@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
 from agno.db.base import BaseDb, SessionType
+from agno.db.migrations.manager import MigrationManager
 from agno.db.schemas import UserMemory
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -90,6 +91,7 @@ from agno.db.utils import (
     metrics_month_end,
     metrics_nested_run_ids,
     metrics_refresh_status,
+    metrics_remote_member_team_session_ids,
     metrics_versions,
     resolve_metrics_fields,
     total_metrics_rows,
@@ -187,6 +189,8 @@ class SurrealDb(BaseDb):
         self._metrics_refreshed_at: float = 0.0
         # The days whose metrics a write could not reopen, retried by the next write
         self._metrics_days_not_reopened: Set[date] = set()
+        # Whether a session holds legacy runs, None until a read of every session found out
+        self._metrics_legacy_runs: Optional[bool] = None
 
     @property
     def client(self) -> Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection]:
@@ -267,6 +271,10 @@ class SurrealDb(BaseDb):
 
         if create_table_if_not_found and not self.table_exists(table_name):
             self._create_table(table_type, table_name)
+            # Store the schema version for the created sessions table, which holds no legacy runs for metrics
+            if table_type == "sessions":
+                latest_schema_version = MigrationManager(self).latest_schema_version
+                self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
 
         return table_name
 
@@ -917,14 +925,15 @@ class SurrealDb(BaseDb):
         table = self._get_table("sessions")
 
         existing = self.client.query(
-            f"SELECT user_id, runs, agent, team, workflow FROM {table} WHERE id = $record",
+            f"SELECT user_id, runs, agent, team, workflow, created_at FROM {table} WHERE id = $record",
             {"record": RecordID(table, session.session_id)},
         )
         legacy_runs: Any = None
-        stored_sessions: Dict[str, Dict[str, Any]] = {}
+        existing_row: Dict[str, Any] = {}
+        stored_session: Optional[Dict[str, Any]] = None
         if isinstance(existing, list) and len(existing) > 0:
             existing_row = existing[0] if isinstance(existing[0], dict) else {}
-            stored_sessions[session.session_id] = existing_row
+            stored_session = {**desurrealize_session(dict(existing_row)), "session_id": session.session_id}
             existing_uid = existing_row.get("user_id")
             if existing_uid is not None and existing_uid != session.user_id:
                 return None
@@ -937,6 +946,9 @@ class SurrealDb(BaseDb):
         content = serialize_session(session, self.table_names, include_runs=False)
         if legacy_runs is not None:
             content["runs"] = legacy_runs
+        # The stored created_at, which keeps the session on the day it was created
+        if existing_row and existing_row.get("created_at") is not None:
+            content["created_at"] = existing_row["created_at"]
 
         session_raw = self._query_one(
             "UPSERT ONLY $record CONTENT $content",
@@ -951,13 +963,7 @@ class SurrealDb(BaseDb):
 
         # Runs are persisted separately via upsert_run by the caller (agent loop).
         desurrealized = desurrealize_session(session_raw)
-        if get_metrics_reopen_session_ids(
-            [
-                {**desurrealize_session(dict(row)), "session_id": session_id}
-                for session_id, row in stored_sessions.items()
-            ],
-            [desurrealized],
-        ):
+        if get_metrics_reopen_session_ids([stored_session] if stored_session else [], [desurrealized]):
             self._reopen_metrics_days([desurrealized.get("created_at")])
         # Attach in-memory runs so the caller sees them on the returned session
         desurrealized["runs"] = [r.to_dict() if hasattr(r, "to_dict") else r for r in (session.runs or [])]
@@ -994,7 +1000,7 @@ class SurrealDb(BaseDb):
             # CONTENT would wipe any pre-v3 history on the row (see the
             # single-record upsert_session above for the full rationale).
             existing = self.client.query(
-                f"SELECT runs, user_id, agent, team, workflow FROM {table} WHERE id = $record",
+                f"SELECT runs, user_id, agent, team, workflow, created_at FROM {table} WHERE id = $record",
                 {"record": RecordID(table, session.session_id)},
             )
             legacy_runs: Any = None
@@ -1005,6 +1011,10 @@ class SurrealDb(BaseDb):
             content = serialize_session(session, self.table_names, include_runs=False)
             if legacy_runs is not None:
                 content["runs"] = legacy_runs
+            # The stored created_at, which keeps the session on the day it was created
+            stored_session = stored_sessions.get(session.session_id)
+            if stored_session and stored_session.get("created_at") is not None:
+                content["created_at"] = stored_session["created_at"]
 
             session_raw = self._query_one(
                 "UPSERT ONLY $record CONTENT $content",
@@ -1016,16 +1026,21 @@ class SurrealDb(BaseDb):
             )
             if session_raw:
                 sessions_raw.append(session_raw)
+        written_sessions = [desurrealize_session(dict(session_raw)) for session_raw in sessions_raw]
         reopen_session_ids = get_metrics_reopen_session_ids(
             [
                 {**desurrealize_session(dict(row)), "session_id": session_id}
                 for session_id, row in stored_sessions.items()
             ],
-            [desurrealize_session(dict(session_raw)) for session_raw in sessions_raw],
+            written_sessions,
         )
-        # UPSERT CONTENT stores each session's own created_at
+        # The stored created_at, which keeps the session on the day it was created
         self._reopen_metrics_days(
-            [session.created_at for session in sessions if session.session_id in reopen_session_ids]
+            [
+                written_session.get("created_at")
+                for written_session in written_sessions
+                if written_session["session_id"] in reopen_session_ids
+            ]
         )
         if not deserialize:
             return list(sessions_raw)
@@ -1488,6 +1503,23 @@ class SurrealDb(BaseDb):
             return desurrealize_metrics_refresh(response[0])
         return None
 
+    def _mark_metrics_refresh_rebuild(self, refreshes_table: str) -> bool:
+        """Write a mark no fingerprint equals on the row of the metrics refreshes table, so the next calculation
+        rebuilds yesterday and today. False when a calculation's write conflicted with it through every try."""
+        for _ in range(3):
+            try:
+                self.client.query(
+                    "UPDATE $refresh SET fingerprint = $mark RETURN NONE",
+                    {"refresh": RecordID(refreshes_table, METRICS_REFRESH_ID), "mark": ["rebuild", uuid4().hex]},
+                )
+                return True
+            except Exception as e:
+                # A calculation heartbeats the row in each day's transaction: SurrealDB fails the later write with
+                # "Transaction conflict: ... This transaction can be retried"
+                if "can be retried" not in str(e):
+                    raise
+        return False
+
     def _heartbeat_metrics_refresh(self, refreshes_table: str, worker_id: str) -> bool:
         """Refresh locked_at for this worker's metrics refresh. False when another process took it over."""
         return bool(self._query(*heartbeat_metrics_refresh(refreshes_table, worker_id), dict))
@@ -1495,13 +1527,18 @@ class SurrealDb(BaseDb):
     def _release_metrics_refresh(
         self,
         refreshes_table: str,
-        worker_id: str,
+        worker_id: Optional[str],
         error: Optional[str] = None,
         fingerprint: Optional[List[Any]] = None,
         stopped: bool = False,
+        claimed_fingerprint: Optional[List[Any]] = None,
+        started_at: Optional[int] = None,
+        finished_at: Optional[int] = None,
     ) -> None:
         """Release the row of the metrics refreshes table: completed, with the fingerprint, without an error, failed
-        with one, and as the last completed refresh left it when the calculation stopped."""
+        with one, and as the last completed refresh left it when the calculation stopped. A worker_id of None writes
+        the row only while no process holds it and no calculation started or finished after the read of started_at
+        and finished_at, and creates it when that read found none."""
         variables: Dict[str, Any] = {"refresh": RecordID(refreshes_table, METRICS_REFRESH_ID), "worker_id": worker_id}
         if stopped:
             # The days it did not reach stay open for the next calculation; a first one that stopped has none to show
@@ -1512,18 +1549,38 @@ class SurrealDb(BaseDb):
             )
         elif error is None:
             variables["fingerprint"] = fingerprint
+            # A rebuild that marked the fingerprint after the claim keeps its mark, so the next calculation rebuilds
+            # yesterday and today. No fingerprint is stored as NONE, which a claim of None compares equal to
+            variables["claimed_fingerprint"] = claimed_fingerprint
             assignments = (
-                'status = "completed", error = NONE, finished_at = time::unix(time::now()), fingerprint = $fingerprint'
+                'status = "completed", error = NONE, finished_at = time::unix(time::now()), '
+                "fingerprint = IF fingerprint != $claimed_fingerprint THEN fingerprint ELSE $fingerprint END"
             )
         else:
             variables["error"] = error
             assignments = 'status = "failed", error = $error'
-        self._query(
-            f"UPDATE $refresh SET locked_by = NONE, locked_at = NONE, {assignments} WHERE locked_by = $worker_id "
-            "RETURN NONE",
-            variables,
-            dict,
-        )
+        condition = "locked_by = $worker_id"
+        if worker_id is None and error is not None:
+            variables.update(started_at=started_at, finished_at=finished_at)
+            condition += " AND started_at = $started_at AND finished_at = $finished_at"
+        try:
+            if worker_id is None and error is not None and started_at is None:
+                # Before any refresh there is no row to update; one created since keeps its own status
+                self._query(
+                    f"INSERT IGNORE INTO {refreshes_table} "
+                    '{id: $refresh, started_at: time::unix(time::now()), status: "failed", error: $error} RETURN NONE',
+                    variables,
+                    dict,
+                )
+            else:
+                self._query(
+                    f"UPDATE $refresh SET locked_by = NONE, locked_at = NONE, {assignments} WHERE {condition} "
+                    "RETURN NONE",
+                    variables,
+                    dict,
+                )
+        except Exception as e:
+            log_debug(f"Error releasing metrics refresh: {e}")
 
     def _get_metrics_fingerprint(
         self, sessions_table: str, runs_table: Optional[str], yesterday: date
@@ -1799,6 +1856,19 @@ class SurrealDb(BaseDb):
                     self._query(f"SELECT VALUE run_id FROM {runs_table} WHERE run_id IN $ids", {"ids": run_ids}, str)
                 )
 
+            # A remote member's run after midnight is named by its team's run of the day before
+            team_session_ids = sorted(metrics_remote_member_team_session_ids(runs))
+            if team_session_ids:
+                team_runs = get_all_runs_for_component_metrics_calculation(
+                    self.client,
+                    runs_table,
+                    start_timestamp - timedelta(days=1),
+                    start_timestamp,
+                    team_session_ids,
+                )
+                parent_runs.extend(team_runs)
+                parent_run_ids.extend(run["parent_run_id"] for run in team_runs if run.get("parent_run_id"))
+
             parent_runs.extend(self._get_metrics_parent_runs(runs_table, parent_run_ids))
 
         records = calculate_date_component_metrics(date_to_process, sessions, runs, stored_run_ids, parent_runs)
@@ -1937,6 +2007,9 @@ class SurrealDb(BaseDb):
 
         Returns:
             Optional[List[date]]: The days calculated, oldest first. None when another process is calculating them.
+
+        Raises:
+            Exception: If an error occurs during metrics calculation.
         """
         table = self._get_metrics_table("component_metrics", self.component_metrics_table_name)
         user_metrics_table = self._get_metrics_table("user_metrics", self.user_metrics_table_name)
@@ -1950,7 +2023,29 @@ class SurrealDb(BaseDb):
         if rebuild_from is not None:
             # Reopened as a write reopens a day, before the claim, so a calculation another process is running
             # leaves them to the next one
-            self._query(*reopen_metrics_days_from(user_metrics_table, rebuild_from), dict)
+            started_at = finished_at = None
+            try:
+                # A calculation that starts or finishes after this read keeps its own status
+                stored_row = self._get_metrics_refresh_row(refreshes_table)[0]
+                if stored_row is not None:
+                    started_at, finished_at = stored_row["started_at"], stored_row["finished_at"]
+                # A statement of its own, without the refresh row: a day's calculation heartbeats that row
+                self._query(*reopen_metrics_days_from(user_metrics_table, rebuild_from), dict)
+                # Yesterday and today are picked by the fingerprint, so it is marked for the next one too
+                if not self._mark_metrics_refresh_rebuild(refreshes_table):
+                    return None
+            except Exception as e:
+                # Failed before the claim, so the refresh status shows it. The query helper raises the database's
+                # own error as the context of its own
+                error = e.__context__ if isinstance(e.__context__, Exception) else e
+                self._release_metrics_refresh(
+                    refreshes_table,
+                    None,
+                    error=database_error_message(error),
+                    started_at=started_at,
+                    finished_at=finished_at,
+                )
+                raise
 
         worker_id = str(uuid4())
         # Claimed before anything is read, so a process that finds another calculating reads nothing
@@ -1971,12 +2066,21 @@ class SurrealDb(BaseDb):
 
             legacy_runs_by_day: Dict[date, List[Dict[str, Any]]] = {}
             legacy_runs_by_id: Dict[str, Dict[str, Any]] = {}
-            # Read once for every day until the v3.0.0 migration is stamped: no index finds one day's legacy runs
+            if rebuild_from is not None:
+                # Every session is read again, for the legacy runs a process of an earlier release saved since
+                self._metrics_legacy_runs = None
+            # Read once for every day until the v3.0.0 migration is stamped: no index finds one day's legacy runs. A
+            # store created by 3.0 or 3.1 stamps no version, so they are read only while a read of every session found
+            # some
             # Nothing is stamped while the versions table was never written, whose read SurrealDB 3 refuses
-            if dates_to_process and (
-                not self.table_exists(self.versions_table_name)
-                or packaging_version.parse(str(self.get_latest_schema_version(self.session_table_name)))
-                < packaging_version.parse("3.0.0")
+            if (
+                dates_to_process
+                and self._metrics_legacy_runs is not False
+                and (
+                    not self.table_exists(self.versions_table_name)
+                    or packaging_version.parse(self.get_latest_schema_version(self.session_table_name) or "2.0.0")
+                    < packaging_version.parse("3.0.0")
+                )
             ):
                 start_timestamp = datetime.combine(dates_to_process[0], datetime.min.time()).replace(
                     tzinfo=timezone.utc
@@ -1984,6 +2088,10 @@ class SurrealDb(BaseDb):
                 end_timestamp = datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time()).replace(
                     tzinfo=timezone.utc
                 )
+                if self._metrics_legacy_runs is None:
+                    # The first read reads every session, so one that finds no legacy runs finds none anywhere
+                    start_timestamp = datetime.fromtimestamp(0, tz=timezone.utc)
+                    end_timestamp = max(end_timestamp, datetime.now(timezone.utc) + timedelta(seconds=1))
                 for legacy_run_day, day_legacy_runs in get_metrics_records_by_day(
                     self._get_metrics_legacy_runs(sessions_table, runs_table, start_timestamp, end_timestamp),
                     int(start_timestamp.timestamp()),
@@ -1993,6 +2101,8 @@ class SurrealDb(BaseDb):
                     legacy_runs_by_id.update({run["run_id"]: run for run in day_legacy_runs})
                 if not self._heartbeat_metrics_refresh(refreshes_table, worker_id):
                     return None
+                if self._metrics_legacy_runs is None:
+                    self._metrics_legacy_runs = bool(legacy_runs_by_id)
                 # A legacy run is dated on its own day, which may hold no session or run of the tables
                 today = datetime.now(timezone.utc).date()
                 dates_to_process = sorted(
@@ -2010,26 +2120,41 @@ class SurrealDb(BaseDb):
                 if should_stop is not None and should_stop():
                     self._release_metrics_refresh(refreshes_table, worker_id, stopped=True)
                     return None
-                if not self._calculate_date_metrics(
-                    table,
-                    user_metrics_table,
-                    sessions_table,
-                    runs_table,
-                    date_to_process,
-                    legacy_runs_by_day.get(date_to_process, []),
-                    legacy_runs_by_id,
-                    refreshes_table,
-                    worker_id,
-                    should_stop,
-                ):
+                for _ in range(2):
+                    try:
+                        calculated = self._calculate_date_metrics(
+                            table,
+                            user_metrics_table,
+                            sessions_table,
+                            runs_table,
+                            date_to_process,
+                            legacy_runs_by_day.get(date_to_process, []),
+                            legacy_runs_by_id,
+                            refreshes_table,
+                            worker_id,
+                            should_stop,
+                        )
+                        break
+                    except Exception as e:
+                        # A write reopened the day at the same moment: SurrealDB fails the later write with
+                        # "Transaction conflict: ... This transaction can be retried", and the day is calculated again
+                        if "can be retried" not in str(e):
+                            raise
+                else:
+                    # The write that conflicted both times reopened the day, so the next calculation picks it up
+                    continue
+                if not calculated:
                     if should_stop is not None and should_stop():
                         self._release_metrics_refresh(refreshes_table, worker_id, stopped=True)
                     return None
                 calculated_dates.append(date_to_process)
 
+            # A month row is read only once completed, so a month is built only once its last day can be completed
             month_starts = sorted(
-                set(get_months_to_calculate_metrics_for(calculated_dates))
+                month_start
+                for month_start in set(get_months_to_calculate_metrics_for(calculated_dates))
                 | set(self._get_open_metrics_months(user_metrics_table))
+                if metrics_day_completed(metrics_month_end(month_start))
             )
             for month_start in month_starts:
                 if should_stop is not None and should_stop():
@@ -2046,7 +2171,9 @@ class SurrealDb(BaseDb):
             self._release_metrics_refresh(refreshes_table, worker_id, error=database_error_message(error))
             raise
 
-        self._release_metrics_refresh(refreshes_table, worker_id, fingerprint=fingerprint)
+        self._release_metrics_refresh(
+            refreshes_table, worker_id, fingerprint=fingerprint, claimed_fingerprint=refresh_row["fingerprint"]
+        )
 
         if not calculated_dates:
             log_info("Metrics already calculated for all relevant dates.")

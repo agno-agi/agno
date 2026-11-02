@@ -12,8 +12,8 @@ from agno.db.utils import (
     METRICS_TOKEN_FIELDS,
     build_user_metrics_row,
     get_metrics_legacy_runs,
-    get_metrics_parent_run_id,
     get_sort_value,
+    metrics_parent_run_id,
 )
 from agno.utils.log import log_warning
 
@@ -442,11 +442,33 @@ return 1
 
 RELEASE_METRICS_REFRESH_LUA = """
 local stored = redis.call('GET', KEYS[1])
+if ARGV[1] == '' and ARGV[2] == 'failed' and ARGV[6] == 'null' then
+  -- Before any refresh there is no row to update; one created since keeps its own status
+  if stored then
+    return 0
+  end
+  local now = tonumber(redis.call('TIME')[1])
+  local row = {
+    id = ARGV[8], locked_by = cjson.null, locked_at = cjson.null, started_at = now, finished_at = cjson.null,
+    fingerprint = cjson.null, status = 'failed', error = ARGV[4]
+  }
+  redis.call('SET', KEYS[1], cjson.encode(row))
+  return 1
+end
 if not stored then
   return 0
 end
 local row = cjson.decode(stored)
-if row['locked_by'] ~= ARGV[1] then
+-- An empty ARGV[1] writes the row only while no process holds it and no calculation started or finished after the
+-- read of ARGV[6] and ARGV[7]
+local holder = cjson.null
+if ARGV[1] ~= '' then
+  holder = ARGV[1]
+end
+if row['locked_by'] ~= holder then
+  return 0
+end
+if ARGV[1] == '' and (row['started_at'] ~= cjson.decode(ARGV[6]) or row['finished_at'] ~= cjson.decode(ARGV[7])) then
   return 0
 end
 row['locked_by'] = cjson.null
@@ -464,11 +486,38 @@ elseif ARGV[2] == 'completed' then
   row['status'] = 'completed'
   row['error'] = cjson.null
   row['finished_at'] = tonumber(redis.call('TIME')[1])
+  local stored_fingerprint = row['fingerprint']
   row['fingerprint'] = cjson.decode(ARGV[3])
+  -- A rebuild that marked the fingerprint after the claim keeps its mark, so the next calculation rebuilds
+  -- yesterday and today. Compared value by value: cjson and json.dumps encode a list with different separators
+  local changed = type(stored_fingerprint) == 'table'
+  if ARGV[5] ~= 'null' then
+    local claimed = cjson.decode(ARGV[5])
+    changed = not changed or #stored_fingerprint ~= #claimed
+    local index = 1
+    while not changed and index <= #claimed do
+      changed = stored_fingerprint[index] ~= claimed[index]
+      index = index + 1
+    end
+  end
+  if changed then
+    row['fingerprint'] = stored_fingerprint
+  end
 else
   row['status'] = 'failed'
   row['error'] = ARGV[4]
 end
+redis.call('SET', KEYS[1], cjson.encode(row))
+return 1
+"""
+
+MARK_METRICS_REFRESH_REBUILD_LUA = """
+local stored = redis.call('GET', KEYS[1])
+if not stored then
+  return 0
+end
+local row = cjson.decode(stored)
+row['fingerprint'] = cjson.decode(ARGV[1])
 redis.call('SET', KEYS[1], cjson.encode(row))
 return 1
 """
@@ -883,6 +932,8 @@ def _build_component_metrics_run_data(run_data: Dict[str, Any]) -> Dict[str, Any
         "run_id": run_data.get("run_id"),
         "agent_id": run_data.get("agent_id"),
         "team_id": run_data.get("team_id"),
+        "session_id": run_data.get("session_id"),
+        "parent_run_id": run_data.get("parent_run_id"),
         "metrics": trimmed_metrics,
         "model": run_data.get("model"),
         "model_provider": run_data.get("model_provider"),
@@ -922,12 +973,13 @@ def build_component_metrics_run(run: Dict[str, Any]) -> Dict[str, Any]:
     """
     return {
         "run_id": run.get("run_id"),
+        "session_id": run.get("session_id"),
         "run_type": run.get("run_type"),
         "agent_id": run.get("agent_id"),
         "team_id": run.get("team_id"),
         "workflow_id": run.get("workflow_id"),
         "user_id": run.get("user_id"),
-        "parent_run_id": get_metrics_parent_run_id(run),
+        "parent_run_id": metrics_parent_run_id(run),
         "status": run.get("status"),
         "run_data": _build_component_metrics_run_data(run.get("run_data") or {}),
         "created_at": run.get("created_at"),

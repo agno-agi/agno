@@ -459,9 +459,12 @@ def user_metrics_key(aggregation_period: str, row_date: date, user_id: str) -> D
 
 
 def serialize_user_metrics_row(row: Dict[str, Any]) -> Dict[str, Any]:
-    """Serialize a user metrics row to a DynamoDB item, with its key and its day as an ISO string."""
+    """Serialize a user metrics row to a DynamoDB item, with its key and its day as an ISO string, and an open everyone
+    row with its period as open_period, the key of the index of the open rows."""
     item = serialize_to_dynamo_item({**row, "date": row["date"].isoformat()})
     item.update(user_metrics_key(row["aggregation_period"], row["date"], row["user_id"]))
+    if row["user_id"] == "" and not row["completed"]:
+        item["open_period"] = {"S": row["aggregation_period"]}
     return item
 
 
@@ -499,16 +502,20 @@ def heartbeat_metrics_refresh_update(table_name: str, worker_id: str) -> Dict[st
     }
 
 
-def _reopen_metrics_row(dynamodb_client, table_name: str, row_date: date, aggregation_period: str) -> None:
+def reopen_metrics_row(dynamodb_client, table_name: str, row_date: date, aggregation_period: str) -> None:
     """Reopen a day's or a month's everyone row of the user metrics table, putting an empty open row when it has
     none."""
     # Moved in the write, so two writers reopening the same row never give it the same version
     reopen_kwargs: Dict[str, Any] = {
         "TableName": table_name,
         "Key": user_metrics_key(aggregation_period, row_date, ""),
-        "UpdateExpression": "SET #completed = :false ADD #version :one",
-        "ExpressionAttributeNames": {"#completed": "completed", "#version": "version"},
-        "ExpressionAttributeValues": {":false": {"BOOL": False}, ":one": {"N": "1"}},
+        "UpdateExpression": "SET #completed = :false, #open_period = :period ADD #version :one",
+        "ExpressionAttributeNames": {"#completed": "completed", "#open_period": "open_period", "#version": "version"},
+        "ExpressionAttributeValues": {
+            ":false": {"BOOL": False},
+            ":period": {"S": aggregation_period},
+            ":one": {"N": "1"},
+        },
     }
     try:
         dynamodb_client.update_item(**reopen_kwargs, ConditionExpression="attribute_exists(period_user_id)")
@@ -533,7 +540,7 @@ def reopen_metrics_day(dynamodb_client, table_name: str, day: date) -> None:
         table_name: The user metrics table.
         day: The day, from metrics_day_to_reopen.
     """
-    _reopen_metrics_row(dynamodb_client, table_name, day, "daily")
+    reopen_metrics_row(dynamodb_client, table_name, day, "daily")
 
 
 def reopen_metrics_month(dynamodb_client, table_name: str, month_start: date) -> None:
@@ -544,7 +551,7 @@ def reopen_metrics_month(dynamodb_client, table_name: str, month_start: date) ->
         table_name: The user metrics table.
         month_start: The first day of the month.
     """
-    _reopen_metrics_row(dynamodb_client, table_name, month_start, "monthly")
+    reopen_metrics_row(dynamodb_client, table_name, month_start, "monthly")
 
 
 def reopen_metrics_days_from(dynamodb_client, table_name: str, starting_date: date) -> None:
@@ -571,9 +578,9 @@ def reopen_metrics_days_from(dynamodb_client, table_name: str, starting_date: da
         dynamodb_client.update_item(
             TableName=table_name,
             Key=item,
-            UpdateExpression="SET #completed = :false ADD #version :one",
-            ExpressionAttributeNames={"#completed": "completed", "#version": "version"},
-            ExpressionAttributeValues={":false": {"BOOL": False}, ":one": {"N": "1"}},
+            UpdateExpression="SET #completed = :false, #open_period = :period ADD #version :one",
+            ExpressionAttributeNames={"#completed": "completed", "#open_period": "open_period", "#version": "version"},
+            ExpressionAttributeValues={":false": {"BOOL": False}, ":period": {"S": "daily"}, ":one": {"N": "1"}},
         )
 
 

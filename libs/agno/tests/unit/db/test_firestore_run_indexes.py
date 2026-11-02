@@ -42,6 +42,10 @@ class TestRunsCompositeIndexes:
         """The base ordered-per-session read (``_get_session_runs_docs``)."""
         assert _has_index(_composite_keys(), [("session_id", "ASCENDING"), ("run_index", "ASCENDING")])
 
+    def test_session_id_created_at_index_present(self):
+        """A remote member's metrics read: its team's runs created before the member's day."""
+        assert _has_index(_composite_keys(), [("session_id", "ASCENDING"), ("created_at", "ASCENDING")])
+
     @pytest.mark.parametrize("scoped", ["status", "agent_id", "team_id", "workflow_id"])
     def test_session_scoped_filter_indexes_present(self, scoped: str):
         """``get_runs(session_id=..., <scoped>=...)`` needs a 3-field composite."""

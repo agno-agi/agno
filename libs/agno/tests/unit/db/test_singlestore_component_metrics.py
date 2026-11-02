@@ -8,11 +8,15 @@ import pytest
 from sqlalchemy import Column, MetaData, Table
 from sqlalchemy.dialects import mysql
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.sql.dml import Insert
 
 from agno.db.singlestore.schemas import SESSION_TABLE_SCHEMA, get_table_schema_definition
 from agno.db.singlestore.singlestore import SingleStoreDb
-from agno.db.singlestore.utils import build_component_metrics_run, upsert_user_metrics_row
+from agno.db.singlestore.utils import (
+    build_component_metrics_run,
+    upsert_user_metrics_row,
+)
 
 TODAY = datetime.now(timezone.utc).date()
 
@@ -83,6 +87,7 @@ class _FakeSession:
         rows = next((self.rows_by_table[name] for name in table_names if name in self.rows_by_table), [])
         result = MagicMock()
         result.fetchall.return_value = rows
+        result.first.return_value = rows[0] if rows else None
         result.fetchmany.side_effect = _batches(rows)
         result.scalar.return_value = self.scalar
         result.scalars.return_value.all.return_value = [row.date for row in rows if hasattr(row, "date")]
@@ -117,9 +122,9 @@ def _written(session, table_name):
     return [row for name, rows in session.writes if name == table_name for row in rows]
 
 
-def test_calculate_metrics_writes_each_day_and_its_totals_rows_last(singlestore_db):
-    """Each day gets one row per user, then its user and everyone totals rows; only a day ended a day ago is
-    completed, and the lock is released with the fingerprint."""
+def test_calculate_metrics_writes_each_day_and_its_user_metrics_rows_last(singlestore_db):
+    """Each day gets one row per user, then its user metrics rows; only a day ended a day ago is completed, and the
+    lock is released with the fingerprint."""
     session = _FakeSession({"test_sessions": [_session_row("alice"), _session_row("bob")]})
     singlestore_db.Session = Mock(return_value=session)
 
@@ -140,13 +145,17 @@ def test_calculate_metrics_writes_each_day_and_its_totals_rows_last(singlestore_
         ("daily", TODAY - timedelta(days=1), 2, False),
         ("daily", TODAY, 2, False),
     ]
-    # Every month a rebuilt day is in is reopened with the day, then gets its totals rows after the days
+    # Every month a rebuilt day is in is reopened with the day
     month_rows = [row for row in everyone_rows if row["aggregation_period"] == "monthly"]
     assert {row["date"] for row in month_rows} == {row["date"].replace(day=1) for row in rows}
-    assert singlestore_db._release_metrics_refresh.call_args.kwargs == {"fingerprint": ["fingerprint"]}
+    singlestore_db._release_metrics_refresh.assert_called_once()
+    assert singlestore_db._release_metrics_refresh.call_args.kwargs == {
+        "fingerprint": ["fingerprint"],
+        "claimed_fingerprint": None,
+    }
 
 
-def test_totals_row_completed_is_compared_before_the_version_moves():
+def test_everyone_row_completed_is_compared_before_the_version_moves():
     """The everyone row is completed only while it keeps the version read, compared before the upsert moves it."""
     session = Mock()
     upsert_user_metrics_row(
@@ -162,7 +171,7 @@ def test_totals_row_completed_is_compared_before_the_version_moves():
     assert completed < statement.index("version = (test_user_metrics.version + %s)")
 
 
-def test_nested_runs_are_read_as_stored():
+def test_build_component_metrics_run_rebuilds_the_stored_run_shape():
     """Runs nested inside a run come back as stored, and the run's own requests as its messages."""
     member = {"run_id": "m1", "member_responses": [{"run_id": "m1-1"}]}
     row = SimpleNamespace(
@@ -184,8 +193,50 @@ def test_nested_runs_are_read_as_stored():
     assert run["run_data"]["messages"] == [{"role": "assistant", "metrics": {"duration": 1.5}}]
 
 
+def test_claim_metrics_refresh_returns_while_another_process_writes_a_day(mock_engine):
+    """A claim whose lock wait times out returns None."""
+    db = SingleStoreDb(db_engine=mock_engine, db_schema="test_schema")
+    session = MagicMock()
+    session.__enter__.return_value = session
+    session.execute.side_effect = OperationalError("INSERT", {}, Exception(1205, "Lock wait timeout exceeded"))
+    db.Session = Mock(return_value=session)
+
+    assert db._claim_metrics_refresh(TABLES["metrics_refreshes"], "worker") is None
+
+
+def test_release_metrics_refresh_keeps_a_rebuild_mark_over_a_claim_of_no_fingerprint(mock_engine):
+    """A mark a rebuild wrote after a claim that found no fingerprint stays, so the next calculation rebuilds
+    yesterday and today."""
+    db = SingleStoreDb(db_engine=mock_engine, db_schema="test_schema")
+    session = MagicMock()
+    session.__enter__.return_value = session
+    session.execute.return_value.scalar.return_value = ["rebuild", "mark"]
+    db.Session = Mock(return_value=session)
+
+    db._release_metrics_refresh(TABLES["metrics_refreshes"], "worker", fingerprint=["today"], claimed_fingerprint=None)
+
+    statement = str(session.execute.call_args.args[0].compile(dialect=mysql.dialect()))
+    assert "fingerprint" not in statement
+
+
+def test_calculate_metrics_rebuild_from_records_a_failed_reopen_before_any_refresh(singlestore_db, monkeypatch):
+    """A rebuild whose reopen fails before any metrics refresh ran is shown as failed with its error."""
+
+    def _fail(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("agno.db.singlestore.singlestore.reopen_metrics_days_from", _fail)
+    singlestore_db.Session = Mock(return_value=_FakeSession())
+
+    with pytest.raises(RuntimeError):
+        singlestore_db.calculate_metrics_dates(rebuild_from=TODAY - timedelta(days=3))
+    singlestore_db._release_metrics_refresh.assert_called_once_with(
+        TABLES["metrics_refreshes"], None, error="boom", started_at=None, finished_at=None
+    )
+
+
 def test_get_component_metrics_reads_every_owner_from_the_everyone_rows(singlestore_db):
-    """Every owner is read from the everyone totals rows, totalled in Python."""
+    """Every owner is read from the everyone rows of the user metrics table, totalled in Python."""
     user_metrics_row = {
         "aggregation_period": "daily",
         "date": TODAY,

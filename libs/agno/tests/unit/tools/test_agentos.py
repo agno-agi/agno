@@ -474,7 +474,6 @@ class TestGetPlatformMetrics:
                     session_id=str(uuid.uuid4()), agent_id="agent-1", user_id=owner, created_at=now, updated_at=now
                 )
             )
-        db.calculate_metrics()
 
         out = _loads(toolkit.get_platform_metrics(days=7))
 
@@ -494,7 +493,6 @@ class TestGetPlatformMetrics:
             updated_at=now,
         )
         db.upsert_session(session)
-        db.calculate_metrics()
 
         out = _loads(toolkit.get_platform_metrics(days=7))
 
@@ -545,18 +543,15 @@ class TestLazyMetricsRefresh:
 
     def test_get_metrics_refreshes_lazily(self, db):
         self._seed_session(db)
-        db.calculate_metrics()
-        self._seed_session(db, user_id="user-2")
 
-        # No second calculate_metrics call: once a first one has finished, get_metrics refreshes on its own
+        # No calculate_metrics call: get_metrics must refresh on its own
         rows, _ = db.get_metrics()
 
-        assert len(rows) == 2
-        assert sum(row["agent_sessions_count"] for row in rows) == 2
+        assert len(rows) == 1
+        assert rows[0]["agent_sessions_count"] == 1
 
     def test_refresh_is_throttled(self, db):
         self._seed_session(db)
-        db.calculate_metrics()
         rows, _ = db.get_metrics()
         assert rows[0]["agent_sessions_count"] == 1
 
@@ -573,7 +568,6 @@ class TestLazyMetricsRefresh:
 
     def test_metrics_tool_does_not_bypass_the_throttle(self, db, toolkit):
         self._seed_session(db)
-        db.calculate_metrics()
         calls = []
         # A read refreshes through calculate_metrics_dates, never through calculate_metrics
         original = type(db).calculate_metrics_dates

@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 
 try:
-    from google.api_core.exceptions import FailedPrecondition, NotFound
+    from google.api_core.exceptions import AlreadyExists, FailedPrecondition, NotFound
     from google.cloud.firestore import Increment
 
     from agno.db.firestore.firestore import FIRESTORE_BATCH_LIMIT, FirestoreDb
@@ -28,6 +28,7 @@ def _make_db_with_mock_client(monkeypatch) -> FirestoreDb:
     db = FirestoreDb.__new__(FirestoreDb)
     db.db_client = MagicMock()
     db._metrics_days_not_reopened = set()
+    db._metrics_legacy_runs = None
     db._metrics_refresh_found = False
     monkeypatch.setattr("agno.db.firestore.firestore.transactional", lambda function: function)
     return db
@@ -50,7 +51,7 @@ def _mock_collections(db: FirestoreDb, refresh_exists: bool) -> MagicMock:
 
 class TestReopenMetricsDays:
     def test_creates_an_open_row_for_a_day_without_one(self, monkeypatch):
-        """Ensure a day without a totals row gets an open one"""
+        """Ensure a day without an everyone row gets an open one"""
         db = _make_db_with_mock_client(monkeypatch)
         user_metrics_collection_ref = _mock_collections(db, refresh_exists=True)
         user_metrics_collection_ref.document.return_value.update.side_effect = NotFound("no row")
@@ -64,7 +65,6 @@ class TestReopenMetricsDays:
         """The refresh document is written by the claim, before the first calculation reads any day"""
         db = _make_db_with_mock_client(monkeypatch)
         user_metrics_collection_ref = _mock_collections(db, refresh_exists=True)
-        user_metrics_collection_ref.limit.return_value.get.return_value = []
 
         db._reopen_metrics_days([_old_day_timestamp()])
 
@@ -122,6 +122,31 @@ class TestMetricsRefresh:
         transaction.update.assert_not_called()
         db.db_client.transaction.return_value.update.assert_not_called()
 
+    def test_release_keeps_the_mark_a_rebuild_wrote_after_the_claim(self, monkeypatch):
+        """Ensure a release keeps the mark a rebuild wrote after the claim, also over a claim of no fingerprint"""
+        db = _make_db_with_mock_client(monkeypatch)
+        refreshes_collection_ref = self._refreshes(
+            {"locked_by": "worker", "locked_at": 0, "fingerprint": ["rebuild", "mark"]}
+        )
+
+        db._release_metrics_refresh(refreshes_collection_ref, "worker", fingerprint=["today"], claimed_fingerprint=None)
+
+        values = db.db_client.transaction.return_value.update.call_args.args[1]
+        assert (values["status"], values["fingerprint"]) == ("completed", ["rebuild", "mark"])
+
+    def test_release_without_a_worker_writes_only_while_no_process_holds_it(self, monkeypatch):
+        """Ensure a failure before the claim is written only while no process holds the refresh"""
+        db = _make_db_with_mock_client(monkeypatch)
+
+        stored = {"locked_by": "another", "locked_at": 0, "started_at": 1, "finished_at": 5}
+        db._release_metrics_refresh(self._refreshes(stored), None, error="boom", started_at=1, finished_at=5)
+        db.db_client.transaction.return_value.update.assert_not_called()
+
+        stored = {"locked_by": None, "started_at": 1, "finished_at": 5}
+        db._release_metrics_refresh(self._refreshes(stored), None, error="boom", started_at=1, finished_at=5)
+        values = db.db_client.transaction.return_value.update.call_args.args[1]
+        assert (values["status"], values["error"]) == ("failed", "boom")
+
 
 class TestMetricsFingerprint:
     def test_unknown_while_the_index_of_the_sum_is_not_built(self, monkeypatch):
@@ -135,17 +160,17 @@ class TestMetricsFingerprint:
         assert db._get_metrics_fingerprint(sessions_collection_ref, None, date(2026, 1, 1)) is None
 
 
-class TestWriteMetricsTotalsRows:
+class TestWriteUserMetricsRows:
     def _write(self, monkeypatch, row_writes, heartbeat=True):
         db = _make_db_with_mock_client(monkeypatch)
-        batches = []
+        transactions = []
 
-        def new_batch():
-            batch = MagicMock()
-            batches.append(batch)
-            return batch
+        def new_transaction():
+            transaction = MagicMock()
+            transactions.append(transaction)
+            return transaction
 
-        db.db_client.batch.side_effect = new_batch
+        db.db_client.transaction.side_effect = new_transaction
         db._heartbeat_metrics_refresh = MagicMock(return_value=heartbeat)  # type: ignore[method-assign]
         day = date(2026, 1, 1)
         user_metrics_collection_ref = MagicMock()
@@ -166,31 +191,39 @@ class TestWriteMetricsTotalsRows:
             worker_id="worker",
             row_writes=row_writes,
         )
-        return written, batches
+        return written, transactions
 
     def test_moves_the_version_first_when_the_rows_take_more_than_one_commit(self, monkeypatch):
-        """Ensure the version moves first when the rows take more than one commit"""
-        written, batches = self._write(monkeypatch, [(MagicMock(), {"n": i}) for i in range(FIRESTORE_BATCH_LIMIT)])
+        """Ensure the version moves first when the rows take more than one commit, each leaving a write for the
+        heartbeat"""
+        written, transactions = self._write(
+            monkeypatch, [(MagicMock(), {"n": i}) for i in range(FIRESTORE_BATCH_LIMIT)]
+        )
 
         assert written
-        assert len(batches) == 2
-        first_update = batches[0].update.call_args_list[0]
+        assert [len(t.set.call_args_list) + len(t.update.call_args_list) for t in transactions] == [
+            FIRESTORE_BATCH_LIMIT - 1,
+            2,
+            1,
+        ]
+        first_update = transactions[0].update.call_args_list[0]
         assert isinstance(first_update.args[1]["version"], Increment)
 
     def test_moves_the_version_with_its_row_when_the_rows_take_one_commit(self, monkeypatch):
         """Ensure the version moves with its row when the rows take one commit"""
-        written, batches = self._write(monkeypatch, [(MagicMock(), {"n": 1})])
+        written, transactions = self._write(monkeypatch, [(MagicMock(), {"n": 1})])
 
         assert written
-        assert len(batches) == 1
-        batches[0].update.assert_not_called()
+        assert len(transactions) == 2
+        transactions[0].update.assert_not_called()
 
     def test_writes_nothing_once_another_worker_took_the_refresh_over(self, monkeypatch):
         """Ensure nothing is written once another worker took the refresh over"""
-        written, batches = self._write(monkeypatch, [(MagicMock(), {"n": 1})], heartbeat=False)
+        written, transactions = self._write(monkeypatch, [(MagicMock(), {"n": 1})], heartbeat=False)
 
         assert not written
-        batches[0].commit.assert_not_called()
+        assert len(transactions) == 1
+        transactions[0].set.assert_not_called()
 
 
 class TestGetMetricsVersions:
@@ -205,8 +238,8 @@ class TestGetMetricsVersions:
 
 
 class TestCalculateMetrics:
-    def test_writes_each_day_and_its_totals_rows_last(self, monkeypatch):
-        """Each day gets one row per user, then its everyone totals row; only a day ended a day ago is completed, and
+    def test_writes_each_day_and_its_user_metrics_rows_last(self, monkeypatch):
+        """Each day gets one row per user, then its everyone row; only a day ended a day ago is completed, and
         the refresh is released with the fingerprint."""
         db = _make_db_with_mock_client(monkeypatch)
         today = datetime.now(timezone.utc).date()
@@ -242,27 +275,19 @@ class TestCalculateMetrics:
         db._release_metrics_refresh = MagicMock()  # type: ignore[method-assign]
         db.session_table_name = "test_sessions"
         db.get_latest_schema_version = MagicMock(return_value="3.0.0")  # type: ignore[method-assign]
-        batches = []
-
-        def new_batch():
-            batch = MagicMock()
-            batches.append(batch)
-            return batch
-
-        db.db_client.batch.side_effect = new_batch
 
         assert db.calculate_metrics_dates() == days
 
-        rows = [
-            call.args[1]
-            for batch in batches
-            for call in batch.set.call_args_list
-            if call.args[0] is collection_ref.document.return_value
-        ]
+        written = db.db_client.transaction.return_value.set.call_args_list
+        rows = [call.args[1] for call in written if call.args[0] is collection_ref.document.return_value]
         assert [(row["date"], row["user_id"], row["sessions_count"]) for row in rows] == [
             (day.isoformat(), user_id, 1) for day in days for user_id in ["alice", "bob"]
         ]
-        everyone_rows = [call.args[1] for call in db.db_client.transaction.return_value.set.call_args_list]
+        everyone_rows = [
+            call.args[1]
+            for call in written
+            if call.args[0] is user_metrics_collection_ref.document.return_value and call.args[1]["user_id"] == ""
+        ]
         assert [
             (row["date"], row["agent_sessions_count"], row["completed"])
             for row in everyone_rows
@@ -272,4 +297,47 @@ class TestCalculateMetrics:
             (days[1].isoformat(), 2, False),
             (days[2].isoformat(), 2, False),
         ]
-        assert db._release_metrics_refresh.call_args.kwargs == {"fingerprint": ["fingerprint"]}
+        assert db._release_metrics_refresh.call_args.kwargs == {
+            "fingerprint": ["fingerprint"],
+            "claimed_fingerprint": None,
+        }
+
+    def test_reads_an_unstamped_sessions_collection_with_no_legacy_runs_for_them_once(self, monkeypatch):
+        """A sessions collection stamped with no version, as 3.0 and 3.1 left it, is read for legacy runs once, and
+        not again once that read of every session found none."""
+        db = _make_db_with_mock_client(monkeypatch)
+        day = date(2026, 10, 1)
+        db._get_collection = MagicMock(return_value=MagicMock())  # type: ignore[method-assign]
+        db._claim_metrics_refresh = MagicMock(return_value={"finished_at": 1, "fingerprint": None})  # type: ignore[method-assign]
+        db._get_metrics_dates_to_calculate = MagicMock(return_value=([day], None))  # type: ignore[method-assign]
+        db._get_metrics_legacy_runs = MagicMock(return_value=({}, {}))  # type: ignore[method-assign]
+        db._heartbeat_metrics_refresh = MagicMock(return_value=True)  # type: ignore[method-assign]
+        db._calculate_date_metrics = MagicMock(return_value=True)  # type: ignore[method-assign]
+        db._get_open_metrics_months = MagicMock(return_value=[])  # type: ignore[method-assign]
+        db._calculate_month_metrics = MagicMock(return_value=True)  # type: ignore[method-assign]
+        db._release_metrics_refresh = MagicMock()  # type: ignore[method-assign]
+        db.session_table_name = "test_sessions"
+        db.get_latest_schema_version = MagicMock(return_value="2.0.0")  # type: ignore[method-assign]
+
+        assert db.calculate_metrics_dates() == [day]
+        assert db.calculate_metrics_dates() == [day]
+
+        # The one read starts at 0, so it read every session
+        assert [call.args[2] for call in db._get_metrics_legacy_runs.call_args_list] == [0]
+
+
+class TestSessionsCollectionVersion:
+    def test_keeps_the_stored_version_of_an_empty_sessions_collection(self, monkeypatch):
+        """Ensure an empty sessions collection with a version stored keeps it"""
+        db = _make_db_with_mock_client(monkeypatch)
+        db.versions_table_name = "agno_versions"
+        monkeypatch.setattr("agno.db.firestore.firestore.create_collection_indexes", MagicMock())
+        sessions_collection_ref, versions_collection_ref = MagicMock(), MagicMock()
+        sessions_collection_ref.limit.return_value.select.return_value.stream.return_value = iter([])
+        versions_collection_ref.document.return_value.create.side_effect = AlreadyExists("stored")
+        collections = {"test_sessions": sessions_collection_ref, "agno_versions": versions_collection_ref}
+        db.db_client.collection.side_effect = lambda name: collections[name]
+
+        assert db._get_or_create_collection("test_sessions", "sessions") is sessions_collection_ref
+
+        versions_collection_ref.document.return_value.set.assert_not_called()

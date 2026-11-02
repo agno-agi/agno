@@ -110,6 +110,8 @@ RUNS_COLLECTION_SCHEMA = [
     },
     # The metrics fingerprint: the count and the sum of updated_at of the runs created since a time
     {"key": [("created_at", "ASCENDING"), ("updated_at", "ASCENDING")], "collection_group": False},
+    # The metrics of a remote member's run: its team's runs created before the member's day
+    {"key": [("session_id", "ASCENDING"), ("created_at", "ASCENDING")], "collection_group": False},
 ]
 
 USER_MEMORY_COLLECTION_SCHEMA = [

@@ -1,7 +1,6 @@
 """Tests for the component metrics methods of JsonDb, on JSON files in a temporary directory."""
 
 import os
-import sys
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -9,7 +8,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import pytest
 
 from agno.db.json import JsonDb
-from agno.db.utils import METRICS_LOCK_SECONDS, METRICS_STOPPED_ERROR
+from agno.db.json import json_db as json_db_module
+from agno.db.utils import METRICS_LOCK_SECONDS, METRICS_STOPPED_ERROR, calculate_date_metrics
 from agno.metrics import RunMetrics
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -201,9 +201,9 @@ def ground_truth(runs: List[Tuple[Any, Optional[str]]]) -> Dict[Any, Dict[str, A
 
 
 def assert_matches_ground_truth(db, runs):
-    totals = stored_rows(db, db.user_metrics_table_name)
+    user_metrics_rows = stored_rows(db, db.user_metrics_table_name)
     for (day, user_id), counts in ground_truth(runs).items():
-        row = totals[("daily", day, user_id)]
+        row = user_metrics_rows[("daily", day, user_id)]
         assert {
             **{column: row[column] for column in counts if column != "cache_read_tokens"},
             "cache_read_tokens": row["token_details"].get("cache_read_tokens", 0),
@@ -211,7 +211,7 @@ def assert_matches_ground_truth(db, runs):
 
 
 def test_calculate_metrics_matches_a_direct_count_of_the_runs(tmp_path):
-    """Ensure every day's totals rows match a direct count of the stored runs"""
+    """Ensure every day's user metrics rows match a direct count of the stored runs"""
     db = JsonDb(db_path=str(tmp_path))
     runs = build_dataset(db)
 
@@ -220,13 +220,16 @@ def test_calculate_metrics_matches_a_direct_count_of_the_runs(tmp_path):
     old_day, yesterday, today = utc_date(3), utc_date(1), utc_date(0)
     assert {metric["date"] for metric in calculated} == {old_day, yesterday, today}
     assert_matches_ground_truth(db, runs)
-    totals = stored_rows(db, db.user_metrics_table_name)
-    assert totals[("daily", old_day, "")]["agent_sessions_count"] == 1
-    assert totals[("daily", yesterday, "")]["team_sessions_count"] == 1
-    assert totals[("daily", today, "")]["workflow_sessions_count"] == 1
-    assert (totals[("daily", yesterday, "")]["users_count"], totals[("daily", today, "")]["users_count"]) == (1, 0)
-    assert totals[("daily", old_day, "")]["completed"] is True
-    assert totals[("daily", yesterday, "")]["completed"] is False
+    user_metrics_rows = stored_rows(db, db.user_metrics_table_name)
+    assert user_metrics_rows[("daily", old_day, "")]["agent_sessions_count"] == 1
+    assert user_metrics_rows[("daily", yesterday, "")]["team_sessions_count"] == 1
+    assert user_metrics_rows[("daily", today, "")]["workflow_sessions_count"] == 1
+    assert (
+        user_metrics_rows[("daily", yesterday, "")]["users_count"],
+        user_metrics_rows[("daily", today, "")]["users_count"],
+    ) == (1, 0)
+    assert user_metrics_rows[("daily", old_day, "")]["completed"] is True
+    assert user_metrics_rows[("daily", yesterday, "")]["completed"] is False
 
     # The member run is counted under the team that started it
     rows = stored_rows(db, db.component_metrics_table_name)
@@ -239,7 +242,7 @@ def test_calculate_metrics_matches_a_direct_count_of_the_runs(tmp_path):
     assert db.get_metrics_refresh_status()["status"] == "completed"
 
 
-def test_a_run_save_reopens_its_closed_day(tmp_path):
+def test_calculate_metrics_rebuilds_a_reopened_day(tmp_path):
     """Ensure saving a run of a closed day reopens it, and the next calculation completes it again"""
     db = JsonDb(db_path=str(tmp_path))
     runs = build_dataset(db)
@@ -262,7 +265,7 @@ def test_a_run_save_reopens_its_closed_day(tmp_path):
     )
 
 
-def test_a_new_session_on_a_closed_day_reopens_it(tmp_path):
+def test_session_save_reopens_the_day_the_session_is_stored_on(tmp_path):
     """Ensure a new session on a closed day reopens it, while saving the same session again does not"""
     db = JsonDb(db_path=str(tmp_path))
     build_dataset(db)
@@ -282,7 +285,7 @@ def test_a_new_session_on_a_closed_day_reopens_it(tmp_path):
     assert (everyone_row(db, old_day)["completed"], everyone_row(db, old_day)["version"]) == (False, version + 1)
 
 
-def test_a_delete_does_not_reopen_its_day(tmp_path):
+def test_delete_session_keeps_its_closed_day_closed(tmp_path):
     """Ensure deleting a session keeps its closed day closed"""
     db = JsonDb(db_path=str(tmp_path))
     build_dataset(db)
@@ -357,6 +360,8 @@ def test_calculate_metrics_counts_runs_kept_in_the_legacy_runs_field(tmp_path):
         db.session_table_name, [{**session, "runs": legacy_runs[session["session_id"]]} for session in sessions]
     )
     db.upsert_run(in_both, session_id="legacy", user_id="alice", run_index=0)
+    # Not yet migrated to v3.0.0, so the legacy runs are read
+    db.upsert_schema_version(db.session_table_name, "2.5.0")
 
     calculated_dates = db.calculate_metrics_dates()
 
@@ -374,6 +379,43 @@ def test_calculate_metrics_counts_runs_kept_in_the_legacy_runs_field(tmp_path):
     db.calculate_metrics(rebuild_from=yesterday)
     alice_row = stored_rows(db, db.component_metrics_table_name)[("daily", yesterday, "alice", "agent", "agent-1")]
     assert (alice_row["runs_count"], alice_row["input_tokens"]) == (1, 10)
+
+
+@pytest.mark.parametrize("legacy_runs_count", [0, 1])
+def test_calculate_metrics_reads_the_legacy_runs_while_a_session_holds_some(tmp_path, monkeypatch, legacy_runs_count):
+    """Ensure an unstamped store reads the legacy runs once when none are held, and every time while one is"""
+    db = JsonDb(db_path=str(tmp_path))
+    yesterday = utc_date(1)
+    db.upsert_session(
+        AgentSession(session_id="legacy", agent_id="agent-1", user_id="alice", created_at=noon_utc(yesterday))
+    )
+    legacy_runs = [agent_run("legacy_run", noon_utc(yesterday), 20).to_dict()][:legacy_runs_count]
+    db._write_json_file(
+        db.session_table_name,
+        [{**session, "runs": legacy_runs} for session in db._read_json_file(db.session_table_name)],
+    )
+    # A store created on 3.0 or 3.1 stamps no schema version
+    db._write_json_file(db.versions_table_name, [])
+    reads = []
+    get_metrics_legacy_runs = json_db_module.get_metrics_legacy_runs
+    monkeypatch.setattr(
+        json_db_module, "get_metrics_legacy_runs", lambda sessions: reads.append(1) or get_metrics_legacy_runs(sessions)
+    )
+
+    db.calculate_metrics_dates(rebuild_from=yesterday)
+    for index in range(2):
+        # A new run today changes the fingerprint, so yesterday and today are rebuilt
+        persist(
+            db,
+            AgentSession(
+                session_id=f"new_{index}", agent_id="agent-1", user_id="bob", created_at=noon_utc(utc_date(0))
+            ),
+            [agent_run(f"new_run_{index}", noon_utc(utc_date(0)), 10)],
+        )
+        db.calculate_metrics_dates()
+        assert everyone_row(db, yesterday)["agent_runs_count"] == legacy_runs_count
+
+    assert len(reads) == (3 if legacy_runs_count else 1)
 
 
 def test_get_component_metrics_reads_every_owner_and_one_owner(tmp_path):
@@ -426,8 +468,8 @@ def test_get_metrics_reads_the_metrics_file_until_the_first_calculation_finished
     assert [(m["user_id"], m["agent_runs_count"]) for m in metrics] == [("alice", 2), ("bob", 1)]
 
 
-def test_completed_month_gets_month_rows(tmp_path):
-    """Ensure a completed month gets its month totals rows"""
+def test_calculate_metrics_writes_a_month_user_metrics_row_for_a_completed_month(tmp_path):
+    """Ensure a completed month gets its month user metrics rows"""
     db = JsonDb(db_path=str(tmp_path))
     month_start = (utc_date(0).replace(day=1) - timedelta(days=32)).replace(day=1)
     month_end = (month_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
@@ -444,15 +486,15 @@ def test_completed_month_gets_month_rows(tmp_path):
 
     db.calculate_metrics()
 
-    month_totals = everyone_row(db, month_start, period="monthly")
-    assert (month_totals["agent_runs_count"], month_totals["completed"], month_totals["version"]) == (2, True, 1)
-    assert month_totals["users_count"] == 1
+    month_row = everyone_row(db, month_start, period="monthly")
+    assert (month_row["agent_runs_count"], month_row["completed"], month_row["version"]) == (2, True, 1)
+    assert month_row["users_count"] == 1
 
     totals, _ = db.get_metrics_totals(starting_date=month_start, ending_date=month_end, user_id="alice")
     assert (totals["sessions_count"], totals["root_runs_count"], totals["input_tokens"]) == (2, 2, 150)
 
 
-def test_a_stopped_calculation_writes_its_days_and_releases_the_lock(tmp_path):
+def test_calculate_metrics_dates_releases_the_lock_when_stopped(tmp_path):
     """Ensure a stopped calculation writes the days it calculated and releases the lock"""
     db = stored_sessions(tmp_path)
     calls = []
@@ -481,9 +523,9 @@ def test_a_run_save_never_fails_because_of_metrics(tmp_path):
     build_dataset(db)
     db.calculate_metrics()
     old_day = utc_date(3)
-    totals_path = tmp_path / f"{db.user_metrics_table_name}.json"
-    stored_totals = totals_path.read_text()
-    totals_path.write_text("not json")
+    user_metrics_path = tmp_path / f"{db.user_metrics_table_name}.json"
+    stored_user_metrics = user_metrics_path.read_text()
+    user_metrics_path.write_text("not json")
 
     db.upsert_run(
         agent_run("alice_paused_run", noon_utc(old_day) + 60, 50), session_id="alice_session", user_id="alice"
@@ -491,7 +533,7 @@ def test_a_run_save_never_fails_because_of_metrics(tmp_path):
     assert db._metrics_days_not_reopened == {old_day}
 
     # The next write reopens it
-    totals_path.write_text(stored_totals)
+    user_metrics_path.write_text(stored_user_metrics)
     db.upsert_run(agent_run("today_run", noon_utc(utc_date(0)), 1), session_id="alice_session", user_id="alice")
     assert db._metrics_days_not_reopened == set()
     assert everyone_row(db, old_day)["completed"] is False
@@ -525,18 +567,16 @@ def test_calculate_metrics_keeps_a_day_reopened_during_its_rebuild_open(monkeypa
     db.calculate_metrics(rebuild_from=old_day)
     assert everyone_row(db, old_day)["completed"] is True
 
-    calculate_day_metrics = sys.modules[type(db).__module__].calculate_day_metrics
-
     def calculate_and_save(rows_by_key, date_to_process, *args):
         if date_to_process == old_day:
             # Saved after the calculation read the day's runs
             db.upsert_run(
                 agent_run("alice_paused_run", noon_utc(old_day) + 60, 50), session_id="alice_session", user_id="alice"
             )
-        return calculate_day_metrics(rows_by_key, date_to_process, *args)
+        return calculate_date_metrics(rows_by_key, date_to_process, *args)
 
     with monkeypatch.context() as patch:
-        patch.setattr(sys.modules[type(db).__module__], "calculate_day_metrics", calculate_and_save)
+        patch.setattr("agno.db.json.json_db.calculate_date_metrics", calculate_and_save)
         db.calculate_metrics(rebuild_from=old_day)
 
     assert everyone_row(db, old_day)["completed"] is False
@@ -545,7 +585,7 @@ def test_calculate_metrics_keeps_a_day_reopened_during_its_rebuild_open(monkeypa
     assert (row["completed"], row["status_metrics"]) == (True, {COMPLETED: 2})
 
 
-def test_calculate_metrics_returns_none_while_another_worker_holds_the_refresh(tmp_path):
+def test_calculate_metrics_skips_a_rebuild_already_running(tmp_path):
     """Ensure a calculation returns None while another worker holds the refresh"""
     db = stored_sessions(tmp_path)
     assert db._claim_metrics_refresh("another-worker") is not None
@@ -565,7 +605,15 @@ def test_calculate_metrics_returns_none_while_another_worker_holds_the_refresh(t
     assert status["finished_at"] is not None
 
 
-def test_a_stale_refresh_reads_failed_and_is_taken_over(tmp_path):
+def test_claim_metrics_refresh_returns_none_when_its_lock_file_never_reads(tmp_path):
+    """Ensure a lock file that can be neither created nor read returns None instead of retrying forever"""
+    db = stored_sessions(tmp_path)
+    os.symlink(db.db_path / "missing.json", db.db_path / f"{db.metrics_refreshes_table_name}_lock.json")
+
+    assert db._claim_metrics_refresh("another-worker") is None
+
+
+def test_calculate_metrics_takes_over_a_lock_that_went_stale(tmp_path):
     """Ensure a stale refresh reads as failed and the next calculation takes it over"""
     db = stored_sessions(tmp_path)
     db._claim_metrics_refresh("stopped-worker")
@@ -578,14 +626,14 @@ def test_a_stale_refresh_reads_failed_and_is_taken_over(tmp_path):
     assert db._heartbeat_metrics_refresh("stopped-worker") is False
 
 
-def test_a_failed_refresh_keeps_no_finished_at(monkeypatch, tmp_path):
+def test_calculate_metrics_records_a_failed_refresh(monkeypatch, tmp_path):
     """Ensure a failed refresh records its error and keeps no finished_at"""
     db = stored_sessions(tmp_path)
 
     def fail(*args):
         raise ValueError("boom")
 
-    monkeypatch.setattr(sys.modules[type(db).__module__], "calculate_day_metrics", fail)
+    monkeypatch.setattr("agno.db.json.json_db.calculate_date_metrics", fail)
     with pytest.raises(ValueError):
         db.calculate_metrics()
     refresh_row = db._get_metrics_refresh_row()[0]
@@ -645,7 +693,7 @@ def test_a_run_save_keeps_the_first_created_at_of_its_run(tmp_path):
     assert stored_run["created_at"] == noon_utc(old_day) + 60
 
 
-def test_a_month_whose_day_was_rebuilt_after_a_stop_is_rebuilt_next(monkeypatch, tmp_path):
+def test_calculate_metrics_rebuilds_a_month_a_stopped_calculation_left(monkeypatch, tmp_path):
     """Ensure a month left open by a stopped calculation is read from its days and rebuilt next"""
     db = JsonDb(db_path=str(tmp_path))
     month_start = (utc_date(0).replace(day=1) - timedelta(days=32)).replace(day=1)
@@ -696,3 +744,145 @@ def test_get_metrics_versions_move_for_a_reopened_day_that_is_rebuilt(tmp_path):
     new_versions = db.get_metrics_versions(old_day, old_day)
     assert new_versions == {f"daily {old_day.isoformat()}": everyone_row(db, old_day)["version"]}
     assert new_versions[f"daily {old_day.isoformat()}"] > versions[f"daily {old_day.isoformat()}"]
+
+
+def test_calculate_metrics_builds_no_month_row_before_its_last_day_can_be_completed(tmp_path):
+    """Ensure the current month's user metrics row is left open and unbuilt, as its last day cannot be completed yet"""
+    db = stored_sessions(tmp_path)
+
+    db.calculate_metrics()
+
+    month_row = everyone_row(db, utc_date(0).replace(day=1), period="monthly")
+    assert (month_row["completed"], month_row["input_tokens"]) == (False, 0)
+
+
+def test_calculate_metrics_rebuild_from_rebuilds_yesterday_and_today_after_another_process_completes(tmp_path):
+    """Ensure rebuild_from leaves yesterday and today to the next calculation when another process holds the metrics
+    refresh and completes it with the fingerprint it read before the rebuild"""
+    db = JsonDb(db_path=str(tmp_path))
+    persist(
+        db,
+        AgentSession(session_id="alice_session", agent_id="agent-1", user_id="alice", created_at=noon_utc(utc_date(3))),
+        [agent_run("alice_run", noon_utc(utc_date(3)), 100)],
+    )
+    _backdate(db)
+    db.calculate_metrics()
+    refresh_row = db._claim_metrics_refresh("other_process")
+    assert refresh_row is not None
+
+    assert db.calculate_metrics(rebuild_from=utc_date(3)) is None
+
+    db._release_metrics_refresh(
+        "other_process", fingerprint=refresh_row["fingerprint"], claimed_fingerprint=refresh_row["fingerprint"]
+    )
+    assert db.calculate_metrics_dates() == [utc_date(3), utc_date(1), utc_date(0)]
+    assert db.calculate_metrics_dates() == []
+
+
+def test_a_heartbeat_keeps_a_fingerprint_marked_since_its_read(monkeypatch, tmp_path):
+    """Ensure a fingerprint rebuild_from marks between a heartbeat's read and its write stays marked"""
+    db = stored_sessions(tmp_path)
+    _backdate(db)
+    db.calculate_metrics()
+    assert db._claim_metrics_refresh("worker")["fingerprint"] is not None
+    read_json_file = db._read_json_file
+    reads = []
+
+    def read_then_rebuild(filename, create_table_if_not_found=True):
+        result = read_json_file(filename, create_table_if_not_found)
+        if filename == db.metrics_refreshes_table_name and not reads:
+            reads.append(filename)
+            # Another process marks the fingerprint between the heartbeat's read of the refresh and its write
+            assert JsonDb(db_path=str(tmp_path)).calculate_metrics(rebuild_from=utc_date(1)) is None
+        return result
+
+    monkeypatch.setattr(db, "_read_json_file", read_then_rebuild)
+    assert db._heartbeat_metrics_refresh("worker") is True
+    monkeypatch.undo()
+
+    assert db._get_metrics_refresh_row()[0]["fingerprint"][0] == "rebuild"
+
+
+def test_calculate_metrics_rebuild_from_rebuilds_yesterday_and_today_after_another_process_claimed_no_fingerprint(
+    tmp_path,
+):
+    """Ensure rebuild_from, run while a calculation that claimed no fingerprint holds the metrics refresh, leaves
+    yesterday and today to the next calculation"""
+    db = stored_sessions(tmp_path)
+    _backdate(db)
+    rebuilds = []
+
+    def rebuild_once():
+        if not rebuilds:
+            rebuilds.append(JsonDb(db_path=str(tmp_path)).calculate_metrics_dates(rebuild_from=utc_date(1)))
+        return False
+
+    assert db.calculate_metrics_dates(should_stop=rebuild_once) == [utc_date(1), utc_date(0)]
+    assert rebuilds == [None]
+    assert db.calculate_metrics_dates() == [utc_date(1), utc_date(0)]
+    assert db.calculate_metrics_dates() == []
+
+
+def test_calculate_metrics_rebuild_from_records_a_failed_reopen(monkeypatch, tmp_path):
+    """Ensure rebuild_from that fails to reopen its days shows the error on the metrics refresh no process holds,
+    before any refresh too"""
+    db = stored_sessions(tmp_path)
+
+    def fail(user_metrics_by_key, starting_date):
+        raise RuntimeError("reopen failed")
+
+    # Before any refresh there is no row, so the failed one is created
+    with monkeypatch.context() as patch:
+        patch.setattr("agno.db.json.json_db.reopen_metrics_days_from", fail)
+        with pytest.raises(RuntimeError):
+            db.calculate_metrics_dates(rebuild_from=utc_date(1))
+
+    refresh_row = db._get_metrics_refresh_row()[0]
+    assert (refresh_row["status"], refresh_row["error"], refresh_row["locked_by"]) == ("failed", "reopen failed", None)
+
+    db.calculate_metrics()
+    monkeypatch.setattr("agno.db.json.json_db.reopen_metrics_days_from", fail)
+    with pytest.raises(RuntimeError):
+        db.calculate_metrics_dates(rebuild_from=utc_date(1))
+
+    refresh_row = db._get_metrics_refresh_row()[0]
+    assert (refresh_row["status"], refresh_row["error"], refresh_row["locked_by"]) == ("failed", "reopen failed", None)
+
+
+def test_calculate_metrics_names_a_remote_member_run_the_day_after_its_team_run(tmp_path):
+    """Ensure a remote member's run, stored with no parent the day after its team's run, names that team"""
+    db = JsonDb(db_path=str(tmp_path))
+    team_day, member_day = utc_date(3), utc_date(2)
+    member_session_id = "team_session:remote-agent"
+    team_run = TeamRunOutput(
+        run_id="team_run",
+        team_id="team-1",
+        session_id="team_session",
+        status=RunStatus.completed,
+        model="gpt-5",
+        model_provider="OpenAI",
+        metrics=run_metrics(30),
+        member_responses=[
+            agent_run(
+                "member_run",
+                noon_utc(member_day),
+                20,
+                agent_id="remote-agent",
+                session_id=member_session_id,
+                parent_run_id="team_run",
+            )
+        ],
+        created_at=noon_utc(team_day),
+    )
+    persist(db, TeamSession(session_id="team_session", team_id="team-1", created_at=noon_utc(team_day)), [team_run])
+    # The remote AgentOS stores the member run with no parent
+    persist(
+        db,
+        AgentSession(session_id=member_session_id, agent_id="remote-agent", created_at=noon_utc(member_day)),
+        [agent_run("member_run", noon_utc(member_day), 20, agent_id="remote-agent", session_id=member_session_id)],
+    )
+
+    db.calculate_metrics()
+
+    row = stored_rows(db, db.component_metrics_table_name)[("daily", member_day, "", "agent", "remote-agent")]
+    assert (row["parent_component_id"], row["root_component_id"]) == ("team-1", "team-1")

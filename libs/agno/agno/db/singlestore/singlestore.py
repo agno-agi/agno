@@ -71,6 +71,7 @@ from agno.db.utils import (
     metrics_month_end,
     metrics_nested_run_ids,
     metrics_refresh_status,
+    metrics_remote_member_team_session_ids,
     metrics_versions,
     resolve_metrics_fields,
     table_schema_mismatch_error,
@@ -96,6 +97,7 @@ try:
         case,
         cast,
         func,
+        null,
         or_,
         select,
         tuple_,
@@ -104,6 +106,7 @@ try:
     )
     from sqlalchemy.dialects import mysql
     from sqlalchemy.engine import Engine, create_engine
+    from sqlalchemy.exc import DBAPIError
     from sqlalchemy.orm import scoped_session, sessionmaker
     from sqlalchemy.schema import Column, MetaData, Table
     from sqlalchemy.sql.expression import text
@@ -2202,10 +2205,7 @@ class SingleStoreDb(BaseDb):
     # -- Metrics methods --
     def _reopen_metrics_days(self, sess: Any, created_ats: Sequence[Optional[int]]) -> None:
         """Reopen the metrics of each day a write changed, in the write's transaction, so the next calculation
-        rebuilds it.
-
-        SingleStore rolls back a failed statement on its own, so a failed reopen leaves the write as it is, and the
-        days it could not reopen are retried by the next write.
+        rebuilds it. A day it could not reopen is retried by the next write.
 
         Args:
             sess (Any): The session of the write.
@@ -2218,9 +2218,10 @@ class SingleStoreDb(BaseDb):
         )
         if not days:
             return
+        # No savepoint: SingleStore rolls back only the statement that failed, and the write's transaction goes on
         try:
-            # Looked up only when a day reopens, and on the write's own connection: a lookup through the scoped
-            # session would end the write's transaction. None when no day was calculated yet
+            # Looked up only when a day reopens, the table loaded on the write's own connection: a lookup
+            # through the scoped session would end the write's transaction. None when no day was calculated yet
             user_metrics_table = self._get_cached_table("user_metrics", self.user_metrics_table_name)
             if user_metrics_table is None:
                 if not is_table_available(
@@ -2258,19 +2259,18 @@ class SingleStoreDb(BaseDb):
         self, sess: Any, table: Table, session_records: List[Dict[str, Any]]
     ) -> Set[str]:
         """Get the id of each session the given rows add, or move to another owner or component."""
-        stored_sessions = {
-            row.session_id: row
-            for row in sess.execute(
-                select(
-                    table.c.session_id,
-                    table.c.user_id,
-                    table.c.agent_id,
-                    table.c.team_id,
-                    table.c.workflow_id,
-                    table.c.created_at,
-                ).where(table.c.session_id.in_([record["session_id"] for record in session_records]))
-            ).fetchall()
-        }
+        written_session_ids = [record["session_id"] for record in session_records]
+        stored_sessions: Dict[str, Any] = {}
+        for start in range(0, len(written_session_ids), METRICS_IN_LIST_LIMIT):
+            stored_stmt = select(
+                table.c.session_id,
+                table.c.user_id,
+                table.c.agent_id,
+                table.c.team_id,
+                table.c.workflow_id,
+                table.c.created_at,
+            ).where(table.c.session_id.in_(written_session_ids[start : start + METRICS_IN_LIST_LIMIT]))
+            stored_sessions.update((row.session_id, row) for row in sess.execute(stored_stmt).fetchall())
         session_ids: Set[str] = set()
         for record in session_records:
             stored_session = stored_sessions.get(record["session_id"])
@@ -2327,40 +2327,67 @@ class SingleStoreDb(BaseDb):
         """
         now = func.unix_timestamp()
         claimed = refreshes_table.c.locked_by == worker_id
-        with self.Session() as sess, sess.begin():
-            # One statement, so two processes never both find the row free
-            stmt = mysql.insert(refreshes_table).values(
-                id=METRICS_REFRESH_ID, locked_by=worker_id, locked_at=now, started_at=now, status="running"
-            )
-            # The columns are set in order, each seeing the ones before: the row is taken over first, and the rest
-            # moves only when it was
-            stmt = stmt.on_duplicate_key_update(
-                [
-                    (
-                        "locked_by",
-                        case(
-                            # A stale lock is taken over: the process that held it stopped
-                            (
-                                or_(
-                                    refreshes_table.c.locked_by.is_(None),
-                                    refreshes_table.c.locked_at <= now - METRICS_LOCK_SECONDS,
+        try:
+            with self.Session() as sess, sess.begin():
+                # One statement, so two processes never both find the row free
+                stmt = mysql.insert(refreshes_table).values(
+                    id=METRICS_REFRESH_ID, locked_by=worker_id, locked_at=now, started_at=now, status="running"
+                )
+                # The columns are set in order, each seeing the ones before: the row is taken over first, and the
+                # rest moves only when it was
+                stmt = stmt.on_duplicate_key_update(
+                    [
+                        (
+                            "locked_by",
+                            case(
+                                # A stale lock is taken over: the process that held it stopped
+                                (
+                                    or_(
+                                        refreshes_table.c.locked_by.is_(None),
+                                        refreshes_table.c.locked_at <= now - METRICS_LOCK_SECONDS,
+                                    ),
+                                    worker_id,
                                 ),
-                                worker_id,
+                                else_=refreshes_table.c.locked_by,
                             ),
-                            else_=refreshes_table.c.locked_by,
                         ),
-                    ),
-                    ("locked_at", case((claimed, now), else_=refreshes_table.c.locked_at)),
-                    ("started_at", case((claimed, now), else_=refreshes_table.c.started_at)),
-                    ("status", case((claimed, "running"), else_=refreshes_table.c.status)),
-                    ("error", case((claimed, None), else_=refreshes_table.c.error)),
-                ]
-            )
-            sess.execute(stmt)
-            # The row stays locked until the transaction ends, so it still holds what the claim wrote
-            result = sess.execute(select(refreshes_table).where(refreshes_table.c.id == METRICS_REFRESH_ID))
-            row = result.mappings().one()
-            return dict(row) if row["locked_by"] == worker_id else None
+                        ("locked_at", case((claimed, now), else_=refreshes_table.c.locked_at)),
+                        ("started_at", case((claimed, now), else_=refreshes_table.c.started_at)),
+                        ("status", case((claimed, "running"), else_=refreshes_table.c.status)),
+                        ("error", case((claimed, None), else_=refreshes_table.c.error)),
+                    ]
+                )
+                sess.execute(stmt)
+                # The row stays locked until the transaction ends, so it still holds what the claim wrote
+                result = sess.execute(select(refreshes_table).where(refreshes_table.c.id == METRICS_REFRESH_ID))
+                row = result.mappings().one()
+                return dict(row) if row["locked_by"] == worker_id else None
+        except DBAPIError as exc:
+            cause = getattr(exc, "orig", exc)
+            # 1205: the lock wait timed out, after the leaves' lock_wait_timeout, which a session cannot shorten
+            if cause.args[:1] != (1205,):
+                raise
+            return None
+
+    def _mark_metrics_refresh_rebuild(self, refreshes_table: Table) -> bool:
+        """Write a mark no fingerprint equals on the row of the metrics refreshes table, so the next calculation
+        rebuilds yesterday and today. False when a calculation kept the row locked through the try."""
+        try:
+            with self.Session() as sess, sess.begin():
+                # A calculation keeps the row locked while it writes a day, and lets it go between days. Tried once:
+                # the lock wait is the leaves' lock_wait_timeout, which a session cannot shorten
+                sess.execute(
+                    update(refreshes_table)
+                    .where(refreshes_table.c.id == METRICS_REFRESH_ID)
+                    .values(fingerprint=["rebuild", uuid4().hex])
+                )
+            return True
+        except DBAPIError as exc:
+            cause = getattr(exc, "orig", exc)
+            # 1205: the lock wait timed out
+            if cause.args[:1] != (1205,):
+                raise
+            return False
 
     def _heartbeat_metrics_refresh(self, sess: Any, refreshes_table: Table, worker_id: str) -> bool:
         """Refresh locked_at for this worker's metrics refresh. False when another process took it over."""
@@ -2374,13 +2401,18 @@ class SingleStoreDb(BaseDb):
     def _release_metrics_refresh(
         self,
         refreshes_table: Table,
-        worker_id: str,
+        worker_id: Optional[str],
         error: Optional[str] = None,
         fingerprint: Optional[List[Any]] = None,
         stopped: bool = False,
+        claimed_fingerprint: Optional[List[Any]] = None,
+        started_at: Optional[int] = None,
+        finished_at: Optional[int] = None,
     ) -> None:
         """Release the row of the metrics refreshes table: completed, with the fingerprint, without an error, failed
-        with one, and as the last completed refresh left it when the calculation stopped."""
+        with one, and as the last completed refresh left it when the calculation stopped. A worker_id of None writes
+        the row only while no process holds it and no calculation started or finished after the read of started_at
+        and finished_at, and creates it when that read found none."""
         values: Dict[str, Any] = {"locked_by": None, "locked_at": None}
         if stopped:
             # The days it did not reach stay open for the next calculation; a first one that stopped has none to show
@@ -2389,15 +2421,49 @@ class SingleStoreDb(BaseDb):
                 error=case((refreshes_table.c.finished_at.is_not(None), None), else_=METRICS_STOPPED_ERROR),
             )
         elif error is None:
-            values.update(status="completed", error=None, finished_at=func.unix_timestamp(), fingerprint=fingerprint)
+            values.update(status="completed", error=None, finished_at=func.unix_timestamp())
         else:
             values.update(status="failed", error=error)
-        with self.Session() as sess, sess.begin():
-            sess.execute(
-                update(refreshes_table)
-                .where(refreshes_table.c.id == METRICS_REFRESH_ID, refreshes_table.c.locked_by == worker_id)
-                .values(**values)
-            )
+        try:
+            with self.Session() as sess, sess.begin():
+                if not stopped and error is None:
+                    # A rebuild that marked the fingerprint after the claim keeps its mark, so the next calculation
+                    # rebuilds yesterday and today. Compared here: SingleStore never finds a JSON column equal to a
+                    # string. No fingerprint is stored as NULL, which a claim of NULL compares equal to
+                    stored_fingerprint = sess.execute(
+                        select(refreshes_table.c.fingerprint)
+                        .where(refreshes_table.c.id == METRICS_REFRESH_ID)
+                        .with_for_update()
+                    ).scalar()
+                    if stored_fingerprint == claimed_fingerprint:
+                        values["fingerprint"] = null() if fingerprint is None else fingerprint
+                if worker_id is None and error is not None and started_at is None:
+                    # Before any refresh there is no row to update; one created since keeps its own status
+                    sess.execute(
+                        mysql.insert(refreshes_table)
+                        .values(id=METRICS_REFRESH_ID, started_at=func.unix_timestamp(), status="failed", error=error)
+                        .prefix_with("IGNORE")
+                    )
+                elif worker_id is None and error is not None:
+                    # A plain update skips the row a calculation holds, instead of waiting for its lock
+                    sess.execute(
+                        update(refreshes_table)
+                        .where(
+                            refreshes_table.c.id == METRICS_REFRESH_ID,
+                            refreshes_table.c.locked_by.is_(None),
+                            refreshes_table.c.started_at == started_at,
+                            refreshes_table.c.finished_at.is_not_distinct_from(finished_at),
+                        )
+                        .values(**values)
+                    )
+                else:
+                    sess.execute(
+                        update(refreshes_table)
+                        .where(refreshes_table.c.id == METRICS_REFRESH_ID, refreshes_table.c.locked_by == worker_id)
+                        .values(**values)
+                    )
+        except Exception as e:
+            log_debug(f"Error releasing metrics refresh: {e}")
 
     def _get_metrics_fingerprint(
         self, sess: Any, sessions_table: Table, runs_table: Optional[Table], yesterday: date
@@ -2505,15 +2571,18 @@ class SingleStoreDb(BaseDb):
         or reopened by a day a calculation rebuilt before it stopped."""
         current_month = datetime.now(timezone.utc).date().replace(day=1)
         with self.Session() as sess:
-            result = sess.execute(
-                select(user_metrics_table.c.date).where(
-                    user_metrics_table.c.aggregation_period == "monthly",
-                    user_metrics_table.c.user_id == "",
-                    user_metrics_table.c.completed.is_(False),
-                    user_metrics_table.c.date < current_month,
+            return list(
+                sess.execute(
+                    select(user_metrics_table.c.date).where(
+                        user_metrics_table.c.aggregation_period == "monthly",
+                        user_metrics_table.c.user_id == "",
+                        user_metrics_table.c.completed.is_(False),
+                        user_metrics_table.c.date < current_month,
+                    )
                 )
+                .scalars()
+                .all()
             )
-            return list(result.scalars().all())
 
     def _get_metrics_parent_runs(self, sess: Any, runs_table: Table, parent_run_ids: List[str]) -> List[Dict[str, Any]]:
         """Get the stored runs that started the given runs, and the runs that started those, up to the whole run."""
@@ -2675,6 +2744,18 @@ class SingleStoreDb(BaseDb):
                     )
                     stored_run_ids.update(record.run_id for record in sess.execute(stored_stmt).fetchall())
 
+                # A remote member's run after midnight is named by its team's run of the day before
+                team_session_ids = sorted(metrics_remote_member_team_session_ids(runs))
+                for start in range(0, len(team_session_ids), METRICS_IN_LIST_LIMIT):
+                    team_runs_stmt = build_component_metrics_runs_query(
+                        runs_table, start_timestamp - 86400, start_timestamp
+                    ).where(runs_table.c.session_id.in_(team_session_ids[start : start + METRICS_IN_LIST_LIMIT]))
+                    team_runs = [
+                        build_component_metrics_run(record) for record in sess.execute(team_runs_stmt).fetchall()
+                    ]
+                    parent_runs.extend(team_runs)
+                    parent_run_ids.extend(run["parent_run_id"] for run in team_runs if run.get("parent_run_id"))
+
                 parent_runs.extend(self._get_metrics_parent_runs(sess, runs_table, parent_run_ids))
 
             records = calculate_date_component_metrics(date_to_process, sessions, runs, stored_run_ids, parent_runs)
@@ -2805,6 +2886,9 @@ class SingleStoreDb(BaseDb):
 
         Returns:
             Optional[List[date]]: The days calculated, oldest first. None when another process is calculating them.
+
+        Raises:
+            Exception: If an error occurs during metrics calculation.
         """
         table = self._get_metrics_table("component_metrics", self.component_metrics_table_name)
         user_metrics_table = self._get_metrics_table("user_metrics", self.user_metrics_table_name)
@@ -2818,8 +2902,32 @@ class SingleStoreDb(BaseDb):
         if rebuild_from is not None:
             # Reopened as a write reopens a day, before the claim, so a calculation another process is running
             # leaves them to the next one
-            with self.Session() as sess, sess.begin():
-                reopen_metrics_days_from(session=sess, table=user_metrics_table, starting_date=rebuild_from)
+            started_at = finished_at = None
+            try:
+                # A transaction of its own, without locking the refresh row, so it never waits on a day's calculation
+                with self.Session() as sess, sess.begin():
+                    # A calculation that starts or finishes after this read keeps its own status
+                    refresh_times = sess.execute(
+                        select(refreshes_table.c.started_at, refreshes_table.c.finished_at).where(
+                            refreshes_table.c.id == METRICS_REFRESH_ID
+                        )
+                    ).first()
+                    if refresh_times is not None:
+                        started_at, finished_at = refresh_times
+                    reopen_metrics_days_from(session=sess, table=user_metrics_table, starting_date=rebuild_from)
+                # Yesterday and today are picked by the fingerprint, so it is marked for the next one too
+                if not self._mark_metrics_refresh_rebuild(refreshes_table):
+                    return None
+            except Exception as e:
+                # Failed before the claim, so the refresh status shows it
+                self._release_metrics_refresh(
+                    refreshes_table,
+                    None,
+                    error=database_error_message(e),
+                    started_at=started_at,
+                    finished_at=finished_at,
+                )
+                raise
 
         worker_id = str(uuid4())
         # Claimed before anything is read, so a process that finds another calculating reads nothing
@@ -2904,9 +3012,12 @@ class SingleStoreDb(BaseDb):
                     return None
                 calculated_dates.append(date_to_process)
 
+            # A month row is read only once completed, so a month is built only once its last day can be completed
             month_starts = sorted(
-                set(get_months_to_calculate_metrics_for(calculated_dates))
+                month_start
+                for month_start in set(get_months_to_calculate_metrics_for(calculated_dates))
                 | set(self._get_open_metrics_months(user_metrics_table))
+                if metrics_day_completed(metrics_month_end(month_start))
             )
             for month_start in month_starts:
                 if should_stop is not None and should_stop():
@@ -2921,7 +3032,9 @@ class SingleStoreDb(BaseDb):
             self._release_metrics_refresh(refreshes_table, worker_id, error=database_error_message(e))
             raise
 
-        self._release_metrics_refresh(refreshes_table, worker_id, fingerprint=fingerprint)
+        self._release_metrics_refresh(
+            refreshes_table, worker_id, fingerprint=fingerprint, claimed_fingerprint=refresh_row["fingerprint"]
+        )
 
         if not calculated_dates:
             log_info("Metrics already calculated for all relevant dates.")

@@ -1,6 +1,5 @@
 """Tests for the component metrics methods of InMemoryDb."""
 
-import sys
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -8,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import pytest
 
 from agno.db.in_memory import InMemoryDb
-from agno.db.utils import METRICS_LOCK_SECONDS, METRICS_STOPPED_ERROR
+from agno.db.utils import METRICS_LOCK_SECONDS, METRICS_STOPPED_ERROR, calculate_date_metrics
 from agno.metrics import RunMetrics
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -186,9 +185,9 @@ def ground_truth(runs: List[Tuple[Any, Optional[str]]]) -> Dict[Any, Dict[str, A
 
 
 def assert_matches_ground_truth(db, runs):
-    totals = stored_rows(db, db.user_metrics_table_name)
+    user_metrics_rows = stored_rows(db, db.user_metrics_table_name)
     for (day, user_id), counts in ground_truth(runs).items():
-        row = totals[("daily", day, user_id)]
+        row = user_metrics_rows[("daily", day, user_id)]
         assert {
             **{column: row[column] for column in counts if column != "cache_read_tokens"},
             "cache_read_tokens": row["token_details"].get("cache_read_tokens", 0),
@@ -196,7 +195,7 @@ def assert_matches_ground_truth(db, runs):
 
 
 def test_calculate_metrics_matches_a_direct_count_of_the_runs():
-    """Ensure every day's totals rows match a direct count of the stored runs"""
+    """Ensure every day's user metrics rows match a direct count of the stored runs"""
     db = InMemoryDb()
     runs = build_dataset(db)
 
@@ -205,13 +204,16 @@ def test_calculate_metrics_matches_a_direct_count_of_the_runs():
     old_day, yesterday, today = utc_date(3), utc_date(1), utc_date(0)
     assert {metric["date"] for metric in calculated} == {old_day, yesterday, today}
     assert_matches_ground_truth(db, runs)
-    totals = stored_rows(db, db.user_metrics_table_name)
-    assert totals[("daily", old_day, "")]["agent_sessions_count"] == 1
-    assert totals[("daily", yesterday, "")]["team_sessions_count"] == 1
-    assert totals[("daily", today, "")]["workflow_sessions_count"] == 1
-    assert (totals[("daily", yesterday, "")]["users_count"], totals[("daily", today, "")]["users_count"]) == (1, 0)
-    assert totals[("daily", old_day, "")]["completed"] is True
-    assert totals[("daily", yesterday, "")]["completed"] is False
+    user_metrics_rows = stored_rows(db, db.user_metrics_table_name)
+    assert user_metrics_rows[("daily", old_day, "")]["agent_sessions_count"] == 1
+    assert user_metrics_rows[("daily", yesterday, "")]["team_sessions_count"] == 1
+    assert user_metrics_rows[("daily", today, "")]["workflow_sessions_count"] == 1
+    assert (
+        user_metrics_rows[("daily", yesterday, "")]["users_count"],
+        user_metrics_rows[("daily", today, "")]["users_count"],
+    ) == (1, 0)
+    assert user_metrics_rows[("daily", old_day, "")]["completed"] is True
+    assert user_metrics_rows[("daily", yesterday, "")]["completed"] is False
 
     # The member run is counted under the team that started it
     rows = stored_rows(db, db.component_metrics_table_name)
@@ -224,7 +226,7 @@ def test_calculate_metrics_matches_a_direct_count_of_the_runs():
     assert db.get_metrics_refresh_status()["status"] == "completed"
 
 
-def test_a_run_save_reopens_its_closed_day():
+def test_calculate_metrics_rebuilds_a_reopened_day():
     """Ensure saving a run of a closed day reopens it, and the next calculation completes it again"""
     db = InMemoryDb()
     runs = build_dataset(db)
@@ -247,7 +249,7 @@ def test_a_run_save_reopens_its_closed_day():
     )
 
 
-def test_a_new_session_on_a_closed_day_reopens_it():
+def test_session_save_reopens_the_day_the_session_is_stored_on():
     """Ensure a new session on a closed day reopens it, while saving the same session again does not"""
     db = InMemoryDb()
     build_dataset(db)
@@ -267,7 +269,17 @@ def test_a_new_session_on_a_closed_day_reopens_it():
     assert (everyone_row(db, old_day)["completed"], everyone_row(db, old_day)["version"]) == (False, version + 1)
 
 
-def test_a_delete_does_not_reopen_its_day():
+def test_a_session_save_keeps_the_first_created_at_of_its_session():
+    """Ensure a session saved again with another created_at keeps the stored one"""
+    db = InMemoryDb()
+    db.upsert_session(AgentSession(session_id="s", agent_id="agent-1", user_id="alice", created_at=1000))
+
+    db.upsert_session(AgentSession(session_id="s", agent_id="agent-1", user_id="alice", created_at=2000))
+
+    assert db._sessions["s"]["created_at"] == 1000
+
+
+def test_delete_session_keeps_its_closed_day_closed():
     """Ensure deleting a session keeps its closed day closed"""
     db = InMemoryDb()
     build_dataset(db)
@@ -320,7 +332,7 @@ def test_get_metrics_reads_the_metrics_rows_until_the_first_calculation_finished
     assert [(m["user_id"], m["agent_runs_count"]) for m in metrics] == [("alice", 2), ("bob", 1)]
 
 
-def test_a_stopped_calculation_writes_its_days_and_releases_the_lock():
+def test_calculate_metrics_dates_releases_the_lock_when_stopped():
     """Ensure a stopped calculation writes the days it calculated and releases the lock"""
     db = stored_sessions()
     calls = []
@@ -342,7 +354,7 @@ def test_a_run_save_never_fails_because_of_metrics():
     build_dataset(db)
     db.calculate_metrics()
     old_day = utc_date(3)
-    stored_totals = db._user_metrics
+    stored_user_metrics = db._user_metrics
     db._user_metrics = [{"broken": True}]
 
     db.upsert_run(
@@ -351,7 +363,7 @@ def test_a_run_save_never_fails_because_of_metrics():
     assert db._metrics_days_not_reopened == {old_day}
 
     # The next write reopens it
-    db._user_metrics = stored_totals
+    db._user_metrics = stored_user_metrics
     db.upsert_run(agent_run("today_run", noon_utc(utc_date(0)), 1), session_id="alice_session", user_id="alice")
     assert db._metrics_days_not_reopened == set()
     assert everyone_row(db, old_day)["completed"] is False
@@ -375,18 +387,16 @@ def test_calculate_metrics_keeps_a_day_reopened_during_its_rebuild_open(monkeypa
     db.calculate_metrics(rebuild_from=old_day)
     assert everyone_row(db, old_day)["completed"] is True
 
-    calculate_day_metrics = sys.modules[type(db).__module__].calculate_day_metrics
-
     def calculate_and_save(rows_by_key, date_to_process, *args):
         if date_to_process == old_day:
             # Saved after the calculation read the day's runs
             db.upsert_run(
                 agent_run("alice_paused_run", noon_utc(old_day) + 60, 50), session_id="alice_session", user_id="alice"
             )
-        return calculate_day_metrics(rows_by_key, date_to_process, *args)
+        return calculate_date_metrics(rows_by_key, date_to_process, *args)
 
     with monkeypatch.context() as patch:
-        patch.setattr(sys.modules[type(db).__module__], "calculate_day_metrics", calculate_and_save)
+        patch.setattr("agno.db.in_memory.in_memory_db.calculate_date_metrics", calculate_and_save)
         db.calculate_metrics(rebuild_from=old_day)
 
     assert everyone_row(db, old_day)["completed"] is False
@@ -395,7 +405,7 @@ def test_calculate_metrics_keeps_a_day_reopened_during_its_rebuild_open(monkeypa
     assert (row["completed"], row["status_metrics"]) == (True, {COMPLETED: 2})
 
 
-def test_calculate_metrics_returns_none_while_another_worker_holds_the_refresh():
+def test_calculate_metrics_skips_a_rebuild_already_running():
     """Ensure a calculation returns None while another worker holds the refresh"""
     db = stored_sessions()
     assert db._claim_metrics_refresh("another-worker") is not None
@@ -415,7 +425,7 @@ def test_calculate_metrics_returns_none_while_another_worker_holds_the_refresh()
     assert status["finished_at"] is not None
 
 
-def test_a_stale_refresh_reads_failed_and_is_taken_over():
+def test_calculate_metrics_takes_over_a_lock_that_went_stale():
     """Ensure a stale refresh reads as failed and the next calculation takes it over"""
     db = stored_sessions()
     db._claim_metrics_refresh("stopped-worker")
@@ -428,14 +438,14 @@ def test_a_stale_refresh_reads_failed_and_is_taken_over():
     assert db._heartbeat_metrics_refresh("stopped-worker") is False
 
 
-def test_a_failed_refresh_keeps_no_finished_at(monkeypatch):
+def test_calculate_metrics_records_a_failed_refresh(monkeypatch):
     """Ensure a failed refresh records its error and keeps no finished_at"""
     db = stored_sessions()
 
     def fail(*args):
         raise ValueError("boom")
 
-    monkeypatch.setattr(sys.modules[type(db).__module__], "calculate_day_metrics", fail)
+    monkeypatch.setattr("agno.db.in_memory.in_memory_db.calculate_date_metrics", fail)
     with pytest.raises(ValueError):
         db.calculate_metrics()
     refresh_row = db._get_metrics_refresh_row()[0]
@@ -487,3 +497,48 @@ def test_get_metrics_versions_move_for_a_reopened_day_that_is_rebuilt():
     new_versions = db.get_metrics_versions(old_day, old_day)
     assert new_versions == {f"daily {old_day.isoformat()}": everyone_row(db, old_day)["version"]}
     assert new_versions[f"daily {old_day.isoformat()}"] > versions[f"daily {old_day.isoformat()}"]
+
+
+def test_calculate_metrics_counts_a_remote_member_run_and_session_under_the_team_on_a_shared_database():
+    """Ensure a remote member's run, stored with no parent in a session named after its team's session, is counted
+    under the team, so the team's run is the one root run and session"""
+    db = InMemoryDb()
+    yesterday = utc_date(1)
+    member_run = agent_run(
+        "remote_run",
+        noon_utc(yesterday),
+        10,
+        agent_id="remote-agent",
+        session_id="team_session:remote-agent",
+        parent_run_id="team_run",
+    )
+    team_run = TeamRunOutput(
+        run_id="team_run",
+        team_id="team-1",
+        status=RunStatus.completed,
+        member_responses=[member_run],
+        created_at=noon_utc(yesterday),
+    )
+    # The team's session keeps the member's run too, as the team stores member responses
+    persist(
+        db,
+        TeamSession(session_id="team_session", team_id="team-1", user_id="bob", created_at=noon_utc(yesterday)),
+        [member_run, team_run],
+    )
+    # The remote AgentOS stores its run with no parent, in a session of its own
+    persist(
+        db,
+        AgentSession(
+            session_id="team_session:remote-agent",
+            agent_id="remote-agent",
+            user_id="bob",
+            created_at=noon_utc(yesterday),
+        ),
+        [agent_run("remote_run", noon_utc(yesterday), 10, agent_id="remote-agent")],
+    )
+
+    db.calculate_metrics()
+
+    row = everyone_row(db, yesterday)
+    assert (row["root_runs_count"], row["team_sessions_count"], row["agent_sessions_count"]) == (1, 1, 0)
+    assert (row["agent_runs_count"], row["input_tokens"]) == (1, 10)

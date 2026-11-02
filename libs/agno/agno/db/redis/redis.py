@@ -84,6 +84,7 @@ from agno.db.utils import (
     metrics_month_end,
     metrics_nested_run_ids,
     metrics_refresh_status,
+    metrics_remote_member_team_session_ids,
     metrics_versions,
     resolve_metrics_fields,
     total_metrics_rows,
@@ -1070,6 +1071,9 @@ class RedisDb(BaseDb):
             # would lose history for sessions not yet migrated.
             if existing and existing.get("runs") is not None:
                 data["runs"] = existing["runs"]
+            # The stored created_at, which keeps the session on the day it was created
+            if existing and existing.get("created_at") is not None:
+                data["created_at"] = existing["created_at"]
 
             success = self._store_record(
                 table_type="sessions",
@@ -1577,7 +1581,7 @@ class RedisDb(BaseDb):
 
         refresh_key = self._metrics_refresh_key()
         try:
-            with self.redis_client.pipeline() as pipe:
+            with self.redis_client.pipeline(transaction=True) as pipe:
                 # A claim racing this one changes the row after the watch, which fails this one
                 pipe.watch(refresh_key)
                 raw = pipe.get(refresh_key)
@@ -1609,75 +1613,142 @@ class RedisDb(BaseDb):
         except WatchError:
             return None
 
+    def _mark_metrics_refresh_rebuild(self) -> bool:
+        """Write a mark no fingerprint equals on the row of the metrics refreshes table, so the next calculation
+        rebuilds yesterday and today. False when a calculation's write conflicted with it through every try."""
+        from redis.exceptions import WatchError
+
+        refresh_key = self._metrics_refresh_key()
+        for _ in range(10):
+            try:
+                with self.redis_client.pipeline(transaction=True) as pipe:
+                    pipe.watch(refresh_key)
+                    raw = pipe.get(refresh_key)
+                    if raw is None:
+                        pipe.unwatch()
+                        return True
+                    stored_row = json.loads(raw if isinstance(raw, str) else raw.decode())
+                    pipe.multi()
+                    pipe.set(refresh_key, json.dumps({**stored_row, "fingerprint": ["rebuild", uuid4().hex]}))
+                    pipe.execute()
+                    return True
+            except WatchError:
+                continue  # the refresh changed under us; re-read and re-check
+        return False
+
     def _heartbeat_metrics_refresh(self, worker_id: str) -> bool:
         """Refresh locked_at for this worker's metrics refresh. False when another process took it over."""
         from redis.exceptions import WatchError
 
         refresh_key = self._metrics_refresh_key()
-        try:
-            with self.redis_client.pipeline() as pipe:
-                pipe.watch(refresh_key)
-                raw = pipe.get(refresh_key)
-                refresh_row = json.loads(raw if isinstance(raw, str) else raw.decode()) if raw is not None else {}
-                if refresh_row.get("locked_by") != worker_id:
-                    pipe.unwatch()
-                    return False
-                pipe.multi()
-                pipe.set(refresh_key, json.dumps({**refresh_row, "locked_at": self._q_server_now()}))
-                pipe.execute()
-                return True
-        except WatchError:
-            return False
+        for _ in range(10):
+            try:
+                with self.redis_client.pipeline(transaction=True) as pipe:
+                    pipe.watch(refresh_key)
+                    raw = pipe.get(refresh_key)
+                    refresh_row = json.loads(raw if isinstance(raw, str) else raw.decode()) if raw is not None else {}
+                    if refresh_row.get("locked_by") != worker_id:
+                        pipe.unwatch()
+                        return False
+                    pipe.multi()
+                    pipe.set(refresh_key, json.dumps({**refresh_row, "locked_at": self._q_server_now()}))
+                    pipe.execute()
+                    return True
+            except WatchError:
+                continue  # the refresh changed under us; re-read and re-check
+        return False
 
     def _release_metrics_refresh(
         self,
-        worker_id: str,
+        worker_id: Optional[str],
         error: Optional[str] = None,
         fingerprint: Optional[List[Any]] = None,
         stopped: bool = False,
+        claimed_fingerprint: Optional[List[Any]] = None,
+        started_at: Optional[int] = None,
+        finished_at: Optional[int] = None,
     ) -> None:
         """Release the row of the metrics refreshes table: completed, with the fingerprint, without an error, failed
-        with one, and as the last completed refresh left it when the calculation stopped."""
+        with one, and as the last completed refresh left it when the calculation stopped. A worker_id of None writes
+        the row only while no process holds it and no calculation started or finished after the read of started_at
+        and finished_at, and creates it when that read found none."""
         from redis.exceptions import WatchError
 
         refresh_key = self._metrics_refresh_key()
         try:
-            with self.redis_client.pipeline() as pipe:
-                pipe.watch(refresh_key)
-                raw = pipe.get(refresh_key)
-                refresh_row = json.loads(raw if isinstance(raw, str) else raw.decode()) if raw is not None else {}
-                if refresh_row.get("locked_by") != worker_id:
-                    pipe.unwatch()
-                    return
-                refresh_row.update(locked_by=None, locked_at=None)
-                if stopped:
-                    # The days it did not reach stay open for the next calculation; a first one that stopped has none
-                    # to show
-                    finished = refresh_row.get("finished_at") is not None
-                    refresh_row.update(
-                        status="completed" if finished else "failed", error=None if finished else METRICS_STOPPED_ERROR
-                    )
-                elif error is None:
-                    refresh_row.update(
-                        status="completed", error=None, finished_at=self._q_server_now(), fingerprint=fingerprint
-                    )
-                else:
-                    refresh_row.update(status="failed", error=error)
-                pipe.multi()
-                pipe.set(refresh_key, json.dumps(refresh_row))
-                pipe.execute()
-        except WatchError:
-            return
+            for _ in range(10):
+                try:
+                    with self.redis_client.pipeline(transaction=True) as pipe:
+                        pipe.watch(refresh_key)
+                        raw = pipe.get(refresh_key)
+                        refresh_row = (
+                            json.loads(raw if isinstance(raw, str) else raw.decode()) if raw is not None else {}
+                        )
+                        if worker_id is None and error is not None and started_at is None:
+                            # Before any refresh there is no row to update; one created since keeps its own status
+                            if raw is not None:
+                                pipe.unwatch()
+                                return
+                            refresh_row = {
+                                "id": METRICS_REFRESH_ID,
+                                "started_at": self._q_server_now(),
+                                "finished_at": None,
+                                "fingerprint": None,
+                            }
+                        elif (
+                            raw is None
+                            or refresh_row.get("locked_by") != worker_id
+                            or (
+                                worker_id is None
+                                and (refresh_row.get("started_at"), refresh_row.get("finished_at"))
+                                != (started_at, finished_at)
+                            )
+                        ):
+                            pipe.unwatch()
+                            return
+                        refresh_row.update(locked_by=None, locked_at=None)
+                        if stopped:
+                            # The days it did not reach stay open for the next calculation; a first one that stopped
+                            # has none to show
+                            finished = refresh_row.get("finished_at") is not None
+                            refresh_row.update(
+                                status="completed" if finished else "failed",
+                                error=None if finished else METRICS_STOPPED_ERROR,
+                            )
+                        elif error is None:
+                            # A rebuild that marked the fingerprint after the claim keeps its mark, so the next
+                            # calculation rebuilds yesterday and today
+                            stored_fingerprint = refresh_row.get("fingerprint")
+                            refresh_row.update(
+                                status="completed",
+                                error=None,
+                                finished_at=self._q_server_now(),
+                                fingerprint=stored_fingerprint
+                                if stored_fingerprint != claimed_fingerprint
+                                else fingerprint,
+                            )
+                        else:
+                            refresh_row.update(status="failed", error=error)
+                        pipe.multi()
+                        pipe.set(refresh_key, json.dumps(refresh_row))
+                        pipe.execute()
+                        return
+                except WatchError:
+                    continue  # the refresh changed under us; re-read and re-check
+        except Exception as e:
+            log_debug(f"Error releasing metrics refresh: {e}")
 
-    def _get_metrics_index_state(self, worker_id: str) -> Optional[Dict[str, Any]]:
+    def _get_metrics_index_state(self, worker_id: str, force: bool = False) -> Optional[Dict[str, Any]]:
         """Get the state of the sorted sets that list the sessions and runs by created_at, indexing every session and
-        run first when they were never indexed, or when the v3 migration copied runs since.
+        run first when they were never indexed, when the v3 migration copied runs since, or when forced.
 
         Sessions and runs written before this release, and runs the v3 migration copies, are in no sorted set, so they
         are read once here, a batch at a time.
 
         Args:
             worker_id (str): The id of the calculation holding the metrics refresh, heartbeated with every batch.
+            force (bool): Index every session and run again, as a rebuild does for the ones a process of an earlier
+                release saved since.
 
         Returns:
             Optional[Dict[str, Any]]: The sessions schema version they were indexed at, and whether a session held
@@ -1686,7 +1757,7 @@ class RedisDb(BaseDb):
         schema_version = self.get_latest_schema_version(self.session_table_name)
         raw = self.redis_client.get(self._metrics_index_key())
         index_state = json.loads(raw if isinstance(raw, str) else raw.decode()) if raw is not None else None  # type: ignore[union-attr]
-        if index_state is not None and index_state["schema_version"] == schema_version:
+        if not force and index_state is not None and index_state["schema_version"] == schema_version:
             return index_state
 
         legacy_runs = False
@@ -1788,7 +1859,7 @@ class RedisDb(BaseDb):
         date."""
         records: List[Dict[str, Any]] = []
         for batch_start in range(0, len(record_ids), METRICS_BATCH_SIZE):
-            pipeline = self.redis_client.pipeline()
+            pipeline = self.redis_client.pipeline(transaction=False)
             for record_id in record_ids[batch_start : batch_start + METRICS_BATCH_SIZE]:
                 pipeline.get(
                     generate_redis_key(prefix=self._metrics_prefix(), table_type="component_metrics", key_id=record_id)
@@ -1801,7 +1872,7 @@ class RedisDb(BaseDb):
         read back as a date."""
         records: List[Dict[str, Any]] = []
         for batch_start in range(0, len(record_ids), METRICS_BATCH_SIZE):
-            pipeline = self.redis_client.pipeline()
+            pipeline = self.redis_client.pipeline(transaction=False)
             for record_id in record_ids[batch_start : batch_start + METRICS_BATCH_SIZE]:
                 pipeline.hgetall(
                     generate_redis_key(prefix=self._metrics_prefix(), table_type="user_metrics", key_id=record_id)
@@ -2011,6 +2082,29 @@ class RedisDb(BaseDb):
             records.extend(build_record(deserialize_data(data)) for data in pipeline.execute() if data)
         return records
 
+    def _get_metrics_team_runs(
+        self, team_session_ids: Set[str], end_timestamp: int, should_stop: Optional[Callable[[], bool]] = None
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Get the runs of the given team sessions created in the day before end_timestamp, from the sorted set that
+        lists the runs by created_at, a batch at a time. None when should_stop returned True between batches."""
+        run_ids = self.redis_client.zrangebyscore(
+            generate_created_at_index_key(self.db_prefix, "runs"), end_timestamp - 86400, f"({end_timestamp}"
+        )
+        team_runs: List[Dict[str, Any]] = []
+        for batch_start in range(0, len(run_ids), METRICS_BATCH_SIZE):  # type: ignore[arg-type]
+            if should_stop is not None and should_stop():
+                return None
+            pipeline = self.redis_client.pipeline(transaction=False)
+            for run_id in run_ids[batch_start : batch_start + METRICS_BATCH_SIZE]:  # type: ignore[index]
+                run_id = run_id.decode() if isinstance(run_id, bytes) else str(run_id)
+                pipeline.get(generate_redis_key(prefix=self.db_prefix, table_type="runs", key_id=run_id))
+            team_runs.extend(
+                build_component_metrics_run(run)
+                for run in (deserialize_data(data) for data in pipeline.execute() if data)
+                if run.get("session_id") in team_session_ids
+            )
+        return team_runs
+
     def _get_metrics_parent_runs(self, parent_run_ids: List[str]) -> List[Dict[str, Any]]:
         """Get the stored runs that started the given runs, and the runs that started those, up to the whole run."""
         parent_runs: List[Dict[str, Any]] = []
@@ -2045,7 +2139,7 @@ class RedisDb(BaseDb):
         refresh_key = self._metrics_refresh_key()
         for _ in range(10):
             try:
-                with self.redis_client.pipeline() as pipe:
+                with self.redis_client.pipeline(transaction=True) as pipe:
                     pipe.watch(refresh_key)
                     raw = pipe.get(refresh_key)
                     refresh_row = json.loads(raw if isinstance(raw, str) else raw.decode()) if raw is not None else {}
@@ -2146,6 +2240,15 @@ class RedisDb(BaseDb):
             for run_id in batch_run_ids:
                 pipeline.exists(generate_redis_key(prefix=self.db_prefix, table_type="runs", key_id=run_id))
             stored_run_ids.update(run_id for run_id, exists in zip(batch_run_ids, pipeline.execute()) if exists)
+
+        # A remote member's run after midnight is named by its team's run of the day before
+        team_session_ids = metrics_remote_member_team_session_ids(runs)
+        if team_session_ids:
+            team_runs = self._get_metrics_team_runs(team_session_ids, metrics_day_start(date_to_process), should_stop)
+            if team_runs is None:
+                return False
+            parent_runs.extend(team_runs)
+            parent_run_ids.extend(run["parent_run_id"] for run in team_runs if run.get("parent_run_id"))
 
         parent_runs.extend(self._get_metrics_parent_runs(parent_run_ids))
 
@@ -2284,21 +2387,39 @@ class RedisDb(BaseDb):
 
         Returns:
             Optional[List[date]]: The days calculated, oldest first. None when another process is calculating them.
+
+        Raises:
+            Exception: If an error occurs during metrics calculation.
         """
         if rebuild_from is not None:
-            # Reopened as a write reopens a day, before the claim, so a calculation another process is running
-            # leaves them to the next one
-            everyone_record_ids = self._get_metrics_everyone_record_ids()
-            for batch_start in range(0, len(everyone_record_ids), METRICS_BATCH_SIZE):
-                pipe = self.redis_client.pipeline()
-                reopen_metrics_days_from(
-                    pipe,
-                    self._metrics_prefix(),
-                    everyone_record_ids[batch_start : batch_start + METRICS_BATCH_SIZE],
-                    rebuild_from,
-                    self.expire,
+            started_at = finished_at = None
+            try:
+                # A calculation that starts or finishes after this read keeps its own status
+                stored_row = self._get_metrics_refresh_row()[0]
+                if stored_row is not None:
+                    started_at, finished_at = stored_row.get("started_at"), stored_row.get("finished_at")
+                # Reopened as a write reopens a day, before the claim, so a calculation another process is running
+                # leaves them to the next one
+                everyone_record_ids = self._get_metrics_everyone_record_ids()
+                for batch_start in range(0, len(everyone_record_ids), METRICS_BATCH_SIZE):
+                    pipe = self.redis_client.pipeline()
+                    reopen_metrics_days_from(
+                        pipe,
+                        self._metrics_prefix(),
+                        everyone_record_ids[batch_start : batch_start + METRICS_BATCH_SIZE],
+                        rebuild_from,
+                        self.expire,
+                    )
+                    pipe.execute()
+                # Yesterday and today are picked by the fingerprint, so it is marked for the next one too
+                if not self._mark_metrics_refresh_rebuild():
+                    return None
+            except Exception as e:
+                # Failed before the claim, so the refresh status shows it
+                self._release_metrics_refresh(
+                    None, error=database_error_message(e), started_at=started_at, finished_at=finished_at
                 )
-                pipe.execute()
+                raise
 
         worker_id = str(uuid4())
         # Claimed before anything is read, so a process that finds another calculating reads nothing
@@ -2307,7 +2428,7 @@ class RedisDb(BaseDb):
             return None
 
         try:
-            index_state = self._get_metrics_index_state(worker_id)
+            index_state = self._get_metrics_index_state(worker_id, force=rebuild_from is not None)
             if index_state is None:
                 return None
             dates_to_process, fingerprint = self._get_metrics_dates_to_calculate(refresh_row, rebuild_from)
@@ -2365,8 +2486,12 @@ class RedisDb(BaseDb):
                     return None
                 calculated_dates.append(date_to_process)
 
+            # A month row is read only once completed, so a month is built only once its last day can be completed
             month_starts = sorted(
-                set(get_months_to_calculate_metrics_for(calculated_dates)) | set(self._get_open_metrics_months())
+                month_start
+                for month_start in set(get_months_to_calculate_metrics_for(calculated_dates))
+                | set(self._get_open_metrics_months())
+                if metrics_day_completed(metrics_month_end(month_start))
             )
             for month_start in month_starts:
                 if should_stop is not None and should_stop():
@@ -2379,7 +2504,9 @@ class RedisDb(BaseDb):
             self._release_metrics_refresh(worker_id, error=database_error_message(e))
             raise
 
-        self._release_metrics_refresh(worker_id, fingerprint=fingerprint)
+        self._release_metrics_refresh(
+            worker_id, fingerprint=fingerprint, claimed_fingerprint=refresh_row["fingerprint"]
+        )
 
         if not calculated_dates:
             log_info("Metrics already calculated for all relevant dates.")

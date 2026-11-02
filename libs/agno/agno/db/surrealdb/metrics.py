@@ -6,7 +6,7 @@ from surrealdb import BlockingHttpSurrealConnection, BlockingWsSurrealConnection
 
 from agno.db.base import SessionType
 from agno.db.surrealdb import utils
-from agno.db.surrealdb.models import desurrealize_dates, desurrealize_session, surrealize_dates
+from agno.db.surrealdb.models import desurrealize_session, surrealize_dates
 from agno.db.surrealdb.queries import order_limit_start
 from agno.db.utils import (
     COMPONENT_METRICS_KEY_COLUMNS,
@@ -86,7 +86,7 @@ def _metrics_nested_runs_fields(depth: int = _METRICS_NESTED_RUNS_DEPTH) -> str:
         return ", ".join(_METRICS_NESTED_RUN_KEYS)
     nested_fields = _metrics_nested_runs_fields(depth - 1)
     return ", ".join(
-        f"{key}.{{run_id, agent_id, team_id, {_METRICS_RUN_DATA_FIELDS}, {nested_fields}}}"
+        f"{key}.{{run_id, agent_id, team_id, session_id, parent_run_id, {_METRICS_RUN_DATA_FIELDS}, {nested_fields}}}"
         for key in _METRICS_NESTED_RUN_KEYS
     )
 
@@ -168,11 +168,10 @@ def get_all_sessions_with_legacy_runs_for_component_metrics_calculation(
         page (int): The page to read, from 1, of METRICS_BATCH_SIZE sessions.
 
     Returns:
-        List[Dict[str, Any]]: The sessions: their owner, creation time and legacy runs, with only what component
+        List[Dict[str, Any]]: The sessions: their id, owner, creation time and legacy runs, with only what component
             metrics count of each.
     """
-    # Paged by offset over a filtered scan of the sessions table: 6.5 min of a 23.6 min first build of 200,000
-    # sessions with legacy runs
+    # Paged by offset over a filtered scan of the sessions table
     query = dedent(f"""
         SELECT id, user_id, created_at,
             runs.{{{_METRICS_LEGACY_RUN_FIELDS}, {_METRICS_RUN_DATA_FIELDS}, {_metrics_nested_runs_fields()}}} AS runs
@@ -181,7 +180,7 @@ def get_all_sessions_with_legacy_runs_for_component_metrics_calculation(
         {order_limit_start("id", "ASC", METRICS_BATCH_SIZE, page)}
     """)
     results = utils.query(client, query, {"start": start_timestamp, "end": end_timestamp}, dict)
-    return [desurrealize_dates(x) for x in results]
+    return [desurrealize_session(x) for x in results]
 
 
 def get_all_runs_for_component_metrics_calculation(
@@ -189,6 +188,7 @@ def get_all_runs_for_component_metrics_calculation(
     table: str,
     start_timestamp: datetime,
     end_timestamp: datetime,
+    session_ids: Optional[Sequence[str]] = None,
 ) -> List[Dict[str, Any]]:
     """Get the runs created in the given time range, with only what component metrics count.
 
@@ -196,6 +196,7 @@ def get_all_runs_for_component_metrics_calculation(
         table (str): The runs table.
         start_timestamp (datetime): The start of the range, included.
         end_timestamp (datetime): The end of the range, not included.
+        session_ids (Optional[Sequence[str]]): Only the runs of these sessions, when given.
 
     Returns:
         List[Dict[str, Any]]: The runs, with the run_data calculate_date_component_metrics reads. Of the messages it
@@ -205,13 +206,15 @@ def get_all_runs_for_component_metrics_calculation(
     # session repeats a run counted in the session it was made in
     query = dedent(f"""
         SELECT
-            run_id, run_type, agent_id, team_id, workflow_id, user_id,
+            run_id, session_id, run_type, agent_id, team_id, workflow_id, user_id,
             parent_run_id ?? run_data.called_from_run_id AS parent_run_id, status,
             run_data.{{{_METRICS_RUN_DATA_FIELDS}, {_metrics_nested_runs_fields()}}} AS run_data
         FROM {table}
         WHERE created_at >= $start AND created_at < $end AND !run_data.forked_from_session_id
+        {"AND session_id IN $session_ids" if session_ids is not None else ""}
     """)
-    return list(utils.query(client, query, {"start": start_timestamp, "end": end_timestamp}, dict))
+    variables: Dict[str, Any] = {"start": start_timestamp, "end": end_timestamp, "session_ids": session_ids}
+    return list(utils.query(client, query, variables, dict))
 
 
 def bulk_upsert_metrics_rows(
@@ -321,9 +324,9 @@ def bulk_upsert_metrics_rows(
         )
 
     # One block is one transaction: the rows are written only while the refresh is still held, and a read never sees
-    # half of them. The everyone row is written last, so its version never moves without the rows it tells of
-    held = utils.query_one(
-        client,
+    # half of them. The everyone row is written last, so its version never moves without the rows it tells of.
+    # Queried directly, as utils.query_one returns a failed statement as None instead of raising it
+    held = client.query(
         dedent(f"""
             {{
                 LET $held = ({heartbeat_statement});
@@ -334,8 +337,10 @@ def bulk_upsert_metrics_rows(
             }}
         """),
         variables,
-        bool,
     )
+    # SDK 1.x returns a failed statement as its error message instead of raising it
+    if isinstance(held, str):
+        raise RuntimeError(held)
     return bool(held)
 
 

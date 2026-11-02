@@ -36,6 +36,7 @@ from agno.db.dynamo.utils import (
     reopen_metrics_day,
     reopen_metrics_days_from,
     reopen_metrics_month,
+    reopen_metrics_row,
     serialize_component_metrics_row,
     serialize_eval_record,
     serialize_knowledge_row,
@@ -44,6 +45,7 @@ from agno.db.dynamo.utils import (
     user_metrics_key,
     user_metrics_period_user_id,
 )
+from agno.db.migrations.manager import MigrationManager
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
@@ -85,6 +87,7 @@ from agno.db.utils import (
     metrics_month_end,
     metrics_nested_run_ids,
     metrics_refresh_status,
+    metrics_remote_member_team_session_ids,
     metrics_versions,
     resolve_metrics_fields,
     total_metrics_rows,
@@ -143,8 +146,8 @@ class DynamoDb(BaseDb):
             session_table: The name of the session table.
             memory_table: The name of the memory table.
             metrics_table: The name of the metrics table.
-            component_metrics_table: The name of the table of the metrics of each agent, team and workflow.
-            user_metrics_table: The name of the table of the metrics of each user.
+            component_metrics_table: The name of the table to store the metrics of each agent, team and workflow.
+            user_metrics_table: The name of the table to store the metrics of each user.
             metrics_refreshes_table: The name of the metrics refreshes table.
             eval_table: The name of the eval table.
             knowledge_table: The name of the knowledge table.
@@ -196,6 +199,8 @@ class DynamoDb(BaseDb):
 
         # The days whose metrics a write could not reopen, retried by the next write
         self._metrics_days_not_reopened: Set[date] = set()
+        # Whether a session holds legacy runs, None until a read of every session found out
+        self._metrics_legacy_runs: Optional[bool] = None
 
     def table_exists(self, table_name: str) -> bool:
         """Check if a DynamoDB table exists.
@@ -231,6 +236,10 @@ class DynamoDb(BaseDb):
                 schema = get_table_schema_definition(table_type)
                 schema["TableName"] = table_name
                 create_table_if_not_exists(self.client, table_name, schema)
+                # Store the schema version for the created sessions table, which holds no legacy runs for metrics
+                if table_type == "sessions":
+                    latest_schema_version = MigrationManager(self).latest_schema_version
+                    self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
 
     def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = True) -> Optional[str]:
         """
@@ -280,6 +289,10 @@ class DynamoDb(BaseDb):
             schema = get_table_schema_definition(table_type)
             schema["TableName"] = table_name
             create_table_if_not_exists(self.client, table_name, schema)
+            # Store the schema version for the created sessions table, which holds no legacy runs for metrics
+            if table_type == "sessions":
+                latest_schema_version = MigrationManager(self).latest_schema_version
+                self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
 
         return table_name
 
@@ -1176,7 +1189,7 @@ class DynamoDb(BaseDb):
             except self.client.exceptions.ConditionalCheckFailedException:
                 return None
             if session.session_id in reopen_session_ids:
-                # The stored created_at, which a session keeps
+                # The stored created_at, which keeps the session on the day it was created
                 self._reopen_metrics_days([serialized_session.get("created_at")])
 
             # Runs are persisted separately via upsert_run by the caller (agent loop).
@@ -1811,58 +1824,123 @@ class DynamoDb(BaseDb):
     def _release_metrics_refresh(
         self,
         refreshes_table_name: str,
-        worker_id: str,
+        worker_id: Optional[str],
         error: Optional[str] = None,
         fingerprint: Optional[List[Any]] = None,
         stopped: bool = False,
+        claimed_fingerprint: Optional[List[Any]] = None,
+        started_at: Optional[int] = None,
+        finished_at: Optional[int] = None,
     ) -> None:
         """Release the item of the metrics refreshes table: completed, with the fingerprint, without an error, failed
-        with one, and as the last completed refresh left it when the calculation stopped."""
+        with one, and as the last completed refresh left it when the calculation stopped. A worker_id of None writes
+        the item only while no process holds it and no calculation started or finished after the read of started_at
+        and finished_at, and creates it when that read found none."""
         names = {"#locked_by": "locked_by", "#locked_at": "locked_at", "#status": "status", "#error": "error"}
-        values: Dict[str, Any] = {":worker_id": {"S": worker_id}}
-        if stopped:
-            # The days it did not reach stay open for the next calculation; a first one that stopped has none to show
-            names["#finished_at"] = "finished_at"
+        values: Dict[str, Any] = {}
+        if worker_id is None:
+            names["#id"] = "id"
+            lock_condition = "attribute_exists(#id) AND attribute_not_exists(#locked_by)"
+            if error is not None and started_at is not None:
+                names.update({"#started_at": "started_at", "#finished_at": "finished_at"})
+                values[":started_at"] = {"N": str(started_at)}
+                lock_condition += " AND #started_at = :started_at"
+                # No finished_at is no attribute, as a NULL column
+                if finished_at is None:
+                    lock_condition += " AND attribute_not_exists(#finished_at)"
+                else:
+                    values[":finished_at"] = {"N": str(finished_at)}
+                    lock_condition += " AND #finished_at = :finished_at"
+        else:
+            values[":worker_id"] = {"S": worker_id}
+            lock_condition = "#locked_by = :worker_id"
+        try:
+            if worker_id is None and error is not None and started_at is None:
+                # Before any refresh there is no item to update; one created since keeps its own status
+                try:
+                    self.client.put_item(
+                        TableName=refreshes_table_name,
+                        Item={
+                            "id": {"S": METRICS_REFRESH_ID},
+                            "started_at": {"N": str(int(time.time()))},
+                            "status": {"S": "failed"},
+                            "error": {"S": error},
+                        },
+                        ConditionExpression="attribute_not_exists(#id)",
+                        ExpressionAttributeNames={"#id": "id"},
+                    )
+                except self.client.exceptions.ConditionalCheckFailedException:
+                    pass
+                return
+            if stopped:
+                # The days it did not reach stay open for the next calculation; a first one that stopped has none to
+                # show
+                names["#finished_at"] = "finished_at"
+                try:
+                    self.client.update_item(
+                        TableName=refreshes_table_name,
+                        Key={"id": {"S": METRICS_REFRESH_ID}},
+                        UpdateExpression="SET #status = :completed REMOVE #locked_by, #locked_at, #error",
+                        ConditionExpression=f"{lock_condition} AND attribute_exists(#finished_at)",
+                        ExpressionAttributeNames=names,
+                        ExpressionAttributeValues={**values, ":completed": {"S": "completed"}},
+                    )
+                    return
+                except self.client.exceptions.ConditionalCheckFailedException:
+                    names.pop("#finished_at")
+                    error = METRICS_STOPPED_ERROR
+            if error is None:
+                names.update({"#finished_at": "finished_at", "#fingerprint": "fingerprint"})
+                values.update({":completed": {"S": "completed"}, ":finished_at": {"N": str(int(time.time()))}})
+                update_expression = "SET #status = :completed, #finished_at = :finished_at"
+                remove_parts = ["#locked_by", "#locked_at", "#error"]
+                # A fingerprint of nothing is no attribute, as a NULL column
+                if fingerprint is None:
+                    remove_parts.append("#fingerprint")
+                else:
+                    update_expression += ", #fingerprint = :fingerprint"
+                    values[":fingerprint"] = {"S": json.dumps(fingerprint)}
+                update_expression += " REMOVE " + ", ".join(remove_parts)
+                # A rebuild that marked the fingerprint after the claim keeps its mark, so the next calculation rebuilds
+                # yesterday and today. No fingerprint is no attribute, which a claim of None compares equal to
+                fingerprint_condition = "attribute_not_exists(#fingerprint)"
+                claimed_values: Dict[str, Any] = {}
+                if claimed_fingerprint is not None:
+                    fingerprint_condition = "#fingerprint = :claimed_fingerprint"
+                    claimed_values[":claimed_fingerprint"] = {"S": json.dumps(claimed_fingerprint)}
+                try:
+                    self.client.update_item(
+                        TableName=refreshes_table_name,
+                        Key={"id": {"S": METRICS_REFRESH_ID}},
+                        UpdateExpression=update_expression,
+                        ConditionExpression=f"{lock_condition} AND {fingerprint_condition}",
+                        ExpressionAttributeNames=names,
+                        ExpressionAttributeValues={**values, **claimed_values},
+                    )
+                    return
+                except self.client.exceptions.ConditionalCheckFailedException:
+                    names.pop("#fingerprint")
+                    values.pop(":fingerprint", None)
+                    update_expression = (
+                        "SET #status = :completed, #finished_at = :finished_at REMOVE #locked_by, #locked_at, #error"
+                    )
+            else:
+                values.update({":failed": {"S": "failed"}, ":error": {"S": error}})
+                update_expression = "SET #status = :failed, #error = :error REMOVE #locked_by, #locked_at"
             try:
                 self.client.update_item(
                     TableName=refreshes_table_name,
                     Key={"id": {"S": METRICS_REFRESH_ID}},
-                    UpdateExpression="SET #status = :completed REMOVE #locked_by, #locked_at, #error",
-                    ConditionExpression="#locked_by = :worker_id AND attribute_exists(#finished_at)",
+                    UpdateExpression=update_expression,
+                    ConditionExpression=lock_condition,
                     ExpressionAttributeNames=names,
-                    ExpressionAttributeValues={**values, ":completed": {"S": "completed"}},
+                    ExpressionAttributeValues=values,
                 )
-                return
             except self.client.exceptions.ConditionalCheckFailedException:
-                names.pop("#finished_at")
-                error = METRICS_STOPPED_ERROR
-        if error is None:
-            names.update({"#finished_at": "finished_at", "#fingerprint": "fingerprint"})
-            values.update({":completed": {"S": "completed"}, ":finished_at": {"N": str(int(time.time()))}})
-            update_expression = "SET #status = :completed, #finished_at = :finished_at"
-            remove_parts = ["#locked_by", "#locked_at", "#error"]
-            # A fingerprint of nothing is no attribute, as a NULL column
-            if fingerprint is None:
-                remove_parts.append("#fingerprint")
-            else:
-                update_expression += ", #fingerprint = :fingerprint"
-                values[":fingerprint"] = {"S": json.dumps(fingerprint)}
-            update_expression += " REMOVE " + ", ".join(remove_parts)
-        else:
-            values.update({":failed": {"S": "failed"}, ":error": {"S": error}})
-            update_expression = "SET #status = :failed, #error = :error REMOVE #locked_by, #locked_at"
-        try:
-            self.client.update_item(
-                TableName=refreshes_table_name,
-                Key={"id": {"S": METRICS_REFRESH_ID}},
-                UpdateExpression=update_expression,
-                ConditionExpression="#locked_by = :worker_id",
-                ExpressionAttributeNames=names,
-                ExpressionAttributeValues=values,
-            )
-        except self.client.exceptions.ConditionalCheckFailedException:
-            # Another process took the refresh over after this one's lock went stale
-            pass
+                # Another process took the refresh over after this one's lock went stale
+                pass
+        except Exception as e:
+            log_debug(f"Error releasing metrics refresh: {e}")
 
     def _query_metrics_sources(
         self,
@@ -1925,7 +2003,7 @@ class DynamoDb(BaseDb):
             end_timestamp: The end of the range, not included.
 
         Returns:
-            List[Dict[str, Any]]: The sessions, with their user, creation time and legacy runs.
+            List[Dict[str, Any]]: The sessions, with their id, user, creation time and legacy runs.
         """
         sessions: List[Dict[str, Any]] = []
         for session_type in METRICS_COMPONENT_TYPES:
@@ -1941,6 +2019,7 @@ class DynamoDb(BaseDb):
                         "#session_type": "session_type",
                         "#created_at": "created_at",
                         "#updated_at": "updated_at",
+                        "#session_id": "session_id",
                         "#user_id": "user_id",
                         "#runs": "runs",
                     },
@@ -1949,7 +2028,7 @@ class DynamoDb(BaseDb):
                         ":start_ts": {"N": str(start_timestamp)},
                         ":end_ts": {"N": str(end_timestamp)},
                     },
-                    "ProjectionExpression": "#user_id, #created_at, #updated_at, #runs",
+                    "ProjectionExpression": "#session_id, #user_id, #created_at, #updated_at, #runs",
                 },
             )
             sessions.extend(deserialize_from_dynamodb_item(item) for item in items)
@@ -1977,7 +2056,8 @@ class DynamoDb(BaseDb):
                 rows, which are read from the period's index a moment after a write.
             starting_date: The first day to read. ``None`` reads from the first one.
             ending_date: The last day to read. ``None`` reads to the last one.
-            completed: Only the rows completed, or only those not completed. ``None`` reads both.
+            completed: Only the rows completed, or only the everyone rows not completed, which are read from the index
+                of the open rows a moment after a write. ``None`` reads both.
 
         Returns:
             List[Dict[str, Any]]: The rows.
@@ -1997,11 +2077,16 @@ class DynamoDb(BaseDb):
             "ExpressionAttributeNames": names,
             "ExpressionAttributeValues": values,
         }
-        if user_id is None:
+        if completed is False:
+            # Only an open everyone row has open_period, so finding the open rows never reads a completed one
+            names["#key"] = "open_period"
+            values[":key"] = {"S": aggregation_period}
+            query_kwargs["IndexName"] = "open_period-date-index"
+        elif user_id is None:
             query_kwargs["IndexName"] = "aggregation_period-date-index"
         else:
             query_kwargs["ConsistentRead"] = True
-        if completed is not None:
+        if completed:
             query_kwargs["FilterExpression"] = "#completed = :completed"
             names["#completed"] = "completed"
             values[":completed"] = {"BOOL": completed}
@@ -2342,7 +2427,11 @@ class DynamoDb(BaseDb):
                 batch_write_with_retry(self.client, {table_name: requests[i : i + DYNAMO_BATCH_SIZE_LIMIT]})
 
         if everyone_row is None:
-            return self._heartbeat_metrics_refresh(refreshes_table_name, worker_id)
+            if not self._heartbeat_metrics_refresh(refreshes_table_name, worker_id):
+                # The rows took several batch requests: a lock lost between them would leave stale rows completed
+                reopen_metrics_row(self.client, user_metrics_table_name, period_date, period)
+                return False
+            return True
         # Written last, so its version never moves without the rows it tells of. A reopen written between its read and
         # its write fails the condition, and the row is read again, as batch_write_with_retry retries
         for attempt in range(METRICS_WRITE_RETRIES + 1):
@@ -2375,6 +2464,8 @@ class DynamoDb(BaseDb):
             except self.client.exceptions.TransactionCanceledException as e:
                 reasons = e.response.get("CancellationReasons") or []
                 if reasons and reasons[0].get("Code") == "ConditionalCheckFailed":
+                    # The rows took several batch requests: a lock lost between them would leave stale rows completed
+                    reopen_metrics_row(self.client, user_metrics_table_name, period_date, period)
                     return False
                 if attempt == METRICS_WRITE_RETRIES:
                     raise
@@ -2430,6 +2521,7 @@ class DynamoDb(BaseDb):
             [status.value for status in RunStatus],
             [
                 "run_id",
+                "session_id",
                 "run_type",
                 "agent_id",
                 "team_id",
@@ -2470,11 +2562,24 @@ class DynamoDb(BaseDb):
         parent_runs = get_metrics_runs(
             [legacy_runs_by_id[run_id] for run_id in parent_run_ids if run_id in legacy_runs_by_id]
         )
-        parent_runs.extend(
-            self._get_metrics_parent_runs(
-                runs_table_name, [run_id for run_id in parent_run_ids if run_id not in legacy_runs_by_id]
+        parent_run_ids = [run_id for run_id in parent_run_ids if run_id not in legacy_runs_by_id]
+
+        # A remote member's run after midnight is named by its team's run of the day before
+        team_runs = get_metrics_runs(
+            self._query_metrics_sources(
+                runs_table_name,
+                "session_id-created_at-index",
+                "session_id",
+                sorted(metrics_remote_member_team_session_ids(runs)),
+                ["run_id", "session_id", "run_type", "agent_id", "team_id", "workflow_id", "parent_run_id", "run_data"],
+                start_timestamp - 86400,
+                start_timestamp,
             )
         )
+        parent_runs.extend(team_runs)
+        parent_run_ids.extend(run["parent_run_id"] for run in team_runs if run.get("parent_run_id"))
+
+        parent_runs.extend(self._get_metrics_parent_runs(runs_table_name, parent_run_ids))
 
         records = calculate_date_component_metrics(date_to_process, sessions, runs, stored_run_ids, parent_runs)
         stored_rows = self._get_component_metrics_rows(table_name, date_to_process)
@@ -2597,6 +2702,9 @@ class DynamoDb(BaseDb):
 
         Returns:
             Optional[List[date]]: The days calculated, oldest first. None when another process is calculating them.
+
+        Raises:
+            Exception: If an error occurs during metrics calculation.
         """
         sessions_table_name = self.session_table_name
         if not self.table_exists(sessions_table_name):
@@ -2613,7 +2721,36 @@ class DynamoDb(BaseDb):
         if rebuild_from is not None:
             # Reopened as a write reopens a day, before the claim, so a calculation another process is running
             # leaves them to the next one
-            reopen_metrics_days_from(self.client, user_metrics_table_name, rebuild_from)
+            started_at = finished_at = None
+            try:
+                # A calculation that starts or finishes after this read keeps its own status
+                stored_row = self._get_metrics_refresh_row(refreshes_table_name)[0]
+                if stored_row is not None:
+                    started_at, finished_at = stored_row["started_at"], stored_row["finished_at"]
+                reopen_metrics_days_from(self.client, user_metrics_table_name, rebuild_from)
+                # Yesterday and today are picked by the fingerprint, so it is marked for the next one too
+                try:
+                    self.client.update_item(
+                        TableName=refreshes_table_name,
+                        Key={"id": {"S": METRICS_REFRESH_ID}},
+                        UpdateExpression="SET #fingerprint = :rebuild",
+                        # Before any refresh there is no item to mark, and an update would create one
+                        ConditionExpression="attribute_exists(#id)",
+                        ExpressionAttributeNames={"#id": "id", "#fingerprint": "fingerprint"},
+                        ExpressionAttributeValues={":rebuild": {"S": json.dumps(["rebuild", uuid4().hex])}},
+                    )
+                except self.client.exceptions.ConditionalCheckFailedException:
+                    pass
+            except Exception as e:
+                # Failed before the claim, so the refresh status shows it
+                self._release_metrics_refresh(
+                    refreshes_table_name,
+                    None,
+                    error=database_error_message(e),
+                    started_at=started_at,
+                    finished_at=finished_at,
+                )
+                raise
 
         worker_id = str(uuid4())
         # Claimed before anything is read, so a process that finds another calculating reads nothing
@@ -2634,10 +2771,18 @@ class DynamoDb(BaseDb):
 
             legacy_runs_by_day: Dict[date, List[Dict[str, Any]]] = {}
             legacy_runs_by_id: Dict[str, Dict[str, Any]] = {}
-            # Read once for every day until the v3.0.0 migration is stamped: no index finds one day's legacy runs
-            if dates_to_process and packaging_version.parse(
-                self.get_latest_schema_version(self.session_table_name) or "2.0.0"
-            ) < packaging_version.parse("3.0.0"):
+            if rebuild_from is not None:
+                # Every session is read again, for the legacy runs a process of an earlier release saved since
+                self._metrics_legacy_runs = None
+            # Read once for every day until the v3.0.0 migration is stamped: no index finds one day's legacy runs. A
+            # store created by 3.0 or 3.1 stamps no version, so they are read only while a read of every session found
+            # some
+            if (
+                dates_to_process
+                and self._metrics_legacy_runs is not False
+                and packaging_version.parse(self.get_latest_schema_version(self.session_table_name) or "2.0.0")
+                < packaging_version.parse("3.0.0")
+            ):
                 start_timestamp = int(
                     datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
                 )
@@ -2646,11 +2791,16 @@ class DynamoDb(BaseDb):
                     .replace(tzinfo=timezone.utc)
                     .timestamp()
                 )
+                if self._metrics_legacy_runs is None:
+                    # The first read reads every session, so one that finds no legacy runs finds none anywhere
+                    start_timestamp, end_timestamp = 0, max(end_timestamp, int(time.time()) + 1)
                 legacy_runs_by_day, legacy_runs_by_id = self._get_metrics_legacy_runs(
                     sessions_table_name, runs_table_name, start_timestamp, end_timestamp
                 )
                 if not self._heartbeat_metrics_refresh(refreshes_table_name, worker_id):
                     return None
+                if self._metrics_legacy_runs is None:
+                    self._metrics_legacy_runs = bool(legacy_runs_by_id)
                 # A legacy run is dated on its own day, which may hold no session or run of the tables
                 today = datetime.now(timezone.utc).date()
                 dates_to_process = sorted(
@@ -2685,9 +2835,12 @@ class DynamoDb(BaseDb):
                     return None
                 calculated_dates.append(date_to_process)
 
+            # A month row is read only once completed, so a month is built only once its last day can be completed
             month_starts = sorted(
-                set(get_months_to_calculate_metrics_for(calculated_dates))
+                month_start
+                for month_start in set(get_months_to_calculate_metrics_for(calculated_dates))
                 | set(self._get_open_metrics_months(user_metrics_table_name))
+                if metrics_day_completed(metrics_month_end(month_start))
             )
             for month_start in month_starts:
                 if should_stop is not None and should_stop():
@@ -2702,7 +2855,9 @@ class DynamoDb(BaseDb):
             self._release_metrics_refresh(refreshes_table_name, worker_id, error=database_error_message(e))
             raise
 
-        self._release_metrics_refresh(refreshes_table_name, worker_id, fingerprint=fingerprint)
+        self._release_metrics_refresh(
+            refreshes_table_name, worker_id, fingerprint=fingerprint, claimed_fingerprint=refresh_row["fingerprint"]
+        )
 
         if not calculated_dates:
             log_info("Metrics already calculated for all relevant dates.")

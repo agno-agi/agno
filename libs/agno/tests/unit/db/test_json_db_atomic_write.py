@@ -22,6 +22,11 @@ def create_symlink(link, target, target_is_directory=False):
         raise
 
 
+def table_files(directory):
+    """The files of the directory but the schema versions table, which creating the sessions table writes"""
+    return [path for path in directory.iterdir() if path.name != f"{JsonDb().versions_table_name}.json"]
+
+
 def saved_table(tmp_path):
     db = JsonDb(db_path=str(tmp_path))
     db.upsert_session(AgentSession(session_id="saved", agent_id="agent", session_data={"session_name": "saved"}))
@@ -44,7 +49,7 @@ def test_failed_session_save_preserves_table_and_removes_staging_file(tmp_path, 
 
     assert table.read_bytes() == prior
     assert db.get_session("saved", session_type=SessionType.AGENT).session_id == "saved"
-    assert list(tmp_path.iterdir()) == [table]
+    assert table_files(tmp_path) == [table]
 
 
 def test_session_save_publishes_complete_unicode_table(tmp_path):
@@ -53,7 +58,7 @@ def test_session_save_publishes_complete_unicode_table(tmp_path):
 
     assert db.get_session("new", session_type=SessionType.AGENT).session_data["session_name"] == "Olá, 世界"
     assert len(json.loads(table.read_text(encoding="utf-8"))) == 2
-    assert list(tmp_path.iterdir()) == [table]
+    assert table_files(tmp_path) == [table]
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX permissions")
@@ -75,7 +80,7 @@ def test_read_only_table_is_not_replaced(tmp_path):
         with pytest.raises(PermissionError):
             db.upsert_session(AgentSession(session_id="new", agent_id="agent"))
         assert table.read_bytes() == prior
-        assert list(tmp_path.iterdir()) == [table]
+        assert table_files(tmp_path) == [table]
     finally:
         table.chmod(0o600)
 
@@ -89,7 +94,7 @@ def test_session_save_keeps_existing_table_symlink(tmp_path):
 
     assert table.is_symlink()
     assert len(json.loads(target.read_text(encoding="utf-8"))) == 2
-    assert set(tmp_path.iterdir()) == {table, target}
+    assert set(table_files(tmp_path)) == {table, target}
 
 
 @pytest.mark.skipif(os.name == "nt", reason="Requires POSIX RLIMIT_FSIZE")
@@ -119,7 +124,7 @@ else:
     raise AssertionError("the native write must fail")
 assert table.read_bytes() == prior
 assert db.get_session("saved", session_type=SessionType.AGENT).session_id == "saved"
-assert list(directory.iterdir()) == [table]
+assert [path for path in directory.iterdir() if path.name != f"{JsonDb().versions_table_name}.json"] == [table]
 """
     result = subprocess.run([sys.executable, "-c", script, str(tmp_path)], capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr
@@ -135,7 +140,7 @@ def test_session_save_follows_database_directory_symlink(tmp_path):
 
     assert linked_directory.is_symlink()
     assert db.get_session("saved", session_type=SessionType.AGENT).session_id == "saved"
-    assert [file.name for file in target.iterdir()] == [f"{db.session_table_name}.json"]
+    assert [file.name for file in table_files(target)] == [f"{db.session_table_name}.json"]
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX write-only permissions")
@@ -192,7 +197,7 @@ def test_unreplaceable_table_is_written_in_place(tmp_path, error):
         db.upsert_session(AgentSession(session_id="new", agent_id="agent"))
 
     assert db.get_session("new", session_type=SessionType.AGENT).session_id == "new"
-    assert list(tmp_path.iterdir()) == [table]
+    assert table_files(tmp_path) == [table]
 
 
 @pytest.mark.skipif(os.name == "nt", reason="Requires unprivileged POSIX permissions")
@@ -207,7 +212,7 @@ def test_read_only_directory_writes_existing_table_in_place(tmp_path):
         tmp_path.chmod(0o755)
 
     assert db.get_session("new", session_type=SessionType.AGENT).session_id == "new"
-    assert list(tmp_path.iterdir()) == [table]
+    assert table_files(tmp_path) == [table]
 
 
 def test_table_owned_by_another_user_is_written_in_place(tmp_path):
@@ -216,7 +221,7 @@ def test_table_owned_by_another_user_is_written_in_place(tmp_path):
         db.upsert_session(AgentSession(session_id="new", agent_id="agent"))
 
     assert db.get_session("new", session_type=SessionType.AGENT).session_id == "new"
-    assert list(tmp_path.iterdir()) == [table]
+    assert table_files(tmp_path) == [table]
 
 
 @pytest.mark.skipif(not hasattr(os, "chown"), reason="POSIX ownership")
@@ -272,4 +277,4 @@ def test_serialization_error_is_not_written_in_place(tmp_path, error):
         db.upsert_session(AgentSession(session_id="new", agent_id="agent"))
 
     assert table.read_bytes() == prior
-    assert list(tmp_path.iterdir()) == [table]
+    assert table_files(tmp_path) == [table]

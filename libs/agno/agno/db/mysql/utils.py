@@ -14,7 +14,6 @@ from agno.db.utils import (
     METRICS_TOKEN_FIELDS,
     USER_METRICS_KEY_COLUMNS,
     build_user_metrics_row,
-    empty_metrics_totals,
     metrics_day_ranges,
     metrics_days_to_read,
 )
@@ -406,11 +405,18 @@ async def areopen_metrics_day(session: AsyncSession, table: Table, day: date) ->
     await session.execute(_reopen_metrics_row(table, day, "daily"))
 
 
-def _reopen_metrics_days_from(table: Table, starting_date: date) -> Any:
-    """Build the reopen of every day's everyone row of the user metrics table from the given date on."""
+def _metrics_days_from(table: Table, starting_date: date) -> Any:
+    """Build the read of the date of every day's everyone row of the user metrics table from the given date on."""
+    return select(table.c.date).where(
+        table.c.aggregation_period == "daily", table.c.user_id == "", table.c.date >= starting_date
+    )
+
+
+def _reopen_metrics_days_in(table: Table, days: List[date]) -> Any:
+    """Build the reopen of the given days' everyone rows of the user metrics table."""
     return (
         update(table)
-        .where(table.c.aggregation_period == "daily", table.c.user_id == "", table.c.date >= starting_date)
+        .where(table.c.aggregation_period == "daily", table.c.user_id == "", table.c.date.in_(days))
         .values(completed=False, version=table.c.version + 1)
     )
 
@@ -424,7 +430,11 @@ def reopen_metrics_days_from(session: Session, table: Table, starting_date: date
         table (Table): The user metrics table.
         starting_date (date): The first day to reopen.
     """
-    session.execute(_reopen_metrics_days_from(table, starting_date))
+    # Read first, then reopened by key: an update over a range of dates locks the user rows of those days too, which a
+    # day's calculation writes before its everyone row
+    days = list(session.execute(_metrics_days_from(table, starting_date)).scalars().all())
+    for start in range(0, len(days), METRICS_IN_LIST_LIMIT):
+        session.execute(_reopen_metrics_days_in(table, days[start : start + METRICS_IN_LIST_LIMIT]))
 
 
 async def areopen_metrics_days_from(session: AsyncSession, table: Table, starting_date: date) -> None:
@@ -436,7 +446,11 @@ async def areopen_metrics_days_from(session: AsyncSession, table: Table, startin
         table (Table): The user metrics table.
         starting_date (date): The first day to reopen.
     """
-    await session.execute(_reopen_metrics_days_from(table, starting_date))
+    # Read first, then reopened by key: an update over a range of dates locks the user rows of those days too, which a
+    # day's calculation writes before its everyone row
+    days = list((await session.execute(_metrics_days_from(table, starting_date))).scalars().all())
+    for start in range(0, len(days), METRICS_IN_LIST_LIMIT):
+        await session.execute(_reopen_metrics_days_in(table, days[start : start + METRICS_IN_LIST_LIMIT]))
 
 
 def reopen_metrics_month(session: Session, table: Table, month_start: date) -> None:
@@ -496,6 +510,10 @@ def _metrics_nested_run(path: Any, depth: Any, key: str, run_data: Any) -> Any:
         func.json_extract(run_data, "$.agent_id"),
         "team_id",
         func.json_extract(run_data, "$.team_id"),
+        "session_id",
+        func.json_extract(run_data, "$.session_id"),
+        "parent_run_id",
+        func.json_extract(run_data, "$.parent_run_id"),
         "metrics",
         func.json_extract(run_data, "$.metrics"),
         "model",
@@ -552,6 +570,7 @@ def build_component_metrics_legacy_runs_query(
     # A legacy run is dated and typed the way the v3.0.0 migration writes it to the runs table
     legacy_runs_stmt = select(
         legacy_run.c.run_id,
+        sessions_table.c.session_id,
         case(
             (func.coalesce(legacy_run.c.agent_id, "") != "", "agent"),
             (func.coalesce(legacy_run.c.team_id, "") != "", "team"),
@@ -654,6 +673,7 @@ def build_component_metrics_runs_query(table: Table, start_timestamp: int, end_t
     return (
         select(
             table.c.run_id,
+            table.c.session_id,
             table.c.run_type,
             table.c.agent_id,
             table.c.team_id,
@@ -779,8 +799,8 @@ def build_component_metrics_totals_queries(
         table (Table): The user metrics table, or the component metrics table to total the runs with no user.
         starting_date (date): The first day to total.
         ending_date (date): The last day to total.
-        user_id (str): The user whose rows are totalled: ``""`` totals the everyone rows of the totals table, or the
-            rows with no user of the component metrics table.
+        user_id (str): The user whose rows are totalled: ``""`` totals the everyone rows of the user metrics table, or
+            the rows with no user of the component metrics table.
         fields (Sequence[str]): The columns to total.
         month_starts (Sequence[date]): The first day of every month inside the date range to total from its month
             row instead of its days.
@@ -789,7 +809,8 @@ def build_component_metrics_totals_queries(
         Dict[str, Any]: The queries, keyed "totals", "count_maps", "additional_metrics" and "model_metrics".
             Empty when there is no day to total.
     """
-    # Days that follow one another are looked up as one range
+    # Days that follow one another are looked up as one range, which is planned by the rows it holds,
+    # where a list of days is planned as if each day held rows
     day_ranges = [
         and_(table.c.date >= first_day, table.c.date <= last_day)
         for first_day, last_day in metrics_day_ranges(metrics_days_to_read(starting_date, ending_date, month_starts))
@@ -859,53 +880,6 @@ def build_component_metrics_totals_queries(
         )
 
     return queries
-
-
-def build_component_metrics_totals(
-    fields: Sequence[str],
-    rows_by_query: Dict[str, Sequence[Any]],
-) -> Tuple[List[Dict[str, Any]], Optional[int]]:
-    """Build the component metrics totals of each date from the rows of the totals queries.
-
-    Args:
-        fields (Sequence[str]): The columns that were totalled.
-        rows_by_query (Dict[str, Sequence[Any]]): The rows of each query of build_component_metrics_totals_queries.
-
-    Returns:
-        Tuple[List[Dict[str, Any]], Optional[int]]: One dict per date, oldest first, and when the rows were
-            last updated. A month totalled from its month row is one dict, dated its first day.
-    """
-    totals_by_date: Dict[date, Dict[str, Any]] = {}
-    latest_updated_at: Optional[int] = None
-    for row in rows_by_query.get("totals", []):
-        day_totals: Dict[str, Any] = {"date": row.date, **empty_metrics_totals(fields)}
-        for field in fields:
-            # No cost when no run reported one
-            if field == "cost":
-                day_totals[field] = None if getattr(row, field) is None else float(getattr(row, field))
-            elif field in METRICS_SUM_FIELDS:
-                day_totals[field] = int(getattr(row, field) or 0)
-            elif field in METRICS_MAX_COLUMNS and getattr(row, field) is not None:
-                day_totals[field] = int(getattr(row, field))
-        totals_by_date[row.date] = day_totals
-        if row.updated_at is not None and (latest_updated_at is None or row.updated_at > latest_updated_at):
-            latest_updated_at = row.updated_at
-
-    for row in rows_by_query.get("count_maps", []):
-        totals_by_date[row.date][row.field][row.key] = int(row.count)
-
-    for row in rows_by_query.get("additional_metrics", []):
-        # A whole number comes back a whole number
-        value = int(row.value) if row.value == int(row.value) else float(row.value)
-        totals_by_date[row.date]["additional_metrics"][row.key] = value
-
-    for row in rows_by_query.get("model_metrics", []):
-        model: Dict[str, Any] = {"count": int(row.count)}
-        if row.cost is not None:
-            model["cost"] = float(row.cost)
-        totals_by_date[row.date]["model_metrics"].setdefault(row.model_provider, {})[row.model_id] = model
-
-    return [totals_by_date[day] for day in sorted(totals_by_date)], latest_updated_at
 
 
 def build_metrics_by_owner_queries(

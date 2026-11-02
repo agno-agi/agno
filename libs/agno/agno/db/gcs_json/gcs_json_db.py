@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.gcs_json.utils import apply_sorting
+from agno.db.migrations.manager import MigrationManager
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
@@ -26,7 +27,7 @@ from agno.db.utils import (
     build_metrics_by_owner_from_rows,
     build_metrics_from_user_metrics,
     build_single_run_row,
-    calculate_day_metrics,
+    calculate_date_metrics,
     calculate_month_metrics,
     database_error_message,
     deserialize_metrics_rows,
@@ -35,7 +36,7 @@ from agno.db.utils import (
     deserialize_sessions,
     drop_legacy_metrics,
     filter_context_runs,
-    get_metrics_days_to_calculate,
+    get_metrics_dates_to_calculate,
     get_metrics_legacy_runs,
     get_metrics_records_by_day,
     get_metrics_reopen_session_ids,
@@ -46,12 +47,14 @@ from agno.db.utils import (
     list_metrics_totals_models,
     merge_metrics_totals,
     merge_runs_table_with_legacy_blob,
+    metrics_day_completed,
     metrics_day_to_reopen,
     metrics_full_months,
+    metrics_month_end,
     metrics_refresh_status,
     metrics_versions,
-    reopen_metrics_day_rows_from,
-    reopen_metrics_month_row,
+    reopen_metrics_days_from,
+    reopen_metrics_month,
     reopened_user_metrics_row,
     resolve_metrics_fields,
     total_metrics_rows,
@@ -148,6 +151,8 @@ class GcsJsonDb(BaseDb):
 
         # The days whose metrics a write could not reopen, retried by the next write
         self._metrics_days_not_reopened: Set[date] = set()
+        # Whether a session held legacy runs when the metrics last read them; refreshes skip the read once none did
+        self._metrics_legacy_runs: bool = True
 
     def table_exists(self, table_name: str) -> bool:
         """JSON implementation, always returns True."""
@@ -187,6 +192,10 @@ class GcsJsonDb(BaseDb):
             if create_table_if_not_found:
                 log_debug(f"Creating new GCS JSON file: {blob_name}")
                 blob.upload_from_string("[]", content_type="application/json")
+                # Store the schema version for the created sessions table, which holds no legacy runs for metrics
+                if filename == self.session_table_name:
+                    latest_schema_version = MigrationManager(self).latest_schema_version
+                    self.upsert_schema_version(table_name=filename, version=latest_schema_version.public)
             return []
         except Exception as e:
             # Any other GCS error (auth, network, quota) must propagate — a
@@ -816,6 +825,9 @@ class GcsJsonDb(BaseDb):
                     session_dict["updated_at"] = int(time.time())
                     if legacy_runs is not None:
                         session_dict["runs"] = legacy_runs
+                    # The stored created_at, which keeps the session on the day it was created
+                    if existing_session.get("created_at") is not None:
+                        session_dict["created_at"] = existing_session["created_at"]
                     sessions[i] = session_dict
                     session_updated = True
                     break
@@ -1265,7 +1277,7 @@ class GcsJsonDb(BaseDb):
         """
         from google.cloud.exceptions import PreconditionFailed  # type: ignore[import-untyped]
 
-        for attempt in range(METRICS_WRITE_RETRIES + 1):
+        for _ in range(METRICS_WRITE_RETRIES + 1):
             refresh_rows, generation = self._read_json_file_with_generation(self.metrics_refreshes_table_name)
             refresh_row = refresh_rows[0] if refresh_rows else None
             now = int(time.time())
@@ -1293,9 +1305,31 @@ class GcsJsonDb(BaseDb):
                 )
                 break
             except PreconditionFailed:
-                if attempt == METRICS_WRITE_RETRIES:
-                    raise
+                pass
+        else:
+            return None
         return refresh_row
+
+    def _mark_metrics_refresh_rebuild(self) -> bool:
+        """Write a mark no fingerprint equals on the row of the metrics refreshes file, so the next calculation
+        rebuilds yesterday and today. False when another process wrote the file on every try."""
+        from google.cloud.exceptions import PreconditionFailed  # type: ignore[import-untyped]
+
+        for _ in range(METRICS_WRITE_RETRIES + 1):
+            refresh_rows, generation = self._read_json_file_with_generation(self.metrics_refreshes_table_name)
+            if not refresh_rows:
+                return True
+            try:
+                self._write_json_file(
+                    self.metrics_refreshes_table_name,
+                    [{**refresh_rows[0], "fingerprint": ["rebuild", uuid4().hex]}],
+                    if_generation_match=generation,
+                    indent=None,
+                )
+                return True
+            except PreconditionFailed:
+                pass
+        return False
 
     def _heartbeat_metrics_refresh(self, worker_id: str) -> bool:
         """Refresh locked_at for this worker's metrics refresh. False when another process took it over."""
@@ -1320,41 +1354,72 @@ class GcsJsonDb(BaseDb):
 
     def _release_metrics_refresh(
         self,
-        worker_id: str,
+        worker_id: Optional[str],
         error: Optional[str] = None,
         fingerprint: Optional[List[Any]] = None,
         stopped: bool = False,
+        claimed_fingerprint: Optional[List[Any]] = None,
+        started_at: Optional[int] = None,
+        finished_at: Optional[int] = None,
     ) -> None:
         """Release the row of the metrics refreshes file: completed, with the fingerprint, without an error, and
-        failed with one, and as the last completed refresh left it when the calculation stopped."""
+        failed with one, and as the last completed refresh left it when the calculation stopped. A worker_id of None
+        writes the row only while no process holds it and no calculation started or finished after the read of
+        started_at and finished_at, and creates it when that read found none."""
         from google.cloud.exceptions import PreconditionFailed  # type: ignore[import-untyped]
 
-        for attempt in range(METRICS_WRITE_RETRIES + 1):
-            refresh_rows, generation = self._read_json_file_with_generation(self.metrics_refreshes_table_name)
-            if not refresh_rows or refresh_rows[0]["locked_by"] != worker_id:
-                return
-            values: Dict[str, Any] = {"locked_by": None, "locked_at": None}
-            if stopped:
-                # The days it did not reach stay open for the next calculation; a first one that stopped has none to show
-                finished = refresh_rows[0]["finished_at"] is not None
-                values.update(
-                    status="completed" if finished else "failed", error=None if finished else METRICS_STOPPED_ERROR
-                )
-            elif error is None:
-                values.update(status="completed", error=None, finished_at=int(time.time()), fingerprint=fingerprint)
-            else:
-                values.update(status="failed", error=error)
-            try:
-                self._write_json_file(
-                    self.metrics_refreshes_table_name,
-                    [{**refresh_rows[0], **values}],
-                    if_generation_match=generation,
-                    indent=None,
-                )
-                break
-            except PreconditionFailed:
-                if attempt == METRICS_WRITE_RETRIES:
-                    raise
+        try:
+            for attempt in range(METRICS_WRITE_RETRIES + 1):
+                refresh_rows, generation = self._read_json_file_with_generation(self.metrics_refreshes_table_name)
+                if worker_id is None and error is not None and started_at is None:
+                    # Before any refresh there is no row to update; one created since keeps its own status
+                    if refresh_rows:
+                        return
+                    refresh_row: Dict[str, Any] = {
+                        "id": METRICS_REFRESH_ID,
+                        "started_at": int(time.time()),
+                        "finished_at": None,
+                        "fingerprint": None,
+                    }
+                elif not refresh_rows or refresh_rows[0]["locked_by"] != worker_id:
+                    return
+                elif (
+                    worker_id is None
+                    and error is not None
+                    and (refresh_rows[0]["started_at"] != started_at or refresh_rows[0]["finished_at"] != finished_at)
+                ):
+                    return
+                else:
+                    refresh_row = refresh_rows[0]
+                values: Dict[str, Any] = {"locked_by": None, "locked_at": None}
+                if stopped:
+                    # The days it did not reach stay open for the next calculation; a first one that stopped has none
+                    # to show
+                    finished = refresh_row["finished_at"] is not None
+                    values.update(
+                        status="completed" if finished else "failed", error=None if finished else METRICS_STOPPED_ERROR
+                    )
+                elif error is None:
+                    values.update(status="completed", error=None, finished_at=int(time.time()), fingerprint=fingerprint)
+                    if refresh_row["fingerprint"] != claimed_fingerprint:
+                        # A rebuild that marked the fingerprint after the claim keeps its mark, so the next
+                        # calculation rebuilds yesterday and today
+                        values["fingerprint"] = refresh_row["fingerprint"]
+                else:
+                    values.update(status="failed", error=error)
+                try:
+                    self._write_json_file(
+                        self.metrics_refreshes_table_name,
+                        [{**refresh_row, **values}],
+                        if_generation_match=generation,
+                        indent=None,
+                    )
+                    break
+                except PreconditionFailed:
+                    if attempt == METRICS_WRITE_RETRIES:
+                        raise
+        except Exception as e:
+            log_debug(f"Error releasing metrics refresh: {e}")
 
     def _write_metrics_rows(
         self,
@@ -1370,9 +1435,9 @@ class GcsJsonDb(BaseDb):
             rows_by_key (Optional[Dict[Tuple[Any, ...], Dict[str, Any]]]): Every component metrics row, by key. None
                 when no row changed.
             rows_generation (int): The generation of the component metrics file when its rows were read.
-            periods (List[Tuple[List[Dict[str, Any]], bool, Optional[int]]]): The user metrics rows of each day and month,
-                from build_user_metrics_rows, whether its component rows changed, and the version of its everyone
-                row read before its runs.
+            periods (List[Tuple[List[Dict[str, Any]], bool, Optional[int]]]): The user metrics rows of each day and
+                month, from build_user_metrics_rows, whether its component rows changed, and the version of its
+                everyone row read before its runs.
             worker_id (str): The id of this calculation.
         """
         # The months this write rebuilds, which a rebuilt day of theirs leaves to be rebuilt here
@@ -1414,7 +1479,7 @@ class GcsJsonDb(BaseDb):
                 if rows_changed and month_start not in month_starts:
                     # Reopened with the day, so a calculation that stops before its months leaves the month for
                     # the next
-                    reopen_metrics_month_row(user_metrics_by_key, month_start)
+                    reopen_metrics_month(user_metrics_by_key, month_start)
             try:
                 self._write_json_file(
                     self.user_metrics_table_name,
@@ -1474,6 +1539,9 @@ class GcsJsonDb(BaseDb):
 
         Returns:
             Optional[List[date]]: The days calculated, oldest first. None when another process is calculating them.
+
+        Raises:
+            Exception: If an error occurs during metrics calculation.
         """
         from google.cloud.exceptions import PreconditionFailed  # type: ignore[import-untyped]
 
@@ -1487,23 +1555,38 @@ class GcsJsonDb(BaseDb):
         if rebuild_from is not None:
             # Reopened as a write reopens a day, before the claim, so a calculation another process is running
             # leaves them to the next one
-            for attempt in range(METRICS_WRITE_RETRIES + 1):
-                user_metrics_rows, generation = self._read_json_file_with_generation(self.user_metrics_table_name)
-                user_metrics_by_key = get_metrics_rows_by_key(
-                    deserialize_metrics_rows(user_metrics_rows), USER_METRICS_KEY_COLUMNS
-                )
-                reopen_metrics_day_rows_from(user_metrics_by_key, rebuild_from)
-                try:
-                    self._write_json_file(
-                        self.user_metrics_table_name,
-                        list(user_metrics_by_key.values()),
-                        if_generation_match=generation,
-                        indent=None,
+            started_at = finished_at = None
+            try:
+                # A calculation that starts or finishes after this read keeps its own status
+                refresh_row = self._get_metrics_refresh_row()[0]
+                if refresh_row is not None:
+                    started_at, finished_at = refresh_row["started_at"], refresh_row["finished_at"]
+                for attempt in range(METRICS_WRITE_RETRIES + 1):
+                    user_metrics_rows, generation = self._read_json_file_with_generation(self.user_metrics_table_name)
+                    user_metrics_by_key = get_metrics_rows_by_key(
+                        deserialize_metrics_rows(user_metrics_rows), USER_METRICS_KEY_COLUMNS
                     )
-                    break
-                except PreconditionFailed:
-                    if attempt == METRICS_WRITE_RETRIES:
-                        raise
+                    reopen_metrics_days_from(user_metrics_by_key, rebuild_from)
+                    try:
+                        self._write_json_file(
+                            self.user_metrics_table_name,
+                            list(user_metrics_by_key.values()),
+                            if_generation_match=generation,
+                            indent=None,
+                        )
+                        break
+                    except PreconditionFailed:
+                        if attempt == METRICS_WRITE_RETRIES:
+                            raise
+                # Yesterday and today are picked by the fingerprint, so it is marked for the next one too
+                if not self._mark_metrics_refresh_rebuild():
+                    return None
+            except Exception as e:
+                # Failed before the claim, so the refresh status shows it
+                self._release_metrics_refresh(
+                    None, error=database_error_message(e), started_at=started_at, finished_at=finished_at
+                )
+                raise
 
         worker_id = str(uuid4())
         # Claimed before anything is read, so a process that finds another calculating reads nothing
@@ -1519,7 +1602,7 @@ class GcsJsonDb(BaseDb):
             # Read after the versions of the days, so a run written while they are calculated moves its day
             sessions = self._read_json_file(self.session_table_name, create_table_if_not_found=False)
             runs = get_metrics_runs(self._read_runs_file(create_table_if_not_found=False))
-            dates_to_process, fingerprint = get_metrics_days_to_calculate(
+            dates_to_process, fingerprint = get_metrics_dates_to_calculate(
                 user_metrics_by_key, sessions, runs, refresh_row, rebuild_from
             )
             if rebuild_from is not None:
@@ -1528,6 +1611,8 @@ class GcsJsonDb(BaseDb):
                 dates_to_process = sorted(
                     set(dates_to_process) | {day for day in [today - timedelta(days=1), today] if day >= rebuild_from}
                 )
+                # Every session is read again, for the legacy runs a process of an earlier release saved since
+                self._metrics_legacy_runs = True
 
             calculated_dates: List[date] = []
             periods: List[Tuple[List[Dict[str, Any]], bool, Optional[int]]] = []
@@ -1540,12 +1625,13 @@ class GcsJsonDb(BaseDb):
             if dates_to_process:
                 run_ids = {run["run_id"] for run in runs if run.get("run_id")}
                 # Legacy runs are counted until the v3.0.0 migration is stamped, unless the runs file holds them too
-                if packaging_version.parse(
+                # A store created by 3.0 or 3.1 stamps no version, so they are read only while a session held some
+                if self._metrics_legacy_runs and packaging_version.parse(
                     self.get_latest_schema_version(self.session_table_name) or "2.0.0"
                 ) < packaging_version.parse("3.0.0"):
-                    legacy_runs = get_metrics_runs(
-                        [run for run in get_metrics_legacy_runs(sessions) if run["run_id"] not in run_ids]
-                    )
+                    session_legacy_runs = get_metrics_legacy_runs(sessions)
+                    self._metrics_legacy_runs = bool(session_legacy_runs)
+                    legacy_runs = get_metrics_runs([run for run in session_legacy_runs if run["run_id"] not in run_ids])
                     runs = runs + legacy_runs
                     if not self._heartbeat_metrics_refresh(worker_id):
                         return None
@@ -1582,7 +1668,7 @@ class GcsJsonDb(BaseDb):
                     if should_stop is not None and should_stop():
                         stopped = True
                         break
-                    user_metrics_rows, day_rows_changed = calculate_day_metrics(
+                    user_metrics_rows, day_rows_changed = calculate_date_metrics(
                         rows_by_key,
                         date_to_process,
                         sessions_by_day.get(date_to_process, []),
@@ -1602,9 +1688,12 @@ class GcsJsonDb(BaseDb):
                     rows_changed = rows_changed or day_rows_changed
                     calculated_dates.append(date_to_process)
 
+            # A month row is read only once completed, so a month is built only once its last day can be completed
             month_starts = sorted(
-                set(get_months_to_calculate_metrics_for(calculated_dates))
+                month_start
+                for month_start in set(get_months_to_calculate_metrics_for(calculated_dates))
                 | set(get_open_metrics_months(user_metrics_by_key))
+                if metrics_day_completed(metrics_month_end(month_start))
             )
             for month_start in month_starts:
                 if stopped or (should_stop is not None and should_stop()):
@@ -1630,7 +1719,9 @@ class GcsJsonDb(BaseDb):
             self._release_metrics_refresh(worker_id, error=database_error_message(e))
             raise
 
-        self._release_metrics_refresh(worker_id, fingerprint=fingerprint)
+        self._release_metrics_refresh(
+            worker_id, fingerprint=fingerprint, claimed_fingerprint=refresh_row["fingerprint"]
+        )
 
         if not calculated_dates:
             log_info("Metrics already calculated for all relevant dates.")
@@ -1663,8 +1754,8 @@ class GcsJsonDb(BaseDb):
     def _get_user_metrics_rows(
         self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
     ) -> Tuple[List[dict], Optional[int]]:
-        """Get the day rows of the user metrics file in the shape of the metrics table: the everyone rows for ``""``, one
-        user's rows for a name, and every user's rows for ``None``."""
+        """Get the day rows of the user metrics file in the shape of the metrics table: the everyone rows for ``""``,
+        one user's rows for a name, and every user's rows for ``None``."""
         user_metrics_rows = self._read_metrics_file(self.user_metrics_table_name)
         rows = sorted(
             (
@@ -1959,9 +2050,7 @@ class GcsJsonDb(BaseDb):
 
             return metrics_versions(
                 [
-                    SimpleNamespace(
-                        aggregation_period=row["aggregation_period"], date=row["date"], version=row["version"]
-                    )
+                    SimpleNamespace(**row)
                     for row in self._read_metrics_file(self.user_metrics_table_name)
                     if row["user_id"] == "" and starting_date <= row["date"] <= ending_date
                 ]

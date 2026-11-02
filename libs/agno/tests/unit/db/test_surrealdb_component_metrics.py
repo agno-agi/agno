@@ -5,8 +5,8 @@ credentials), such as ws://localhost:8000.
 """
 
 import os
-import time
 from datetime import date, datetime, timedelta, timezone
+from textwrap import dedent
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
@@ -16,7 +16,7 @@ surrealdb = pytest.importorskip("surrealdb")
 
 from agno.db.surrealdb import SurrealDb  # noqa: E402
 from agno.db.surrealdb.metrics import desurrealize_metrics_row, reopen_metrics_day  # noqa: E402
-from agno.db.utils import METRICS_REFRESH_ID, METRICS_STOPPED_ERROR  # noqa: E402
+from agno.db.utils import METRICS_LOCK_SECONDS, METRICS_REFRESH_ID, METRICS_STOPPED_ERROR  # noqa: E402
 from agno.metrics import ModelMetrics, RunMetrics  # noqa: E402
 from agno.models.message import Message  # noqa: E402
 from agno.run.agent import RunOutput  # noqa: E402
@@ -169,10 +169,25 @@ def ground_truth(db: SurrealDb) -> Dict[Tuple[date, str], Dict[str, int]]:
     return truth
 
 
+def backdate(db: SurrealDb) -> None:
+    """Date every update of the sessions and runs to a minute ago, so none was updated in the current second"""
+    for table in [db.session_table_name, db.runs_table_name]:
+        # The schema sets updated_at to the time of every write, so it is lifted for the update
+        db._query(
+            dedent(f"""
+                DEFINE FIELD OVERWRITE updated_at ON {table} TYPE datetime;
+                UPDATE {table} SET updated_at = time::now() - 1m RETURN NONE;
+                DEFINE FIELD OVERWRITE updated_at ON {table} TYPE datetime VALUE time::now();
+            """),
+            {},
+            dict,
+        )
+
+
 def assert_matches_ground_truth(db: SurrealDb) -> None:
-    totals = user_metrics_rows(db)
+    rows = user_metrics_rows(db)
     for (day, user_id), counts in ground_truth(db).items():
-        row = totals[("daily", day, user_id)]
+        row = rows[("daily", day, user_id)]
         assert {
             **{column: row[column] for column in counts if column != "cache_read_tokens"},
             "cache_read_tokens": row["token_details"].get("cache_read_tokens", 0),
@@ -180,7 +195,7 @@ def assert_matches_ground_truth(db: SurrealDb) -> None:
 
 
 def test_calculate_metrics_matches_a_direct_count_of_the_runs(surreal_db: SurrealDb):
-    """Ensure every day's totals rows match a direct count of the stored runs"""
+    """Ensure every day's user metrics rows match a direct count of the stored runs"""
     build_dataset(surreal_db)
 
     calculated = surreal_db.calculate_metrics()
@@ -189,12 +204,13 @@ def test_calculate_metrics_matches_a_direct_count_of_the_runs(surreal_db: Surrea
     assert calculated is not None
     assert {metric["date"] for metric in calculated} == {old_day, yesterday, today}
     assert_matches_ground_truth(surreal_db)
-    totals = user_metrics_rows(surreal_db)
-    assert (totals[("daily", yesterday, "")]["users_count"], totals[("daily", today, "")]["users_count"]) == (1, 0)
-    assert totals[("daily", old_day, "")]["completed"] is True
-    assert totals[("daily", yesterday, "")]["completed"] is False
-    assert totals[("daily", old_day, "")]["model_metrics"] == {"OpenAI": {"gpt-5": {"count": 2}}}
-    assert totals[("daily", old_day, "")]["duration_runs_count"] == 1
+    user_metrics = user_metrics_rows(surreal_db)
+    assert user_metrics[("daily", yesterday, "")]["users_count"] == 1
+    assert user_metrics[("daily", today, "")]["users_count"] == 0
+    assert user_metrics[("daily", old_day, "")]["completed"] is True
+    assert user_metrics[("daily", yesterday, "")]["completed"] is False
+    assert user_metrics[("daily", old_day, "")]["model_metrics"] == {"OpenAI": {"gpt-5": {"count": 2}}}
+    assert user_metrics[("daily", old_day, "")]["duration_runs_count"] == 1
 
     # The member run is counted under the team that started it
     rows = {
@@ -292,7 +308,7 @@ def test_a_new_session_on_a_closed_day_reopens_it(surreal_db: SurrealDb):
     assert (row["completed"], row["version"]) == (False, version + 1)
 
 
-def test_a_delete_does_not_reopen_its_day(surreal_db: SurrealDb):
+def test_delete_session_keeps_its_closed_day_closed(surreal_db: SurrealDb):
     """Ensure deleting a session keeps its closed day closed"""
     build_dataset(surreal_db)
     surreal_db.calculate_metrics()
@@ -361,7 +377,70 @@ def test_rebuild_from_picks_every_day_with_data(surreal_db: SurrealDb):
     assert everyone_row(surreal_db, late_day)["agent_runs_count"] == 1
 
 
-def test_calculate_metrics_returns_none_while_another_worker_holds_the_refresh(surreal_db: SurrealDb):
+def test_calculate_metrics_rebuild_from_rebuilds_yesterday_and_today_after_another_process_completes(
+    surreal_db: SurrealDb,
+):
+    """Ensure rebuild_from leaves yesterday and today to the next calculation when another process holds the metrics
+    refresh and completes it with the fingerprint it read before the rebuild"""
+    build_dataset(surreal_db)
+    backdate(surreal_db)
+    surreal_db.calculate_metrics()
+    refreshes_table = surreal_db._get_table("metrics_refreshes")
+    refresh_row = surreal_db._claim_metrics_refresh(refreshes_table, "other_process")
+    assert refresh_row is not None
+
+    assert surreal_db.calculate_metrics(rebuild_from=utc_date(3)) is None
+
+    surreal_db._release_metrics_refresh(
+        refreshes_table,
+        "other_process",
+        fingerprint=refresh_row["fingerprint"],
+        claimed_fingerprint=refresh_row["fingerprint"],
+    )
+    assert surreal_db.calculate_metrics_dates() == [utc_date(3), utc_date(1), utc_date(0)]
+    assert surreal_db.calculate_metrics_dates() == []
+
+
+def test_calculate_metrics_rebuild_from_rebuilds_yesterday_and_today_after_another_process_claimed_no_fingerprint(
+    surreal_db: SurrealDb,
+):
+    """Ensure rebuild_from leaves yesterday and today to the next calculation when another process holds the metrics
+    refresh, claimed with no fingerprint, and completes it"""
+    build_dataset(surreal_db)
+    backdate(surreal_db)
+    surreal_db.calculate_metrics()
+    refreshes_table = surreal_db._get_table("metrics_refreshes")
+    surreal_db._query(
+        "UPDATE $refresh SET fingerprint = NONE", {"refresh": RecordID(refreshes_table, METRICS_REFRESH_ID)}, dict
+    )
+    refresh_row = surreal_db._claim_metrics_refresh(refreshes_table, "other_process")
+    assert refresh_row is not None and refresh_row["fingerprint"] is None
+
+    assert surreal_db.calculate_metrics(rebuild_from=utc_date(3)) is None
+
+    fingerprint = surreal_db._get_metrics_fingerprint(
+        surreal_db.session_table_name, surreal_db.runs_table_name, utc_date(1)
+    )
+    surreal_db._release_metrics_refresh(refreshes_table, "other_process", fingerprint=fingerprint)
+    assert surreal_db.calculate_metrics_dates() == [utc_date(3), utc_date(1), utc_date(0)]
+
+
+def test_calculate_metrics_rebuild_from_records_a_failed_reopen(surreal_db: SurrealDb, monkeypatch):
+    """Ensure a rebuild whose reopen fails shows the error on the refresh status"""
+    build_dataset(surreal_db)
+    surreal_db.calculate_metrics()
+    monkeypatch.setattr(
+        "agno.db.surrealdb.surrealdb.reopen_metrics_days_from", lambda table, starting_date: ("THROW 'it failed'", {})
+    )
+
+    with pytest.raises(Exception):
+        surreal_db.calculate_metrics(rebuild_from=utc_date(3))
+
+    status = surreal_db.get_metrics_refresh_status()
+    assert status is not None and status["status"] == "failed" and "it failed" in status["error"]
+
+
+def test_calculate_metrics_skips_a_rebuild_already_running(surreal_db: SurrealDb):
     """Ensure a calculation returns None while another worker holds the refresh"""
     build_dataset(surreal_db)
     refreshes_table = surreal_db._get_table("metrics_refreshes")
@@ -385,7 +464,7 @@ def test_calculate_metrics_returns_none_while_another_worker_holds_the_refresh(s
     assert status["finished_at"] is not None and status["finished_at"] >= status["started_at"]
 
 
-def test_calculate_metrics_takes_over_a_stale_lock(surreal_db: SurrealDb):
+def test_calculate_metrics_takes_over_a_lock_that_went_stale(surreal_db: SurrealDb):
     """Ensure a stale refresh reads as failed and the next calculation takes it over"""
     build_dataset(surreal_db)
     refreshes_table = surreal_db._get_table("metrics_refreshes")
@@ -393,7 +472,7 @@ def test_calculate_metrics_takes_over_a_stale_lock(surreal_db: SurrealDb):
     # A refresh still running a heartbeat ago is not taken over
     assert surreal_db.calculate_metrics() is None
     surreal_db._query(
-        "UPDATE $refresh SET locked_at = time::unix(time::now()) - 301",
+        f"UPDATE $refresh SET locked_at = time::unix(time::now()) - {METRICS_LOCK_SECONDS + 1}",
         {"refresh": RecordID(refreshes_table, METRICS_REFRESH_ID)},
         dict,
     )
@@ -406,7 +485,7 @@ def test_calculate_metrics_takes_over_a_stale_lock(surreal_db: SurrealDb):
     assert refresh_row is not None and (refresh_row["locked_by"], refresh_row["locked_at"]) == (None, None)
 
 
-def test_a_day_written_after_another_worker_took_the_refresh_over_is_not_written(surreal_db: SurrealDb):
+def test_calculate_date_metrics_writes_nothing_after_losing_the_lock(surreal_db: SurrealDb):
     """Ensure a calculation whose refresh another worker took over writes no more days"""
     build_dataset(surreal_db)
     user_metrics_table = surreal_db._get_table("user_metrics")
@@ -433,6 +512,29 @@ def test_a_day_written_after_another_worker_took_the_refresh_over_is_not_written
     assert surreal_db._heartbeat_metrics_refresh(refreshes_table, "another-worker")
 
 
+def test_a_day_write_returned_as_an_error_fails_the_refresh(surreal_db: SurrealDb, monkeypatch):
+    """Ensure a day write that SDK 1.x returns as its error message fails the refresh, and the next one completes"""
+    build_dataset(surreal_db)
+    client = surreal_db.client
+    query = client.query
+
+    def _fail_day_write(statement, variables=None):
+        if "IF $held" in statement:
+            return "An error occurred: write failed"
+        return query(statement, variables)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(client, "query", _fail_day_write)
+        with pytest.raises(RuntimeError, match="write failed"):
+            surreal_db.calculate_metrics()
+    status = surreal_db.get_metrics_refresh_status()
+    assert status is not None and (status["status"], status["error"]) == ("failed", "An error occurred: write failed")
+
+    assert surreal_db.calculate_metrics()
+    status = surreal_db.get_metrics_refresh_status()
+    assert status is not None and status["status"] == "completed"
+
+
 def test_calculate_metrics_counts_runs_kept_in_the_legacy_runs_field(surreal_db: SurrealDb):
     """Ensure a run not yet migrated out of the session's legacy runs field is counted once, on its own day"""
     old_day = utc_date(3)
@@ -450,6 +552,8 @@ def test_calculate_metrics_counts_runs_kept_in_the_legacy_runs_field(surreal_db:
         },
         dict,
     )
+    # Not yet migrated to v3.0.0, so the legacy runs are read
+    surreal_db.upsert_schema_version(surreal_db.session_table_name, "2.5.0")
 
     surreal_db.calculate_metrics()
 
@@ -471,6 +575,8 @@ def test_calculate_metrics_builds_the_day_of_a_legacy_run_alone_on_its_day(surre
         },
         dict,
     )
+    # Not yet migrated to v3.0.0, so the legacy runs are read
+    surreal_db.upsert_schema_version(surreal_db.session_table_name, "2.5.0")
 
     calculated_dates = surreal_db.calculate_metrics_dates()
 
@@ -494,9 +600,8 @@ def test_calculate_metrics_skips_a_refresh_with_nothing_new(surreal_db: SurrealD
     build_dataset(surreal_db)
     surreal_db.calculate_metrics()
 
-    # Yesterday and today are rebuilt while their runs were written in the current second, then left as they are
-    surreal_db.calculate_metrics()
-    time.sleep(1.1)
+    # Yesterday and today are rebuilt once their runs were not written in the current second, then left as they are
+    backdate(surreal_db)
     surreal_db.calculate_metrics()
     versions = {key: row["version"] for key, row in user_metrics_rows(surreal_db).items()}
     assert surreal_db.calculate_metrics_dates() == []
@@ -516,8 +621,8 @@ def test_get_metrics_reads_the_metrics_table_until_the_first_calculation_finishe
     assert surreal_db.get_component_metrics(utc_date(1), utc_date(0)) == ([], None)
 
 
-def test_completed_month_gets_month_rows(surreal_db: SurrealDb, monkeypatch):
-    """Ensure a completed month gets its month totals rows"""
+def test_calculate_metrics_writes_a_month_user_metrics_row_for_a_completed_month(surreal_db: SurrealDb, monkeypatch):
+    """Ensure a completed month gets its month user metrics rows"""
     monkeypatch.setattr("agno.db.surrealdb.surrealdb.METRICS_BATCH_SIZE", 1)
     old_day = utc_date(70)
     for user_id in ["alice", "bob"]:
@@ -546,7 +651,17 @@ def test_completed_month_gets_month_rows(surreal_db: SurrealDb, monkeypatch):
     assert totals == {"sessions_count": 2}
 
 
-def test_a_stopped_calculation_releases_the_refresh(surreal_db: SurrealDb):
+def test_calculate_metrics_builds_no_month_before_its_last_day_can_be_completed(surreal_db: SurrealDb):
+    """Ensure the current month is not built, its row left open and empty until its last day can be completed"""
+    build_dataset(surreal_db)
+
+    surreal_db.calculate_metrics()
+
+    month_row = everyone_row(surreal_db, utc_date(0).replace(day=1), "monthly")
+    assert (month_row["workflow_runs_count"], month_row["completed"]) == (0, False)
+
+
+def test_calculate_metrics_dates_releases_the_lock_when_stopped(surreal_db: SurrealDb):
     """Ensure a stopped calculation writes the days it calculated and releases the refresh"""
     build_dataset(surreal_db)
 
@@ -564,7 +679,7 @@ def test_a_stopped_calculation_releases_the_refresh(surreal_db: SurrealDb):
     assert everyone_row(surreal_db, utc_date(3))["completed"] is False
 
 
-def test_a_calculation_stopped_before_its_months_leaves_the_month_open(surreal_db: SurrealDb, monkeypatch):
+def test_calculate_metrics_rebuilds_a_month_a_stopped_calculation_left(surreal_db: SurrealDb, monkeypatch):
     """Ensure a day rebuilt by a calculation that stopped before its months reopens its month, which the next
     calculation rebuilds, and a read of the open month totals its days"""
     old_day = utc_date(70)
@@ -599,7 +714,7 @@ def test_a_calculation_stopped_before_its_months_leaves_the_month_open(surreal_d
     assert (month_row["completed"], month_row["input_tokens"]) == (True, 15)
 
 
-def test_a_run_save_before_any_calculation_creates_no_metrics_table(surreal_db: SurrealDb):
+def test_upsert_session_without_a_user_metrics_table(surreal_db: SurrealDb):
     """Ensure a run save before any calculation creates no metrics table"""
     surreal_db.upsert_session(
         AgentSession(session_id="old_session", agent_id="agent-1", created_at=noon_utc(utc_date(5)))
@@ -608,6 +723,37 @@ def test_a_run_save_before_any_calculation_creates_no_metrics_table(surreal_db: 
 
     assert not surreal_db.table_exists(surreal_db.user_metrics_table_name)
     assert surreal_db._metrics_days_not_reopened == set()
+
+
+def test_a_created_sessions_table_reads_no_legacy_runs(surreal_db: SurrealDb, monkeypatch):
+    """Ensure creating the sessions table stores schema version 3.0.0, so a calculation reads no legacy runs"""
+    surreal_db.upsert_session(
+        AgentSession(session_id="new_session", agent_id="agent-1", created_at=noon_utc(utc_date(1)))
+    )
+    surreal_db.upsert_run(agent_run("new_run", noon_utc(utc_date(1)), 10), session_id="new_session", run_index=0)
+    assert surreal_db.get_latest_schema_version(surreal_db.session_table_name) == "3.0.0"
+
+    def _fail_legacy_runs_read(*args, **kwargs):
+        raise AssertionError("legacy runs were read")
+
+    monkeypatch.setattr(surreal_db, "_get_metrics_legacy_runs", _fail_legacy_runs_read)
+    assert surreal_db.calculate_metrics()
+
+
+def test_an_unstamped_sessions_table_with_no_legacy_runs_is_read_for_them_once(surreal_db: SurrealDb, monkeypatch):
+    """Ensure a sessions table stamped with no version, as 3.0 and 3.1 left it, is read for legacy runs once, and not
+    again once that read of every session found none"""
+    surreal_db.upsert_session(AgentSession(session_id="s1", agent_id="agent-1", created_at=noon_utc(utc_date(1))))
+    monkeypatch.setattr(surreal_db, "get_latest_schema_version", lambda table_name="": "2.0.0")
+    legacy_reads: List[Any] = []
+    monkeypatch.setattr(surreal_db, "_get_metrics_legacy_runs", lambda *args: legacy_reads.append(args) or [])
+
+    assert surreal_db.calculate_metrics_dates()
+    surreal_db.upsert_session(AgentSession(session_id="s2", agent_id="agent-1", created_at=noon_utc(utc_date(1))))
+    assert surreal_db.calculate_metrics_dates()
+
+    # The one read starts at the epoch, so it read every session
+    assert [args[2].timestamp() for args in legacy_reads] == [0]
 
 
 @pytest.mark.parametrize("metrics_table", [None, "custom_metrics"])
@@ -650,6 +796,114 @@ def test_calculate_metrics_skips_fork_copies_and_reads_request_durations(surreal
     assert (row["model_calls_count"], row["total_model_call_ms"]) == (1, 250)
 
 
+def test_calculate_metrics_counts_a_remote_member_run_once(surreal_db: SurrealDb):
+    """Ensure a remote member's run kept inside its team run and stored as a run of its own by the AgentOS that ran it,
+    in the same database, is counted once, under the team"""
+    day = utc_date(2)
+    remote_session_id = "team_session:remote-agent"
+    member_run = agent_run(
+        "remote_member_run", noon_utc(day), 10, agent_id="remote-agent", session_id=remote_session_id
+    )
+    team_run = TeamRunOutput(
+        run_id="team_run",
+        team_id="team-1",
+        status=RunStatus.completed,
+        member_responses=[
+            agent_run(
+                "remote_member_run",
+                noon_utc(day),
+                10,
+                agent_id="remote-agent",
+                session_id=remote_session_id,
+                parent_run_id="team_run",
+            )
+        ],
+        created_at=noon_utc(day),
+    )
+    surreal_db.upsert_session(
+        TeamSession(session_id="team_session", team_id="team-1", user_id="bob", created_at=noon_utc(day))
+    )
+    surreal_db.upsert_run(team_run, session_id="team_session", user_id="bob", run_index=0)
+    # The remote AgentOS stores its run, with no parent, in a session of its own
+    surreal_db.upsert_session(
+        AgentSession(session_id=remote_session_id, agent_id="remote-agent", user_id="bob", created_at=noon_utc(day))
+    )
+    surreal_db.upsert_run(member_run, session_id=remote_session_id, user_id="bob", run_index=0)
+
+    surreal_db.calculate_metrics()
+
+    row = everyone_row(surreal_db, day)
+    assert (row["root_runs_count"], row["agent_sessions_count"], row["team_sessions_count"]) == (1, 0, 1)
+    assert row["input_tokens"] == 10
+
+
+def test_calculate_metrics_counts_a_remote_member_run_two_days_after_its_team_run_as_a_root_run(surreal_db: SurrealDb):
+    """Ensure a remote member's run stored two days after its team's run is counted as a root run, as only the day
+    before is read for its team's run"""
+    team_day, member_day = utc_date(4), utc_date(2)
+    remote_session_id = "team_session:remote-agent"
+    member_run = agent_run(
+        "remote_member_run", noon_utc(member_day), 10, agent_id="remote-agent", session_id=remote_session_id
+    )
+    team_run = TeamRunOutput(
+        run_id="team_run",
+        team_id="team-1",
+        status=RunStatus.completed,
+        member_responses=[
+            agent_run(
+                "remote_member_run",
+                noon_utc(member_day),
+                10,
+                agent_id="remote-agent",
+                session_id=remote_session_id,
+                parent_run_id="team_run",
+            )
+        ],
+        created_at=noon_utc(team_day),
+    )
+    surreal_db.upsert_session(
+        TeamSession(session_id="team_session", team_id="team-1", user_id="bob", created_at=noon_utc(team_day))
+    )
+    surreal_db.upsert_run(team_run, session_id="team_session", user_id="bob", run_index=0)
+    surreal_db.upsert_session(
+        AgentSession(
+            session_id=remote_session_id, agent_id="remote-agent", user_id="bob", created_at=noon_utc(member_day)
+        )
+    )
+    surreal_db.upsert_run(member_run, session_id=remote_session_id, user_id="bob", run_index=0)
+
+    surreal_db.calculate_metrics()
+
+    row = everyone_row(surreal_db, member_day)
+    assert (row["root_runs_count"], row["agent_sessions_count"], row["agent_runs_count"]) == (1, 1, 1)
+
+
+def test_calculate_metrics_leaves_a_day_that_conflicts_twice_to_the_next_calculation(
+    surreal_db: SurrealDb, monkeypatch
+):
+    """Ensure a day whose write conflicts with another write twice is left open, and the refresh calculates the
+    other days and completes"""
+    build_dataset(surreal_db)
+    surreal_db.calculate_metrics()
+    old_day = utc_date(3)
+    surreal_db.upsert_run(agent_run("alice_run_3", noon_utc(old_day) + 120, 1), "alice_session", "alice", 2)
+    surreal_db.upsert_run(agent_run("alice_run_4", noon_utc(utc_date(2)), 1), "alice_session", "alice", 3)
+    calculate_date_metrics = SurrealDb._calculate_date_metrics
+
+    def _conflict_on_the_old_day(self, *args, **kwargs):
+        if args[4] == old_day:
+            raise Exception("Transaction conflict: Resource busy. This transaction can be retried")
+        return calculate_date_metrics(self, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(SurrealDb, "_calculate_date_metrics", _conflict_on_the_old_day)
+        calculated_dates = surreal_db.calculate_metrics_dates()
+
+    assert calculated_dates is not None and old_day not in calculated_dates and utc_date(2) in calculated_dates
+    assert (surreal_db.get_metrics_refresh_status() or {}).get("status") == "completed"
+    assert old_day in (surreal_db.calculate_metrics_dates() or [])
+
+
 def test_calculate_metrics_keeps_a_day_reopened_during_its_rebuild_open(surreal_db: SurrealDb, monkeypatch):
     """Ensure a day reopened between the read of its version and the write of its rows stays open for the next
     calculation"""
@@ -673,7 +927,7 @@ def test_calculate_metrics_keeps_a_day_reopened_during_its_rebuild_open(surreal_
     assert everyone_row(surreal_db, old_day)["completed"] is True
 
 
-def test_a_run_save_never_fails_because_of_metrics(surreal_db: SurrealDb, monkeypatch):
+def test_upsert_run_reopens_a_day_a_write_could_not_reopen(surreal_db: SurrealDb, monkeypatch):
     """Ensure a save whose reopen fails is stored, and the day is reopened by the next write"""
     build_dataset(surreal_db)
     surreal_db.calculate_metrics()
@@ -694,7 +948,7 @@ def test_a_run_save_never_fails_because_of_metrics(surreal_db: SurrealDb, monkey
     assert everyone_row(surreal_db, old_day)["completed"] is False
 
 
-def test_get_metrics_versions_move_only_for_the_day_that_changed(surreal_db: SurrealDb):
+def test_metrics_versions_move_only_for_the_day_that_changed(surreal_db: SurrealDb):
     """Ensure no version is read before a first calculation, and only a changed day's version moves"""
     build_dataset(surreal_db)
     old_day = utc_date(3)
@@ -709,7 +963,7 @@ def test_get_metrics_versions_move_only_for_the_day_that_changed(surreal_db: Sur
 
     # A reopened day is rebuilt: its version moves, the other days' stay
     surreal_db.upsert_run(agent_run("alice_run_3", noon_utc(old_day) + 120, 1), "alice_session", "alice", 2)
-    time.sleep(1.1)
+    backdate(surreal_db)
     surreal_db.calculate_metrics()
     surreal_db.calculate_metrics()
     changed = surreal_db.get_metrics_versions(old_day, utc_date(0))

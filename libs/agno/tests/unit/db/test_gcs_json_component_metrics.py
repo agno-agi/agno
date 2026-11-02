@@ -4,7 +4,6 @@ Uses a tiny in-memory stub for the GCS client/bucket/blob trio, keeping a
 generation per object as GCS does, so no real GCS account is needed.
 """
 
-import sys
 import time
 import types
 from datetime import date, datetime, timedelta, timezone
@@ -12,7 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
 
-from agno.db.utils import METRICS_LOCK_SECONDS, METRICS_STOPPED_ERROR
+from agno.db.utils import METRICS_LOCK_SECONDS, METRICS_STOPPED_ERROR, calculate_date_metrics
 from agno.metrics import RunMetrics
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -48,15 +47,6 @@ class _FakeBlob:
         self._bucket._generation += 1
         self.generation = self._bucket._generation
         self._bucket._objects[self.name] = (data, self.generation)
-
-    def delete(self, if_generation_match=None) -> None:
-        from google.cloud.exceptions import NotFound, PreconditionFailed  # type: ignore[import-untyped]
-
-        if self.name not in self._bucket._objects:
-            raise NotFound(self.name)
-        if if_generation_match is not None and if_generation_match != self._bucket._objects[self.name][1]:
-            raise PreconditionFailed(self.name)
-        del self._bucket._objects[self.name]
 
 
 class _FakeBucket:
@@ -274,9 +264,9 @@ def ground_truth(runs: List[Tuple[Any, Optional[str]]]) -> Dict[Any, Dict[str, A
 
 
 def assert_matches_ground_truth(db, runs):
-    totals = stored_rows(db, db.user_metrics_table_name)
+    user_metrics_rows = stored_rows(db, db.user_metrics_table_name)
     for (day, user_id), counts in ground_truth(runs).items():
-        row = totals[("daily", day, user_id)]
+        row = user_metrics_rows[("daily", day, user_id)]
         assert {
             **{column: row[column] for column in counts if column != "cache_read_tokens"},
             "cache_read_tokens": row["token_details"].get("cache_read_tokens", 0),
@@ -284,7 +274,7 @@ def assert_matches_ground_truth(db, runs):
 
 
 def test_calculate_metrics_matches_a_direct_count_of_the_runs():
-    """Ensure every day's totals rows match a direct count of the stored runs"""
+    """Ensure every day's user metrics rows match a direct count of the stored runs"""
     db = new_db()
     runs = build_dataset(db)
 
@@ -293,13 +283,16 @@ def test_calculate_metrics_matches_a_direct_count_of_the_runs():
     old_day, yesterday, today = utc_date(3), utc_date(1), utc_date(0)
     assert {metric["date"] for metric in calculated} == {old_day, yesterday, today}
     assert_matches_ground_truth(db, runs)
-    totals = stored_rows(db, db.user_metrics_table_name)
-    assert totals[("daily", old_day, "")]["agent_sessions_count"] == 1
-    assert totals[("daily", yesterday, "")]["team_sessions_count"] == 1
-    assert totals[("daily", today, "")]["workflow_sessions_count"] == 1
-    assert (totals[("daily", yesterday, "")]["users_count"], totals[("daily", today, "")]["users_count"]) == (1, 0)
-    assert totals[("daily", old_day, "")]["completed"] is True
-    assert totals[("daily", yesterday, "")]["completed"] is False
+    user_metrics_rows = stored_rows(db, db.user_metrics_table_name)
+    assert user_metrics_rows[("daily", old_day, "")]["agent_sessions_count"] == 1
+    assert user_metrics_rows[("daily", yesterday, "")]["team_sessions_count"] == 1
+    assert user_metrics_rows[("daily", today, "")]["workflow_sessions_count"] == 1
+    assert (
+        user_metrics_rows[("daily", yesterday, "")]["users_count"],
+        user_metrics_rows[("daily", today, "")]["users_count"],
+    ) == (1, 0)
+    assert user_metrics_rows[("daily", old_day, "")]["completed"] is True
+    assert user_metrics_rows[("daily", yesterday, "")]["completed"] is False
 
     # The member run is counted under the team that started it
     rows = stored_rows(db, db.component_metrics_table_name)
@@ -312,7 +305,7 @@ def test_calculate_metrics_matches_a_direct_count_of_the_runs():
     assert db.get_metrics_refresh_status()["status"] == "completed"
 
 
-def test_a_run_save_reopens_its_closed_day():
+def test_calculate_metrics_rebuilds_a_reopened_day():
     """Ensure saving a run of a closed day reopens it, and the next calculation completes it again"""
     db = new_db()
     runs = build_dataset(db)
@@ -335,7 +328,7 @@ def test_a_run_save_reopens_its_closed_day():
     )
 
 
-def test_a_new_session_on_a_closed_day_reopens_it():
+def test_session_save_reopens_the_day_the_session_is_stored_on():
     """Ensure a new session on a closed day reopens it, while saving the same session again does not"""
     db = new_db()
     build_dataset(db)
@@ -355,7 +348,7 @@ def test_a_new_session_on_a_closed_day_reopens_it():
     assert (everyone_row(db, old_day)["completed"], everyone_row(db, old_day)["version"]) == (False, version + 1)
 
 
-def test_a_delete_does_not_reopen_its_day():
+def test_delete_session_keeps_its_closed_day_closed():
     """Ensure deleting a session keeps its closed day closed"""
     db = new_db()
     build_dataset(db)
@@ -409,7 +402,7 @@ def test_get_metrics_never_calculates_and_reads_the_metrics_file_until_the_first
     assert [(m["user_id"], m["agent_runs_count"]) for m in metrics] == [("alice", 2), ("bob", 1)]
 
 
-def test_a_stopped_calculation_writes_its_days_and_releases_the_lock():
+def test_calculate_metrics_dates_releases_the_lock_when_stopped():
     """Ensure a stopped calculation writes the days it calculated and releases the lock"""
     db = stored_sessions()
     calls = []
@@ -431,7 +424,7 @@ def test_a_run_save_never_fails_because_of_metrics():
     build_dataset(db)
     db.calculate_metrics()
     old_day = utc_date(3)
-    stored_totals = db.bucket._objects[db._get_blob_name(db.user_metrics_table_name)][0]
+    stored_user_metrics = db.bucket._objects[db._get_blob_name(db.user_metrics_table_name)][0]
     write_blob(db, db.user_metrics_table_name, "not json")
 
     db.upsert_run(
@@ -440,7 +433,7 @@ def test_a_run_save_never_fails_because_of_metrics():
     assert db._metrics_days_not_reopened == {old_day}
 
     # The next write reopens it
-    write_blob(db, db.user_metrics_table_name, stored_totals)
+    write_blob(db, db.user_metrics_table_name, stored_user_metrics)
     db.upsert_run(agent_run("today_run", noon_utc(utc_date(0)), 1), session_id="alice_session", user_id="alice")
     assert db._metrics_days_not_reopened == set()
     assert everyone_row(db, old_day)["completed"] is False
@@ -474,18 +467,16 @@ def test_calculate_metrics_keeps_a_day_reopened_during_its_rebuild_open(monkeypa
     db.calculate_metrics(rebuild_from=old_day)
     assert everyone_row(db, old_day)["completed"] is True
 
-    calculate_day_metrics = sys.modules[type(db).__module__].calculate_day_metrics
-
     def calculate_and_save(rows_by_key, date_to_process, *args):
         if date_to_process == old_day:
             # Saved after the calculation read the day's runs
             db.upsert_run(
                 agent_run("alice_paused_run", noon_utc(old_day) + 60, 50), session_id="alice_session", user_id="alice"
             )
-        return calculate_day_metrics(rows_by_key, date_to_process, *args)
+        return calculate_date_metrics(rows_by_key, date_to_process, *args)
 
     with monkeypatch.context() as patch:
-        patch.setattr(sys.modules[type(db).__module__], "calculate_day_metrics", calculate_and_save)
+        patch.setattr("agno.db.gcs_json.gcs_json_db.calculate_date_metrics", calculate_and_save)
         db.calculate_metrics(rebuild_from=old_day)
 
     assert everyone_row(db, old_day)["completed"] is False
@@ -494,13 +485,12 @@ def test_calculate_metrics_keeps_a_day_reopened_during_its_rebuild_open(monkeypa
     assert (row["completed"], row["status_metrics"]) == (True, {COMPLETED: 2})
 
 
-def test_a_totals_write_made_since_the_read_is_never_written_over(monkeypatch):
-    """Ensure a totals write made by another process since the read is never written over"""
+def test_a_user_metrics_write_made_since_the_read_is_never_written_over(monkeypatch):
+    """Ensure a user metrics write made by another process since the read is never written over"""
     db = new_db()
     build_dataset(db)
     db.calculate_metrics()
     old_day = utc_date(3)
-    calculate_day_metrics = sys.modules[type(db).__module__].calculate_day_metrics
     read_json_file_with_generation = db._read_json_file_with_generation
     reads = []
 
@@ -509,7 +499,7 @@ def test_a_totals_write_made_since_the_read_is_never_written_over(monkeypatch):
         if filename != db.user_metrics_table_name:
             return result
         if not reads:
-            # Another process reopens the day between the calculation's read of the totals and its write
+            # Another process reopens the day between the calculation's read of the user metrics and its write
             new_db().upsert_run(
                 agent_run("alice_paused_run", noon_utc(old_day) + 60, 50), session_id="alice_session", user_id="alice"
             )
@@ -518,19 +508,19 @@ def test_a_totals_write_made_since_the_read_is_never_written_over(monkeypatch):
 
     def calculate_and_watch(*args):
         db._read_json_file_with_generation = read_then_reopen
-        return calculate_day_metrics(*args)
+        return calculate_date_metrics(*args)
 
     with monkeypatch.context() as patch:
-        patch.setattr(sys.modules[type(db).__module__], "calculate_day_metrics", calculate_and_watch)
+        patch.setattr("agno.db.gcs_json.gcs_json_db.calculate_date_metrics", calculate_and_watch)
         db.calculate_metrics(rebuild_from=old_day)
     del db._read_json_file_with_generation
 
-    # The write found the totals written since its read, read them again and kept the reopen
+    # The write found the user metrics written since its read, read them again and kept the reopen
     assert reads[:2] == [db.user_metrics_table_name, db.user_metrics_table_name]
     assert everyone_row(db, old_day)["completed"] is False
 
 
-def test_calculate_metrics_returns_none_while_another_worker_holds_the_refresh():
+def test_calculate_metrics_skips_a_rebuild_already_running():
     """Ensure a calculation returns None while another worker holds the refresh"""
     db = stored_sessions()
     assert db._claim_metrics_refresh("another-worker") is not None
@@ -550,7 +540,7 @@ def test_calculate_metrics_returns_none_while_another_worker_holds_the_refresh()
     assert status["finished_at"] is not None
 
 
-def test_a_stale_refresh_reads_failed_and_is_taken_over():
+def test_calculate_metrics_takes_over_a_lock_that_went_stale():
     """Ensure a stale refresh reads as failed and the next calculation takes it over"""
     db = stored_sessions()
     db._claim_metrics_refresh("stopped-worker")
@@ -563,14 +553,14 @@ def test_a_stale_refresh_reads_failed_and_is_taken_over():
     assert db._heartbeat_metrics_refresh("stopped-worker") is False
 
 
-def test_a_failed_refresh_keeps_no_finished_at(monkeypatch):
+def test_calculate_metrics_records_a_failed_refresh(monkeypatch):
     """Ensure a failed refresh records its error and keeps no finished_at"""
     db = stored_sessions()
 
     def fail(*args):
         raise ValueError("boom")
 
-    monkeypatch.setattr(sys.modules[type(db).__module__], "calculate_day_metrics", fail)
+    monkeypatch.setattr("agno.db.gcs_json.gcs_json_db.calculate_date_metrics", fail)
     with pytest.raises(ValueError):
         db.calculate_metrics()
     refresh_row = db._get_metrics_refresh_row()[0]
@@ -599,3 +589,16 @@ def test_get_metrics_versions_move_for_a_reopened_day_that_is_rebuilt():
     new_versions = db.get_metrics_versions(old_day, old_day)
     assert new_versions == {f"daily {old_day.isoformat()}": everyone_row(db, old_day)["version"]}
     assert new_versions[f"daily {old_day.isoformat()}"] > versions[f"daily {old_day.isoformat()}"]
+
+
+def test_claim_metrics_refresh_returns_none_while_another_process_writes_the_refresh(monkeypatch):
+    """Ensure a claim whose every write finds the metrics refreshes file written since its read returns None"""
+    from google.cloud.exceptions import PreconditionFailed  # type: ignore[import-untyped]
+
+    db = stored_sessions()
+
+    def written_since(*args, **kwargs):
+        raise PreconditionFailed(db.metrics_refreshes_table_name)
+
+    monkeypatch.setattr(db, "_write_json_file", written_since)
+    assert db._claim_metrics_refresh("worker") is None

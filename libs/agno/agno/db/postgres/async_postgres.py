@@ -30,10 +30,10 @@ from agno.db.postgres.utils import (
     build_component_metrics_legacy_runs_table,
     build_component_metrics_run,
     build_component_metrics_runs_query,
-    build_component_metrics_totals,
     build_component_metrics_totals_queries,
     build_metrics_by_owner_queries,
     is_foreign_key_violation,
+    is_lock_not_available,
     metrics_parent_run_id,
 )
 from agno.db.schemas.authz import (
@@ -64,6 +64,7 @@ from agno.db.utils import (
     SessionRunObjectCache,
     add_metrics_month_totals,
     bound_index_name,
+    build_component_metrics_totals,
     build_metrics_by_owner,
     build_metrics_from_user_metrics,
     build_single_run_row,
@@ -89,6 +90,7 @@ from agno.db.utils import (
     metrics_month_end,
     metrics_nested_run_ids,
     metrics_refresh_status,
+    metrics_remote_member_team_session_ids,
     metrics_versions,
     resolve_metrics_fields,
     table_schema_mismatch_error,
@@ -115,6 +117,8 @@ try:
         case,
         distinct,
         func,
+        literal,
+        null,
         or_,
         tuple_,
         union,
@@ -123,7 +127,7 @@ try:
     from sqlalchemy import cast as sa_cast
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.dialects.postgresql import TIMESTAMP
-    from sqlalchemy.exc import ProgrammingError
+    from sqlalchemy.exc import DBAPIError, ProgrammingError
     from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
     from sqlalchemy.schema import Column, MetaData
     from sqlalchemy.sql.expression import select, text
@@ -1378,12 +1382,15 @@ class AsyncPostgresDb(AsyncBaseDb):
         statement = (
             table.update()
             .where(table.c.session_id == session_id, table.c.user_id == previous_user_id, ~active.exists())
-            .values(user_id=user_id)
-            .returning(table.c.session_id)
+            .values(user_id=user_id, updated_at=int(time.time()))
+            .returning(table.c.created_at)
         )
         async with self.async_session_factory() as sess, sess.begin():
-            result = await sess.execute(statement)
-            return result.scalar_one_or_none() is not None
+            reassigned_session = (await sess.execute(statement)).first()
+            if reassigned_session is None:
+                return False
+            await self._reopen_metrics_days(sess, [reassigned_session.created_at])
+            return True
 
     async def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         """
@@ -2528,8 +2535,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             return
         try:
             async with sess.begin_nested():
-                # Looked up only when a day reopens, and on the write's own connection: a lookup through another
-                # session would not see the write's transaction. None when no day was calculated yet
+                # Looked up only when a day reopens, the table loaded on the write's own connection: a lookup
+                # through another session would not run in the write's transaction. None when no day was calculated yet
                 user_metrics_table = self._get_cached_table("user_metrics", self.user_metrics_table_name)
                 if user_metrics_table is None:
                     if not await ais_table_available(
@@ -2571,17 +2578,19 @@ class AsyncPostgresDb(AsyncBaseDb):
         self, sess: Any, table: Table, session_records: List[Dict[str, Any]]
     ) -> Set[str]:
         """Get the id of each session the given rows add, or move to another owner or component."""
-        stored_sessions_result = await sess.execute(
-            select(
+        written_session_ids = [record["session_id"] for record in session_records]
+        stored_sessions: Dict[str, Any] = {}
+        for start in range(0, len(written_session_ids), METRICS_IN_LIST_LIMIT):
+            stored_stmt = select(
                 table.c.session_id,
                 table.c.user_id,
                 table.c.agent_id,
                 table.c.team_id,
                 table.c.workflow_id,
                 table.c.created_at,
-            ).where(table.c.session_id.in_([record["session_id"] for record in session_records]))
-        )
-        stored_sessions = {row.session_id: row for row in stored_sessions_result.fetchall()}
+            ).where(table.c.session_id.in_(written_session_ids[start : start + METRICS_IN_LIST_LIMIT]))
+            stored_sessions_result = await sess.execute(stored_stmt)
+            stored_sessions.update((row.session_id, row) for row in stored_sessions_result.fetchall())
         session_ids: Set[str] = set()
         for record in session_records:
             stored_session = stored_sessions.get(record["session_id"])
@@ -2634,22 +2643,49 @@ class AsyncPostgresDb(AsyncBaseDb):
                 None when another process holds it.
         """
         now = _db_epoch()
-        async with self.async_session_factory() as sess, sess.begin():
-            # One statement, so two processes never both find the row free
-            stmt = postgresql.insert(refreshes_table).values(
-                id=METRICS_REFRESH_ID, locked_by=worker_id, locked_at=now, started_at=now, status="running"
-            )
-            stmt = stmt.on_conflict_do_update(  # type: ignore
-                index_elements=["id"],
-                set_=dict(locked_by=worker_id, locked_at=now, started_at=now, status="running", error=None),
-                # A stale lock is taken over: the process that held it stopped
-                where=or_(
-                    refreshes_table.c.locked_by.is_(None),
-                    refreshes_table.c.locked_at <= now - METRICS_LOCK_SECONDS,
-                ),
-            ).returning(*refreshes_table.c)
-            row = (await sess.execute(stmt)).fetchone()
-            return dict(row._mapping) if row is not None else None
+        try:
+            async with self.async_session_factory() as sess, sess.begin():
+                # The holder's calculation keeps the row locked while it writes a day, so this returns instead of
+                # waiting for it
+                await sess.execute(text("SET LOCAL lock_timeout = '1s'"))
+                # One statement, so two processes never both find the row free
+                stmt = postgresql.insert(refreshes_table).values(
+                    id=METRICS_REFRESH_ID, locked_by=worker_id, locked_at=now, started_at=now, status="running"
+                )
+                stmt = stmt.on_conflict_do_update(  # type: ignore
+                    index_elements=["id"],
+                    set_=dict(locked_by=worker_id, locked_at=now, started_at=now, status="running", error=None),
+                    # A stale lock is taken over: the process that held it stopped
+                    where=or_(
+                        refreshes_table.c.locked_by.is_(None),
+                        refreshes_table.c.locked_at <= now - METRICS_LOCK_SECONDS,
+                    ),
+                ).returning(*refreshes_table.c)
+                row = (await sess.execute(stmt)).fetchone()
+                return dict(row._mapping) if row is not None else None
+        except DBAPIError as exc:
+            if not is_lock_not_available(exc):
+                raise
+            return None
+
+    async def _mark_metrics_refresh_rebuild(self, refreshes_table: Table) -> bool:
+        """Write a mark no fingerprint equals on the row of the metrics refreshes table, so the next calculation
+        rebuilds yesterday and today. False when a calculation kept the row locked through every try."""
+        for _ in range(3):
+            try:
+                async with self.async_session_factory() as sess, sess.begin():
+                    # A calculation keeps the row locked while it writes a day, and lets it go between days
+                    await sess.execute(text("SET LOCAL lock_timeout = '1s'"))
+                    await sess.execute(
+                        update(refreshes_table)
+                        .where(refreshes_table.c.id == METRICS_REFRESH_ID)
+                        .values(fingerprint=["rebuild", uuid4().hex])
+                    )
+                return True
+            except DBAPIError as exc:
+                if not is_lock_not_available(exc):
+                    raise
+        return False
 
     async def _heartbeat_metrics_refresh(self, sess: Any, refreshes_table: Table, worker_id: str) -> bool:
         """Refresh locked_at for this worker's metrics refresh. False when another process took it over."""
@@ -2663,13 +2699,30 @@ class AsyncPostgresDb(AsyncBaseDb):
     async def _release_metrics_refresh(
         self,
         refreshes_table: Table,
-        worker_id: str,
+        worker_id: Optional[str],
         error: Optional[str] = None,
         fingerprint: Optional[List[Any]] = None,
         stopped: bool = False,
+        claimed_fingerprint: Optional[List[Any]] = None,
+        started_at: Optional[int] = None,
+        finished_at: Optional[int] = None,
     ) -> None:
         """Release the row of the metrics refreshes table: completed, with the fingerprint, without an error, failed
-        with one, and as the last completed refresh left it when the calculation stopped."""
+        with one, and as the last completed refresh left it when the calculation stopped.
+
+        Args:
+            refreshes_table (Table): The metrics refreshes table.
+            worker_id (Optional[str]): The id of the calculation that claimed the row. None writes the row only while
+                no process holds it and no calculation started or finished after the read of started_at and
+                finished_at, and creates it when that read found none.
+            error (Optional[str]): The error the calculation failed with. None when it completed.
+            fingerprint (Optional[List[Any]]): The fingerprint of yesterday and today, stored once it completed.
+            stopped (bool): Whether the calculation stopped before it finished.
+            claimed_fingerprint (Optional[List[Any]]): The fingerprint of the claimed row. A rebuild that marked
+                another one since keeps its mark.
+            started_at (Optional[int]): The started_at read before a failure with a worker_id of None.
+            finished_at (Optional[int]): The finished_at read before a failure with a worker_id of None.
+        """
         values: Dict[str, Any] = {"locked_by": None, "locked_at": None}
         if stopped:
             # The days it did not reach stay open for the next calculation; a first one that stopped has none to show
@@ -2678,15 +2731,47 @@ class AsyncPostgresDb(AsyncBaseDb):
                 error=case((refreshes_table.c.finished_at.is_not(None), None), else_=METRICS_STOPPED_ERROR),
             )
         elif error is None:
-            values.update(status="completed", error=None, finished_at=_db_epoch(), fingerprint=fingerprint)
+            values.update(status="completed", error=None, finished_at=_db_epoch())
+            # A rebuild that marked the fingerprint after the claim keeps its mark, so the next calculation rebuilds
+            # yesterday and today. No fingerprint is stored as NULL, which a claim of NULL compares equal to
+            values["fingerprint"] = case(
+                (
+                    refreshes_table.c.fingerprint.is_distinct_from(claimed_fingerprint),
+                    refreshes_table.c.fingerprint,
+                ),
+                else_=null() if fingerprint is None else literal(fingerprint, refreshes_table.c.fingerprint.type),
+            )
         else:
             values.update(status="failed", error=error)
-        async with self.async_session_factory() as sess, sess.begin():
-            await sess.execute(
-                update(refreshes_table)
-                .where(refreshes_table.c.id == METRICS_REFRESH_ID, refreshes_table.c.locked_by == worker_id)
-                .values(**values)
-            )
+        try:
+            async with self.async_session_factory() as sess, sess.begin():
+                if worker_id is None and error is not None and started_at is None:
+                    # Before any refresh there is no row to update; one created since keeps its own status
+                    await sess.execute(
+                        postgresql.insert(refreshes_table)
+                        .values(id=METRICS_REFRESH_ID, started_at=_db_epoch(), status="failed", error=error)
+                        .on_conflict_do_nothing(index_elements=["id"])
+                    )
+                elif worker_id is None and error is not None:
+                    # A plain update skips the row a calculation holds, instead of waiting for its lock
+                    await sess.execute(
+                        update(refreshes_table)
+                        .where(
+                            refreshes_table.c.id == METRICS_REFRESH_ID,
+                            refreshes_table.c.locked_by.is_(None),
+                            refreshes_table.c.started_at == started_at,
+                            refreshes_table.c.finished_at.is_not_distinct_from(finished_at),
+                        )
+                        .values(**values)
+                    )
+                else:
+                    await sess.execute(
+                        update(refreshes_table)
+                        .where(refreshes_table.c.id == METRICS_REFRESH_ID, refreshes_table.c.locked_by == worker_id)
+                        .values(**values)
+                    )
+        except Exception as e:
+            log_debug(f"Error releasing metrics refresh: {e}")
 
     async def _get_metrics_fingerprint(
         self, sess: Any, sessions_table: Table, runs_table: Optional[Table], yesterday: date
@@ -2836,13 +2921,23 @@ class AsyncPostgresDb(AsyncBaseDb):
         user rows, then the everyone row, which is completed only while it still has the version read before the
         period's rows."""
         period, period_date = user_metrics_rows[0]["aggregation_period"], user_metrics_rows[0]["date"]
-        stored_rows_result = await sess.execute(
+        # Server-side cursor, so a period of many users is read a batch at a time and never holds the event loop
+        stored_rows_result = await sess.stream(
             select(user_metrics_table).where(
                 user_metrics_table.c.aggregation_period == period, user_metrics_table.c.date == period_date
             )
         )
-        everyone_row, changed_rows, stale_user_ids = user_metrics_rows_to_write(
-            user_metrics_rows, [dict(row) for row in stored_rows_result.mappings().all()], rows_changed
+        stored_rows: List[Dict[str, Any]] = []
+        while True:
+            batch = await stored_rows_result.fetchmany(METRICS_BATCH_SIZE)
+            if not batch:
+                break
+            stored_rows.extend(dict(record._mapping) for record in batch)
+        everyone_row, changed_rows, stale_user_ids = await asyncio.to_thread(
+            user_metrics_rows_to_write,
+            user_metrics_rows,
+            stored_rows,
+            rows_changed,
         )
         for start in range(0, len(stale_user_ids), METRICS_IN_LIST_LIMIT):
             await sess.execute(
@@ -2852,7 +2947,13 @@ class AsyncPostgresDb(AsyncBaseDb):
                     user_metrics_table.c.user_id.in_(stale_user_ids[start : start + METRICS_IN_LIST_LIMIT]),
                 )
             )
-        await abulk_upsert_user_metrics_rows(session=sess, table=user_metrics_table, user_metrics_rows=changed_rows)
+        # Written a batch at a time, so binding a period of many users never holds the event loop
+        for start in range(0, len(changed_rows), METRICS_BATCH_SIZE):
+            await abulk_upsert_user_metrics_rows(
+                session=sess,
+                table=user_metrics_table,
+                user_metrics_rows=changed_rows[start : start + METRICS_BATCH_SIZE],
+            )
         if everyone_row is not None:
             await aupsert_user_metrics_row(
                 session=sess, table=user_metrics_table, user_metrics_row=everyone_row, read_version=read_version
@@ -2952,19 +3053,45 @@ class AsyncPostgresDb(AsyncBaseDb):
                     stored_ids_result = await sess.execute(stored_stmt)
                     stored_run_ids.update(record.run_id for record in stored_ids_result.fetchall())
 
+                # A remote member's run after midnight is named by its team's run of the day before
+                team_session_ids = sorted(metrics_remote_member_team_session_ids(runs))
+                for start in range(0, len(team_session_ids), METRICS_IN_LIST_LIMIT):
+                    team_runs_stmt = build_component_metrics_runs_query(
+                        runs_table, start_timestamp - 86400, start_timestamp
+                    ).where(runs_table.c.session_id.in_(team_session_ids[start : start + METRICS_IN_LIST_LIMIT]))
+                    # Server-side cursor, so many team runs are read a batch at a time and never hold the event loop
+                    team_runs_result = await sess.stream(team_runs_stmt)
+                    team_runs: List[Dict[str, Any]] = []
+                    while True:
+                        batch = await team_runs_result.fetchmany(METRICS_BATCH_SIZE)
+                        if not batch:
+                            break
+                        team_runs.extend(build_component_metrics_run(record) for record in batch)
+                    parent_runs.extend(team_runs)
+                    parent_run_ids.extend(run["parent_run_id"] for run in team_runs if run.get("parent_run_id"))
+
                 parent_runs.extend(await self._get_metrics_parent_runs(sess, runs_table, parent_run_ids))
 
-            records = calculate_date_component_metrics(date_to_process, sessions, runs, stored_run_ids, parent_runs)
-            stored_rows_result = await sess.execute(
+            # Added up in a thread, so a day of many runs never holds the event loop
+            records = await asyncio.to_thread(
+                calculate_date_component_metrics, date_to_process, sessions, runs, stored_run_ids, parent_runs
+            )
+            # Server-side cursor, so a day of many rows is read a batch at a time and never holds the event loop
+            stored_rows_result = await sess.stream(
                 select(table).where(table.c.aggregation_period == "daily", table.c.date == date_to_process)
             )
-            stored_rows = [dict(record._mapping) for record in stored_rows_result.fetchall()]
+            stored_rows: List[Dict[str, Any]] = []
+            while True:
+                batch = await stored_rows_result.fetchmany(METRICS_BATCH_SIZE)
+                if not batch:
+                    break
+                stored_rows.extend(dict(record._mapping) for record in batch)
 
             # Checked in the transaction of the rows, so a process whose lock went stale never overwrites the rows of
             # the process that took the refresh over
             if not await self._heartbeat_metrics_refresh(sess, refreshes_table, worker_id):
                 return False
-            changed_rows, stale_keys = component_metrics_rows_to_write(records, stored_rows)
+            changed_rows, stale_keys = await asyncio.to_thread(component_metrics_rows_to_write, records, stored_rows)
             for start in range(0, len(stale_keys), METRICS_STALE_KEYS_LIMIT):
                 await sess.execute(
                     table.delete().where(
@@ -2979,13 +3106,21 @@ class AsyncPostgresDb(AsyncBaseDb):
                         ).in_(stale_keys[start : start + METRICS_STALE_KEYS_LIMIT]),
                     )
                 )
-            await abulk_upsert_component_metrics(session=sess, table=table, component_metrics_records=changed_rows)
+            # Written a batch at a time, so binding a day of many rows never holds the event loop
+            for start in range(0, len(changed_rows), METRICS_BATCH_SIZE):
+                await abulk_upsert_component_metrics(
+                    session=sess,
+                    table=table,
+                    component_metrics_records=changed_rows[start : start + METRICS_BATCH_SIZE],
+                )
 
             # Written last, in the day's transaction, so its version never moves without the rows it tells of
             await self._write_user_metrics_rows(
                 sess,
                 user_metrics_table,
-                build_user_metrics_rows(records, "daily", date_to_process, metrics_day_completed(date_to_process)),
+                await asyncio.to_thread(
+                    build_user_metrics_rows, records, "daily", date_to_process, metrics_day_completed(date_to_process)
+                ),
                 rows_changed=bool(changed_rows or stale_keys),
                 read_version=read_version,
             )
@@ -3024,8 +3159,9 @@ class AsyncPostgresDb(AsyncBaseDb):
                 batch = await stored_rows_result.fetchmany(METRICS_BATCH_SIZE)
                 if not batch:
                     break
-                add_metrics_month_totals(per_owner, [dict(record._mapping) for record in batch])
-                await asyncio.sleep(0)  # yield control between batches
+                await asyncio.to_thread(
+                    add_metrics_month_totals, per_owner, [dict(record._mapping) for record in batch]
+                )
 
             # Checked in the transaction of the rows, so a process whose lock went stale never overwrites the rows of
             # the process that took the refresh over
@@ -3035,7 +3171,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             await self._write_user_metrics_rows(
                 sess,
                 user_metrics_table,
-                build_user_metrics_month_rows(month_start, per_owner),
+                await asyncio.to_thread(build_user_metrics_month_rows, month_start, per_owner),
                 rows_changed=False,
                 read_version=read_version,
             )
@@ -3063,7 +3199,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             if calculated_dates is None:
                 return None
             if not calculated_dates:
-                # Nothing changed: today's metrics come back, as they did when every refresh calculated today
+                # A refresh that changed no day answers with today's metrics
                 calculated_dates = [datetime.now(timezone.utc).date()]
             metrics, _ = await self._get_metrics_rows(calculated_dates[0], calculated_dates[-1], None)
             return [metric for metric in metrics if metric["date"] in calculated_dates]
@@ -3086,6 +3222,9 @@ class AsyncPostgresDb(AsyncBaseDb):
 
         Returns:
             Optional[List[date]]: The days calculated, oldest first. None when another process is calculating them.
+
+        Raises:
+            Exception: If an error occurs during metrics calculation.
         """
         table = await self._get_metrics_table("component_metrics", self.component_metrics_table_name)
         user_metrics_table = await self._get_metrics_table("user_metrics", self.user_metrics_table_name)
@@ -3099,8 +3238,34 @@ class AsyncPostgresDb(AsyncBaseDb):
         if rebuild_from is not None:
             # Reopened as a write reopens a day, before the claim, so a calculation another process is running
             # leaves them to the next one
-            async with self.async_session_factory() as sess, sess.begin():
-                await areopen_metrics_days_from(session=sess, table=user_metrics_table, starting_date=rebuild_from)
+            started_at = finished_at = None
+            try:
+                # A transaction of its own, without locking the refresh row, so it never waits on a day's calculation
+                async with self.async_session_factory() as sess, sess.begin():
+                    # A calculation that starts or finishes after this read keeps its own status
+                    refresh_times = (
+                        await sess.execute(
+                            select(refreshes_table.c.started_at, refreshes_table.c.finished_at).where(
+                                refreshes_table.c.id == METRICS_REFRESH_ID
+                            )
+                        )
+                    ).first()
+                    if refresh_times is not None:
+                        started_at, finished_at = refresh_times
+                    await areopen_metrics_days_from(session=sess, table=user_metrics_table, starting_date=rebuild_from)
+                # Yesterday and today are picked by the fingerprint, so it is marked for the next one too
+                if not await self._mark_metrics_refresh_rebuild(refreshes_table):
+                    return None
+            except Exception as e:
+                # Failed before the claim, so the refresh status shows it
+                await self._release_metrics_refresh(
+                    refreshes_table,
+                    None,
+                    error=database_error_message(e),
+                    started_at=started_at,
+                    finished_at=finished_at,
+                )
+                raise
 
         worker_id = str(uuid4())
         # Claimed before anything is read, so a process that finds another calculating reads nothing
@@ -3192,9 +3357,12 @@ class AsyncPostgresDb(AsyncBaseDb):
                     return None
                 calculated_dates.append(date_to_process)
 
+            # A month row is read only once completed, so a month is built only once its last day can be completed
             month_starts = sorted(
-                set(get_months_to_calculate_metrics_for(calculated_dates))
+                month_start
+                for month_start in set(get_months_to_calculate_metrics_for(calculated_dates))
                 | set(await self._get_open_metrics_months(user_metrics_table))
+                if metrics_day_completed(metrics_month_end(month_start))
             )
             for month_start in month_starts:
                 if should_stop is not None and should_stop():
@@ -3214,7 +3382,9 @@ class AsyncPostgresDb(AsyncBaseDb):
             await self._release_metrics_refresh(refreshes_table, worker_id, stopped=True)
             raise
 
-        await self._release_metrics_refresh(refreshes_table, worker_id, fingerprint=fingerprint)
+        await self._release_metrics_refresh(
+            refreshes_table, worker_id, fingerprint=fingerprint, claimed_fingerprint=refresh_row["fingerprint"]
+        )
 
         if not calculated_dates:
             log_info("Metrics already calculated for all relevant dates.")
@@ -3252,8 +3422,8 @@ class AsyncPostgresDb(AsyncBaseDb):
     async def _get_user_metrics_rows(
         self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
     ) -> Tuple[List[dict], Optional[int]]:
-        """Get the day rows of the user metrics table in the shape of the metrics table: the everyone rows for ``""``, one
-        user's rows for a name, and every user's rows for ``None``."""
+        """Get the day rows of the user metrics table in the shape of the metrics table: the everyone rows for ``""``,
+        one user's rows for a name, and every user's rows for ``None``."""
         user_metrics_table = await self._get_table(table_type="user_metrics")
         if user_metrics_table is None:
             return [], None
@@ -3420,8 +3590,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             return rows, latest_updated_at
 
         except Exception as e:
-            log_warning(f"Exception getting metrics: {str(e)}")
-            return [], None
+            log_error(f"Exception getting metrics: {str(e)}")
+            raise e
 
     async def get_metrics_by_date(
         self,
@@ -3450,8 +3620,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             return await super().get_metrics_by_date(starting_date, ending_date)
 
         except Exception as e:
-            log_warning(f"Exception getting metrics: {str(e)}")
-            return [], None
+            log_error(f"Exception getting metrics: {str(e)}")
+            raise e
 
     async def get_metrics_refresh_status(self) -> Optional[Dict[str, Any]]:
         """Get the status of the most recent calculate_metrics, from the metrics refreshes table.
@@ -6013,10 +6183,13 @@ class AsyncPostgresDb(AsyncBaseDb):
                             postgresql.insert(runs_table)
                             .values(**row)
                             .on_conflict_do_nothing(index_elements=["run_id"])
-                            .returning(runs_table.c.run_id)
+                            .returning(runs_table.c.created_at)
                         )
                         inserted = (await sess.execute(stmt)).fetchone()
-                        return inserted is not None
+                        if inserted is None:
+                            return False
+                        await self._reopen_metrics_days(sess, [inserted.created_at])
+                        return True
             except IntegrityError:
                 # FK violation: no session row yet - caller creates it and retries
                 return None
@@ -6084,10 +6257,13 @@ class AsyncPostgresDb(AsyncBaseDb):
                     postgresql.insert(table)
                     .values(**values)
                     .on_conflict_do_nothing(index_elements=["session_id"])
-                    .returning(table.c.session_id)
+                    .returning(table.c.created_at)
                 )
-                result = await sess.execute(stmt)
-                return result.fetchone() is not None
+                inserted = (await sess.execute(stmt)).fetchone()
+                if inserted is None:
+                    return False
+                await self._reopen_metrics_days(sess, [inserted.created_at])
+                return True
         except Exception as e:
             log_warning(f"Error inserting session if absent (caller falls back): {e}")
             return None

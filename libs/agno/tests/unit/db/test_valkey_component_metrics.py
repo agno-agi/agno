@@ -6,7 +6,6 @@ needed, as test_v3_valkey_migration_compat.py does.
 
 from __future__ import annotations
 
-import copy
 import fnmatch
 import json
 import time
@@ -23,7 +22,7 @@ from agno.session import AgentSession, TeamSession, WorkflowSession
 # In-memory GLIDE client stub
 #
 # Backed by one dict per Valkey type. Values come back as bytes, as GLIDE returns
-# them, and a transaction is dropped when a watched key changed after the watch.
+# them.
 # ---------------------------------------------------------------------------
 
 
@@ -94,6 +93,11 @@ def _encode(value: Any) -> bytes:
     return value.encode() if isinstance(value, str) else value
 
 
+def _cjson_number(value: str) -> Any:
+    # The scripts decode and encode the row of the metrics refreshes table with cjson, which keeps 14 digits
+    return json.loads("%.14g" % int(value))
+
+
 def _in_range(score: float, start: Any, end: Any) -> bool:
     above = start == _InfBound.NEG_INF or (score >= start.value if start.is_inclusive else score > start.value)
     below = end == _InfBound.POS_INF or (score <= end.value if end.is_inclusive else score < end.value)
@@ -106,10 +110,6 @@ class _FakeGlideClient:
         self.sets: Dict[str, set] = {}
         self.zsets: Dict[str, Dict[str, float]] = {}
         self.hashes: Dict[str, Dict[str, bytes]] = {}
-        self.watched: Dict[str, Any] = {}
-
-    def _snapshot(self, key: str) -> Any:
-        return copy.deepcopy([store.get(key) for store in (self.strings, self.sets, self.zsets, self.hashes)])
 
     # -- strings --
 
@@ -218,21 +218,11 @@ class _FakeGlideClient:
     def time(self):
         return [str(int(time.time())).encode(), b"0"]
 
-    # -- transactions --
-
-    def watch(self, keys):
-        self.watched = {key: self._snapshot(key) for key in keys}
-        return "OK"
-
-    def unwatch(self):
-        self.watched = {}
-        return "OK"
-
     # -- scripts, run as the Lua of agno.db.valkey.utils runs them --
 
     def _holds(self, refresh_key: str, worker_id: str) -> bool:
         stored = self.strings.get(refresh_key)
-        return stored is not None and json.loads(stored)["locked_by"] == worker_id
+        return stored is not None and json.loads(stored)["locked_by"] == (worker_id or None)
 
     def _claim(self, keys, args):
         now = int(time.time())
@@ -255,17 +245,42 @@ class _FakeGlideClient:
         return 1
 
     def _release(self, keys, args):
+        if args[0] == "" and args[1] == "failed" and args[5] == "null":
+            if keys[0] in self.strings:
+                return 0
+            row = {"id": args[7], "locked_by": None, "locked_at": None, "started_at": int(time.time())}
+            row.update(finished_at=None, fingerprint=None, status="failed", error=args[3])
+            self.strings[keys[0]] = json.dumps(row).encode()
+            return 1
         if not self._holds(keys[0], args[0]):
             return 0
         row = {**json.loads(self.strings[keys[0]]), "locked_by": None, "locked_at": None}
+        if args[0] == "" and [row["started_at"], row["finished_at"]] != [json.loads(args[5]), json.loads(args[6])]:
+            return 0
         if args[1] == "stopped":
             finished = row["finished_at"] is not None
             row.update(status="completed" if finished else "failed", error=None if finished else args[3])
         elif args[1] == "completed":
-            row.update(status="completed", error=None, finished_at=int(time.time()), fingerprint=json.loads(args[2]))
+            stored_fingerprint = row["fingerprint"]
+            row.update(
+                status="completed",
+                error=None,
+                finished_at=int(time.time()),
+                fingerprint=json.loads(args[2], parse_int=_cjson_number),
+            )
+            if stored_fingerprint != json.loads(args[4]):
+                row["fingerprint"] = stored_fingerprint
         else:
             row.update(status="failed", error=args[3])
         self.strings[keys[0]] = json.dumps(row).encode()
+        return 1
+
+    def _mark_metrics_refresh_rebuild(self, keys, args):
+        if keys[0] not in self.strings:
+            return 0
+        self.strings[keys[0]] = json.dumps(
+            {**json.loads(self.strings[keys[0]]), "fingerprint": json.loads(args[0])}
+        ).encode()
         return 1
 
     def _fenced_writes(self, keys, args):
@@ -289,7 +304,7 @@ class _FakeGlideClient:
                 self.hincrby(key, *rest)
         return 1
 
-    def _upsert_totals_row(self, keys, args):
+    def _upsert_user_metrics_row(self, keys, args):
         if not self._holds(keys[0], args[0]):
             return 0
         fields = json.loads(args[2])
@@ -315,18 +330,15 @@ class _FakeGlideClient:
             valkey_utils.CLAIM_METRICS_REFRESH_LUA: self._claim,
             valkey_utils.HEARTBEAT_METRICS_REFRESH_LUA: self._heartbeat,
             valkey_utils.RELEASE_METRICS_REFRESH_LUA: self._release,
+            valkey_utils.MARK_METRICS_REFRESH_REBUILD_LUA: self._mark_metrics_refresh_rebuild,
             valkey_utils.FENCED_METRICS_WRITES_LUA: self._fenced_writes,
-            valkey_utils.UPSERT_USER_METRICS_ROW_LUA: self._upsert_totals_row,
+            valkey_utils.UPSERT_USER_METRICS_ROW_LUA: self._upsert_user_metrics_row,
         }[script.code]
         return run(keys or [], args or [])
 
     def exec(self, batch, raise_on_error=False):
         if not batch.commands:
             raise _RequestError("Received empty pipeline")
-        watched, self.watched = self.watched, {}
-        # A transaction is dropped when a watched key changed after the watch
-        if batch.is_atomic and any(self._snapshot(key) != snapshot for key, snapshot in watched.items()):
-            return None
         results: List[Any] = []
         for name, args in batch.commands:
             try:
@@ -460,7 +472,7 @@ def _backdate(db: ValkeyDb) -> None:
 
 
 def _versions(db: ValkeyDb, starting_date: date, ending_date: date) -> Dict[str, int]:
-    """The version of every total row of a day or a month in the date range, keyed by its period and date."""
+    """The version of every everyone row of a day or a month in the date range, keyed by its period and date."""
     record_ids = [
         record_id
         for record_id in db._get_metrics_everyone_record_ids()
@@ -569,7 +581,7 @@ def test_a_run_save_reopens_its_closed_day(db):
     assert status == [{"date": _utc_date(3), "status_metrics": {"COMPLETED": 6}}]
 
 
-def test_deleting_a_session_keeps_its_closed_day_closed(db):
+def test_delete_session_keeps_its_closed_day_closed(db):
     """A delete reopens nothing: the deleted usage stays counted until its day is rebuilt."""
     _seed(db)
     _backdate(db)
@@ -583,9 +595,25 @@ def test_deleting_a_session_keeps_its_closed_day_closed(db):
     assert db.get_metrics(_utc_date(3), _utc_date(3), user_id="alice")[0][0]["agent_sessions_count"] == 1
 
 
-def test_rebuild_from_rebuilds_every_day_from_that_date(db):
+def test_a_session_saved_again_stays_on_the_day_it_was_created(db):
+    """A session saved again with another created_at keeps the stored one, so it is counted on its first day."""
+    _seed(db)
+    db.upsert_session(
+        AgentSession(session_id="s-agent", agent_id="agent-1", user_id="alice", created_at=int(time.time()))
+    )
+    db.upsert_sessions(
+        [AgentSession(session_id="s-agent-bob", agent_id="agent-1", user_id="bob", created_at=int(time.time()))]
+    )
+
+    db.calculate_metrics()
+
+    assert db.get_metrics(_utc_date(3), _utc_date(3), user_id="alice")[0][0]["agent_sessions_count"] == 1
+    assert db.get_metrics(_utc_date(2), _utc_date(2), user_id="bob")[0][0]["agent_sessions_count"] == 1
+
+
+def test_calculate_metrics_rebuilds_every_day_from_rebuild_from(db):
     """rebuild_from rebuilds every day with data from the date, completed or not, so a deleted session drops out of
-    its day, and a day whose totals were lost is built again."""
+    its day, and a day whose user metrics rows were lost is built again."""
     _seed(db)
     db.calculate_metrics()
     db.delete_session("s-agent")
@@ -599,7 +627,7 @@ def test_rebuild_from_rebuilds_every_day_from_that_date(db):
     assert _stored_counts(db) == _ground_truth(db)
 
 
-def test_a_refresh_with_nothing_new_rebuilds_nothing(db):
+def test_calculate_metrics_skips_a_refresh_with_nothing_new(db):
     """With no write since the last calculation, the fingerprint of yesterday and today is the same, so nothing is
     rebuilt; a run written today moves only today."""
     _seed(db)
@@ -622,6 +650,21 @@ def test_a_refresh_with_nothing_new_rebuilds_nothing(db):
     if month_key in versions:
         expected.add(month_key)
     assert {key for key in versions if new_versions[key] != versions[key]} == expected
+
+
+def test_a_fingerprint_past_14_digits_still_matches(db, monkeypatch):
+    """Past ~56k sessions or runs of yesterday and today, the sum of their update times passes 14 digits, so a refresh
+    with nothing new still rebuilds nothing."""
+    import agno.db.valkey.valkey as valkey_module
+
+    monkeypatch.setattr(
+        valkey_module,
+        "get_metrics_fingerprint",
+        lambda sessions, runs, yesterday: [yesterday.isoformat(), 60000, 107617023359999, 0, 0],
+    )
+    db.calculate_metrics()
+
+    assert db.calculate_metrics_dates() == []
 
 
 def test_get_metrics_reads_the_metrics_table_until_the_first_calculation_finished(db):
@@ -685,7 +728,26 @@ def test_records_written_before_the_index_are_indexed_by_the_first_calculation(d
     assert _stored_counts(db) == _ground_truth(db)
 
 
-def test_legacy_runs_of_an_unmigrated_session_are_counted(db):
+def test_a_rebuild_indexes_records_saved_without_the_index_since(db):
+    """Sessions and runs an earlier release saves after the first calculation, as during a rolling deploy, are in no
+    sorted set; a rebuild indexes them, so their days are built."""
+    _seed(db)
+    db.calculate_metrics()
+    day1 = _noon_utc(1)
+    _save(
+        db,
+        AgentSession(session_id="s-earlier", agent_id="agent-1", user_id="bob", created_at=day1),
+        [_run("r-earlier", day1, 20, agent_id="agent-1")],
+    )
+    for table_type, record_id in [("sessions", "s-earlier"), ("runs", "r-earlier")]:
+        db.valkey_client.zrem(f"agno:{table_type}:index:created_at", [record_id])
+
+    db.calculate_metrics(rebuild_from=_utc_date(3))
+
+    assert _stored_counts(db) == _ground_truth(db)
+
+
+def test_calculate_metrics_counts_runs_kept_in_the_legacy_runs_column(db):
     """A 2.x session keeps its runs in its legacy runs field until the v3 migration copies them; they are counted
     from there, and a run the runs table also holds is counted from the runs table."""
     created_at = _noon_utc(3)
@@ -740,7 +802,7 @@ def test_a_legacy_run_is_counted_on_its_own_day(db):
     assert [(row["date"], row["agent_runs_count"]) for row in rows] == [(_utc_date(5), 1), (_utc_date(3), 1)]
 
 
-def test_a_day_a_write_could_not_reopen_is_reopened_by_the_next_write(db, monkeypatch):
+def test_upsert_run_reopens_a_day_a_write_could_not_reopen(db, monkeypatch):
     """A failed reopen never fails the save, and the next write reopens the day."""
     _seed(db)
     db.calculate_metrics()
@@ -759,7 +821,7 @@ def test_a_day_a_write_could_not_reopen_is_reopened_by_the_next_write(db, monkey
     assert _versions(db, _utc_date(3), _utc_date(0))[day3] == versions[day3] + 1
 
 
-def test_a_stopped_calculation_releases_the_refresh(db):
+def test_calculate_metrics_dates_releases_the_lock_when_stopped(db):
     """A first calculation stopped between days releases the refresh as failed; a later one stopped leaves it as the
     last completed one left it, and the days it did not reach to the next."""
     _seed(db)
@@ -775,7 +837,7 @@ def test_a_stopped_calculation_releases_the_refresh(db):
     assert db.calculate_metrics_dates() == [_utc_date(1), _utc_date(0)]
 
 
-def test_a_month_rebuilt_day_reopens_its_month(db):
+def test_calculate_metrics_rebuilds_a_month_a_stopped_calculation_left(db):
     """A day rebuilt by a calculation that stops before its months reopens its month, so the next calculation
     rebuilds the month and a read of the whole month never takes the stale month row."""
     month_start = (_utc_date(0).replace(day=1) - timedelta(days=1)).replace(day=1)
@@ -807,7 +869,7 @@ def test_a_month_rebuilt_day_reopens_its_month(db):
     ]
 
 
-def test_a_whole_month_is_read_from_its_month_rows(db):
+def test_get_metrics_totals_reads_a_whole_month_from_its_month_rows(db):
     """A completed month gets month rows, counted over the month, and a range holding the whole month reads them."""
     month_start = (_utc_date(0).replace(day=1) - timedelta(days=1)).replace(day=1)
     if (_utc_date(0) - month_start).days < 40:
@@ -860,3 +922,118 @@ def test_get_metrics_versions(db):
     # Reopened, then rebuilt by the refresh before the read
     assert new_versions[f"daily {_utc_date(3).isoformat()}"] == versions[f"daily {_utc_date(3).isoformat()}"] + 2
     assert db.get_metrics_versions(_utc_date(3), _utc_date(3)) == new_versions
+
+
+def test_calculate_metrics_counts_a_remote_member_run_once(db):
+    """A remote member's run kept inside its team run and stored as a run of its own by the AgentOS that ran it, in the
+    same database, is counted once, from its own row, and its session is not counted."""
+    day2 = _noon_utc(2)
+    member_run = {
+        **_run("r-remote", day2, 10, agent_id="remote-agent", parent_run_id="r-team"),
+        "session_id": "s-team:remote-agent",
+    }
+    _save(
+        db,
+        TeamSession(session_id="s-team", team_id="team-1", user_id="bob", created_at=day2),
+        [_run("r-team", day2, 0, team_id="team-1", member_responses=[member_run])],
+    )
+    # The remote AgentOS stores its run, with no parent, in a session of its own
+    _save(
+        db,
+        AgentSession(session_id="s-team:remote-agent", agent_id="remote-agent", user_id="bob", created_at=day2),
+        [{**member_run, "parent_run_id": None}],
+    )
+
+    db.calculate_metrics()
+
+    totals, _ = db.get_metrics_totals(_utc_date(2), _utc_date(2), fields=["root_runs_count", "input_tokens"])
+    assert totals == {"root_runs_count": 1, "input_tokens": 10}
+    assert db.get_metrics(_utc_date(2), _utc_date(2), user_id="bob")[0][0]["agent_sessions_count"] == 0
+
+
+def test_calculate_metrics_builds_no_month_before_its_last_day_can_be_completed(db):
+    """The current month is only reopened by its days, never built, until its last day can be completed."""
+    _seed(db)
+
+    db.calculate_metrics()
+
+    month_key = f"monthly {_utc_date(0).replace(day=1).isoformat()}"
+    assert _versions(db, _utc_date(0).replace(day=1), _utc_date(0)).get(month_key, 1) == 1
+
+
+def test_calculate_metrics_rebuild_from_rebuilds_yesterday_and_today_after_another_process_completes(db):
+    """rebuild_from leaves yesterday and today to the next calculation when another process holds the metrics refresh
+    and completes it with the fingerprint it read before the rebuild."""
+    _seed(db)
+    _backdate(db)
+    db.calculate_metrics()
+    refresh_row = db._claim_metrics_refresh("other")
+    assert refresh_row is not None and refresh_row["fingerprint"] is not None
+
+    assert db.calculate_metrics(rebuild_from=_utc_date(3)) is None
+
+    db._release_metrics_refresh(
+        "other", fingerprint=refresh_row["fingerprint"], claimed_fingerprint=refresh_row["fingerprint"]
+    )
+    assert db.calculate_metrics_dates() == [_utc_date(day) for day in [3, 2, 1, 0]]
+    assert db.calculate_metrics_dates() == []
+
+
+def test_calculate_metrics_rebuild_from_rebuilds_yesterday_and_today_after_another_process_claimed_no_fingerprint(db):
+    """rebuild_from leaves yesterday and today to the next calculation when another process holds a metrics refresh it
+    claimed with no fingerprint stored, and completes it with a fingerprint."""
+    _seed(db)
+    _backdate(db)
+    db.calculate_metrics()
+    fingerprint = db._claim_metrics_refresh("other")["fingerprint"]
+    db._release_metrics_refresh("other", fingerprint=None, claimed_fingerprint=fingerprint)
+    refresh_row = db._claim_metrics_refresh("other")
+    assert refresh_row is not None and refresh_row["fingerprint"] is None
+
+    assert db.calculate_metrics(rebuild_from=_utc_date(0)) is None
+
+    db._release_metrics_refresh("other", fingerprint=fingerprint, claimed_fingerprint=None)
+    assert db.calculate_metrics_dates() == [_utc_date(1), _utc_date(0)]
+    assert db.calculate_metrics_dates() == []
+
+
+def test_calculate_metrics_rebuild_from_records_a_failed_reopen(db, monkeypatch):
+    """A rebuild whose reopen fails shows the error in the refresh status."""
+    _seed(db)
+    db.calculate_metrics()
+
+    def fail_reopen() -> List[str]:
+        raise ConnectionError("reopen failed")
+
+    monkeypatch.setattr(db, "_get_metrics_everyone_record_ids", fail_reopen)
+    with pytest.raises(ConnectionError):
+        db.calculate_metrics(rebuild_from=_utc_date(3))
+
+    refresh_row = json.loads(db.valkey_client.get(db._metrics_refresh_key()))
+    assert (refresh_row["status"], refresh_row["error"], refresh_row["locked_by"]) == ("failed", "reopen failed", None)
+
+
+def test_calculate_metrics_counts_a_remote_member_run_two_days_after_its_team_run_as_a_root_run(db):
+    """A remote member's run two days after its team run names itself as its root, as only the day before is read for
+    its team's run."""
+    member_run = {
+        **_run("r-remote", _noon_utc(1), 10, agent_id="remote-agent", parent_run_id="r-team"),
+        "session_id": "s-team:remote-agent",
+    }
+    _save(
+        db,
+        TeamSession(session_id="s-team", team_id="team-1", user_id="bob", created_at=_noon_utc(3)),
+        [_run("r-team", _noon_utc(3), 0, team_id="team-1", member_responses=[member_run])],
+    )
+    _save(
+        db,
+        AgentSession(session_id="s-team:remote-agent", agent_id="remote-agent", user_id="bob", created_at=_noon_utc(1)),
+        [{**member_run, "parent_run_id": None}],
+    )
+
+    db.calculate_metrics()
+
+    rows = db._get_component_metrics_records(
+        db._get_metrics_record_ids("component_metrics", "date", [_utc_date(1).isoformat()])
+    )
+    assert [(row["component_id"], row["root_component_id"]) for row in rows] == [("remote-agent", "remote-agent")]

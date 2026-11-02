@@ -230,7 +230,7 @@ def _user_metrics_upsert(table: Table, user_metrics_row: Dict[str, Any], read_ve
         for col in table.columns
         if col.name not in [*USER_METRICS_KEY_COLUMNS, "created_at", "version", "completed"]
     ]
-    # Compared in the statement, so a reopen written since the version was read keeps the period open. MySQL sets
+    # Compared in the statement, so a reopen written since the version was read keeps the period open. SingleStore sets
     # the columns in order, each seeing the ones before, so the version is compared before it moves
     update_columns.append(
         (
@@ -372,6 +372,7 @@ def build_component_metrics_legacy_runs_query(
     # A legacy run is dated and typed the way the v3.0.0 migration writes it to the runs table
     legacy_runs_stmt = select(
         run_id.label("run_id"),
+        sessions_table.c.session_id,
         case(
             (func.coalesce(func.JSON_EXTRACT_STRING(legacy_run.c.table_col, "agent_id"), "") != "", "agent"),
             (func.coalesce(func.JSON_EXTRACT_STRING(legacy_run.c.table_col, "team_id"), "") != "", "team"),
@@ -449,6 +450,7 @@ def build_component_metrics_runs_query(table: Table, start_timestamp: int, end_t
     return (
         select(
             table.c.run_id,
+            table.c.session_id,
             table.c.run_type,
             table.c.agent_id,
             table.c.team_id,
@@ -549,8 +551,8 @@ def build_component_metrics_totals_query(
         table (Table): The user metrics table, or the component metrics table to total the runs with no user.
         starting_date (date): The first day to total.
         ending_date (date): The last day to total.
-        user_id (str): The user whose rows are totalled: ``""`` totals the everyone rows of the totals table, or the
-            rows with no user of the component metrics table.
+        user_id (str): The user whose rows are totalled: ``""`` totals the everyone rows of the user metrics table, or
+            the rows with no user of the component metrics table.
         month_starts (Sequence[date]): The first day of every month inside the date range to total from its month
             row instead of its days.
 
@@ -569,7 +571,7 @@ def build_component_metrics_totals_query(
     if not filters:
         return None
 
-    # Read in one statement: SingleStore reads at READ COMMITTED only
+    # Read the day and month rows in one statement: SingleStore reads at READ COMMITTED only
     return select(table).where(table.c.user_id == user_id, or_(*filters))
 
 

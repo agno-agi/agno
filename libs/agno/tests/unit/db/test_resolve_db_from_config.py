@@ -48,6 +48,17 @@ class TestResolveDbFromConfigSqlite:
         # Same Python object: no clone needed, no new engine allocated.
         assert resolved is os_db
 
+    def test_saved_default_metrics_table_returns_registered_instance(self, tmp_path):
+        os_db = SqliteDb(db_file=str(tmp_path / "os.db"))
+        registry = _FakeRegistry(os_db)
+
+        data = dict(os_db.to_dict())
+        data["metrics_table"] = "agno_metrics"
+
+        resolved = resolve_db_from_config(data, registry=registry)
+
+        assert resolved is os_db
+
     def test_overrides_return_clone_sharing_engine(self, tmp_path):
         os_db = SqliteDb(db_file=str(tmp_path / "os.db"))
         registry = _FakeRegistry(os_db)

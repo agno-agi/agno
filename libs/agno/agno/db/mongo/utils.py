@@ -182,6 +182,7 @@ def build_component_metrics_runs_projection() -> Dict[str, int]:
     return {
         "_id": 0,
         "run_id": 1,
+        "session_id": 1,
         "run_type": 1,
         "agent_id": 1,
         "team_id": 1,
@@ -201,6 +202,7 @@ def build_component_metrics_legacy_runs_projection() -> Dict[str, int]:
     field, and the runs nested inside them."""
     return {
         "_id": 0,
+        "session_id": 1,
         "user_id": 1,
         "created_at": 1,
         **{f"runs.{field}": 1 for field in _METRICS_LEGACY_RUN_FIELDS},
@@ -346,7 +348,7 @@ async def aupsert_user_metrics_row(
 
 
 def _user_metrics_rows_upserts(user_metrics_rows: List[Dict[str, Any]]) -> List[UpdateOne]:
-    """Build the upsert of each user row of the user metrics table. A user row is written with its period's
+    """Build the upsert of each user row of the user metrics collection. A user row is written with its period's
     everyone row, so its completed and version are never compared."""
     upserts = []
     for user_metrics_row in user_metrics_rows:
@@ -368,7 +370,7 @@ def _user_metrics_rows_upserts(user_metrics_rows: List[Dict[str, Any]]) -> List[
 
 
 def bulk_upsert_user_metrics_rows(collection: Collection, user_metrics_rows: List[Dict[str, Any]]) -> None:
-    """Bulk upsert the user rows of a period into the user metrics table, in one request.
+    """Bulk upsert the user rows of a period into the user metrics collection, in one request.
 
     Args:
         collection (Collection): The user metrics collection.
@@ -382,7 +384,7 @@ def bulk_upsert_user_metrics_rows(collection: Collection, user_metrics_rows: Lis
 async def abulk_upsert_user_metrics_rows(
     collection: "AsyncMongoCollectionType", user_metrics_rows: List[Dict[str, Any]]
 ) -> None:
-    """Bulk upsert the user rows of a period into the user metrics table, in one request.
+    """Bulk upsert the user rows of a period into the user metrics collection, in one request.
 
     Args:
         collection (AsyncMongoCollectionType): The user metrics collection.
@@ -394,7 +396,7 @@ async def abulk_upsert_user_metrics_rows(
 
 
 def _reopen_metrics_row(row_date: date, aggregation_period: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    """Build the filter and the update that reopen a day's or a month's everyone row of the user metrics table,
+    """Build the filter and the update that reopen a day's or a month's everyone row of the user metrics collection,
     inserting an empty open row when it has none."""
     empty_row = serialize_metrics_row(build_user_metrics_row([], aggregation_period, row_date, completed=False))
     key_filter = {column: empty_row[column] for column in USER_METRICS_KEY_COLUMNS}
@@ -429,8 +431,8 @@ async def areopen_metrics_day(collection: "AsyncMongoCollectionType", day: date)
 
 
 def _reopen_metrics_days_from(starting_date: date) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    """Build the filter and the update that reopen every day's everyone row of the user metrics table from the given
-    date on."""
+    """Build the filter and the update that reopen every day's everyone row of the user metrics collection from the
+    given date on."""
     return (
         {"aggregation_period": "daily", "user_id": "", "date": {"$gte": starting_date.isoformat()}},
         {"$set": {"completed": False}, "$inc": {"version": 1}},
@@ -516,8 +518,8 @@ def build_metrics_rows_filter(
     Args:
         starting_date (date): The first day to read.
         ending_date (date): The last day to read.
-        user_id (str): The user whose rows are read. "" for the everyone rows of the user metrics table, or the rows
-            with no user of the component metrics table.
+        user_id (str): The user whose rows are read. "" for the everyone rows of the user metrics collection, or the
+            rows with no user of the component metrics collection.
         month_starts (Sequence[date]): The first day of every month inside the date range to read the month row of
             instead of its days.
 
@@ -546,8 +548,8 @@ def build_metrics_rows_projection(fields: Sequence[str]) -> Dict[str, int]:
     projection = {"_id": 0, "aggregation_period": 1, "date": 1, "updated_at": 1, **{field: 1 for field in fields}}
     if any(field in [*METRICS_TOKEN_DETAILS_FIELDS, "audio_total_tokens", *METRICS_COST_FIELDS] for field in fields):
         projection["token_details"] = 1
-    # The user metrics table keeps the sessions of each type, and the component metrics table the runs of each
-    # component, with the run that started them
+    # The user metrics collection keeps the sessions of each type, and the component metrics collection the runs of
+    # each component, with the run that started them
     if "sessions_count" in fields:
         projection.update({f"{component_type}_sessions_count": 1 for component_type in METRICS_COMPONENT_TYPES})
     if "root_runs_count" in fields:

@@ -125,7 +125,7 @@ METRICS_TABLE_SCHEMA = {
     "updated_at": {"type": BigInteger, "nullable": True},
     "completed": {"type": Boolean, "nullable": False, "default": False},
     # No ``UNIQUE(user_id, date, aggregation_period)``: SingleStore rejects a second multi-column UNIQUE
-    # alongside the ``id`` primary key (error 1706). Each calculation wrote one row per triple.
+    # alongside the ``id`` primary key (error 1706).
 }
 
 COMPONENT_METRICS_TABLE_SCHEMA = {

@@ -286,7 +286,7 @@ _DEFAULT_METRICS_STOP_TIMEOUT = 30
 @asynccontextmanager
 async def metrics_lifespan(app: FastAPI, agent_os: "AgentOS"):
     """Calculate the metrics of every database with a lock row in the background: once at startup, then every
-    metrics_calculation_interval seconds. The lock row lets one process calculate at a time."""
+    metrics_calculation_interval_seconds. The lock row lets one process calculate at a time."""
     from itertools import chain
 
     # A database registered under several ids is calculated once
@@ -314,7 +314,7 @@ async def metrics_lifespan(app: FastAPI, agent_os: "AgentOS"):
                 except Exception as exc:
                     log_error(f"Metrics calculation error: {database_error_message(exc)}")
             with contextlib.suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(stopping.wait(), timeout=agent_os.settings.metrics_calculation_interval)
+                await asyncio.wait_for(stopping.wait(), timeout=agent_os.settings.metrics_calculation_interval_seconds)
 
     task = asyncio.create_task(calculate_loop())
 

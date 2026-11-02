@@ -280,6 +280,7 @@ USER_METRICS_TABLE_SCHEMA = {
         {"AttributeName": "period_user_id", "AttributeType": "S"},
         {"AttributeName": "date", "AttributeType": "S"},
         {"AttributeName": "aggregation_period", "AttributeType": "S"},
+        {"AttributeName": "open_period", "AttributeType": "S"},
     ],
     "GlobalSecondaryIndexes": [
         # Every user's rows of a period and date range
@@ -287,6 +288,17 @@ USER_METRICS_TABLE_SCHEMA = {
             "IndexName": "aggregation_period-date-index",
             "KeySchema": [
                 {"AttributeName": "aggregation_period", "KeyType": "HASH"},
+                {"AttributeName": "date", "KeyType": "RANGE"},
+            ],
+            "Projection": {"ProjectionType": "ALL"},
+            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+        },
+        # The open everyone rows of a period: only an open everyone row has open_period, so a completed row is never
+        # read to find the open ones
+        {
+            "IndexName": "open_period-date-index",
+            "KeySchema": [
+                {"AttributeName": "open_period", "KeyType": "HASH"},
                 {"AttributeName": "date", "KeyType": "RANGE"},
             ],
             "Projection": {"ProjectionType": "ALL"},

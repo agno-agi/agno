@@ -11,8 +11,8 @@ from agno.db.utils import (
     METRICS_TOKEN_FIELDS,
     build_user_metrics_row,
     get_metrics_legacy_runs,
-    get_metrics_parent_run_id,
     get_sort_value,
+    metrics_parent_run_id,
     user_metrics_row_to_store,
 )
 from agno.utils.log import log_warning
@@ -221,7 +221,7 @@ def generate_created_at_index_key(prefix: str, table_type: str) -> str:
 
 def generate_metrics_prefix(prefix: str) -> str:
     """Generate the prefix of every key of the metrics tables. The braces make it the keys' hash tag, so they share one
-    cluster slot and a transaction or a script can write the rows of a day together with the metrics refresh."""
+    cluster slot and a transaction can write the rows of a day together with the metrics refresh."""
     return f"{{{prefix}}}"
 
 
@@ -370,10 +370,10 @@ def upsert_user_metrics_row(
     refresh_key = generate_redis_key(prefix=prefix, table_type="metrics_refreshes", key_id=METRICS_REFRESH_ID)
     for _ in range(10):
         try:
-            with redis_client.pipeline() as pipe:
+            with redis_client.pipeline(transaction=True) as pipe:
                 pipe.watch(key, refresh_key)
                 raw = pipe.get(refresh_key)
-                refresh_row = json.loads(raw) if raw is not None else {}  # type: ignore[arg-type]
+                refresh_row = json.loads(raw if isinstance(raw, str) else raw.decode()) if raw is not None else {}
                 if refresh_row.get("locked_by") != worker_id:
                     pipe.unwatch()
                     return False
@@ -558,6 +558,8 @@ def _build_component_metrics_run_data(run_data: Dict[str, Any]) -> Dict[str, Any
         "run_id": run_data.get("run_id"),
         "agent_id": run_data.get("agent_id"),
         "team_id": run_data.get("team_id"),
+        "session_id": run_data.get("session_id"),
+        "parent_run_id": run_data.get("parent_run_id"),
         "metrics": trimmed_metrics,
         "model": run_data.get("model"),
         "model_provider": run_data.get("model_provider"),
@@ -597,12 +599,13 @@ def build_component_metrics_run(run: Dict[str, Any]) -> Dict[str, Any]:
     """
     return {
         "run_id": run.get("run_id"),
+        "session_id": run.get("session_id"),
         "run_type": run.get("run_type"),
         "agent_id": run.get("agent_id"),
         "team_id": run.get("team_id"),
         "workflow_id": run.get("workflow_id"),
         "user_id": run.get("user_id"),
-        "parent_run_id": get_metrics_parent_run_id(run),
+        "parent_run_id": metrics_parent_run_id(run),
         "status": run.get("status"),
         "run_data": _build_component_metrics_run_data(run.get("run_data") or {}),
         "created_at": run.get("created_at"),

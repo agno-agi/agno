@@ -20,7 +20,7 @@ from agno.db.utils import (
     USER_METRICS_KEY_COLUMNS,
     build_metrics_by_owner_from_rows,
     build_metrics_from_user_metrics,
-    calculate_day_metrics,
+    calculate_date_metrics,
     calculate_month_metrics,
     database_error_message,
     deserialize_history_run,
@@ -28,7 +28,7 @@ from agno.db.utils import (
     deserialize_sessions,
     drop_legacy_metrics,
     filter_context_runs,
-    get_metrics_days_to_calculate,
+    get_metrics_dates_to_calculate,
     get_metrics_records_by_day,
     get_metrics_reopen_session_ids,
     get_metrics_rows_by_key,
@@ -39,12 +39,14 @@ from agno.db.utils import (
     list_metrics_totals_models,
     merge_metrics_totals,
     metrics_calculation_enabled,
+    metrics_day_completed,
     metrics_day_to_reopen,
     metrics_full_months,
+    metrics_month_end,
     metrics_refresh_status,
     metrics_versions,
-    reopen_metrics_day_rows_from,
-    reopen_metrics_month_row,
+    reopen_metrics_days_from,
+    reopen_metrics_month,
     reopened_user_metrics_row,
     resolve_metrics_fields,
     total_metrics_rows,
@@ -426,6 +428,9 @@ class InMemoryDb(BaseDb):
                 if existing_uid is not None and existing_uid != session_dict.get("user_id"):
                     return None
                 session_dict["updated_at"] = int(time.time())
+                # The stored created_at, which keeps the session on the day it was created
+                if existing_session.get("created_at") is not None:
+                    session_dict["created_at"] = existing_session["created_at"]
                 # A session-row update must never drop runs written by
                 # upsert_run: carry the stored list forward. The list is
                 # already owned by the store, so it needs no copy.
@@ -1052,64 +1057,137 @@ class InMemoryDb(BaseDb):
             # A stale lock is taken over: the calculation that held it stopped
             self._metrics_refresh_locks[METRICS_REFRESH_ID] = worker_id
         now = int(time.time())
-        refresh_row = {
-            "id": METRICS_REFRESH_ID,
-            "finished_at": None,
-            "fingerprint": None,
-            **(refresh_row or {}),
-            "locked_by": worker_id,
-            "locked_at": now,
-            "started_at": now,
-            "status": "running",
-            "error": None,
-        }
-        self._metrics_refreshes = [refresh_row]
-        return refresh_row
+        for _ in range(METRICS_WRITE_RETRIES + 1):
+            refresh_rows = self._metrics_refreshes
+            refresh_row = {
+                "id": METRICS_REFRESH_ID,
+                "finished_at": None,
+                "fingerprint": None,
+                **(refresh_rows[0] if refresh_rows else {}),
+                "locked_by": worker_id,
+                "locked_at": now,
+                "started_at": now,
+                "status": "running",
+                "error": None,
+            }
+            # Replaced only while it is still the list read, so a rebuild's mark written since is kept
+            if self._metrics_refreshes is refresh_rows:
+                self._metrics_refreshes = [refresh_row]
+                return refresh_row
+        if self._metrics_refresh_locks.get(METRICS_REFRESH_ID) == worker_id:
+            del self._metrics_refresh_locks[METRICS_REFRESH_ID]
+        return None
+
+    def _mark_metrics_refresh_rebuild(self) -> bool:
+        """Write a mark no fingerprint equals on the metrics refresh row, so the next calculation rebuilds yesterday
+        and today. False when another thread wrote it on every try."""
+        for _ in range(METRICS_WRITE_RETRIES + 1):
+            refresh_rows = self._metrics_refreshes
+            if not refresh_rows:
+                return True
+            marked_rows = [{**refresh_rows[0], "fingerprint": ["rebuild", uuid4().hex]}]
+            # Replaced only while it is still the list read, so a write made since is never written over
+            if self._metrics_refreshes is refresh_rows:
+                self._metrics_refreshes = marked_rows
+                return True
+        return False
 
     def _heartbeat_metrics_refresh(self, worker_id: str) -> bool:
         """Refresh locked_at for this worker's metrics refresh. False when another calculation took it over."""
-        refresh_row = self._get_metrics_refresh_row()[0]
-        if self._metrics_refresh_locks.get(METRICS_REFRESH_ID) != worker_id or refresh_row is None:
-            return False
-        self._metrics_refreshes = [{**refresh_row, "locked_at": int(time.time())}]
+        for attempt in range(METRICS_WRITE_RETRIES + 1):
+            refresh_rows = self._metrics_refreshes
+            if self._metrics_refresh_locks.get(METRICS_REFRESH_ID) != worker_id or not refresh_rows:
+                return False
+            refreshed_rows = [{**refresh_rows[0], "locked_at": int(time.time())}]
+            # Replaced only while it is still the list read, so a write made since is never written over
+            if self._metrics_refreshes is refresh_rows:
+                self._metrics_refreshes = refreshed_rows
+                break
+            if attempt == METRICS_WRITE_RETRIES:
+                raise RuntimeError("The metrics refresh row was written by another thread on every try")
         return True
 
     def _release_metrics_refresh(
         self,
-        worker_id: str,
+        worker_id: Optional[str],
         error: Optional[str] = None,
         fingerprint: Optional[List[Any]] = None,
         stopped: bool = False,
+        claimed_fingerprint: Optional[List[Any]] = None,
+        started_at: Optional[int] = None,
+        finished_at: Optional[int] = None,
     ) -> None:
-        """Release the metrics refresh row: completed, with the fingerprint, without an error, and failed with
-        one."""
-        refresh_row = self._get_metrics_refresh_row()[0]
-        if self._metrics_refresh_locks.get(METRICS_REFRESH_ID) != worker_id or refresh_row is None:
-            return
-        values: Dict[str, Any] = {"locked_by": None, "locked_at": None}
-        if stopped:
-            # The days it did not reach stay open for the next calculation; a first one that stopped has none to show
-            finished = refresh_row["finished_at"] is not None
-            values.update(
-                status="completed" if finished else "failed", error=None if finished else METRICS_STOPPED_ERROR
-            )
-        elif error is None:
-            values.update(status="completed", error=None, finished_at=int(time.time()), fingerprint=fingerprint)
-        else:
-            values.update(status="failed", error=error)
-        self._metrics_refreshes = [{**refresh_row, **values}]
-        del self._metrics_refresh_locks[METRICS_REFRESH_ID]
+        """Release the metrics refresh row: completed, with the fingerprint, without an error, failed with one, and
+        as the last completed refresh left it when the calculation stopped. A worker_id of None writes the row only
+        while no calculation holds it and none started or finished after the read of started_at and finished_at, and
+        creates it when that read found none."""
+        try:
+            if self._metrics_refresh_locks.get(METRICS_REFRESH_ID) != worker_id:
+                return
+            for attempt in range(METRICS_WRITE_RETRIES + 1):
+                refresh_rows = self._metrics_refreshes
+                if worker_id is None and error is not None and started_at is None:
+                    # Before any refresh there is no row to update; one created since keeps its own status
+                    if refresh_rows:
+                        return
+                    refresh_row: Dict[str, Any] = {
+                        "id": METRICS_REFRESH_ID,
+                        "started_at": int(time.time()),
+                        "finished_at": None,
+                        "fingerprint": None,
+                    }
+                elif not refresh_rows or refresh_rows[0]["locked_by"] != worker_id:
+                    return
+                elif (
+                    worker_id is None
+                    and error is not None
+                    and (refresh_rows[0]["started_at"] != started_at or refresh_rows[0]["finished_at"] != finished_at)
+                ):
+                    return
+                else:
+                    refresh_row = refresh_rows[0]
+                values: Dict[str, Any] = {"locked_by": None, "locked_at": None}
+                if stopped:
+                    # The days it did not reach stay open for the next calculation; a first one that stopped has none
+                    # to show
+                    finished = refresh_row["finished_at"] is not None
+                    values.update(
+                        status="completed" if finished else "failed", error=None if finished else METRICS_STOPPED_ERROR
+                    )
+                elif error is None:
+                    values.update(status="completed", error=None, finished_at=int(time.time()), fingerprint=fingerprint)
+                    if refresh_row["fingerprint"] != claimed_fingerprint:
+                        # A rebuild that marked the fingerprint after the claim keeps its mark, so the next
+                        # calculation rebuilds yesterday and today
+                        values["fingerprint"] = refresh_row["fingerprint"]
+                else:
+                    values.update(status="failed", error=error)
+                released_rows = [{**refresh_row, **values}]
+                # Replaced only while it is still the list read, so a write made since is never written over
+                if self._metrics_refreshes is refresh_rows:
+                    self._metrics_refreshes = released_rows
+                    break
+                if attempt == METRICS_WRITE_RETRIES:
+                    raise RuntimeError("The metrics refresh row was written by another thread on every try")
+            if worker_id is not None:
+                del self._metrics_refresh_locks[METRICS_REFRESH_ID]
+        except Exception as e:
+            log_debug(f"Error releasing metrics refresh: {e}")
 
     def _get_metrics_runs(self) -> List[Dict[str, Any]]:
         """Get every run in the shape of a runs table row, as component metrics count them."""
         runs = []
-        for session in self._sessions.values():
+        for session in list(self._sessions.values()):
             for run in session.get("runs") or []:
                 if not isinstance(run, dict):
+                    continue
+                # A remote member's run, kept in its team's session too, is counted once, from its own session
+                if run.get("session_id") not in (None, session.get("session_id")):
                     continue
                 runs.append(
                     {
                         "run_id": run.get("run_id"),
+                        "session_id": session.get("session_id"),
                         "run_type": get_run_type(run),
                         "agent_id": run.get("agent_id"),
                         "team_id": run.get("team_id"),
@@ -1138,9 +1216,9 @@ class InMemoryDb(BaseDb):
         Args:
             rows_by_key (Optional[Dict[Tuple[Any, ...], Dict[str, Any]]]): Every component metrics row, by key. None
                 when no row changed.
-            periods (List[Tuple[List[Dict[str, Any]], bool, Optional[int]]]): The user metrics rows of each day and month,
-                from build_user_metrics_rows, whether its component rows changed, and the version of its everyone
-                row read before its runs.
+            periods (List[Tuple[List[Dict[str, Any]], bool, Optional[int]]]): The user metrics rows of each day and
+                month, from build_user_metrics_rows, whether its component rows changed, and the version of its
+                everyone row read before its runs.
             worker_id (str): The id of this calculation.
         """
         # The months this write rebuilds, which a rebuilt day of theirs leaves to be rebuilt here
@@ -1169,7 +1247,7 @@ class InMemoryDb(BaseDb):
                 if rows_changed and month_start not in month_starts:
                     # Reopened with the day, so a calculation that stops before its months leaves the month for
                     # the next
-                    reopen_metrics_month_row(user_metrics_by_key, month_start)
+                    reopen_metrics_month(user_metrics_by_key, month_start)
             # Replaced only while it is still the list read, so a reopen written since is kept
             if self._user_metrics is user_metrics_rows:
                 self._user_metrics = list(user_metrics_by_key.values())
@@ -1224,6 +1302,9 @@ class InMemoryDb(BaseDb):
 
         Returns:
             Optional[List[date]]: The days calculated, oldest first. None when another process is calculating them.
+
+        Raises:
+            Exception: If an error occurs during metrics calculation.
         """
         # Created before the claim, so a write during the first calculation reopens its day
         if self._user_metrics is None:
@@ -1232,15 +1313,30 @@ class InMemoryDb(BaseDb):
         if rebuild_from is not None:
             # Reopened as a write reopens a day, before the claim, so a calculation another process is running
             # leaves them to the next one
-            for attempt in range(METRICS_WRITE_RETRIES + 1):
-                user_metrics_rows = self._user_metrics
-                user_metrics_by_key = get_metrics_rows_by_key(user_metrics_rows, USER_METRICS_KEY_COLUMNS)
-                reopen_metrics_day_rows_from(user_metrics_by_key, rebuild_from)
-                if self._user_metrics is user_metrics_rows:
-                    self._user_metrics = list(user_metrics_by_key.values())
-                    break
-                if attempt == METRICS_WRITE_RETRIES:
-                    raise RuntimeError("The user metrics rows were written by another thread on every try")
+            started_at = finished_at = None
+            try:
+                # A calculation that starts or finishes after this read keeps its own status
+                refresh_row = self._get_metrics_refresh_row()[0]
+                if refresh_row is not None:
+                    started_at, finished_at = refresh_row["started_at"], refresh_row["finished_at"]
+                for attempt in range(METRICS_WRITE_RETRIES + 1):
+                    user_metrics_rows = self._user_metrics
+                    user_metrics_by_key = get_metrics_rows_by_key(user_metrics_rows, USER_METRICS_KEY_COLUMNS)
+                    reopen_metrics_days_from(user_metrics_by_key, rebuild_from)
+                    if self._user_metrics is user_metrics_rows:
+                        self._user_metrics = list(user_metrics_by_key.values())
+                        break
+                    if attempt == METRICS_WRITE_RETRIES:
+                        raise RuntimeError("The user metrics rows were written by another thread on every try")
+                # Yesterday and today are picked by the fingerprint, so it is marked for the next one too
+                if not self._mark_metrics_refresh_rebuild():
+                    return None
+            except Exception as e:
+                # Failed before the claim, so the refresh status shows it
+                self._release_metrics_refresh(
+                    None, error=database_error_message(e), started_at=started_at, finished_at=finished_at
+                )
+                raise
 
         worker_id = str(uuid4())
         # Claimed before anything is read, so a calculation that finds another running reads nothing
@@ -1254,7 +1350,7 @@ class InMemoryDb(BaseDb):
             # Read after the versions of the days, so a run written while they are calculated moves its day
             sessions = list(self._sessions.values())
             runs = self._get_metrics_runs()
-            dates_to_process, fingerprint = get_metrics_days_to_calculate(
+            dates_to_process, fingerprint = get_metrics_dates_to_calculate(
                 user_metrics_by_key, sessions, runs, refresh_row, rebuild_from
             )
             if rebuild_from is not None:
@@ -1289,7 +1385,7 @@ class InMemoryDb(BaseDb):
                     if should_stop is not None and should_stop():
                         stopped = True
                         break
-                    user_metrics_rows, day_rows_changed = calculate_day_metrics(
+                    user_metrics_rows, day_rows_changed = calculate_date_metrics(
                         rows_by_key,
                         date_to_process,
                         sessions_by_day.get(date_to_process, []),
@@ -1309,9 +1405,12 @@ class InMemoryDb(BaseDb):
                     rows_changed = rows_changed or day_rows_changed
                     calculated_dates.append(date_to_process)
 
+            # A month row is read only once completed, so a month is built only once its last day can be completed
             month_starts = sorted(
-                set(get_months_to_calculate_metrics_for(calculated_dates))
+                month_start
+                for month_start in set(get_months_to_calculate_metrics_for(calculated_dates))
                 | set(get_open_metrics_months(user_metrics_by_key))
+                if metrics_day_completed(metrics_month_end(month_start))
             )
             for month_start in month_starts:
                 if stopped or (should_stop is not None and should_stop()):
@@ -1337,7 +1436,9 @@ class InMemoryDb(BaseDb):
             self._release_metrics_refresh(worker_id, error=database_error_message(e))
             raise
 
-        self._release_metrics_refresh(worker_id, fingerprint=fingerprint)
+        self._release_metrics_refresh(
+            worker_id, fingerprint=fingerprint, claimed_fingerprint=refresh_row["fingerprint"]
+        )
 
         if not calculated_dates:
             log_info("Metrics already calculated for all relevant dates.")
@@ -1461,7 +1562,7 @@ class InMemoryDb(BaseDb):
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
             ending_date (Optional[date]): The ending date to filter metrics by.
-            user_id (Optional[str]): The ID of the user to filter by. ``None`` returns metrics for all users.
+            user_id (Optional[str]): The ID of the user. If provided, only returns that user's records.
         """
         try:
             self._refresh_metrics_before_read()
@@ -1686,9 +1787,7 @@ class InMemoryDb(BaseDb):
 
             return metrics_versions(
                 [
-                    SimpleNamespace(
-                        aggregation_period=row["aggregation_period"], date=row["date"], version=row["version"]
-                    )
+                    SimpleNamespace(**row)
                     for row in self._user_metrics or []
                     if row["user_id"] == "" and starting_date <= row["date"] <= ending_date
                 ]

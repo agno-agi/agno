@@ -309,8 +309,6 @@ class _SandboxStore:
     @staticmethod
     def _queue_metrics_reopen(connection: Connection, created_at: Optional[int]) -> None:
         """Queue the day a run write changed, for _transaction to reopen."""
-        # The async path runs the write as sync code through run_sync, which cannot await the reopen, so the days are
-        # kept on the connection and reopened when the transaction ends, in the same transaction.
         connection.info.setdefault(_METRICS_CREATED_ATS, []).append(created_at)
 
     @staticmethod
@@ -1146,6 +1144,7 @@ class _SandboxStore:
                     updated_at=int(time.time()),
                 )
             )
+            self._queue_metrics_reopen(connection, service["created_at"])
 
         await self._transaction(publish)
 

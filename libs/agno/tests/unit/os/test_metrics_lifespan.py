@@ -1,3 +1,5 @@
+"""Tests for the background metrics calculation of the AgentOS lifespan."""
+
 import asyncio
 import threading
 from datetime import date

@@ -8,13 +8,17 @@ import pytest
 from sqlalchemy import Column, MetaData, Table
 from sqlalchemy.dialects import mysql
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.sql.dml import Insert
 
 from agno.db.mysql.async_mysql import AsyncMySQLDb
 from agno.db.mysql.mysql import MySQLDb
 from agno.db.mysql.schemas import SESSION_TABLE_SCHEMA, get_table_schema_definition
-from agno.db.mysql.utils import build_component_metrics_run, upsert_user_metrics_row
+from agno.db.mysql.utils import (
+    build_component_metrics_run,
+    upsert_user_metrics_row,
+)
 
 TODAY = datetime.now(timezone.utc).date()
 
@@ -85,6 +89,7 @@ class _FakeSession:
         rows = next((self.rows_by_table[name] for name in table_names if name in self.rows_by_table), [])
         result = MagicMock()
         result.fetchall.return_value = rows
+        result.first.return_value = rows[0] if rows else None
         result.fetchmany.side_effect = _batches(rows)
         result.scalar.return_value = self.scalar
         result.scalars.return_value.all.return_value = [row.date for row in rows if hasattr(row, "date")]
@@ -115,6 +120,7 @@ def mock_engine():
     """Create a mock SQLAlchemy engine"""
     engine = Mock(spec=Engine)
     engine.url = "fake:///url"
+    engine.dialect = mysql.dialect()
     return engine
 
 
@@ -123,6 +129,7 @@ def mock_async_engine():
     """Create a mock async SQLAlchemy engine"""
     engine = Mock(spec=AsyncEngine)
     engine.url = "fake:///url"
+    engine.dialect = mysql.dialect()
     return engine
 
 
@@ -160,9 +167,9 @@ def _written(session, table_name):
     return [row for name, rows in session.writes if name == table_name for row in rows]
 
 
-def test_calculate_metrics_writes_each_day_and_its_totals_rows_last(mysql_db):
-    """Each day gets one row per user, then its user and everyone totals rows; only a day ended a day ago is
-    completed, and the lock is released with the fingerprint."""
+def test_calculate_metrics_writes_each_day_and_its_user_metrics_rows_last(mysql_db):
+    """Each day gets one row per user, then its user metrics rows; only a day ended a day ago is completed, and the
+    lock is released with the fingerprint."""
     session = _FakeSession({"test_sessions": [_session_row("alice"), _session_row("bob")]})
     mysql_db.Session = Mock(return_value=session)
 
@@ -183,14 +190,17 @@ def test_calculate_metrics_writes_each_day_and_its_totals_rows_last(mysql_db):
         ("daily", TODAY - timedelta(days=1), 2, False),
         ("daily", TODAY, 2, False),
     ]
-    # Every month a rebuilt day is in is reopened with the day, then gets its totals rows after the days
+    # Every month a rebuilt day is in is reopened with the day
     month_rows = [row for row in everyone_rows if row["aggregation_period"] == "monthly"]
     assert {row["date"] for row in month_rows} == {row["date"].replace(day=1) for row in rows}
     mysql_db._release_metrics_refresh.assert_called_once()
-    assert mysql_db._release_metrics_refresh.call_args.kwargs == {"fingerprint": ["fingerprint"]}
+    assert mysql_db._release_metrics_refresh.call_args.kwargs == {
+        "fingerprint": ["fingerprint"],
+        "claimed_fingerprint": None,
+    }
 
 
-def test_totals_row_completed_is_compared_before_the_version_moves():
+def test_everyone_row_completed_is_compared_before_the_version_moves():
     """The everyone row is completed only while it keeps the version read, compared before the upsert moves it."""
     session = Mock()
     upsert_user_metrics_row(
@@ -206,7 +216,7 @@ def test_totals_row_completed_is_compared_before_the_version_moves():
     assert completed < statement.index("version = (test_user_metrics.version + %s)")
 
 
-def test_nested_runs_are_put_back_in_place():
+def test_build_component_metrics_run_rebuilds_the_stored_run_shape():
     """Runs nested inside a run come back under the run they are nested inside, in their stored order."""
     row = SimpleNamespace(
         _mapping={
@@ -235,6 +245,70 @@ def test_nested_runs_are_put_back_in_place():
     assert [member["run_id"] for member in members] == ["m1", "m2"]
     assert [nested["run_id"] for nested in members[0]["member_responses"]] == ["m1-1"]
     assert run["run_data"]["messages"] == [{"role": "assistant", "metrics": {"duration": 1.5}}]
+
+
+def test_reopen_metrics_days_raises_when_a_deadlock_rolled_back_the_write(mysql_db):
+    """A deadlock rolls back the whole transaction, savepoint included, and the write with it: the reopen raises, so
+    the write fails instead of committing nothing."""
+    session = MagicMock()
+    session.begin_nested.side_effect = OperationalError(
+        "ROLLBACK TO SAVEPOINT sa_savepoint_1", {}, Exception(1305, "SAVEPOINT sa_savepoint_1 does not exist")
+    )
+    old_day = TODAY - timedelta(days=5)
+
+    with pytest.raises(OperationalError):
+        mysql_db._reopen_metrics_days(
+            session, [int(datetime(old_day.year, old_day.month, old_day.day, 12, tzinfo=timezone.utc).timestamp())]
+        )
+
+
+def test_claim_metrics_refresh_returns_while_another_process_writes_a_day(mock_engine):
+    """A claim waits a second for the holder's lock, then returns None, and sets the lock wait back."""
+    db = MySQLDb(db_engine=mock_engine, db_schema="test_schema")
+    session = MagicMock()
+    session.__enter__.return_value = session
+    session.execute.side_effect = [
+        Mock(scalar=Mock(return_value=50)),
+        Mock(),
+        OperationalError("INSERT", {}, Exception(1205, "Lock wait timeout exceeded")),
+        Mock(),
+    ]
+    db.Session = Mock(return_value=session)
+
+    assert db._claim_metrics_refresh(TABLES["metrics_refreshes"], "worker") is None
+    assert str(session.execute.call_args_list[1].args[0]) == "SET SESSION innodb_lock_wait_timeout = 1"
+    assert session.execute.call_args.args[1] == {"seconds": 50}
+
+
+def test_release_metrics_refresh_keeps_a_rebuild_mark_over_a_claim_of_no_fingerprint(mock_engine):
+    """A mark a rebuild wrote after a claim that found no fingerprint stays, so the next calculation rebuilds
+    yesterday and today."""
+    db = MySQLDb(db_engine=mock_engine, db_schema="test_schema")
+    session = MagicMock()
+    session.__enter__.return_value = session
+    session.execute.return_value.scalar.return_value = ["rebuild", "mark"]
+    db.Session = Mock(return_value=session)
+
+    db._release_metrics_refresh(TABLES["metrics_refreshes"], "worker", fingerprint=["today"], claimed_fingerprint=None)
+
+    statement = str(session.execute.call_args.args[0].compile(dialect=mysql.dialect()))
+    assert "fingerprint" not in statement
+
+
+def test_calculate_metrics_rebuild_from_records_a_failed_reopen_before_any_refresh(mysql_db, monkeypatch):
+    """A rebuild whose reopen fails before any metrics refresh ran is shown as failed with its error."""
+
+    def _fail(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("agno.db.mysql.mysql.reopen_metrics_days_from", _fail)
+    mysql_db.Session = Mock(return_value=_FakeSession())
+
+    with pytest.raises(RuntimeError):
+        mysql_db.calculate_metrics_dates(rebuild_from=TODAY - timedelta(days=3))
+    mysql_db._release_metrics_refresh.assert_called_once_with(
+        TABLES["metrics_refreshes"], None, error="boom", started_at=None, finished_at=None
+    )
 
 
 def test_a_read_never_calculates_before_the_first_calculation_finished(mysql_db):

@@ -47,6 +47,20 @@ async def cleanup_component_metrics_sessions_and_runs(async_postgres_db_real: As
             pass  # Ignore cleanup errors for this table
 
 
+@pytest_asyncio.fixture
+async def legacy_runs_column(async_postgres_db_real: AsyncPostgresDb):
+    """Fixture adding the sessions table's legacy runs column, and dropping it after the test"""
+    schema_version = await async_postgres_db_real.get_latest_schema_version(async_postgres_db_real.session_table_name)
+    await async_postgres_db_real._get_table("sessions", create_table_if_not_found=True)
+    async with async_postgres_db_real.async_session_factory() as sess, sess.begin():
+        await sess.execute(text("ALTER TABLE test_schema.test_sessions ADD COLUMN runs JSONB"))
+    yield
+
+    await async_postgres_db_real.upsert_schema_version(async_postgres_db_real.session_table_name, schema_version)
+    async with async_postgres_db_real.async_session_factory() as sess, sess.begin():
+        await sess.execute(text("ALTER TABLE test_schema.test_sessions DROP COLUMN runs"))
+
+
 def _noon_utc(days_ago: int) -> int:
     """Midday UTC, ``days_ago`` days back.
 
@@ -71,6 +85,20 @@ async def _persist(db: AsyncPostgresDb, session) -> None:
     await db.upsert_session(session)
     for run_index, run in enumerate(session.runs or []):
         await db.upsert_run(run, session_id=session.session_id, user_id=session.user_id, run_index=run_index)
+
+
+async def _store_legacy_runs(db: AsyncPostgresDb, runs: List[Dict]) -> AsyncPostgresDb:
+    """Keep the runs in the sessions table's legacy runs column, and return a new instance that reads them.
+
+    The legacy column is read only before the v3.0.0 migration is stamped.
+    """
+    async with db.async_session_factory() as sess, sess.begin():
+        await sess.execute(
+            text("UPDATE test_schema.test_sessions SET runs = CAST(:runs AS JSONB)"), {"runs": json.dumps(runs)}
+        )
+    await db.upsert_schema_version(db.session_table_name, "2.5.0")
+    # A new instance, so the sessions table is read with its legacy column
+    return AsyncPostgresDb(db_engine=db.db_engine, db_schema="test_schema", session_table="test_sessions")
 
 
 def _run_metrics(
@@ -412,50 +440,50 @@ async def test_calculate_metrics_skips_a_rebuild_already_running(
 
 
 @pytest.mark.asyncio
-async def test_calculate_metrics_counts_runs_kept_in_the_legacy_runs_column(async_postgres_db_real: AsyncPostgresDb):
-    """Ensure a run not yet migrated out of the sessions table's legacy runs column is counted once, on its session's
-    day"""
-    session = _session_on(_utc_date(2), "legacy_session", "alice")
-    session.runs.append(
-        RunOutput(
-            run_id="legacy_only_run",
-            agent_id="agent-1",
-            status=RunStatus.completed,
-            model="gpt-5",
-            model_provider="OpenAI",
-            metrics=_run_metrics(30, 5),
-            messages=[_assistant_message(0.5)],
-            created_at=_noon_utc(2),
-        )
+async def test_calculate_metrics_counts_runs_kept_in_the_legacy_runs_column(
+    async_postgres_db_real: AsyncPostgresDb, legacy_runs_column
+):
+    """Ensure a run not yet migrated out of the sessions table's legacy runs column is counted once, on its own day,
+    and a first calculation builds a day with no session for it"""
+    session = _session_on(_utc_date(6), "legacy_session", "alice")
+    session.runs.extend(
+        [
+            RunOutput(
+                run_id="legacy_only_run",
+                agent_id="agent-1",
+                status=RunStatus.completed,
+                model="gpt-5",
+                model_provider="OpenAI",
+                metrics=_run_metrics(30, 5),
+                messages=[_assistant_message(0.5)],
+                created_at=_noon_utc(6),
+            ),
+            RunOutput(
+                run_id="legacy_later_run",
+                agent_id="agent-1",
+                user_id="alice",
+                status=RunStatus.completed,
+                model="gpt-5",
+                model_provider="OpenAI",
+                metrics=_run_metrics(30, 5),
+                messages=[],
+                created_at=_noon_utc(4),
+            ),
+        ]
     )
-    # The first run is in the runs table and the legacy column, the second in the legacy column only
-    schema_version = await async_postgres_db_real.get_latest_schema_version(async_postgres_db_real.session_table_name)
+    # The first run is in the runs table and the legacy column, the others in the legacy column only
     await async_postgres_db_real.upsert_session(session)
     await async_postgres_db_real.upsert_run(
         session.runs[0], session_id=session.session_id, user_id="alice", run_index=0
     )
-    async with async_postgres_db_real.async_session_factory() as sess, sess.begin():
-        await sess.execute(text("ALTER TABLE test_schema.test_sessions ADD COLUMN runs JSONB"))
-        await sess.execute(
-            text("UPDATE test_schema.test_sessions SET runs = CAST(:runs AS JSONB)"),
-            {"runs": json.dumps([run.to_dict() for run in session.runs])},
-        )
-    # The legacy column is read only before the v3.0.0 migration is stamped
-    await async_postgres_db_real.upsert_schema_version(async_postgres_db_real.session_table_name, "2.5.0")
-    try:
-        # A new instance, so the sessions table is read with its legacy column
-        legacy_db = AsyncPostgresDb(
-            db_engine=async_postgres_db_real.db_engine, db_schema="test_schema", session_table="test_sessions"
-        )
-        await legacy_db.calculate_metrics()
+    legacy_db = await _store_legacy_runs(async_postgres_db_real, [run.to_dict() for run in session.runs])
+    await legacy_db.calculate_metrics()
 
-        row = (await _stored_rows(legacy_db))[(_utc_date(2), "alice", "agent", "agent-1")]
-        assert (row["sessions_count"], row["runs_count"], row["total_tokens"]) == (1, 2, 50)
-        assert (row["model_calls_count"], row["total_model_call_ms"]) == (2, 2000)
-    finally:
-        await async_postgres_db_real.upsert_schema_version(async_postgres_db_real.session_table_name, schema_version)
-        async with async_postgres_db_real.async_session_factory() as sess, sess.begin():
-            await sess.execute(text("ALTER TABLE test_schema.test_sessions DROP COLUMN runs"))
+    row = (await _stored_rows(legacy_db))[(_utc_date(6), "alice", "agent", "agent-1")]
+    assert (row["sessions_count"], row["runs_count"], row["total_tokens"]) == (1, 2, 50)
+    assert (row["model_calls_count"], row["total_model_call_ms"]) == (2, 2000)
+    # The later run is counted on its own day, a day with no session
+    assert (await _stored_user_metrics_rows(legacy_db))[("daily", _utc_date(4))]["agent_runs_count"] == 1
 
 
 @pytest.mark.asyncio
@@ -637,7 +665,7 @@ def sample_multi_month_sessions_for_component_metrics() -> List[AgentSession]:
 
 
 @pytest.mark.asyncio
-async def test_calculate_metrics_writes_a_month_total_row_for_a_completed_month(
+async def test_calculate_metrics_writes_a_month_user_metrics_row_for_a_completed_month(
     async_postgres_db_real: AsyncPostgresDb, sample_multi_month_sessions_for_component_metrics
 ):
     """Ensure every month of a calculated day gets a user metrics row, completed once its last day is"""
@@ -649,18 +677,18 @@ async def test_calculate_metrics_writes_a_month_total_row_for_a_completed_month(
     second_month = _month_start(2)
     this_month = _month_start(0)
     # The month of yesterday gets its user metrics row even without traffic
-    month_totals_rows = {
+    month_user_metrics_rows = {
         key[1]: row
         for key, row in (await _stored_user_metrics_rows(async_postgres_db_real)).items()
         if key[0] == "monthly"
     }
-    assert set(month_totals_rows) == {first_month, second_month, _utc_date(1).replace(day=1), this_month}
-    assert {month_start for month_start, row in month_totals_rows.items() if row["completed"]} == {
+    assert set(month_user_metrics_rows) == {first_month, second_month, _utc_date(1).replace(day=1), this_month}
+    assert {month_start for month_start, row in month_user_metrics_rows.items() if row["completed"]} == {
         first_month,
         second_month,
     }
 
-    month_row = month_totals_rows[first_month]
+    month_row = month_user_metrics_rows[first_month]
     assert _user_metrics_sessions_count(month_row) == 4
     assert month_row["root_runs_count"] == 4
     assert (month_row["input_tokens"], month_row["output_tokens"], month_row["total_tokens"]) == (165, 20, 185)
@@ -679,12 +707,12 @@ async def test_calculate_metrics_writes_a_month_total_row_for_a_completed_month(
         starting_date=first_month, ending_date=second_month - timedelta(days=1), user_id=""
     )
     assert unowned_totals["sessions_count"] == 1
-    assert _user_metrics_sessions_count(month_totals_rows[second_month]) == 1
+    assert _user_metrics_sessions_count(month_user_metrics_rows[second_month]) == 1
 
 
 @pytest.mark.asyncio
-async def test_a_save_of_a_closed_day_from_a_fresh_process_is_stored(async_postgres_db_real: AsyncPostgresDb):
-    """Ensure a save that reopens a closed day is stored by a process that never looked the totals table up"""
+async def test_upsert_session_of_a_closed_day_from_a_fresh_process_is_stored(async_postgres_db_real: AsyncPostgresDb):
+    """Ensure a save that reopens a closed day is stored by a process that never looked the user metrics table up"""
     await _persist(async_postgres_db_real, _session_on(_utc_date(5), "alice_session", "alice"))
     await async_postgres_db_real.calculate_metrics()
     fresh_db = AsyncPostgresDb(
@@ -702,7 +730,9 @@ async def test_a_save_of_a_closed_day_from_a_fresh_process_is_stored(async_postg
 
 
 @pytest.mark.asyncio
-async def test_a_cancelled_calculation_releases_the_lock(async_postgres_db_real: AsyncPostgresDb, monkeypatch):
+async def test_calculate_metrics_dates_releases_the_lock_when_cancelled(
+    async_postgres_db_real: AsyncPostgresDb, monkeypatch
+):
     """Ensure a calculation cancelled mid-build, as on shutdown, releases the metrics refresh instead of holding it"""
     await _persist(async_postgres_db_real, _session_on(_utc_date(3), "alice_session", "alice"))
 

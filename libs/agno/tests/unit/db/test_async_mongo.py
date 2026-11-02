@@ -1,4 +1,5 @@
 import asyncio
+from datetime import date
 from unittest.mock import AsyncMock, Mock, PropertyMock, patch
 
 import pytest
@@ -6,6 +7,8 @@ from pymongo import AsyncMongoClient
 
 from agno.db.base import SessionType
 from agno.db.mongo import AsyncMongoDb
+from agno.db.utils import METRICS_REFRESH_ID
+from agno.session import AgentSession
 
 
 def test_id_is_deterministic():
@@ -85,6 +88,7 @@ def test_init_with_all_collections():
 
 
 @pytest.mark.asyncio
+@patch.object(AsyncMongoDb, "table_exists", new=AsyncMock(return_value=True))
 async def test_initialization_flags_cleared_on_event_loop_change():
     """Test that _initialized flags are cleared when event loop changes.
 
@@ -131,6 +135,7 @@ async def test_initialization_flags_cleared_on_event_loop_change():
 
 
 @pytest.mark.asyncio
+@patch.object(AsyncMongoDb, "table_exists", new=AsyncMock(return_value=True))
 async def test_indexes_awaited_properly():
     """Test that index creation is properly awaited.
 
@@ -165,6 +170,7 @@ async def test_indexes_awaited_properly():
 
 
 @pytest.mark.asyncio
+@patch.object(AsyncMongoDb, "table_exists", new=AsyncMock(return_value=True))
 async def test_collection_cache_reset_on_event_loop_change():
     """Test that all collection caches are reset on event loop change"""
     db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_cache_reset")
@@ -211,6 +217,21 @@ async def test_get_collection_without_table_name():
 
     with pytest.raises(ValueError, match="Session collection was not provided"):
         await db._get_collection("sessions", create_collection_if_not_found=True)
+
+
+@pytest.mark.asyncio
+async def test_created_sessions_collection_stores_latest_schema_version():
+    """A sessions collection the store creates stores the latest schema version, so metrics never read its legacy runs."""
+    db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
+
+    with (
+        patch.object(db, "table_exists", AsyncMock(return_value=False)),
+        patch.object(db, "upsert_schema_version", AsyncMock()) as upsert_schema_version,
+        patch("agno.db.mongo.async_mongo.create_collection_indexes_async", AsyncMock()),
+    ):
+        await db._get_collection("sessions", create_collection_if_not_found=True)
+
+    upsert_schema_version.assert_awaited_once_with(table_name=db.session_table_name, version="3.0.0")
 
 
 def test_db_client_property():
@@ -384,3 +405,113 @@ async def test_text_filters_match_literal_text():
     sessions_query, memories_query = [c.args[0] for c in mock_collection.count_documents.call_args_list]
     assert sessions_query["session_data.session_name"] == {"$regex": r"v1\.2\(draft", "$options": "i"}
     assert memories_query["memory"] == {"$regex": r"v1\.2\(draft", "$options": "i"}
+
+
+@pytest.mark.asyncio
+async def test_metrics_legacy_runs_stop_when_refresh_taken_over():
+    """The legacy runs are read with a heartbeat per batch, and stop once another process took the refresh over."""
+    db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
+
+    cursor = Mock()
+    cursor.batch_size.return_value = cursor
+    cursor.to_list = AsyncMock(return_value=[{"session_id": "s1", "created_at": 0, "runs": [{"run_id": "r1"}]}])
+    sessions_collection = Mock()
+    sessions_collection.find.return_value = cursor
+
+    with patch.object(db, "_heartbeat_metrics_refresh", AsyncMock(return_value=False)) as heartbeat:
+        result = await db._get_metrics_legacy_runs(sessions_collection, None, 0, 86400, Mock(), "worker")
+
+    assert result is None
+    heartbeat.assert_awaited_once()
+    cursor.to_list.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_metrics_release_keeps_rebuild_mark_after_claim_of_none():
+    """A claim of no fingerprint still compares, so a rebuild marked after it is kept."""
+    db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
+    refreshes_collection = Mock()
+    refreshes_collection.update_one = AsyncMock()
+
+    await db._release_metrics_refresh(refreshes_collection, "worker", fingerprint=["2026-11-01", 1, 2])
+
+    values = refreshes_collection.update_one.call_args.args[1][0]["$set"]
+    assert values["fingerprint"]["$cond"][0] == {"$eq": [{"$ifNull": ["$fingerprint", None]}, {"$literal": None}]}
+    assert values["fingerprint"]["$cond"][2] == "$fingerprint"
+
+
+@pytest.mark.asyncio
+async def test_metrics_rebuild_reopen_failure_marks_refresh_failed():
+    """A rebuild whose reopen fails shows the error in the refresh status, unless a process holds the refresh or a
+    calculation started or finished after the rebuild read it."""
+    db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
+    refreshes_collection = Mock()
+    refreshes_collection.find_one = AsyncMock(
+        return_value={"id": METRICS_REFRESH_ID, "started_at": 100, "finished_at": 200}
+    )
+    refreshes_collection.update_one = AsyncMock()
+
+    with (
+        patch.object(db, "_get_collection", AsyncMock(return_value=refreshes_collection)),
+        patch("agno.db.mongo.async_mongo.areopen_metrics_days_from", AsyncMock(side_effect=Exception("reopen failed"))),
+    ):
+        with pytest.raises(Exception, match="reopen failed"):
+            await db.calculate_metrics_dates(rebuild_from=date(2026, 10, 1))
+
+    query, pipeline = refreshes_collection.update_one.call_args.args
+    assert query == {"id": METRICS_REFRESH_ID, "locked_by": None, "started_at": 100, "finished_at": 200}
+    assert pipeline[0]["$set"]["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_upsert_sessions_reads_back_in_chunks():
+    """The sessions written are read back a chunk of ids at a time, so many long ids never exceed a query document."""
+    db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
+
+    async def _docs(docs):
+        for doc in docs:
+            yield doc
+
+    collection = Mock()
+    collection.bulk_write = AsyncMock()
+    # The lookup before the write passes a projection and finds nothing stored
+    collection.find.side_effect = lambda query, *args: _docs(
+        [] if args else [{"session_id": sid, "session_type": "agent"} for sid in query["session_id"]["$in"]]
+    )
+
+    with (
+        patch.object(db, "_get_collection", AsyncMock(return_value=collection)),
+        patch.object(db, "_reopen_metrics_days", AsyncMock()),
+        patch("agno.db.mongo.async_mongo.METRICS_IN_LIST_LIMIT", 1),
+    ):
+        results = await db.upsert_sessions([AgentSession(session_id="s1"), AgentSession(session_id="s2")])
+
+    assert [session.session_id for session in results] == ["s1", "s2"]
+    read_backs = [call.args[0] for call in collection.find.call_args_list if len(call.args) == 1]
+    assert read_backs == [{"session_id": {"$in": ["s1"]}}, {"session_id": {"$in": ["s2"]}}]
+
+
+@pytest.mark.asyncio
+async def test_an_unstamped_sessions_collection_with_no_legacy_runs_is_read_for_them_once():
+    """A sessions collection stamped with no version, as 3.0 and 3.1 left it, is read for legacy runs once, and not
+    again once that read of every session found none."""
+    db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
+    legacy_reads = AsyncMock(return_value=({}, {}))
+
+    with (
+        patch.object(db, "_get_collection", AsyncMock(return_value=Mock())),
+        patch.object(db, "get_latest_schema_version", AsyncMock(return_value="2.0.0")),
+        patch.object(db, "_claim_metrics_refresh", AsyncMock(return_value={"finished_at": 1, "fingerprint": None})),
+        patch.object(db, "_get_metrics_dates_to_calculate", AsyncMock(return_value=([date(2026, 10, 1)], None))),
+        patch.object(db, "_get_metrics_legacy_runs", legacy_reads),
+        patch.object(db, "_heartbeat_metrics_refresh", AsyncMock(return_value=True)),
+        patch.object(db, "_calculate_date_metrics", AsyncMock(return_value=True)),
+        patch.object(db, "_get_open_metrics_months", AsyncMock(return_value=[])),
+        patch.object(db, "_calculate_month_metrics", AsyncMock(return_value=True)),
+        patch.object(db, "_release_metrics_refresh", AsyncMock()),
+    ):
+        assert await db.calculate_metrics_dates() == [date(2026, 10, 1)]
+        assert await db.calculate_metrics_dates() == [date(2026, 10, 1)]
+
+    # The one read starts at 0, so it read every session
+    assert [read.args[2] for read in legacy_reads.call_args_list] == [0]

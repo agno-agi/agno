@@ -7,9 +7,10 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 import pytest
-from sqlalchemy import select, text, update
+from sqlalchemy import create_engine, null, select, text, update
 from sqlalchemy.orm import Session as OrmSession
 
+from agno.db.base import SessionType
 from agno.db.sqlite import AsyncSqliteDb, SqliteDb
 from agno.db.sqlite.utils import build_component_metrics_runs_query, reopen_metrics_day
 from agno.db.utils import METRICS_LOCK_SECONDS, METRICS_REFRESH_ID, METRICS_STOPPED_ERROR
@@ -241,7 +242,7 @@ async def _astored_rows(db: AsyncSqliteDb) -> Dict[tuple, Dict]:
         }
 
 
-def _stored_totals_rows(db: SqliteDb) -> Dict[tuple, Dict]:
+def _stored_user_metrics_rows(db: SqliteDb) -> Dict[tuple, Dict]:
     """Every day and month row of agno_user_metrics, keyed by (aggregation_period, date, user_id)."""
     table = db._get_table("user_metrics", create_table_if_not_found=True)
     with db.Session() as sess:
@@ -251,7 +252,7 @@ def _stored_totals_rows(db: SqliteDb) -> Dict[tuple, Dict]:
         }
 
 
-async def _astored_totals_rows(db: AsyncSqliteDb) -> Dict[tuple, Dict]:
+async def _astored_user_metrics_rows(db: AsyncSqliteDb) -> Dict[tuple, Dict]:
     """Every day and month row of agno_user_metrics, keyed by (aggregation_period, date, user_id)."""
     table = await db._get_table("user_metrics", create_table_if_not_found=True)
     async with db.async_session_factory() as sess:
@@ -265,7 +266,7 @@ def _day_versions(db: SqliteDb, starting_date: date, ending_date: date) -> Dict[
     """The version of each day's everyone row of agno_user_metrics in the date range."""
     return {
         key[1]: row["version"]
-        for key, row in _stored_totals_rows(db).items()
+        for key, row in _stored_user_metrics_rows(db).items()
         if key[0] == "daily" and key[2] == "" and starting_date <= key[1] <= ending_date
     }
 
@@ -275,7 +276,7 @@ def _numbers(row: Dict) -> tuple:
     return row["sessions_count"], row["runs_count"], row["total_tokens"]
 
 
-def _totals_numbers(row: Dict) -> tuple:
+def _user_metrics_numbers(row: Dict) -> tuple:
     """The sessions, runs and total tokens of a user metrics row."""
     return (
         row["agent_sessions_count"] + row["team_sessions_count"] + row["workflow_sessions_count"],
@@ -372,7 +373,7 @@ def test_calculate_month_metrics_in_batches(sqlite_db, monkeypatch):
     sqlite_db.calculate_metrics()
 
     month_start = _utc_date(70).replace(day=1)
-    assert _totals_numbers(_stored_totals_rows(sqlite_db)[("monthly", month_start, "")]) == (2, 2, 33)
+    assert _user_metrics_numbers(_stored_user_metrics_rows(sqlite_db)[("monthly", month_start, "")]) == (2, 2, 33)
 
 
 def test_calculate_metrics_counts_runs_kept_in_the_legacy_runs_column(tmp_path):
@@ -536,6 +537,45 @@ def test_calculate_metrics_counts_nested_runs_at_every_depth(tmp_path):
     assert row["model_metrics"] == {"OpenAI": {"gpt-5": {"count": 4}}}
 
 
+def test_calculate_metrics_counts_a_remote_member_run_once(tmp_path):
+    """Ensure a remote member's run kept inside its team run and stored as a run of its own by the AgentOS that ran it,
+    in the same database, is counted once, as a member run of its team's session"""
+    db = SqliteDb(db_file=str(tmp_path / "remote_member.db"))
+    member_run = _run("remote_member_run", "bob", 10, 0, _noon_utc(2), agent_id="remote-agent")
+    member_run.session_id = "team_session:remote-agent"
+    nested_member_run = _run(
+        "remote_member_run", "bob", 10, 0, _noon_utc(2), agent_id="remote-agent", parent_run_id="team_run"
+    )
+    nested_member_run.session_id = "team_session:remote-agent"
+    team_run = TeamRunOutput(
+        run_id="team_run",
+        team_id="team-1",
+        user_id="bob",
+        status=RunStatus.completed,
+        member_responses=[nested_member_run],
+        created_at=_noon_utc(2),
+    )
+    _persist(
+        db,
+        TeamSession(
+            session_id="team_session", team_id="team-1", user_id="bob", runs=[team_run], created_at=_noon_utc(2)
+        ),
+    )
+    # The remote AgentOS stores its run, with no parent, in a session of its own
+    _persist(db, _session("team_session:remote-agent", "bob", [member_run], _noon_utc(2)))
+    _backdate(db)
+    db.calculate_metrics()
+
+    everyone_row = _stored_user_metrics_rows(db)[("daily", _utc_date(2), "")]
+    assert (everyone_row["root_runs_count"], everyone_row["agent_runs_count"], everyone_row["team_runs_count"]) == (
+        1,
+        1,
+        1,
+    )
+    assert (everyone_row["agent_sessions_count"], everyone_row["team_sessions_count"]) == (0, 1)
+    assert everyone_row["input_tokens"] == 10
+
+
 def test_get_component_metrics(sqlite_db):
     """Ensure a read returns the totals of each day, for every owner or one, with only the fields asked for"""
     sqlite_db.calculate_metrics()
@@ -615,7 +655,7 @@ def test_calculate_metrics_with_nothing_new_leaves_every_version(sqlite_db):
 def test_get_metrics_omits_days_without_sessions_or_runs(sqlite_db):
     """Ensure a day the calculation keeps an everyone row of zeros for is not returned"""
     sqlite_db.calculate_metrics()
-    assert ("daily", _utc_date(1), "") in _stored_totals_rows(sqlite_db)
+    assert ("daily", _utc_date(1), "") in _stored_user_metrics_rows(sqlite_db)
     assert sqlite_db.get_metrics_by_date(_utc_date(1), _utc_date(0)) == ([], None)
     by_date, _ = sqlite_db.get_metrics_by_date(_utc_date(3), _utc_date(0))
     assert [metric["date"] for metric in by_date] == [_utc_date(2)]
@@ -656,7 +696,7 @@ def test_stop_metrics_refresh_on_read(sqlite_db):
 
 
 def test_calculate_metrics_matches_a_direct_count(tmp_path):
-    """Ensure the totals rows of every day, user and month match a direct count of the sessions and runs, and a
+    """Ensure the user metrics rows of every day, user and month match a direct count of the sessions and runs, and a
     paused run completed later is counted as completed once its day is rebuilt"""
     db = SqliteDb(db_file=str(tmp_path / "ground_truth.db"))
     for session in _ground_truth_sessions():
@@ -664,24 +704,25 @@ def test_calculate_metrics_matches_a_direct_count(tmp_path):
     _backdate(db)
     db.calculate_metrics()
     assert db.get_metrics_refresh_status()["status"] == "completed"
-    totals = _stored_totals_rows(db)
-    assert totals[("daily", _utc_date(5), "bob")]["status_metrics"]["PAUSED"] == 1
+    user_metrics_rows = _stored_user_metrics_rows(db)
+    assert user_metrics_rows[("daily", _utc_date(5), "bob")]["status_metrics"]["PAUSED"] == 1
     # Only the days with data, yesterday and today; yesterday's everyone row is zeros
-    assert sorted(key[1] for key in totals if key[0] == "daily" and key[2] == "") == [
+    assert sorted(key[1] for key in user_metrics_rows if key[0] == "daily" and key[2] == "") == [
         _utc_date(days_ago) for days_ago in [5, 2, 1, 0]
     ]
-    assert _totals_numbers(totals[("daily", _utc_date(1), "")]) == (0, 0, 0)
-    assert (totals[("daily", _utc_date(5), "")]["completed"], totals[("daily", _utc_date(5), "")]["version"]) == (
+    assert _user_metrics_numbers(user_metrics_rows[("daily", _utc_date(1), "")]) == (0, 0, 0)
+    assert (
+        user_metrics_rows[("daily", _utc_date(5), "")]["completed"],
+        user_metrics_rows[("daily", _utc_date(5), "")]["version"],
+    ) == (
         True,
         1,
     )
-    assert totals[("daily", _utc_date(0), "")]["completed"] is False
-    # A month's totals rows add up its days
+    assert user_metrics_rows[("daily", _utc_date(0), "")]["completed"] is False
+    # The current month is built only once its last day can be completed: its row stays the open row of its days
     month_start = _utc_date(0).replace(day=1)
-    month_days = [row for key, row in totals.items() if key[0] == "daily" and key[2] == "" and key[1] >= month_start]
-    assert _totals_numbers(totals[("monthly", month_start, "")]) == tuple(
-        map(sum, zip(*[_totals_numbers(row) for row in month_days]))
-    )
+    assert _user_metrics_numbers(user_metrics_rows[("monthly", month_start, "")]) == (0, 0, 0)
+    assert user_metrics_rows[("monthly", month_start, "")]["completed"] is False
     rows = _stored_rows(db)
     # The component metrics table keeps day rows only
     assert {row["aggregation_period"] for row in rows.values()} == {"daily"}
@@ -691,18 +732,18 @@ def test_calculate_metrics_matches_a_direct_count(tmp_path):
     # The paused run is completed: its stored created_at keeps it on its day, which the save reopens
     paused_run = _run("paused_run", "bob", 8, 2, _noon_utc(0))
     db.upsert_run(paused_run, session_id="paused_session", user_id="bob")
-    assert _stored_totals_rows(db)[("daily", _utc_date(5), "")]["completed"] is False
+    assert _stored_user_metrics_rows(db)[("daily", _utc_date(5), "")]["completed"] is False
     _backdate(db)
     db.calculate_metrics()
 
     with db.Session() as sess:
         sessions_rows = sess.execute(text(_GROUND_TRUTH_SESSIONS_SQL)).fetchall()
         runs_rows = sess.execute(text(_GROUND_TRUTH_RUNS_SQL)).fetchall()
-    totals = _stored_totals_rows(db)
+    user_metrics_rows = _stored_user_metrics_rows(db)
     for days_ago in [5, 2, 0]:
-        _check_ground_truth(sessions_rows, runs_rows, totals, _utc_date(days_ago))
-    assert "PAUSED" not in totals[("daily", _utc_date(5), "bob")]["status_metrics"]
-    assert totals[("daily", _utc_date(5), "")]["completed"] is True
+        _check_ground_truth(sessions_rows, runs_rows, user_metrics_rows, _utc_date(days_ago))
+    assert "PAUSED" not in user_metrics_rows[("daily", _utc_date(5), "bob")]["status_metrics"]
+    assert user_metrics_rows[("daily", _utc_date(5), "")]["completed"] is True
     # The member run was started by the team run, so it is no root run, and is kept under its parent
     member_row = _stored_rows(db)[(_utc_date(2), "alice", "agent", "agent-2")]
     assert (member_row["parent_component_id"], member_row["root_component_id"]) == ("team-1", "team-1")
@@ -714,19 +755,19 @@ def test_calculate_metrics_matches_a_direct_count(tmp_path):
 def test_calculate_metrics_rebuilds_a_reopened_day(sqlite_db):
     """Ensure a run saved on a completed day reopens the day, and the next calculation counts it"""
     sqlite_db.calculate_metrics()
-    version = _stored_totals_rows(sqlite_db)[("daily", _utc_date(2), "")]["version"]
+    version = _stored_user_metrics_rows(sqlite_db)[("daily", _utc_date(2), "")]["version"]
 
     sqlite_db.upsert_run(
         _run("alice_run_3", "alice", 1, 1, _noon_utc(2) + 120), session_id="alice_session", user_id="alice"
     )
-    reopened = _stored_totals_rows(sqlite_db)[("daily", _utc_date(2), "")]
+    reopened = _stored_user_metrics_rows(sqlite_db)[("daily", _utc_date(2), "")]
     assert (reopened["completed"], reopened["version"]) == (False, version + 1)
 
     _backdate(sqlite_db)
     sqlite_db.calculate_metrics()
-    rebuilt = _stored_totals_rows(sqlite_db)[("daily", _utc_date(2), "")]
+    rebuilt = _stored_user_metrics_rows(sqlite_db)[("daily", _utc_date(2), "")]
     assert rebuilt["completed"] is True
-    assert _totals_numbers(rebuilt) == (2, 4, 467)
+    assert _user_metrics_numbers(rebuilt) == (2, 4, 467)
 
 
 def test_session_save_reopens_the_day_the_session_is_stored_on(sqlite_db):
@@ -734,24 +775,24 @@ def test_session_save_reopens_the_day_the_session_is_stored_on(sqlite_db):
     sqlite_db.calculate_metrics()
     alice_session = _sample_sessions()[0]
     sqlite_db.upsert_session(alice_session)
-    assert _stored_totals_rows(sqlite_db)[("daily", _utc_date(2), "")]["completed"] is True
+    assert _stored_user_metrics_rows(sqlite_db)[("daily", _utc_date(2), "")]["completed"] is True
 
     sqlite_db.upsert_sessions([_session("new_session", "carol", [], _noon_utc(2))])
-    assert _stored_totals_rows(sqlite_db)[("daily", _utc_date(2), "")]["completed"] is False
+    assert _stored_user_metrics_rows(sqlite_db)[("daily", _utc_date(2), "")]["completed"] is False
 
 
-def test_deleting_a_session_keeps_its_closed_day_closed(sqlite_db):
+def test_delete_session_keeps_its_closed_day_closed(sqlite_db):
     """Ensure a delete never reopens the day it removes a session from"""
     sqlite_db.calculate_metrics()
     sqlite_db.delete_session("bob_session")
     sqlite_db.delete_run("alice_run_2")
-    stored = _stored_totals_rows(sqlite_db)[("daily", _utc_date(2), "")]
+    stored = _stored_user_metrics_rows(sqlite_db)[("daily", _utc_date(2), "")]
     assert (stored["completed"], stored["version"]) == (True, 1)
     _backdate(sqlite_db)
     assert sqlite_db.calculate_metrics() == []
 
 
-def test_cancelling_a_pending_run_reopens_its_day(sqlite_db):
+def test_cancel_pending_run_reopens_its_day(sqlite_db):
     """Ensure a pending run cancelled on a closed day reopens it"""
     _persist(
         sqlite_db,
@@ -765,11 +806,21 @@ def test_cancelling_a_pending_run_reopens_its_day(sqlite_db):
     _backdate(sqlite_db)
     sqlite_db.calculate_metrics()
     assert sqlite_db.cancel_pending_run("pending_run", session_id="pending_session", reason="stop", user_id="alice")
-    assert _stored_totals_rows(sqlite_db)[("daily", _utc_date(2), "")]["completed"] is False
+    assert _stored_user_metrics_rows(sqlite_db)[("daily", _utc_date(2), "")]["completed"] is False
+
+
+def test_reassign_session_owner_reopens_its_day(sqlite_db):
+    """Ensure moving a session of a closed day to another owner reopens the day, and marks the session updated"""
+    sqlite_db.calculate_metrics()
+    reassigned_at = int(time.time())
+
+    assert sqlite_db.reassign_session_owner("alice_session", previous_user_id="alice", user_id="bob")
+    assert _stored_user_metrics_rows(sqlite_db)[("daily", _utc_date(2), "")]["completed"] is False
+    assert sqlite_db.get_session("alice_session", SessionType.AGENT).updated_at >= reassigned_at
 
 
 def test_calculate_metrics_rebuilds_every_day_from_rebuild_from(sqlite_db):
-    """Ensure rebuild_from rebuilds every day with data from that date, one with no totals row included, and none
+    """Ensure rebuild_from rebuilds every day with data from that date, one with no user metrics row included, and none
     before it"""
     sqlite_db.calculate_metrics()
     user_metrics_table = sqlite_db._get_table("user_metrics")
@@ -778,10 +829,64 @@ def test_calculate_metrics_rebuilds_every_day_from_rebuild_from(sqlite_db):
 
     calculated = sqlite_db.calculate_metrics(rebuild_from=_utc_date(3))
     assert sorted({metric["date"] for metric in calculated}) == [_utc_date(2)]
-    totals = _stored_totals_rows(sqlite_db)
-    assert _totals_numbers(totals[("daily", _utc_date(2), "")]) == (2, 3, 465)
-    assert totals[("daily", _utc_date(2), "")]["completed"] is True
-    assert totals[("daily", _utc_date(70), "")]["version"] == 1
+    user_metrics_rows = _stored_user_metrics_rows(sqlite_db)
+    assert _user_metrics_numbers(user_metrics_rows[("daily", _utc_date(2), "")]) == (2, 3, 465)
+    assert user_metrics_rows[("daily", _utc_date(2), "")]["completed"] is True
+    assert user_metrics_rows[("daily", _utc_date(70), "")]["version"] == 1
+
+
+def test_calculate_metrics_rebuild_from_rebuilds_yesterday_and_today_after_another_process_completes(sqlite_db):
+    """Ensure rebuild_from leaves yesterday and today to the next calculation when another process holds the metrics
+    refresh and completes it with the fingerprint it read before the rebuild"""
+    sqlite_db.calculate_metrics()
+    refreshes_table = sqlite_db._get_table("metrics_refreshes")
+    refresh_row = sqlite_db._claim_metrics_refresh(refreshes_table, "other_process")
+    assert refresh_row is not None
+
+    assert sqlite_db.calculate_metrics(rebuild_from=_utc_date(3)) is None
+
+    sqlite_db._release_metrics_refresh(
+        refreshes_table,
+        "other_process",
+        fingerprint=refresh_row["fingerprint"],
+        claimed_fingerprint=refresh_row["fingerprint"],
+    )
+    assert sqlite_db.calculate_metrics_dates() == [_utc_date(2), _utc_date(1), _utc_date(0)]
+    assert sqlite_db.calculate_metrics_dates() == []
+
+
+def test_calculate_metrics_rebuild_from_rebuilds_yesterday_and_today_after_another_process_claimed_no_fingerprint(
+    sqlite_db,
+):
+    """Ensure rebuild_from leaves yesterday and today to the next calculation when another process claimed the metrics
+    refresh with no fingerprint and completes it with a fingerprint"""
+    sqlite_db.calculate_metrics()
+    refreshes_table = sqlite_db._get_table("metrics_refreshes")
+    fingerprint = sqlite_db._get_metrics_refresh_row(refreshes_table)[0]["fingerprint"]
+    _set_refresh_row(sqlite_db, fingerprint=null())
+    refresh_row = sqlite_db._claim_metrics_refresh(refreshes_table, "other_process")
+    assert refresh_row is not None and refresh_row["fingerprint"] is None
+
+    assert sqlite_db.calculate_metrics(rebuild_from=_utc_date(3)) is None
+
+    sqlite_db._release_metrics_refresh(
+        refreshes_table, "other_process", fingerprint=fingerprint, claimed_fingerprint=refresh_row["fingerprint"]
+    )
+    assert sqlite_db.calculate_metrics_dates() == [_utc_date(2), _utc_date(1), _utc_date(0)]
+    assert sqlite_db.calculate_metrics_dates() == []
+
+
+def test_calculate_metrics_rebuild_from_records_a_failed_reopen_before_any_refresh(sqlite_db, monkeypatch):
+    """Ensure a rebuild whose reopen fails before any metrics refresh ran is shown as failed with its error"""
+
+    def _fail(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("agno.db.sqlite.sqlite.reopen_metrics_days_from", _fail)
+    with pytest.raises(RuntimeError):
+        sqlite_db.calculate_metrics(rebuild_from=_utc_date(3))
+    status = sqlite_db.get_metrics_refresh_status()
+    assert (status["status"], status["error"]) == ("failed", "boom")
 
 
 def test_a_legacy_run_is_counted_on_its_own_day(tmp_path):
@@ -801,9 +906,9 @@ def test_a_legacy_run_is_counted_on_its_own_day(tmp_path):
 
     legacy_db = SqliteDb(db_file=db_file)
     legacy_db.calculate_metrics()
-    totals = _stored_totals_rows(legacy_db)
-    assert _totals_numbers(totals[("daily", _utc_date(4), "")]) == (0, 1, 20)
-    assert _totals_numbers(totals[("daily", _utc_date(6), "")]) == (1, 0, 0)
+    user_metrics_rows = _stored_user_metrics_rows(legacy_db)
+    assert _user_metrics_numbers(user_metrics_rows[("daily", _utc_date(4), "")]) == (0, 1, 20)
+    assert _user_metrics_numbers(user_metrics_rows[("daily", _utc_date(6), "")]) == (1, 0, 0)
 
 
 def _set_refresh_row(db: SqliteDb, **values) -> None:
@@ -821,6 +926,19 @@ def test_calculate_metrics_skips_a_rebuild_already_running(sqlite_db):
     status = sqlite_db.get_metrics_refresh_status()
     assert (status["status"], status["finished_at"]) == ("running", None)
     assert _stored_rows(sqlite_db) == {}
+
+
+def test_claim_metrics_refresh_returns_while_another_process_writes_a_day(sqlite_db):
+    """Ensure a claim returns None, instead of raising, while the transaction of another process's day keeps the
+    database locked"""
+    refreshes_table = sqlite_db._get_table("metrics_refreshes", create_table_if_not_found=True)
+    assert sqlite_db._claim_metrics_refresh(refreshes_table, "other_process") is not None
+    # Another process, which waits a moment for the database instead of SQLite's default 5 s
+    second_db = SqliteDb(db_engine=create_engine(sqlite_db.db_engine.url, connect_args={"timeout": 0.1}))
+
+    with sqlite_db.db_engine.connect() as conn, conn.begin():
+        assert sqlite_db._heartbeat_metrics_refresh(conn, refreshes_table, "other_process")
+        assert second_db._claim_metrics_refresh(refreshes_table, "second_process") is None
 
 
 def test_calculate_metrics_takes_over_a_lock_that_went_stale(sqlite_db):
@@ -857,7 +975,7 @@ def test_calculate_metrics_records_a_failed_refresh(sqlite_db, monkeypatch):
     assert (refresh_row["locked_by"], refresh_row["finished_at"]) == (None, finished_at)
 
 
-def test_a_day_is_never_written_by_a_process_that_lost_the_lock(sqlite_db, monkeypatch):
+def test_calculate_date_metrics_writes_nothing_after_losing_the_lock(sqlite_db, monkeypatch):
     """Ensure a calculation whose refresh another process took over writes nothing more"""
     refreshes_table = sqlite_db._get_table("metrics_refreshes", create_table_if_not_found=True)
 
@@ -891,19 +1009,19 @@ def test_calculate_metrics_keeps_a_day_reopened_during_its_rebuild_open(sqlite_d
     with monkeypatch.context() as patch:
         patch.setattr(SqliteDb, "_heartbeat_metrics_refresh", _reopen_before_the_write)
         sqlite_db.calculate_metrics()
-    assert _stored_totals_rows(sqlite_db)[("daily", _utc_date(2), "")]["completed"] is False
+    assert _stored_user_metrics_rows(sqlite_db)[("daily", _utc_date(2), "")]["completed"] is False
 
     sqlite_db.calculate_metrics()
-    assert _stored_totals_rows(sqlite_db)[("daily", _utc_date(2), "")]["completed"] is True
+    assert _stored_user_metrics_rows(sqlite_db)[("daily", _utc_date(2), "")]["completed"] is True
 
 
-def test_a_run_save_never_fails_because_of_metrics(sqlite_db):
+def test_upsert_run_reopens_a_day_a_write_could_not_reopen(sqlite_db):
     """Ensure a save whose reopen fails is stored, and the day is reopened by the next write"""
     sqlite_db.calculate_metrics()
     with sqlite_db.Session() as sess, sess.begin():
         sess.execute(
             text(
-                "CREATE TRIGGER refuse_totals_writes BEFORE UPDATE ON agno_user_metrics "
+                "CREATE TRIGGER refuse_user_metrics_writes BEFORE UPDATE ON agno_user_metrics "
                 "BEGIN SELECT RAISE(ABORT, 'refused'); END"
             )
         )
@@ -912,13 +1030,13 @@ def test_a_run_save_never_fails_because_of_metrics(sqlite_db):
     )
     assert sqlite_db.get_run("alice_run_3") is not None
     assert sqlite_db._metrics_days_not_reopened == {_utc_date(2)}
-    assert _stored_totals_rows(sqlite_db)[("daily", _utc_date(2), "")]["completed"] is True
+    assert _stored_user_metrics_rows(sqlite_db)[("daily", _utc_date(2), "")]["completed"] is True
 
     with sqlite_db.Session() as sess, sess.begin():
-        sess.execute(text("DROP TRIGGER refuse_totals_writes"))
+        sess.execute(text("DROP TRIGGER refuse_user_metrics_writes"))
     sqlite_db.upsert_run(_run("today_run", "alice", 1, 1, _noon_utc(0)), session_id="alice_session", user_id="alice")
     assert sqlite_db._metrics_days_not_reopened == set()
-    assert _stored_totals_rows(sqlite_db)[("daily", _utc_date(2), "")]["completed"] is False
+    assert _stored_user_metrics_rows(sqlite_db)[("daily", _utc_date(2), "")]["completed"] is False
 
 
 def test_upsert_session_without_a_user_metrics_table(sqlite_db):
@@ -931,17 +1049,17 @@ def test_upsert_session_without_a_user_metrics_table(sqlite_db):
     assert sqlite_db.table_exists(sqlite_db.user_metrics_table_name) is False
 
 
-def test_a_save_of_a_closed_day_from_a_fresh_process_is_stored(sqlite_db):
+def test_upsert_session_of_a_closed_day_from_a_fresh_process_is_stored(sqlite_db):
     """Ensure a process that never read the user metrics table reopens a day on its first save"""
     sqlite_db.calculate_metrics()
     fresh_db = SqliteDb(db_file=sqlite_db.db_file)
     fresh_db.upsert_run(
         _run("alice_run_3", "alice", 1, 1, _noon_utc(2) + 120), session_id="alice_session", user_id="alice"
     )
-    assert _stored_totals_rows(sqlite_db)[("daily", _utc_date(2), "")]["completed"] is False
+    assert _stored_user_metrics_rows(sqlite_db)[("daily", _utc_date(2), "")]["completed"] is False
 
 
-def test_a_stopped_calculation_releases_the_lock(sqlite_db):
+def test_calculate_metrics_dates_releases_the_lock_when_stopped(sqlite_db):
     """Ensure a calculation told to stop releases the lock: a first one as failed, a later one as the last completed
     one left it"""
     assert sqlite_db.calculate_metrics_dates(should_stop=lambda: True) is None
@@ -955,7 +1073,7 @@ def test_a_stopped_calculation_releases_the_lock(sqlite_db):
     assert (status["status"], status["error"]) == ("completed", None)
 
 
-def test_a_calculation_stops_between_the_batches_of_a_day(sqlite_db, monkeypatch):
+def test_calculate_metrics_dates_stops_between_the_batches_of_a_day(sqlite_db, monkeypatch):
     """Ensure a stop is seen between the batches of a day's runs, and the day is left unwritten"""
     monkeypatch.setattr("agno.db.sqlite.sqlite.METRICS_BATCH_SIZE", 1)
     checks: List[int] = []
@@ -971,7 +1089,7 @@ def test_a_calculation_stops_between_the_batches_of_a_day(sqlite_db, monkeypatch
     assert sqlite_db.get_metrics_refresh_status()["error"] == METRICS_STOPPED_ERROR
 
 
-def test_a_month_a_stopped_calculation_left_open_is_rebuilt_by_the_next(sqlite_db, monkeypatch):
+def test_calculate_metrics_rebuilds_a_month_a_stopped_calculation_left(sqlite_db, monkeypatch):
     """Ensure a day rebuilt by a calculation that stops before its months reopens the month, the month is read from
     its days while open, and the next calculation rebuilds it"""
     sqlite_db.calculate_metrics()
@@ -990,17 +1108,17 @@ def test_a_month_a_stopped_calculation_left_open_is_rebuilt_by_the_next(sqlite_d
     with monkeypatch.context() as patch:
         patch.setattr(SqliteDb, "_calculate_date_metrics", _stop_after_the_day)
         assert sqlite_db.calculate_metrics_dates(should_stop=lambda: bool(stop)) is None
-    month_row = _stored_totals_rows(sqlite_db)[("monthly", month_start, "")]
+    month_row = _stored_user_metrics_rows(sqlite_db)[("monthly", month_start, "")]
     assert (month_row["completed"], month_row["total_tokens"]) == (False, 30)
     totals, _ = sqlite_db.get_metrics_totals(month_start, _utc_date(70), fields=["total_tokens"])
     assert totals["total_tokens"] == 40
 
     sqlite_db.calculate_metrics()
-    month_row = _stored_totals_rows(sqlite_db)[("monthly", month_start, "")]
+    month_row = _stored_user_metrics_rows(sqlite_db)[("monthly", month_start, "")]
     assert (month_row["completed"], month_row["total_tokens"]) == (True, 40)
 
 
-def test_a_nested_run_also_kept_as_a_legacy_run_is_counted_once(tmp_path):
+def test_calculate_metrics_counts_a_legacy_member_run_kept_as_its_own_run_once(tmp_path):
     """Ensure a member run kept both inside its team's legacy run and as a legacy run of its own, on the next day, is
     counted once, on its own row"""
     db_file = str(tmp_path / "legacy_member.db")
@@ -1088,8 +1206,8 @@ def test_get_metrics_runs_a_first_calculation_without_deprecated_rows(sqlite_db)
 
 @pytest.mark.asyncio
 async def test_async_calculate_metrics(async_sqlite_db):
-    """Ensure a calculation stores one row per owner, component and day, a totals row per day and user, and the
-    totals rows of a month"""
+    """Ensure a calculation stores one row per owner, component and day, a user metrics row per day and user, and
+    the user metrics rows of a month"""
     await async_sqlite_db.calculate_metrics()
 
     rows = await _astored_rows(async_sqlite_db)
@@ -1097,12 +1215,12 @@ async def test_async_calculate_metrics(async_sqlite_db):
     assert _numbers(rows[(_utc_date(2), "bob", "agent", "agent-1")]) == (1, 1, 300)
     assert rows[(_utc_date(2), "alice", "agent", "agent-1")]["model_metrics"] == {"OpenAI": {"gpt-5": {"count": 2}}}
 
-    totals = await _astored_totals_rows(async_sqlite_db)
-    assert _totals_numbers(totals[("daily", _utc_date(2), "")]) == (2, 3, 465)
-    assert _totals_numbers(totals[("daily", _utc_date(2), "alice")]) == (1, 2, 165)
-    assert totals[("daily", _utc_date(2), "")]["completed"] is True
-    assert totals[("daily", _utc_date(0), "")]["completed"] is False
-    assert sorted(key[1] for key in totals if key[0] == "daily" and key[2] == "") == [
+    user_metrics_rows = await _astored_user_metrics_rows(async_sqlite_db)
+    assert _user_metrics_numbers(user_metrics_rows[("daily", _utc_date(2), "")]) == (2, 3, 465)
+    assert _user_metrics_numbers(user_metrics_rows[("daily", _utc_date(2), "alice")]) == (1, 2, 165)
+    assert user_metrics_rows[("daily", _utc_date(2), "")]["completed"] is True
+    assert user_metrics_rows[("daily", _utc_date(0), "")]["completed"] is False
+    assert sorted(key[1] for key in user_metrics_rows if key[0] == "daily" and key[2] == "") == [
         _utc_date(70),
         _utc_date(2),
         _utc_date(1),
@@ -1110,7 +1228,7 @@ async def test_async_calculate_metrics(async_sqlite_db):
     ]
 
     month_start = _utc_date(70).replace(day=1)
-    assert _totals_numbers(totals[("monthly", month_start, "")]) == (1, 1, 30)
+    assert _user_metrics_numbers(user_metrics_rows[("monthly", month_start, "")]) == (1, 1, 30)
     assert (await async_sqlite_db.get_metrics_refresh_status())["status"] == "completed"
 
 
@@ -1165,22 +1283,22 @@ async def test_async_saves_reopen_a_closed_day_and_deletes_do_not(async_sqlite_d
     await async_sqlite_db.calculate_metrics()
     await async_sqlite_db.delete_session("bob_session")
     await async_sqlite_db.upsert_session(_sample_sessions()[0])
-    assert (await _astored_totals_rows(async_sqlite_db))[("daily", _utc_date(2), "")]["completed"] is True
+    assert (await _astored_user_metrics_rows(async_sqlite_db))[("daily", _utc_date(2), "")]["completed"] is True
 
     await async_sqlite_db.upsert_run(
         _run("alice_run_3", "alice", 1, 1, _noon_utc(2) + 120), session_id="alice_session", user_id="alice"
     )
-    reopened = (await _astored_totals_rows(async_sqlite_db))[("daily", _utc_date(2), "")]
+    reopened = (await _astored_user_metrics_rows(async_sqlite_db))[("daily", _utc_date(2), "")]
     assert (reopened["completed"], reopened["version"]) == (False, 2)
 
     await _abackdate(async_sqlite_db)
     await async_sqlite_db.calculate_metrics()
-    rebuilt = (await _astored_totals_rows(async_sqlite_db))[("daily", _utc_date(2), "")]
+    rebuilt = (await _astored_user_metrics_rows(async_sqlite_db))[("daily", _utc_date(2), "")]
     assert rebuilt["completed"] is True
-    assert _totals_numbers(rebuilt) == (1, 3, 167)
+    assert _user_metrics_numbers(rebuilt) == (1, 3, 167)
 
     await async_sqlite_db.upsert_sessions([_session("new_session", "carol", [], _noon_utc(2))])
-    assert (await _astored_totals_rows(async_sqlite_db))[("daily", _utc_date(2), "")]["completed"] is False
+    assert (await _astored_user_metrics_rows(async_sqlite_db))[("daily", _utc_date(2), "")]["completed"] is False
 
 
 @pytest.mark.asyncio
@@ -1213,7 +1331,7 @@ async def test_async_calculate_metrics_skips_a_rebuild_already_running(async_sql
 
 
 @pytest.mark.asyncio
-async def test_async_a_cancelled_calculation_releases_the_lock(async_sqlite_db, monkeypatch):
+async def test_async_calculate_metrics_dates_releases_the_lock_when_cancelled(async_sqlite_db, monkeypatch):
     """Ensure a calculation cancelled mid-build, as on shutdown, releases the metrics refresh instead of holding it"""
 
     async def cancelled(*args, **kwargs):

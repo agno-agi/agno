@@ -891,6 +891,14 @@ def has_metrics_lock_row(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> bool:
     )
 
 
+def keeps_metrics_versions(db: Union[BaseDb, AsyncBaseDb]) -> bool:
+    """Whether the database implements get_metrics_versions, rather than the stub."""
+    return getattr(type(db), "get_metrics_versions", None) not in (
+        BaseDb.get_metrics_versions,
+        AsyncBaseDb.get_metrics_versions,
+    )
+
+
 def get_metrics_calculation(
     db: Union[BaseDb, AsyncBaseDb],
     should_stop: Optional[Callable[[], bool]] = None,

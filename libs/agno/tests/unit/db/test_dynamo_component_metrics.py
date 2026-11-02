@@ -20,7 +20,9 @@ from agno.db.dynamo.utils import (  # noqa: E402
     serialize_to_dynamo_item,
     user_metrics_key,
 )
+from agno.db.migrations.manager import MigrationManager  # noqa: E402
 from agno.db.utils import (  # noqa: E402
+    METRICS_LOCK_SECONDS,
     METRICS_REFRESH_ID,
     METRICS_STOPPED_ERROR,
     METRICS_TOKEN_FIELDS,
@@ -220,7 +222,7 @@ def _ground_truth(db: DynamoDb, day: date, user_id: Optional[str]) -> Dict[str, 
     return truth
 
 
-def _stored_totals(db: DynamoDb, day: date, user_id: str) -> Dict[str, Any]:
+def _stored_user_metrics_row(db: DynamoDb, day: date, user_id: str) -> Dict[str, Any]:
     """The stored user metrics row of a day and user, with its token counts flattened as get_metrics reads them."""
     row = _row(db, "daily", day, user_id)
     metric = next(
@@ -241,14 +243,14 @@ def test_calculate_metrics_matches_the_stored_sessions_and_runs(dynamo_db: Dynam
 
     for day in [_utc_date(OLD_DAY), _utc_date(MID_DAY)]:
         truth = _ground_truth(dynamo_db, day, None)
-        stored = _stored_totals(dynamo_db, day, "")
+        stored = _stored_user_metrics_row(dynamo_db, day, "")
         assert {key: stored[key] for key in truth} == truth
         assert _everyone_row(dynamo_db, day)["completed"] is True
         for user_id in ["alice", "bob"]:
             user_truth = _ground_truth(dynamo_db, day, user_id)
             if not any(user_truth[f"{t}_sessions_count"] for t in ["agent", "team", "workflow"]):
                 continue
-            stored = _stored_totals(dynamo_db, day, user_id)
+            stored = _stored_user_metrics_row(dynamo_db, day, user_id)
             assert {key: stored[key] for key in user_truth} == user_truth
 
     totals, _ = dynamo_db.get_metrics_totals(
@@ -283,12 +285,13 @@ def test_a_completed_run_reopens_its_old_day(dynamo_db: DynamoDb, dataset):
     paused_run.status = RunStatus.completed
     dynamo_db.upsert_run(paused_run, session_id="s_paused", user_id="alice")
     reopened = _everyone_row(dynamo_db, mid_day)
-    assert (reopened["completed"], reopened["version"]) == (False, version + 1)
+    assert (reopened["completed"], reopened["version"], reopened["open_period"]) == (False, version + 1, "daily")
     # The resumed run keeps the day it was created on
     assert dynamo_db.get_run("paused_run", deserialize=False)["created_at"] == _timestamp(mid_day)
 
     assert mid_day in [metric["date"] for metric in dynamo_db.calculate_metrics()]
-    assert _everyone_row(dynamo_db, mid_day)["completed"] is True
+    completed_row = _everyone_row(dynamo_db, mid_day)
+    assert completed_row["completed"] is True and "open_period" not in completed_row
     totals, _ = dynamo_db.get_metrics_totals(mid_day, mid_day, user_id="alice", fields=["status_metrics"])
     assert totals["status_metrics"] == {"COMPLETED": 1}
 
@@ -321,7 +324,7 @@ def test_a_session_write_reopens_only_when_it_moves_the_session(dynamo_db: Dynam
     )
 
 
-def test_calculate_metrics_rebuild_from(dynamo_db: DynamoDb, dataset):
+def test_calculate_metrics_rebuilds_every_day_from_rebuild_from(dynamo_db: DynamoDb, dataset):
     """Ensure a calculation with nothing new builds nothing, and rebuild_from rebuilds every day from that date"""
     dynamo_db.calculate_metrics()
     # Only yesterday and today can be rebuilt, when a write of this second leaves their fingerprint unknown
@@ -330,6 +333,61 @@ def test_calculate_metrics_rebuild_from(dynamo_db: DynamoDb, dataset):
     rebuilt = dynamo_db.calculate_metrics_dates(rebuild_from=_utc_date(OLD_DAY))
     assert rebuilt is not None and {_utc_date(OLD_DAY), _utc_date(MID_DAY)} <= set(rebuilt)
     assert _everyone_row(dynamo_db, _utc_date(OLD_DAY))["completed"] is True
+
+
+def test_calculate_metrics_rebuild_from_rebuilds_yesterday_and_today_after_another_process_completes(
+    dynamo_db: DynamoDb, dataset
+):
+    """Ensure rebuild_from leaves yesterday and today to the next calculation when another process holds the metrics
+    refresh and completes it with the fingerprint it read before the rebuild"""
+    _backdate(dynamo_db)
+    dynamo_db.calculate_metrics()
+    refreshes_table_name = dynamo_db._get_table("metrics_refreshes")
+    refresh_row = dynamo_db._claim_metrics_refresh(refreshes_table_name, "other_process")
+    assert refresh_row is not None and refresh_row["fingerprint"] is not None
+
+    assert dynamo_db.calculate_metrics(rebuild_from=_utc_date(MID_DAY)) is None
+
+    dynamo_db._release_metrics_refresh(
+        refreshes_table_name,
+        "other_process",
+        fingerprint=refresh_row["fingerprint"],
+        claimed_fingerprint=refresh_row["fingerprint"],
+    )
+    assert {_utc_date(MID_DAY), _utc_date(1), _utc_date(0)} <= set(dynamo_db.calculate_metrics_dates() or [])
+    assert dynamo_db.calculate_metrics_dates() == []
+
+
+def test_calculate_metrics_rebuild_from_rebuilds_yesterday_and_today_after_another_process_claimed_no_fingerprint(
+    dynamo_db: DynamoDb, dataset
+):
+    """Ensure a release over a claim of no fingerprint keeps the mark a rebuild wrote after the claim"""
+    refreshes_table_name = dynamo_db._get_table("metrics_refreshes", create_table_if_not_found=True)
+    refresh_row = dynamo_db._claim_metrics_refresh(refreshes_table_name, "other_process")
+    assert refresh_row is not None and refresh_row["fingerprint"] is None
+
+    assert dynamo_db.calculate_metrics(rebuild_from=_utc_date(0)) is None
+    dynamo_db._release_metrics_refresh(
+        refreshes_table_name, "other_process", fingerprint=["today"], claimed_fingerprint=None
+    )
+
+    refresh_row = dynamo_db._get_metrics_refresh_row(refreshes_table_name)[0]
+    assert (refresh_row["status"], refresh_row["fingerprint"][0]) == ("completed", "rebuild")
+
+
+def test_calculate_metrics_rebuild_from_records_a_failed_reopen(dynamo_db: DynamoDb, dataset, monkeypatch):
+    """Ensure a rebuild that fails before its claim marks the refresh failed with its error"""
+    dynamo_db.calculate_metrics()
+
+    def _fail(*args: Any) -> None:
+        raise RuntimeError("reopen failed")
+
+    monkeypatch.setattr("agno.db.dynamo.dynamo.reopen_metrics_days_from", _fail)
+    with pytest.raises(RuntimeError):
+        dynamo_db.calculate_metrics_dates(rebuild_from=_utc_date(OLD_DAY))
+
+    status = dynamo_db.get_metrics_refresh_status()
+    assert (status["status"], status["error"]) == ("failed", "reopen failed")
 
 
 def test_calculate_metrics_returns_none_while_another_process_holds_the_refresh(dynamo_db: DynamoDb, dataset):
@@ -349,7 +407,7 @@ def test_calculate_metrics_returns_none_while_another_process_holds_the_refresh(
         Key={"id": {"S": METRICS_REFRESH_ID}},
         UpdateExpression="SET #locked_at = :locked_at",
         ExpressionAttributeNames={"#locked_at": "locked_at"},
-        ExpressionAttributeValues={":locked_at": {"N": str(int(time.time()) - 301)}},
+        ExpressionAttributeValues={":locked_at": {"N": str(int(time.time()) - METRICS_LOCK_SECONDS)}},
     )
     status = dynamo_db.get_metrics_refresh_status()
     assert (status["status"], status["finished_at"]) == ("failed", None)
@@ -406,24 +464,36 @@ def test_reads_never_calculate(dynamo_db: DynamoDb, dataset):
     assert metrics and latest_updated_at is not None
 
 
-def test_month_rows_total_the_days_of_a_month(dynamo_db: DynamoDb, dataset):
-    """Ensure a calculated month has a month user metrics row per user and an everyone row adding up its days"""
+def test_month_rows_total_the_days_of_a_month(dynamo_db: DynamoDb):
+    """Ensure a completed month has a month user metrics row per user and an everyone row adding up its days"""
+    old_day = _utc_date(40)
+    month_start = old_day.replace(day=1)
+    for session_id, user_id, day in [("s_alice", "alice", old_day), ("s_bob", "bob", month_start)]:
+        dynamo_db.upsert_session(
+            AgentSession(session_id=session_id, agent_id="agent-1", user_id=user_id, created_at=_timestamp(day))
+        )
     dynamo_db.calculate_metrics()
-    month_start = _utc_date(OLD_DAY).replace(day=1)
     month_rows = [
         row
         for row in _items(dynamo_db, dynamo_db.user_metrics_table_name)
         if row["aggregation_period"] == "monthly" and row["date"] == month_start
     ]
     everyone_row = next(row for row in month_rows if row["user_id"] == "")
-    assert everyone_row["users_count"] == len(
-        {
-            s["user_id"]
-            for s in _items(dynamo_db, dynamo_db.session_table_name)
-            if s.get("user_id") and datetime.fromtimestamp(s["created_at"], tz=timezone.utc).date() >= month_start
-        }
-    )
+    assert (everyone_row["completed"], everyone_row["users_count"]) == (True, 2)
     assert {row["user_id"] for row in month_rows} >= {""}
+
+
+def test_calculate_metrics_builds_no_month_before_its_last_day_can_be_completed(dynamo_db: DynamoDb):
+    """Ensure the month of today is left unbuilt, as a month row is read only once completed"""
+    today = _utc_date(0)
+    dynamo_db.upsert_session(
+        AgentSession(session_id="s_today", agent_id="agent-1", user_id="alice", created_at=int(time.time()))
+    )
+    dynamo_db.calculate_metrics()
+
+    assert _everyone_row(dynamo_db, today)["agent_sessions_count"] == 1
+    month_row = _row(dynamo_db, "monthly", today.replace(day=1), "")
+    assert (month_row["completed"], month_row["agent_sessions_count"]) == (False, 0)
 
 
 def test_legacy_member_runs_are_counted_once(dynamo_db: DynamoDb):
@@ -463,10 +533,128 @@ def test_legacy_member_runs_are_counted_once(dynamo_db: DynamoDb):
             }
         ),
     )
+    # Not yet migrated to v3.0.0, so the legacy runs are read
+    dynamo_db.upsert_schema_version(dynamo_db.session_table_name, "2.5.0")
     # The member run's day holds no session or run of the tables, only the legacy run
     dynamo_db.calculate_metrics()
     totals, _ = dynamo_db.get_metrics_totals(old_day, next_day, fields=["total_tokens", "root_runs_count"])
     assert totals == {"total_tokens": 40, "root_runs_count": 1}
+
+
+def test_calculate_metrics_counts_a_remote_member_run_once(dynamo_db: DynamoDb):
+    """Ensure a remote member's run, stored by its own AgentOS with no parent in a session named after the team's
+    session, is counted under the team on a shared database: the team's run is the one root run and session"""
+    day = _utc_date(OLD_DAY)
+    remote_session_id = "team_session:remote-agent"
+
+    def _remote_run(parent_run_id: Optional[str]) -> RunOutput:
+        return RunOutput(
+            run_id="remote_run",
+            agent_id="remote-agent",
+            session_id=remote_session_id,
+            parent_run_id=parent_run_id,
+            status=RunStatus.completed,
+            metrics=_metrics(7, 3),
+            created_at=_timestamp(day),
+        )
+
+    team_run = TeamRunOutput(
+        run_id="team_run",
+        team_id="team-1",
+        session_id="team_session",
+        status=RunStatus.completed,
+        metrics=_metrics(20, 10),
+        member_responses=[_remote_run("team_run")],
+        created_at=_timestamp(day),
+    )
+    dynamo_db.upsert_session(TeamSession(session_id="team_session", team_id="team-1", created_at=_timestamp(day)))
+    dynamo_db.upsert_run(team_run, session_id="team_session", run_index=0)
+    dynamo_db.upsert_session(
+        AgentSession(session_id=remote_session_id, agent_id="remote-agent", created_at=_timestamp(day))
+    )
+    dynamo_db.upsert_run(_remote_run(None), session_id=remote_session_id, run_index=0)
+
+    dynamo_db.calculate_metrics()
+
+    everyone_row = _everyone_row(dynamo_db, day)
+    assert (
+        everyone_row["root_runs_count"],
+        everyone_row["agent_sessions_count"],
+        everyone_row["team_sessions_count"],
+    ) == (1, 0, 1)
+
+
+def test_calculate_metrics_counts_a_remote_member_run_two_days_after_its_team_run_as_a_root_run(dynamo_db: DynamoDb):
+    """Ensure a remote member's run two days after its team's run is counted as a root run, as only the day before
+    is read for its team's run"""
+    day, team_day = _utc_date(OLD_DAY), _utc_date(OLD_DAY + 2)
+    remote_session_id = "team_session:remote-agent"
+
+    def _remote_run(parent_run_id: Optional[str]) -> RunOutput:
+        return RunOutput(
+            run_id="remote_run",
+            agent_id="remote-agent",
+            session_id=remote_session_id,
+            parent_run_id=parent_run_id,
+            status=RunStatus.completed,
+            metrics=_metrics(7, 3),
+            created_at=_timestamp(day),
+        )
+
+    team_run = TeamRunOutput(
+        run_id="team_run",
+        team_id="team-1",
+        session_id="team_session",
+        status=RunStatus.completed,
+        metrics=_metrics(20, 10),
+        member_responses=[_remote_run("team_run")],
+        created_at=_timestamp(team_day),
+    )
+    dynamo_db.upsert_session(TeamSession(session_id="team_session", team_id="team-1", created_at=_timestamp(team_day)))
+    dynamo_db.upsert_run(team_run, session_id="team_session", run_index=0)
+    dynamo_db.upsert_session(
+        AgentSession(session_id=remote_session_id, agent_id="remote-agent", created_at=_timestamp(day))
+    )
+    dynamo_db.upsert_run(_remote_run(None), session_id=remote_session_id, run_index=0)
+
+    dynamo_db.calculate_metrics()
+
+    remote_rows = [
+        row
+        for row in _items(dynamo_db, dynamo_db._get_table("component_metrics"))
+        if row["component_id"] == "remote-agent"
+    ]
+    assert [(row["parent_component_id"], row["root_component_id"]) for row in remote_rows] == [("", "remote-agent")]
+
+
+def test_a_created_sessions_table_reads_no_legacy_runs(dynamo_db: DynamoDb, monkeypatch):
+    """Ensure the sessions table this class creates is stamped with the latest schema version, so a refresh never
+    reads every session for legacy runs"""
+    dynamo_db.upsert_session(AgentSession(session_id="s1", agent_id="agent-1", created_at=_timestamp(_utc_date(1))))
+    legacy_reads: List[Any] = []
+    monkeypatch.setattr(dynamo_db, "_get_metrics_legacy_runs", lambda *args: legacy_reads.append(args) or ({}, {}))
+
+    dynamo_db.calculate_metrics()
+
+    latest_schema_version = MigrationManager(dynamo_db).latest_schema_version.public
+    assert dynamo_db.get_latest_schema_version(dynamo_db.session_table_name) == latest_schema_version
+    assert legacy_reads == []
+
+
+def test_an_unstamped_sessions_table_with_no_legacy_runs_is_read_for_them_once(dynamo_db: DynamoDb, monkeypatch):
+    """Ensure a sessions table stamped with no version, as 3.0 and 3.1 left it, is read for legacy runs once, and not
+    again once that read of every session found none"""
+    dynamo_db.upsert_session(AgentSession(session_id="s1", agent_id="agent-1", created_at=_timestamp(_utc_date(1))))
+    monkeypatch.setattr(dynamo_db, "get_latest_schema_version", lambda table_name="": "2.0.0")
+    legacy_reads: List[Any] = []
+    monkeypatch.setattr(dynamo_db, "_get_metrics_legacy_runs", lambda *args: legacy_reads.append(args) or ({}, {}))
+
+    assert dynamo_db.calculate_metrics_dates()
+    dynamo_db.upsert_session(AgentSession(session_id="s2", agent_id="agent-1", created_at=_timestamp(_utc_date(1))))
+    assert dynamo_db.calculate_metrics_dates()
+
+    # The one read starts at 0, so it read every session
+    assert [args[2] for args in legacy_reads] == [0]
 
 
 def test_calculate_metrics_keeps_a_day_reopened_during_its_rebuild_open(dynamo_db: DynamoDb, dataset, monkeypatch):
