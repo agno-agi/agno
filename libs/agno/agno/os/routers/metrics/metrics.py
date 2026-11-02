@@ -1348,6 +1348,7 @@ def attach_routes(
                 # An AgentOS whose databases are all on one remote AgentOS has its users in that AgentOS's directory
                 remote_db = _remote_os_db(dbs)
                 if remote_db is not None:
+                    await require_user_admin(request)
                     auth_token = get_auth_token_from_request(request)
                     headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
                     return await remote_db.get_os_user_metrics(
