@@ -1,10 +1,11 @@
 import json
-from typing import Any, AsyncIterator, Dict, List, Optional, Tuple, Union
+from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple, Union
 
 from agno.run.team import CustomEvent as TeamCustomEvent
 from agno.run.team import MemoryUpdateCompletedEvent as TeamMemoryUpdateCompletedEvent
 from agno.run.team import MemoryUpdateStartedEvent as TeamMemoryUpdateStartedEvent
 from agno.run.team import ReasoningCompletedEvent as TeamReasoningCompletedEvent
+from agno.run.team import ReasoningContentDeltaEvent as TeamReasoningContentDeltaEvent
 from agno.run.team import ReasoningStartedEvent as TeamReasoningStartedEvent
 from agno.run.team import ReasoningStepEvent as TeamReasoningStepEvent
 from agno.run.team import RunCancelledEvent as TeamRunCancelledEvent
@@ -15,6 +16,7 @@ from agno.run.team import RunPausedEvent as TeamRunPausedEvent
 from agno.run.team import RunStartedEvent as TeamRunStartedEvent
 from agno.run.team import TeamRunOutput, TeamRunOutputEvent, team_run_output_event_from_dict
 from agno.run.team import ToolCallCompletedEvent as TeamToolCallCompletedEvent
+from agno.run.team import ToolCallErrorEvent as TeamToolCallErrorEvent
 from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
 from agno.run.workflow import (
     ConditionExecutionCompletedEvent,
@@ -29,6 +31,7 @@ from agno.run.workflow import (
     RouterExecutionStartedEvent,
     RouterPausedEvent,
     StepExecutorPausedEvent,
+    StepOutputEvent,
     StepsExecutionCompletedEvent,
     StepsExecutionStartedEvent,
     WorkflowCancelledEvent,
@@ -63,6 +66,7 @@ from agno.run.agent import (
     MemoryUpdateCompletedEvent,
     MemoryUpdateStartedEvent,
     ReasoningCompletedEvent,
+    ReasoningContentDeltaEvent,
     ReasoningStartedEvent,
     ReasoningStepEvent,
     RunCancelledEvent,
@@ -74,6 +78,7 @@ from agno.run.agent import (
     RunPausedEvent,
     RunStartedEvent,
     ToolCallCompletedEvent,
+    ToolCallErrorEvent,
     ToolCallStartedEvent,
 )
 from agno.run.base import RunStatus
@@ -140,6 +145,11 @@ def _get_progress_metadata(event: Any) -> Optional[Dict[str, Any]]:
         return _get_tool_metadata(event, "tool_call_started")
     if isinstance(event, (ToolCallCompletedEvent, TeamToolCallCompletedEvent)):
         return _get_tool_metadata(event, "tool_call_completed")
+    if isinstance(event, (ToolCallErrorEvent, TeamToolCallErrorEvent)):
+        error_metadata = _get_tool_metadata(event, "tool_call_error")
+        if event.error:
+            error_metadata["error"] = event.error
+        return error_metadata
 
     # Reasoning events
     if isinstance(event, (ReasoningStartedEvent, TeamReasoningStartedEvent)):
@@ -275,6 +285,9 @@ async def stream_run_events_to_task(
     reasoning_artifact_id: str = f"{updater.task_id}-{REASONING_ARTIFACT_NAME}"
     accumulated_content = ""
     content_started = False
+    content_run_ids: Set[Optional[str]] = set()
+    # The text each workflow step streamed, by "<workflow run id>:<step name>"
+    step_texts: Dict[str, str] = {}
     reasoning_started = False
     root_run_id: Optional[str] = None
     is_team_run = False
@@ -299,15 +312,30 @@ async def stream_run_events_to_task(
         # 2. Send all content and secondary events
 
         # Send content events
-        # The leader writes a team's response: a member's text is only its part of the work
+        # The leader writes a team's response: a member's text is only its part of the work.
+        # A function step of a workflow has no content events: its output comes whole, as a StepOutputEvent
         elif (
-            isinstance(event, (RunContentEvent, TeamRunContentEvent))
+            isinstance(event, (RunContentEvent, TeamRunContentEvent, StepOutputEvent))
             and event.content
             and (is_root_event or not is_team_run)
+            # A function step that streams an agent's text returns that same text as its output
+            and not (
+                isinstance(event, StepOutputEvent)
+                and step_texts.get(f"{event.run_id}:{event.step_name}") == event.content
+            )
         ):
             # Structured content (from output_schema) is sent as a data part, so it is
             # never str-concatenated into the accumulated text.
             raw_content = event.content
+            # Each step of a workflow streams its own run, so a step's text starts apart from the text before it
+            # A function step's output carries the workflow's run id, so its step tells it apart
+            content_source = f"{event.run_id}:{event.step_name}" if isinstance(event, StepOutputEvent) else event.run_id
+            if content_started and isinstance(raw_content, str) and content_source not in content_run_ids:
+                raw_content = "\n\n" + raw_content
+            content_run_ids.add(content_source)
+            if not isinstance(event, StepOutputEvent) and event.step_name and isinstance(event.content, str):
+                step_key = f"{event.workflow_run_id}:{event.step_name}"
+                step_texts[step_key] = step_texts.get(step_key, "") + event.content
             if isinstance(raw_content, str):
                 accumulated_content += raw_content
             await updater.add_artifact(
@@ -333,6 +361,22 @@ async def stream_run_events_to_task(
                     append=reasoning_started,
                 )
                 reasoning_started = True
+
+        # Send reasoning content as a native reasoning model streams it
+        # The leader reasons for a team: a member's reasoning is only its part of the work
+        elif (
+            isinstance(event, (ReasoningContentDeltaEvent, TeamReasoningContentDeltaEvent))
+            and event.reasoning_content
+            and (is_root_event or not is_team_run)
+        ):
+            await updater.add_artifact(
+                parts=[new_text_part(event.reasoning_content)],
+                artifact_id=reasoning_artifact_id,
+                name=REASONING_ARTIFACT_NAME,
+                metadata={"agno_content_category": "reasoning", "agno_event_type": "reasoning_content_delta"},
+                append=reasoning_started,
+            )
+            reasoning_started = True
 
         # Capture completion event for final task construction
         elif isinstance(event, (RunCompletedEvent, TeamRunCompletedEvent, WorkflowCompletedEvent)):

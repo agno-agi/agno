@@ -10,6 +10,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
 from agno.client.a2a.schemas import Artifact, StreamEvent, TaskResult
 from agno.media import Audio, File, Image, Video
+from agno.metrics import RunMetrics
 from agno.models.response import ToolExecution
 from agno.run.agent import (
     RunCancelledEvent,
@@ -21,6 +22,7 @@ from agno.run.agent import (
     RunPausedEvent,
     RunStartedEvent,
     ToolCallCompletedEvent,
+    ToolCallErrorEvent,
     ToolCallStartedEvent,
 )
 from agno.run.base import RunStatus
@@ -51,6 +53,9 @@ from agno.run.team import (
     ToolCallCompletedEvent as TeamToolCallCompletedEvent,
 )
 from agno.run.team import (
+    ToolCallErrorEvent as TeamToolCallErrorEvent,
+)
+from agno.run.team import (
     ToolCallStartedEvent as TeamToolCallStartedEvent,
 )
 from agno.run.workflow import (
@@ -62,7 +67,7 @@ from agno.run.workflow import (
     WorkflowRunOutputEvent,
     WorkflowStartedEvent,
 )
-from agno.workflow.types import StepRequirement
+from agno.workflow.types import StepRequirement, WorkflowMetrics
 
 
 def map_task_result_to_run_output(
@@ -109,6 +114,24 @@ def map_task_result_to_run_output(
         audio=audio if audio else None,
         files=files if files else None,
         metadata=task_result.metadata,
+        metrics=_map_run_metrics(task_result.metadata),
+    )
+
+
+def _map_run_metrics(metadata: Optional[Dict[str, Any]]) -> Optional[RunMetrics]:
+    """Map the metrics an Agno server sends in the task metadata to RunMetrics."""
+    metrics = (metadata or {}).get("metrics")
+    return RunMetrics.from_dict(metrics) if isinstance(metrics, dict) else None
+
+
+def _map_workflow_metrics(metadata: Optional[Dict[str, Any]]) -> Optional[WorkflowMetrics]:
+    """Map the metrics an Agno server sends in the task metadata to WorkflowMetrics."""
+    metrics = (metadata or {}).get("metrics")
+    # Another A2A server may send metrics of its own shape, which are left in the metadata
+    return (
+        WorkflowMetrics.from_dict(metrics)
+        if isinstance(metrics, dict) and isinstance(metrics.get("steps"), dict)
+        else None
     )
 
 
@@ -249,6 +272,15 @@ async def map_stream_events_to_run_events(
                 agent_id=agent_id,
             )
 
+        elif event.event_type == "tool_call_error":
+            yield ToolCallErrorEvent(
+                tool=_map_tool_execution(event.metadata),
+                error=(event.metadata or {}).get("error"),
+                run_id=run_id,
+                session_id=session_id,
+                agent_id=agent_id,
+            )
+
         elif event.event_type == "artifact" or (event.event_type == "content" and not event.content):
             # The complete response, sent once the agent is done writing it. Structured
             # content has no text chunks, and is given as its JSON string.
@@ -259,6 +291,7 @@ async def map_stream_events_to_run_events(
                 yield RunCompletedEvent(
                     content=final_content,
                     metadata=event.metadata,
+                    metrics=_map_run_metrics(event.metadata),
                     run_id=run_id,
                     session_id=session_id,
                     agent_id=agent_id,
@@ -278,6 +311,7 @@ async def map_stream_events_to_run_events(
                 yield RunCompletedEvent(
                     content=accumulated_content,
                     metadata=event.metadata,
+                    metrics=_map_run_metrics(event.metadata),
                     run_id=run_id,
                     session_id=session_id,
                     agent_id=agent_id,
@@ -318,6 +352,7 @@ async def map_stream_events_to_run_events(
             yield RunCompletedEvent(
                 content=final_content or event.content or accumulated_content,
                 metadata=event.metadata,
+                metrics=_map_run_metrics(event.metadata),
                 run_id=run_id,
                 session_id=session_id,
                 agent_id=agent_id,
@@ -382,6 +417,7 @@ def map_task_result_to_team_run_output(
         audio=audio if audio else None,
         files=files if files else None,
         metadata=task_result.metadata,
+        metrics=_map_run_metrics(task_result.metadata),
     )
 
 
@@ -441,6 +477,15 @@ async def map_stream_events_to_team_run_events(
                 team_id=team_id,
             )
 
+        elif event.event_type == "tool_call_error":
+            yield TeamToolCallErrorEvent(
+                tool=_map_tool_execution(event.metadata),
+                error=(event.metadata or {}).get("error"),
+                run_id=run_id,
+                session_id=session_id,
+                team_id=team_id,
+            )
+
         elif event.event_type == "artifact" or (event.event_type == "content" and not event.content):
             # The complete response, sent once the agent is done writing it. Structured
             # content has no text chunks, and is given as its JSON string.
@@ -451,6 +496,7 @@ async def map_stream_events_to_team_run_events(
                 yield TeamRunCompletedEvent(
                     content=final_content,
                     metadata=event.metadata,
+                    metrics=_map_run_metrics(event.metadata),
                     run_id=run_id,
                     session_id=session_id,
                     team_id=team_id,
@@ -470,6 +516,7 @@ async def map_stream_events_to_team_run_events(
                 yield TeamRunCompletedEvent(
                     content=accumulated_content,
                     metadata=event.metadata,
+                    metrics=_map_run_metrics(event.metadata),
                     run_id=run_id,
                     session_id=session_id,
                     team_id=team_id,
@@ -510,6 +557,7 @@ async def map_stream_events_to_team_run_events(
             yield TeamRunCompletedEvent(
                 content=final_content or event.content or accumulated_content,
                 metadata=event.metadata,
+                metrics=_map_run_metrics(event.metadata),
                 run_id=run_id,
                 session_id=session_id,
                 team_id=team_id,
@@ -573,6 +621,7 @@ def map_task_result_to_workflow_run_output(
         videos=videos if videos else None,
         audio=audio if audio else None,
         metadata=task_result.metadata,
+        metrics=_map_workflow_metrics(task_result.metadata),
     )
 
 
@@ -633,6 +682,15 @@ async def map_stream_events_to_workflow_run_events(
                 agent_id=workflow_id,
             )
 
+        elif event.event_type == "tool_call_error":
+            yield ToolCallErrorEvent(
+                tool=_map_tool_execution(event.metadata),
+                error=(event.metadata or {}).get("error"),
+                run_id=run_id,
+                session_id=session_id,
+                agent_id=workflow_id,
+            )
+
         elif event.event_type == "artifact" or (event.event_type == "content" and not event.content):
             # The complete response, sent once the agent is done writing it. Structured
             # content has no text chunks, and is given as its JSON string.
@@ -643,6 +701,7 @@ async def map_stream_events_to_workflow_run_events(
                 yield WorkflowCompletedEvent(
                     content=final_content,
                     metadata=event.metadata,
+                    metrics=_map_workflow_metrics(event.metadata),
                     run_id=run_id,
                     session_id=session_id,
                     workflow_id=workflow_id,
@@ -663,6 +722,7 @@ async def map_stream_events_to_workflow_run_events(
                 yield WorkflowCompletedEvent(
                     content=accumulated_content,
                     metadata=event.metadata,
+                    metrics=_map_workflow_metrics(event.metadata),
                     run_id=run_id,
                     session_id=session_id,
                     workflow_id=workflow_id,
@@ -702,6 +762,7 @@ async def map_stream_events_to_workflow_run_events(
             yield WorkflowCompletedEvent(
                 content=final_content or event.content or accumulated_content,
                 metadata=event.metadata,
+                metrics=_map_workflow_metrics(event.metadata),
                 run_id=run_id,
                 session_id=session_id,
                 workflow_id=workflow_id,

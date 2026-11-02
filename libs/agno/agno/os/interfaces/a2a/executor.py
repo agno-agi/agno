@@ -23,6 +23,7 @@ from agno.os.interfaces.a2a.utils import (
     map_paused_run_to_parts,
     send_run_output_to_task,
 )
+from agno.os.middleware.user_scope import caller_is_admin
 from agno.os.utils import get_agent_by_id, get_team_by_id, get_workflow_by_id
 from agno.team import RemoteTeam, Team
 from agno.utils.common import restore_integers
@@ -111,6 +112,11 @@ class A2AExecutor(AgentExecutor):
         # gets a new context id from the A2A server, which is not the session of the run.
         current_task = context.current_task
         if current_task is not None:
+            # An admin may continue another user's task: the run is continued as its owner, whose session holds it
+            if request is not None and caller_is_admin(request) and self.task_store is not None:
+                run_output = await self.task_store.get_run(current_task.id)
+                if run_output is not None:
+                    user_id = run_output.user_id
             updater = TaskUpdater(event_queue, current_task.id, current_task.context_id)
             await self._continue_task(entity, context.message, updater, current_task, user_id)
             return

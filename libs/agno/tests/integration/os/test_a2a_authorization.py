@@ -120,6 +120,14 @@ class TestA2AAuthorization:
         )
         assert resp.status_code == 403, resp.text
 
+    def test_malformed_body_blocked_without_run_scope(self, authz_client):
+        resp = authz_client.post(
+            f"/a2a/agents/{AGENT_ID}",
+            json=[],
+            headers={"Authorization": f"Bearer {_token(['agents:read'])}"},
+        )
+        assert resp.status_code == 403, resp.text
+
     def test_message_send_blocked_without_run_scope_v1(self, authz_client):
         body = _message_body("SendMessage")
         body["params"]["message"] = {"messageId": "msg-123", "role": "ROLE_USER", "parts": [{"text": "Hello!"}]}
@@ -146,13 +154,20 @@ class TestA2AAuthorization:
         assert resp.status_code == 200, resp.text
         assert resp.json()["securitySchemes"]["bearerAuth"]["httpAuthSecurityScheme"]["scheme"] == "bearer"
 
-    def test_card_blocked_without_read_scope(self, authz_client):
-        # A run-only token must not read the agent card (requires agents:read).
+    def test_card_blocked_without_read_or_run_scope(self, authz_client):
         resp = authz_client.get(
             f"/a2a/agents/{AGENT_ID}/.well-known/agent-card.json",
-            headers={"Authorization": f"Bearer {_token(['agents:run'])}"},
+            headers={"Authorization": f"Bearer {_token(['config:read'])}"},
         )
         assert resp.status_code == 403, resp.text
+
+    def test_card_allowed_with_run_scope(self, authz_client):
+        # The card tells a client how to authenticate, so a run-only token reads it too.
+        resp = authz_client.get(
+            f"/a2a/agents/{AGENT_ID}/.well-known/agent-card.json",
+            headers={"Authorization": f"Bearer {_token([f'agents:{AGENT_ID}:run'])}"},
+        )
+        assert resp.status_code == 200, resp.text
 
     def test_tasks_get_blocked_without_read_scope(self, authz_client):
         resp = authz_client.post(
@@ -276,8 +291,8 @@ def test_every_a2a_route_is_gated():
     """Regression guard for the root cause of B1: the unmapped-route default is *allow*,
     so any A2A route added without a gate would silently ship ungated.
 
-    Every A2A route must either be an Agent Card route, gated by its scope mapping and
-    require_resource_access, or an entity's A2A endpoint -- gated per A2A method by
+    Every A2A route must either be an Agent Card route, gated by require_a2a_card_access
+    because read or run allows a card, or an entity's A2A endpoint -- gated per A2A method by
     authorize_a2a_request, because all A2A methods share that one route.
     """
     agent = Agent(id=AGENT_ID, name="Authz Agent", db=InMemoryDb())
@@ -294,8 +309,10 @@ def test_every_a2a_route_is_gated():
         for method in getattr(route, "methods", set()) or set():
             if method in ("HEAD", "OPTIONS"):
                 continue
+            gates = [getattr(d.dependency, "__qualname__", "") for d in getattr(route, "dependencies", [])]
             if getattr(route.endpoint, "__name__", "") in ("get_agent_card", "get_team_card", "get_workflow_card"):
-                continue
+                if "require_a2a_card_access.<locals>.dependency" in gates:
+                    continue
             if getattr(route.endpoint, "__name__", "") == "a2a_endpoint":
                 endpoints.append(f"{method} {path}")
                 continue

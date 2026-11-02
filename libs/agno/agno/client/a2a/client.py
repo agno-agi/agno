@@ -360,7 +360,11 @@ class A2AClient:
 
             # Tool calls ride working status updates, named in the metadata
             agno_event_type = (metadata or {}).get("agno_event_type")
-            if status == "working" and agno_event_type in ("tool_call_started", "tool_call_completed"):
+            if status == "working" and agno_event_type in (
+                "tool_call_started",
+                "tool_call_completed",
+                "tool_call_error",
+            ):
                 event_type = agno_event_type
             else:
                 event_type = status if status in ("working", "completed", "failed", "canceled") else "status"

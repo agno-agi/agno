@@ -8,7 +8,16 @@ from agno.models.base import Model
 from agno.models.message import Message
 from agno.remote.base import BaseRemote, RemoteDb, RemoteKnowledge
 from agno.run.agent import RunOutputEvent
-from agno.run.team import TeamRunOutput, TeamRunOutputEvent
+from agno.run.base import RunStatus
+from agno.run.team import (
+    RunCancelledEvent,
+    RunCompletedEvent,
+    RunContentEvent,
+    RunErrorEvent,
+    RunPausedEvent,
+    TeamRunOutput,
+    TeamRunOutputEvent,
+)
 from agno.utils.agent import validate_input
 from agno.utils.log import log_warning
 from agno.utils.remote import serialize_input
@@ -247,8 +256,9 @@ class RemoteTeam(BaseRemote):
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         auth_token: Optional[str] = None,
+        yield_run_output: bool = False,
         **kwargs: Any,
-    ) -> AsyncIterator[TeamRunOutputEvent]: ...
+    ) -> AsyncIterator[Union[TeamRunOutputEvent, TeamRunOutput]]: ...
 
     def arun(  # type: ignore
         self,
@@ -271,10 +281,11 @@ class RemoteTeam(BaseRemote):
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         auth_token: Optional[str] = None,
+        yield_run_output: bool = False,
         **kwargs: Any,
     ) -> Union[
         TeamRunOutput,
-        AsyncIterator[RunOutputEvent],
+        AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, TeamRunOutput]],
     ]:
         validated_input = validate_input(input)
         serialized_input = serialize_input(validated_input)
@@ -293,13 +304,14 @@ class RemoteTeam(BaseRemote):
                 files=files,
                 metadata=metadata,
                 headers=headers,
+                yield_run_output=yield_run_output,
             )
 
         # AgentOS protocol path (default)
         if self.agentos_client:
             if stream:
                 # Handle streaming response
-                return self.agentos_client.run_team_stream(  # type: ignore
+                event_stream = self.agentos_client.run_team_stream(
                     team_id=self.team_id,
                     message=serialized_input,
                     session_id=session_id,
@@ -320,6 +332,9 @@ class RemoteTeam(BaseRemote):
                     headers=headers,
                     **kwargs,
                 )
+                if yield_run_output:
+                    return self._astream_with_run_output(event_stream, user_id=user_id)
+                return event_stream  # type: ignore
             else:
                 return self.agentos_client.run_team(  # type: ignore
                     team_id=self.team_id,
@@ -357,7 +372,8 @@ class RemoteTeam(BaseRemote):
         files: Optional[Sequence[File]],
         headers: Optional[Dict[str, str]],
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> Union[TeamRunOutput, AsyncIterator[TeamRunOutputEvent]]:
+        yield_run_output: bool = False,
+    ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, TeamRunOutput]]]:
         """Execute via A2A protocol.
 
         Args:
@@ -371,6 +387,7 @@ class RemoteTeam(BaseRemote):
             files: Files to include
             headers: HTTP headers to include in the request (optional)
             metadata: Additional metadata to include in the message envelope (optional)
+            yield_run_output: Whether to end the stream with the TeamRunOutput (optional)
         Returns:
             TeamRunOutput for non-streaming, AsyncIterator[TeamRunOutputEvent] for streaming
         """
@@ -391,7 +408,10 @@ class RemoteTeam(BaseRemote):
                 metadata=metadata,
                 headers=headers,
             )
-            return map_stream_events_to_team_run_events(event_stream, team_id=self.team_id)
+            run_events = map_stream_events_to_team_run_events(event_stream, team_id=self.team_id)
+            if yield_run_output:
+                return self._astream_with_run_output(run_events, user_id=user_id)
+            return run_events
         else:
             # Return coroutine for non-streaming
             return self._arun_a2a_send(  # type: ignore[return-value]
@@ -435,6 +455,54 @@ class RemoteTeam(BaseRemote):
             headers=headers,
         )
         return map_task_result_to_team_run_output(task_result, team_id=self.team_id, user_id=user_id)
+
+    async def _astream_with_run_output(
+        self,
+        event_stream: AsyncIterator[Any],
+        user_id: Optional[str],
+    ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, TeamRunOutput]]:
+        """Forward a remote stream, then yield the TeamRunOutput its terminal event describes."""
+        terminal_event: Optional[TeamRunOutputEvent] = None
+        cancelled_event: Optional[RunCancelledEvent] = None
+        run_id: Optional[str] = None
+        session_id: Optional[str] = None
+        accumulated_content = ""
+
+        async for event in event_stream:
+            # Member events are forwarded too; only this team's own events end its run
+            if getattr(event, "team_id", None) == self.team_id:
+                run_id = event.run_id or run_id
+                session_id = event.session_id or session_id
+                if isinstance(event, RunContentEvent) and isinstance(event.content, str):
+                    accumulated_content += event.content
+                if isinstance(event, (RunCompletedEvent, RunPausedEvent, RunCancelledEvent, RunErrorEvent)):
+                    terminal_event = event
+                if isinstance(event, RunCancelledEvent):
+                    cancelled_event = event
+            yield event
+
+        # A local Team yields no TeamRunOutput for a run that errored
+        if isinstance(terminal_event, RunErrorEvent):
+            return
+
+        # Without stream_events the server sends no terminal event, only the content
+        run_output = (
+            TeamRunOutput.from_dict(terminal_event.to_dict())
+            if terminal_event is not None
+            else TeamRunOutput(run_id=run_id, session_id=session_id)
+        )
+        run_output.team_id = self.team_id
+        run_output.user_id = user_id
+        if not run_output.content:
+            run_output.content = accumulated_content or (cancelled_event.reason if cancelled_event else None)
+        # A cancelled run also ends with a completed event, which must not hide the cancellation
+        if cancelled_event is not None:
+            run_output.status = RunStatus.cancelled
+        elif isinstance(terminal_event, RunPausedEvent):
+            run_output.status = RunStatus.paused
+        else:
+            run_output.status = RunStatus.completed
+        yield run_output
 
     async def acancel_run(self, run_id: str, auth_token: Optional[str] = None) -> bool:
         """Cancel a running team execution.

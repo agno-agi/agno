@@ -30,13 +30,14 @@ from agno.client.a2a import (
     StreamEvent,
     TaskResult,
 )
-from agno.client.a2a.utils import map_stream_events_to_run_events
+from agno.client.a2a.utils import map_stream_events_to_run_events, map_task_result_to_run_output
 from agno.exceptions import RemoteServerUnavailableError
 from agno.run.agent import (
     RunCompletedEvent,
     RunContentEvent,
     RunErrorEvent,
     RunStartedEvent,
+    ToolCallErrorEvent,
     ToolCallStartedEvent,
 )
 
@@ -308,6 +309,22 @@ class TestSendMessage:
             assert result.content == "The answer is 4"
             assert result.is_completed
 
+    def test_send_message_result_maps_metrics(self):
+        """Test the metrics in the task metadata map onto the RunOutput."""
+        result = TaskResult(
+            task_id="t1",
+            context_id="c1",
+            status="completed",
+            content="Done",
+            metadata={"metrics": {"input_tokens": 3, "output_tokens": 5, "total_tokens": 8}},
+        )
+
+        output = map_task_result_to_run_output(result, agent_id="agent-1")
+
+        assert output.metrics.input_tokens == 3
+        assert output.metrics.output_tokens == 5
+        assert output.metrics.total_tokens == 8
+
     @pytest.mark.asyncio
     async def test_send_message_fetches_agent_card(self):
         """Test send_message negotiates the protocol from the server's Agent Card."""
@@ -515,6 +532,34 @@ class TestStreamMessage:
             assert run_events[1].tool.tool_name == "add"
             assert run_events[1].tool.tool_args == {"a": 1}
             assert run_events[-1].content == "Error: boom"
+
+    @pytest.mark.asyncio
+    async def test_stream_message_maps_tool_call_error(self):
+        """Test a tool call error maps to a ToolCallErrorEvent with the error."""
+        responses = [
+            _status_update(TaskState.TASK_STATE_WORKING),
+            _status_update(
+                TaskState.TASK_STATE_WORKING,
+                metadata={"agno_event_type": "tool_call_error", "tool_name": "add", "error": "boom"},
+            ),
+            _status_update(TaskState.TASK_STATE_COMPLETED),
+        ]
+        with _patch_sdk_client(responses):
+            client = _client()
+
+            async def raw_stream() -> AsyncIterator[StreamEvent]:
+                async for event in client.stream_message(message="Hello"):
+                    yield event
+
+            run_events = [event async for event in map_stream_events_to_run_events(raw_stream(), agent_id="agent-1")]
+
+            assert [type(e) for e in run_events] == [
+                RunStartedEvent,
+                ToolCallErrorEvent,
+                RunCompletedEvent,
+            ]
+            assert run_events[1].tool.tool_name == "add"
+            assert run_events[1].error == "boom"
 
 
 class TestSchemas:

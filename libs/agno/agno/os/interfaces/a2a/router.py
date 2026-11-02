@@ -20,9 +20,8 @@ except ImportError as e:
 
 from agno.agent import Agent, RemoteAgent
 from agno.agent.protocol import AgentProtocol
-from agno.os.auth import require_resource_access
 from agno.os.interfaces.a2a.agent_card import build_agent_card
-from agno.os.interfaces.a2a.auth import authorize_a2a_request
+from agno.os.interfaces.a2a.auth import authorize_a2a_request, require_a2a_card_access
 from agno.os.interfaces.a2a.context import A2ACallContextBuilder, A2ARequestContextBuilder, A2ARequestHandler
 from agno.os.interfaces.a2a.executor import A2AExecutor
 from agno.os.interfaces.a2a.task_store import A2ATaskStore
@@ -65,23 +64,23 @@ def _attach_a2a_endpoint(
 ) -> None:
     """Attach the A2A server routes to the router as API routes, so they are served and documented with it."""
     for route in routes:
-        if isinstance(route, Route) and route.methods:
-            router.add_api_route(
-                route.path,
-                _build_a2a_endpoint(route.endpoint, resource_type, entity),
-                methods=sorted(method for method in route.methods if method != "HEAD"),
-                operation_id=operation_id,
-                name=operation_id,
-                description="Send an A2A request to an Agno Agent, Team or Workflow. The A2A method is carried in the JSON-RPC body. "
-                "Optional: Pass user ID via X-User-ID header (recommended) or 'userId' in params.message.metadata.",
-                responses={
-                    400: {"description": "Invalid request"},
-                    403: {"description": "Access denied"},
-                    404: {"description": "Session not found"},
-                },
-            )
-        else:
-            router.routes.append(route)
+        # A route that cannot be wrapped would be served without the A2A authorization
+        if not isinstance(route, Route) or not route.methods:
+            raise ValueError(f"Unsupported A2A route type: {type(route).__name__}")
+        router.add_api_route(
+            route.path,
+            _build_a2a_endpoint(route.endpoint, resource_type, entity),
+            methods=sorted(method for method in route.methods if method != "HEAD"),
+            operation_id=operation_id,
+            name=operation_id,
+            description="Send an A2A request to an Agno Agent, Team or Workflow. The A2A method is carried in the JSON-RPC body. "
+            "Optional: Pass user ID via X-User-ID header (recommended) or 'userId' in params.message.metadata.",
+            responses={
+                400: {"description": "Invalid request"},
+                403: {"description": "Access denied"},
+                404: {"description": "Session not found"},
+            },
+        )
 
 
 def attach_routes(
@@ -110,7 +109,7 @@ def attach_routes(
         operation_id="get_agent_card",
         name="get_agent_card",
         responses={404: {"description": "Agent not found"}},
-        dependencies=[Depends(require_resource_access("agents", "read", "id"))],
+        dependencies=[Depends(require_a2a_card_access("agents", "id"))],
     )
     async def get_agent_card(request: Request, id: str):
         agent = get_agent_by_id(id, agents)
@@ -170,7 +169,7 @@ def attach_routes(
         operation_id="get_team_card",
         name="get_team_card",
         responses={404: {"description": "Team not found"}},
-        dependencies=[Depends(require_resource_access("teams", "read", "id"))],
+        dependencies=[Depends(require_a2a_card_access("teams", "id"))],
     )
     async def get_team_card(request: Request, id: str):
         team = get_team_by_id(id, teams)
@@ -230,7 +229,7 @@ def attach_routes(
         operation_id="get_workflow_card",
         name="get_workflow_card",
         responses={404: {"description": "Workflow not found"}},
-        dependencies=[Depends(require_resource_access("workflows", "read", "id"))],
+        dependencies=[Depends(require_a2a_card_access("workflows", "id"))],
     )
     async def get_workflow_card(request: Request, id: str):
         workflow = get_workflow_by_id(id, workflows)

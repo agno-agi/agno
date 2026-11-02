@@ -99,6 +99,55 @@ async def test_remote_agent_a2a_continue_run_sends_requirements_to_task() -> Non
     }
 
 
+@pytest.mark.asyncio
+async def test_remote_agent_a2a_stream_yields_run_output() -> None:
+    """RemoteAgent.arun(protocol="a2a", stream=True, yield_run_output=True) must end with the RunOutput.
+
+    Regression test: a Team records a streamed member only from that RunOutput, so the
+    member's metrics were missing from the team session.
+    """
+    from agno.client.a2a.schemas import StreamEvent
+    from agno.run.agent import RunCompletedEvent, RunOutput
+    from agno.run.base import RunStatus
+
+    remote_agent = RemoteAgent(base_url="http://fake-host", agent_id="test_agent", protocol="a2a")
+
+    async def stream_message(**kwargs):
+        yield StreamEvent(event_type="working", task_id="task-1", context_id="session-abc")
+        yield StreamEvent(event_type="content", content="144", task_id="task-1", context_id="session-abc")
+        yield StreamEvent(
+            event_type="completed",
+            task_id="task-1",
+            context_id="session-abc",
+            metadata={"metrics": {"input_tokens": 26, "output_tokens": 5, "total_tokens": 31}},
+            is_final=True,
+            status="completed",
+        )
+
+    mock_client = MagicMock()
+    mock_client.stream_message = stream_message
+    remote_agent.a2a_client = mock_client
+
+    events = [
+        event
+        async for event in remote_agent.arun(
+            "hello", stream=True, user_id="user-123", session_id="session-abc", yield_run_output=True
+        )
+    ]
+
+    assert isinstance(events[-2], RunCompletedEvent)
+    run_output = events[-1]
+    assert isinstance(run_output, RunOutput)
+    assert run_output.status == RunStatus.completed
+    assert run_output.content == "144"
+    assert run_output.run_id == "task-1"
+    assert run_output.session_id == "session-abc"
+    assert run_output.agent_id == "test_agent"
+    assert run_output.user_id == "user-123"
+    assert run_output.metrics is not None
+    assert (run_output.metrics.input_tokens, run_output.metrics.output_tokens) == (26, 5)
+
+
 def test_remote_agent_role_is_a_property() -> None:
     """RemoteAgent.role must resolve to the configured role string, not a bound method.
 

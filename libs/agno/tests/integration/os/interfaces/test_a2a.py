@@ -15,6 +15,7 @@ from agno.run.agent import (
     MemoryUpdateCompletedEvent,
     MemoryUpdateStartedEvent,
     ReasoningCompletedEvent,
+    ReasoningContentDeltaEvent,
     ReasoningStartedEvent,
     ReasoningStepEvent,
     RunCancelledEvent,
@@ -27,6 +28,7 @@ from agno.run.agent import (
     RunStartedEvent,
     RunStatus,
     ToolCallCompletedEvent,
+    ToolCallErrorEvent,
     ToolCallStartedEvent,
 )
 from agno.run.requirement import RunRequirement
@@ -43,14 +45,16 @@ from agno.run.workflow import (
     StepCompletedEvent as WorkflowStepCompletedEvent,
 )
 from agno.run.workflow import (
-    StepStartedEvent as WorkflowStepStartedEvent,
-)
-from agno.run.workflow import (
+    StepOutputEvent,
     WorkflowCompletedEvent,
     WorkflowStartedEvent,
 )
+from agno.run.workflow import (
+    StepStartedEvent as WorkflowStepStartedEvent,
+)
 from agno.team import Team
 from agno.workflow import Workflow
+from agno.workflow.types import StepOutput
 
 
 def _message_body(method: str, text: str, **message_fields: Any) -> Dict[str, Any]:
@@ -432,6 +436,53 @@ def test_a2a_streaming_with_tools(test_agent: Agent, test_client: TestClient):
         assert final_status["result"]["final"] is True
 
 
+def test_a2a_streaming_with_tool_error(test_agent: Agent, test_client: TestClient):
+    """Test A2A streaming flow with a tool error event."""
+
+    async def mock_event_stream() -> AsyncIterator[RunOutputEvent]:
+        """Mock event stream with a failed tool call."""
+        yield RunStartedEvent(
+            session_id="context-789",
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
+            run_id="test-run-123",
+        )
+
+        yield ToolCallErrorEvent(
+            session_id="context-789",
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
+            run_id="test-run-123",
+            tool=ToolExecution(tool_name="get_weather", tool_args={"location": "Shanghai"}),
+            error="Weather service unavailable",
+        )
+
+        yield RunCompletedEvent(
+            session_id="context-789",
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
+            run_id="test-run-123",
+            content="The weather service is unavailable.",
+        )
+
+    with patch.object(test_agent, "arun") as mock_arun:
+        mock_arun.return_value = mock_event_stream()
+
+        request_body = _message_body("message/stream", "What's the weather in SF?")
+
+        response = test_client.post(f"/a2a/agents/{test_agent.id}", json=request_body)
+
+        assert response.status_code == 200
+        events = _parse_sse_events(response.text)
+
+        tool_error = [e for e in events if e["result"].get("metadata", {}).get("agno_event_type") == "tool_call_error"]
+        assert len(tool_error) == 1
+        assert tool_error[0]["result"]["kind"] == "status-update"
+        assert tool_error[0]["result"]["status"]["state"] == "working"
+        assert tool_error[0]["result"]["metadata"]["tool_name"] == "get_weather"
+        assert tool_error[0]["result"]["metadata"]["error"] == "Weather service unavailable"
+
+
 def test_a2a_streaming_with_custom_event(test_agent: Agent, test_client: TestClient):
     """Test A2A streaming flow with a custom event."""
 
@@ -595,6 +646,96 @@ def test_a2a_streaming_with_reasoning(test_agent: Agent, test_client: TestClient
         ]
         assert len(content_chunks) == 1
         assert content_chunks[0]["result"]["artifact"]["parts"][0]["text"] == "Based on my analysis, here's the answer."
+
+        final_status = events[-1]
+        assert final_status["result"]["kind"] == "status-update"
+        assert final_status["result"]["status"]["state"] == "completed"
+
+
+def test_a2a_streaming_with_reasoning_content(test_agent: Agent, test_client: TestClient):
+    """Test A2A streaming with reasoning content streamed by a native reasoning model."""
+
+    async def mock_event_stream() -> AsyncIterator[RunOutputEvent]:
+        """Mock event stream with reasoning content chunks and no reasoning steps."""
+        yield RunStartedEvent(
+            session_id="context-789",
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
+            run_id="test-run-123",
+        )
+
+        yield ReasoningStartedEvent(
+            session_id="context-789",
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
+            run_id="test-run-123",
+        )
+
+        yield ReasoningContentDeltaEvent(
+            session_id="context-789",
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
+            run_id="test-run-123",
+            reasoning_content="First, I need to understand ",
+        )
+
+        yield ReasoningContentDeltaEvent(
+            session_id="context-789",
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
+            run_id="test-run-123",
+            reasoning_content="what the user is asking.",
+        )
+
+        yield ReasoningCompletedEvent(
+            session_id="context-789",
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
+            run_id="test-run-123",
+        )
+
+        yield RunContentEvent(
+            session_id="context-789",
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
+            run_id="test-run-123",
+            content="Based on my analysis, here's the answer.",
+        )
+
+        yield RunCompletedEvent(
+            session_id="context-789",
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
+            run_id="test-run-123",
+            content="Based on my analysis, here's the answer.",
+        )
+
+    with patch.object(test_agent, "arun") as mock_arun:
+        mock_arun.return_value = mock_event_stream()
+
+        request_body = _message_body("message/stream", "Help me think through this problem.")
+
+        response = test_client.post(f"/a2a/agents/{test_agent.id}", json=request_body)
+
+        assert response.status_code == 200
+        events = _parse_sse_events(response.text)
+
+        # Reasoning content streams as chunks of the reasoning artifact
+        reasoning_chunks = [
+            e
+            for e in events
+            if e["result"].get("kind") == "artifact-update"
+            and e["result"]["artifact"].get("metadata", {}).get("agno_content_category") == "reasoning"
+        ]
+        assert len(reasoning_chunks) == 2
+        assert reasoning_chunks[0]["result"]["artifact"]["parts"][0]["text"] == "First, I need to understand "
+        assert reasoning_chunks[1]["result"]["artifact"]["parts"][0]["text"] == "what the user is asking."
+        assert not reasoning_chunks[0]["result"].get("append")
+        assert reasoning_chunks[1]["result"]["append"] is True
+
+        for chunk in reasoning_chunks:
+            assert chunk["result"]["artifact"]["name"] == "reasoning"
+            assert chunk["result"]["artifact"]["metadata"]["agno_event_type"] == "reasoning_content_delta"
 
         final_status = events[-1]
         assert final_status["result"]["kind"] == "status-update"
@@ -1364,6 +1505,131 @@ def test_a2a_streaming_workflow(test_workflow: Workflow, test_workflow_client: T
         ]
         assert len(step_started) == 1
         assert step_started[0]["result"]["metadata"]["step_name"] == "echo_step"
+
+        final_status = events[-1]
+        assert final_status["result"]["kind"] == "status-update"
+        assert final_status["result"]["status"]["state"] == "completed"
+
+
+def test_a2a_streaming_workflow_with_agent_steps(test_workflow: Workflow, test_workflow_client: TestClient):
+    """Test that the text of each agent step of a streamed workflow starts apart from the step before it."""
+
+    async def mock_event_stream():
+        yield WorkflowStartedEvent(
+            session_id="context-789",
+            workflow_id=test_workflow.id,
+            workflow_name=test_workflow.name,
+            run_id="test-run-123",
+        )
+
+        for step_name, step_run_id, chunks in (
+            ("weather", "weather-run", ["Fog at sea ", "hides the horizon."]),
+            ("lighthouse", "lighthouse-run", ["Lighthouses ", "guide ships home."]),
+        ):
+            yield WorkflowStepStartedEvent(
+                session_id="context-789",
+                workflow_id=test_workflow.id,
+                workflow_name=test_workflow.name,
+                run_id="test-run-123",
+                step_name=step_name,
+            )
+            for chunk in chunks:
+                yield RunContentEvent(
+                    session_id="context-789",
+                    run_id=step_run_id,
+                    workflow_run_id="test-run-123",
+                    step_name=step_name,
+                    content=chunk,
+                )
+            yield WorkflowStepCompletedEvent(
+                session_id="context-789",
+                workflow_id=test_workflow.id,
+                workflow_name=test_workflow.name,
+                run_id="test-run-123",
+                step_name=step_name,
+            )
+
+        yield WorkflowCompletedEvent(
+            session_id="context-789",
+            workflow_id=test_workflow.id,
+            workflow_name=test_workflow.name,
+            run_id="test-run-123",
+            content="Lighthouses guide ships home.",
+        )
+
+    with patch.object(test_workflow, "arun") as mock_arun:
+        mock_arun.return_value = mock_event_stream()
+
+        request_body = _message_body("message/stream", "Fog at sea")
+
+        response = test_workflow_client.post(f"/a2a/workflows/{test_workflow.id}", json=request_body)
+
+        assert response.status_code == 200
+        events = _parse_sse_events(response.text)
+
+        artifact_updates = [e["result"] for e in events if e["result"].get("kind") == "artifact-update"]
+        content_chunks = [update for update in artifact_updates if not update.get("lastChunk")]
+        assert [chunk["artifact"]["parts"][0]["text"] for chunk in content_chunks] == [
+            "Fog at sea ",
+            "hides the horizon.",
+            "\n\nLighthouses ",
+            "guide ships home.",
+        ]
+
+        # The final chunk replaces the streamed steps with the response of the workflow
+        final_chunks = [update for update in artifact_updates if update.get("lastChunk")]
+        assert len(final_chunks) == 1
+        assert final_chunks[0]["append"] is False
+        assert final_chunks[0]["artifact"]["parts"][0]["text"] == "Lighthouses guide ships home."
+
+        final_status = events[-1]
+        assert final_status["result"]["kind"] == "status-update"
+        assert final_status["result"]["status"]["state"] == "completed"
+
+
+def test_a2a_streaming_workflow_with_function_steps(test_workflow: Workflow, test_workflow_client: TestClient):
+    """Test A2A streaming flow with the output of function steps."""
+
+    async def mock_event_stream():
+        yield WorkflowStartedEvent(
+            session_id="context-789",
+            workflow_id=test_workflow.id,
+            workflow_name=test_workflow.name,
+            run_id="test-run-123",
+        )
+
+        for step_name, content in (("a", "A"), ("b", "B")):
+            yield StepOutputEvent(
+                session_id="context-789",
+                workflow_id=test_workflow.id,
+                workflow_name=test_workflow.name,
+                run_id="test-run-123",
+                step_name=step_name,
+                step_output=StepOutput(step_name=step_name, content=content),
+            )
+
+        yield WorkflowCompletedEvent(
+            session_id="context-789",
+            workflow_id=test_workflow.id,
+            workflow_name=test_workflow.name,
+            run_id="test-run-123",
+            content="B",
+        )
+
+    with patch.object(test_workflow, "arun") as mock_arun:
+        mock_arun.return_value = mock_event_stream()
+
+        request_body = _message_body("message/stream", "Hello, workflow!")
+
+        response = test_workflow_client.post(f"/a2a/workflows/{test_workflow.id}", json=request_body)
+
+        assert response.status_code == 200
+        events = _parse_sse_events(response.text)
+
+        content_chunks = [
+            e for e in events if e["result"].get("kind") == "artifact-update" and not e["result"].get("lastChunk")
+        ]
+        assert "".join(chunk["result"]["artifact"]["parts"][0]["text"] for chunk in content_chunks) == "A\n\nB"
 
         final_status = events[-1]
         assert final_status["result"]["kind"] == "status-update"

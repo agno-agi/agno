@@ -77,9 +77,5 @@ class A2A(BaseInterface):
 
     def get_scope_mappings(self) -> dict:
         # The A2A endpoint is authorized in the route, per A2A method: all methods share one route
-        p = self.prefix.rstrip("/")
-        return {
-            f"GET {p}/agents/*/.well-known/agent-card.json": ["agents:read"],
-            f"GET {p}/teams/*/.well-known/agent-card.json": ["teams:read"],
-            f"GET {p}/workflows/*/.well-known/agent-card.json": ["workflows:read"],
-        }
+        # The Agent Cards are too: read or run allows a card, and a scope mapping requires all of its scopes
+        return {}

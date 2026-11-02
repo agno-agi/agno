@@ -767,5 +767,71 @@ class TestInterfaceSessionWriteOwnership:
         assert {r["user_id"] for r in rows} == {"userC"}
 
 
+class RefundScriptedModel(ScriptedModel):
+    """Calls the refund tool, then answers once the tool result is in."""
+
+    def _next(self, messages) -> ModelResponse:
+        last_user = max(i for i, m in enumerate(messages) if m.role == "user")
+        if any(m.role == "tool" for m in messages[last_user + 1 :]):
+            return self._resp()
+        response = ModelResponse(role="assistant", response_usage=MessageMetrics())
+        response.tool_calls = [
+            {"id": "call-1", "type": "function", "function": {"name": "refund", "arguments": '{"order_id": "42"}'}}
+        ]
+        return response
+
+    async def ainvoke(self, *args, **kwargs):
+        return self._next(kwargs["messages"])
+
+    async def ainvoke_stream(self, *args, **kwargs):
+        yield self._next(kwargs["messages"])
+
+
+class TestA2AAdminContinue:
+    """An admin reads and cancels another user's A2A task, so it must be able to continue it too."""
+
+    def _send(self, client, token, message):
+        return client.post(
+            "/a2a/agents/refund-agent",
+            json={"jsonrpc": "2.0", "id": "1", "method": "SendMessage", "params": {"message": message}},
+            headers={"A2A-Version": "1.0", **auth_header(token)},
+        )
+
+    def test_admin_continues_another_users_paused_task(self, shared_db):
+        from agno.tools import tool
+
+        @tool(requires_confirmation=True)
+        def refund(order_id: str) -> str:
+            """Refund an order."""
+            return f"Order {order_id} refunded"
+
+        agent = Agent(id="refund-agent", db=shared_db, model=RefundScriptedModel("scripted-1", "done"), tools=[refund])
+        agent_os = AgentOS(
+            id=TEST_OS_ID,
+            agents=[agent],
+            db=shared_db,
+            telemetry=False,
+            a2a_interface=True,
+            authorization=True,
+            authorization_config=AuthorizationConfig(
+                verification_keys=[JWT_SECRET], algorithm="HS256", user_isolation=True
+            ),
+        )
+        client = TestClient(agent_os.get_app())
+
+        message = {"messageId": "m1", "role": "ROLE_USER", "contextId": "ctx-c", "parts": [{"text": "Refund 42"}]}
+        task = self._send(client, create_token("user-c"), message).json()["result"]["task"]
+        assert task["status"]["state"] == "TASK_STATE_INPUT_REQUIRED"
+        requirements = [part["data"] for part in task["status"]["message"]["parts"] if "data" in part][0]
+        requirements["requirements"][0]["confirmation"] = True
+
+        message = {"messageId": "m2", "role": "ROLE_USER", "taskId": task["id"], "parts": [{"data": requirements}]}
+        assert self._send(client, create_token("user-d"), message).json()["error"]["code"] == -32001
+
+        resp = self._send(client, create_admin_token(), message)
+        assert resp.json()["result"]["task"]["status"]["state"] == "TASK_STATE_COMPLETED", resp.text
+        assert agent.get_run_output(task["id"], session_id="ctx-c").user_id == "user-c"
+
+
 def history_agent_id() -> str:
     return "history-agent"

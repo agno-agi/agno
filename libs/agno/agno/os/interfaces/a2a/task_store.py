@@ -72,6 +72,7 @@ class A2ATaskStore(TaskStore):
         """Get the user the caller is scoped to, or None when the caller reads unfiltered."""
         request = context.state.get("request")
         if request is None:
+            # The call context user is the id resolve_run_user_id pinned, not one the client chose
             return context.user.user_name or None
         return get_scoped_user_id(request)
 
@@ -85,7 +86,7 @@ class A2ATaskStore(TaskStore):
             owner = stored[0]
         else:
             # A task this process does not hold yet belongs to the user of its stored run, if it has one
-            run_output = await self._get_run(task.id)
+            run_output = await self.get_run(task.id)
             owner = getattr(run_output, "user_id", None) or context.user.user_name
 
         # The A2A server cancels a task it is not running itself (a paused one, one running on
@@ -102,14 +103,14 @@ class A2ATaskStore(TaskStore):
 
                 # A stored run is the same on every replica, and another replica may still move it on.
                 # The canceled task is not kept here: it is read back from the stored run.
-                if await self._get_run(task.id) is not None:
+                if await self.get_run(task.id) is not None:
                     self._live_tasks.pop(task.id, None)
                     return
 
         # A paused run is stored, and every replica reads its task from there.
         # The paused task is not kept here: it is read back from the stored run.
         if task.status.state == TaskState.TASK_STATE_INPUT_REQUIRED:
-            run_output = await self._get_run(task.id)
+            run_output = await self.get_run(task.id)
             if run_output is not None and run_output.status == RunStatus.paused:
                 self._live_tasks.pop(task.id, None)
                 return
@@ -133,7 +134,7 @@ class A2ATaskStore(TaskStore):
         # A task waiting for input can be continued on another replica. Its stored run then
         # moves on while the copy kept here still waits, so the stored run is checked.
         if stored is not None and stored[1].status.state == TaskState.TASK_STATE_INPUT_REQUIRED:
-            run_output = await self._get_run(task_id)
+            run_output = await self.get_run(task_id)
             if run_output is not None and run_output.status != RunStatus.paused:
                 self._live_tasks.pop(task_id, None)
                 stored = None
@@ -148,7 +149,7 @@ class A2ATaskStore(TaskStore):
             return None
         return await self._get_task_from_run(task_id, scoped_user_id)
 
-    async def _get_run(self, task_id: str) -> Optional[Any]:
+    async def get_run(self, task_id: str) -> Optional[Any]:
         """Get the run the entity persisted for a task, pinned to this entity."""
         # A remote entity's runs are stored by the AgentOS it runs on
         if self.db is None or isinstance(self.db, RemoteDb):
@@ -169,7 +170,7 @@ class A2ATaskStore(TaskStore):
         if self.db is None or isinstance(self.db, RemoteDb):
             return
         # A paused run is not running anywhere, so nothing else acts on the cancellation intent
-        run_output = await self._get_run(task_id)
+        run_output = await self.get_run(task_id)
         if run_output is None or run_output.status != RunStatus.paused:
             return
         run_output.status = RunStatus.cancelled
@@ -206,7 +207,7 @@ class A2ATaskStore(TaskStore):
 
     async def _get_task_from_run(self, task_id: str, scoped_user_id: Optional[str]) -> Optional[Task]:
         """Rebuild a task from the run the entity persisted, pinned to this entity and the caller."""
-        run_output = await self._get_run(task_id)
+        run_output = await self.get_run(task_id)
         if run_output is None:
             return None
         if scoped_user_id is not None and getattr(run_output, "user_id", None) != scoped_user_id:

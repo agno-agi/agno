@@ -95,22 +95,26 @@ async def _authorize_a2a_route(
         return False, "provider_error"
 
 
-async def authorize_a2a_access(request: Request, resource_type: str, resource_id: str, action: str) -> None:
+async def authorize_a2a_access(request: Request, resource_type: str, resource_id: str, *actions: str) -> None:
     """Check the caller may read or run an entity over A2A, and record the decision.
 
     Args:
         request: The A2A request
         resource_type: The type of the entity ("agents", "teams", "workflows")
         resource_id: The id of the entity
-        action: The action the request requires ("read" or "run")
+        actions: The actions that allow the request, any one of them ("read", "run")
     """
     # Only check authorization if it's enabled
     if not getattr(request.state, "authorization_enabled", False):
         return
 
-    allowed, reason = await _authorize_a2a_route(request, resource_type, resource_id, action)
-    if allowed:
-        allowed = await acheck_resource_access(request, resource_id, resource_type, action)
+    allowed, reason = False, None
+    for action in actions:
+        allowed, reason = await _authorize_a2a_route(request, resource_type, resource_id, action)
+        if allowed:
+            allowed = await acheck_resource_access(request, resource_id, resource_type, action)
+        if allowed:
+            break
 
     # Record the per-method decision. The route gate does not see the A2A method,
     # so this is the decision the access audit must show, allowed or denied.
@@ -121,7 +125,7 @@ async def authorize_a2a_access(request: Request, resource_type: str, resource_id
         allowed=allowed,
         target=f"{request.method} {request.url.path}",
         principal=getattr(request.state, "user_id", None),
-        required_scopes=[f"{resource_type}:{resource_id}:{action}"],
+        required_scopes=[f"{resource_type}:{resource_id}:{action}" for action in actions],
         scopes=list(getattr(request.state, "scopes", None) or []),
         claims=getattr(request.state, "claims", None),
         reason=None if allowed else reason or "resource_access_denied",
@@ -133,7 +137,29 @@ async def authorize_a2a_access(request: Request, resource_type: str, resource_id
             "teams": "team",
             "workflows": "workflow",
         }.get(resource_type, resource_type.rstrip("s"))
-        raise HTTPException(status_code=403, detail=f"Access denied to {action} this {resource_singular}")
+        raise HTTPException(status_code=403, detail=f"Access denied to {actions[0]} this {resource_singular}")
+
+
+def require_a2a_card_access(resource_type: str, resource_id_param: str):
+    """Create a dependency that checks the caller may read an entity's Agent Card.
+
+    The card tells a client how to authenticate, so a caller that may run the entity
+    may read its card, as well as a caller that may read it.
+
+    Args:
+        resource_type: The type of the entity ("agents", "teams", "workflows")
+        resource_id_param: Name of the path parameter containing the entity id
+
+    Returns:
+        A dependency function for use with FastAPI's Depends()
+    """
+
+    async def dependency(request: Request):
+        resource_id = request.path_params.get(resource_id_param)
+        if resource_id:
+            await authorize_a2a_access(request, resource_type, resource_id, "read", "run")
+
+    return dependency
 
 
 async def authorize_a2a_request(request: Request, resource_type: str, entity: Any) -> None:
@@ -156,12 +182,13 @@ async def authorize_a2a_request(request: Request, resource_type: str, entity: An
     db = getattr(entity, "db", None)
 
     # 1. Read the A2A method
-    # A malformed body is left to the A2A server to reject
+    # A malformed body requires run, and is left to the A2A server to reject
     try:
         request_body = await request.json()
     except Exception:
-        return
+        request_body = None
     if not isinstance(request_body, dict):
+        await authorize_a2a_access(request, resource_type, resource_id, "run")
         return
     method = request_body.get("method")
     # A method that is not a string is left to the A2A server to reject
