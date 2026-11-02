@@ -66,34 +66,6 @@ class MetricsResponse(BaseModel):
     refresh: Optional[MetricsRefreshStatusResponse] = Field(None, description="Status of the most recent refresh")
 
 
-class ModelUsage(BaseModel):
-    """The runs one model served across the window"""
-
-    model_id: str = Field(..., description="Identifier of the model")
-    model_provider: Optional[str] = Field(None, description="Provider serving the model")
-    runs_count: int = Field(..., description="Runs the model served in the window", ge=0)
-    runs_share: float = Field(..., description="Percentage of the window's runs the model served", ge=0)
-
-
-class OSModelMetricsResponse(BaseModel):
-    models: List[ModelUsage] = Field(..., description="Model usage across the window, most-run first")
-    total_model_runs: int = Field(
-        ..., description="Runs in the window that called a model, team members and workflow steps included", ge=0
-    )
-    window_days: int = Field(..., description="Number of days the metrics cover", ge=1)
-    updated_at: Optional[datetime] = Field(None, description="Timestamp of the most recent metrics update")
-    db_ids: Dict[str, Optional[datetime]] = Field(
-        default_factory=dict, description="Databases the metrics were read from, each with its most recent update"
-    )
-    skipped_db_ids: Dict[str, str] = Field(
-        default_factory=dict,
-        description=(
-            "Databases left out of the metrics, each with the reason: "
-            "'timeout', 'incomplete', 'failed' or 'unsupported'"
-        ),
-    )
-
-
 class DaySessionMetrics(BaseModel):
     """The sessions created on one day"""
 
@@ -149,6 +121,61 @@ class OSTokenMetricsResponse(BaseModel):
             "Change of total_tokens against previous_total_tokens, in percent. "
             "None when the previous window used no tokens"
         ),
+    )
+    window_days: int = Field(..., description="Number of days the metrics cover", ge=1)
+    updated_at: Optional[datetime] = Field(None, description="Timestamp of the most recent metrics update")
+    db_ids: Dict[str, Optional[datetime]] = Field(
+        default_factory=dict, description="Databases the metrics were read from, each with its most recent update"
+    )
+    skipped_db_ids: Dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Databases left out of the metrics, each with the reason: "
+            "'timeout', 'incomplete', 'failed' or 'unsupported'"
+        ),
+    )
+
+
+class DayUserMetrics(BaseModel):
+    """The users in the directory at the end of one day"""
+
+    date: datetime = Field(..., description="Date the users are counted at the end of")
+    users_count: int = Field(..., description="Users in the directory at the end of this date", ge=0)
+
+
+class OSUserMetricsResponse(BaseModel):
+    metrics: List[DayUserMetrics] = Field(..., description="Daily user counts across the window, oldest first")
+    total_users: int = Field(..., description="Users in the directory at the end of the window", ge=0)
+    previous_total_users: int = Field(
+        ...,
+        description=(
+            "Users in the directory at the end of the window of the same length that ends the day before this one"
+        ),
+        ge=0,
+    )
+    change_percent: Optional[float] = Field(
+        None,
+        description=(
+            "Change of total_users against previous_total_users, in percent. None when the previous window had no users"
+        ),
+    )
+    window_days: int = Field(..., description="Number of days the metrics cover", ge=1)
+    updated_at: Optional[datetime] = Field(None, description="Timestamp of the directory read")
+
+
+class ModelUsage(BaseModel):
+    """The runs one model served across the window"""
+
+    model_id: str = Field(..., description="Identifier of the model")
+    model_provider: Optional[str] = Field(None, description="Provider serving the model")
+    runs_count: int = Field(..., description="Runs the model served in the window", ge=0)
+    runs_share: float = Field(..., description="Percentage of the window's runs the model served", ge=0)
+
+
+class OSModelMetricsResponse(BaseModel):
+    models: List[ModelUsage] = Field(..., description="Model usage across the window, most-run first")
+    total_model_runs: int = Field(
+        ..., description="Runs in the window that called a model, team members and workflow steps included", ge=0
     )
     window_days: int = Field(..., description="Number of days the metrics cover", ge=1)
     updated_at: Optional[datetime] = Field(None, description="Timestamp of the most recent metrics update")
@@ -280,30 +307,3 @@ class OSLatencyMetricsResponse(BaseModel):
             "'timeout', 'incomplete', 'failed' or 'unsupported'"
         ),
     )
-
-
-class DayUserMetrics(BaseModel):
-    """The users in the directory at the end of one day"""
-
-    date: datetime = Field(..., description="Date the users are counted at the end of")
-    users_count: int = Field(..., description="Users in the directory at the end of this date", ge=0)
-
-
-class OSUserMetricsResponse(BaseModel):
-    metrics: List[DayUserMetrics] = Field(..., description="Daily user counts across the window, oldest first")
-    total_users: int = Field(..., description="Users in the directory at the end of the window", ge=0)
-    previous_total_users: int = Field(
-        ...,
-        description=(
-            "Users in the directory at the end of the window of the same length that ends the day before this one"
-        ),
-        ge=0,
-    )
-    change_percent: Optional[float] = Field(
-        None,
-        description=(
-            "Change of total_users against previous_total_users, in percent. None when the previous window had no users"
-        ),
-    )
-    window_days: int = Field(..., description="Number of days the metrics cover", ge=1)
-    updated_at: Optional[datetime] = Field(None, description="Timestamp of the directory read")

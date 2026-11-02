@@ -58,6 +58,7 @@ from agno.os.utils import (
     get_db,
     get_metrics_calculation,
     has_metrics_lock_row,
+    keeps_metrics_versions,
     stop_metrics_refresh_on_read,
     to_utc_datetime,
 )
@@ -155,6 +156,12 @@ def _os_metrics_location(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> tuple[Opti
         for name in ("db_url", "_db_url", "project_id", "bucket_name"):
             if isinstance(getattr(db, name, None), str):
                 address = getattr(db, name)
+                break
+    if address is None:
+        # A client given without a URL is named the way its adapter seeds its default id
+        for name in ("db_client", "_provided_client", "redis_client"):
+            if getattr(db, name, None) is not None:
+                address = str(getattr(db, name))
                 break
     if address is None:
         return (str(db.id), *table_names)
@@ -324,6 +331,12 @@ def attach_routes(
         for db in chain.from_iterable(dbs.values()):
             stop_metrics_refresh_on_read(db)
 
+    # Most recent refresh state per db id, doubling as the in-flight guard ('running'), for a database that
+    # keeps no refresh status of its own.
+    # Only mutated on the event loop (the sync calculation itself runs in the threadpool),
+    # so no lock is needed. Per-process: each worker tracks the refreshes it started.
+    refresh_states: dict[str, MetricsRefreshStatusResponse] = {}
+
     async def _get_refresh_status(db: Union[BaseDb, AsyncBaseDb]) -> MetricsRefreshStatusResponse:
         """The status of the most recent refresh: the database's, for every process, or this process's own."""
         if not has_metrics_lock_row(db):
@@ -477,12 +490,6 @@ def attach_routes(
             logger.exception("GET /metrics failed")
             raise HTTPException(status_code=500, detail=f"Error getting metrics: {str(e)}")
 
-    # Most recent refresh state per db id, doubling as the in-flight guard ('running'), for a database that
-    # keeps no refresh status of its own.
-    # Only mutated on the event loop (the sync calculation itself runs in the threadpool),
-    # so no lock is needed. Per-process: each worker tracks the refreshes it started.
-    refresh_states: dict[str, MetricsRefreshStatusResponse] = {}
-
     def _refresh_is_running(refresh_key: str) -> bool:
         state = refresh_states.get(refresh_key)
         return state is not None and state.status == "running"
@@ -595,6 +602,7 @@ def attach_routes(
                 },
             },
             500: {"description": "Failed to refresh metrics", "model": InternalServerErrorResponse},
+            503: {"description": "rebuild_from not supported by the configured database"},
         },
     )
     async def calculate_metrics(
@@ -643,11 +651,9 @@ def attach_routes(
             refresh_key = str(db.id)
             has_lock_row = has_metrics_lock_row(db)
             if rebuild_from is not None and not has_lock_row:
-                raise HTTPException(
-                    status_code=400, detail=f"rebuild_from needs a database that keeps {db.user_metrics_table_name}"
-                )
+                raise HTTPException(status_code=503, detail="rebuild_from not supported by the configured database")
             if rebuild_from is not None and rebuild_from > datetime.now(timezone.utc).date():
-                raise HTTPException(status_code=400, detail="rebuild_from cannot be a future date")
+                raise HTTPException(status_code=422, detail="rebuild_from cannot be a future date")
 
             # A database with a lock row lets one refresh run at a time for every process, and claims it when the
             # refresh starts; without one, the same guard holds for this process
@@ -688,7 +694,7 @@ def attach_routes(
                 return _already_running_response() if has_lock_row else []
             # The days alone came back: their rows are read from the tables
             if has_lock_row:
-                # Nothing changed: today's metrics come back, as they did when every refresh calculated today
+                # A refresh that changed no day answers with today's metrics
                 days = result or [datetime.now(timezone.utc).date()]
                 metrics, _ = await _read_metrics(db, days[0], days[-1], effective_user_id)
                 metrics_by_date = {metric["date"]: metric for metric in metrics if metric["date"] in days}
@@ -990,7 +996,7 @@ def attach_routes(
         versions_starting_date = _previous_starting_date(starting_date, ending_date)
 
         async def _versions_of(db: Union[BaseDb, AsyncBaseDb, RemoteDb], seconds_left: float) -> Any:
-            if isinstance(db, RemoteDb) or not _keeps_metrics_versions(db):
+            if isinstance(db, RemoteDb) or not keeps_metrics_versions(db):
                 return "unsupported"
             if isinstance(db, AsyncBaseDb):
                 task = asyncio.ensure_future(db.get_metrics_versions(versions_starting_date, ending_date))
@@ -1126,6 +1132,7 @@ def attach_routes(
     ) -> Union[OSSessionMetricsResponse, Response]:
         try:
             os_dbs = _os_dbs(db_id)
+            effective_user_id = _owner(request, user_id)
             remote_db = _remote_os_db(os_dbs)
             if remote_db is not None:
                 auth_token = get_auth_token_from_request(request)
@@ -1133,14 +1140,13 @@ def attach_routes(
                 remote_response = await remote_db.get_os_session_metrics(
                     starting_date=starting_date,
                     ending_date=ending_date,
-                    user_id=_owner(request, user_id),
+                    user_id=effective_user_id,
                     db_id=list(os_dbs),
                     timeout_seconds=timeout_seconds,
                     headers=headers,
                 )
                 return _os_metrics_answer(request, response, remote_response)
             starting_date, ending_date = _window(starting_date, ending_date, settings.os_metrics_max_window_days)
-            effective_user_id = _owner(request, user_id)
             deadline = asyncio.get_running_loop().time() + timeout_seconds
             response_key, skipped_db_ids = await _os_metrics_response_key(
                 "sessions", os_dbs, effective_user_id, starting_date, ending_date, timeout_seconds / 2
@@ -1254,6 +1260,7 @@ def attach_routes(
     ) -> Union[OSTokenMetricsResponse, Response]:
         try:
             os_dbs = _os_dbs(db_id)
+            effective_user_id = _owner(request, user_id)
             remote_db = _remote_os_db(os_dbs)
             if remote_db is not None:
                 auth_token = get_auth_token_from_request(request)
@@ -1261,14 +1268,13 @@ def attach_routes(
                 remote_response = await remote_db.get_os_token_metrics(
                     starting_date=starting_date,
                     ending_date=ending_date,
-                    user_id=_owner(request, user_id),
+                    user_id=effective_user_id,
                     db_id=list(os_dbs),
                     timeout_seconds=timeout_seconds,
                     headers=headers,
                 )
                 return _os_metrics_answer(request, response, remote_response)
             starting_date, ending_date = _window(starting_date, ending_date, settings.os_metrics_max_window_days)
-            effective_user_id = _owner(request, user_id)
             deadline = asyncio.get_running_loop().time() + timeout_seconds
             response_key, skipped_db_ids = await _os_metrics_response_key(
                 "tokens", os_dbs, effective_user_id, starting_date, ending_date, timeout_seconds / 2
@@ -1492,6 +1498,7 @@ def attach_routes(
     ) -> Union[OSModelMetricsResponse, Response]:
         try:
             os_dbs = _os_dbs(db_id)
+            effective_user_id = _owner(request, user_id)
             remote_db = _remote_os_db(os_dbs)
             if remote_db is not None:
                 auth_token = get_auth_token_from_request(request)
@@ -1499,14 +1506,13 @@ def attach_routes(
                 remote_response = await remote_db.get_os_model_metrics(
                     starting_date=starting_date,
                     ending_date=ending_date,
-                    user_id=_owner(request, user_id),
+                    user_id=effective_user_id,
                     db_id=list(os_dbs),
                     timeout_seconds=timeout_seconds,
                     headers=headers,
                 )
                 return _os_metrics_answer(request, response, remote_response)
             starting_date, ending_date = _window(starting_date, ending_date, settings.os_metrics_max_window_days)
-            effective_user_id = _owner(request, user_id)
             deadline = asyncio.get_running_loop().time() + timeout_seconds
             response_key, skipped_db_ids = await _os_metrics_response_key(
                 "models", os_dbs, effective_user_id, starting_date, ending_date, timeout_seconds / 2
@@ -1632,6 +1638,7 @@ def attach_routes(
     ) -> Union[OSRunMetricsResponse, Response]:
         try:
             os_dbs = _os_dbs(db_id)
+            effective_user_id = _owner(request, user_id)
             remote_db = _remote_os_db(os_dbs)
             if remote_db is not None:
                 auth_token = get_auth_token_from_request(request)
@@ -1639,14 +1646,13 @@ def attach_routes(
                 remote_response = await remote_db.get_os_run_metrics(
                     starting_date=starting_date,
                     ending_date=ending_date,
-                    user_id=_owner(request, user_id),
+                    user_id=effective_user_id,
                     db_id=list(os_dbs),
                     timeout_seconds=timeout_seconds,
                     headers=headers,
                 )
                 return _os_metrics_answer(request, response, remote_response)
             starting_date, ending_date = _window(starting_date, ending_date, settings.os_metrics_max_window_days)
-            effective_user_id = _owner(request, user_id)
             deadline = asyncio.get_running_loop().time() + timeout_seconds
             response_key, skipped_db_ids = await _os_metrics_response_key(
                 "runs", os_dbs, effective_user_id, starting_date, ending_date, timeout_seconds / 2
@@ -1808,6 +1814,7 @@ def attach_routes(
     ) -> Union[OSLatencyMetricsResponse, Response]:
         try:
             os_dbs = _os_dbs(db_id)
+            effective_user_id = _owner(request, user_id)
             remote_db = _remote_os_db(os_dbs)
             if remote_db is not None:
                 auth_token = get_auth_token_from_request(request)
@@ -1815,14 +1822,13 @@ def attach_routes(
                 remote_response = await remote_db.get_os_latency_metrics(
                     starting_date=starting_date,
                     ending_date=ending_date,
-                    user_id=_owner(request, user_id),
+                    user_id=effective_user_id,
                     db_id=list(os_dbs),
                     timeout_seconds=timeout_seconds,
                     headers=headers,
                 )
                 return _os_metrics_answer(request, response, remote_response)
             starting_date, ending_date = _window(starting_date, ending_date, settings.os_metrics_max_window_days)
-            effective_user_id = _owner(request, user_id)
             deadline = asyncio.get_running_loop().time() + timeout_seconds
             response_key, skipped_db_ids = await _os_metrics_response_key(
                 "latency", os_dbs, effective_user_id, starting_date, ending_date, timeout_seconds / 2
@@ -1873,12 +1879,5 @@ def attach_routes(
         except Exception as e:
             logger.exception("GET /os/metrics/latency failed")
             raise HTTPException(status_code=500, detail=f"Error getting OS latency metrics: {str(e)}")
-
-    def _keeps_metrics_versions(db: Union[BaseDb, AsyncBaseDb]) -> bool:
-        """Whether the database implements get_metrics_versions, rather than the stub."""
-        return getattr(type(db), "get_metrics_versions", None) not in (
-            BaseDb.get_metrics_versions,
-            AsyncBaseDb.get_metrics_versions,
-        )
 
     return router

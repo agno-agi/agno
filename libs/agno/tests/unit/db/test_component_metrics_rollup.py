@@ -12,16 +12,18 @@ import pytest
 
 import agno
 from agno.db.postgres import PostgresDb
-from agno.db.postgres.utils import build_component_metrics_run, build_component_metrics_totals
+from agno.db.postgres.utils import build_component_metrics_run
 from agno.db.utils import (
     _METRICS_BUCKET_BOUNDS_MS,
     METRICS_COMPONENT_TYPES,
+    METRICS_DAY_GRACE_SECONDS,
     METRICS_FIELDS,
     METRICS_READ_FIELDS,
     METRICS_STOPPED_ERROR,
     METRICS_TOKEN_FIELDS,
     add_metrics_month_totals,
     add_metrics_totals,
+    build_component_metrics_totals,
     build_metrics_by_owner,
     build_metrics_from_user_metrics,
     build_user_metrics_month_rows,
@@ -42,6 +44,7 @@ from agno.db.utils import (
     metrics_month_end,
     metrics_nested_run_ids,
     metrics_refresh_status,
+    metrics_remote_member_team_session_ids,
     resolve_metrics_fields,
     user_metrics_row_to_write,
     user_metrics_rows_to_write,
@@ -57,6 +60,17 @@ REGENERATED = RunStatus.regenerated.value
 
 # The keys that differ between two builds of the same day.
 EPHEMERAL = {"created_at", "updated_at"}
+
+# The row of the metrics refreshes table while a refresh holds its lock.
+RUNNING_REFRESH = {
+    "locked_by": "worker",
+    "locked_at": 400,
+    "started_at": 100,
+    "finished_at": 50,
+    "status": "running",
+    "error": None,
+    "fingerprint": None,
+}
 
 
 def _session(user_id="alice", session_type="agent", component_id="agent-1"):
@@ -315,6 +329,59 @@ def test_harness_state_session_is_not_counted_but_an_agent_with_team_metadata_is
     rows = calculate_date_component_metrics(TARGET_DATE, [state_session, own_session, bad_metadata], [], set(), [])
 
     assert [(row["component_id"], row["sessions_count"]) for row in rows] == [("agent-1", 2)]
+
+
+def test_remote_member_run_and_session_are_counted_under_the_team_on_a_shared_database():
+    """A remote member's AgentOS stores its run with no parent, in a session named after the team's session; on a
+    shared database the team's run names the parent, so the team's run is the one root run and session."""
+    member = {
+        **_model_call(run_id="remote-run", agent_id="remote-agent"),
+        "session_id": "team-session:remote-agent",
+        "parent_run_id": "team-run",
+    }
+    team_run = {
+        **_run("team-run", run_type="team", component_id="team-1", member_responses=[member]),
+        "session_id": "team-session",
+    }
+    remote_run = {**_run("remote-run", component_id="remote-agent"), "session_id": "team-session:remote-agent"}
+    sessions = [
+        {**_session("alice", "team", "team-1"), "session_id": "team-session"},
+        {**_session("alice", "agent", "remote-agent"), "session_id": "team-session:remote-agent"},
+    ]
+
+    rows = calculate_date_component_metrics(TARGET_DATE, sessions, [team_run, remote_run], {"remote-run"}, [])
+
+    assert [
+        (row["component_id"], row["parent_component_id"], row["root_component_id"], row["sessions_count"])
+        for row in rows
+    ] == [("remote-agent", "team-1", "team-1", 0), ("team-1", "", "team-1", 1)]
+    total = build_user_metrics_row(rows, "daily", TARGET_DATE, True)
+    assert (total["root_runs_count"], total["agent_sessions_count"], total["team_sessions_count"]) == (1, 0, 1)
+
+
+def test_remote_member_run_after_midnight_is_counted_under_the_team_run_of_the_day_before():
+    """A remote member's run no run of its day names asks for its team's session, whose run of the day before names
+    the parent, so the member run is no root run and its session no session of its own."""
+    member = {
+        **_model_call(run_id="remote-run", agent_id="remote-agent"),
+        "session_id": "team-session:remote-agent",
+        "parent_run_id": "team-run",
+    }
+    team_run = {
+        **_run("team-run", run_type="team", component_id="team-1", member_responses=[member]),
+        "session_id": "team-session",
+    }
+    remote_run = {**_run("remote-run", component_id="remote-agent"), "session_id": "team-session:remote-agent"}
+    sessions = [{**_session("alice", "agent", "remote-agent"), "session_id": "team-session:remote-agent"}]
+
+    assert metrics_remote_member_team_session_ids([remote_run]) == {"team-session"}
+    assert metrics_remote_member_team_session_ids([team_run, remote_run]) == set()
+    rows = calculate_date_component_metrics(TARGET_DATE, sessions, [remote_run], set(), [team_run])
+
+    assert [
+        (row["component_id"], row["parent_component_id"], row["root_component_id"], row["sessions_count"])
+        for row in rows
+    ] == [("remote-agent", "team-1", "team-1", 0)]
 
 
 def test_sandboxed_member_record_of_a_member_run_of_another_day_is_not_counted():
@@ -813,7 +880,7 @@ def test_rows_to_write_come_in_key_order():
 
 
 # ---------------------------------------------------------------------------
-# Total rows
+# User metrics rows
 # ---------------------------------------------------------------------------
 
 
@@ -865,7 +932,7 @@ def test_user_metrics_rows_are_the_everyone_row_then_one_row_per_user():
     assert (bob["user_id"], bob["total_tokens"], bob["users_count"]) == ("bob", 20, 1)
 
 
-def test_totals_rows_to_write_keep_the_everyone_row_apart():
+def test_user_metrics_rows_to_write_keep_the_everyone_row_apart():
     """The everyone row goes through the version check; a user row is written when new or changed, and a stored
     user row the day no longer has is stale."""
     user_metrics_rows = build_user_metrics_rows(
@@ -912,7 +979,7 @@ def test_days_since_the_last_calculation_are_rebuilt():
     assert metrics_days_since_last_calculation(finished_at, date(2026, 1, 1)) == [date(2025, 12, 31)]
 
 
-def test_month_total_row_counts_its_users_once():
+def test_month_user_metrics_row_counts_its_users_once():
     """A user active on several days and components is one user of the month, as agno_metrics never counted it."""
     month_start = date(2026, 1, 1)
     per_owner: dict = {}
@@ -959,7 +1026,7 @@ def test_total_row_of_an_unknown_aggregation_period_is_refused():
 
 def test_today_and_yesterday_are_still_open():
     """A run of yesterday can still be written today, so yesterday is completed a day later."""
-    today = datetime.now(timezone.utc).date()
+    today = (datetime.now(timezone.utc) - timedelta(seconds=METRICS_DAY_GRACE_SECONDS)).date()
 
     assert metrics_day_completed(today) is False
     assert metrics_day_completed(today - timedelta(days=1)) is False
@@ -979,44 +1046,45 @@ def test_only_a_write_to_a_day_before_yesterday_reopens_it():
     assert metrics_day_to_reopen(None) is None
 
 
+def test_a_day_a_write_stops_reopening_at_midnight_is_completed_after_the_grace(monkeypatch):
+    """A write checked before midnight can commit after it, so the day it stops reopening is completed only
+    METRICS_DAY_GRACE_SECONDS later, and a calculation in between rebuilds the day with that write."""
+    midnight = datetime(2026, 11, 2, tzinfo=timezone.utc)
+    day = midnight.date() - timedelta(days=2)
+
+    class _FrozenDatetime(datetime):
+        frozen = midnight + timedelta(seconds=1)
+
+        @classmethod
+        def now(cls, tz=None):  # type: ignore[override]
+            return cls.frozen if tz is None else cls.frozen.astimezone(tz)
+
+    monkeypatch.setattr("agno.db.utils.datetime", _FrozenDatetime)
+
+    assert metrics_day_completed(day) is False
+    assert metrics_day_to_reopen(int(midnight.timestamp()) - 86400 - 1) == day
+    _FrozenDatetime.frozen = midnight + timedelta(seconds=METRICS_DAY_GRACE_SECONDS)
+    assert metrics_day_completed(day) is True
+
+
 def test_refresh_status_is_read_from_the_refreshes_row():
     """The row is running while its lock holds, then completed or failed; a refresh that never ran reads None."""
-    running = {
-        "locked_by": "worker",
-        "locked_at": 400,
-        "started_at": 100,
-        "finished_at": 50,
-        "status": "running",
-        "error": None,
-        "fingerprint": None,
-    }
-
     assert metrics_refresh_status(None, 200) is None
-    assert metrics_refresh_status(running, 200)["status"] == "running"
-    failed = {**running, "locked_by": None, "locked_at": None, "status": "failed", "error": "boom"}
+    assert metrics_refresh_status(RUNNING_REFRESH, 200)["status"] == "running"
+    failed = {**RUNNING_REFRESH, "locked_by": None, "locked_at": None, "status": "failed", "error": "boom"}
     assert metrics_refresh_status(failed, 200) == {
         "status": "failed",
         "started_at": 100,
         "finished_at": None,
         "error": "boom",
     }
-    completed = {**running, "locked_by": None, "locked_at": None, "status": "completed", "finished_at": 150}
+    completed = {**RUNNING_REFRESH, "locked_by": None, "locked_at": None, "status": "completed", "finished_at": 150}
     assert metrics_refresh_status(completed, 200)["finished_at"] == 150
 
 
 def test_refresh_whose_lock_went_stale_reads_failed():
     """A refresh whose process stopped before it finished reads failed, not the finish of the refresh before it."""
-    running = {
-        "locked_by": "worker",
-        "locked_at": 400,
-        "started_at": 100,
-        "finished_at": 50,
-        "status": "running",
-        "error": None,
-        "fingerprint": None,
-    }
-
-    status = metrics_refresh_status(running, 400)
+    status = metrics_refresh_status(RUNNING_REFRESH, 400)
 
     assert (status["status"], status["finished_at"]) == ("failed", None)
     assert status["error"] == METRICS_STOPPED_ERROR

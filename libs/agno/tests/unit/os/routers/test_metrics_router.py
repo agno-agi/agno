@@ -69,18 +69,24 @@ def mock_db(alice_row, bob_row):
     """A day with two owners plus the unowned bucket."""
     rows = [alice_row, bob_row, _make_metric("", runs=1, tokens=5)]
     db = MagicMock()
+    db.id = "db-1"
     db.get_metrics = MagicMock(return_value=(rows, int(time.time())))
     db.get_metrics_by_date = MagicMock(side_effect=lambda **kwargs: BaseDb.get_metrics_by_date(db, **kwargs))
     db.calculate_metrics = MagicMock(return_value=rows)
     return db
 
 
-@pytest.fixture
-def client(mock_db, settings):
+def _client(settings, db):
+    """A test client of the metrics router with auth off, for an AgentOS with the given database."""
     app = FastAPI()
     with patch("agno.os.routers.metrics.metrics.get_authentication_dependency", return_value=lambda: True):
-        app.include_router(get_metrics_router(dbs={"db-1": [mock_db]}, settings=settings))
+        app.include_router(get_metrics_router(dbs={db.id: [db]}, settings=settings))
     return TestClient(app)
+
+
+@pytest.fixture
+def client(mock_db, settings):
+    return _client(settings, mock_db)
 
 
 @pytest.fixture
@@ -99,10 +105,7 @@ def lock_row_db(alice_row, bob_row):
 
 @pytest.fixture
 def lock_row_client(lock_row_db, settings):
-    app = FastAPI()
-    with patch("agno.os.routers.metrics.metrics.get_authentication_dependency", return_value=lambda: True):
-        app.include_router(get_metrics_router(dbs={"db-1": [lock_row_db]}, settings=settings))
-    return TestClient(app)
+    return _client(settings, lock_row_db)
 
 
 def _scope(user_id):
@@ -216,11 +219,8 @@ class TestGetMetrics:
         remote_db = MagicMock(spec=RemoteDb)
         remote_db.id = "remote-1"
         remote_db.get_metrics.side_effect = lambda **kwargs: remote_response.raise_for_status()
-        app = FastAPI()
-        with patch("agno.os.routers.metrics.metrics.get_authentication_dependency", return_value=lambda: True):
-            app.include_router(get_metrics_router(dbs={"remote-1": [remote_db]}, settings=settings))
         with _scope("alice"):
-            resp = TestClient(app).get("/metrics")
+            resp = _client(settings, remote_db).get("/metrics")
 
         assert resp.status_code == 403
         assert resp.json()["detail"] == "Admin privileges required"
@@ -310,8 +310,17 @@ class TestRefreshMetrics:
         with _scope(None):
             resp = lock_row_client.post("/metrics/refresh", params={"rebuild_from": "2999-01-01"})
 
-        assert resp.status_code == 400
+        assert resp.status_code == 422
         lock_row_db.calculate_metrics_dates.assert_not_called()
+
+    def test_a_rebuild_on_a_database_without_a_lock_row_is_refused(self, client, mock_db):
+        """A database without the user metrics table has no days to reopen, so a rebuild is refused."""
+        with _scope(None):
+            resp = client.post("/metrics/refresh", params={"rebuild_from": "2026-01-01"})
+
+        assert resp.status_code == 503
+        assert resp.json()["detail"] == "rebuild_from not supported by the configured database"
+        mock_db.calculate_metrics.assert_not_called()
 
     def test_a_refresh_reads_the_days_it_calculated_back_from_the_tables(self, lock_row_client, lock_row_db):
         """The build gives only the days it calculated, so their rows are read back from the tables, one per day."""
@@ -371,16 +380,10 @@ class TestRefreshMetrics:
 
     def test_refresh_is_refused_and_a_read_never_calculates_when_calculation_is_turned_off(self, lock_row_db):
         """A database that calculates its metrics on read is stopped from doing so."""
-        app = FastAPI()
-        with patch("agno.os.routers.metrics.metrics.get_authentication_dependency", return_value=lambda: True):
-            app.include_router(
-                get_metrics_router(
-                    dbs={"db-1": [lock_row_db]}, settings=AgnoAPISettings(metrics_calculation_enabled=False)
-                )
-            )
+        client = _client(AgnoAPISettings(metrics_calculation_enabled=False), lock_row_db)
         with _scope(None):
-            resp = TestClient(app).post("/metrics/refresh")
-            background = TestClient(app).post("/metrics/refresh?background=true")
+            resp = client.post("/metrics/refresh")
+            background = client.post("/metrics/refresh?background=true")
 
         assert (resp.status_code, resp.json()["status"]) == (200, "disabled")
         # A background refresh never starts either, so it is answered the same way
@@ -392,11 +395,8 @@ class TestRefreshMetrics:
     def test_background_refresh_of_a_remote_database_forwards_the_user(self, settings):
         remote_db = MagicMock(spec=RemoteDb)
         remote_db.id = "remote-1"
-        app = FastAPI()
-        with patch("agno.os.routers.metrics.metrics.get_authentication_dependency", return_value=lambda: True):
-            app.include_router(get_metrics_router(dbs={"remote-1": [remote_db]}, settings=settings))
         with _scope("alice"):
-            resp = TestClient(app).post("/metrics/refresh?background=true")
+            resp = _client(settings, remote_db).post("/metrics/refresh?background=true")
 
         assert resp.status_code == 202
         assert remote_db.refresh_metrics.call_args.kwargs["user_id"] == "alice"

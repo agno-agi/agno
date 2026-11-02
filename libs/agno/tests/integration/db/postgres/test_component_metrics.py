@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional, Union
 
 import pytest
-from sqlalchemy import inspect, select, text
+from sqlalchemy import inspect, null, select, text
 
 from agno.db.base import SessionType
 from agno.db.postgres.postgres import PostgresDb
@@ -24,6 +24,7 @@ from agno.db.utils import (
     calculate_date_component_metrics,
     list_metrics_totals_models,
     merge_metrics_totals,
+    metrics_day_completed,
     resolve_metrics_fields,
 )
 from agno.metrics import MessageMetrics, ModelMetrics, RunMetrics
@@ -493,6 +494,17 @@ def test_calculate_metrics_skips_a_rebuild_already_running(
     assert len(_stored_rows(postgres_db_real)) == len(PAST_DAY_ROW_KEYS) + 1
 
 
+def test_claim_metrics_refresh_returns_while_another_process_writes_a_day(postgres_db_real: PostgresDb):
+    """Ensure a claim returns None, instead of waiting, while the transaction of another process's day keeps the row of
+    the metrics refreshes table locked"""
+    refreshes_table = postgres_db_real._get_table("metrics_refreshes", create_table_if_not_found=True)
+    assert postgres_db_real._claim_metrics_refresh(refreshes_table, "other_process") is not None
+
+    with postgres_db_real.db_engine.connect() as conn, conn.begin():
+        assert postgres_db_real._heartbeat_metrics_refresh(conn, refreshes_table, "other_process")
+        assert postgres_db_real._claim_metrics_refresh(refreshes_table, "second_process") is None
+
+
 def test_calculate_metrics_skips_messages_carried_over_from_history_or_copied_by_a_forked_run(
     postgres_db_real: PostgresDb,
 ):
@@ -608,7 +620,9 @@ def test_calculate_metrics_counts_runs_kept_in_the_legacy_runs_column(postgres_d
     assert _stored_user_metrics_rows(legacy_db)[("daily", _utc_date(4))]["agent_runs_count"] == 1
 
 
-def test_a_legacy_member_run_kept_as_its_own_run_is_counted_once(postgres_db_real: PostgresDb, legacy_runs_column):
+def test_calculate_metrics_counts_a_legacy_member_run_kept_as_its_own_run_once(
+    postgres_db_real: PostgresDb, legacy_runs_column
+):
     """Ensure a member run nested inside its team's legacy run, and kept as a legacy run of its own on a later day, is
     counted once, on its own day"""
     session = TeamSession(session_id="legacy_team_session", team_id="team-1", created_at=_noon_utc(6))
@@ -1033,7 +1047,7 @@ def test_get_component_metrics_reads_one_owner_from_their_own_user_metrics_row(
     ]
 
 
-def test_calculate_metrics_writes_a_month_total_row_for_a_completed_month(
+def test_calculate_metrics_writes_a_month_user_metrics_row_for_a_completed_month(
     postgres_db_real: PostgresDb, sample_multi_month_sessions_for_component_metrics
 ):
     """Ensure every month of a calculated day gets a user metrics row, completed once its last day is"""
@@ -1045,16 +1059,16 @@ def test_calculate_metrics_writes_a_month_total_row_for_a_completed_month(
     second_month = _month_start(2)
     this_month = _month_start(0)
     # The month of yesterday gets its user metrics row even without traffic
-    month_totals_rows = {
+    month_user_metrics_rows = {
         key[1]: row for key, row in _stored_user_metrics_rows(postgres_db_real).items() if key[0] == "monthly"
     }
-    assert set(month_totals_rows) == {first_month, second_month, _utc_date(1).replace(day=1), this_month}
-    assert {month_start for month_start, row in month_totals_rows.items() if row["completed"]} == {
+    assert set(month_user_metrics_rows) == {first_month, second_month, _utc_date(1).replace(day=1), this_month}
+    assert {month_start for month_start, row in month_user_metrics_rows.items() if row["completed"]} == {
         first_month,
         second_month,
     }
 
-    month_row = month_totals_rows[first_month]
+    month_row = month_user_metrics_rows[first_month]
     assert _user_metrics_sessions_count(month_row) == 4
     assert month_row["root_runs_count"] == 4
     assert (month_row["input_tokens"], month_row["output_tokens"], month_row["total_tokens"]) == (165, 20, 185)
@@ -1073,7 +1087,7 @@ def test_calculate_metrics_writes_a_month_total_row_for_a_completed_month(
         starting_date=first_month, ending_date=second_month - timedelta(days=1), user_id=""
     )
     assert unowned_totals["sessions_count"] == 1
-    assert _user_metrics_sessions_count(month_totals_rows[second_month]) == 1
+    assert _user_metrics_sessions_count(month_user_metrics_rows[second_month]) == 1
 
 
 def test_calculate_metrics_rebuilds_the_month_of_a_reopened_day(
@@ -1651,7 +1665,7 @@ def test_calculate_metrics_keeps_an_everyone_row_and_a_row_per_user(
     assert day_row["max_duration_ms"] == 4000
     assert day_row["duration_buckets"] == {"le_1000": 1, "le_2000": 1, "le_3000": 1, "le_4000": 1}
     assert day_row["model_metrics"] == {"OpenAI": {"gpt-5": {"count": 6}}}
-    assert day_row["completed"] is True
+    assert day_row["completed"] is metrics_day_completed(past_day)
     assert day_row["version"] == 1
 
     # Yesterday has no traffic and is still open; today is open too
@@ -1762,7 +1776,25 @@ def test_calculate_metrics_records_a_failed_refresh(postgres_db_real: PostgresDb
     assert (status["status"], status["error"]) == ("failed", "The day cannot be calculated")
 
 
-def test_deleting_a_session_keeps_its_closed_day_closed(postgres_db_real: PostgresDb):
+def test_calculate_metrics_rebuild_from_records_a_failed_reopen_before_any_refresh(
+    postgres_db_real: PostgresDb, monkeypatch
+):
+    """Ensure a rebuild whose reopen fails before any metrics refresh ran leaves its error on the metrics refresh"""
+    _persist(postgres_db_real, _session_on(_utc_date(2), "alice_session", "alice"))
+
+    def _fail(**kwargs):
+        raise RuntimeError("The days cannot be reopened")
+
+    with monkeypatch.context() as patch:
+        patch.setattr("agno.db.postgres.postgres.reopen_metrics_days_from", _fail)
+        with pytest.raises(RuntimeError):
+            postgres_db_real.calculate_metrics(rebuild_from=_utc_date(2))
+
+    status = postgres_db_real.get_metrics_refresh_status()
+    assert (status["status"], status["error"]) == ("failed", "The days cannot be reopened")
+
+
+def test_delete_session_keeps_its_closed_day_closed(postgres_db_real: PostgresDb):
     """Ensure a deleted session's usage stays on its closed day: the delete reopens nothing"""
     _persist(postgres_db_real, _session_on(_utc_date(3), "alice_session", "alice"))
     postgres_db_real.calculate_metrics()
@@ -1773,7 +1805,7 @@ def test_deleting_a_session_keeps_its_closed_day_closed(postgres_db_real: Postgr
     assert _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(3))] == day_row
 
 
-def test_a_day_is_never_written_by_a_process_that_lost_the_lock(postgres_db_real: PostgresDb):
+def test_calculate_date_metrics_writes_nothing_after_losing_the_lock(postgres_db_real: PostgresDb):
     """Ensure a calculation whose lock went stale writes nothing once another process took the refresh over"""
     _persist(postgres_db_real, _session_on(_utc_date(3), "alice_session", "alice"))
     table = postgres_db_real._get_table("component_metrics", create_table_if_not_found=True)
@@ -1802,8 +1834,40 @@ def test_a_day_is_never_written_by_a_process_that_lost_the_lock(postgres_db_real
     assert _stored_user_metrics_rows(postgres_db_real) == {}
 
 
-def test_a_save_of_a_closed_day_from_a_fresh_process_is_stored(postgres_db_real: PostgresDb):
-    """Ensure saves that reopen a closed day are stored by a process that never looked the totals table up"""
+def test_calculate_month_metrics_writes_nothing_after_losing_the_lock(
+    postgres_db_real: PostgresDb, sample_multi_month_sessions_for_component_metrics
+):
+    """Ensure a month's calculation whose lock went stale writes nothing once another process took the refresh over"""
+    for session in sample_multi_month_sessions_for_component_metrics:
+        _persist(postgres_db_real, session)
+    postgres_db_real.calculate_metrics()
+
+    first_month = _month_start(3)
+    table = postgres_db_real._get_table("component_metrics", create_table_if_not_found=True)
+    user_metrics_table = postgres_db_real._get_table("user_metrics", create_table_if_not_found=True)
+    refreshes_table = postgres_db_real._get_table("metrics_refreshes", create_table_if_not_found=True)
+    with postgres_db_real.Session() as sess, sess.begin():
+        sess.execute(
+            user_metrics_table.delete().where(
+                user_metrics_table.c.aggregation_period == "monthly", user_metrics_table.c.date == first_month
+            )
+        )
+    assert postgres_db_real._claim_metrics_refresh(refreshes_table, "paused") is not None
+
+    # The lock goes stale, and another process takes the refresh over
+    with postgres_db_real.Session() as sess, sess.begin():
+        sess.execute(refreshes_table.update().values(locked_at=0))
+    assert postgres_db_real._claim_metrics_refresh(refreshes_table, "taker") is not None
+
+    calculated = postgres_db_real._calculate_month_metrics(
+        table, user_metrics_table, first_month, refreshes_table, "paused"
+    )
+    assert calculated is False
+    assert ("monthly", first_month) not in _stored_user_metrics_rows(postgres_db_real)
+
+
+def test_upsert_session_of_a_closed_day_from_a_fresh_process_is_stored(postgres_db_real: PostgresDb):
+    """Ensure saves that reopen a closed day are stored by a process that never looked the user metrics table up"""
     _persist(postgres_db_real, _session_on(_utc_date(5), "alice_session", "alice"))
     postgres_db_real.calculate_metrics()
     fresh_db = PostgresDb(db_engine=postgres_db_real.db_engine, db_schema="test_schema", session_table="test_sessions")
@@ -1819,7 +1883,7 @@ def test_a_save_of_a_closed_day_from_a_fresh_process_is_stored(postgres_db_real:
     assert fresh_db._get_cached_table("user_metrics", fresh_db.user_metrics_table_name) is not None
 
 
-def test_cancelling_a_pending_run_reopens_its_day(postgres_db_real: PostgresDb):
+def test_cancel_pending_run_reopens_its_day(postgres_db_real: PostgresDb):
     """Ensure cancelling a pending run of a closed day reopens the day, as every other run write does"""
     session = _session_on(_utc_date(3), "alice_session", "alice")
     session.runs[0].status = RunStatus.pending
@@ -1832,7 +1896,47 @@ def test_cancelling_a_pending_run_reopens_its_day(postgres_db_real: PostgresDb):
     assert _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["completed"] is False
 
 
-def test_a_day_a_write_could_not_reopen_is_reopened_by_the_next_write(postgres_db_real: PostgresDb):
+def test_reassign_session_owner_reopens_its_day(postgres_db_real: PostgresDb):
+    """Ensure moving a session of a closed day to another owner reopens the day, and marks the session updated"""
+    _persist(postgres_db_real, _session_on(_utc_date(3), "alice_session", "alice"))
+    postgres_db_real.calculate_metrics()
+    reassigned_at = int(time.time())
+
+    assert postgres_db_real.reassign_session_owner("alice_session", previous_user_id="alice", user_id="bob")
+    assert _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["completed"] is False
+    assert postgres_db_real.get_session("alice_session", SessionType.AGENT).updated_at >= reassigned_at
+
+
+def test_insert_session_if_absent_reopens_its_day(postgres_db_real: PostgresDb):
+    """Ensure a session of a closed day created by the queued run prepare reopens the day"""
+    _persist(postgres_db_real, _session_on(_utc_date(3), "alice_session", "alice"))
+    postgres_db_real.calculate_metrics()
+
+    assert postgres_db_real.insert_session_if_absent(_session_on(_utc_date(3), "bob_session", "bob"))
+    assert _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["completed"] is False
+
+
+def test_append_run_to_session_if_absent_reopens_its_day(postgres_db_real: PostgresDb):
+    """Ensure a run of a closed day appended by the queued run prepare reopens the day"""
+    session = _session_on(_utc_date(3), "alice_session", "alice")
+    _persist(postgres_db_real, session)
+    postgres_db_real.calculate_metrics()
+
+    run = session.runs[0].to_dict()
+    run["run_id"] = "alice_session_second_run"
+    assert postgres_db_real.append_run_to_session_if_absent("alice_session", run, user_id="alice")
+    assert _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["completed"] is False
+
+
+def test_upsert_sessions_past_query_parameter_limit(postgres_db_real: PostgresDb):
+    """Ensure a bulk save of more sessions than a 65,535-parameter query can list stores every one"""
+    created_at = int(time.time())
+    sessions = [AgentSession(session_id=f"s_{i}", agent_id="agent-1", created_at=created_at) for i in range(65_536)]
+
+    assert len(postgres_db_real.upsert_sessions(sessions, deserialize=False)) == 65_536
+
+
+def test_upsert_session_reopens_a_day_a_write_could_not_reopen(postgres_db_real: PostgresDb):
     """Ensure a save of a closed day never fails when the day cannot be reopened, and the next write reopens the day
     once its user metrics row can be written again"""
     _persist(postgres_db_real, _session_on(_utc_date(3), "alice_session", "alice"))
@@ -1867,7 +1971,7 @@ def test_a_day_a_write_could_not_reopen_is_reopened_by_the_next_write(postgres_d
     assert _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["completed"] is False
 
 
-def test_a_stopped_calculation_releases_the_lock(postgres_db_real: PostgresDb):
+def test_calculate_metrics_dates_releases_the_lock_when_stopped(postgres_db_real: PostgresDb):
     """Ensure a calculation stopped between days, as on shutdown, releases the metrics refresh instead of holding it"""
     _persist(postgres_db_real, _session_on(_utc_date(3), "alice_session", "alice"))
 
@@ -1878,7 +1982,7 @@ def test_a_stopped_calculation_releases_the_lock(postgres_db_real: PostgresDb):
     assert postgres_db_real.calculate_metrics() is not None
 
 
-def test_a_calculation_stops_between_the_batches_of_a_day(postgres_db_real: PostgresDb):
+def test_calculate_metrics_dates_stops_between_the_batches_of_a_day(postgres_db_real: PostgresDb):
     """Ensure a stop asked during a day stops it at its next batch, before the day is written"""
     _persist(postgres_db_real, _session_on(_utc_date(3), "alice_session", "alice"))
     # Checked before the day, then between its batches
@@ -1921,7 +2025,7 @@ def test_calculate_metrics_rebuilds_every_day_from_rebuild_from(postgres_db_real
     assert _user_metrics_sessions_count(_stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(15))]) == 1
 
 
-def test_a_calculation_stopped_after_a_completed_one_reads_completed(postgres_db_real: PostgresDb):
+def test_calculate_metrics_dates_stopped_after_a_completed_one_reads_completed(postgres_db_real: PostgresDb):
     """Ensure a calculation stopped between days after one that completed, as on a deploy, keeps reading the last
     completed refresh, and leaves the days it did not reach open"""
     _persist(postgres_db_real, _session_on(_utc_date(3), "alice_session", "alice"))
@@ -1980,6 +2084,52 @@ def test_calculate_metrics_rebuild_from_reopens_the_days_while_another_process_c
     postgres_db_real._release_metrics_refresh(refreshes_table, "other_process", stopped=True)
     postgres_db_real.calculate_metrics()
     assert _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["completed"] is True
+
+
+def test_calculate_metrics_rebuild_from_rebuilds_yesterday_and_today_after_another_process_completes(
+    postgres_db_real: PostgresDb,
+):
+    """Ensure rebuild_from leaves yesterday and today to the next calculation when another process holds the metrics
+    refresh and completes it with the fingerprint it read before the rebuild"""
+    _persist(postgres_db_real, _session_on(_utc_date(3), "alice_session", "alice"))
+    postgres_db_real.calculate_metrics()
+    refreshes_table = postgres_db_real._get_table("metrics_refreshes")
+    refresh_row = postgres_db_real._claim_metrics_refresh(refreshes_table, "other_process")
+    assert refresh_row is not None
+
+    assert postgres_db_real.calculate_metrics(rebuild_from=_utc_date(3)) is None
+
+    postgres_db_real._release_metrics_refresh(
+        refreshes_table,
+        "other_process",
+        fingerprint=refresh_row["fingerprint"],
+        claimed_fingerprint=refresh_row["fingerprint"],
+    )
+    assert postgres_db_real.calculate_metrics_dates() == [_utc_date(3), _utc_date(1), _utc_date(0)]
+    assert postgres_db_real.calculate_metrics_dates() == []
+
+
+def test_calculate_metrics_rebuild_from_rebuilds_yesterday_and_today_after_another_process_claimed_no_fingerprint(
+    postgres_db_real: PostgresDb,
+):
+    """Ensure rebuild_from leaves yesterday and today to the next calculation when another process claimed the metrics
+    refresh without a fingerprint and completes it"""
+    _persist(postgres_db_real, _session_on(_utc_date(3), "alice_session", "alice"))
+    postgres_db_real.calculate_metrics()
+    refreshes_table = postgres_db_real._get_table("metrics_refreshes")
+    with postgres_db_real.Session() as sess, sess.begin():
+        fingerprint = sess.execute(select(refreshes_table.c.fingerprint)).scalar_one()
+        sess.execute(refreshes_table.update().values(fingerprint=null()))
+    refresh_row = postgres_db_real._claim_metrics_refresh(refreshes_table, "other_process")
+    assert refresh_row is not None and refresh_row["fingerprint"] is None
+
+    assert postgres_db_real.calculate_metrics(rebuild_from=_utc_date(3)) is None
+
+    postgres_db_real._release_metrics_refresh(
+        refreshes_table, "other_process", fingerprint=fingerprint, claimed_fingerprint=refresh_row["fingerprint"]
+    )
+    assert postgres_db_real.calculate_metrics_dates() == [_utc_date(3), _utc_date(1), _utc_date(0)]
+    assert postgres_db_real.calculate_metrics_dates() == []
 
 
 def test_get_metrics_runs_a_first_calculation_without_deprecated_rows(postgres_db_real: PostgresDb):

@@ -8,7 +8,7 @@ from os import getenv
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 from uuid import UUID
 
-from agno import __version__
+from agno import __version__ as agno_version
 from agno.exceptions import MigrationRequiredError, SchemaMismatchError
 from agno.metrics import ModelMetrics, RunMetrics, SessionMetrics
 from agno.models.message import Message
@@ -1000,14 +1000,17 @@ _METRICS_BUCKET_BOUNDS_MS = (
     8000000,
 )
 
-# Rows a rebuild reads at a time, so a day or a month of many rows is never held or decoded in one step
+# Rows a rebuild reads at a time, so a day or a month of many rows is never held or decoded in one step.
 METRICS_BATCH_SIZE = 1000
 
 # A lock goes stale 300 s after its last heartbeat by the database's clock, and every day heartbeats it, so a process
-# that stopped while holding the metrics refresh never holds it longer
+# that stopped while holding the metrics refresh never holds it longer.
 METRICS_LOCK_SECONDS = 300
 
-# The error of a refresh that stopped before it finished.
+# A write checks whether it reopens a day before it commits, so a write checked before midnight can commit after it; a
+# day is completed 600 s after the point that write could have reopened it, so a calculation never completes it first.
+METRICS_DAY_GRACE_SECONDS = 600
+
 METRICS_STOPPED_ERROR = "The metrics refresh stopped before it finished"
 
 # Each timing a row keeps: how many were counted, their total and their maximum in milliseconds,
@@ -1220,6 +1223,25 @@ def _add_metrics_nested_run_ids(run_data: Dict[str, Any], nested_run_ids: Set[st
         _add_metrics_nested_run_ids(nested_run, nested_run_ids)
 
 
+def _add_metrics_remote_member_runs(
+    run_data: Dict[str, Any],
+    session_id: Optional[str],
+    remote_parent_run_ids: Dict[str, str],
+    remote_session_ids: Set[str],
+) -> None:
+    """Add the remote members' runs nested inside run_data, at any depth: each run's parent, and its session."""
+    for nested_run in _metrics_nested_runs(run_data):
+        nested_session_id = nested_run.get("session_id") or ""
+        # A remote member runs in a session of its own, named after its team's session and the member
+        if session_id and nested_session_id.startswith(f"{session_id}:"):
+            if nested_run.get("run_id") and nested_run.get("parent_run_id"):
+                remote_parent_run_ids[nested_run["run_id"]] = nested_run["parent_run_id"]
+            remote_session_ids.add(nested_session_id)
+        _add_metrics_remote_member_runs(
+            nested_run, nested_session_id or session_id, remote_parent_run_ids, remote_session_ids
+        )
+
+
 def metrics_nested_run_ids(runs: Sequence[Dict[str, Any]]) -> Set[str]:
     """The ids of every run nested inside a day's stored runs, at any depth, and of the member run each sandboxed
     member's record of the day repeats.
@@ -1234,6 +1256,31 @@ def metrics_nested_run_ids(runs: Sequence[Dict[str, Any]]) -> Set[str]:
         if run_id.endswith(".sandbox"):
             nested_run_ids.add(run_id[: -len(".sandbox")])
     return nested_run_ids
+
+
+def metrics_remote_member_team_session_ids(runs: Sequence[Dict[str, Any]]) -> Set[str]:
+    """The team sessions of the remote members' runs of a day that no run of the day names.
+
+    A team run started before midnight is stored on the day before its remote member's run, so the rollup reads that
+    day's runs of these sessions too.
+    """
+    remote_parent_run_ids: Dict[str, str] = {}
+    for run in runs:
+        _add_metrics_remote_member_runs(run.get("run_data") or {}, run.get("session_id"), remote_parent_run_ids, set())
+    team_session_ids: Set[str] = set()
+    for run in runs:
+        session_id = run.get("session_id") or ""
+        member_id = run.get(f"{run.get('run_type')}_id") or ""
+        # A remote member runs in a session named after its team's session and the member
+        if (
+            not run.get("parent_run_id")
+            and run.get("run_id") not in remote_parent_run_ids
+            and member_id
+            and len(session_id) > len(member_id) + 1
+            and session_id.endswith(f":{member_id}")
+        ):
+            team_session_ids.add(session_id[: -len(member_id) - 1])
+    return team_session_ids
 
 
 def _metrics_model_calls(run_data: Dict[str, Any], seen_run_ids: Set[str]) -> List[Dict[str, Any]]:
@@ -1425,7 +1472,7 @@ def calculate_date_component_metrics(
             are counted where they are stored.
         parent_runs (Sequence[Dict[str, Any]]): The runs of another date that started runs of
             that date, such as a team run started before midnight, and the runs that started those.
-            Only their ids and parent ids are read.
+            Only their ids and parent ids are read, and the remote members' runs nested inside them.
 
     Returns:
         List[Dict[str, Any]]: The calculated rows of agno_component_metrics, one per user, agent, team or workflow,
@@ -1433,7 +1480,18 @@ def calculate_date_component_metrics(
     """
     per_owner: Dict[Tuple[str, str, str, str, str], Dict[str, Any]] = {}
 
+    # The AgentOS of a remote member stores its run with no parent; on a shared database its team's run names it
+    remote_parent_run_ids: Dict[str, str] = {}
+    remote_session_ids: Set[str] = set()
+    for run in list(runs) + list(parent_runs):
+        _add_metrics_remote_member_runs(
+            run.get("run_data") or {}, run.get("session_id"), remote_parent_run_ids, remote_session_ids
+        )
+
     for session in sessions:
+        # A remote member's session holds a member run of its team's session
+        if session.get("session_id") in remote_session_ids:
+            continue
         metadata = session.get("metadata")
         # A harness agent run for a team or workflow keeps its native state in a session of its own, named after the
         # parent's session and the agent; the parent's session counts the conversation
@@ -1464,7 +1522,11 @@ def calculate_date_component_metrics(
         for run in list(runs) + list(parent_runs)
         if run.get("run_id") and run.get("parent_run_id")
     }
+    for run_id, parent_run_id in remote_parent_run_ids.items():
+        parent_run_ids.setdefault(run_id, parent_run_id)
     for run in runs:
+        if not run.get("parent_run_id") and run.get("run_id") in remote_parent_run_ids:
+            run = {**run, "parent_run_id": remote_parent_run_ids[run["run_id"]]}
         # A run copied into a forked session repeats a run counted in the session it was made in
         if (run.get("run_data") or {}).get("forked_from_session_id"):
             continue
@@ -1525,9 +1587,10 @@ def metrics_calculation_enabled() -> bool:
 def metrics_day_completed(day: date) -> bool:
     """Whether a day's metrics can be final.
 
-    A run can be written again after its day ended, so a day is completed one day later.
+    A run can be written again after its day ended, so a day is completed one day and METRICS_DAY_GRACE_SECONDS later.
     """
-    return day < datetime.now(timezone.utc).date() - timedelta(days=1)
+    now = datetime.now(timezone.utc) - timedelta(seconds=METRICS_DAY_GRACE_SECONDS)
+    return day < now.date() - timedelta(days=1)
 
 
 def metrics_days_since_last_calculation(finished_at: int, yesterday: date) -> List[date]:
@@ -1547,12 +1610,13 @@ def metrics_days_since_last_calculation(finished_at: int, yesterday: date) -> Li
 def metrics_day_to_reopen(created_at: Optional[int]) -> Optional[date]:
     """The day whose metrics a write of a run or session stored with the given created_at reopens.
 
-    ``None`` for today and yesterday, which every refresh rebuilds anyway.
+    ``None`` for today and yesterday, which every calculation rebuilds anyway.
     """
     if created_at is None:
         return None
     day = datetime.fromtimestamp(created_at, tz=timezone.utc).date()
-    return day if metrics_day_completed(day) else None
+    # Without METRICS_DAY_GRACE_SECONDS: a write reopens a day as soon as its calculation can complete it
+    return day if day < datetime.now(timezone.utc).date() - timedelta(days=1) else None
 
 
 def build_user_metrics_row(
@@ -1592,7 +1656,7 @@ def build_user_metrics_row(
         # A team member, a nested team and a run started inside a tool call were started by another run
         "root_runs_count": sum(row["runs_count"] for row in rows if not row["parent_component_id"]),
         # The agno version that built the row
-        "metrics_version": __version__,
+        "metrics_version": agno_version,
         "completed": completed,
         "created_at": current_time,
         "updated_at": current_time,
@@ -1868,6 +1932,53 @@ def build_metrics_by_owner(rows: Sequence[Any], model_rows: Sequence[Any]) -> Li
             )
 
     return [metrics_by_owner[key] for key in sorted(metrics_by_owner)]
+
+
+def build_component_metrics_totals(
+    fields: Sequence[str],
+    rows_by_query: Dict[str, Sequence[Any]],
+) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+    """Build the component metrics totals of each date from the rows of the totals queries.
+
+    Args:
+        fields (Sequence[str]): The columns that were totalled.
+        rows_by_query (Dict[str, Sequence[Any]]): The rows of each query of build_component_metrics_totals_queries.
+
+    Returns:
+        Tuple[List[Dict[str, Any]], Optional[int]]: One dict per date, oldest first, and when the rows were
+            last updated. A month totalled from its month row is one dict, dated its first day.
+    """
+    totals_by_date: Dict[date, Dict[str, Any]] = {}
+    latest_updated_at: Optional[int] = None
+    for row in rows_by_query.get("totals", []):
+        day_totals: Dict[str, Any] = {"date": row.date, **empty_metrics_totals(fields)}
+        for field in fields:
+            # No cost when no run reported one
+            if field == "cost":
+                day_totals[field] = None if getattr(row, field) is None else float(getattr(row, field))
+            elif field in METRICS_SUM_FIELDS:
+                day_totals[field] = int(getattr(row, field) or 0)
+            elif field in METRICS_MAX_COLUMNS and getattr(row, field) is not None:
+                day_totals[field] = int(getattr(row, field))
+        totals_by_date[row.date] = day_totals
+        if row.updated_at is not None and (latest_updated_at is None or row.updated_at > latest_updated_at):
+            latest_updated_at = row.updated_at
+
+    for row in rows_by_query.get("count_maps", []):
+        totals_by_date[row.date][row.field][row.key] = int(row.count)
+
+    for row in rows_by_query.get("additional_metrics", []):
+        # A whole number comes back a whole number
+        value = int(row.value) if row.value == int(row.value) else float(row.value)
+        totals_by_date[row.date]["additional_metrics"][row.key] = value
+
+    for row in rows_by_query.get("model_metrics", []):
+        model: Dict[str, Any] = {"count": int(row.count)}
+        if row.cost is not None:
+            model["cost"] = float(row.cost)
+        totals_by_date[row.date]["model_metrics"].setdefault(row.model_provider, {})[row.model_id] = model
+
+    return [totals_by_date[day] for day in sorted(totals_by_date)], latest_updated_at
 
 
 def _metrics_token_count(row: Dict[str, Any], field: str) -> Any:
@@ -2265,6 +2376,8 @@ def resolve_db_from_config(
         registry_db = registry.get_db(db_id)
         if registry_db is not None:
             registry_dict = registry_db.to_dict()
+            # to_dict leaves out metrics_table when it is the default, but a saved config can still carry the default
+            registry_dict.setdefault("metrics_table", registry_db.metrics_table_name)
             has_table_overrides = any(
                 key in db_data and db_data[key] != registry_dict.get(key) for key in DB_TABLE_NAME_KEYS
             )

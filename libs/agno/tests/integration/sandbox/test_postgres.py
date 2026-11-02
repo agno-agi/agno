@@ -1736,3 +1736,38 @@ async def test_a_prepared_run_of_a_closed_day_reopens_the_day(store):
         assert [tuple(row) for row in reopened] == [(False, 2)]
     finally:
         await store._transaction(lambda c: totals.drop(c))
+
+
+async def test_a_native_permission_request_of_a_closed_day_reopens_the_day(store):
+    from agno.db.utils import build_user_metrics_row
+
+    await seed(store)
+    state = await claim(store)
+    await store.aset_computer(state.lease, computer(state))
+    totals = await store._table("user_metrics", store.db.user_metrics_table_name)
+    # The seeded run's day as a finished calculation leaves it: completed, at version 1
+    day = datetime.fromtimestamp(1, tz=timezone.utc).date()
+    await store._transaction(
+        lambda c: c.execute(
+            insert(totals).values({**build_user_metrics_row([], "daily", day, completed=True), "version": 1})
+        )
+    )
+    tool = {"tool_call_id": "tool", "tool_name": "Bash", "requires_confirmation": True}
+    request = {
+        "tool_call_id": "tool",
+        "owner": "owner",
+        "digest": "digest",
+        "native": {},
+        "expires_at": int(time.time()) + 60,
+        "requirement": {"tool_execution": tool},
+    }
+    try:
+        await store._anative_hitl_event(state.lease, {"event": "RunPaused", "external_agent_request": request})
+        reopened = await store._transaction(
+            lambda c: c.execute(
+                select(totals.c.completed, totals.c.version).where(totals.c.aggregation_period == "daily")
+            ).all()
+        )
+        assert [tuple(row) for row in reopened] == [(False, 2)]
+    finally:
+        await store._transaction(lambda c: totals.drop(c))

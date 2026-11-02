@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from agno.agent import Agent
 from agno.client import AgentOSClient
+from agno.db.mongo import MongoDb
 from agno.db.sqlite import SqliteDb
 from agno.db.utils import merge_metrics_totals
 from agno.os import AgentOS, Authorization
@@ -189,6 +190,32 @@ def client(mock_db, settings):
     return _client(settings, mock_db)
 
 
+def _users_client(dbs, user_store=None, require_admin=None):
+    """A test client of the metrics router with auth off and the admin gate passed, unless another is given, for an
+    AgentOS with the given databases and user directory."""
+    app = FastAPI()
+    if user_store is not None:
+        app.state.user_store = user_store
+    with patch("agno.os.routers.metrics.metrics.get_authentication_dependency", return_value=lambda: True):
+        with patch(
+            "agno.os.routers.metrics.metrics._make_require_admin",
+            return_value=require_admin or AsyncMock(return_value=""),
+        ):
+            app.include_router(get_metrics_router(dbs=dbs, settings=AgnoAPISettings()))
+    return TestClient(app)
+
+
+def _remote_db(db_id, remote_client):
+    """A RemoteDb with the given id, on a remote AgentOS that answers every read through the given test client."""
+    agentos_client = AgentOSClient(base_url="http://remote-os")
+
+    async def remote_get(endpoint, params=None, headers=None):
+        return remote_client.get(endpoint, params=params, headers=headers).json()
+
+    agentos_client._aget = AsyncMock(side_effect=remote_get)  # type: ignore[method-assign]
+    return RemoteDb(id=db_id, client=agentos_client)
+
+
 def _created_row(days_ago, count):
     """A row of the directory's users-created-per-day read, keyed by the day's start in epoch seconds."""
     day = _today() - timedelta(days=days_ago)
@@ -238,7 +265,7 @@ def _databases():
 
 
 class TestShapes:
-    def test_sessions(self, client, mock_db):
+    def test_sessions_compare_the_window_with_the_one_before(self, client, mock_db):
         """A two-day window ending today, compared with the two days before it, from one read."""
         with _scope(None):
             body = client.get(f"/os/metrics/sessions?{_last(2)}").json()
@@ -261,7 +288,7 @@ class TestShapes:
             "fields": ["sessions_count"],
         }
 
-    def test_tokens(self, client):
+    def test_tokens_compare_the_window_with_the_one_before(self, client):
         with _scope(None):
             body = client.get(f"/os/metrics/tokens?{_last(2)}").json()
 
@@ -296,7 +323,7 @@ class TestShapes:
         }
         assert mock_db.get_component_metrics.call_args.kwargs["fields"] == ["root_runs_count", "status_metrics"]
 
-    def test_latency(self, client):
+    def test_latency_gives_the_average_median_p95_and_max_of_each_day_and_the_window(self, client):
         with _scope(None):
             body = client.get(f"/os/metrics/latency?{_last(1)}").json()
 
@@ -322,7 +349,7 @@ class TestShapes:
             **_databases(),
         }
 
-    def test_models(self, client, mock_db):
+    def test_models_share_the_window_runs_most_run_first(self, client, mock_db):
         with _scope(None):
             body = client.get(f"/os/metrics/models?{_last(2)}").json()
 
@@ -388,16 +415,25 @@ class TestDatabases:
         assert body["db_ids"] == {"db-1": UPDATED_AT_ISO}
         assert body["skipped_db_ids"] == {"db-2": "failed"}
 
+    def test_one_client_under_two_ids_is_read_once(self, settings):
+        """Two databases on one client, registered under two ids, count its rows once under the first id."""
+        db_client = MagicMock()
+        dbs = [MongoDb(db_client=db_client, id=db_id) for db_id in ["db-1", "db-2"]]
+        for db in dbs:
+            db.get_component_metrics = MagicMock(side_effect=_totals(_today_row()))  # type: ignore[method-assign]
+            db.get_metrics_totals = MagicMock(side_effect=_window_totals(_today_row()))  # type: ignore[method-assign]
+            db.get_metrics_versions = MagicMock(return_value=_versions())  # type: ignore[method-assign]
+        client = _client(settings, *dbs)
+        with _scope(None):
+            body = client.get(f"/os/metrics/sessions?{_last(1)}").json()
+
+        assert body["total_sessions"] == 3
+        assert list(body["db_ids"]) == ["db-1"]
+
     def test_only_remote_database_answers_through_its_agentos(self, mock_db, settings):
         """A gateway whose one database is a RemoteDb forwards the read, with the caller's token and filters."""
         remote_client = _client(settings, mock_db)
-        agentos_client = AgentOSClient(base_url="http://remote-os")
-
-        async def remote_get(endpoint, params=None, headers=None):
-            return remote_client.get(endpoint, params=params, headers=headers).json()
-
-        agentos_client._aget = AsyncMock(side_effect=remote_get)  # type: ignore[method-assign]
-        gateway_db = RemoteDb(id="db-1", client=agentos_client)
+        gateway_db = _remote_db("db-1", remote_client)
         gateway = _client(settings, gateway_db)
         with _scope(None):
             expected = remote_client.get(f"/os/metrics/sessions?{_last(2)}&user_id=alice").json()
@@ -409,8 +445,8 @@ class TestDatabases:
         assert response.status_code == 200
         assert response.json() == expected
         assert response.headers["etag"]
-        endpoint = agentos_client._aget.call_args.args[0]
-        kwargs = agentos_client._aget.call_args.kwargs
+        endpoint = gateway_db.client._aget.call_args.args[0]  # type: ignore[attr-defined]
+        kwargs = gateway_db.client._aget.call_args.kwargs  # type: ignore[attr-defined]
         assert endpoint == "/os/metrics/sessions"
         assert kwargs["params"] == {
             "starting_date": _day(1).isoformat(),
@@ -423,13 +459,7 @@ class TestDatabases:
     def test_only_remote_database_reads_itself_alone_on_its_agentos(self, settings):
         """A gateway whose one database is a RemoteDb reads that database, not every database of the remote AgentOS."""
         remote_client = _client(settings, _db("db-1", _today_row()), _db("db-2", _today_row()))
-        agentos_client = AgentOSClient(base_url="http://remote-os")
-
-        async def remote_get(endpoint, params=None, headers=None):
-            return remote_client.get(endpoint, params=params, headers=headers).json()
-
-        agentos_client._aget = AsyncMock(side_effect=remote_get)  # type: ignore[method-assign]
-        gateway = _client(settings, RemoteDb(id="db-1", client=agentos_client))
+        gateway = _client(settings, _remote_db("db-1", remote_client))
         with _scope(None):
             body = gateway.get(f"/os/metrics/sessions?{_last(1)}").json()
 
@@ -439,15 +469,7 @@ class TestDatabases:
     def test_remote_databases_of_one_agentos_answer_through_it_together(self, settings):
         """A gateway whose databases are RemoteDbs of one remote AgentOS forwards one read with all their ids."""
         remote_client = _client(settings, _db("db-1", _today_row()), _db("db-2", _today_row()))
-        gateway_dbs = []
-        for db_id in ["db-1", "db-2"]:
-            agentos_client = AgentOSClient(base_url="http://remote-os")
-
-            async def remote_get(endpoint, params=None, headers=None):
-                return remote_client.get(endpoint, params=params, headers=headers).json()
-
-            agentos_client._aget = AsyncMock(side_effect=remote_get)  # type: ignore[method-assign]
-            gateway_dbs.append(RemoteDb(id=db_id, client=agentos_client))
+        gateway_dbs = [_remote_db(db_id, remote_client) for db_id in ["db-1", "db-2"]]
         gateway = _client(settings, *gateway_dbs)
         with _scope(None):
             body = gateway.get(f"/os/metrics/sessions?{_last(1)}").json()
@@ -470,14 +492,13 @@ class TestUsers:
         user_store.acreated_by_day = AsyncMock(
             side_effect=_created_by_day(_created_row(40, 1), _created_row(3, 2), _created_row(1, 1), _created_row(0, 2))
         )
-        app = FastAPI()
-        app.state.user_store = user_store
-        with patch("agno.os.routers.metrics.metrics.get_authentication_dependency", return_value=lambda: True):
-            with patch("agno.os.routers.metrics.metrics._make_require_admin", return_value=AsyncMock(return_value="")):
-                app.include_router(get_metrics_router(dbs={}, settings=AgnoAPISettings()))
         starting_date = _today() - timedelta(days=1)
 
-        body = TestClient(app).get(f"/os/metrics/users?starting_date={starting_date.isoformat()}").json()
+        body = (
+            _users_client({}, user_store=user_store)
+            .get(f"/os/metrics/users?starting_date={starting_date.isoformat()}")
+            .json()
+        )
 
         assert body.pop("updated_at")
         assert body == {
@@ -495,25 +516,10 @@ class TestUsers:
         """A gateway with no directory whose database is a RemoteDb forwards the read to the remote AgentOS."""
         user_store = MagicMock()
         user_store.acreated_by_day = AsyncMock(side_effect=_created_by_day(_created_row(3, 2), _created_row(0, 1)))
-        remote_app = FastAPI()
-        remote_app.state.user_store = user_store
-        agentos_client = AgentOSClient(base_url="http://remote-os")
+        remote_client = _users_client({}, user_store=user_store)
+        gateway = _users_client({"db-1": [_remote_db("db-1", remote_client)]})
 
-        async def remote_get(endpoint, params=None, headers=None):
-            return TestClient(remote_app).get(endpoint, params=params, headers=headers).json()
-
-        agentos_client._aget = AsyncMock(side_effect=remote_get)  # type: ignore[method-assign]
-        gateway_app = FastAPI()
-        with patch("agno.os.routers.metrics.metrics.get_authentication_dependency", return_value=lambda: True):
-            with patch("agno.os.routers.metrics.metrics._make_require_admin", return_value=AsyncMock(return_value="")):
-                remote_app.include_router(get_metrics_router(dbs={}, settings=AgnoAPISettings()))
-                gateway_app.include_router(
-                    get_metrics_router(
-                        dbs={"db-1": [RemoteDb(id="db-1", client=agentos_client)]}, settings=AgnoAPISettings()
-                    )
-                )
-
-        response = TestClient(gateway_app).get("/os/metrics/users")
+        response = gateway.get("/os/metrics/users")
 
         assert response.status_code == 200
         assert response.json()["total_users"] == 3
@@ -522,17 +528,10 @@ class TestUsers:
         """A gateway refuses a caller who is not its admin before forwarding the read to the remote AgentOS."""
         agentos_client = AgentOSClient(base_url="http://remote-os")
         agentos_client._aget = AsyncMock()  # type: ignore[method-assign]
-        gateway_app = FastAPI()
         require_admin = AsyncMock(side_effect=HTTPException(status_code=403, detail="Admin privileges required"))
-        with patch("agno.os.routers.metrics.metrics.get_authentication_dependency", return_value=lambda: True):
-            with patch("agno.os.routers.metrics.metrics._make_require_admin", return_value=require_admin):
-                gateway_app.include_router(
-                    get_metrics_router(
-                        dbs={"db-1": [RemoteDb(id="db-1", client=agentos_client)]}, settings=AgnoAPISettings()
-                    )
-                )
+        gateway = _users_client({"db-1": [RemoteDb(id="db-1", client=agentos_client)]}, require_admin=require_admin)
 
-        response = TestClient(gateway_app).get("/os/metrics/users")
+        response = gateway.get("/os/metrics/users")
 
         assert response.status_code == 403
         agentos_client._aget.assert_not_called()
@@ -546,16 +545,9 @@ class TestUsers:
             request=httpx.Request("GET", "http://remote-os/os/metrics/users"),
         )
         agentos_client._aget = AsyncMock(side_effect=lambda *args, **kwargs: remote_response.raise_for_status())  # type: ignore[method-assign]
-        gateway_app = FastAPI()
-        with patch("agno.os.routers.metrics.metrics.get_authentication_dependency", return_value=lambda: True):
-            with patch("agno.os.routers.metrics.metrics._make_require_admin", return_value=AsyncMock(return_value="")):
-                gateway_app.include_router(
-                    get_metrics_router(
-                        dbs={"db-1": [RemoteDb(id="db-1", client=agentos_client)]}, settings=AgnoAPISettings()
-                    )
-                )
+        gateway = _users_client({"db-1": [RemoteDb(id="db-1", client=agentos_client)]})
 
-        response = TestClient(gateway_app).get("/os/metrics/users")
+        response = gateway.get("/os/metrics/users")
 
         assert response.status_code == 403
         assert response.json()["detail"] == "Admin privileges required"

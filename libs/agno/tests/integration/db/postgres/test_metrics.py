@@ -7,6 +7,7 @@ import pytest
 
 from agno.db.base import SessionType
 from agno.db.postgres.postgres import PostgresDb
+from agno.db.utils import metrics_day_completed
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
@@ -307,9 +308,7 @@ def test_calculate_metrics_multiple_days(postgres_db_real: PostgresDb, sample_mu
             day[field] += row[field]
     metrics_sorted = [by_date[d] for d in sorted(by_date)]
     # A run of yesterday can still be written today, so only the days before it are completed
-    assert all(
-        row["completed"] is (row["date"] < datetime.now(timezone.utc).date() - timedelta(days=1)) for row in metrics
-    )
+    assert all(row["completed"] is metrics_day_completed(row["date"]) for row in metrics)
 
     # Verify Day 1 metrics (2 sessions)
     day1_metrics = metrics_sorted[0]
