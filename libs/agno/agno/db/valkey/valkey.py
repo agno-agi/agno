@@ -346,7 +346,9 @@ class ValkeyDb(BaseDb):
             for key in keys:
                 pipeline.get(key)
 
-            results = self._exec_pipeline(pipeline, raise_on_error=raise_on_error)
+            results = (
+                self._exec_pipeline(pipeline, raise_on_error=True) if raise_on_error else self._exec_pipeline(pipeline)
+            )
             if raise_on_error and (results is None or len(results) != len(keys)):
                 raise RuntimeError(f"Cannot verify {table_type} records")
             if not results:

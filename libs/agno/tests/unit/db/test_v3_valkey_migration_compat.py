@@ -46,6 +46,17 @@ class _ExpiryType:
     SEC = "SEC"
 
 
+@pytest.fixture(autouse=True)
+def restore_valkey_glide_types():
+    import agno.db.valkey.valkey as valkey_module
+
+    names = ("RangeByIndex", "RequestError", "ExpirySet", "ExpiryType")
+    original = {name: getattr(valkey_module, name) for name in names}
+    yield
+    for name, value in original.items():
+        setattr(valkey_module, name, value)
+
+
 class _Batch:
     """Records commands; `_FakeGlideClient.exec` replays them."""
 
