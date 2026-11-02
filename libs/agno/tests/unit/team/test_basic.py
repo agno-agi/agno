@@ -140,7 +140,7 @@ def test_team_calculate_metrics_preserves_duration(team):
 
 
 def test_team_update_session_metrics_accumulates(team):
-    """Test that _update_session_metrics correctly accumulates metrics using run_response."""
+    """Test that _update_session_metrics correctly accumulates the metrics of the session's runs."""
 
     session = TeamSession(session_id="test_session")
     session.session_data = {}
@@ -151,7 +151,8 @@ def test_team_update_session_metrics_accumulates(team):
     run1.metrics.duration = 2.0
     run1.metrics.input_tokens = 100
 
-    team._update_session_metrics(session, run_response=run1)
+    session.upsert_run(run1)
+    team._update_session_metrics(session)
 
     # session_data carries the serialized form, so metrics survive a round-trip to the DB.
     # SessionMetrics accumulates tokens and cost; duration stays a run-level metric.
@@ -166,7 +167,8 @@ def test_team_update_session_metrics_accumulates(team):
     run2.metrics.input_tokens = 50
 
     # Should accumulate with previous session metrics
-    team._update_session_metrics(session, run_response=run2)
+    session.upsert_run(run2)
+    team._update_session_metrics(session)
 
     metrics2 = session.session_data["session_metrics"]
 

@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 from agno.agent._utils import convert_dependencies_to_string, convert_documents_to_string
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
-from agno.metrics import RunMetrics, merge_background_metrics
+from agno.metrics import RunMetrics, SessionMetrics, merge_background_metrics
 from agno.models.message import Message, MessageReferences
 from agno.models.response import ModelResponse
 from agno.run import RunContext
@@ -447,32 +447,34 @@ async def acompact_now(agent: "Agent", session: AgentSession, history: List[Mess
 
 
 def _add_to_session_and_latest_run(agent: "Agent", session: AgentSession, metrics: RunMetrics) -> Optional[RunOutput]:
-    """Add a manual compaction's usage to the session's metrics and to its latest completed or cancelled run, returned
-    for saving.
+    """Add a manual compaction's usage to its latest completed or cancelled run, returned for saving, and to the
+    session's metrics.
 
-    A manual compaction has no run of its own, so that run carries its model call; a run that can still change, failed
-    runs included, keeps only its own metrics. With no such run, the usage is in the session's metrics only.
+    A manual compaction has no run of its own, so that run carries its model call. With no such run, the usage is kept
+    in the session's compaction metrics, which the session's metrics add to its runs'.
     """
     from copy import copy as shallow_copy
 
-    from agno.agent._storage import get_session_metrics_internal
+    from agno.agent._session import update_session_metrics
 
-    session_metrics = get_session_metrics_internal(agent, session)
-    session_metrics.accumulate_from_run(metrics)
     if session.session_data is None:
         session.session_data = {}
-    session.session_data["session_metrics"] = session_metrics.to_dict()
-
     runs = session.runs or []
-    # A failed run can still be continued in place, which would drop the usage from it
+    # A run that can still change, failed and running runs included, would drop the usage when it is saved again
     finished = [index for index, run in enumerate(runs) if run.status in (RunStatus.completed, RunStatus.cancelled)]
-    if not finished:
-        return None
-    # Update a copy, never the loaded run: history run objects are shared between reads of the same session
-    latest_run = cast(RunOutput, shallow_copy(runs[finished[-1]]))
-    latest_run.metrics = RunMetrics.from_dict(latest_run.metrics.to_dict()) if latest_run.metrics else RunMetrics()
-    merge_background_metrics(latest_run.metrics, [metrics])
-    runs[finished[-1]] = latest_run
+    latest_run = None
+    if finished:
+        # Update a copy, never the loaded run: history run objects are shared between reads of the same session
+        latest_run = cast(RunOutput, shallow_copy(runs[finished[-1]]))
+        latest_run.metrics = RunMetrics.from_dict(latest_run.metrics.to_dict()) if latest_run.metrics else RunMetrics()
+        merge_background_metrics(latest_run.metrics, [metrics])
+        runs[finished[-1]] = latest_run
+    else:
+        compaction_metrics = SessionMetrics.from_dict(session.session_data.get("compaction_metrics") or {})
+        compaction_metrics.accumulate_from_run(metrics)
+        session.session_data["compaction_metrics"] = compaction_metrics.to_dict()
+
+    update_session_metrics(agent, session=session)
     return latest_run
 
 

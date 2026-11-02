@@ -3345,12 +3345,7 @@ def continue_run_dispatch(
     from agno.agent._init import has_async_db, set_default_model
     from agno.agent._messages import get_continue_run_messages
     from agno.agent._response import get_response_format
-    from agno.agent._storage import (
-        load_session_state,
-        read_or_create_session,
-        remove_run_from_session_metrics,
-        update_metadata,
-    )
+    from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
     from agno.agent._tools import determine_tools_for_model
     from agno.media.storage.base import AsyncMediaStorage
 
@@ -3627,11 +3622,6 @@ def continue_run_dispatch(
         run_response=run_response,
     )
 
-    # Take this run's earlier writes out of the session metrics now, or when a stream starts, to count it once
-    if not opts.stream:
-        stored_run = cast(RunOutput, agent_session.get_run(run_response.run_id or "") or run_response)
-        remove_run_from_session_metrics(agent, session=agent_session, run_response=stored_run)
-
     # Reset the run state
     run_response.status = RunStatus.running
 
@@ -3651,7 +3641,7 @@ def continue_run_dispatch(
             background_tasks=background_tasks,
             **kwargs,
         )
-        return _remove_run_from_session_metrics_on_start(agent, agent_session, run_response, response_iterator)
+        return response_iterator
     else:
         response = _continue_run(
             agent,
@@ -3667,31 +3657,6 @@ def continue_run_dispatch(
             **kwargs,
         )
         return response
-
-
-def _remove_run_from_session_metrics_on_start(
-    agent: Agent, session: AgentSession, run_response: RunOutput, stream: Iterator[Any]
-) -> Iterator[Any]:
-    """The continue stream, taking the run's earlier writes out of the session metrics when it starts.
-
-    Not when the stream is made: a stream that is never iterated leaves the session metrics as they were.
-    """
-    from agno.agent._storage import remove_run_from_session_metrics, update_session_metrics
-
-    stored_run = cast(RunOutput, session.get_run(run_response.run_id or "") or run_response)
-    remove_run_from_session_metrics(agent, session=session, run_response=stored_run)
-    session_metrics = (session.session_data or {}).get("session_metrics")
-    try:
-        yield from stream
-    except GeneratorExit:
-        # Closed before the run wrote itself back, or after a checkpoint took it back out: put back the run it holds now
-        if (
-            run_response.status == RunStatus.running
-            or (session.session_data or {}).get("session_metrics") is session_metrics
-        ):
-            stored_run = cast(RunOutput, session.get_run(run_response.run_id or "") or run_response)
-            update_session_metrics(agent, session=session, run_response=stored_run)
-        raise
 
 
 def _continue_run(
@@ -4767,19 +4732,12 @@ async def _acontinue_run(
         convert_response_to_structured_format,
         update_run_response,
     )
-    from agno.agent._storage import (
-        aread_or_create_session,
-        load_session_state,
-        remove_run_from_session_metrics,
-        update_metadata,
-    )
+    from agno.agent._storage import aread_or_create_session, load_session_state, update_metadata
     from agno.agent._telemetry import alog_agent_telemetry
     from agno.agent._tools import ahandle_tool_call_updates, determine_tools_for_model
 
     log_debug(f"Agent Run Continue: {run_response.run_id if run_response else run_id}", center=True)  # type: ignore
     agent_session: Optional[AgentSession] = None
-    # The session read this run's metrics were last taken out of
-    metrics_removed_from: Optional[AgentSession] = None
 
     # Resolve retry parameters
     try:
@@ -4993,12 +4951,6 @@ async def _acontinue_run(
                     add_history_to_context=agent.add_history_to_context,
                     run_response=run_response,
                 )
-
-                # Take this run out of each new session read once, so the next write counts it once
-                if metrics_removed_from is not agent_session:
-                    stored_run = cast(RunOutput, agent_session.get_run(run_response.run_id or "") or run_response)
-                    remove_run_from_session_metrics(agent, session=agent_session, run_response=stored_run)
-                    metrics_removed_from = agent_session
 
                 # Resume the run metrics timer: the run's duration runs from its start to its end, the wait included
                 run_response.metrics = run_response.metrics or RunMetrics()
@@ -5304,20 +5256,13 @@ async def _acontinue_run_stream(
         ahandle_model_response_stream,
         aparse_response_with_parser_model_stream,
     )
-    from agno.agent._storage import (
-        aread_or_create_session,
-        load_session_state,
-        remove_run_from_session_metrics,
-        update_metadata,
-    )
+    from agno.agent._storage import aread_or_create_session, load_session_state, update_metadata
     from agno.agent._telemetry import alog_agent_telemetry
     from agno.agent._tools import ahandle_tool_call_updates_stream, determine_tools_for_model
 
     log_debug(f"Agent Run Continue: {run_response.run_id if run_response else run_id}", center=True)  # type: ignore
 
     agent_session: Optional[AgentSession] = None
-    # The session read this run's metrics were last taken out of
-    metrics_removed_from: Optional[AgentSession] = None
 
     # Resolve retry parameters
     try:
@@ -5529,12 +5474,6 @@ async def _acontinue_run_stream(
                     add_history_to_context=agent.add_history_to_context,
                     run_response=run_response,
                 )
-
-                # Take this run out of each new session read once, so the next write counts it once
-                if metrics_removed_from is not agent_session:
-                    stored_run = cast(RunOutput, agent_session.get_run(run_response.run_id or "") or run_response)
-                    remove_run_from_session_metrics(agent, session=agent_session, run_response=stored_run)
-                    metrics_removed_from = agent_session
 
                 # Resume the run metrics timer: the run's duration runs from its start to its end, the wait included
                 run_response.metrics = run_response.metrics or RunMetrics()
@@ -6130,7 +6069,7 @@ def persist_run_in_session(
     run_index = resolve_run_index(session, storage_copy)
 
     # Calculate session metrics
-    update_session_metrics(agent, session=session, run_response=run_response)
+    update_session_metrics(agent, session=session)
 
     # Update session state before saving the session
     if run_context is not None and run_context.session_state is not None:
@@ -6168,7 +6107,7 @@ async def apersist_run_in_session(
 
     session.upsert_run(run=storage_copy)
     run_index = resolve_run_index(session, storage_copy)
-    update_session_metrics(agent, session=session, run_response=run_response)
+    update_session_metrics(agent, session=session)
 
     if run_context is not None and run_context.session_state is not None:
         if session.session_data is not None:
@@ -6456,16 +6395,12 @@ def checkpoint_run(
     ``run_response.tools`` reflect the state to persist (see
     :func:`_sync_run_response_with_model_response`).
     """
-    from agno.agent._storage import remove_run_from_session_metrics
-
     if agent.checkpoint != "tool-batch":
         return
     run_response.status = RunStatus.running
     run_response.last_checkpoint_at_message_index = len(run_response.messages or [])
     _mark_checkpoint_message(run_response)
     persist_run_in_session(agent, run_response, session, run_context)
-    # The checkpoint is in the saved session metrics: take it out, so the run's next write counts it once
-    remove_run_from_session_metrics(agent, session=session, run_response=run_response)
 
 
 async def acheckpoint_run(
@@ -6475,16 +6410,12 @@ async def acheckpoint_run(
     run_context: Optional[RunContext] = None,
 ) -> None:
     """Async variant of :func:`checkpoint_run`."""
-    from agno.agent._storage import remove_run_from_session_metrics
-
     if agent.checkpoint != "tool-batch":
         return
     run_response.status = RunStatus.running
     run_response.last_checkpoint_at_message_index = len(run_response.messages or [])
     _mark_checkpoint_message(run_response)
     await apersist_run_in_session(agent, run_response, session, run_context)
-    # The checkpoint is in the saved session metrics: take it out, so the run's next write counts it once
-    remove_run_from_session_metrics(agent, session=session, run_response=run_response)
 
 
 def build_after_tool_results_callback(

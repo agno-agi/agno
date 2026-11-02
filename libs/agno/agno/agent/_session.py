@@ -735,11 +735,11 @@ async def aget_session_metrics(agent: Agent, session_id: Optional[str] = None) -
     return await aget_session_metrics_util(agent, session_id=session_id)
 
 
-def update_session_metrics(agent: Agent, session: AgentSession, run_response: RunOutput) -> None:
-    """Calculate session metrics convert run Metrics to SessionMetrics."""
+def update_session_metrics(agent: Agent, session: AgentSession) -> None:
+    """Calculate session metrics from the session's runs."""
     from agno.agent._storage import update_session_metrics as _update_session_metrics_storage
 
-    _update_session_metrics_storage(agent, session=session, run_response=run_response)
+    _update_session_metrics_storage(agent, session=session)
 
 
 # ---------------------------------------------------------------------------

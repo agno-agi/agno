@@ -154,11 +154,11 @@ def test_strict_missing_native_identity_rejects_prior_completed_history(agent):
 @pytest.mark.parametrize("status", [RunStatus.error, RunStatus.cancelled])
 def test_failed_or_cancelled_run_keeps_its_tokens_in_the_session_metrics(status):
     """A failed or cancelled run keeps the tokens it used on its row, so the session totals keep them too."""
-    session = AgentSession(session_id="s")
     run_output = RunOutput(
         run_id="r", status=status, metrics=RunMetrics(input_tokens=6, output_tokens=4, total_tokens=10)
     )
+    session = AgentSession(session_id="s", runs=[run_output])
 
-    BaseExternalAgent._update_session_metrics(session, run_output)
+    BaseExternalAgent._update_session_metrics(session)
 
     assert session.session_data["session_metrics"]["total_tokens"] == 10

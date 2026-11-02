@@ -6090,6 +6090,62 @@ def test_a_routing_failure_restores_the_callers_team_level_requirements(tmp_path
     assert names.count("publish") == 1, f"the caller's run object carries: {names}"
 
 
+@pytest.mark.parametrize("stream", [False, True], ids=["non_stream", "stream"])
+def test_a_routing_failure_then_retry_counts_the_run_once_in_the_session_metrics(tmp_path, stream):
+    """A continue whose member routing fails, then retried on the cached session, counts the run once."""
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "routing_failure_metrics.db")
+    session_id = "s-routing-failure-metrics"
+
+    team1 = _build_own_tool_flat_team(SqliteDb(db_file=db_file), resuming=False)
+    run1 = team1.run("Publish the release and email a@example.com", session_id=session_id)
+    assert run1.is_paused
+    requirements = _wire_requirements(run1.requirements)
+
+    from agno.team import _run as team_run
+
+    calls: List[int] = []
+    if stream:
+        name = "_route_requirements_to_members_stream"
+        route_stream = team_run._route_requirements_to_members_stream
+
+        def _boom_once(*args: Any, **kwargs: Any):
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError("router boom")
+            yield from route_stream(*args, **kwargs)
+    else:
+        name = "_route_requirements_to_members"
+        route = team_run._route_requirements_to_members
+
+        def _boom_once(*args: Any, **kwargs: Any):  # type: ignore[misc]
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError("router boom")
+            return route(*args, **kwargs)
+
+    team2 = _build_own_tool_flat_team(SqliteDb(db_file=db_file), resuming=True)
+    team2.cache_session = True
+
+    def _continue() -> None:
+        response = team2.continue_run(
+            run_response=run1, session_id=session_id, requirements=requirements, stream=stream
+        )
+        if stream:
+            for _ in response:
+                pass
+
+    with patch(f"agno.team._run.{name}", new=_boom_once):
+        with pytest.raises(RuntimeError, match="router boom"):
+            _continue()
+        _continue()
+
+    assert run1.status == RunStatus.completed
+    session = SqliteDb(db_file=db_file).get_session(session_id=session_id, session_type="team")
+    # Two leader calls and two member calls, 15 tokens each
+    assert session.session_data["session_metrics"]["total_tokens"] == 60
+
+
 def test_nested_teams_member_runs_are_stored_at_every_depth(monkeypatch) -> None:
     """A member team's own member runs, kept only inside its run, are stored as runs of their own, at every depth,
     each with its own position in the session."""
@@ -6118,68 +6174,83 @@ def test_nested_teams_member_runs_are_stored_at_every_depth(monkeypatch) -> None
     assert saved_runs == [("l2-run", 0), ("l3-run", 1), ("leaf-run", 2)]
 
 
-def test_team_run_is_taken_out_with_every_member_run_the_session_counted_for_it() -> None:
-    """A continue takes the team run out of the session metrics with the member runs it counted and still carries,
-    whether stored inside the run, as rows of their own or, for a remote member, on its own AgentOS; one it no longer
-    carries keeps its row counted."""
+def test_team_session_metrics_count_every_run_once() -> None:
+    """The session metrics count the team run, its members' runs of their own, and a remote member's run kept only
+    inside the team run, once each: a run written again, or a remote run also held as a run of the cached session, is
+    not counted twice."""
     from agno.metrics import RunMetrics
     from agno.run.agent import RunOutput
     from agno.run.base import RunStatus
     from agno.run.team import TeamRunOutput
     from agno.session import TeamSession
     from agno.team import Team
-    from agno.team._run import _stored_run_with_member_runs
-    from agno.team._session import remove_run_from_session_metrics, update_session_metrics
+    from agno.team._session import update_session_metrics
 
-    def session_after_continue_takes_out(continuing_run_members) -> int:
-        finished = RunOutput(
-            run_id="finished",
-            session_id="s",
-            parent_run_id="team-run",
-            status=RunStatus.completed,
-            metrics=RunMetrics(total_tokens=57),
-        )
-        paused = RunOutput(
-            run_id="paused",
-            session_id="s",
-            parent_run_id="team-run",
-            status=RunStatus.paused,
-            metrics=RunMetrics(total_tokens=10),
-        )
-        # A remote member's run is stored in its own session on the AgentOS that ran it, not in the team's
-        remote = RunOutput(
-            run_id="remote",
-            session_id="s:remote_agent",
-            parent_run_id="team-run",
-            status=RunStatus.completed,
-            metrics=RunMetrics(total_tokens=1000),
-        )
-        members = {"finished": finished, "paused": paused, "remote": remote}
-        team_run = TeamRunOutput(
-            run_id="team-run",
-            session_id="s",
-            metrics=RunMetrics(total_tokens=100),
-            member_responses=[finished, paused, remote],
-        )
-        session = TeamSession(session_id="s", session_data={})
-        team = Team(members=[])
-        update_session_metrics(team, session, team_run)
-        # Stored with store_member_responses=False: only the paused member run stays inside the team run
-        stored_team_run = TeamRunOutput(
-            run_id="team-run", session_id="s", metrics=RunMetrics(total_tokens=100), member_responses=[paused]
-        )
-        session.runs = [finished, paused, stored_team_run]
-        continuing_run = TeamRunOutput(
-            run_id="team-run",
-            session_id="s",
-            metrics=RunMetrics(total_tokens=100),
-            member_responses=[members[run_id] for run_id in continuing_run_members],
-        )
+    member = RunOutput(
+        run_id="member",
+        session_id="s",
+        parent_run_id="team-run",
+        status=RunStatus.completed,
+        metrics=RunMetrics(total_tokens=57),
+    )
+    # A remote member's run is stored in its own session on the AgentOS that ran it, not in the team's
+    remote = RunOutput(
+        run_id="remote",
+        session_id="s:remote_agent",
+        parent_run_id="team-run",
+        status=RunStatus.completed,
+        metrics=RunMetrics(total_tokens=1000),
+    )
+    team_run = TeamRunOutput(
+        run_id="team-run", session_id="s", metrics=RunMetrics(total_tokens=100), member_responses=[member, remote]
+    )
+    team = Team(members=[])
 
-        remove_run_from_session_metrics(team, session, _stored_run_with_member_runs(session, continuing_run))
-        return session.session_data["session_metrics"].get("total_tokens", 0)
+    # Read back: the remote run is kept only inside the team run
+    session = TeamSession(session_id="s", session_data={}, runs=[member, team_run])
+    update_session_metrics(team, session)
+    update_session_metrics(team, session)
+    assert session.session_data["session_metrics"]["total_tokens"] == 1157
 
-    # Continued by object: the in-memory run carries both member runs
-    assert session_after_continue_takes_out(["finished", "paused", "remote"]) == 0
-    # Continued by run id: the run read back carries only the paused member run, so the others stay counted
-    assert session_after_continue_takes_out(["paused"]) == 1057
+    # Cached: the delegation also added the remote run to the session's runs
+    session = TeamSession(session_id="s", session_data={}, runs=[member, remote, team_run])
+    update_session_metrics(team, session)
+    assert session.session_data["session_metrics"]["total_tokens"] == 1157
+
+
+def test_team_session_metrics_count_every_run_three_levels_deep() -> None:
+    """A team three levels deep counts each run once, whether a member team's own members' runs are kept only inside
+    its run, as before the team run is written, or are also runs of their own, as after."""
+    from agno.metrics import RunMetrics
+    from agno.run.agent import RunOutput
+    from agno.run.team import TeamRunOutput
+    from agno.session import TeamSession
+    from agno.team import Team
+    from agno.team._session import update_session_metrics
+
+    leaf = RunOutput(run_id="leaf", session_id="s", parent_run_id="l3", metrics=RunMetrics(total_tokens=7))
+    level_3 = TeamRunOutput(
+        run_id="l3", session_id="s", parent_run_id="l2", metrics=RunMetrics(total_tokens=20), member_responses=[leaf]
+    )
+    level_2 = TeamRunOutput(
+        run_id="l2",
+        session_id="s",
+        parent_run_id="team-run",
+        metrics=RunMetrics(total_tokens=50),
+        member_responses=[level_3],
+    )
+    team_run = TeamRunOutput(
+        run_id="team-run", session_id="s", metrics=RunMetrics(total_tokens=100), member_responses=[level_2]
+    )
+    team = Team(members=[])
+
+    # Before the team run is written: only the direct member's run is a run of the session
+    session = TeamSession(session_id="s", session_data={}, runs=[level_2, team_run])
+    update_session_metrics(team, session)
+    assert session.session_data["session_metrics"]["total_tokens"] == 177
+
+    # After: every member run at every depth is a run of the session too
+    session = TeamSession(session_id="s", session_data={}, runs=[level_2, level_3, leaf, team_run])
+    update_session_metrics(team, session)
+    update_session_metrics(team, session)
+    assert session.session_data["session_metrics"]["total_tokens"] == 177
