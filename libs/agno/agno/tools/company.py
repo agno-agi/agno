@@ -41,6 +41,7 @@ def _public_source(source: Dict[str, Any]) -> Dict[str, Any]:
 # Keep nullable schemas and normalize empty strings before Pydantic validation.
 _OptionalString = Annotated[Optional[str], BeforeValidator(_empty_to_none)]
 _OptionalInt = Annotated[Optional[int], BeforeValidator(_empty_to_none)]
+_OptionalBool = Annotated[Optional[bool], BeforeValidator(_empty_to_none)]
 _OptionalSourceConfig = Annotated[Optional[Dict[str, List[str]]], BeforeValidator(_empty_to_none)]
 
 
@@ -87,6 +88,25 @@ def _require_human_creation(run_context):
         raise PermissionError("Only a calling human may create Company Products and Routines from chat")
 
 
+def _automated_edit_stage(row, run_context):
+    """Return "backlog" for automated callers, raising if the Task has left it; None for humans."""
+    from agno.company.execution import _automatic_task, _ExecutorAuthorization
+
+    if not (isinstance(_authority(run_context), _ExecutorAuthorization) or _automatic_task.get() is not None):
+        return None
+    if row["status"] != "backlog":
+        raise PermissionError("Automated runs may edit Task content only in Backlog")
+    return "backlog"
+
+
+def _require_edited(edited, stage):
+    if edited is None and stage is not None:
+        raise PermissionError(
+            "Task changed before the automated edit; automated runs edit Task content only in Backlog"
+        )
+    return edited
+
+
 def _chat_sources(sources, agent, team, run_context):
     from agno.company.manager import _validate_agent_source
 
@@ -102,7 +122,7 @@ def _chat_sources(sources, agent, team, run_context):
         )
 
 
-def _routine_declaration(name, executor_type, executor_id, template, instructions, cron_expr, timezone):
+def _routine_declaration(name, executor_type, executor_id, template, instructions, cron_expr, timezone, enabled=True):
     return Routine.model_validate(
         dict(
             name=name,
@@ -112,6 +132,7 @@ def _routine_declaration(name, executor_type, executor_id, template, instruction
             instructions=_empty_to_none(instructions),
             cron_expr=_empty_to_none(cron_expr),
             timezone=_empty_to_none(timezone) or "UTC",
+            enabled=True if _empty_to_none(enabled) is None else enabled,
         )
     )
 
@@ -350,6 +371,7 @@ class CompanyTools(Toolkit):
         instructions: _OptionalString = None,
         cron_expr: _OptionalString = None,
         timezone: _OptionalString = "UTC",
+        enabled: _OptionalBool = True,
         _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Create a Routine for the calling human; automated runs cannot create Routines.
@@ -359,12 +381,15 @@ class CompanyTools(Toolkit):
             instructions: Custom instructions; null uses the selected template.
             cron_expr: Cron expression; null creates an on-demand Routine.
             timezone: Schedule timezone; null uses UTC.
+            enabled: Whether the new Routine starts enabled; null uses true. False requires a human to resume it.
         """
         _require_human_creation(_agno_run_context)
         _permission("products", "write", _agno_run_context)
         _permission("schedules", "write", _agno_run_context)
         _permission("routines", "write", _agno_run_context)
-        routine = _routine_declaration(name, executor_type, executor_id, template, instructions, cron_expr, timezone)
+        routine = _routine_declaration(
+            name, executor_type, executor_id, template, instructions, cron_expr, timezone, enabled
+        )
         return _public_json(
             self._sync().create_routine(
                 product_id=product_id,
@@ -450,6 +475,7 @@ class CompanyTools(Toolkit):
         instructions: _OptionalString = None,
         cron_expr: _OptionalString = None,
         timezone: _OptionalString = "UTC",
+        enabled: _OptionalBool = True,
         _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Create a Routine for the calling human; automated runs cannot create Routines.
@@ -459,12 +485,15 @@ class CompanyTools(Toolkit):
             instructions: Custom instructions; null uses the selected template.
             cron_expr: Cron expression; null creates an on-demand Routine.
             timezone: Schedule timezone; null uses UTC.
+            enabled: Whether the new Routine starts enabled; null uses true. False requires a human to resume it.
         """
         _require_human_creation(_agno_run_context)
         await _apermission("products", "write", _agno_run_context)
         await _apermission("schedules", "write", _agno_run_context)
         await _apermission("routines", "write", _agno_run_context)
-        routine = _routine_declaration(name, executor_type, executor_id, template, instructions, cron_expr, timezone)
+        routine = _routine_declaration(
+            name, executor_type, executor_id, template, instructions, cron_expr, timezone, enabled
+        )
         # A synchronous database runs the manager in a worker thread, where only a plain check can run.
         check = (
             self._aroutine_check(routine, _agno_run_context)
@@ -637,7 +666,7 @@ class CompanyTools(Toolkit):
 
     @requires_permission()
     def edit_company_task(self, task_id: str, title: str, brief: str, _agno_run_context: Optional[Any] = None) -> str:
-        """Edit the title and brief of Backlog work; never change lifecycle or ownership."""
+        """Edit a Task's title and brief; automated runs only in Backlog. Never changes lifecycle, executor or ownership."""
         _permission("tasks", "write", _agno_run_context)
         manager = self._sync()
         row = manager.get_task(task_id)
@@ -645,7 +674,9 @@ class CompanyTools(Toolkit):
             raise LookupError("Task not found")
         self._scoped_user(_agno_run_context)
         _require_routine_product(row["product_id"])
-        return _public_json(manager.update_task(task_id, user_id=None, title=title, brief=brief))
+        stage = _automated_edit_stage(row, _agno_run_context)
+        edited = manager.update_task(task_id, user_id=None, expected_status=stage, title=title, brief=brief)
+        return _public_json(_require_edited(edited, stage))
 
     @requires_permission()
     def list_company_wiki(
@@ -931,7 +962,7 @@ class CompanyTools(Toolkit):
     async def aedit_company_task(
         self, task_id: str, title: str, brief: str, _agno_run_context: Optional[Any] = None
     ) -> str:
-        """Edit the title and brief of Backlog work; never change lifecycle or ownership."""
+        """Edit a Task's title and brief; automated runs only in Backlog. Never changes lifecycle, executor or ownership."""
         await _apermission("tasks", "write", _agno_run_context)
         manager = self._async()
         row = await manager.get_task(task_id)
@@ -939,7 +970,9 @@ class CompanyTools(Toolkit):
             raise LookupError("Task not found")
         self._scoped_user(_agno_run_context)
         _require_routine_product(row["product_id"])
-        return _public_json(await manager.update_task(task_id, user_id=None, title=title, brief=brief))
+        stage = _automated_edit_stage(row, _agno_run_context)
+        edited = await manager.update_task(task_id, user_id=None, expected_status=stage, title=title, brief=brief)
+        return _public_json(_require_edited(edited, stage))
 
     @requires_permission()
     async def alist_company_wiki(

@@ -9,79 +9,90 @@
 </div>
 
 <p align="center">
-  Build, run, and manage agent platforms.<br/>
+  The self-driving agent platform<br/>
 </p>
 
 ## Introduction
 
-Agno is a framework and runtime for agent platforms. Build agents, run them as a service, manage your platform using a web UI.
+Agno is a self-driving agent platform. Build agents for your company, product, or customers. Run them as durable services on AgentOS. Put them to work automating company operations.
 
-- Build your agent platform using the Agno SDK.
-- Run your agent platform using the AgentOS runtime.
-- Manage everything using the AgentOS UI.
+- **Build** agents with the Agno, Claude Agent, or Codex SDKs. Combine agents into teams and workflows.
+- **Run** agents as durable services with built-in API and MCP. AgentOS handles authentication, role-based access, resume/replay, human approvals, scheduling, and durable execution.
+- **Automate** company operations with Company OS. Give agents responsibilities, organize work into projects and tasks, and configure recurring routines. People set direction and review results; agents own and execute.
 
-Agno allows you to own your agent stack. Maintain control of your data, memory, and security posture (JWT-based RBAC), and turn your agent platform into a learning loop with simulations and usage data.
+Agno provides the orchestration and service layer around your agents, making them available in:
 
-<img width="3192" height="2038" alt="demo-os" src="https://github.com/user-attachments/assets/6d21e6bc-111f-4b81-ba29-6550fead89b2" />
+1. **Your product:** using the REST API.
+2. **Claude and ChatGPT:** using the MCP server.
+3. **Chat apps like Slack:** using Agno Interfaces.
+
+Run your platform in your own cloud and keep your data in your control. Review conversations, inspect traces, manage knowledge, and track your agent activity using the [AgentOS UI](https://os.agno.com).
 
 ## Get started
 
-Hand this prompt to your coding agent (Claude Code, Cursor, Codex):
+Agno is built for coding agents. Start with a pre-built template and give this prompt to your coding agent:
 
 ```text
-Help me set up my agent platform.
+Help me set up my agent platform and build my first agent.
 
-Clone https://github.com/agno-agi/agentos-railway into a folder called
-agent-platform, cd in, read the README, and follow the get started guide.
+Clone https://github.com/agno-agi/agentos-railway into a folder called agent-platform, cd into it, and follow .agents/skills/setup-platform/SKILL.md.
 ```
 
-Your coding agent will set up your agent platform and run it locally using Docker, giving you a REST API for serving your agents, a Postgres database for storing your data and traces, an MCP server, and a control plane.
+The setup skill runs your platform locally and helps you build your first agent. You get:
 
-Deploying somewhere else? Use the same prompt but point it to a different repo. The starter templates are identical except for the deploy scripts: swap [agentos-railway](https://github.com/agno-agi/agentos-railway) for [agentos-docker](https://github.com/agno-agi/agentos-docker), [agentos-aws](https://github.com/agno-agi/agentos-aws), [agentos-gcp](https://github.com/agno-agi/agentos-gcp), [agentos-azure](https://github.com/agno-agi/agentos-azure), [agentos-fly](https://github.com/agno-agi/agentos-fly), [agentos-render](https://github.com/agno-agi/agentos-render), [agentos-modal](https://github.com/agno-agi/agentos-modal), or [agentos-helm](https://github.com/agno-agi/agentos-helm).
+- An API server and MCP server.
+- PostgreSQL storage for conversations, memory, and platform activity.
+- OS Manager to help build and manage your platform.
+- Claude and Codex engineers to work on your code.
+- Skills for building, evaluating, and improving agents.
+- A Company workspace for organizing ongoing work, with a daily maintenance routine that reviews your codebase and Agno releases and proposes platform improvements.
 
-### Prefer to code by hand?
+Connect your platform to [os.agno.com](https://os.agno.com) to start using it. Build agents with code, use the no-code UI, or chat with the OS Manager.
 
-- [Build your first agent in 20 lines of code.](https://docs.agno.com/first-agent)
-- [Build your own agent platform.](https://docs.agno.com/agent-platform/overview)
-- [Read the docs.](https://docs.agno.com)
+Start improving your agents and platform with the `/improve` skill. Keep useful changes and regression tests so each round builds on the last. When you're ready, configure scheduled improvement runs in a sandbox that return pull requests for review.
 
-## Features
+## Templates for every cloud
 
-- [Production API](https://docs.agno.com/runtime/serve-as-api). 50+ endpoints with SSE and websockets to build a product on top.
-- [Storage](https://docs.agno.com/runtime/storage). Store sessions, memory, knowledge, and traces in your own database.
-- [100+ integrations](https://docs.agno.com/tools/toolkits/overview). Connect to GitHub, Slack, Postgres, and more using pre-built toolkits.
-- [Context Providers](https://docs.agno.com/runtime/context). Access live data from Slack, Drive, wikis, MCP, and custom sources.
-- [Human approval](https://docs.agno.com/runtime/human-approval). Pause runs for user confirmation. Block tools that require admin approval.
-- [Observability](https://docs.agno.com/runtime/observability). Monitor with OpenTelemetry tracing, run history, and audit logs.
-- [Security](https://docs.agno.com/runtime/security-and-auth). Get JWT-based RBAC and multi-user, multi-tenant isolation out of the box.
-- [Interfaces](https://docs.agno.com/runtime/interfaces). Expose your agents via Slack, Telegram, WhatsApp, Discord, AG-UI, A2A.
-- [Scheduling](https://docs.agno.com/runtime/scheduling). Cron-based scheduling and background jobs with no external infrastructure.
-- [Deploy anywhere](https://docs.agno.com/runtime/deploy). Run on any cloud platform that runs containers. Docker, Railway, AWS, GCP.
+Choose a template for your cloud: [Docker](https://github.com/agno-agi/agentos-docker) · [Railway](https://github.com/agno-agi/agentos-railway) · [AWS](https://github.com/agno-agi/agentos-aws) · [GCP](https://github.com/agno-agi/agentos-gcp) · [Azure](https://github.com/agno-agi/agentos-azure) · [Fly.io](https://github.com/agno-agi/agentos-fly) · [Render](https://github.com/agno-agi/agentos-render) · [Modal](https://github.com/agno-agi/agentos-modal) · [Helm](https://github.com/agno-agi/agentos-helm)
 
-## Use Agno with your coding agent
+## What's included
 
-Two options:
+| Capability | What you can do |
+| --- | --- |
+| **[Agents](https://docs.agno.com/agents/overview) and [teams](https://docs.agno.com/teams/overview)** | Build agents that use tools, delegate work, and collaborate. |
+| **[Workflows](https://docs.agno.com/workflows/overview)** | Control execution with routing, conditions, loops, and parallel steps. |
+| **[Memory](https://docs.agno.com/memory/overview) and [knowledge](https://docs.agno.com/knowledge/overview)** | Remember users across sessions and retrieve answers from your data. |
+| **[Tools and integrations](https://docs.agno.com/tools/overview)** | Connect agents to APIs, databases, and MCP servers. |
+| **[Durable execution](https://docs.agno.com/agent-os/background-execution/durable-queue)** | Persist background jobs and track their status across restarts. |
+| **[Human approval](https://docs.agno.com/hitl/overview)** | Review sensitive actions before they run, then approve and continue. |
+| **[Observability](https://docs.agno.com/agent-os/tracing/overview)** | Trace runs, inspect tool calls, and diagnose failures. |
+| **[Scheduling](https://docs.agno.com/agent-os/scheduler/overview)** | Run agents, teams, and workflows on recurring schedules. |
+| **[Security](https://docs.agno.com/agent-os/security/overview)** | Control access with authentication, roles, and per-user data isolation. |
+| **[Coding agents](https://docs.agno.com/agent-platform/harness-agents)** | Run Claude and Codex in sandboxes to implement and test changes. |
+| **Company OS** | Organize work into products, projects, tasks, and recurring routines. |
 
-1. Recommended: Add Agno docs as an MCP server. Add [docs.agno.com/mcp](https://docs.agno.com/mcp) to your favourite coding agent.
-2. Add Agno docs as an indexed source. In Cursor: Settings → Indexing & Docs → Add `https://docs.agno.com/llms-full.txt`. Also works in VSCode, Windsurf, and similar tools.
+## Tutorials
 
-Read the full guide [here](https://docs.agno.com/coding-agents).
+First, [add Agno to your coding agent](https://docs.agno.com/coding-agents) so it can read the tutorials as you build. Then, learn how to:
+
+- [Build your agent platform](https://docs.agno.com/agent-platform/overview)
+- [Serve agents as an API](https://docs.agno.com/tutorials/agents-as-api)
+- [Serve agents over MCP](https://docs.agno.com/tutorials/agents-as-mcp)
+- [Run Claude and Codex as services](https://docs.agno.com/tutorials/harnesses-as-a-service)
+- [Read the documentation](https://docs.agno.com)
 
 ## Community
 
-- [X](https://x.com/AgnoAgi): follow for releases and demos
-- [Newsletter](https://www.agno.com/the-agno-loop-newsletter): monthly updates on what's shipping
+Follow [Agno on X](https://x.com/AgnoAgi) for releases and demos, or subscribe to [The Agno Loop](https://www.agno.com/the-agno-loop-newsletter).
 
-## Contributing
-
-See the [contributing guide](https://github.com/agno-agi/agno/blob/main/CONTRIBUTING.md).
+See the [contributing guide](CONTRIBUTING.md) to contribute.
 
 ## License
 
-Agno is distributed under the [Apache-2.0 license](LICENSE).
+Agno is distributed under the [Apache 2.0 license](LICENSE).
 
 ## Telemetry
 
-Agno sends a telemetry event per agent run so we know which model providers to prioritize. Prompts, messages, and outputs are never sent. Disable by setting `AGNO_TELEMETRY=false`.
+Agno sends a telemetry event per agent so we know which model providers to prioritize. Prompts, messages, and outputs are never sent. Disable by setting `AGNO_TELEMETRY=false`.
 
 <p align="right"><a href="#top">↑ Back to top</a></p>

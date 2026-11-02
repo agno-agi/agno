@@ -291,6 +291,7 @@ class Condition:
     def _prepare_steps(self):
         """Prepare the steps for execution - mirrors workflow logic"""
         from agno.agent.agent import Agent
+        from agno.agents.base import BaseExternalAgent
         from agno.team.team import Team
         from agno.workflow.loop import Loop
         from agno.workflow.parallel import Parallel
@@ -305,7 +306,7 @@ class Condition:
             for step in steps:
                 if callable(step) and hasattr(step, "__name__"):
                     prepared.append(Step(name=step.__name__, description="User-defined callable step", executor=step))
-                elif isinstance(step, Agent):
+                elif isinstance(step, (Agent, BaseExternalAgent)):
                     prepared.append(Step(name=step.name, description=step.description, agent=step))
                 elif isinstance(step, Team):
                     prepared.append(Step(name=step.name, description=step.description, team=step))

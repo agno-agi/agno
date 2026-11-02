@@ -89,6 +89,7 @@ class Parallel:
         self.name = resolved_name
         self.description = description
         self.human_review = human_review or HumanReview()
+        _refuse_shared_harness_agents(self.steps)
 
         from agno.workflow.types import validate_human_review_for_parallel
 
@@ -155,6 +156,7 @@ class Parallel:
     def _prepare_steps(self):
         """Prepare the steps for execution - mirrors workflow logic"""
         from agno.agent.agent import Agent
+        from agno.agents.base import BaseExternalAgent
         from agno.team.team import Team
         from agno.workflow.loop import Loop
         from agno.workflow.router import Router
@@ -166,7 +168,7 @@ class Parallel:
         for step in self.steps:
             if callable(step) and hasattr(step, "__name__"):
                 prepared_steps.append(Step(name=step.__name__, description="User-defined callable step", executor=step))
-            elif isinstance(step, Agent):
+            elif isinstance(step, (Agent, BaseExternalAgent)):
                 prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
             elif isinstance(step, Team):
                 prepared_steps.append(Step(name=step.name, description=step.description, team=step))
@@ -1027,3 +1029,50 @@ class Parallel:
                 step_id=parallel_step_id,
                 parent_step_id=parent_step_id,
             )
+
+
+def _harness_agent_ids(item: Any) -> set:
+    """Ids of the harness agents (Claude Code, Codex) one Parallel branch runs, at any depth."""
+    from agno.agents.base import BaseExternalAgent
+    from agno.team.team import Team
+
+    if isinstance(item, BaseExternalAgent):
+        return {item.get_id()}
+    if isinstance(item, Team):
+        found: set = set()
+        for member in item.members if isinstance(item.members, list) else []:
+            found |= _harness_agent_ids(member)
+        return found
+    if isinstance(item, list):
+        found = set()
+        for child in item:
+            found |= _harness_agent_ids(child)
+        return found
+    found = set()
+    for attr in ("agent", "team"):
+        if getattr(item, attr, None) is not None:
+            found |= _harness_agent_ids(getattr(item, attr))
+    for attr in ("steps", "else_steps", "choices"):
+        children = getattr(item, attr, None)
+        if isinstance(children, list):
+            found |= _harness_agent_ids(children)
+    return found
+
+
+def _refuse_shared_harness_agents(branches: List[Any]) -> None:
+    """Refuse a harness agent that more than one branch runs.
+
+    A harness agent keeps one conversation per workflow session, and a conversation takes one turn at
+    a time, so two branches running it at once would leave one waiting on the other until its retries
+    ran out. Different harness agents, and Agno agents, can run side by side.
+    """
+    seen: Dict[str, int] = {}
+    for index, branch in enumerate(branches):
+        for agent_id in _harness_agent_ids(branch):
+            if agent_id in seen and seen[agent_id] != index:
+                raise ValueError(
+                    f"Harness agent '{agent_id}' is used in more than one Parallel branch. It keeps one "
+                    "conversation per workflow session, which takes one turn at a time; use a separate "
+                    "agent, with its own id, for each branch."
+                )
+            seen.setdefault(agent_id, index)

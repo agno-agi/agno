@@ -37,6 +37,7 @@ else:
     WebSocket = Any
 
 from agno.agent.agent import Agent
+from agno.agents.base import BaseExternalAgent
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
 from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.utils import resolve_db_from_config
@@ -166,6 +167,21 @@ from agno.workflow.utils import (
 
 # Set to prevent background tasks from being garbage-collected
 _workflow_background_tasks: set[asyncio.Task[None]] = set()
+
+
+def _link_steps_to_db(steps: Any, db: Any) -> None:
+    """Record the workflow's database on its steps, at any depth, so a step can read the workflow session.
+
+    A nested workflow links its own steps when it prepares them."""
+    for item in steps if isinstance(steps, list) else []:
+        if isinstance(item, Step):
+            item._workflow_db = db
+        elif isinstance(item, list):
+            _link_steps_to_db(item, db)
+        elif isinstance(item, (Steps, Loop, Parallel, Condition, Router)):
+            for attr in ("steps", "else_steps", "choices"):
+                _link_steps_to_db(getattr(item, attr, None), db)
+
 
 STEP_TYPE_MAPPING = {
     Step: StepType.STEP,
@@ -2535,7 +2551,7 @@ class Workflow:
             for step in self.steps:  # type: ignore
                 if callable(step):
                     step_type = StepType.STEP
-                elif isinstance(step, Agent) or isinstance(step, Team):
+                elif isinstance(step, (Agent, BaseExternalAgent)) or isinstance(step, Team):
                     step_type = StepType.STEP
                 elif isinstance(step, Workflow):
                     step_type = StepType.WORKFLOW
@@ -11046,7 +11062,7 @@ class Workflow:
                     step_name = step.__name__
                     log_debug(f"Step {i + 1}: Wrapping callable function '{step_name}'", log_level=2)
                     prepared_steps.append(Step(name=step_name, description="User-defined callable step", executor=step))  # type: ignore
-                elif isinstance(step, Agent):
+                elif isinstance(step, (Agent, BaseExternalAgent)):
                     step_name = step.name or f"step_{i + 1}"
                     log_debug(f"Step {i + 1}: Agent '{step_name}'", log_level=2)
                     prepared_steps.append(Step(name=step_name, description=step.description, agent=step))
@@ -11073,6 +11089,7 @@ class Workflow:
                     raise ValueError(f"Invalid step type: {type(step).__name__}")
 
             self.steps = prepared_steps  # type: ignore
+            _link_steps_to_db(self.steps, self.db)
             log_debug("Step preparation completed", log_level=2)
 
     def print_response(
@@ -11245,7 +11262,7 @@ class Workflow:
                 return step_dict
 
             # Handle Agent and Team objects directly
-            if isinstance(step, Agent):
+            if isinstance(step, (Agent, BaseExternalAgent)):
                 step_dict = {
                     "name": step.name or "unnamed_agent",
                     "description": step.description or "Agent step",
@@ -11839,7 +11856,7 @@ class Workflow:
             return Step(**step_kwargs)
 
         # Handle direct Agent
-        if isinstance(step, Agent):
+        if isinstance(step, (Agent, BaseExternalAgent)):
             return step.deep_copy() if hasattr(step, "deep_copy") else step
 
         # Handle direct Team

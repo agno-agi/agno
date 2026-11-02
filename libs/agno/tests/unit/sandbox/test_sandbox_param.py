@@ -539,3 +539,31 @@ async def test_repository_metadata_crosses_harness_and_queue_options(coordinator
     execution = coordinator.calls[-1][1]
     assert execution["metadata"] == metadata
     assert execution["config"]["repository"]["branch"] == "main"
+
+
+def test_agentos_applies_the_sandbox_startup_checks_to_team_members(tmp_path):
+    """A sandboxed agent inside a served team, at any depth, is checked at startup like a served one."""
+    from agno.db.postgres import PostgresDb
+    from agno.job_queue import QueueConfig
+    from agno.os import AgentOS
+    from agno.sandbox.checkpoint import FileCheckpointStore
+    from agno.team import Team
+
+    def team_with(member, nested: bool = False):
+        inner = Team(id="inner", name="Inner", members=[member])
+        return Team(id="outer", name="Outer", members=[inner] if nested else [member])
+
+    with pytest.raises(ValueError, match="PostgresDb"):
+        AgentOS(
+            teams=[team_with(ClaudeAgent(id="coder", sandbox=DockerSandbox("agno-sandbox:claude")))], telemetry=False
+        )
+
+    db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:1/ai")
+    unset = ClaudeAgent(id="coder", sandbox=DockerSandbox("agno-sandbox:claude", network="isolated"))
+    with pytest.raises(ValueError, match="checkpoints="):
+        AgentOS(teams=[team_with(unset, nested=True)], db=db, queue=QueueConfig(durable=True), telemetry=False)
+
+    named = DockerSandbox("agno-sandbox:claude", network="isolated", checkpoints=FileCheckpointStore(tmp_path))
+    member = ClaudeAgent(id="coder", sandbox=named)
+    AgentOS(teams=[team_with(member, nested=True)], db=db, queue=QueueConfig(durable=True), telemetry=False)
+    assert member.db is db, "a sandboxed member without its own database coordinates on the OS database"

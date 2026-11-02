@@ -107,6 +107,18 @@ directory; otherwise it is `tmp/harnesses/<provider>/` under your launch directo
 Stop the server before removing its disposable local state. That does not
 remove SDK-native session files.
 
+When Claude Code or Codex asks for a native permission, the run pauses for a confirm or reject in the
+chat, like an Agno agent's confirmation tool. See [human in the loop](human_in_the_loop/README.md); it
+covers AgentOS and sandbox execution.
+
+## Harness agents in a team
+
+Claude Code and Codex can be members of an Agno team next to native agents; the leader delegates to them like any member. See [harness_teams](harness_teams/README.md).
+
+## Harness agents in a workflow
+
+Claude Code and Codex can also run as workflow steps, in a `Step` or directly in `Parallel`, `Loop`, `Condition` and `Router`. See [harness_workflows](harness_workflows/README.md).
+
 ## Existing examples and the next exercises
 
 The [Claude guide](claude-agent-sdk/README.md#more-claude-examples) and

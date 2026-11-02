@@ -1122,6 +1122,45 @@ class PostgresDb(BaseDb):
             result = sess.execute(statement)
             return result.scalar_one_or_none() is not None
 
+    def update_run_if_matches(
+        self,
+        run_id: str,
+        session_id: str,
+        expected: Dict[str, Any],
+        fields: Dict[str, Any],
+        user_id: Optional[str] = None,
+    ) -> bool:
+        """Apply ``fields`` to a stored run only while it still matches ``expected``, as one atomic step.
+
+        ``expected`` maps "status" and dotted paths into the run's data to the values they must hold. A
+        paused run is handed over to its continuation this way: a repeated or stale writer finds the run
+        changed and writes nothing. Returns whether the run was updated.
+        """
+        from agno.db.sql.runs import apply_run_fields, run_matches
+
+        try:
+            table = self._get_table(table_type="runs")
+            if table is None:
+                return False
+            with self.Session() as sess, sess.begin():
+                row = sess.execute(
+                    select(table.c.run_data, table.c.status)
+                    .where(table.c.run_id == run_id, table.c.session_id == session_id)
+                    .where((table.c.user_id == user_id) | table.c.user_id.is_(None))
+                    .with_for_update()
+                ).fetchone()
+                if row is None or row[0] is None or not run_matches(dict(row[0]), row[1], expected):
+                    return False
+                run, status = apply_run_fields(dict(row[0]), fields)
+                values: Dict[str, Any] = {"run_data": sanitize_postgres_strings(run), "updated_at": int(time.time())}
+                if status is not None:
+                    values["status"] = status
+                sess.execute(update(table).where(table.c.run_id == run_id).values(**values))
+                return True
+        except Exception as e:
+            log_warning(f"Error conditionally updating run {run_id}: {e}")
+            raise
+
     def upsert_run(
         self,
         run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
@@ -1854,6 +1893,7 @@ class PostgresDb(BaseDb):
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
         include_runs: bool = True,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """
         Get all sessions in the given table. Can filter by user_id and component_id.
@@ -1884,6 +1924,9 @@ class PostgresDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        from agno.db.session_filters import normalize_session_filter, session_filter_to_sqlalchemy
+
+        filter_expr = normalize_session_filter(filter_expr)
         validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="sessions")
@@ -1893,6 +1936,9 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
+
+                if filter_expr is not None:
+                    stmt = stmt.where(session_filter_to_sqlalchemy(filter_expr, table))
 
                 # Filtering
                 if user_id is not None:
@@ -7240,7 +7286,7 @@ class PostgresDb(BaseDb):
             raise
 
     def update_schedule(
-        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+        self, schedule_id: str, user_id: Optional[str] = None, *, preserve_updated_at: bool = False, **kwargs: Any
     ) -> Optional[Dict[str, Any]]:
         from agno.db.schemas.scheduler import validate_schedule_update
 
@@ -7253,7 +7299,8 @@ class PostgresDb(BaseDb):
                 # A system-set disabled_reason describes why the row was off;
                 # turning it on retires the explanation.
                 kwargs.setdefault("disabled_reason", None)
-            kwargs["updated_at"] = int(time.time())
+            if not preserve_updated_at:
+                kwargs["updated_at"] = int(time.time())
             with self.Session() as sess, sess.begin():
                 stmt = table.update().where(table.c.id == schedule_id)
                 if user_id is not None:
@@ -7334,6 +7381,8 @@ class PostgresDb(BaseDb):
         The table is passed in because the caller may hold an open transaction
         on this scoped session; _get_table would try to begin a second one.
         """
+        from sqlalchemy import literal
+
         from agno.db.schemas.scheduler import build_run_endpoint
 
         endpoint = build_run_endpoint(target_type, target_id)
@@ -7358,7 +7407,15 @@ class PostgresDb(BaseDb):
                 ),
                 table.c.enabled.is_(True),
             )
-            .values(enabled=False, disabled_reason=reason, updated_at=int(time.time()))
+            # An archive cascade is not a user edit, so a Company routine keeps its last-edit time.
+            .values(
+                enabled=False,
+                disabled_reason=reason,
+                updated_at=case(
+                    (table.c.managed_by == "company", table.c.updated_at),
+                    else_=literal(int(time.time()), table.c.updated_at.type),
+                ),
+            )
         )
         return int(result.rowcount or 0)
 
@@ -7440,12 +7497,15 @@ class PostgresDb(BaseDb):
         *,
         worker_id: Optional[str] = None,
         locked_at: Optional[int] = None,
+        preserve_updated_at: bool = False,
     ) -> bool:
         try:
             table = self._get_table(table_type="schedules")
             if table is None:
                 return False
-            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None, "updated_at": int(time.time())}
+            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None}
+            if not preserve_updated_at:
+                updates["updated_at"] = int(time.time())
             # A cron may be cleared while this claim is running. Never re-arm
             # an on-demand schedule using the executor's older schedule snapshot.
             updates["next_run_at"] = case(
@@ -9532,7 +9592,7 @@ class PostgresDb(BaseDb):
         """Apply a lifecycle transition only if the observed state still matches."""
         from agno.db.schemas.projects import project_transition_fields
         from agno.db.schemas.tasks import _acceptance_count
-        from agno.db.sql.company import lock_child
+        from agno.db.sql.company import lock_child, open_project_tasks
 
         table = self._get_table(table_type="projects")
         if table is None:
@@ -9570,10 +9630,7 @@ class PostgresDb(BaseDb):
             existing = dict(row._mapping)
             open_tasks = []
             if tasks_table is not None:
-                open_query = select(tasks_table).where(
-                    tasks_table.c.project_id == project_id,
-                    tasks_table.c.status.not_in(["done", "cancelled"]),
-                )
+                open_query = open_project_tasks(tasks_table, project_id)
                 open_tasks = [dict(task._mapping) for task in sess.execute(open_query).fetchall()]
             fields = project_transition_fields(existing, target, reason, accepted_by, tasks=open_tasks)
             if auto_accept is not None:
@@ -9717,7 +9774,9 @@ class PostgresDb(BaseDb):
             rows = sess.execute(stmt).fetchall()
             return [dict(row._mapping) for row in rows], total
 
-    def update_task(self, task_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
+    def update_task(
+        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
         from agno.db.schemas.tasks import validate_task_fields
         from agno.db.sql.company import lock_child, require_project
 
@@ -9725,7 +9784,11 @@ class PostgresDb(BaseDb):
         table = self._get_table(table_type="tasks")
         if table is None:
             return None
-        stmt = table.update().where(table.c.id == task_id, table.c.deleted_at.is_(None), table.c.status == "backlog")
+        stmt = table.update().where(table.c.id == task_id, table.c.deleted_at.is_(None))
+        if set(fields) - {"title", "brief"}:
+            stmt = stmt.where(table.c.status == "backlog")
+        if expected_status is not None:
+            stmt = stmt.where(table.c.status == expected_status)
         if user_id is not None:
             stmt = stmt.where(table.c.user_id == user_id)
         products = self._get_table(table_type="products", create_table_if_not_found=True)
@@ -9772,7 +9835,7 @@ class PostgresDb(BaseDb):
         products = self._get_table(table_type="products", create_table_if_not_found=True)
         projects = self._get_table(table_type="projects", create_table_if_not_found=True)
         with self.Session() as sess, sess.begin():
-            lock_child(sess, products, projects, table, task_id)
+            lock_child(sess, products, projects, table, task_id, restoring=True)
             existing = sess.execute(select(table).where(table.c.id == task_id)).mappings().first()
             if existing is None:
                 return None
@@ -9906,7 +9969,7 @@ class PostgresDb(BaseDb):
     ) -> Optional[Dict[str, Any]]:
         """Apply a lifecycle transition only if the observed state still matches."""
         from agno.db.schemas.tasks import _acceptance_count, task_transition_fields
-        from agno.db.sql.company import lock_child
+        from agno.db.sql.company import lock_child, require_project
 
         table = self._get_table(table_type="tasks")
         if table is None:
@@ -9946,6 +10009,9 @@ class PostgresDb(BaseDb):
                 fields["transitions"][-1]["auto_accept"] = auto_accept
             else:
                 lock_child(sess, products, projects, table, task_id)
+            if existing["status"] in {"done", "cancelled"}:
+                # Reopened work must not land in a completed or cancelled Project.
+                require_project(sess, projects, existing["project_id"], existing["product_id"], target)
             update = table.update().where(
                 table.c.id == task_id,
                 table.c.deleted_at.is_(None),

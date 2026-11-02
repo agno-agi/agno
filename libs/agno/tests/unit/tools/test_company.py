@@ -5,8 +5,10 @@ import json
 
 import pytest
 
+from agno.agent import Agent
 from agno.company import CompanyManager
 from agno.db.sqlite import SqliteDb
+from agno.registry import Registry
 from agno.run import RunContext
 from agno.tools.company import CompanyTools
 
@@ -104,6 +106,7 @@ async def test_empty_optionals_equal_omission(tmp_path, use_async, processed, na
     manager = CompanyManager(db)
     product = manager.create(name="SDK", user_id="alice")
     project = manager.create_project(product_id=product["id"], name="Release")
+    manager.transition_project(project_id=project["id"], target="active", reason="Approved")
     manager.create_task(product_id=product["id"], title="Existing task", project_id=project["id"])
     manager.log_decision(decision="Review before shipping", agent_id="planner", session_id="prior")
     tools = CompanyTools(db)
@@ -204,3 +207,30 @@ async def test_source_optionals_equal_omission(tmp_path, use_async, processed, n
         selected = await invoke({"path": path.name, "max_chars": None, "content_offset": ""})
         assert selected["content"] == "Observed content"
     db.close()
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("enabled", [True, False, None, ""])
+async def test_create_routine_enabled_option(tmp_path, use_async, enabled):
+    db = SqliteDb(db_file=str(tmp_path / "routine.db"))
+    product = CompanyManager(db).create(name="SDK", user_id="alice")
+    reviewer = Agent(id="reviewer", telemetry=False)
+    tools = CompanyTools(db, registry=Registry(agents=[reviewer]))
+    function = (tools.get_async_functions() if use_async else tools.functions)["create_product_routine"]
+    function.process_entrypoint(strict=True)
+    try:
+        result = function.entrypoint(
+            product_id=product["id"],
+            name="review",
+            executor_type="agent",
+            executor_id="reviewer",
+            instructions="Review existing work.",
+            cron_expr="0 9 * * *",
+            enabled=enabled,
+            _agno_run_context=RunContext(run_id="human", session_id="session", user_id="alice"),
+        )
+        row = json.loads(await result if inspect.isawaitable(result) else result)
+        assert row["enabled"] is (enabled is not False)
+        assert db.get_schedule(row["id"])["enabled"] is (enabled is not False)
+    finally:
+        db.close()

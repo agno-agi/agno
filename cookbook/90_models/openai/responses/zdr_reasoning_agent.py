@@ -16,7 +16,7 @@ agent = Agent(
     name="ZDR Compliant Agent",
     session_id="zdr_demo_session",
     model=OpenAIResponses(
-        id="o4-mini",
+        id="gpt-5.6-terra",
         store=False,
         reasoning_summary="auto",  # Requesting a reasoning summary
     ),
