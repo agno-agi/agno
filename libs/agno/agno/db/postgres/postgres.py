@@ -3137,7 +3137,8 @@ class PostgresDb(BaseDb):
     def _get_metrics_reopen_session_ids(
         self, sess: Any, table: Table, session_records: List[Dict[str, Any]]
     ) -> Set[str]:
-        """Get the id of each session the given rows add, or move to another owner or component."""
+        """Get the id of each session the given rows add, move to another owner or component, or give other
+        compaction metrics."""
         written_session_ids = [record["session_id"] for record in session_records]
         stored_sessions: Dict[str, Any] = {}
         for start in range(0, len(written_session_ids), METRICS_IN_LIST_LIMIT):
@@ -3148,15 +3149,23 @@ class PostgresDb(BaseDb):
                 table.c.team_id,
                 table.c.workflow_id,
                 table.c.created_at,
+                table.c.session_data["compaction_metrics"].label("compaction_metrics"),
             ).where(table.c.session_id.in_(written_session_ids[start : start + METRICS_IN_LIST_LIMIT]))
             stored_sessions.update((row.session_id, row) for row in sess.execute(stored_stmt).fetchall())
         session_ids: Set[str] = set()
         for record in session_records:
             stored_session = stored_sessions.get(record["session_id"])
-            if stored_session is None or any(
-                record[column] != getattr(stored_session, column)
-                for column in ["user_id", "agent_id", "team_id", "workflow_id"]
-                if column in record
+            if (
+                stored_session is None
+                or any(
+                    record[column] != getattr(stored_session, column)
+                    for column in ["user_id", "agent_id", "team_id", "workflow_id"]
+                    if column in record
+                )
+                or (
+                    isinstance(record.get("session_data"), dict)
+                    and record["session_data"].get("compaction_metrics") != stored_session.compaction_metrics
+                )
             ):
                 session_ids.add(record["session_id"])
         return session_ids
@@ -3554,6 +3563,7 @@ class PostgresDb(BaseDb):
                 sessions_table.c.team_id,
                 sessions_table.c.workflow_id,
                 sessions_table.c.metadata,
+                sessions_table.c.session_data["compaction_metrics"].label("compaction_metrics"),
             ).where(sessions_table.c.created_at >= start_timestamp, sessions_table.c.created_at < end_timestamp)
             result = sess.execute(sessions_stmt).fetchall()
             sessions = [dict(record._mapping) for record in result]

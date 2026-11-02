@@ -213,6 +213,20 @@ def test_session_without_user_lands_under_empty_string():
     assert row["sessions_count"] == 1
 
 
+def test_session_compaction_metrics_are_counted_on_the_session_row():
+    """A manual compaction no run carries keeps its usage in the session's compaction metrics, which count on the
+    session's row beside its runs."""
+    session = {
+        **_session("alice"),
+        "compaction_metrics": {"input_tokens": 700, "output_tokens": 24, "total_tokens": 724},
+    }
+    row = _only_row(sessions=[session], runs=[_run("run-1", user_id="alice")])
+
+    plain_row = _only_row(sessions=[_session("alice")], runs=[_run("run-1", user_id="alice")])
+    assert row["total_tokens"] == plain_row["total_tokens"] + 724
+    assert row["runs_count"] == plain_row["runs_count"]
+
+
 def test_only_the_id_matching_the_component_type_is_used():
     """A team session that also names an agent is counted under the team alone."""
     session = {**_session("alice", "team", "team-1"), "agent_id": "agent-1"}
