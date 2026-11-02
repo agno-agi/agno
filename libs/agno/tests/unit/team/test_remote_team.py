@@ -263,3 +263,35 @@ def test_stored_team_run_keeps_its_remote_members_metrics() -> None:
     assert stored_remote_run.content is None
     # The live run the caller holds keeps both members' whole runs
     assert len(team_run.member_responses) == 2 and remote_run.content == "remote answer"
+
+
+def test_stored_team_run_keeps_its_remote_teams_members_metrics() -> None:
+    """A remote team's run kept on the team run carries its own members' runs, ids and metrics only."""
+    from agno.metrics import RunMetrics
+    from agno.run.agent import RunOutput
+    from agno.run.base import RunStatus
+    from agno.run.team import TeamRunOutput
+    from agno.team import Team
+    from agno.team._session import _scrub_member_responses_keeping_paused
+
+    remote_team_run = TeamRunOutput(
+        run_id="remote-team-run",
+        session_id="team-session:remote_team",
+        parent_run_id="team-run",
+        team_id="remote_team",
+        status=RunStatus.completed,
+        metrics=RunMetrics(total_tokens=15),
+        member_responses=[
+            RunOutput(run_id="inner-run", content="inner answer", metrics=RunMetrics(total_tokens=7)),
+        ],
+    )
+    team_run = TeamRunOutput(run_id="team-run", session_id="team-session", member_responses=[remote_team_run])
+
+    storage_run = _scrub_member_responses_keeping_paused(Team(members=[]), team_run)
+
+    [stored_inner_run] = storage_run.member_responses[0].member_responses
+    assert (stored_inner_run.run_id, stored_inner_run.metrics.total_tokens, stored_inner_run.content) == (
+        "inner-run",
+        7,
+        None,
+    )
