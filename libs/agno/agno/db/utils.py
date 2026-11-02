@@ -1488,6 +1488,29 @@ def _calculate_run_metrics(run: Dict[str, Any], seen_run_ids: Set[str]) -> Dict[
     return totals
 
 
+def _calculate_session_compaction_metrics(session: Dict[str, Any]) -> Dict[str, Any]:
+    """The totals a session's compaction metrics add to its row: the usage of a manual compaction no run carries."""
+    totals = empty_metrics_totals()
+    compaction_metrics = session.get("compaction_metrics") or {}
+    if isinstance(compaction_metrics, str):
+        try:
+            compaction_metrics = json.loads(compaction_metrics)
+        except (json.JSONDecodeError, TypeError):
+            log_warning(f"Could not parse the compaction metrics of session {session.get('session_id')}; ignoring them")
+            compaction_metrics = {}
+    if not isinstance(compaction_metrics, dict):
+        compaction_metrics = {}
+    for field in METRICS_TOKEN_FIELDS:
+        tokens = int(compaction_metrics.get(field) or 0)
+        if field in METRICS_SUM_COLUMNS:
+            totals[field] += tokens
+        elif field in METRICS_TOKEN_DETAILS_FIELDS and tokens:
+            totals["token_details"][field] = tokens
+    if compaction_metrics.get("cost") is not None:
+        totals["token_details"]["cost"] = compaction_metrics["cost"]
+    return totals
+
+
 def calculate_date_component_metrics(
     date_to_process: date,
     sessions: List[Dict[str, Any]],
@@ -1503,7 +1526,8 @@ def calculate_date_component_metrics(
 
     Args:
         date_to_process (date): The date to calculate component metrics for.
-        sessions (List[Dict[str, Any]]): The sessions created on that date.
+        sessions (List[Dict[str, Any]]): The sessions created on that date, with the compaction metrics of their
+            session_data.
         runs (List[Dict[str, Any]]): The runs created on that date, as stored.
         stored_run_ids (Set[str]): The ids of the nested runs of that date, and of the member runs its
             sandboxed members' records repeat, that are stored as runs of their own, on any date. Those
@@ -1547,6 +1571,8 @@ def calculate_date_component_metrics(
         bucket_key = (session.get("user_id") or "", *component, "", component[1])
         bucket = per_owner.setdefault(bucket_key, empty_metrics_totals())
         bucket["sessions_count"] += 1
+        # A manual compaction no run carries is counted on its session's row, on the day the session started
+        add_metrics_totals(bucket, _calculate_session_compaction_metrics(session))
 
     day_run_ids = {run["run_id"] for run in runs if run.get("run_id")}
     seen_run_ids = day_run_ids | stored_run_ids
