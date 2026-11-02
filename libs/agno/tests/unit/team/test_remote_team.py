@@ -152,6 +152,25 @@ async def test_remote_agent_stream_ends_at_the_first_event_that_ends_its_own_run
     assert (items[-1].model, items[-1].model_provider) == ("gpt-5.6-luna", "OpenAI")
 
 
+@pytest.mark.asyncio
+async def test_remote_team_stream_run_output_keeps_its_member_responses() -> None:
+    """A RemoteTeam's run output keeps the member runs its completed event carries, so the local team counts them."""
+    from agno.metrics import RunMetrics
+    from agno.run.agent import RunOutput
+    from agno.run.team import RunCompletedEvent, TeamRunOutput
+
+    remote_team = RemoteTeam(base_url="http://fake-host", team_id="test_team")
+    member_run = RunOutput(run_id="member-run", agent_id="member", metrics=RunMetrics(total_tokens=32))
+
+    async def _events():
+        yield RunCompletedEvent(run_id="run-1", session_id="s-1", team_id="test_team", member_responses=[member_run])
+
+    items = [item async for item in remote_team._with_run_output(_events())]
+
+    assert isinstance(items[-1], TeamRunOutput)
+    assert items[-1].member_responses == [member_run]
+
+
 def test_remote_member_runs_in_a_session_of_its_own() -> None:
     """A remote member keeps its own session on its AgentOS; a local member shares the team's."""
     from agno.agent import Agent
@@ -184,3 +203,63 @@ def test_remote_members_run_is_stored_by_the_agentos_that_ran_it(monkeypatch) ->
     _persist_member_runs_for_team_run(Team(members=[]), session, "team-run")
 
     assert saved_run_ids == ["local-run"]
+
+
+def test_continued_remote_member_keeps_its_team_run() -> None:
+    """A remote continue stream names neither the model nor the team run, so both come from the paused copy."""
+    from agno.run.agent import RunOutput
+    from agno.run.team import TeamRunOutput
+    from agno.team._run import _replace_member_response
+
+    paused = RunOutput(run_id="remote-run", parent_run_id="team-run", model="gpt-5.6-luna", model_provider="OpenAI")
+    team_run = TeamRunOutput(run_id="team-run", member_responses=[paused])
+
+    _replace_member_response(team_run, RunOutput(run_id="remote-run", content="done"))
+
+    continued = team_run.member_responses[0]
+    assert (continued.content, continued.parent_run_id, continued.model) == ("done", "team-run", "gpt-5.6-luna")
+
+
+def test_stored_team_run_keeps_its_remote_members_metrics() -> None:
+    """A team run stored without its member responses keeps the ids, model and metrics of its remote member's run,
+    which the team's database may hold no other record of, and nothing else of it."""
+    from agno.metrics import RunMetrics
+    from agno.run.agent import RunOutput
+    from agno.run.base import RunStatus
+    from agno.run.team import TeamRunOutput
+    from agno.team import Team
+    from agno.team._session import _scrub_member_responses_keeping_paused
+
+    remote_run = RunOutput(
+        run_id="remote-run",
+        session_id="team-session:remote_agent",
+        parent_run_id="team-run",
+        agent_id="remote_agent",
+        content="remote answer",
+        model="gpt-5.6-luna",
+        model_provider="OpenAI",
+        metrics=RunMetrics(input_tokens=10, output_tokens=5, total_tokens=15),
+        status=RunStatus.completed,
+    )
+    team_run = TeamRunOutput(
+        run_id="team-run",
+        session_id="team-session",
+        member_responses=[
+            RunOutput(run_id="local-run", session_id="team-session", parent_run_id="team-run", content="local answer"),
+            remote_run,
+        ],
+    )
+
+    storage_run = _scrub_member_responses_keeping_paused(Team(members=[]), team_run)
+
+    [stored_remote_run] = storage_run.member_responses
+    assert (stored_remote_run.run_id, stored_remote_run.parent_run_id, stored_remote_run.agent_id) == (
+        "remote-run",
+        "team-run",
+        "remote_agent",
+    )
+    assert (stored_remote_run.model, stored_remote_run.status) == ("gpt-5.6-luna", RunStatus.completed)
+    assert stored_remote_run.metrics.total_tokens == 15
+    assert stored_remote_run.content is None
+    # The live run the caller holds keeps both members' whole runs
+    assert len(team_run.member_responses) == 2 and remote_run.content == "remote answer"

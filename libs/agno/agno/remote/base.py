@@ -653,6 +653,7 @@ class BaseRemote:
                             tools=getattr(event, "tools", None),
                             requirements=getattr(event, "requirements", None),
                             metrics=getattr(event, "metrics", None),
+                            member_responses=getattr(event, "member_responses", None) or [],
                             metadata=getattr(event, "metadata", None),
                             status=status,
                         )
