@@ -157,6 +157,8 @@ class MistralChat(Model):
             _request_params["safe_prompt"] = True
         if isinstance(response_format, type) and issubclass(response_format, BaseModel):
             _request_params["response_format"] = response_format_from_pydantic_model(response_format)
+        elif isinstance(response_format, dict):
+            _request_params["response_format"] = response_format
         if tools:
             _request_params["tools"] = tools
             if tool_choice is None:

@@ -295,6 +295,15 @@ async def test_mistral_ainvoke_sends_pydantic_response_format():
     assert sent["response_format"] == response_format_from_pydantic_model(MovieScript)
 
 
+def test_mistral_invoke_stream_sends_dict_response_format():
+    model = _model_with_mock_client()
+
+    list(model.invoke_stream(**_invoke_kwargs({"type": "json_object"})))
+
+    sent = model.mistral_client.chat.stream.call_args.kwargs  # type: ignore[union-attr]
+    assert sent["response_format"] == {"type": "json_object"}
+
+
 def test_mistral_stream_without_output_schema_omits_response_format():
     model = _model_with_mock_client()
 
