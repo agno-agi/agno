@@ -146,7 +146,7 @@ def test_team_update_session_metrics_accumulates(team):
     session.session_data = {}
 
     # First Run
-    run1 = TeamRunOutput(content="run 1")
+    run1 = TeamRunOutput(run_id="r1", content="run 1")
     run1.metrics = RunMetrics()
     run1.metrics.duration = 2.0
     run1.metrics.input_tokens = 100
@@ -161,7 +161,7 @@ def test_team_update_session_metrics_accumulates(team):
     assert "duration" not in metrics1
 
     # Second Run
-    run2 = TeamRunOutput(content="run 2")
+    run2 = TeamRunOutput(run_id="r2", content="run 2")
     run2.metrics = RunMetrics()
     run2.metrics.duration = 3.0
     run2.metrics.input_tokens = 50
