@@ -314,6 +314,8 @@ def _remote_member_run_metrics(
             model=member_response.model,
             model_provider=member_response.model_provider,
             metrics=member_response.metrics,
+            # The remote team's own members' runs, which the team's database holds no record of either
+            member_responses=[_remote_member_run_metrics(m) for m in member_response.member_responses or []],
         )
     return RunOutput(
         run_id=member_response.run_id,
