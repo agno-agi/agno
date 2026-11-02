@@ -11,7 +11,16 @@ from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.db.base import AsyncBaseDb, BaseDb, CompanyDeletionUnavailableError
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id
-from agno.os.routers.company.schema import TaskCreate, TaskResponse, TaskStatus, TaskTransition, TaskUpdate
+from agno.os.routers.company.schema import (
+    DeleteTasksRequest,
+    DeleteTasksResponse,
+    TaskCreate,
+    TaskDeleteFailure,
+    TaskResponse,
+    TaskStatus,
+    TaskTransition,
+    TaskUpdate,
+)
 from agno.os.routers.run_permissions import _require_endpoint_permission
 from agno.os.schema import PaginatedResponse, PaginationInfo
 from agno.os.settings import AgnoAPISettings
@@ -155,8 +164,7 @@ def get_tasks_router(
 
         return await _existing(task_id, include_deleted=True)
 
-    @router.delete("/tasks/{task_id}", status_code=204)
-    async def delete_task(task_id: str, request: Request, _: bool = Depends(auth_dependency)) -> Response:
+    async def _require_purge_admin() -> None:
         from agno.run.authorization import current_authorization
 
         authority = current_authorization()
@@ -165,6 +173,8 @@ def get_tasks_router(
                 await authority.arequire("agent_os", "admin")
             except PermissionError as exc:
                 raise HTTPException(403, str(exc)) from exc
+
+    async def _purge_task(task_id: str, request: Request) -> None:
         await _existing(task_id, include_deleted=True)
         try:
             # The public response omits authorization history needed by the SQL comparison.
@@ -180,6 +190,29 @@ def get_tasks_router(
             raise HTTPException(503, "Cannot verify the records for permanent deletion") from exc
         if not await _call("purge_task", task_id, user_id=None, expected_tasks=tasks):
             raise HTTPException(404, "Task not found")
+
+    @router.delete("/tasks", response_model=DeleteTasksResponse)
+    async def delete_tasks(
+        body: DeleteTasksRequest, request: Request, _: bool = Depends(auth_dependency)
+    ) -> DeleteTasksResponse:
+        await _require_purge_admin()
+        deleted: list[str] = []
+        failed: list[TaskDeleteFailure] = []
+        for task_id in dict.fromkeys(body.task_ids):
+            try:
+                await _purge_task(task_id, request)
+            except HTTPException as exc:
+                if exc.status_code not in {404, 409, 503}:
+                    raise
+                failed.append(TaskDeleteFailure(task_id=task_id, status_code=exc.status_code, detail=str(exc.detail)))
+            else:
+                deleted.append(task_id)
+        return DeleteTasksResponse(deleted=deleted, failed=failed)
+
+    @router.delete("/tasks/{task_id}", status_code=204)
+    async def delete_task(task_id: str, request: Request, _: bool = Depends(auth_dependency)) -> Response:
+        await _require_purge_admin()
+        await _purge_task(task_id, request)
         return Response(status_code=204)
 
     @router.post("/tasks/{task_id}/restore", response_model=TaskResponse)

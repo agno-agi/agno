@@ -147,6 +147,29 @@ class TaskCreate(BaseModel):
         return self
 
 
+class DeleteTasksRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    task_ids: List[str] = Field(..., min_length=1)
+
+    @field_validator("task_ids")
+    @classmethod
+    def validate_task_ids(cls, value: List[str]) -> List[str]:
+        if any(not task_id.strip() for task_id in value):
+            raise ValueError("Task IDs must be non-empty")
+        return value
+
+
+class TaskDeleteFailure(BaseModel):
+    task_id: str
+    status_code: int
+    detail: str
+
+
+class DeleteTasksResponse(BaseModel):
+    deleted: List[str]
+    failed: List[TaskDeleteFailure]
+
+
 class TaskUpdate(BaseModel):
     executor_type: Optional[Literal["agent", "team", "workflow"]] = None
     executor_id: Optional[str] = Field(None, min_length=1)

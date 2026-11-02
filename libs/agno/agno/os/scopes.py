@@ -611,6 +611,7 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
                 "GET /company/tasks/*": ["tasks:read"],
                 "POST /company/tasks": ["tasks:write"],
                 "PATCH /company/tasks/*": ["tasks:write"],
+                "DELETE /company/tasks": ["tasks:delete"],
                 "DELETE /company/tasks/*": ["tasks:delete"],
                 "POST /company/tasks/*/archive": ["tasks:delete"],
                 "POST /company/tasks/*/restore": ["tasks:delete"],

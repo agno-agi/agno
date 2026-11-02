@@ -3613,6 +3613,34 @@ async def test_permanent_delete_refuses_live_execution_after_task_move(system, r
 
 
 @pytest.mark.asyncio
+async def test_bulk_delete_keeps_running_task_and_removes_safe_task(system):
+    from agno.company.execution import _call
+
+    client, db, worker, _, _ = system
+    active = await accepted(client)
+    safe_response = await client.post(
+        "/company/tasks",
+        json={
+            "product_id": active["product_id"],
+            "project_id": active["project_id"],
+            "title": "Safe to delete",
+        },
+    )
+    assert safe_response.status_code == 201, safe_response.text
+    safe_id = safe_response.json()["id"]
+    started = await client.post(f"/company/tasks/{active['id']}/runs")
+    assert started.status_code == 202, started.text
+
+    response = await client.request("DELETE", "/company/tasks", json={"task_ids": [active["id"], safe_id]})
+    assert response.status_code == 200, response.text
+    assert response.json()["deleted"] == [safe_id]
+    assert [(item["task_id"], item["status_code"]) for item in response.json()["failed"]] == [(active["id"], 409)]
+    assert await _call(db, "get_task", active["id"], include_deleted=True) is not None
+    assert await _call(db, "get_task", safe_id, include_deleted=True) is None
+    assert await worker.store.get_job(started.json()["run_id"]) is not None
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("resource", ["tasks", "projects", "products"])
 @pytest.mark.parametrize("queue_available", [True, False])
 @pytest.mark.parametrize("run_state", ["unstarted", "completed", "paused"])

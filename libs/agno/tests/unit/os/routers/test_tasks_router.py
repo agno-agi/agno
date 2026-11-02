@@ -315,6 +315,67 @@ def test_permanent_delete_removes_record(client, archived):
     assert client.delete(path).status_code == 404
 
 
+def test_bulk_permanent_delete_reports_each_result(client):
+    from agno.os.scopes import get_default_scope_mappings
+
+    active, archived = create(client), create(client)
+    assert client.post(f"/company/tasks/{archived['id']}/archive").status_code == 200
+    response = client.request(
+        "DELETE",
+        "/company/tasks",
+        json={"task_ids": [active["id"], "missing", archived["id"], active["id"]]},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "deleted": [active["id"], archived["id"]],
+        "failed": [{"task_id": "missing", "status_code": 404, "detail": "Task not found"}],
+    }
+    for task in (active, archived):
+        assert client.get(f"/company/tasks/{task['id']}?include_deleted=true").status_code == 404
+    assert get_default_scope_mappings(company=True)["DELETE /company/tasks"] == ["tasks:delete"]
+
+
+@pytest.mark.parametrize("body", [{"task_ids": []}, {"task_ids": [""]}, {"task_ids": ["other"], "extra": True}])
+def test_bulk_permanent_delete_rejects_invalid_body_without_deleting(client, body):
+    task = create(client)
+    response = client.request("DELETE", "/company/tasks", json=body)
+    assert response.status_code == 422, response.text
+    assert client.get(f"/company/tasks/{task['id']}").status_code == 200
+
+
+def test_bulk_permanent_delete_requires_delete_scope_and_admin(client):
+    import time
+
+    import jwt
+
+    from agno.os.authz import Authorization
+
+    task = create(client)
+    secret = "bulk-delete-test-secret-at-least-32-bytes"
+    app = AgentOS(
+        id="bulk-delete-test",
+        db=client.app.state.task_test_db,
+        company=CompanyConfig(),
+        telemetry=False,
+        authorization=Authorization(verification_keys=[secret], algorithm="HS256"),
+    ).get_app()
+    with TestClient(app) as authorized_client:
+        for scopes in (["tasks:read"], ["tasks:delete"]):
+            token = jwt.encode(
+                {"sub": "reviewer", "aud": "bulk-delete-test", "scopes": scopes, "exp": int(time.time()) + 300},
+                secret,
+                algorithm="HS256",
+            )
+            response = authorized_client.request(
+                "DELETE",
+                "/company/tasks",
+                json={"task_ids": [task["id"]]},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert response.status_code == 403, response.text
+            assert client.get(f"/company/tasks/{task['id']}").status_code == 200
+
+
 def test_explicit_archive_contract(client):
     from agno.os.scopes import get_default_scope_mappings
 
