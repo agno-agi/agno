@@ -766,6 +766,10 @@ class WorkflowRunOutput:
     parent_run_id: Optional[str] = None
     workflow_step_id: Optional[str] = None
 
+    # Tool-call lineage: the run whose tool call started this workflow run. Distinct from parent_run_id; see the
+    # corresponding field on RunOutput.
+    called_from_run_id: Optional[str] = None
+
     # Media content fields
     images: Optional[List[Image]] = None
     videos: Optional[List[Video]] = None

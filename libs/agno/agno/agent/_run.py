@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
 from agno.agent._init import _initialize_session_state
 from agno.agent._run_options import resolve_run_options
-from agno.agent._session import initialize_session, update_session_metrics
+from agno.agent._session import initialize_session, saves_its_runs, update_session_metrics
 from agno.agent._tools import result_store_kwargs
 from agno.exceptions import (
     InputCheckError,
@@ -63,6 +63,7 @@ from agno.run.approval import (
 # Strong references to background tasks so they aren't garbage-collected mid-execution.
 # See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
 from agno.run.background import _background_tasks
+from agno.run.base import METRICS_FINAL_STATUSES
 from agno.run.cancel import (
     acancel_run as acancel_run_global,
 )
@@ -125,6 +126,7 @@ from agno.utils.log import (
     log_info,
     log_warning,
 )
+from agno.utils.nested_runs import register_nested_run
 from agno.utils.response import get_paused_content
 
 # Cancel raises immediately on every event. Only terminal events bypass so the
@@ -1472,6 +1474,9 @@ def run_dispatch(
     run_response.metrics = RunMetrics()
     run_response.metrics.start_timer()
 
+    # Link a run started inside a tool call to that run; a team's member call runs apart from it
+    nested_runs = register_nested_run(run_response, stored=saves_its_runs(agent))
+
     if opts.stream:
         response_iterator = _run_stream(
             agent,
@@ -1490,23 +1495,24 @@ def run_dispatch(
             pre_session=agent_session,
             **kwargs,
         )
-        return response_iterator
+        return nested_runs.iterate(response_iterator) if nested_runs is not None else response_iterator
     else:
-        response = _run(
-            agent,
-            run_response=run_response,
-            run_context=run_context,
-            session_id=session_id,
-            user_id=user_id,
-            add_history_to_context=opts.add_history_to_context,
-            add_dependencies_to_context=opts.add_dependencies_to_context,
-            add_session_state_to_context=opts.add_session_state_to_context,
-            response_format=response_format,
-            debug_mode=debug_mode,
-            background_tasks=background_tasks,
-            pre_session=agent_session,
-            **kwargs,
-        )
+        with nested_runs.collect() if nested_runs is not None else contextlib.nullcontext():
+            response = _run(
+                agent,
+                run_response=run_response,
+                run_context=run_context,
+                session_id=session_id,
+                user_id=user_id,
+                add_history_to_context=opts.add_history_to_context,
+                add_dependencies_to_context=opts.add_dependencies_to_context,
+                add_session_state_to_context=opts.add_session_state_to_context,
+                response_format=response_format,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                pre_session=agent_session,
+                **kwargs,
+            )
         return response
 
 
@@ -2864,6 +2870,9 @@ def arun_dispatch(  # type: ignore
     run_response.metrics = RunMetrics()
     run_response.metrics.start_timer()
 
+    # Link a run started inside a tool call to that run; a team's member call runs apart from it
+    nested_runs = register_nested_run(run_response, stored=saves_its_runs(agent))
+
     # Background execution
     if background:
         if not agent.db:
@@ -2872,7 +2881,7 @@ def arun_dispatch(  # type: ignore
             )
         if opts.stream:
             # background=True, stream=True: run in background task, stream events via queue
-            return _arun_background_stream(  # type: ignore[return-value]
+            background_stream = _arun_background_stream(
                 agent,
                 run_response=run_response,
                 run_context=run_context,
@@ -2888,7 +2897,8 @@ def arun_dispatch(  # type: ignore
                 background_tasks=background_tasks,
                 **kwargs,
             )
-        return _arun_background(  # type: ignore[return-value]
+            return nested_runs.aiterate(background_stream) if nested_runs is not None else background_stream  # type: ignore[arg-type, return-value]
+        response = _arun_background(
             agent,
             run_response=run_response,
             run_context=run_context,
@@ -2902,10 +2912,11 @@ def arun_dispatch(  # type: ignore
             background_tasks=background_tasks,
             **kwargs,
         )
+        return nested_runs.acollect(response) if nested_runs is not None else response  # type: ignore[return-value]
 
     # Pass the new run_response to _arun
     if opts.stream:
-        return _arun_stream(  # type: ignore
+        response_stream = _arun_stream(
             agent,
             run_response=run_response,
             run_context=run_context,
@@ -2921,9 +2932,10 @@ def arun_dispatch(  # type: ignore
             background_tasks=background_tasks,
             pre_session=_pre_session,
             **kwargs,
-        )  # type: ignore[assignment]
+        )
+        return nested_runs.aiterate(response_stream) if nested_runs is not None else response_stream  # type: ignore[arg-type, return-value]
     else:
-        return _arun(  # type: ignore
+        response = _arun(
             agent,
             run_response=run_response,
             run_context=run_context,
@@ -2938,6 +2950,7 @@ def arun_dispatch(  # type: ignore
             pre_session=_pre_session,
             **kwargs,
         )
+        return nested_runs.acollect(response) if nested_runs is not None else response  # type: ignore[return-value]
 
 
 def _truncate_run_to_checkpoint(run_response: RunOutput, message_index: int) -> None:
@@ -3333,7 +3346,12 @@ def continue_run_dispatch(
     from agno.agent._init import has_async_db, set_default_model
     from agno.agent._messages import get_continue_run_messages
     from agno.agent._response import get_response_format
-    from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
+    from agno.agent._storage import (
+        load_session_state,
+        read_or_create_session,
+        remove_run_from_session_metrics,
+        update_metadata,
+    )
     from agno.agent._tools import determine_tools_for_model
     from agno.media.storage.base import AsyncMediaStorage
 
@@ -3610,6 +3628,11 @@ def continue_run_dispatch(
         run_response=run_response,
     )
 
+    # Take this run's earlier writes out of the session metrics now, or when a stream starts, to count it once
+    if not opts.stream:
+        stored_run = cast(RunOutput, agent_session.get_run(run_response.run_id or "") or run_response)
+        remove_run_from_session_metrics(agent, session=agent_session, run_response=stored_run)
+
     # Reset the run state
     run_response.status = RunStatus.running
 
@@ -3629,7 +3652,7 @@ def continue_run_dispatch(
             background_tasks=background_tasks,
             **kwargs,
         )
-        return response_iterator
+        return _remove_run_from_session_metrics_on_start(agent, agent_session, run_response, response_iterator)
     else:
         response = _continue_run(
             agent,
@@ -3645,6 +3668,26 @@ def continue_run_dispatch(
             **kwargs,
         )
         return response
+
+
+def _remove_run_from_session_metrics_on_start(
+    agent: Agent, session: AgentSession, run_response: RunOutput, stream: Iterator[Any]
+) -> Iterator[Any]:
+    """The continue stream, taking the run's earlier writes out of the session metrics when it starts.
+
+    Not when the stream is made: a stream that is never iterated leaves the session metrics as they were.
+    """
+    from agno.agent._storage import remove_run_from_session_metrics, update_session_metrics
+
+    stored_run = cast(RunOutput, session.get_run(run_response.run_id or "") or run_response)
+    remove_run_from_session_metrics(agent, session=session, run_response=stored_run)
+    try:
+        yield from stream
+    except GeneratorExit:
+        # Closed before the run wrote itself back: put its earlier writes back
+        if run_response.status not in METRICS_FINAL_STATUSES:
+            update_session_metrics(agent, session=session, run_response=stored_run)
+        raise
 
 
 def _continue_run(
@@ -3687,6 +3730,10 @@ def _continue_run(
     from agno.agent._tools import handle_tool_call_updates
 
     register_run(run_response.run_id)  # type: ignore
+
+    # Resume the run metrics timer: the run's duration runs from its start to its end, the wait included
+    run_response.metrics = run_response.metrics or RunMetrics()
+    run_response.metrics.resume_timer(run_response.created_at)
 
     agent.model = cast(Model, agent.model)
 
@@ -3910,6 +3957,10 @@ def _continue_run_stream(
     from agno.agent._tools import handle_tool_call_updates_stream
 
     register_run(run_response.run_id)  # type: ignore
+
+    # Resume the run metrics timer: the run's duration runs from its start to its end, the wait included
+    run_response.metrics = run_response.metrics or RunMetrics()
+    run_response.metrics.resume_timer(run_response.created_at)
 
     # Set up retry logic
     num_attempts = agent.retries + 1
@@ -4712,12 +4763,19 @@ async def _acontinue_run(
         convert_response_to_structured_format,
         update_run_response,
     )
-    from agno.agent._storage import aread_or_create_session, load_session_state, update_metadata
+    from agno.agent._storage import (
+        aread_or_create_session,
+        load_session_state,
+        remove_run_from_session_metrics,
+        update_metadata,
+    )
     from agno.agent._telemetry import alog_agent_telemetry
     from agno.agent._tools import ahandle_tool_call_updates, determine_tools_for_model
 
     log_debug(f"Agent Run Continue: {run_response.run_id if run_response else run_id}", center=True)  # type: ignore
     agent_session: Optional[AgentSession] = None
+    # The session read this run's metrics were last taken out of
+    metrics_removed_from: Optional[AgentSession] = None
 
     # Resolve retry parameters
     try:
@@ -4931,6 +4989,16 @@ async def _acontinue_run(
                     add_history_to_context=agent.add_history_to_context,
                     run_response=run_response,
                 )
+
+                # Take this run out of each new session read once, so the next write counts it once
+                if metrics_removed_from is not agent_session:
+                    stored_run = cast(RunOutput, agent_session.get_run(run_response.run_id or "") or run_response)
+                    remove_run_from_session_metrics(agent, session=agent_session, run_response=stored_run)
+                    metrics_removed_from = agent_session
+
+                # Resume the run metrics timer: the run's duration runs from its start to its end, the wait included
+                run_response.metrics = run_response.metrics or RunMetrics()
+                run_response.metrics.resume_timer(run_response.created_at)
 
                 # Reset the run state
                 run_response.status = RunStatus.running
@@ -5232,13 +5300,20 @@ async def _acontinue_run_stream(
         ahandle_model_response_stream,
         aparse_response_with_parser_model_stream,
     )
-    from agno.agent._storage import aread_or_create_session, load_session_state, update_metadata
+    from agno.agent._storage import (
+        aread_or_create_session,
+        load_session_state,
+        remove_run_from_session_metrics,
+        update_metadata,
+    )
     from agno.agent._telemetry import alog_agent_telemetry
     from agno.agent._tools import ahandle_tool_call_updates_stream, determine_tools_for_model
 
     log_debug(f"Agent Run Continue: {run_response.run_id if run_response else run_id}", center=True)  # type: ignore
 
     agent_session: Optional[AgentSession] = None
+    # The session read this run's metrics were last taken out of
+    metrics_removed_from: Optional[AgentSession] = None
 
     # Resolve retry parameters
     try:
@@ -5450,6 +5525,16 @@ async def _acontinue_run_stream(
                     add_history_to_context=agent.add_history_to_context,
                     run_response=run_response,
                 )
+
+                # Take this run out of each new session read once, so the next write counts it once
+                if metrics_removed_from is not agent_session:
+                    stored_run = cast(RunOutput, agent_session.get_run(run_response.run_id or "") or run_response)
+                    remove_run_from_session_metrics(agent, session=agent_session, run_response=stored_run)
+                    metrics_removed_from = agent_session
+
+                # Resume the run metrics timer: the run's duration runs from its start to its end, the wait included
+                run_response.metrics = run_response.metrics or RunMetrics()
+                run_response.metrics.resume_timer(run_response.created_at)
 
                 # Reset the run state
                 run_response.status = RunStatus.running
@@ -6367,12 +6452,16 @@ def checkpoint_run(
     ``run_response.tools`` reflect the state to persist (see
     :func:`_sync_run_response_with_model_response`).
     """
+    from agno.agent._storage import remove_run_from_session_metrics
+
     if agent.checkpoint != "tool-batch":
         return
     run_response.status = RunStatus.running
     run_response.last_checkpoint_at_message_index = len(run_response.messages or [])
     _mark_checkpoint_message(run_response)
     persist_run_in_session(agent, run_response, session, run_context)
+    # The checkpoint is in the saved session metrics: take it out, so the run's next write counts it once
+    remove_run_from_session_metrics(agent, session=session, run_response=run_response)
 
 
 async def acheckpoint_run(
@@ -6382,12 +6471,16 @@ async def acheckpoint_run(
     run_context: Optional[RunContext] = None,
 ) -> None:
     """Async variant of :func:`checkpoint_run`."""
+    from agno.agent._storage import remove_run_from_session_metrics
+
     if agent.checkpoint != "tool-batch":
         return
     run_response.status = RunStatus.running
     run_response.last_checkpoint_at_message_index = len(run_response.messages or [])
     _mark_checkpoint_message(run_response)
     await apersist_run_in_session(agent, run_response, session, run_context)
+    # The checkpoint is in the saved session metrics: take it out, so the run's next write counts it once
+    remove_run_from_session_metrics(agent, session=session, run_response=run_response)
 
 
 def build_after_tool_results_callback(

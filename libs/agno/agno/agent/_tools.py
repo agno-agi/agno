@@ -271,7 +271,11 @@ def get_tools(
         )
 
     if agent.enable_agentic_memory:
-        agent_tools.append(_default_tools.get_update_user_memory_function(agent, user_id=user_id, async_mode=False))
+        agent_tools.append(
+            _default_tools.get_update_user_memory_function(
+                agent, user_id=user_id, run_response=run_response, async_mode=False
+            )
+        )
 
     # Read-back tools for offloaded results
     if agent._result_store is not None:
@@ -418,7 +422,11 @@ async def aget_tools(
         )
 
     if agent.enable_agentic_memory:
-        agent_tools.append(_default_tools.get_update_user_memory_function(agent, user_id=user_id, async_mode=True))
+        agent_tools.append(
+            _default_tools.get_update_user_memory_function(
+                agent, user_id=user_id, run_response=run_response, async_mode=True
+            )
+        )
 
     # Read-back tools for offloaded results
     if agent._result_store is not None:
@@ -885,6 +893,7 @@ def run_tool(
         function_call=function_call,
         function_call_results=function_call_results,
         result_store=_active_result_store(agent),
+        run_response=run_response,
     ):
         if isinstance(call_result, ModelResponse):
             if call_result.event == ModelResponseEvent.tool_call_started.value:
@@ -1001,6 +1010,7 @@ async def arun_tool(
         function_call_results=function_call_results,
         skip_pause_check=True,
         result_store=_active_result_store(agent),
+        run_response=run_response,
     ):
         if isinstance(call_result, ModelResponse):
             if call_result.event == ModelResponseEvent.tool_call_started.value:

@@ -53,7 +53,7 @@ from agno.run.agent import (
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
 )
-from agno.run.base import RunStatus
+from agno.run.base import METRICS_FINAL_STATUSES, RunStatus
 from agno.session.agent import AgentSession
 from agno.utils.events import error_type_of
 from agno.utils.log import log_exception, log_warning
@@ -1424,12 +1424,13 @@ class BaseExternalAgent:
     async def _apersist_run_fallback(
         self, session_id: str, run_response: RunOutput, user_id: Optional[str] = None
     ) -> None:
-        """Re-read the session and persist one run; completed or cancelled rows win."""
+        """Re-read the session and persist one run; completed, failed or cancelled rows win."""
         if self.sandbox is not None:
             _sandbox_harness().refuse_fallback()
         session = await self.aread_or_create_session(session_id, user_id)
         existing = session.get_run(run_response.run_id or "")
-        if existing is not None and existing.status in (RunStatus.completed, RunStatus.cancelled):
+        # A finished row is already in the session metrics, so writing it again would count it twice
+        if existing is not None and existing.status in METRICS_FINAL_STATUSES:
             return
         await self._apersist_run_in_session(session, run_response, strict=True)
 
@@ -1841,8 +1842,9 @@ class BaseExternalAgent:
 
     @staticmethod
     def _update_session_metrics(session: AgentSession, run_output: RunOutput) -> None:
-        """Add a completed run's metrics to the session totals AgentOS reads from session_data."""
-        if run_output.metrics is None or run_output.status != RunStatus.completed:
+        """Add a finished run's metrics to the session totals AgentOS reads from session_data."""
+        # A failed or cancelled run keeps the tokens it used on its row, so the totals keep them too
+        if run_output.metrics is None or run_output.status not in METRICS_FINAL_STATUSES:
             return
         if session.session_data is None:
             session.session_data = {}
@@ -2353,7 +2355,11 @@ class BaseExternalAgent:
                 str(run_error) if run_error else accumulated_content,
                 status,
                 list(tools.values()) or None,
-                metrics=self._finish_metrics(timer, adapter_metrics) if status == RunStatus.completed else None,
+                metrics=(
+                    self._finish_metrics(timer, adapter_metrics)
+                    if status == RunStatus.completed or adapter_metrics is not None
+                    else None
+                ),
                 media=kwargs.get("media"),
             )
             if warnings:

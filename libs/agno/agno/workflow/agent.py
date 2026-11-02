@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Callable, Optional
 from agno.agent import Agent
 from agno.models.base import Model
 from agno.run import RunContext
+from agno.utils.nested_runs import NestedRuns
 
 if TYPE_CHECKING:
     from agno.os.managers import WebSocketHandler
@@ -157,12 +158,15 @@ Guidelines:
             # ===== EXECUTION LOGIC (Based on streaming mode) =====
             if stream:
                 final_content = ""
-                for event in workflow._execute_stream(
-                    session=session_from_db,
-                    run_context=run_context,
-                    execution_input=workflow_execution_input,
-                    workflow_run_response=workflow_run_response,
-                    stream_events=True,
+                # The workflow keeps its steps' runs, so they are never linked to this tool call
+                for event in NestedRuns(None).iterate(
+                    workflow._execute_stream(
+                        session=session_from_db,
+                        run_context=run_context,
+                        execution_input=workflow_execution_input,
+                        workflow_run_response=workflow_run_response,
+                        stream_events=True,
+                    )
                 ):
                     yield event
 
@@ -175,12 +179,14 @@ Guidelines:
                 return final_content
             else:
                 # NON-STREAMING MODE: Execute synchronously
-                result = workflow._execute(
-                    session=session_from_db,
-                    execution_input=workflow_execution_input,
-                    workflow_run_response=workflow_run_response,
-                    run_context=run_context,
-                )
+                # The workflow keeps its steps' runs, so they are never linked to this tool call
+                with NestedRuns(None).collect():
+                    result = workflow._execute(
+                        session=session_from_db,
+                        execution_input=workflow_execution_input,
+                        workflow_run_response=workflow_run_response,
+                        run_context=run_context,
+                    )
 
                 if isinstance(result.content, str):
                     return result.content
@@ -279,14 +285,17 @@ Guidelines:
 
             if stream:
                 final_content = ""
-                async for event in workflow._aexecute_stream(
-                    session_id=session_from_db.session_id,
-                    user_id=session_from_db.user_id,
-                    execution_input=workflow_execution_input,
-                    workflow_run_response=workflow_run_response,
-                    run_context=run_context,
-                    stream_events=True,
-                    websocket_handler=websocket_handler,
+                # The workflow keeps its steps' runs, so they are never linked to this tool call
+                async for event in NestedRuns(None).aiterate(
+                    workflow._aexecute_stream(
+                        session_id=session_from_db.session_id,
+                        user_id=session_from_db.user_id,
+                        execution_input=workflow_execution_input,
+                        workflow_run_response=workflow_run_response,
+                        run_context=run_context,
+                        stream_events=True,
+                        websocket_handler=websocket_handler,
+                    )
                 ):
                     yield event
 
@@ -297,12 +306,15 @@ Guidelines:
 
                 yield final_content
             else:
-                result = await workflow._aexecute(
-                    session_id=session_from_db.session_id,
-                    user_id=session_from_db.user_id,
-                    execution_input=workflow_execution_input,
-                    workflow_run_response=workflow_run_response,
-                    run_context=run_context,
+                # The workflow keeps its steps' runs, so they are never linked to this tool call
+                result = await NestedRuns(None).acollect(
+                    workflow._aexecute(
+                        session_id=session_from_db.session_id,
+                        user_id=session_from_db.user_id,
+                        execution_input=workflow_execution_input,
+                        workflow_run_response=workflow_run_response,
+                        run_context=run_context,
+                    )
                 )
 
                 if isinstance(result.content, str):

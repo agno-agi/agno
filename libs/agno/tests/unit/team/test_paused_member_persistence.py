@@ -11,7 +11,7 @@ session reload.
 import asyncio
 import json
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
@@ -155,6 +155,36 @@ async def test_async_routing_persists_completed_member_run():
         await _aroute_requirements_to_members(MagicMock(), run_response=run_response, session=session, run_context=None)
 
     session.upsert_run.assert_called_once_with(completed_response)
+
+
+@pytest.mark.asyncio
+async def test_async_routing_continues_a_remote_member_by_its_run_id():
+    from agno.agent.remote import RemoteAgent
+    from agno.team._run import _aroute_requirements_to_members
+
+    run_response, session = _make_run_response_and_session()
+
+    completed_response = MagicMock(
+        is_paused=False, content="done", run_id="member-run-1", model=None, model_provider=None
+    )
+
+    member = RemoteAgent(base_url="http://fake-host", agent_id="remote_agent")
+    member.acontinue_run = AsyncMock(return_value=completed_response)  # type: ignore[method-assign]
+    paused_copy = run_response.requirements[0]._member_run_response
+    paused_copy.model, paused_copy.model_provider = "gpt-5.6-luna", "OpenAI"
+    run_response.member_responses = [paused_copy]
+
+    with (
+        patch("agno.team._tools._find_member_route_by_id", return_value=(0, member)),
+        patch.object(RemoteAgent, "name", new_callable=PropertyMock, return_value="Remote Agent"),
+    ):
+        await _aroute_requirements_to_members(MagicMock(), run_response=run_response, session=session, run_context=None)
+
+    assert member.acontinue_run.call_args.kwargs["run_id"] == "member-run-1"
+    assert "run_response" not in member.acontinue_run.call_args.kwargs
+    # The continued run takes the place of the paused copy in the team run, with the model only the paused copy names
+    assert run_response.member_responses == [completed_response]
+    assert (completed_response.model, completed_response.model_provider) == ("gpt-5.6-luna", "OpenAI")
 
 
 # ---------------------------------------------------------------------------
@@ -6058,3 +6088,98 @@ def test_a_routing_failure_restores_the_callers_team_level_requirements(tmp_path
 
     names = [r.tool_execution.tool_name for r in (run1.requirements or [])]
     assert names.count("publish") == 1, f"the caller's run object carries: {names}"
+
+
+def test_nested_teams_member_runs_are_stored_at_every_depth(monkeypatch) -> None:
+    """A member team's own member runs, kept only inside its run, are stored as runs of their own, at every depth,
+    each with its own position in the session."""
+    from agno.run.agent import RunOutput
+    from agno.run.team import TeamRunOutput
+    from agno.session import TeamSession
+    from agno.team import Team
+    from agno.team._run import _persist_member_runs_for_team_run
+
+    leaf_run = RunOutput(run_id="leaf-run", session_id="team-session", parent_run_id="l3-run")
+    l3_run = TeamRunOutput(
+        run_id="l3-run", session_id="team-session", parent_run_id="l2-run", member_responses=[leaf_run]
+    )
+    l2_run = TeamRunOutput(
+        run_id="l2-run", session_id="team-session", parent_run_id="team-run", member_responses=[l3_run]
+    )
+    session = TeamSession(session_id="team-session", runs=[l2_run])
+    saved_runs = []
+    monkeypatch.setattr(
+        "agno.team._session.save_run",
+        lambda team, run, **kwargs: saved_runs.append((run.run_id, kwargs["run_index"])),
+    )
+
+    _persist_member_runs_for_team_run(Team(members=[]), session, "team-run")
+
+    assert saved_runs == [("l2-run", 0), ("l3-run", 1), ("leaf-run", 2)]
+
+
+def test_team_run_is_taken_out_with_every_member_run_the_session_counted_for_it() -> None:
+    """A continue takes the team run out of the session metrics with the member runs it counted and still carries,
+    whether stored inside the run, as rows of their own or, for a remote member, on its own AgentOS; one it no longer
+    carries keeps its row counted."""
+    from agno.metrics import RunMetrics
+    from agno.run.agent import RunOutput
+    from agno.run.base import RunStatus
+    from agno.run.team import TeamRunOutput
+    from agno.session import TeamSession
+    from agno.team import Team
+    from agno.team._run import _stored_run_with_member_runs
+    from agno.team._session import remove_run_from_session_metrics, update_session_metrics
+
+    def session_after_continue_takes_out(continuing_run_members) -> int:
+        finished = RunOutput(
+            run_id="finished",
+            session_id="s",
+            parent_run_id="team-run",
+            status=RunStatus.completed,
+            metrics=RunMetrics(total_tokens=57),
+        )
+        paused = RunOutput(
+            run_id="paused",
+            session_id="s",
+            parent_run_id="team-run",
+            status=RunStatus.paused,
+            metrics=RunMetrics(total_tokens=10),
+        )
+        # A remote member's run is stored in its own session on the AgentOS that ran it, not in the team's
+        remote = RunOutput(
+            run_id="remote",
+            session_id="s:remote_agent",
+            parent_run_id="team-run",
+            status=RunStatus.completed,
+            metrics=RunMetrics(total_tokens=1000),
+        )
+        members = {"finished": finished, "paused": paused, "remote": remote}
+        team_run = TeamRunOutput(
+            run_id="team-run",
+            session_id="s",
+            metrics=RunMetrics(total_tokens=100),
+            member_responses=[finished, paused, remote],
+        )
+        session = TeamSession(session_id="s", session_data={})
+        team = Team(members=[])
+        update_session_metrics(team, session, team_run)
+        # Stored with store_member_responses=False: only the paused member run stays inside the team run
+        stored_team_run = TeamRunOutput(
+            run_id="team-run", session_id="s", metrics=RunMetrics(total_tokens=100), member_responses=[paused]
+        )
+        session.runs = [finished, paused, stored_team_run]
+        continuing_run = TeamRunOutput(
+            run_id="team-run",
+            session_id="s",
+            metrics=RunMetrics(total_tokens=100),
+            member_responses=[members[run_id] for run_id in continuing_run_members],
+        )
+
+        remove_run_from_session_metrics(team, session, _stored_run_with_member_runs(session, continuing_run))
+        return session.session_data["session_metrics"].get("total_tokens", 0)
+
+    # Continued by object: the in-memory run carries both member runs
+    assert session_after_continue_takes_out(["finished", "paused", "remote"]) == 0
+    # Continued by run id: the run read back carries only the paused member run, so the others stay counted
+    assert session_after_continue_takes_out(["paused"]) == 1057

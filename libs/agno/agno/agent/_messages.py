@@ -15,6 +15,7 @@ from typing import (
     Tuple,
     Type,
     Union,
+    cast,
 )
 
 from pydantic import BaseModel
@@ -26,14 +27,15 @@ if TYPE_CHECKING:
 from agno.agent._utils import convert_dependencies_to_string, convert_documents_to_string
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
-from agno.metrics import RunMetrics
+from agno.metrics import RunMetrics, merge_background_metrics
 from agno.models.message import Message, MessageReferences
 from agno.models.response import ModelResponse
 from agno.run import RunContext
 from agno.run.agent import RunOutput
+from agno.run.base import RunStatus
 from agno.run.messages import RunMessages
 from agno.session import AgentSession
-from agno.session._utils import continue_history_session
+from agno.session._utils import continue_history_session, resolve_run_index
 from agno.tools.function import Function
 from agno.utils.agent import (
     aexecute_instructions,
@@ -444,13 +446,15 @@ async def acompact_now(agent: "Agent", session: AgentSession, history: List[Mess
     return _compaction_result(new_record, metrics)
 
 
-def _add_to_session_metrics(agent: "Agent", session: AgentSession, metrics: RunMetrics) -> None:
-    """Add a manual compaction's summarizer usage to the session's metrics.
+def _add_to_session_and_latest_run(agent: "Agent", session: AgentSession, metrics: RunMetrics) -> Optional[RunOutput]:
+    """Add a manual compaction's usage to the session's metrics and to its latest completed or cancelled run, returned
+    for saving.
 
-    A fold inside a run reaches them through the run's metrics. A manual one has no run, so
-    without this its model call would be missing from the session's totals and from the metrics
-    AgentOS aggregates from them.
+    A manual compaction has no run of its own, so that run carries its model call; a run that can still change, failed
+    runs included, keeps only its own metrics. With no such run, the usage is in the session's metrics only.
     """
+    from copy import copy as shallow_copy
+
     from agno.agent._storage import get_session_metrics_internal
 
     session_metrics = get_session_metrics_internal(agent, session)
@@ -458,6 +462,18 @@ def _add_to_session_metrics(agent: "Agent", session: AgentSession, metrics: RunM
     if session.session_data is None:
         session.session_data = {}
     session.session_data["session_metrics"] = session_metrics.to_dict()
+
+    runs = session.runs or []
+    # A failed run can still be continued in place, which would drop the usage from it
+    finished = [index for index, run in enumerate(runs) if run.status in (RunStatus.completed, RunStatus.cancelled)]
+    if not finished:
+        return None
+    # Update a copy, never the loaded run: history run objects are shared between reads of the same session
+    latest_run = cast(RunOutput, shallow_copy(runs[finished[-1]]))
+    latest_run.metrics = RunMetrics.from_dict(latest_run.metrics.to_dict()) if latest_run.metrics else RunMetrics()
+    merge_background_metrics(latest_run.metrics, [metrics])
+    runs[finished[-1]] = latest_run
+    return latest_run
 
 
 def compact_session(agent: "Agent", session_id: Optional[str] = None, user_id: Optional[str] = None) -> Any:
@@ -469,9 +485,21 @@ def compact_session(agent: "Agent", session_id: Optional[str] = None, user_id: O
         return CompactionResult(status=CompactionStatus.NO_HISTORY, message="No such session.")
     result = compact_now(agent, session, _history_for_compaction(agent, session))
     if result.metrics is not None:
-        _add_to_session_metrics(agent, session, result.metrics)
+        # Read the session again: a run may have finished while the summarizer ran
+        session = cast(
+            AgentSession, _session.get_session(agent, session_id=session.session_id, user_id=user_id) or session
+        )
+        latest_run = _add_to_session_and_latest_run(agent, session, result.metrics)
         try:
             _session.save_session(agent, session)
+            if latest_run is not None:
+                _session.save_run(
+                    agent,
+                    run=latest_run,
+                    session_id=session.session_id,
+                    user_id=session.user_id,
+                    run_index=resolve_run_index(session, latest_run),
+                )
         except Exception as e:  # noqa: BLE001 - the fold is already stored; only the totals are lost
             log_warning(f"Could not add the compaction's usage to the session metrics: {e}")
     return result
@@ -486,9 +514,21 @@ async def acompact_session(agent: "Agent", session_id: Optional[str] = None, use
         return CompactionResult(status=CompactionStatus.NO_HISTORY, message="No such session.")
     result = await acompact_now(agent, session, _history_for_compaction(agent, session))
     if result.metrics is not None:
-        _add_to_session_metrics(agent, session, result.metrics)
+        # Read the session again: a run may have finished while the summarizer ran
+        session = cast(
+            AgentSession, await _session.aget_session(agent, session_id=session.session_id, user_id=user_id) or session
+        )
+        latest_run = _add_to_session_and_latest_run(agent, session, result.metrics)
         try:
             await _session.asave_session(agent, session)
+            if latest_run is not None:
+                await _session.asave_run(
+                    agent,
+                    run=latest_run,
+                    session_id=session.session_id,
+                    user_id=session.user_id,
+                    run_index=resolve_run_index(session, latest_run),
+                )
         except Exception as e:  # noqa: BLE001 - the fold is already stored; only the totals are lost
             log_warning(f"Could not add the compaction's usage to the session metrics: {e}")
     return result

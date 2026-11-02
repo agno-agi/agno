@@ -648,6 +648,18 @@ def update_session_metrics(agent: Agent, session: AgentSession, run_response: Ru
         session.session_data["session_metrics"] = session_metrics.to_dict()
 
 
+def remove_run_from_session_metrics(agent: Agent, session: AgentSession, run_response: RunOutput) -> None:
+    """Take a run's metrics back out of the session metrics, so its next write adds the run once."""
+    session_metrics = get_session_metrics_internal(agent, session=session)
+    if session_metrics is None:
+        return
+    if run_response.metrics is not None:
+        session_metrics.subtract_run(run_response.metrics)
+
+    if session.session_data is not None:
+        session.session_data["session_metrics"] = session_metrics.to_dict()
+
+
 def read_or_create_session(
     agent: Agent,
     session_id: str,

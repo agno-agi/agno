@@ -729,6 +729,10 @@ class RunOutput:
     # regenerated from. Walk the chain via repeated lookups if you need full history.
     regenerated_from: Optional[str] = None
 
+    # Tool-call lineage: the run whose tool call started this run. Distinct from parent_run_id, which keeps a
+    # member or step run out of its own agent's history.
+    called_from_run_id: Optional[str] = None
+
     # === FOREIGN KEY RELATIONSHIPS ===
     # These fields establish relationships to parent workflow/step structures
     # and should be treated as foreign keys for data integrity

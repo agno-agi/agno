@@ -430,6 +430,11 @@ async def asave_session(team: "Team", session: TeamSession) -> None:
         log_debug(f"Created or updated TeamSession record: {session.session_id}")
 
 
+def saves_its_runs(team: "Team") -> bool:
+    """Whether the team saves its own runs: a member team's or a workflow step's are saved by its team or workflow."""
+    return team.db is not None and team.parent_team_id is None and team.workflow_id is None
+
+
 def save_run(
     team: "Team",
     run: Union[TeamRunOutput, RunOutput],
@@ -448,7 +453,7 @@ def save_run(
     if _has_async_db(team):
         raise ValueError("Cannot use sync save_run() with an async database. Use asave_run() instead.")
 
-    if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
+    if saves_its_runs(team):
         storage_run = run
         if hasattr(run, "member_responses"):
             if not team.store_member_responses:
@@ -470,7 +475,7 @@ async def asave_run(
     from agno.team._run import _scrub_member_responses
     from agno.team._storage import _aupsert_run
 
-    if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
+    if saves_its_runs(team):
         storage_run = run
         if hasattr(run, "member_responses"):
             if not team.store_member_responses:
@@ -775,6 +780,36 @@ def _accumulate_member_metrics(
         # Recurse into nested team member responses
         if isinstance(member_response, TeamRunOutput) and member_response.member_responses:
             _accumulate_member_metrics(session_metrics, member_response.member_responses)
+
+
+def remove_run_from_session_metrics(team: "Team", session: TeamSession, run_response: TeamRunOutput) -> None:
+    """Take a run's metrics, and its members', back out of the session metrics, so its next write adds the run once."""
+    from agno.team._storage import get_session_metrics_internal
+
+    session_metrics = get_session_metrics_internal(team, session=session)
+    if session_metrics is None:
+        return
+    if run_response.metrics is not None:
+        session_metrics.subtract_run(run_response.metrics)
+
+    # Remove metrics from member responses (agent and nested team runs)
+    _subtract_member_metrics(session_metrics, run_response.member_responses)
+
+    if session.session_data is not None:
+        session.session_data["session_metrics"] = session_metrics.to_dict()
+
+
+def _subtract_member_metrics(
+    session_metrics: SessionMetrics,
+    member_responses: "List",
+) -> None:
+    """Recursively remove metrics of member responses from session metrics."""
+    for member_response in member_responses:
+        if member_response.metrics is not None:
+            session_metrics.subtract_run(member_response.metrics)
+        # Recurse into nested team member responses
+        if isinstance(member_response, TeamRunOutput) and member_response.member_responses:
+            _subtract_member_metrics(session_metrics, member_response.member_responses)
 
 
 # ---------------------------------------------------------------------------

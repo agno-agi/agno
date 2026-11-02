@@ -192,7 +192,9 @@ def _determine_tools_for_model(
         _tools.append(_get_chat_history_function(team, session=session, async_mode=async_mode))
 
     if team.memory_manager is not None and team.enable_agentic_memory:
-        _tools.append(_get_update_user_memory_function(team, user_id=user_id, async_mode=async_mode))
+        _tools.append(
+            _get_update_user_memory_function(team, user_id=user_id, run_response=run_response, async_mode=async_mode)
+        )
 
     # Add learning machine tools
     # In async mode, caller should pre-fetch with await team._learning.aget_tools() and pass learning_tools

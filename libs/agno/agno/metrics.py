@@ -24,6 +24,7 @@ class ModelType(str, Enum):
 
 if TYPE_CHECKING:
     from agno.models.base import Model
+    from agno.models.message import Message
     from agno.models.response import ModelResponse
 
 
@@ -51,6 +52,9 @@ class BaseMetrics:
 # ---------------------------------------------------------------------------
 # Model Metrics
 # ---------------------------------------------------------------------------
+
+# Decimal places a cost taken back out of a total is rounded to, below any real cost
+_COST_DECIMALS = 12
 
 
 @dataclass
@@ -91,6 +95,33 @@ class ModelMetrics(BaseMetrics):
                     self.provider_metrics[k] += v
                 else:
                     self.provider_metrics[k] = v
+
+    def subtract(self, other: "ModelMetrics") -> None:
+        """Subtract token counts and cost added earlier by accumulate from this one."""
+        self.input_tokens -= other.input_tokens or 0
+        self.output_tokens -= other.output_tokens or 0
+        self.total_tokens -= other.total_tokens or 0
+        self.audio_input_tokens -= other.audio_input_tokens or 0
+        self.audio_output_tokens -= other.audio_output_tokens or 0
+        self.audio_total_tokens -= other.audio_total_tokens or 0
+        self.cache_read_tokens -= other.cache_read_tokens or 0
+        self.cache_write_tokens -= other.cache_write_tokens or 0
+        self.reasoning_tokens -= other.reasoning_tokens or 0
+        if other.cost is not None:
+            # Rounded: a float subtraction leaves residue (0.1 + 0.2 - 0.2 is 0.10000000000000003)
+            self.cost = round((self.cost or 0) - other.cost, _COST_DECIMALS)
+        # Subtract provider_metrics (numeric values); a key only the subtracted run had is dropped
+        if other.provider_metrics is not None and self.provider_metrics is not None:
+            for k, v in other.provider_metrics.items():
+                if (
+                    k in self.provider_metrics
+                    and isinstance(v, (int, float))
+                    and isinstance(self.provider_metrics[k], (int, float))
+                ):
+                    self.provider_metrics[k] -= v
+                    if self.provider_metrics[k] == 0:
+                        del self.provider_metrics[k]
+            self.provider_metrics = self.provider_metrics or None
 
     def to_dict(self) -> Dict[str, Any]:
         metrics_dict = asdict(self)
@@ -429,6 +460,22 @@ class RunMetrics(BaseMetrics):
             self.timer = Timer()
         self.timer.start()
 
+    def resume_timer(self, created_at: Optional[int] = None):
+        """Start the timer again for a run that continues, so its duration runs from the run's start to its end.
+
+        A run continued in the process that started it keeps its timer. A run read back has no timer, so it counts
+        from created_at, which is in whole seconds.
+        """
+        if self.timer is not None and self.timer.start_time is not None:
+            # Running again: the timer measures from the run's start up to now
+            self.timer.end_time = None
+            self.timer.elapsed_time = None
+            return
+        self.timer = Timer()
+        self.timer.start()
+        if created_at is not None and self.timer.start_time is not None:
+            self.timer.start_time -= max(time() - created_at, 0)
+
     def stop_timer(self, set_duration: bool = True):
         if self.timer is not None:
             self.timer.stop()
@@ -554,6 +601,67 @@ class SessionMetrics(BaseMetrics):
                     if not found:
                         # Create a copy so we don't alias the run-level entry
                         existing_list.append(ModelMetrics.from_dict(model_metrics.to_dict()))
+
+    def subtract_run(self, run_metrics: "RunMetrics") -> None:
+        """Subtract run-level RunMetrics added earlier by accumulate_from_run from this SessionMetrics."""
+        # Subtract token metrics
+        self.input_tokens -= run_metrics.input_tokens
+        self.output_tokens -= run_metrics.output_tokens
+        self.total_tokens -= run_metrics.total_tokens
+        self.audio_input_tokens -= run_metrics.audio_input_tokens
+        self.audio_output_tokens -= run_metrics.audio_output_tokens
+        self.audio_total_tokens -= run_metrics.audio_total_tokens
+        self.cache_read_tokens -= run_metrics.cache_read_tokens
+        self.cache_write_tokens -= run_metrics.cache_write_tokens
+        self.reasoning_tokens -= run_metrics.reasoning_tokens
+
+        # Subtract additional_metrics (numeric values); a key only the subtracted run had is dropped
+        if run_metrics.additional_metrics is not None and self.additional_metrics is not None:
+            for k, v in run_metrics.additional_metrics.items():
+                if (
+                    k in self.additional_metrics
+                    and isinstance(v, (int, float))
+                    and isinstance(self.additional_metrics[k], (int, float))
+                ):
+                    self.additional_metrics[k] -= v
+                    if self.additional_metrics[k] == 0:
+                        del self.additional_metrics[k]
+            self.additional_metrics = self.additional_metrics or None
+
+        # Subtract per-model details; a model only the subtracted run had is dropped, as if never added
+        if run_metrics.details and self.details:
+            for model_type, model_metrics_list in run_metrics.details.items():
+                existing_list = self.details.get(model_type, [])
+                for model_metrics in model_metrics_list:
+                    # Find existing entry by (provider, id)
+                    for existing in existing_list:
+                        if existing.provider == model_metrics.provider and existing.id == model_metrics.id:
+                            existing.subtract(model_metrics)
+                            if not any(
+                                (
+                                    existing.input_tokens,
+                                    existing.output_tokens,
+                                    existing.total_tokens,
+                                    existing.audio_input_tokens,
+                                    existing.audio_output_tokens,
+                                    existing.audio_total_tokens,
+                                    existing.cache_read_tokens,
+                                    existing.cache_write_tokens,
+                                    existing.reasoning_tokens,
+                                    existing.cost,
+                                )
+                            ):
+                                existing_list.remove(existing)
+                            break
+            self.details = {model_type: entries for model_type, entries in self.details.items() if entries} or None
+
+        # Subtract cost; a cost only the subtracted run had is dropped, as if never added
+        if run_metrics.cost is not None:
+            # Rounded: a float subtraction leaves residue (0.1 + 0.2 - 0.2 is 0.10000000000000003)
+            self.cost = round((self.cost or 0) - run_metrics.cost, _COST_DECIMALS)
+            model_costs = [entry.cost for entries in (self.details or {}).values() for entry in entries]
+            if self.cost == 0 and all(cost is None for cost in model_costs):
+                self.cost = None
 
     def __add__(self, other: "SessionMetrics") -> "SessionMetrics":
         """Sum two SessionMetrics objects."""
@@ -711,6 +819,23 @@ def accumulate_model_metrics(
         metrics.cost = (metrics.cost or 0) + usage.cost
 
 
+def accumulate_tool_loop_metrics(
+    messages: "List[Message]",
+    model: "Model",
+    model_type: "Union[ModelType, str]",
+    run_metrics: Optional[RunMetrics] = None,
+) -> None:
+    """Accumulate every model call of a tool loop, one per assistant message it added, into run_metrics."""
+    if run_metrics is None:
+        return
+
+    from agno.models.response import ModelResponse
+
+    for message in messages:
+        if message.role == "assistant" and message.metrics.total_tokens:
+            accumulate_model_metrics(ModelResponse(response_usage=message.metrics), model, model_type, run_metrics)
+
+
 def accumulate_eval_metrics(
     eval_metrics: Optional[RunMetrics] = None,
     run_metrics: Optional[RunMetrics] = None,
@@ -771,7 +896,7 @@ def merge_background_metrics(
     run_metrics: Optional[RunMetrics],
     background_metrics: "Sequence[Optional[RunMetrics]]",
 ) -> None:
-    """Merge background task metrics into run_metrics on the main thread.
+    """Merge the metrics of a child or background run into run_metrics on the main thread.
 
     Each background task (memory, learning) accumulates metrics into its
     own isolated RunMetrics collector. After all tasks complete, this function

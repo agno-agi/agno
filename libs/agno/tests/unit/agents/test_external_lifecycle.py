@@ -10,6 +10,7 @@ import pytest
 from agno.agents.base import BaseExternalAgent, _live_handles
 from agno.db.sqlite import SqliteDb
 from agno.db.sqlite.async_sqlite import AsyncSqliteDb
+from agno.metrics import RunMetrics
 from agno.run.agent import RunContentEvent, RunOutput
 from agno.run.base import RunStatus
 
@@ -267,6 +268,21 @@ async def test_pending_prepare_preserves_existing_terminal(agent):
     stale = RunOutput(run_id=run.run_id, session_id="s", status=RunStatus.error)
     await agent._apersist_run_fallback("s", stale)
     assert (await agent.aget_run_output(run.run_id, "s")).status == RunStatus.completed
+
+
+@pytest.mark.asyncio
+async def test_failed_run_written_again_is_counted_once(agent):
+    failed = RunOutput(
+        run_id=str(uuid4()),
+        agent_id="external",
+        session_id="s",
+        status=RunStatus.error,
+        metrics=RunMetrics(total_tokens=23),
+    )
+    await agent._apersist_run_fallback("s", failed)
+    await agent._apersist_run_fallback("s", failed)
+    session = await agent.aread_or_create_session("s", None)
+    assert session.session_data["session_metrics"]["total_tokens"] == 23
 
 
 @pytest.mark.asyncio
