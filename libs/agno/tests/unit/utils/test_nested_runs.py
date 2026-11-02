@@ -282,3 +282,110 @@ async def test_member_given_a_task_by_its_team_is_not_linked(mode: str):
 
     assert [member_run.called_from_run_id for member_run in team_run.member_responses] == [None]
     assert team_run.metrics.total_tokens == 10 * leader.calls
+
+
+@pytest.mark.parametrize("mode", ["sync", "stream", "async", "async_stream"])
+@pytest.mark.parametrize("generator_tool", [False, True], ids=["callable", "generator"])
+async def test_cancelled_tool_retains_completed_child_usage(tmp_path, mode: str, generator_tool: bool) -> None:
+    from agno.exceptions import RunCancelledException
+
+    child_model = MockModel()
+    child_model._mock_response.response_usage = MessageMetrics(input_tokens=20, output_tokens=3, total_tokens=23)
+    child = Agent(model=child_model, telemetry=False)
+    children = []
+
+    def cancel_after_child() -> str:
+        children.append(child.run("child"))
+        raise RunCancelledException("stop after child")
+
+    def cancel_generator() -> Iterator[str]:
+        children.append(child.run("child"))
+        yield "child finished"
+        raise RunCancelledException("stop after child")
+
+    async def acancel_after_child() -> str:
+        children.append(await child.arun("child"))
+        raise RunCancelledException("stop after child")
+
+    async def acancel_generator() -> AsyncIterator[str]:
+        children.append(await child.arun("child"))
+        yield "child finished"
+        raise RunCancelledException("stop after child")
+
+    if mode in ("sync", "stream"):
+        tool = cancel_generator if generator_tool else cancel_after_child
+    else:
+        tool = acancel_generator if generator_tool else acancel_after_child
+    calls = [_tool_call(tool.__name__, "{}") for _ in range(2)]
+    for call in calls:
+        call.response_usage = MessageMetrics(input_tokens=60, output_tokens=6, total_tokens=66)
+    outer = Agent(
+        model=ScriptedModel(calls),
+        tools=[tool],
+        db=SqliteDb(db_file=str(tmp_path / "outer.db")),
+        session_id="session",
+        telemetry=False,
+    )
+    run_ids = []
+    for attempt in range(2):
+        run = await _run_team(outer, mode)
+        run_ids.append(run.run_id)
+        assert run.status == RunStatus.cancelled
+        assert run.metrics.total_tokens == 89
+        assert children[-1].status == RunStatus.completed
+        assert children[-1].called_from_run_id == run.run_id
+        stored_run = outer.get_run_output(run.run_id, session_id="session")
+        assert stored_run.status == RunStatus.cancelled
+        assert stored_run.metrics.total_tokens == 89
+        assert outer.get_session_metrics(session_id="session").total_tokens == 89 * (attempt + 1)
+    assert len(set(run_ids)) == 2
+
+
+@pytest.mark.parametrize("cancel_first", [True, False], ids=["cancel-first", "cancel-last"])
+async def test_cancelled_async_batch_retains_completed_sibling_usage(cancel_first: bool) -> None:
+    from agno.exceptions import RunCancelledException
+    from agno.tools.function import Function, FunctionCall
+
+    outer = _run("outer", 66)
+    children = []
+
+    async def cancel_after_child() -> str:
+        child = Agent(model=MockModel(), telemetry=False)
+        children.append(await child.arun("child"))
+        raise RunCancelledException("stop after child")
+
+    async def finish_after_child() -> str:
+        child = Agent(model=MockModel(), telemetry=False)
+        children.append(await child.arun("child"))
+        return "done"
+
+    tools = [cancel_after_child, finish_after_child] if cancel_first else [finish_after_child, cancel_after_child]
+    calls = [FunctionCall(function=Function.from_callable(tool), arguments={}, call_id=tool.__name__) for tool in tools]
+    with pytest.raises(RunCancelledException, match="stop after child"):
+        async for _ in MockModel().arun_function_calls(calls, [], run_response=outer):
+            pass
+
+    assert len(children) == 2
+    assert all(child.status == RunStatus.completed for child in children)
+    assert all(child.called_from_run_id == "outer" for child in children)
+    assert outer.metrics.total_tokens == 86
+
+
+@pytest.mark.parametrize("mode", ["sync", "stream", "async", "async_stream"])
+async def test_successful_tool_counts_completed_child_once(mode: str) -> None:
+    child = Agent(model=MockModel(), telemetry=False)
+
+    def ask_child() -> str:
+        return str(child.run("child").content)
+
+    async def aask_child() -> str:
+        return str((await child.arun("child")).content)
+
+    tool = ask_child if mode in ("sync", "stream") else aask_child
+    outer_model = ScriptedModel([_tool_call(tool.__name__, "{}"), _answer()])
+    outer = Agent(model=outer_model, tools=[tool], telemetry=False)
+
+    run = await _run_team(outer, mode)
+
+    assert run.status == RunStatus.completed
+    assert run.metrics.total_tokens == 30  # Two outer calls and one child call.

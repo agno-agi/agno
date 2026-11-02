@@ -582,7 +582,14 @@ class BaseRemote:
         try:
             async for event in event_stream:
                 if run_output is not None:
-                    # The run has ended: read the rest, so the remote finishes writing it
+                    # Keep the first terminal outcome, but retain final usage sent after cancellation.
+                    if event.run_id == run_id:
+                        metrics = getattr(event, "metrics", None)
+                        if metrics is not None:
+                            run_output.metrics = metrics
+                        if isinstance(run_output, TeamRunOutput) and isinstance(event, TeamRunCompletedEvent):
+                            run_output.member_responses = event.member_responses
+                    # Read the rest so the remote finishes writing it.
                     continue
                 yield event
                 run_id = run_id or event.run_id

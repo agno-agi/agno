@@ -124,6 +124,7 @@ async def test_remote_agent_stream_ends_with_its_run_output_when_asked() -> None
     assert "yield_run_output" not in mock_client.run_agent_stream.call_args.kwargs
     assert isinstance(items[-1], RunOutput)
     assert (items[-1].run_id, items[-1].status) == ("run-1", RunStatus.error)
+    assert items[-1].metrics is None
 
 
 @pytest.mark.asyncio
@@ -169,6 +170,53 @@ async def test_remote_team_stream_run_output_keeps_its_member_responses() -> Non
 
     assert isinstance(items[-1], TeamRunOutput)
     assert items[-1].member_responses == [member_run]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entity", ["agent", "team"])
+@pytest.mark.parametrize("outcome", ["cancelled", "error"])
+async def test_remote_stream_keeps_later_usage_without_replacing_its_outcome(entity: str, outcome: str) -> None:
+    """Trailing completion carries cumulative usage, independently of the first terminal outcome."""
+    from agno.metrics import RunMetrics
+    from agno.run import agent as agent_events
+    from agno.run import team as team_events
+    from agno.run.base import RunStatus
+
+    events = agent_events if entity == "agent" else team_events
+    remote = (
+        RemoteAgent(base_url="http://fake-host", agent_id="remote")
+        if entity == "agent"
+        else RemoteTeam(base_url="http://fake-host", team_id="remote")
+    )
+    terminal = events.RunCancelledEvent if outcome == "cancelled" else events.RunErrorEvent
+    output_type = agent_events.RunOutput if entity == "agent" else team_events.TeamRunOutput
+    terminal_kwargs = {"content": "original error"} if outcome == "error" else {}
+    member = agent_events.RunOutput(run_id="member", metrics=RunMetrics(total_tokens=23))
+    member_kwargs = {"member_responses": [member]} if entity == "team" else {}
+
+    async def _events():
+        yield events.RunStartedEvent(run_id="root", model="test-model", model_provider="test")
+        yield terminal(run_id="root", **terminal_kwargs)
+        # Read through the end, but never adopt another run's usage.
+        yield events.RunCompletedEvent(run_id="other", metrics=RunMetrics(total_tokens=999))
+        yield events.RunCompletedEvent(
+            run_id="root", content="later completion", metrics=RunMetrics(total_tokens=65), **member_kwargs
+        )
+        yield events.RunCompletedEvent(run_id="root", metrics=RunMetrics(total_tokens=65), **member_kwargs)
+        yield events.RunCompletedEvent(run_id="other", metrics=RunMetrics(total_tokens=999))
+        yield terminal(run_id="root")
+
+    items = [item async for item in remote._with_run_output(_events())]
+    result = items[-1]
+
+    assert [type(item) for item in items] == [events.RunStartedEvent, terminal, output_type]
+    assert result.status == (RunStatus.cancelled if outcome == "cancelled" else RunStatus.error)
+    assert (result.model, result.model_provider) == ("test-model", "test")
+    assert result.metrics is not None
+    assert result.metrics.total_tokens == 65
+    assert result.content == ("original error" if outcome == "error" else None)
+    if entity == "team":
+        assert result.member_responses == [member]
 
 
 def test_remote_member_runs_in_a_session_of_its_own() -> None:
