@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import jwt
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -535,6 +536,30 @@ class TestUsers:
 
         assert response.status_code == 403
         agentos_client._aget.assert_not_called()
+
+    def test_remote_refusal_is_passed_through_without_the_remote_url(self):
+        """A remote AgentOS that refuses the read is answered with its status, not a 500 naming its URL."""
+        agentos_client = AgentOSClient(base_url="http://remote-os")
+        remote_response = httpx.Response(
+            403,
+            json={"detail": "Admin privileges required"},
+            request=httpx.Request("GET", "http://remote-os/os/metrics/users"),
+        )
+        agentos_client._aget = AsyncMock(side_effect=lambda *args, **kwargs: remote_response.raise_for_status())  # type: ignore[method-assign]
+        gateway_app = FastAPI()
+        with patch("agno.os.routers.metrics.metrics.get_authentication_dependency", return_value=lambda: True):
+            with patch("agno.os.routers.metrics.metrics._make_require_admin", return_value=AsyncMock(return_value="")):
+                gateway_app.include_router(
+                    get_metrics_router(
+                        dbs={"db-1": [RemoteDb(id="db-1", client=agentos_client)]}, settings=AgnoAPISettings()
+                    )
+                )
+
+        response = TestClient(gateway_app).get("/os/metrics/users")
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Admin privileges required"
+        assert "http://" not in response.text
 
     def test_member_without_the_admin_scope_is_refused_and_an_admin_answered(self, tmp_path):
         """Served through AgentOS with real tokens, so the admin gate is the one the /users API uses."""

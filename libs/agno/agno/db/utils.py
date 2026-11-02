@@ -1519,7 +1519,7 @@ def calculate_date_component_metrics(
 def metrics_calculation_enabled() -> bool:
     """Whether metrics calculation is turned on by the metrics_calculation_enabled setting AgentOS reads, so the
     switch also stops the refresh on read of a database no AgentOS runs."""
-    return getenv("METRICS_CALCULATION_ENABLED", "true").lower() in ("true", "1", "yes")
+    return getenv("METRICS_CALCULATION_ENABLED", "true").lower() in ("true", "1", "yes", "on", "y", "t")
 
 
 def metrics_day_completed(day: date) -> bool:

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, List, Optional, Unio
 
 from fastapi import BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from fastapi.routing import APIRouter
+from httpx import HTTPStatusError
 from starlette.concurrency import run_in_threadpool
 
 from agno.db.base import AsyncBaseDb, BaseDb
@@ -217,6 +218,20 @@ def _os_metrics_answer(request: Request, response: Response, os_metrics_response
         return Response(status_code=304, headers={"ETag": etag})
     response.headers["ETag"] = etag
     return os_metrics_response
+
+
+def _remote_error(e: HTTPStatusError, message: str) -> HTTPException:
+    """The answer to a request a remote AgentOS refused or failed, without the remote's URL."""
+    status_code = e.response.status_code
+    if status_code >= 500:
+        logger.exception(message)
+        return HTTPException(status_code=500, detail=f"{message}: the remote AgentOS answered {status_code}")
+    try:
+        body = e.response.json()
+    except ValueError:
+        body = None
+    detail = body.get("detail") if isinstance(body, dict) else None
+    return HTTPException(status_code=status_code, detail=detail if isinstance(detail, str) else message)
 
 
 def _days(starting_date: date, ending_date: date) -> list[date]:
@@ -454,6 +469,8 @@ def attach_routes(
 
         except HTTPException:
             raise
+        except HTTPStatusError as e:
+            raise _remote_error(e, "Error getting metrics") from e
         except AgnoError as e:
             raise AgnoHTTPException(e)
         except Exception as e:
@@ -685,7 +702,7 @@ def attach_routes(
                             if effective_user_id is None
                             else f"{day.isoformat()}_{effective_user_id}_daily",
                             "date": day,
-                            "token_metrics": {field: 0 for field in METRICS_TOKEN_FIELDS},
+                            "token_metrics": {**{field: 0 for field in METRICS_TOKEN_FIELDS}, "cost": None},
                             "model_metrics": [],
                         },
                     )
@@ -703,6 +720,8 @@ def attach_routes(
 
         except HTTPException:
             raise
+        except HTTPStatusError as e:
+            raise _remote_error(e, "Error refreshing metrics") from e
         except AgnoError as e:
             raise AgnoHTTPException(e)
         except Exception as e:
@@ -760,6 +779,8 @@ def attach_routes(
 
         except HTTPException:
             raise
+        except HTTPStatusError as e:
+            raise _remote_error(e, "Error getting metrics refresh status") from e
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error getting metrics refresh status: {str(e)}")
 
@@ -1170,6 +1191,8 @@ def attach_routes(
 
         except HTTPException:
             raise
+        except HTTPStatusError as e:
+            raise _remote_error(e, "Error getting OS session metrics") from e
         except AgnoError as e:
             raise AgnoHTTPException(e)
         except Exception as e:
@@ -1294,6 +1317,8 @@ def attach_routes(
 
         except HTTPException:
             raise
+        except HTTPStatusError as e:
+            raise _remote_error(e, "Error getting OS token metrics") from e
         except AgnoError as e:
             raise AgnoHTTPException(e)
         except Exception as e:
@@ -1400,6 +1425,8 @@ def attach_routes(
 
         except HTTPException:
             raise
+        except HTTPStatusError as e:
+            raise _remote_error(e, "Error getting OS user metrics") from e
         except AgnoError as e:
             raise AgnoHTTPException(e)
         except Exception as e:
@@ -1534,6 +1561,8 @@ def attach_routes(
 
         except HTTPException:
             raise
+        except HTTPStatusError as e:
+            raise _remote_error(e, "Error getting OS model metrics") from e
         except AgnoError as e:
             raise AgnoHTTPException(e)
         except Exception as e:
@@ -1689,6 +1718,8 @@ def attach_routes(
 
         except HTTPException:
             raise
+        except HTTPStatusError as e:
+            raise _remote_error(e, "Error getting OS run metrics") from e
         except AgnoError as e:
             raise AgnoHTTPException(e)
         except Exception as e:
@@ -1835,6 +1866,8 @@ def attach_routes(
 
         except HTTPException:
             raise
+        except HTTPStatusError as e:
+            raise _remote_error(e, "Error getting OS latency metrics") from e
         except AgnoError as e:
             raise AgnoHTTPException(e)
         except Exception as e:

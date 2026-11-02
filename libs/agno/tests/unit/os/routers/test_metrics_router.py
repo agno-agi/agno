@@ -5,6 +5,7 @@ import time
 from datetime import date, datetime, timezone
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
@@ -207,6 +208,24 @@ class TestGetMetrics:
 
         assert resp.status_code == 500
 
+    def test_remote_refusal_is_passed_through_without_the_remote_url(self, settings):
+        """A remote AgentOS that refuses the read is answered with its status, not a 500 naming its URL."""
+        remote_response = httpx.Response(
+            403, json={"detail": "Admin privileges required"}, request=httpx.Request("GET", "http://remote-os/metrics")
+        )
+        remote_db = MagicMock(spec=RemoteDb)
+        remote_db.id = "remote-1"
+        remote_db.get_metrics.side_effect = lambda **kwargs: remote_response.raise_for_status()
+        app = FastAPI()
+        with patch("agno.os.routers.metrics.metrics.get_authentication_dependency", return_value=lambda: True):
+            app.include_router(get_metrics_router(dbs={"remote-1": [remote_db]}, settings=settings))
+        with _scope("alice"):
+            resp = TestClient(app).get("/metrics")
+
+        assert resp.status_code == 403
+        assert resp.json()["detail"] == "Admin privileges required"
+        assert "http://" not in resp.text
+
 
 # =============================================================================
 # POST /metrics/refresh
@@ -323,6 +342,8 @@ class TestRefreshMetrics:
             ("2026-01-01T00:00:00Z", 5, 140),
             ("2026-01-02T00:00:00Z", 0, 0),
         ]
+        # Its token metrics have the cost key every other day has
+        assert resp.json()[1]["token_metrics"]["cost"] is None
 
     def test_a_background_rebuild_during_a_running_refresh_still_reopens_its_days(self, lock_row_client, lock_row_db):
         """The days of a rebuild asked while a refresh runs are reopened, so the next refresh rebuilds them."""
