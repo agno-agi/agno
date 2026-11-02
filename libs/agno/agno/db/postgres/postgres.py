@@ -3163,8 +3163,11 @@ class PostgresDb(BaseDb):
                     if column in record
                 )
                 or (
-                    isinstance(record.get("session_data"), dict)
-                    and record["session_data"].get("compaction_metrics") != stored_session.compaction_metrics
+                    "session_data" in record
+                    and (record["session_data"] if isinstance(record["session_data"], dict) else {}).get(
+                        "compaction_metrics"
+                    )
+                    != stored_session.compaction_metrics
                 )
             ):
                 session_ids.add(record["session_id"])

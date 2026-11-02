@@ -1907,6 +1907,22 @@ def test_reassign_session_owner_reopens_its_day(postgres_db_real: PostgresDb):
     assert postgres_db_real.get_session("alice_session", SessionType.AGENT).updated_at >= reassigned_at
 
 
+def test_session_compaction_change_reopens_its_day(postgres_db_real: PostgresDb):
+    """Ensure a session write that changes its compaction metrics reopens its closed day, and one that keeps them does
+    not"""
+    session = _session_on(_utc_date(3), "alice_session", "alice")
+    session.session_data = {"compaction_metrics": {"total_tokens": 724}}
+    _persist(postgres_db_real, session)
+    postgres_db_real.calculate_metrics()
+
+    postgres_db_real.upsert_session(session)
+    assert _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["completed"] is True
+
+    session.session_data = {"compaction_metrics": {"total_tokens": 1000}}
+    postgres_db_real.upsert_session(session)
+    assert _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["completed"] is False
+
+
 def test_insert_session_if_absent_reopens_its_day(postgres_db_real: PostgresDb):
     """Ensure a session of a closed day created by the queued run prepare reopens the day"""
     _persist(postgres_db_real, _session_on(_utc_date(3), "alice_session", "alice"))
