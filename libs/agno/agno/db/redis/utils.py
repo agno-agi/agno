@@ -23,8 +23,7 @@ except ImportError:
     raise ImportError("`redis` not installed. Please install it using `pip install redis`")
 
 
-# Keys each SCAN call walks, as the Valkey adapter scans. SCAN walks every key of the database, not only the matching
-# ones, and the Redis default of 10 takes a round trip per 10 keys
+# Keys each SCAN call walks: SCAN walks every key of the database, not only the matching ones, 10 by default
 METRICS_SCAN_COUNT = 1000
 
 # The keys of a stored run that hold the runs nested inside it, in the order the rollup walks them
@@ -625,7 +624,8 @@ def build_component_metrics_session(session: Dict[str, Any]) -> Dict[str, Any]:
         session (Dict[str, Any]): The session, as stored.
 
     Returns:
-        Dict[str, Any]: The session with its type, its owner, its agent, team or workflow, and its metadata.
+        Dict[str, Any]: The session with its type, its owner, its agent, team or workflow, its metadata, and the
+            compaction metrics of its session_data.
     """
     return {
         "session_id": session.get("session_id"),
@@ -635,5 +635,6 @@ def build_component_metrics_session(session: Dict[str, Any]) -> Dict[str, Any]:
         "team_id": session.get("team_id"),
         "workflow_id": session.get("workflow_id"),
         "metadata": session.get("metadata"),
+        "compaction_metrics": (session.get("session_data") or {}).get("compaction_metrics"),
         "created_at": session.get("created_at"),
     }

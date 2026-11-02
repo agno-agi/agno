@@ -1738,7 +1738,7 @@ class DynamoDb(BaseDb):
         it. A day it could not reopen is retried by the next write.
 
         Args:
-            created_ats (Sequence[Optional[int]]): The stored created_at of each run or session the write changed.
+            created_ats: The stored created_at of each run or session the write changed.
         """
         days = sorted(
             {day for created_at in created_ats if (day := metrics_day_to_reopen(created_at)) is not None}
@@ -2303,10 +2303,10 @@ class DynamoDb(BaseDb):
         """Get the runs not yet migrated out of the sessions' legacy runs field, created in the given time range.
 
         Args:
-            sessions_table_name (str): The sessions table.
-            runs_table_name (str): The runs table. A run it also holds is read from there.
-            start_timestamp (int): The start of the range, included.
-            end_timestamp (int): The end of the range, not included.
+            sessions_table_name: The sessions table.
+            runs_table_name: The runs table. A run it also holds is read from there.
+            start_timestamp: The start of the range, included.
+            end_timestamp: The end of the range, not included.
 
         Returns:
             Tuple[Dict[date, List[Dict[str, Any]]], Dict[str, Dict[str, Any]]]: The legacy runs by the UTC day they
@@ -2510,10 +2510,15 @@ class DynamoDb(BaseDb):
             "session_type-created_at-index",
             "session_type",
             list(METRICS_COMPONENT_TYPES),
-            ["session_id", "session_type", "user_id", "agent_id", "team_id", "workflow_id", "metadata"],
+            ["session_id", "session_type", "user_id", "agent_id", "team_id", "workflow_id", "metadata", "session_data"],
             start_timestamp,
             end_timestamp,
         )
+        # A manual compaction's usage, which no run carries, is read from the session's data
+        sessions = [
+            {**session, "compaction_metrics": (session.get("session_data") or {}).get("compaction_metrics")}
+            for session in sessions
+        ]
         run_rows = self._query_metrics_sources(
             runs_table_name,
             "status-created_at-index",
@@ -2706,17 +2711,21 @@ class DynamoDb(BaseDb):
         Raises:
             Exception: If an error occurs during metrics calculation.
         """
+        table_name = self._get_table("component_metrics", create_table_if_not_found=True)
+        user_metrics_table_name = self._get_table("user_metrics", create_table_if_not_found=True)
+        refreshes_table_name = self._get_table("metrics_refreshes", create_table_if_not_found=True)
         sessions_table_name = self.session_table_name
-        if not self.table_exists(sessions_table_name):
+        if (
+            table_name is None
+            or user_metrics_table_name is None
+            or refreshes_table_name is None
+            or not self.table_exists(sessions_table_name)
+        ):
             log_info("No session data found. Won't calculate metrics.")
             return []
-        # Created on first use; _get_table returns the configured name either way
-        for table_type in ["component_metrics", "user_metrics", "metrics_refreshes", "runs"]:
-            self._get_table(table_type, create_table_if_not_found=True)
-        table_name = self.component_metrics_table_name
-        user_metrics_table_name = self.user_metrics_table_name
-        refreshes_table_name = self.metrics_refreshes_table_name
-        runs_table_name = self.runs_table_name
+        runs_table_name = self._get_table("runs", create_table_if_not_found=True)
+        if runs_table_name is None:
+            return []
 
         if rebuild_from is not None:
             # Reopened as a write reopens a day, before the claim, so a calculation another process is running

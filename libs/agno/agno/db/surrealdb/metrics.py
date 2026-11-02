@@ -134,10 +134,11 @@ def get_all_sessions_for_component_metrics_calculation(
         end_timestamp (datetime): The end of the range, not included.
 
     Returns:
-        List[Dict[str, Any]]: The sessions: their id, type, owner, agent, team or workflow and metadata.
+        List[Dict[str, Any]]: The sessions: their id, type, owner, agent, team or workflow, metadata and compaction
+            metrics.
     """
     query = dedent(f"""
-        SELECT id, user_id, agent, team, workflow, metadata
+        SELECT id, user_id, agent, team, workflow, metadata, session_data.compaction_metrics AS compaction_metrics
         FROM {table}
         WHERE created_at >= $start AND created_at < $end
     """)
@@ -391,14 +392,23 @@ def reopen_metrics_day(
     )
 
 
-def reopen_metrics_days_from(table: str, starting_date: date) -> Tuple[str, Dict[str, Any]]:
-    """Build the reopen of every day's everyone row of the user metrics table from the given date on, as a write
-    reopens a day, so the next calculation rebuilds them, and its variables."""
-    statement = (
+def reopen_metrics_days_from(
+    client: Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection], table: str, starting_date: date
+) -> None:
+    """Reopen every day's everyone row of the user metrics table from the given date on, as a write reopens a day,
+    so the next calculation rebuilds them.
+
+    Args:
+        table (str): The user metrics table.
+        starting_date (date): The first day to reopen.
+    """
+    utils.query(
+        client,
         f'UPDATE {table} SET completed = false, version += 1 WHERE aggregation_period = "daily" AND user_id = "" '
-        "AND date >= $start RETURN NONE"
+        "AND date >= $start RETURN NONE",
+        {"start": datetime.combine(starting_date, datetime.min.time()).replace(tzinfo=timezone.utc)},
+        dict,
     )
-    return statement, {"start": datetime.combine(starting_date, datetime.min.time()).replace(tzinfo=timezone.utc)}
 
 
 def build_metrics_rows_fields(fields: Sequence[str], table_type: str) -> str:

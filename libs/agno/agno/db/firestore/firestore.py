@@ -183,8 +183,6 @@ class FirestoreDb(BaseDb):
         self._metrics_days_not_reopened: Set[date] = set()
         # Whether a session holds legacy runs, None until a read of every session found out
         self._metrics_legacy_runs: Optional[bool] = None
-        # Whether the metrics refresh document was found, which stays once written
-        self._metrics_refresh_found: bool = False
 
     # -- DB methods --
 
@@ -1701,15 +1699,14 @@ class FirestoreDb(BaseDb):
         if not days:
             return
         try:
-            # No metrics were calculated yet: the first calculation builds every day. The refresh document stays once
-            # written, so it is looked up only until it is found
-            if not self._metrics_refresh_found:
-                refreshes_collection_ref = self._get_collection(table_type="metrics_refreshes")
-                if not refreshes_collection_ref.document(METRICS_REFRESH_ID).get().exists:
+            # Looked up only when a day reopens. None when no day was calculated yet: a collection exists only while
+            # it holds a document
+            user_metrics_collection_ref = getattr(self, "user_metrics_collection", None)
+            if user_metrics_collection_ref is None:
+                if not list(self.db_client.collection(self.user_metrics_table_name).limit(1).stream()):
                     self._metrics_days_not_reopened.clear()
                     return
-                self._metrics_refresh_found = True
-            user_metrics_collection_ref = self._get_collection(table_type="user_metrics")
+                user_metrics_collection_ref = self._get_collection(table_type="user_metrics")
             for day in days:
                 reopen_metrics_day(user_metrics_collection_ref, day)
             self._metrics_days_not_reopened.difference_update(days)
@@ -2175,9 +2172,23 @@ class FirestoreDb(BaseDb):
         sessions_query = (
             sessions_collection_ref.where(filter=FieldFilter("created_at", ">=", start_timestamp))
             .where(filter=FieldFilter("created_at", "<", end_timestamp))
-            .select(["session_id", "session_type", "user_id", "agent_id", "team_id", "workflow_id", "metadata"])
+            .select(
+                [
+                    "session_id",
+                    "session_type",
+                    "user_id",
+                    "agent_id",
+                    "team_id",
+                    "workflow_id",
+                    "metadata",
+                    "session_data.compaction_metrics",
+                ]
+            )
         )
         sessions = [doc.to_dict() for doc in sessions_query.stream()]
+        for session in sessions:
+            # A manual compaction's usage, which no run carries, is kept in the session's data
+            session["compaction_metrics"] = (session.get("session_data") or {}).get("compaction_metrics")
 
         runs: List[Dict[str, Any]] = []
         if runs_collection_ref is not None:

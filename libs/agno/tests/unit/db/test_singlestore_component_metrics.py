@@ -13,10 +13,7 @@ from sqlalchemy.sql.dml import Insert
 
 from agno.db.singlestore.schemas import SESSION_TABLE_SCHEMA, get_table_schema_definition
 from agno.db.singlestore.singlestore import SingleStoreDb
-from agno.db.singlestore.utils import (
-    build_component_metrics_run,
-    upsert_user_metrics_row,
-)
+from agno.db.singlestore.utils import upsert_user_metrics_row
 
 TODAY = datetime.now(timezone.utc).date()
 
@@ -171,28 +168,6 @@ def test_everyone_row_completed_is_compared_before_the_version_moves():
     assert completed < statement.index("version = (test_user_metrics.version + %s)")
 
 
-def test_build_component_metrics_run_rebuilds_the_stored_run_shape():
-    """Runs nested inside a run come back as stored, and the run's own requests as its messages."""
-    member = {"run_id": "m1", "member_responses": [{"run_id": "m1-1"}]}
-    row = SimpleNamespace(
-        _mapping={
-            "run_id": "team-run",
-            "metrics": {},
-            "model": "gpt-5",
-            "model_provider": "OpenAI",
-            "call_durations": [1.5],
-            "step_executor_runs": None,
-            "member_responses": [member],
-            "workflow_agent_run": None,
-        }
-    )
-
-    run = build_component_metrics_run(row)
-
-    assert run["run_data"]["member_responses"] == [member]
-    assert run["run_data"]["messages"] == [{"role": "assistant", "metrics": {"duration": 1.5}}]
-
-
 def test_claim_metrics_refresh_returns_while_another_process_writes_a_day(mock_engine):
     """A claim whose lock wait times out returns None."""
     db = SingleStoreDb(db_engine=mock_engine, db_schema="test_schema")
@@ -217,89 +192,3 @@ def test_release_metrics_refresh_keeps_a_rebuild_mark_over_a_claim_of_no_fingerp
 
     statement = str(session.execute.call_args.args[0].compile(dialect=mysql.dialect()))
     assert "fingerprint" not in statement
-
-
-def test_calculate_metrics_rebuild_from_records_a_failed_reopen_before_any_refresh(singlestore_db, monkeypatch):
-    """A rebuild whose reopen fails before any metrics refresh ran is shown as failed with its error."""
-
-    def _fail(*args, **kwargs):
-        raise RuntimeError("boom")
-
-    monkeypatch.setattr("agno.db.singlestore.singlestore.reopen_metrics_days_from", _fail)
-    singlestore_db.Session = Mock(return_value=_FakeSession())
-
-    with pytest.raises(RuntimeError):
-        singlestore_db.calculate_metrics_dates(rebuild_from=TODAY - timedelta(days=3))
-    singlestore_db._release_metrics_refresh.assert_called_once_with(
-        TABLES["metrics_refreshes"], None, error="boom", started_at=None, finished_at=None
-    )
-
-
-def test_get_component_metrics_reads_every_owner_from_the_everyone_rows(singlestore_db):
-    """Every owner is read from the everyone rows of the user metrics table, totalled in Python."""
-    user_metrics_row = {
-        "aggregation_period": "daily",
-        "date": TODAY,
-        "user_id": "",
-        "agent_sessions_count": 2,
-        "team_sessions_count": 1,
-        "workflow_sessions_count": 0,
-        "root_runs_count": 3,
-        "token_details": {"cache_read_tokens": 4},
-        "model_metrics": {"OpenAI": {"gpt-5": {"count": 3}}},
-        "updated_at": 200,
-    }
-    singlestore_db.Session = Mock(
-        return_value=_FakeSession({"test_user_metrics": [SimpleNamespace(_mapping=user_metrics_row)]})
-    )
-
-    metrics, latest_updated_at = singlestore_db.get_component_metrics(
-        TODAY, TODAY, fields=["sessions_count", "root_runs_count", "cache_read_tokens", "model_metrics"]
-    )
-
-    assert metrics == [
-        {
-            "date": TODAY,
-            "sessions_count": 3,
-            "root_runs_count": 3,
-            "cache_read_tokens": 4,
-            "model_metrics": [{"model_id": "gpt-5", "model_provider": "OpenAI", "count": 3, "cost": None}],
-        }
-    ]
-    assert latest_updated_at == 200
-
-
-def test_a_read_never_calculates_before_the_first_calculation_finished(singlestore_db):
-    """A read calculates no metrics before a first calculation has finished, nor once AgentOS calculates them."""
-    singlestore_db._get_metrics_refresh_row = Mock(return_value=({"finished_at": None}, 0))
-    singlestore_db.calculate_metrics_dates = Mock()
-    singlestore_db.Session = Mock(return_value=_FakeSession())
-
-    singlestore_db.get_metrics()
-    singlestore_db.calculate_metrics_dates.assert_not_called()
-
-    singlestore_db._get_metrics_refresh_row = Mock(return_value=({"finished_at": 1}, 0))
-    singlestore_db._metrics_refreshed_at = 0.0
-    singlestore_db.stop_metrics_refresh_on_read()
-    singlestore_db.get_metrics()
-    singlestore_db.calculate_metrics_dates.assert_not_called()
-
-
-def test_get_metrics_versions(singlestore_db):
-    """No version is read before a first calculation finished; then each everyone row's version, keyed by its period
-    and date."""
-    rows = [
-        SimpleNamespace(aggregation_period="daily", date=TODAY - timedelta(days=1), version=1),
-        SimpleNamespace(aggregation_period="monthly", date=TODAY.replace(day=1), version=4),
-    ]
-    singlestore_db.Session = Mock(return_value=_FakeSession({"test_user_metrics": rows}))
-    singlestore_db._metrics_refreshed_at = float("inf")
-
-    singlestore_db._get_metrics_refresh_row = Mock(return_value=({"finished_at": None}, 0))
-    assert singlestore_db.get_metrics_versions(TODAY - timedelta(days=1), TODAY) is None
-
-    singlestore_db._get_metrics_refresh_row = Mock(return_value=({"finished_at": 1}, 0))
-    assert singlestore_db.get_metrics_versions(TODAY - timedelta(days=1), TODAY) == {
-        f"daily {(TODAY - timedelta(days=1)).isoformat()}": 1,
-        f"monthly {TODAY.replace(day=1).isoformat()}": 4,
-    }

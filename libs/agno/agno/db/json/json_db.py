@@ -1686,8 +1686,12 @@ class JsonDb(BaseDb):
                 self._read_metrics_file(self.user_metrics_table_name), USER_METRICS_KEY_COLUMNS
             )
 
-            # Read after the versions of the days, so a run written while they are calculated moves its day
-            sessions = self._read_json_file(self.session_table_name, create_table_if_not_found=False)
+            # Read after the versions of the days, so a run written while they are calculated moves its day. A
+            # manual compaction's usage, which no run carries, is read from the session's data
+            sessions = [
+                {**session, "compaction_metrics": (session.get("session_data") or {}).get("compaction_metrics")}
+                for session in self._read_json_file(self.session_table_name, create_table_if_not_found=False)
+            ]
             runs = get_metrics_runs(self._read_runs_file(create_table_if_not_found=False))
             dates_to_process, fingerprint = get_metrics_dates_to_calculate(
                 user_metrics_by_key, sessions, runs, refresh_row, rebuild_from

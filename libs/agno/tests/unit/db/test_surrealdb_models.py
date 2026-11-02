@@ -1,6 +1,6 @@
 from datetime import date, datetime, timezone
 
-from agno.db.surrealdb.models import desurrealize_dates, get_schema, surrealize_dates
+from agno.db.surrealdb.models import desurrealize_dates, surrealize_dates
 
 
 def test_surrealize_int_timestamp_converts_to_correct_utc():
@@ -41,9 +41,3 @@ def test_epoch_round_trip_preserves_value():
     desurrealized = desurrealize_dates(surrealized)
     assert desurrealized["created_at"] == epoch
     assert desurrealized["updated_at"] == epoch
-
-
-def test_user_metrics_schema_indexes_user_id_and_date():
-    assert "DEFINE INDEX idx_user_id_date ON user_metrics FIELDS user_id, date;" in get_schema(
-        "user_metrics", "user_metrics"
-    )

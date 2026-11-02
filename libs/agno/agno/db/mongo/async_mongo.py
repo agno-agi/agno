@@ -1296,7 +1296,15 @@ class AsyncMongoDb(AsyncBaseDb):
 
             existing = await collection.find_one(
                 {"session_id": session_dict.get("session_id")},
-                {"user_id": 1, "agent_id": 1, "team_id": 1, "workflow_id": 1, "runs": 1, "created_at": 1},
+                {
+                    "user_id": 1,
+                    "agent_id": 1,
+                    "team_id": 1,
+                    "workflow_id": 1,
+                    "runs": 1,
+                    "created_at": 1,
+                    "session_data.compaction_metrics": 1,
+                },
             )
             if existing:
                 existing_uid = existing.get("user_id")
@@ -1446,6 +1454,7 @@ class AsyncMongoDb(AsyncBaseDb):
                         "workflow_id": 1,
                         "runs": 1,
                         "created_at": 1,
+                        "session_data.compaction_metrics": 1,
                     },
                 ):
                     stored_sessions[doc["session_id"]] = doc
@@ -1527,38 +1536,37 @@ class AsyncMongoDb(AsyncBaseDb):
 
                 # Fetch the results
                 session_ids = [session.session_id for session in sessions if session and session.session_id]
-                for start in range(0, len(session_ids), METRICS_IN_LIST_LIMIT):
-                    async for doc in collection.find(
-                        {"session_id": {"$in": session_ids[start : start + METRICS_IN_LIST_LIMIT]}}
-                    ):
-                        session_dict = doc
-                        original_session = sessions_by_id.get(doc.get("session_id"))
-                        session_dict["runs"] = [
-                            run if isinstance(run, dict) else run.to_dict()
-                            for run in (original_session.runs if original_session else None) or []
-                        ]
+                cursor = collection.find({"session_id": {"$in": session_ids}})
 
-                        if deserialize:
-                            session_type = doc.get("session_type")
-                            if session_type == SessionType.AGENT.value:
-                                deserialized_agent_session = AgentSession.from_dict(session_dict)
-                                if deserialized_agent_session is None:
-                                    continue
-                                results.append(deserialized_agent_session)
+                async for doc in cursor:
+                    session_dict = doc
+                    original_session = sessions_by_id.get(doc.get("session_id"))
+                    session_dict["runs"] = [
+                        run if isinstance(run, dict) else run.to_dict()
+                        for run in (original_session.runs if original_session else None) or []
+                    ]
 
-                            elif session_type == SessionType.TEAM.value:
-                                deserialized_team_session = TeamSession.from_dict(session_dict)
-                                if deserialized_team_session is None:
-                                    continue
-                                results.append(deserialized_team_session)
+                    if deserialize:
+                        session_type = doc.get("session_type")
+                        if session_type == SessionType.AGENT.value:
+                            deserialized_agent_session = AgentSession.from_dict(session_dict)
+                            if deserialized_agent_session is None:
+                                continue
+                            results.append(deserialized_agent_session)
 
-                            elif session_type == SessionType.WORKFLOW.value:
-                                deserialized_workflow_session = WorkflowSession.from_dict(session_dict)
-                                if deserialized_workflow_session is None:
-                                    continue
-                                results.append(deserialized_workflow_session)
-                        else:
-                            results.append(session_dict)
+                        elif session_type == SessionType.TEAM.value:
+                            deserialized_team_session = TeamSession.from_dict(session_dict)
+                            if deserialized_team_session is None:
+                                continue
+                            results.append(deserialized_team_session)
+
+                        elif session_type == SessionType.WORKFLOW.value:
+                            deserialized_workflow_session = WorkflowSession.from_dict(session_dict)
+                            if deserialized_workflow_session is None:
+                                continue
+                            results.append(deserialized_workflow_session)
+                    else:
+                        results.append(session_dict)
 
             return results
 
@@ -2016,9 +2024,8 @@ class AsyncMongoDb(AsyncBaseDb):
 
     # -- Metrics methods --
     async def _reopen_metrics_days(self, created_ats: Sequence[Optional[int]]) -> None:
-        """Reopen the metrics of each day a write changed, right after the write, so the next calculation rebuilds it.
-
-        A failed reopen never fails the write itself, and the days it could not reopen are retried by the next write.
+        """Reopen the metrics of each day a write changed, right after the write, so the next calculation rebuilds
+        it. A day it could not reopen is retried by the next write.
 
         Args:
             created_ats (Sequence[Optional[int]]): The stored created_at of each run or session the write changed.
@@ -2466,8 +2473,12 @@ class AsyncMongoDb(AsyncBaseDb):
                 "team_id": 1,
                 "workflow_id": 1,
                 "metadata": 1,
+                "session_data.compaction_metrics": 1,
             },
         ).to_list(length=None)
+        for session in sessions:
+            # A manual compaction's usage, which no run carries, is kept in the session's data
+            session["compaction_metrics"] = (session.get("session_data") or {}).get("compaction_metrics")
 
         runs: List[Dict[str, Any]] = []
         stored_run_ids: Set[str] = set()
@@ -3016,7 +3027,8 @@ class AsyncMongoDb(AsyncBaseDb):
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
             ending_date (Optional[date]): The ending date to filter metrics by.
-            user_id (Optional[str]): Return only this user's bucket. ``None`` returns every bucket.
+            user_id (Optional[str]): The ID of the user to filter by. When None, all per-user buckets are
+                returned, including the unowned one.
 
         Returns:
             Tuple[List[dict], Optional[int]]: A tuple containing the metrics and the timestamp of the latest update.

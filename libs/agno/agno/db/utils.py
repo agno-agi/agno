@@ -695,7 +695,13 @@ def metric_record_day(record: Dict[str, Any]) -> Optional[date]:
 
 def deserialize_metrics_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Read the rows of a metrics file with their date a date, as a JSON file keeps it as text."""
-    return [{**row, "date": date.fromisoformat(row["date"])} for row in rows]
+    deserialized_rows = []
+    for row in rows:
+        try:
+            deserialized_rows.append({**row, "date": date.fromisoformat(row.get("date"))})  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            log_warning(f"Skipping metrics record {row.get('id')}: date {row.get('date')!r} is not a day")
+    return deserialized_rows
 
 
 def get_metrics_records_by_day(
@@ -1742,18 +1748,37 @@ def get_open_metrics_months(user_metrics_by_key: Dict[Tuple[Any, ...], Dict[str,
 def get_metrics_reopen_session_ids(
     stored_sessions: List[Dict[str, Any]], session_records: List[Dict[str, Any]]
 ) -> Set[str]:
-    """The id of each session the given rows add, or move to another owner or component."""
+    """The id of each session the given rows add, move to another owner or component, or give other compaction
+    metrics."""
     stored_by_id = {stored_session.get("session_id"): stored_session for stored_session in stored_sessions}
     session_ids: Set[str] = set()
     for record in session_records:
         stored_session = stored_by_id.get(record["session_id"])
-        if stored_session is None or any(
-            record[column] != stored_session.get(column)
-            for column in ["user_id", "agent_id", "team_id", "workflow_id"]
-            if column in record
+        if (
+            stored_session is None
+            or any(
+                record[column] != stored_session.get(column)
+                for column in ["user_id", "agent_id", "team_id", "workflow_id"]
+                if column in record
+            )
+            or (
+                "session_data" in record
+                and _session_compaction_metrics(record["session_data"])
+                != _session_compaction_metrics(stored_session.get("session_data"))
+            )
         ):
             session_ids.add(record["session_id"])
     return session_ids
+
+
+def _session_compaction_metrics(session_data: Any) -> Optional[Dict[str, Any]]:
+    """The compaction metrics of a session's session_data, which a store may keep as JSON text."""
+    if isinstance(session_data, str):
+        try:
+            session_data = json.loads(session_data)
+        except (json.JSONDecodeError, TypeError):
+            return None
+    return session_data.get("compaction_metrics") if isinstance(session_data, dict) else None
 
 
 def build_user_metrics_row(
@@ -2046,12 +2071,12 @@ def get_metrics_dates_to_calculate(
         user_metrics_by_key (Dict[Tuple[Any, ...], Dict[str, Any]]): The user metrics rows, by key.
         sessions (List[Dict[str, Any]]): The sessions.
         runs (List[Dict[str, Any]]): The runs.
-        refresh_row (Dict[str, Any]): The metrics refresh row, from _claim_metrics_refresh.
+        refresh_row (Dict[str, Any]): The row of the metrics refreshes table, from _claim_metrics_refresh.
         rebuild_from (Optional[date]): The first day of a rebuild.
 
     Returns:
-        Tuple[List[date], Optional[List[Any]]]: The days, oldest first, and the fingerprint to keep on the metrics
-            refresh row.
+        Tuple[List[date], Optional[List[Any]]]: The days, oldest first, and the fingerprint to keep on the row of
+            the metrics refreshes table.
     """
     today = datetime.now(timezone.utc).date()
     yesterday = today - timedelta(days=1)

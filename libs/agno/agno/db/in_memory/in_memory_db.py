@@ -1347,8 +1347,12 @@ class InMemoryDb(BaseDb):
         try:
             user_metrics_by_key = get_metrics_rows_by_key(self._user_metrics or [], USER_METRICS_KEY_COLUMNS)
 
-            # Read after the versions of the days, so a run written while they are calculated moves its day
-            sessions = list(self._sessions.values())
+            # Read after the versions of the days, so a run written while they are calculated moves its day. A
+            # manual compaction's usage, which no run carries, is read from the session's data
+            sessions = [
+                {**session, "compaction_metrics": (session.get("session_data") or {}).get("compaction_metrics")}
+                for session in self._sessions.values()
+            ]
             runs = self._get_metrics_runs()
             dates_to_process, fingerprint = get_metrics_dates_to_calculate(
                 user_metrics_by_key, sessions, runs, refresh_row, rebuild_from

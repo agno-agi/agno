@@ -138,6 +138,10 @@ def _ensure_glide_sync_stub():
             self.start = start
             self.end = end
 
+    class _Script:
+        def __init__(self, code):
+            self.code = code
+
     class _RequestError(Exception):
         pass
 
@@ -157,7 +161,7 @@ def _ensure_glide_sync_stub():
     glide_mod.Limit = MagicMock(name="Limit")
     glide_mod.RangeByScore = MagicMock(name="RangeByScore")
     glide_mod.ScoreBoundary = MagicMock(name="ScoreBoundary")
-    glide_mod.Script = MagicMock(name="Script")
+    glide_mod.Script = _Script
     glide_mod.DataType = MagicMock(name="DataType")
 
     # Also add stubs for vector store imports so both test files can coexist

@@ -296,7 +296,7 @@ def _reopen_metrics_row(table: Table, row_date: date, aggregation_period: str) -
 
 
 def reopen_metrics_day(session: Session, table: Table, day: date) -> None:
-    """Reopen a day's user metrics row, in the session's transaction, so the next refresh rebuilds the day.
+    """Reopen a day's user metrics row, in the session's transaction, so the next calculation rebuilds the day.
 
     Args:
         session (Session): The session of the write that changed the day.
@@ -317,7 +317,7 @@ def _reopen_metrics_days_from(table: Table, starting_date: date) -> Any:
 
 def reopen_metrics_days_from(session: Session, table: Table, starting_date: date) -> None:
     """Reopen every day's user metrics row from the given date on, in the session's transaction, as a write reopens
-    a day, so the next refresh rebuilds them.
+    a day, so the next calculation rebuilds them.
 
     Args:
         session (Session): The session to reopen with.
@@ -328,7 +328,7 @@ def reopen_metrics_days_from(session: Session, table: Table, starting_date: date
 
 
 def reopen_metrics_month(session: Session, table: Table, month_start: date) -> None:
-    """Reopen a month's user metrics row, in the session's transaction, so the next refresh rebuilds the month.
+    """Reopen a month's user metrics row, in the session's transaction, so the next calculation rebuilds the month.
 
     Args:
         session (Session): The session of the day rebuilt in the month.

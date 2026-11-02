@@ -58,12 +58,12 @@ from agno.db.utils import (
     user_metrics_rows_to_write,
 )
 from agno.db.valkey.utils import (
-    CLAIM_METRICS_REFRESH_LUA,
-    FENCED_METRICS_WRITES_LUA,
-    HEARTBEAT_METRICS_REFRESH_LUA,
-    MARK_METRICS_REFRESH_REBUILD_LUA,
-    METRICS_PIPELINE_SIZE,
-    RELEASE_METRICS_REFRESH_LUA,
+    _CLAIM_METRICS_REFRESH_SCRIPT,
+    _FENCED_METRICS_WRITES_SCRIPT,
+    _HEARTBEAT_METRICS_REFRESH_SCRIPT,
+    _MARK_METRICS_REFRESH_REBUILD_SCRIPT,
+    VALKEY_BATCH_LIMIT,
+    _RELEASE_METRICS_REFRESH_SCRIPT,
     MetricsWrites,
     apply_filters,
     apply_pagination,
@@ -120,7 +120,6 @@ try:
         RangeByScore,
         RequestError,
         ScoreBoundary,
-        Script,
         ServerCredentials,
     )
 except ImportError:
@@ -1994,7 +1993,7 @@ class ValkeyDb(BaseDb):
                 None when another process holds it.
         """
         claimed = self.valkey_client.invoke_script(
-            Script(CLAIM_METRICS_REFRESH_LUA),
+            _CLAIM_METRICS_REFRESH_SCRIPT,
             keys=[self._metrics_refresh_key()],
             args=[worker_id, METRICS_REFRESH_ID, str(METRICS_LOCK_SECONDS)],
         )
@@ -2003,7 +2002,7 @@ class ValkeyDb(BaseDb):
     def _heartbeat_metrics_refresh(self, worker_id: str) -> bool:
         """Refresh locked_at for this worker's metrics refresh. False when another process took it over."""
         heartbeat = self.valkey_client.invoke_script(
-            Script(HEARTBEAT_METRICS_REFRESH_LUA), keys=[self._metrics_refresh_key()], args=[worker_id]
+            _HEARTBEAT_METRICS_REFRESH_SCRIPT, keys=[self._metrics_refresh_key()], args=[worker_id]
         )
         return heartbeat == 1
 
@@ -2027,7 +2026,7 @@ class ValkeyDb(BaseDb):
             outcome = "completed" if error is None else "failed"
         try:
             self.valkey_client.invoke_script(
-                Script(RELEASE_METRICS_REFRESH_LUA),
+                _RELEASE_METRICS_REFRESH_SCRIPT,
                 keys=[self._metrics_refresh_key()],
                 args=[
                     worker_id or "",
@@ -2071,10 +2070,10 @@ class ValkeyDb(BaseDb):
                 valkey_client=self.valkey_client, prefix=self.db_prefix, table_type=table_type
             )
             key_prefix = generate_valkey_key(prefix=self.db_prefix, table_type=table_type, key_id="")
-            for batch_start in range(0, len(keys), METRICS_PIPELINE_SIZE):
+            for batch_start in range(0, len(keys), VALKEY_BATCH_LIMIT):
                 if not self._heartbeat_metrics_refresh(worker_id):
                     return None
-                batch_keys = keys[batch_start : batch_start + METRICS_PIPELINE_SIZE]
+                batch_keys = keys[batch_start : batch_start + VALKEY_BATCH_LIMIT]
                 pipeline = self._create_pipeline()
                 for key in batch_keys:
                     pipeline.get(key)
@@ -2149,9 +2148,9 @@ class ValkeyDb(BaseDb):
             List[str]: The record IDs.
         """
         record_ids: Set[str] = set()
-        for batch_start in range(0, len(index_values), METRICS_PIPELINE_SIZE):
+        for batch_start in range(0, len(index_values), VALKEY_BATCH_LIMIT):
             pipeline = self._create_pipeline()
-            for index_value in index_values[batch_start : batch_start + METRICS_PIPELINE_SIZE]:
+            for index_value in index_values[batch_start : batch_start + VALKEY_BATCH_LIMIT]:
                 pipeline.smembers(generate_index_key(self._metrics_prefix(), table_type, index_field, index_value))
             record_ids.update(
                 record_id.decode("utf-8") if isinstance(record_id, bytes) else str(record_id)
@@ -2164,9 +2163,9 @@ class ValkeyDb(BaseDb):
         """Get the component metrics rows with the given IDs, a batch at a time, with their date read back as a
         date."""
         records: List[Dict[str, Any]] = []
-        for batch_start in range(0, len(record_ids), METRICS_PIPELINE_SIZE):
+        for batch_start in range(0, len(record_ids), VALKEY_BATCH_LIMIT):
             pipeline = self._create_pipeline()
-            for record_id in record_ids[batch_start : batch_start + METRICS_PIPELINE_SIZE]:
+            for record_id in record_ids[batch_start : batch_start + VALKEY_BATCH_LIMIT]:
                 pipeline.get(
                     generate_valkey_key(prefix=self._metrics_prefix(), table_type="component_metrics", key_id=record_id)
                 )
@@ -2181,9 +2180,9 @@ class ValkeyDb(BaseDb):
         """Get the user metrics rows with the given IDs, a batch at a time, each with its version and its date
         read back as a date."""
         records: List[Dict[str, Any]] = []
-        for batch_start in range(0, len(record_ids), METRICS_PIPELINE_SIZE):
+        for batch_start in range(0, len(record_ids), VALKEY_BATCH_LIMIT):
             pipeline = self._create_pipeline()
-            for record_id in record_ids[batch_start : batch_start + METRICS_PIPELINE_SIZE]:
+            for record_id in record_ids[batch_start : batch_start + VALKEY_BATCH_LIMIT]:
                 pipeline.hgetall(
                     generate_valkey_key(prefix=self._metrics_prefix(), table_type="user_metrics", key_id=record_id)
                 )
@@ -2210,9 +2209,9 @@ class ValkeyDb(BaseDb):
         """Get one column of each of the given rows of the user metrics table, a batch at a time. None for a row
         that has none."""
         values: List[Any] = []
-        for batch_start in range(0, len(record_ids), METRICS_PIPELINE_SIZE):
+        for batch_start in range(0, len(record_ids), VALKEY_BATCH_LIMIT):
             pipeline = self._create_pipeline()
-            for record_id in record_ids[batch_start : batch_start + METRICS_PIPELINE_SIZE]:
+            for record_id in record_ids[batch_start : batch_start + VALKEY_BATCH_LIMIT]:
                 pipeline.hget(
                     generate_valkey_key(prefix=self._metrics_prefix(), table_type="user_metrics", key_id=record_id),
                     column,
@@ -2335,11 +2334,11 @@ class ValkeyDb(BaseDb):
         keys = get_all_keys_for_table(valkey_client=self.valkey_client, prefix=self.db_prefix, table_type="sessions")
         legacy_runs_by_day: Dict[date, List[Dict[str, Any]]] = {}
         legacy_runs_by_id: Dict[str, Dict[str, Any]] = {}
-        for batch_start in range(0, len(keys), METRICS_PIPELINE_SIZE):
+        for batch_start in range(0, len(keys), VALKEY_BATCH_LIMIT):
             if not self._heartbeat_metrics_refresh(worker_id):
                 return None
             pipeline = self._create_pipeline()
-            for key in keys[batch_start : batch_start + METRICS_PIPELINE_SIZE]:
+            for key in keys[batch_start : batch_start + VALKEY_BATCH_LIMIT]:
                 pipeline.get(key)
             legacy_runs: List[Dict[str, Any]] = []
             for data in self._exec_pipeline(pipeline, raise_on_error=True) or []:
@@ -2388,12 +2387,12 @@ class ValkeyDb(BaseDb):
             ),
         )
         records: List[Dict[str, Any]] = []
-        for batch_start in range(0, len(record_ids), METRICS_PIPELINE_SIZE):
+        for batch_start in range(0, len(record_ids), VALKEY_BATCH_LIMIT):
             # Checked between batches too, so a stop never waits for the whole of a large day
             if should_stop is not None and should_stop():
                 return None
             pipeline = self._create_pipeline()
-            for raw_record_id in record_ids[batch_start : batch_start + METRICS_PIPELINE_SIZE]:
+            for raw_record_id in record_ids[batch_start : batch_start + VALKEY_BATCH_LIMIT]:
                 record_id = raw_record_id.decode("utf-8") if isinstance(raw_record_id, bytes) else str(raw_record_id)
                 pipeline.get(generate_valkey_key(prefix=self.db_prefix, table_type=table_type, key_id=record_id))
             records.extend(
@@ -2413,11 +2412,11 @@ class ValkeyDb(BaseDb):
             RangeByScore(ScoreBoundary(end_timestamp - 86400), ScoreBoundary(end_timestamp, is_inclusive=False)),
         )
         team_runs: List[Dict[str, Any]] = []
-        for batch_start in range(0, len(run_ids), METRICS_PIPELINE_SIZE):
+        for batch_start in range(0, len(run_ids), VALKEY_BATCH_LIMIT):
             if should_stop is not None and should_stop():
                 return None
             pipeline = self._create_pipeline()
-            for raw_run_id in run_ids[batch_start : batch_start + METRICS_PIPELINE_SIZE]:
+            for raw_run_id in run_ids[batch_start : batch_start + VALKEY_BATCH_LIMIT]:
                 run_id = raw_run_id.decode("utf-8") if isinstance(raw_run_id, bytes) else str(raw_run_id)
                 pipeline.get(generate_valkey_key(prefix=self.db_prefix, table_type="runs", key_id=run_id))
             team_runs.extend(
@@ -2437,9 +2436,9 @@ class ValkeyDb(BaseDb):
         seen_run_ids: Set[str] = set()
         while parent_run_ids:
             seen_run_ids.update(parent_run_ids)
-            for batch_start in range(0, len(parent_run_ids), METRICS_PIPELINE_SIZE):
+            for batch_start in range(0, len(parent_run_ids), VALKEY_BATCH_LIMIT):
                 pipeline = self._create_pipeline()
-                for run_id in parent_run_ids[batch_start : batch_start + METRICS_PIPELINE_SIZE]:
+                for run_id in parent_run_ids[batch_start : batch_start + VALKEY_BATCH_LIMIT]:
                     pipeline.get(generate_valkey_key(prefix=self.db_prefix, table_type="runs", key_id=run_id))
                 parent_runs.extend(
                     build_component_metrics_run(deserialize_data(data))
@@ -2455,7 +2454,7 @@ class ValkeyDb(BaseDb):
         """Run the given writes of metrics rows in one script, only while this worker still holds the metrics
         refresh. False when another process took it over, and nothing was written.
 
-        The writes are recorded, then run by FENCED_METRICS_WRITES_LUA with the check that this worker holds the
+        The writes are recorded, then run by _FENCED_METRICS_WRITES_LUA with the check that this worker holds the
         refresh, so no takeover lands between the check and the writes.
 
         Args:
@@ -2465,7 +2464,7 @@ class ValkeyDb(BaseDb):
         writes = MetricsWrites(self._metrics_refresh_key())
         write(writes)
         written = self.valkey_client.invoke_script(
-            Script(FENCED_METRICS_WRITES_LUA), keys=writes.keys, args=[worker_id, json.dumps(writes.commands)]
+            _FENCED_METRICS_WRITES_SCRIPT, keys=writes.keys, args=[worker_id, json.dumps(writes.commands)]
         )
         return written == 1
 
@@ -2488,20 +2487,20 @@ class ValkeyDb(BaseDb):
         )
         stored_by_user = {row["user_id"]: row for row in stored_rows}
         stale_rows = [stored_by_user[user_id] for user_id in stale_user_ids]
-        for batch_start in range(0, max(len(stale_rows), len(changed_rows)), METRICS_PIPELINE_SIZE):
+        for batch_start in range(0, max(len(stale_rows), len(changed_rows)), VALKEY_BATCH_LIMIT):
             if not self._write_metrics_rows(
                 worker_id,
                 partial(
                     delete_user_metrics_rows,
                     prefix=self._metrics_prefix(),
-                    user_metrics_rows=stale_rows[batch_start : batch_start + METRICS_PIPELINE_SIZE],
+                    user_metrics_rows=stale_rows[batch_start : batch_start + VALKEY_BATCH_LIMIT],
                 ),
             ) or not self._write_metrics_rows(
                 worker_id,
                 partial(
                     bulk_upsert_user_metrics_rows,
                     prefix=self._metrics_prefix(),
-                    user_metrics_rows=changed_rows[batch_start : batch_start + METRICS_PIPELINE_SIZE],
+                    user_metrics_rows=changed_rows[batch_start : batch_start + VALKEY_BATCH_LIMIT],
                     expire=self.expire,
                 ),
             ):
@@ -2549,8 +2548,8 @@ class ValkeyDb(BaseDb):
 
         # A nested run also stored as a run of its own is counted from that record, whatever day it is on
         run_ids = sorted(nested_run_ids)
-        for batch_start in range(0, len(run_ids), METRICS_PIPELINE_SIZE):
-            batch_run_ids = run_ids[batch_start : batch_start + METRICS_PIPELINE_SIZE]
+        for batch_start in range(0, len(run_ids), VALKEY_BATCH_LIMIT):
+            batch_run_ids = run_ids[batch_start : batch_start + VALKEY_BATCH_LIMIT]
             pipeline = self._create_pipeline()
             for run_id in batch_run_ids:
                 pipeline.exists([generate_valkey_key(prefix=self.db_prefix, table_type="runs", key_id=run_id)])
@@ -2592,20 +2591,20 @@ class ValkeyDb(BaseDb):
         ]
         # Each batch is written only while this worker still holds the refresh, so a process whose lock went stale
         # never overwrites the rows of the process that took the refresh over
-        for batch_start in range(0, max(len(stale_rows), len(changed_rows)), METRICS_PIPELINE_SIZE):
+        for batch_start in range(0, max(len(stale_rows), len(changed_rows)), VALKEY_BATCH_LIMIT):
             if not self._write_metrics_rows(
                 worker_id,
                 partial(
                     delete_component_metrics,
                     prefix=self._metrics_prefix(),
-                    component_metrics_records=stale_rows[batch_start : batch_start + METRICS_PIPELINE_SIZE],
+                    component_metrics_records=stale_rows[batch_start : batch_start + VALKEY_BATCH_LIMIT],
                 ),
             ) or not self._write_metrics_rows(
                 worker_id,
                 partial(
                     bulk_upsert_component_metrics,
                     prefix=self._metrics_prefix(),
-                    component_metrics_records=changed_rows[batch_start : batch_start + METRICS_PIPELINE_SIZE],
+                    component_metrics_records=changed_rows[batch_start : batch_start + VALKEY_BATCH_LIMIT],
                     expire=self.expire,
                 ),
             ):
@@ -2643,10 +2642,10 @@ class ValkeyDb(BaseDb):
         record_ids = self._get_metrics_record_ids("component_metrics", "date", [day.isoformat() for day in month_days])
         # Added up a batch at a time, so a month of many rows is never held whole
         per_owner: Dict[Tuple[str, str, str, str, str], Dict[str, Any]] = {}
-        for batch_start in range(0, len(record_ids), METRICS_PIPELINE_SIZE):
+        for batch_start in range(0, len(record_ids), VALKEY_BATCH_LIMIT):
             add_metrics_month_totals(
                 per_owner,
-                self._get_component_metrics_records(record_ids[batch_start : batch_start + METRICS_PIPELINE_SIZE]),
+                self._get_component_metrics_records(record_ids[batch_start : batch_start + VALKEY_BATCH_LIMIT]),
             )
 
         # Heartbeated right before the month's writes, so a process whose lock went stale never overwrites the rows
@@ -2720,20 +2719,19 @@ class ValkeyDb(BaseDb):
                 # Reopened as a write reopens a day, before the claim, so a calculation another process is running
                 # leaves them to the next one
                 everyone_record_ids = self._get_metrics_everyone_record_ids()
-                for batch_start in range(0, len(everyone_record_ids), METRICS_PIPELINE_SIZE):
+                for batch_start in range(0, len(everyone_record_ids), VALKEY_BATCH_LIMIT):
                     pipe = self._create_pipeline(is_atomic=True)
                     reopen_metrics_days_from(
                         pipe,
                         self._metrics_prefix(),
-                        everyone_record_ids[batch_start : batch_start + METRICS_PIPELINE_SIZE],
+                        everyone_record_ids[batch_start : batch_start + VALKEY_BATCH_LIMIT],
                         rebuild_from,
                         self.expire,
                     )
                     self._exec_pipeline(pipe, raise_on_error=True)
-                # Yesterday and today are picked by the fingerprint, so it is marked for the next one too, with a mark
-                # no fingerprint equals
+                # Yesterday and today are picked by the fingerprint, so it is marked for the next one too
                 self.valkey_client.invoke_script(
-                    Script(MARK_METRICS_REFRESH_REBUILD_LUA),
+                    _MARK_METRICS_REFRESH_REBUILD_SCRIPT,
                     keys=[self._metrics_refresh_key()],
                     args=[json.dumps(["rebuild", uuid4().hex])],
                 )

@@ -925,7 +925,8 @@ class SurrealDb(BaseDb):
         table = self._get_table("sessions")
 
         existing = self.client.query(
-            f"SELECT user_id, runs, agent, team, workflow, created_at FROM {table} WHERE id = $record",
+            "SELECT user_id, runs, agent, team, workflow, created_at, session_data.compaction_metrics "
+            f"FROM {table} WHERE id = $record",
             {"record": RecordID(table, session.session_id)},
         )
         legacy_runs: Any = None
@@ -1000,7 +1001,8 @@ class SurrealDb(BaseDb):
             # CONTENT would wipe any pre-v3 history on the row (see the
             # single-record upsert_session above for the full rationale).
             existing = self.client.query(
-                f"SELECT runs, user_id, agent, team, workflow, created_at FROM {table} WHERE id = $record",
+                "SELECT runs, user_id, agent, team, workflow, created_at, session_data.compaction_metrics "
+                f"FROM {table} WHERE id = $record",
                 {"record": RecordID(table, session.session_id)},
             )
             legacy_runs: Any = None
@@ -1034,7 +1036,7 @@ class SurrealDb(BaseDb):
             ],
             written_sessions,
         )
-        # The stored created_at, which keeps the session on the day it was created
+        # The stored created_at, which a session keeps
         self._reopen_metrics_days(
             [
                 written_session.get("created_at")
@@ -1727,26 +1729,19 @@ class SurrealDb(BaseDb):
             )
             if not sessions:
                 return legacy_runs
-            legacy_runs.extend(self._get_metrics_unmigrated_runs(runs_table, sessions))
+            page_legacy_runs = get_metrics_runs(get_metrics_legacy_runs(sessions))
+            # The runs table wins on a run in both, as merge_runs_table_with_legacy_blob does
+            stored_run_ids: Set[str] = set()
+            if runs_table is not None and page_legacy_runs:
+                stored_run_ids = set(
+                    self._query(
+                        f"SELECT VALUE run_id FROM {runs_table} WHERE run_id IN $ids",
+                        {"ids": [run["run_id"] for run in page_legacy_runs]},
+                        str,
+                    )
+                )
+            legacy_runs.extend(run for run in page_legacy_runs if run["run_id"] not in stored_run_ids)
             page += 1
-
-    def _get_metrics_unmigrated_runs(
-        self, runs_table: Optional[str], sessions: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """Get the runs of the given sessions' legacy runs field that the runs table does not hold."""
-        legacy_runs = get_metrics_runs(get_metrics_legacy_runs(sessions))
-        if runs_table is None or not legacy_runs:
-            return legacy_runs
-
-        # The runs table wins on a run in both, as merge_runs_table_with_legacy_blob does
-        stored_run_ids = set(
-            self._query(
-                f"SELECT VALUE run_id FROM {runs_table} WHERE run_id IN $ids",
-                {"ids": [run["run_id"] for run in legacy_runs]},
-                str,
-            )
-        )
-        return [run for run in legacy_runs if run["run_id"] not in stored_run_ids]
 
     def _get_metrics_parent_runs(self, runs_table: str, parent_run_ids: List[str]) -> List[Dict[str, Any]]:
         """Get the stored runs that started the given runs, and the runs that started those, up to the whole run."""
@@ -2030,7 +2025,7 @@ class SurrealDb(BaseDb):
                 if stored_row is not None:
                     started_at, finished_at = stored_row["started_at"], stored_row["finished_at"]
                 # A statement of its own, without the refresh row: a day's calculation heartbeats that row
-                self._query(*reopen_metrics_days_from(user_metrics_table, rebuild_from), dict)
+                reopen_metrics_days_from(self.client, user_metrics_table, rebuild_from)
                 # Yesterday and today are picked by the fingerprint, so it is marked for the next one too
                 if not self._mark_metrics_refresh_rebuild(refreshes_table):
                     return None
@@ -2189,10 +2184,11 @@ class SurrealDb(BaseDb):
     def _get_metrics_by_owner(
         self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
     ) -> Tuple[List[dict], Optional[int]]:
-        """Get the metrics of each user and day from the component metrics, in the shape of the metrics table.
+        """Get the metrics of each user and day from the component metrics, in the shape of the metrics table."""
+        table = self._get_table_if_exists("component_metrics")
+        if table is None:
+            return [], None
 
-        Read once the first calculation finished, which created the component metrics table.
-        """
         where = WhereClause().and_("aggregation_period", "daily")
         if starting_date:
             where = where.and_(
@@ -2206,7 +2202,21 @@ class SurrealDb(BaseDb):
             where = where.and_("user_id", user_id)
         where_clause, where_vars = where.build()
 
-        result = self._query(f"SELECT * FROM {self.component_metrics_table_name} {where_clause}", where_vars, dict)
+        # Only what build_metrics_by_owner_from_rows reads, so the maps of timings are never decoded
+        fields = [
+            "date",
+            "user_id",
+            "component_type",
+            "sessions_count",
+            "runs_count",
+            *[field for field in METRICS_TOKEN_FIELDS if field in METRICS_SUM_COLUMNS],
+            "token_details",
+            "model_metrics",
+            "created_at",
+            "updated_at",
+        ]
+
+        result = self._query(f"SELECT {', '.join(fields)} FROM {table} {where_clause}", where_vars, dict)
         rows = [desurrealize_metrics_row(record) for record in result]
         if not rows:
             return [], None
@@ -2214,7 +2224,7 @@ class SurrealDb(BaseDb):
         # Get the latest updated_at, scoped to the same user filter
         user_filter = "WHERE user_id = $user_id" if user_id is not None else ""
         latest_record = self._query_one(
-            f"SELECT updated_at FROM {self.component_metrics_table_name} {user_filter} ORDER BY updated_at DESC LIMIT 1",
+            f"SELECT updated_at FROM {table} {user_filter} ORDER BY updated_at DESC LIMIT 1",
             {"user_id": user_id},
             dict,
         )
@@ -2226,10 +2236,11 @@ class SurrealDb(BaseDb):
         self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
     ) -> Tuple[List[dict], Optional[int]]:
         """Get the day rows of the user metrics table in the shape of the metrics table: the everyone rows for ``""``, one
-        user's rows for a name, and every user's rows for ``None``.
+        user's rows for a name, and every user's rows for ``None``."""
+        user_metrics_table = self._get_table_if_exists("user_metrics")
+        if user_metrics_table is None:
+            return [], None
 
-        Read once the first calculation finished, which created the user metrics table.
-        """
         where = WhereClause().and_("aggregation_period", "daily")
         if starting_date:
             where = where.and_(
@@ -2257,7 +2268,7 @@ class SurrealDb(BaseDb):
         ]
 
         result = self._query(
-            f"SELECT {', '.join(fields)} FROM {self.user_metrics_table_name} {where_clause} AND ({counted}) "
+            f"SELECT {', '.join(fields)} FROM {user_metrics_table} {where_clause} AND ({counted}) "
             "ORDER BY date ASC, user_id ASC",
             where_vars,
             dict,
@@ -2269,7 +2280,7 @@ class SurrealDb(BaseDb):
         # Get the latest updated_at, scoped to the same user filter
         user_filter = 'user_id != ""' if user_id is None else "user_id = $user_id"
         latest_record = self._query_one(
-            f'SELECT updated_at FROM {self.user_metrics_table_name} WHERE aggregation_period = "daily" '
+            f'SELECT updated_at FROM {user_metrics_table} WHERE aggregation_period = "daily" '
             f"AND {user_filter} ORDER BY updated_at DESC LIMIT 1",
             {"user_id": user_id},
             dict,

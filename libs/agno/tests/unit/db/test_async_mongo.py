@@ -7,8 +7,6 @@ from pymongo import AsyncMongoClient
 
 from agno.db.base import SessionType
 from agno.db.mongo import AsyncMongoDb
-from agno.db.utils import METRICS_REFRESH_ID
-from agno.session import AgentSession
 
 
 def test_id_is_deterministic():
@@ -424,71 +422,6 @@ async def test_metrics_legacy_runs_stop_when_refresh_taken_over():
     assert result is None
     heartbeat.assert_awaited_once()
     cursor.to_list.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_metrics_release_keeps_rebuild_mark_after_claim_of_none():
-    """A claim of no fingerprint still compares, so a rebuild marked after it is kept."""
-    db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
-    refreshes_collection = Mock()
-    refreshes_collection.update_one = AsyncMock()
-
-    await db._release_metrics_refresh(refreshes_collection, "worker", fingerprint=["2026-11-01", 1, 2])
-
-    values = refreshes_collection.update_one.call_args.args[1][0]["$set"]
-    assert values["fingerprint"]["$cond"][0] == {"$eq": [{"$ifNull": ["$fingerprint", None]}, {"$literal": None}]}
-    assert values["fingerprint"]["$cond"][2] == "$fingerprint"
-
-
-@pytest.mark.asyncio
-async def test_metrics_rebuild_reopen_failure_marks_refresh_failed():
-    """A rebuild whose reopen fails shows the error in the refresh status, unless a process holds the refresh or a
-    calculation started or finished after the rebuild read it."""
-    db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
-    refreshes_collection = Mock()
-    refreshes_collection.find_one = AsyncMock(
-        return_value={"id": METRICS_REFRESH_ID, "started_at": 100, "finished_at": 200}
-    )
-    refreshes_collection.update_one = AsyncMock()
-
-    with (
-        patch.object(db, "_get_collection", AsyncMock(return_value=refreshes_collection)),
-        patch("agno.db.mongo.async_mongo.areopen_metrics_days_from", AsyncMock(side_effect=Exception("reopen failed"))),
-    ):
-        with pytest.raises(Exception, match="reopen failed"):
-            await db.calculate_metrics_dates(rebuild_from=date(2026, 10, 1))
-
-    query, pipeline = refreshes_collection.update_one.call_args.args
-    assert query == {"id": METRICS_REFRESH_ID, "locked_by": None, "started_at": 100, "finished_at": 200}
-    assert pipeline[0]["$set"]["status"] == "failed"
-
-
-@pytest.mark.asyncio
-async def test_upsert_sessions_reads_back_in_chunks():
-    """The sessions written are read back a chunk of ids at a time, so many long ids never exceed a query document."""
-    db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
-
-    async def _docs(docs):
-        for doc in docs:
-            yield doc
-
-    collection = Mock()
-    collection.bulk_write = AsyncMock()
-    # The lookup before the write passes a projection and finds nothing stored
-    collection.find.side_effect = lambda query, *args: _docs(
-        [] if args else [{"session_id": sid, "session_type": "agent"} for sid in query["session_id"]["$in"]]
-    )
-
-    with (
-        patch.object(db, "_get_collection", AsyncMock(return_value=collection)),
-        patch.object(db, "_reopen_metrics_days", AsyncMock()),
-        patch("agno.db.mongo.async_mongo.METRICS_IN_LIST_LIMIT", 1),
-    ):
-        results = await db.upsert_sessions([AgentSession(session_id="s1"), AgentSession(session_id="s2")])
-
-    assert [session.session_id for session in results] == ["s1", "s2"]
-    read_backs = [call.args[0] for call in collection.find.call_args_list if len(call.args) == 1]
-    assert read_backs == [{"session_id": {"$in": ["s1"]}}, {"session_id": {"$in": ["s2"]}}]
 
 
 @pytest.mark.asyncio

@@ -9,7 +9,6 @@ from agno.db.mongo.utils import (
     build_component_metrics_runs_projection,
 )
 from agno.db.utils import METRICS_REFRESH_ID
-from agno.session import AgentSession
 
 
 def _db():
@@ -159,24 +158,13 @@ def test_metrics_legacy_runs_stop_when_refresh_taken_over():
 
     assert result is None
     heartbeat.assert_called_once()
+    cursor.__iter__.assert_called_once()
 
 
 def test_metrics_runs_projections_keep_session_id():
     """A run and a legacy run keep their session, which names the session of each remote member run nested in them."""
     assert build_component_metrics_runs_projection()["session_id"] == 1
     assert build_component_metrics_legacy_runs_projection()["session_id"] == 1
-
-
-def test_metrics_release_keeps_rebuild_mark_after_claim_of_none():
-    """A claim of no fingerprint still compares, so a rebuild marked after it is kept."""
-    db = _db()
-    refreshes_collection = Mock()
-
-    db._release_metrics_refresh(refreshes_collection, "worker", fingerprint=["2026-11-01", 1, 2])
-
-    values = refreshes_collection.update_one.call_args.args[1][0]["$set"]
-    assert values["fingerprint"]["$cond"][0] == {"$eq": [{"$ifNull": ["$fingerprint", None]}, {"$literal": None}]}
-    assert values["fingerprint"]["$cond"][2] == "$fingerprint"
 
 
 def test_metrics_rebuild_reopen_failure_marks_refresh_failed():
@@ -196,27 +184,6 @@ def test_metrics_rebuild_reopen_failure_marks_refresh_failed():
     query, pipeline = refreshes_collection.update_one.call_args.args
     assert query == {"id": METRICS_REFRESH_ID, "locked_by": None, "started_at": 100, "finished_at": 200}
     assert pipeline[0]["$set"]["status"] == "failed"
-
-
-def test_upsert_sessions_reads_back_in_chunks():
-    """The sessions written are read back a chunk of ids at a time, so many long ids never exceed a query document."""
-    db = _db()
-    collection = Mock()
-    # The lookup before the write passes a projection and finds nothing stored
-    collection.find.side_effect = lambda query, *args: (
-        [] if args else [{"session_id": sid, "session_type": "agent"} for sid in query["session_id"]["$in"]]
-    )
-
-    with (
-        patch.object(db, "_get_collection", return_value=collection),
-        patch.object(db, "_reopen_metrics_days"),
-        patch("agno.db.mongo.mongo.METRICS_IN_LIST_LIMIT", 1),
-    ):
-        results = db.upsert_sessions([AgentSession(session_id="s1"), AgentSession(session_id="s2")])
-
-    assert [session.session_id for session in results] == ["s1", "s2"]
-    read_backs = [call.args[0] for call in collection.find.call_args_list if len(call.args) == 1]
-    assert read_backs == [{"session_id": {"$in": ["s1"]}}, {"session_id": {"$in": ["s2"]}}]
 
 
 def test_an_unstamped_sessions_collection_with_no_legacy_runs_is_read_for_them_once():

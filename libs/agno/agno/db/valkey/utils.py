@@ -18,7 +18,7 @@ from agno.db.utils import (
 from agno.utils.log import log_warning
 
 try:
-    from glide_sync import ClusterScanCursor, GlideClusterClient, Script
+    from glide_sync import ClusterScanCursor, ExpirySet, ExpiryType, GlideClusterClient, Script
 
     ValkeyClusterClient: type = GlideClusterClient
 except ImportError:
@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
 
 # Kept small: a batch is a single request, which the client waits 250 milliseconds for by default
-METRICS_PIPELINE_SIZE = 100
+VALKEY_BATCH_LIMIT = 100
 
 # The keys of a stored run that hold the runs nested inside it, in the order the rollup walks them
 _METRICS_NESTED_RUN_KEYS = ("step_executor_runs", "member_responses", "workflow_agent_run")
@@ -405,7 +405,7 @@ def remove_index_entries(
 # The metrics refresh is claimed, heartbeated and released, and the rows of a calculation written, by one script each,
 # so the check that the calculation holds the refresh and the write run as one step on the server. A GLIDE client sends
 # every caller's commands over one connection, so a WATCH would be lifted by another thread's transaction.
-CLAIM_METRICS_REFRESH_LUA = """
+_CLAIM_METRICS_REFRESH_LUA = """
 local now = tonumber(redis.call('TIME')[1])
 local stored = redis.call('GET', KEYS[1])
 local row = {id = ARGV[2], finished_at = cjson.null, fingerprint = cjson.null}
@@ -426,7 +426,7 @@ redis.call('SET', KEYS[1], encoded)
 return encoded
 """
 
-HEARTBEAT_METRICS_REFRESH_LUA = """
+_HEARTBEAT_METRICS_REFRESH_LUA = """
 local stored = redis.call('GET', KEYS[1])
 if not stored then
   return 0
@@ -440,7 +440,7 @@ redis.call('SET', KEYS[1], cjson.encode(row))
 return 1
 """
 
-RELEASE_METRICS_REFRESH_LUA = """
+_RELEASE_METRICS_REFRESH_LUA = """
 local stored = redis.call('GET', KEYS[1])
 if ARGV[1] == '' and ARGV[2] == 'failed' and ARGV[6] == 'null' then
   -- Before any refresh there is no row to update; one created since keeps its own status
@@ -511,7 +511,7 @@ redis.call('SET', KEYS[1], cjson.encode(row))
 return 1
 """
 
-MARK_METRICS_REFRESH_REBUILD_LUA = """
+_MARK_METRICS_REFRESH_REBUILD_LUA = """
 local stored = redis.call('GET', KEYS[1])
 if not stored then
   return 0
@@ -523,7 +523,7 @@ return 1
 """
 
 # Runs the recorded writes, each [command, index of its key in KEYS, arguments...], while ARGV[1] holds the refresh
-FENCED_METRICS_WRITES_LUA = """
+_FENCED_METRICS_WRITES_LUA = """
 local stored = redis.call('GET', KEYS[1])
 if not stored or cjson.decode(stored)['locked_by'] ~= ARGV[1] then
   return 0
@@ -537,7 +537,7 @@ return 1
 
 # The everyone row stays completed only while it still has the version read before its period's rows, as
 # user_metrics_row_to_store keeps it; created_at is never overwritten
-UPSERT_USER_METRICS_ROW_LUA = """
+_UPSERT_USER_METRICS_ROW_LUA = """
 local stored = redis.call('GET', KEYS[1])
 if not stored or cjson.decode(stored)['locked_by'] ~= ARGV[1] then
   return 0
@@ -567,9 +567,16 @@ redis.call('SADD', KEYS[4], ARGV[5])
 return 1
 """
 
+_CLAIM_METRICS_REFRESH_SCRIPT = Script(_CLAIM_METRICS_REFRESH_LUA)
+_HEARTBEAT_METRICS_REFRESH_SCRIPT = Script(_HEARTBEAT_METRICS_REFRESH_LUA)
+_RELEASE_METRICS_REFRESH_SCRIPT = Script(_RELEASE_METRICS_REFRESH_LUA)
+_MARK_METRICS_REFRESH_REBUILD_SCRIPT = Script(_MARK_METRICS_REFRESH_REBUILD_LUA)
+_FENCED_METRICS_WRITES_SCRIPT = Script(_FENCED_METRICS_WRITES_LUA)
+_UPSERT_USER_METRICS_ROW_SCRIPT = Script(_UPSERT_USER_METRICS_ROW_LUA)
+
 
 class MetricsWrites:
-    """The writes of metrics rows, recorded as a GLIDE batch records them, so FENCED_METRICS_WRITES_LUA runs them in
+    """The writes of metrics rows, recorded as a GLIDE batch records them, so _FENCED_METRICS_WRITES_LUA runs them in
     one step with the check that the calculation still holds the metrics refresh."""
 
     def __init__(self, refresh_key: str):
@@ -582,8 +589,8 @@ class MetricsWrites:
         # Lua tables count from 1
         self.commands.append([command, self.keys.index(key) + 1, *args])
 
-    def set(self, key: str, value: str) -> None:
-        self._add("SET", key, value)
+    def set(self, key: str, value: str, expiry: Optional[ExpirySet] = None) -> None:
+        self._add("SET", key, value, *(expiry.get_cmd_args() if expiry is not None else []))
 
     def delete(self, keys: List[str]) -> None:
         for key in keys:
@@ -693,9 +700,8 @@ def bulk_upsert_component_metrics(
     for record in component_metrics_records:
         record_id = component_metrics_record_id(record)
         key = generate_valkey_key(prefix=prefix, table_type="component_metrics", key_id=record_id)
-        pipe.set(key, serialize_data(record))
-        if expire is not None:
-            pipe.expire(key, expire)
+        expiry = ExpirySet(ExpiryType.SEC, expire) if expire is not None else None
+        pipe.set(key, serialize_data(record), expiry=expiry)
         create_index_entries(
             valkey_client=pipe,
             prefix=prefix,
@@ -755,7 +761,7 @@ def upsert_user_metrics_row(
         user_metrics_row["aggregation_period"], user_metrics_row["date"], user_metrics_row["user_id"]
     )
     written = valkey_client.invoke_script(
-        Script(UPSERT_USER_METRICS_ROW_LUA),
+        _UPSERT_USER_METRICS_ROW_SCRIPT,
         keys=[
             generate_valkey_key(prefix=prefix, table_type="metrics_refreshes", key_id=METRICS_REFRESH_ID),
             generate_valkey_key(prefix=prefix, table_type="user_metrics", key_id=record_id),
@@ -999,7 +1005,8 @@ def build_component_metrics_session(session: Dict[str, Any]) -> Dict[str, Any]:
         session (Dict[str, Any]): The session, as stored.
 
     Returns:
-        Dict[str, Any]: The session with its type, its owner, its agent, team or workflow, and its metadata.
+        Dict[str, Any]: The session with its type, its owner, its agent, team or workflow, its metadata, and the
+            compaction metrics of its session_data.
     """
     return {
         "session_id": session.get("session_id"),
@@ -1009,5 +1016,6 @@ def build_component_metrics_session(session: Dict[str, Any]) -> Dict[str, Any]:
         "team_id": session.get("team_id"),
         "workflow_id": session.get("workflow_id"),
         "metadata": session.get("metadata"),
+        "compaction_metrics": (session.get("session_data") or {}).get("compaction_metrics"),
         "created_at": session.get("created_at"),
     }

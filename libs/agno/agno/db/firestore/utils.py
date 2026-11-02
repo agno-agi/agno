@@ -6,7 +6,7 @@ from datetime import date
 from typing import Any, Dict, List, Optional
 
 from agno.db.firestore.schemas import get_collection_indexes
-from agno.db.utils import build_user_metrics_row, get_sort_value, metric_record_day
+from agno.db.utils import build_user_metrics_row, get_sort_value, list_metrics_models, metric_record_day
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
@@ -217,13 +217,26 @@ def user_metrics_record_id(aggregation_period: str, row_date: date, user_id: str
 
 
 def serialize_metrics_row(record: Dict[str, Any]) -> Dict[str, Any]:
-    """Return a metrics row with its day as an ISO string, the way Firestore stores it."""
-    return {**record, "date": record["date"].isoformat()}
+    """Return a metrics row with its day as an ISO string and its models as the list agno_metrics keeps, the way
+    Firestore stores it, so no model provider becomes a field name."""
+    document = {**record, "date": record["date"].isoformat()}
+    if "model_metrics" in document:
+        document["model_metrics"] = list_metrics_models(document["model_metrics"])
+    return document
 
 
 def deserialize_metrics_row(record: Dict[str, Any]) -> Dict[str, Any]:
     """Return a stored metrics row with its day, stored as an ISO string, as a date."""
-    return {**record, "date": metric_record_day(record)}
+    row = {**record, "date": metric_record_day(record)}
+    if "model_metrics" in row:
+        model_metrics: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        for model in row["model_metrics"] or []:
+            model_totals: Dict[str, Any] = {"count": model["count"]}
+            if model.get("cost") is not None:
+                model_totals["cost"] = model["cost"]
+            model_metrics.setdefault(model["model_provider"], {})[model["model_id"]] = model_totals
+        row["model_metrics"] = model_metrics
+    return row
 
 
 def deserialize_metrics_refresh_row(record: Dict[str, Any]) -> Dict[str, Any]:
@@ -288,14 +301,15 @@ def reopen_metrics_days_from(client: Client, user_metrics_collection_ref, starti
         .stream()
     )
     batch = client.batch()
-    in_batch = 0
+    batch_count = 0
     for doc in docs:
         batch.update(doc.reference, {"completed": False, "version": Increment(1)})
-        in_batch += 1
-        # Firestore batch limit is 500 operations
-        if in_batch >= 500:
+        batch_count += 1
+        # Firestore batch has a limit of 500 operations
+        if batch_count >= 500:
             batch.commit()
             batch = client.batch()
-            in_batch = 0
-    if in_batch > 0:
+            batch_count = 0
+    # Commit remaining operations
+    if batch_count > 0:
         batch.commit()

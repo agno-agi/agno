@@ -3057,7 +3057,7 @@ class SqliteDb(BaseDb):
         # No savepoint: SQLite rolls back only the statement that failed, and the write's transaction goes on
         try:
             # Looked up only when a day reopens, the table loaded on the write's own connection: a lookup
-            # through the scoped session would end the write's transaction. None when no day was calculated yet
+            # through another session would not run in the write's transaction. None when no day was calculated yet
             user_metrics_table = self._get_cached_table("user_metrics", self.user_metrics_table_name)
             if user_metrics_table is None:
                 if not is_table_available(session=sess, table_name=self.user_metrics_table_name):
@@ -3084,7 +3084,8 @@ class SqliteDb(BaseDb):
     def _get_metrics_reopen_session_ids(
         self, sess: Any, table: Table, session_records: List[Dict[str, Any]]
     ) -> Set[str]:
-        """Get the id of each session the given rows add, or move to another owner or component."""
+        """Get the id of each session the given rows add, move to another owner or component, or give other
+        compaction metrics."""
         written_session_ids = [record["session_id"] for record in session_records]
         stored_sessions: Dict[str, Any] = {}
         for start in range(0, len(written_session_ids), METRICS_IN_LIST_LIMIT):
@@ -3095,15 +3096,26 @@ class SqliteDb(BaseDb):
                 table.c.team_id,
                 table.c.workflow_id,
                 table.c.created_at,
+                table.c.session_data["compaction_metrics"].label("compaction_metrics"),
             ).where(table.c.session_id.in_(written_session_ids[start : start + METRICS_IN_LIST_LIMIT]))
             stored_sessions.update((row.session_id, row) for row in sess.execute(stored_stmt).fetchall())
         session_ids: Set[str] = set()
         for record in session_records:
             stored_session = stored_sessions.get(record["session_id"])
-            if stored_session is None or any(
-                record[column] != getattr(stored_session, column)
-                for column in ["user_id", "agent_id", "team_id", "workflow_id"]
-                if column in record
+            if (
+                stored_session is None
+                or any(
+                    record[column] != getattr(stored_session, column)
+                    for column in ["user_id", "agent_id", "team_id", "workflow_id"]
+                    if column in record
+                )
+                or (
+                    "session_data" in record
+                    and (record["session_data"] if isinstance(record["session_data"], dict) else {}).get(
+                        "compaction_metrics"
+                    )
+                    != stored_session.compaction_metrics
+                )
             ):
                 session_ids.add(record["session_id"])
         return session_ids
@@ -3482,6 +3494,7 @@ class SqliteDb(BaseDb):
                 sessions_table.c.team_id,
                 sessions_table.c.workflow_id,
                 sessions_table.c.metadata,
+                func.json_extract(sessions_table.c.session_data, "$.compaction_metrics").label("compaction_metrics"),
             ).where(sessions_table.c.created_at >= start_timestamp, sessions_table.c.created_at < end_timestamp)
             result = sess.execute(sessions_stmt).fetchall()
             sessions = [dict(record._mapping) for record in result]
@@ -3648,7 +3661,7 @@ class SqliteDb(BaseDb):
             if calculated_dates is None:
                 return None
             if not calculated_dates:
-                # Nothing changed: today's metrics come back, as they did when every refresh calculated today
+                # A refresh that changed no day answers with today's metrics
                 calculated_dates = [datetime.now(timezone.utc).date()]
             metrics, _ = self._get_metrics_rows(calculated_dates[0], calculated_dates[-1], None)
             return [metric for metric in metrics if metric["date"] in calculated_dates]
