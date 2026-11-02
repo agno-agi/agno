@@ -228,7 +228,7 @@ async def _verify_task_purge(os: Any, tasks: List[Dict[str, Any]], queue: Any = 
                 for row in rows:
                     if row.get("status") in {"PENDING", "RUNNING", "PAUSED"}:
                         raise _TaskRunConflict("Cancel live Task executions before permanently deleting their records")
-                    if row.get("status") not in {"COMPLETED", "ERROR", "CANCELLED"}:
+                    if row.get("status") not in {"COMPLETED", "ERROR", "CANCELLED", "REGENERATED"}:
                         raise _TaskRunUnavailable("Cannot verify Task executions; a stored run has unknown status")
         except _TaskRunConflict:
             raise
@@ -504,7 +504,11 @@ async def _queue_execution(worker: Any, job: Dict[str, Any]) -> AsyncIterator[Di
     from agno.run.concurrency import task_execution_scope
 
     provider = _queue_provider(worker, job)
-    owner = await _acquire_queue_execution(worker, job, rotate=True)
+    owner = (
+        {}
+        if set(job) == {"component_type", "component_id"}
+        else await _acquire_queue_execution(worker, job, rotate=True)
+    )
     with task_execution_scope(provider, queued=True):
         yield owner
     # Cancellation or an unresolved exception cannot establish that detached work stopped.

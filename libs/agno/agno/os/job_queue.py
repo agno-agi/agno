@@ -2676,6 +2676,10 @@ async def araise_if_ticket_owns_continue(
         )
     if job is None:
         from agno.remote.base import BaseRemote
+        from agno.run.concurrency import current_task_execution_provider
+
+        if queue_worker is None and current_task_execution_provider() is None:
+            return
 
         if component is not None and component_type != "workflow" and not isinstance(component, BaseRemote):
             with _queue_admission_errors():
@@ -3154,6 +3158,8 @@ async def aprepare_accepted_or_abort(
     user_id: Optional[str],
     input: Any,
     media: Optional[List[Dict[str, Any]]] = None,
+    *,
+    accepted_job: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Post-enqueue prepare under the acceptance invariant: once the ticket
     committed, every response must either ACKNOWLEDGE the durable acceptance
@@ -3173,7 +3179,8 @@ async def aprepare_accepted_or_abort(
       swallow the prepare failure and acknowledge. A 500 here would be the
       lie - the work happens anyway.
     """
-    accepted_job = await queue_worker.store.get_job(run_id)
+    if accepted_job is None:
+        accepted_job = await queue_worker.store.get_job(run_id)
     try:
         await aprepare_queued_run(
             component, component_type, run_id, session_id, user_id, input, **({"media": media} if media else {})

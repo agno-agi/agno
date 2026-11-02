@@ -795,6 +795,39 @@ async def test_purge_run_read_propagates_query_failure(db, monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("resource", ["tasks", "projects", "products"])
+@pytest.mark.parametrize("run_status,expected_status", [("REGENERATED", 204), ("PAUSED", 409), ("UNRECOGNIZED", 503)])
+async def test_http_purge_distinguishes_regenerated_terminal_history(db, resource, run_status, expected_status):
+    from agno.run.agent import RunOutput
+    from agno.session.agent import AgentSession
+
+    await call(db._get_table, table_type="schedules", create_table_if_not_found=True)
+    _, product, project, task = await execution_task(db)
+    descriptor = {"db_id": db.id, "session_table": db.session_table_name, "runs_table": db.runs_table_name}
+    await reconcile_execution_provenance(db, task, [descriptor])
+    await call(
+        db.upsert_session,
+        AgentSession(session_id=task["session_id"], agent_id="writer", created_at=1, updated_at=1),
+    )
+    await call(
+        db.upsert_run,
+        RunOutput(run_id=uuid4().hex, agent_id="writer", session_id=task["session_id"], status=run_status),
+        session_id=task["session_id"],
+    )
+    app = AgentOS(
+        db=db,
+        registry=Registry(agents=[Agent(id="writer", db=db, telemetry=False)]),
+        company=CompanyConfig(),
+        telemetry=False,
+    ).get_app()
+    record_id = {"tasks": task["id"], "projects": project["id"], "products": product["id"]}[resource]
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.delete(f"/company/{resource}/{record_id}")
+    assert response.status_code == expected_status, response.text
+    assert (await call(db.get_task, task["id"], include_deleted=True) is None) == (expected_status == 204)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("target", ["product", "project", "task"])
 @pytest.mark.parametrize("archived", [False, True])
 async def test_purge_owned_rows_and_preserve_unrelated_data(db, target, archived):

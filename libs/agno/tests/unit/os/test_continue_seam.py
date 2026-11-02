@@ -1105,18 +1105,38 @@ async def test_workerless_continuation_uses_stored_origin(origin, expected):
 
     from agno.os.job_queue import araise_if_ticket_owns_continue
     from agno.run.agent import RunOutput
+    from agno.run.concurrency import task_execution_scope
 
     run = RunOutput(status="ERROR", queue_attempt=None)
     run.execution_origin = origin
     component = SimpleNamespace(aget_run_output=AsyncMock(return_value=run))
-    for _ in range(2):
-        if expected is None:
-            await araise_if_ticket_owns_continue(None, "r1", component=component, session_id="s1", user_id="owner")
-        else:
-            with pytest.raises(HTTPException) as exc:
+    with task_execution_scope(SimpleNamespace(enabled=True)):
+        for _ in range(2):
+            if expected is None:
                 await araise_if_ticket_owns_continue(None, "r1", component=component, session_id="s1", user_id="owner")
-            assert exc.value.status_code == expected
+            else:
+                with pytest.raises(HTTPException) as exc:
+                    await araise_if_ticket_owns_continue(
+                        None, "r1", component=component, session_id="s1", user_id="owner"
+                    )
+                assert exc.value.status_code == expected
     assert component.aget_run_output.await_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("component_type", ["agent", "team"])
+async def test_workerless_noncompany_continuation_accepts_old_paused_run(component_type):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from agno.os.job_queue import araise_if_ticket_owns_continue
+    from agno.run.agent import RunOutput
+
+    run = RunOutput(status="PAUSED", execution_origin=None)
+    component = SimpleNamespace(aget_run_output=AsyncMock(return_value=run))
+    await araise_if_ticket_owns_continue(
+        None, "old-run", component_type=component_type, component=component, session_id="s1", user_id="owner"
+    )
 
 
 @pytest.mark.asyncio

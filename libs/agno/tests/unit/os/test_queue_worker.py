@@ -2746,6 +2746,23 @@ async def protected_queue(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_component_only_resolution_does_not_acquire_task_execution(protected_queue):
+    worker, db, task = protected_queue
+    for _ in range(2):
+        assert await worker._aresolve_job_target({"component_type": "agent", "component_id": "agent-1"}) is not None
+        assert not db.get_task(task["id"])["metadata"].get("_agno_execution_claims")
+    with pytest.raises(ValueError, match="identity"):
+        await worker._aresolve_job_target(
+            {
+                "id": "incomplete-ticket",
+                "component_type": "agent",
+                "component_id": "agent-1",
+                "session_id": task["session_id"],
+            }
+        )
+
+
+@pytest.mark.asyncio
 async def test_queue_admission_claims_before_observable_ticket(protected_queue, monkeypatch):
     from agno.os.job_queue import aenqueue_ticket
 
@@ -2983,6 +3000,41 @@ async def test_failed_prepare_cleans_only_cancelled_acceptance(protected_queue, 
             await aprepare_accepted_or_abort(worker, FakeAgent(), "agent", job["id"], task["session_id"], None, "work")
         assert (await worker.store.get_job(job["id"]))["status"] == "cancelled"
         assert not db.get_task(task["id"])["metadata"].get("_agno_execution_claims")
+
+
+@pytest.mark.asyncio
+async def test_failed_prepare_releases_claim_when_lenient_job_read_returns_none(protected_queue, monkeypatch):
+    from fastapi import HTTPException
+
+    from agno.os.job_queue import aenqueue_ticket, aprepare_accepted_or_abort
+
+    worker, db, task = protected_queue
+    job = make_job("prepare-read-gap")
+    job["session_id"] = task["session_id"]
+    accepted = await aenqueue_ticket(worker, job)
+    assert accepted["accepted"]
+    assert db.get_task(task["id"])["metadata"].get("_agno_execution_claims")
+
+    original_get_job = worker.store.get_job
+    reads = 0
+
+    async def unreadable_once(run_id):
+        nonlocal reads
+        reads += 1
+        return None if reads == 1 else await original_get_job(run_id)
+
+    async def fail_prepare(*args, **kwargs):
+        raise RuntimeError("session store unavailable")
+
+    monkeypatch.setattr(worker.store, "get_job", unreadable_once)
+    monkeypatch.setattr("agno.os.job_queue.aprepare_queued_run", fail_prepare)
+    with pytest.raises(HTTPException) as error:
+        await aprepare_accepted_or_abort(
+            worker, FakeAgent(), "agent", job["id"], task["session_id"], None, "work", accepted_job=accepted["job"]
+        )
+    assert error.value.status_code == 500
+    assert (await original_get_job(job["id"]))["status"] == "cancelled"
+    assert not db.get_task(task["id"])["metadata"].get("_agno_execution_claims")
 
 
 @pytest.mark.asyncio

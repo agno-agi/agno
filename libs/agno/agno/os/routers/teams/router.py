@@ -900,7 +900,14 @@ def get_team_router(
                         # must not 500 an accepted submission (tails degrade gracefully)
                         await get_event_stream().register_run(queued_run_id, RunStatus.pending)
                     await aprepare_accepted_or_abort(
-                        queue_worker, team, "team", queued_run_id, queued_session_id, user_id, message
+                        queue_worker,
+                        team,
+                        "team",
+                        queued_run_id,
+                        queued_session_id,
+                        user_id,
+                        message,
+                        accepted_job=enqueue_result["job"],
                     )
                     wake_queue_worker(queue_worker)
                     return StreamingResponse(queued_run_tail_streamer(queued_run_id), media_type="text/event-stream")
@@ -1012,7 +1019,14 @@ def get_team_router(
                 # Accepted: persist the PENDING run row so pollers find it.
                 # Idempotent - a worker that already claimed the job wins.
                 await aprepare_accepted_or_abort(
-                    queue_worker, team, "team", queued_run_id, queued_session_id, user_id, message
+                    queue_worker,
+                    team,
+                    "team",
+                    queued_run_id,
+                    queued_session_id,
+                    user_id,
+                    message,
+                    accepted_job=enqueue_result["job"],
                 )
                 wake_queue_worker(queue_worker)
                 return JSONResponse(

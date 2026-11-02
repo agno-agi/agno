@@ -81,7 +81,15 @@ async def enqueue_sandbox_run(
         await get_event_stream().register_run(job["id"], RunStatus.pending)
     media = options.get("media")
     await aprepare_accepted_or_abort(
-        worker, agent, "agent", job["id"], session_id, user_id, input, **({"media": media} if media else {})
+        worker,
+        agent,
+        "agent",
+        job["id"],
+        session_id,
+        user_id,
+        input,
+        accepted_job=accepted["job"],
+        **({"media": media} if media else {}),
     )
     return job
 

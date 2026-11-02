@@ -1006,7 +1006,14 @@ def get_agent_router(
                         # must not 500 an accepted submission (tails degrade gracefully)
                         await _ges().register_run(queued_run_id, _RS.pending)
                     await aprepare_accepted_or_abort(
-                        queue_worker, agent, "agent", queued_run_id, queued_session_id, user_id, message
+                        queue_worker,
+                        agent,
+                        "agent",
+                        queued_run_id,
+                        queued_session_id,
+                        user_id,
+                        message,
+                        accepted_job=enqueue_result["job"],
                     )
                     wake_queue_worker(queue_worker)
                     return StreamingResponse(queued_run_tail_streamer(queued_run_id), media_type="text/event-stream")
@@ -1116,7 +1123,14 @@ def get_agent_router(
                 # Accepted: persist the PENDING run row so pollers find it.
                 # Idempotent - a worker that already claimed the job wins.
                 await aprepare_accepted_or_abort(
-                    queue_worker, agent, "agent", queued_run_id, queued_session_id, user_id, message
+                    queue_worker,
+                    agent,
+                    "agent",
+                    queued_run_id,
+                    queued_session_id,
+                    user_id,
+                    message,
+                    accepted_job=enqueue_result["job"],
                 )
                 wake_queue_worker(queue_worker)
                 return JSONResponse(
