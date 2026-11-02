@@ -339,6 +339,163 @@ async def test_task_execution_provider_opaque_async_database_stays_on_own_loop(t
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_sync_tool_in_async_company_task_uses_database_owning_loop(cancel):
+    from threading import Event
+
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from agno.company.manager import AsyncCompanyManager
+    from agno.db.sqlite import AsyncSqliteDb
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    db = AsyncSqliteDb(db_engine=engine, db_url="sqlite+aiosqlite:///unused.db")
+    manager = AsyncCompanyManager(db)
+    product = await manager.create(name="Tool execution")
+    project = await manager.create_project(product_id=product["id"], name="Tool execution")
+    task = await manager.create_task(product_id=product["id"], project_id=project["id"], title="Use tool")
+    provider = concurrency._TaskExecutionProvider(db)
+    await provider.ainitialize()
+    entered, finish = Event(), Event()
+
+    def tool():
+        entered.set()
+        assert finish.wait(5)
+        return "tool result"
+
+    class Runner:
+        def __init__(self, run_db):
+            self.db = run_db
+
+        @concurrency.guard_task_execution()
+        async def arun(self, session_id):
+            return await asyncio.to_thread(concurrency.task_execution_thread, tool)
+
+    try:
+        with concurrency.task_execution_scope(provider):
+            run = asyncio.create_task(Runner(db).arun(task["session_id"]))
+            assert await asyncio.to_thread(entered.wait, 3)
+            assert (await db.get_task(task["id"]))["metadata"].get("_agno_execution_claims")
+            if cancel:
+                run.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await run
+                assert (await db.get_task(task["id"]))["metadata"].get("_agno_execution_claims")
+            finish.set()
+            if not cancel:
+                assert await run == "tool result"
+            await provider.aclose()
+        assert not (await db.get_task(task["id"]))["metadata"].get("_agno_execution_claims")
+    finally:
+        finish.set()
+        await provider.aclose()
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_release_failure_preserves_run_result_and_attempts_other_owners():
+    acquired, released = [], []
+
+    class Provider:
+        enabled = True
+
+        async def aacquire(self, session_id, token, **kwargs):
+            acquired.append((session_id, token))
+            return [session_id]
+
+        async def arelease(self, session_id, token):
+            released.append((session_id, token))
+            if session_id == "child":
+                raise RuntimeError("one release failed")
+
+    class Producer:
+        @concurrency.guard_task_execution()
+        async def root(self, session_id):
+            return await self.child("child")
+
+        @concurrency.guard_task_execution()
+        async def child(self, session_id):
+            return "successful result"
+
+    with concurrency.task_execution_scope(Provider()):
+        assert await Producer().root("root") == "successful result"
+    assert set(acquired) <= set(released)
+
+
+@pytest.mark.parametrize("tool_thread", [False, True])
+def test_sync_release_failure_preserves_run_result(tool_thread):
+    from threading import Lock
+
+    released = []
+
+    class Provider:
+        enabled = True
+        _lock = Lock()
+        _closing = False
+        _closed = False
+        _threads = set()
+
+        def acquire(self, session_id, token, **kwargs):
+            return [session_id]
+
+        def release(self, session_id, token):
+            released.append(session_id)
+            raise RuntimeError("release unavailable")
+
+    class Producer:
+        @concurrency.guard_task_execution()
+        def run(self, session_id):
+            return (
+                concurrency.task_execution_thread(lambda: "successful result") if tool_thread else "successful result"
+            )
+
+    with concurrency.task_execution_scope(Provider()):
+        assert Producer().run("task-session") == "successful result"
+    assert released == (["task-session", "task-session"] if tool_thread else ["task-session"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("child_db", [None, "invalid"])
+async def test_nested_component_without_database_uses_parent_store(tmp_path, child_db):
+    from agno.company.manager import CompanyManager
+    from agno.db.sqlite import SqliteDb
+
+    db = SqliteDb(db_file=str(tmp_path / "nested-store.db"))
+    manager = CompanyManager(db)
+    product = manager.create(name="Nested")
+    project = manager.create_project(product_id=product["id"], name="Nested")
+    task = manager.create_task(product_id=product["id"], project_id=project["id"], title="Nested")
+    provider = concurrency._TaskExecutionProvider(db)
+    await provider.ainitialize()
+
+    class Child:
+        def __init__(self):
+            self.db = None if child_db is None else object()
+
+        @concurrency.guard_task_execution()
+        async def arun(self, session_id):
+            return "done"
+
+    class Parent:
+        def __init__(self):
+            self.db = db
+
+        @concurrency.guard_task_execution()
+        async def arun(self, session_id):
+            return await Child().arun("derived-child-session")
+
+    try:
+        with concurrency.task_execution_scope(provider):
+            assert await Parent().arun(task["session_id"]) == "done"
+        provenance = db.get_task(task["id"])["metadata"]["_agno_execution_provenance"]
+        assert provenance["complete"] is (child_db is None)
+        assert len(provenance["stores"]) == 1
+    finally:
+        await provider.aclose()
+        db.close()
+
+
+@pytest.mark.asyncio
 async def test_task_execution_provider_checks_partial_capability():
     from agno.db.in_memory import InMemoryDb
 

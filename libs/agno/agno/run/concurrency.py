@@ -350,14 +350,27 @@ class _TaskExecutionProvider:
                 with self._lock:
                     self._pending.discard(future)
         if self.asynchronous:
-            raise RuntimeError("This Company database requires the async calling path on its owning event loop")
+            try:
+                current = asyncio.get_running_loop()
+            except RuntimeError:
+                current = None
+            if current is self._origin_loop:
+                raise RuntimeError("This Company database requires the async calling path on its owning event loop")
+            future = self._submit(method, *args, **kwargs)
+            try:
+                return future.result()
+            finally:
+                with self._lock:
+                    self._pending.discard(future)
         return getattr(self.db, method)(*args, **kwargs)
 
     def _submit(self, method: str, *args: Any, **kwargs: Any) -> Any:
         # Admission and shutdown share the lock: every accepted write is drained.
         with self._lock:
             self._check()
-            future = asyncio.run_coroutine_threadsafe(getattr(self._owned_db, method)(*args, **kwargs), self._loop)
+            db = self._owned_db if self._loop is not None else self.db
+            loop = self._loop if self._loop is not None else self._origin_loop
+            future = asyncio.run_coroutine_threadsafe(getattr(db, method)(*args, **kwargs), loop)
             self._pending.add(future)
             return future
 
@@ -476,6 +489,10 @@ def task_execution_scope(provider: Optional[_TaskExecutionProvider], *, queued: 
 
 def task_execution_store(component: Any) -> Dict[str, Any]:
     db = getattr(component, "db", None)
+    if db is None:
+        parent = _task_execution_producer.get()
+        if parent is not None:
+            return parent[3]
     descriptor = {
         "db_id": getattr(db, "id", None),
         "session_table": getattr(db, "session_table_name", None),
@@ -515,7 +532,10 @@ def task_execution_thread(function: Any) -> Any:
             return function()
         finally:
             for owner, owner_session, _ in owners:
-                owner.release(owner_session, token)
+                try:
+                    owner.release(owner_session, token)
+                except Exception as exc:
+                    log_warning(f"Company execution claim release failed: {exc}")
     finally:
         finished.set_result(None)
         with provider._lock:
@@ -637,7 +657,10 @@ def guard_task_execution(
             finally:
                 if not claim["retained"]:
                     for owner, owner_session, _ in owners:
-                        owner.release(owner_session, token)
+                        try:
+                            owner.release(owner_session, token)
+                        except Exception as exc:
+                            log_warning(f"Company execution claim release failed: {exc}")
 
         @asynccontextmanager
         async def ahold(
@@ -676,7 +699,11 @@ def guard_task_execution(
             finally:
                 if not claim["transferred"] and not claim["retained"]:
                     for owner, owner_session, _ in owners:
-                        await owner.arelease(owner_session, token)
+                        try:
+                            await owner.arelease(owner_session, token)
+                        except Exception as exc:
+                            # An uncertain claim remains protective; do not turn a completed run into a failed one.
+                            log_warning(f"Company execution claim release failed: {exc}")
 
         def iterate(iterator: Any, identity: Any) -> Any:
             # Bind only while advancing: a caller may close the stream in another context.

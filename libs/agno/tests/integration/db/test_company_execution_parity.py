@@ -3916,6 +3916,42 @@ async def test_permanent_delete_accepts_null_history(system, monkeypatch, assign
 
 
 @pytest.mark.asyncio
+async def test_permanent_delete_accepts_inherited_child_execution_store(system):
+    from agno.company.execution import _call
+    from agno.run.concurrency import guard_task_execution, task_execution_scope
+
+    client, db, _, os, _ = system
+    task = await accepted(client)
+    await _call(db, "_get_table", table_type="runs", create_table_if_not_found=True)
+    assert await _call(db, "get_runs", session_id=task["session_id"], deserialize=False, raise_on_error=True) == (
+        [],
+        0,
+    )
+
+    class Child:
+        db = None
+
+        @guard_task_execution()
+        async def arun(self, session_id):
+            return "child result"
+
+    class Parent:
+        def __init__(self, store):
+            self.db = store
+
+        @guard_task_execution()
+        async def arun(self, session_id):
+            return await Child().arun("child-session")
+
+    with task_execution_scope(os._task_execution_provider):
+        assert await Parent(db).arun(task["session_id"]) == "child result"
+    provenance = (await _call(db, "get_task", task["id"]))["metadata"]["_agno_execution_provenance"]
+    assert provenance["complete"] is True
+    response = await client.delete("/company/tasks/" + task["id"])
+    assert response.status_code == 204, response.text
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("state", ["no_runtime", "original_store", "live_run", "terminal"])
 async def test_permanent_delete_verifies_legacy_zero_attempt(system, monkeypatch, state):
     from agno.company.execution import _call
