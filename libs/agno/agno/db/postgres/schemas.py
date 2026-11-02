@@ -151,7 +151,7 @@ METRICS_TABLE_SCHEMA = {
 COMPONENT_METRICS_TABLE_SCHEMA = {
     "aggregation_period": {"type": String, "primary_key": True, "nullable": False},
     "date": {"type": Date, "primary_key": True, "nullable": False},
-    # Empty string for no owner, since Postgres treats NULLs as distinct
+    # Owner of this row. Empty string for runs with no user, since Postgres treats NULLs as distinct
     "user_id": {"type": String, "primary_key": True, "nullable": False, "default": ""},
     "component_type": {"type": String, "primary_key": True, "nullable": False},
     "component_id": {"type": String, "primary_key": True, "nullable": False},
@@ -190,7 +190,8 @@ COMPONENT_METRICS_TABLE_SCHEMA = {
 USER_METRICS_TABLE_SCHEMA = {
     "aggregation_period": {"type": String, "primary_key": True, "nullable": False},
     "date": {"type": Date, "primary_key": True, "nullable": False},
-    # Empty string for the everyone row, since Postgres treats NULLs as distinct
+    # Owner of this row. Empty string for the everyone row, which counts every run, runs with no user included.
+    # Not NULL, since Postgres treats NULLs as distinct
     "user_id": {"type": String, "primary_key": True, "nullable": False, "default": ""},
     "agent_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
     "team_runs_count": {"type": BigInteger, "nullable": False, "default": 0},

@@ -28,15 +28,36 @@ async def cleanup_metrics_and_sessions(async_postgres_db_real: AsyncPostgresDb):
         except Exception:
             pass  # Ignore cleanup errors for metrics table
 
-        # Clean up component metrics, their totals and their refreshes
+        # Clean up component metrics
         try:
-            for table_type in ("component_metrics", "user_metrics", "metrics_refreshes"):
-                table = await async_postgres_db_real._get_table(table_type, create_table_if_not_found=True)
-                async with async_postgres_db_real.async_session_factory() as session:
-                    await session.execute(table.delete())
-                    await session.commit()
+            component_metrics_table = await async_postgres_db_real._get_table(
+                "component_metrics", create_table_if_not_found=True
+            )
+            async with async_postgres_db_real.async_session_factory() as session:
+                await session.execute(component_metrics_table.delete())
+                await session.commit()
         except Exception:
-            pass  # Ignore cleanup errors for component metrics tables
+            pass  # Ignore cleanup errors for component metrics table
+
+        # Clean up user metrics
+        try:
+            user_metrics_table = await async_postgres_db_real._get_table("user_metrics", create_table_if_not_found=True)
+            async with async_postgres_db_real.async_session_factory() as session:
+                await session.execute(user_metrics_table.delete())
+                await session.commit()
+        except Exception:
+            pass  # Ignore cleanup errors for user metrics table
+
+        # Clean up metrics refreshes
+        try:
+            metrics_refreshes_table = await async_postgres_db_real._get_table(
+                "metrics_refreshes", create_table_if_not_found=True
+            )
+            async with async_postgres_db_real.async_session_factory() as session:
+                await session.execute(metrics_refreshes_table.delete())
+                await session.commit()
+        except Exception:
+            pass  # Ignore cleanup errors for metrics refreshes table
 
         # Clean up sessions
         try:
@@ -241,11 +262,7 @@ async def test_calculate_metrics_past_query_parameter_limit(async_postgres_db_re
                     "run_id": f"r_{i}",
                     "session_id": f"s_{i}",
                     "run_type": "agent",
-                    "run_data": {
-                        "model": "gpt-5.5",
-                        "model_provider": "OpenAI",
-                        "metrics": {"details": {"model": [{"id": "gpt-5.5"}]}},
-                    },
+                    "run_data": {"model": "gpt-5.5", "model_provider": "OpenAI"},
                     "created_at": created_at,
                 }
                 for i in range(SESSIONS_PAST_PARAMETER_LIMIT)
@@ -259,7 +276,7 @@ async def test_calculate_metrics_past_query_parameter_limit(async_postgres_db_re
     assert result[0]["agent_sessions_count"] == SESSIONS_PAST_PARAMETER_LIMIT
     assert result[0]["agent_runs_count"] == SESSIONS_PAST_PARAMETER_LIMIT
     assert result[0]["model_metrics"] == [
-        {"model_id": "gpt-5.5", "model_provider": "OpenAI", "count": SESSIONS_PAST_PARAMETER_LIMIT}
+        {"model_id": "gpt-5.5", "model_provider": "OpenAI", "count": SESSIONS_PAST_PARAMETER_LIMIT, "cost": None}
     ]
 
 

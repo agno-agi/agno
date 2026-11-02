@@ -1,7 +1,8 @@
 # Test Log: 13_observability
 
 Tested on 2026-07-24 against Agno source commit
-`74c0bfb1499c2636aa7c3f1ccd8935ceeb824b4b`.
+`74c0bfb1499c2636aa7c3f1ccd8935ceeb824b4b`. `os_metrics.py` and the `metrics.py`
+re-run were tested on 2026-11-02.
 
 ### basic.py
 
@@ -94,20 +95,14 @@ user, 43 total tokens, and the last refresh `completed`.
 
 **Test mode:** LIVE
 
-**Description:** Ran `run_os_metrics_demo()` on 2026-11-02 against a local
-PostgreSQL that already held six runs of the day, one of them a team member run:
-`metrics-researcher` (`gpt-5.5`) and `metrics-summarizer` (`gpt-5.6-luna`) ran
-once each as `observability-user`. The six `/os/metrics` routes were called over
-HTTP on a served AgentOS over the same tables.
+**Description:** Ran `run_os_metrics_demo()` on 2026-11-02 against a fresh local
+PostgreSQL: `metrics-researcher` and `metrics-summarizer` (`gpt-5.6-luna`) ran
+once each as `observability-user`, then `POST /metrics/refresh` and the
+`/os/metrics/sessions`, `/runs`, `/tokens` and `/models` routes were called for
+today on the in-process AgentOS app.
 
-**Result:** Printed 5 sessions today, 5 runs today (runs no other run started),
-6 completed runs today (the team member run included), 1696 tokens today, and
-1 run of `gpt-5.5` and 5 of `gpt-5.6-luna`. Over a 7-day window the session
-and token totals equalled `GET /metrics` and SQL over `agno_sessions` and
-`agno_runs`, the run total equalled the SQL count of runs with no parent, and a
-repeated read sent with its ETag answered 304 with no body.
-`GET /os/metrics/users` answered 503, since the example passes no
-`user_directory`.
+**Result:** Printed 2 sessions today, 2 runs today, 2 completed runs today,
+121 tokens today, and 2 runs of `gpt-5.6-luna`.
 
 ---
 

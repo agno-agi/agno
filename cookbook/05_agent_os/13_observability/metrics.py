@@ -7,9 +7,8 @@ POST /metrics/refresh, then read the stored result through GET /metrics.
 
 Prerequisites: OPENAI_API_KEY
 Run: .venvs/demo/bin/python cookbook/05_agent_os/13_observability/metrics.py
-Try: Compare agent_runs_count and total_tokens after another run. On PostgreSQL,
-     POST /metrics/refresh?rebuild_from=YYYY-MM-DD also rebuilds every day since then;
-     set METRICS_CALCULATION_ENABLED=false to stop calculating metrics.
+Try: Compare agent_runs_count and total_tokens after another run, or set
+     METRICS_CALCULATION_ENABLED=false to stop calculating metrics.
 """
 
 import asyncio

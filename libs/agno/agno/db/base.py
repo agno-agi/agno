@@ -353,8 +353,8 @@ class BaseDb(ABC):
             self.runs_table_name = "agno_runs"
         self.memory_table_name = memory_table or "agno_memories"
         self.metrics_table_name = metrics_table or "agno_metrics"
-        # Derived from a custom session table like the runs table, so two databases sharing one schema never
-        # rebuild each other's metrics. Bound as index names are, so a long session table name stays a valid name
+        # Named after a custom session table, so two databases sharing one schema never rebuild each other's metrics.
+        # On Postgres the name is cut to the 63 characters Postgres keeps, so it is the name the table is stored under
         from agno.db.utils import bound_index_name
 
         if component_metrics_table:
@@ -471,13 +471,12 @@ class BaseDb(ABC):
         """
         Serialize common DB fields (table names + id). Subclasses may extend this.
         """
-        return {
+        config = {
             "id": self.id,
             "session_table": self.session_table_name,
             "job_table": self.job_table_name,
             "runs_table": self.runs_table_name,
             "memory_table": self.memory_table_name,
-            "metrics_table": self.metrics_table_name,
             "component_metrics_table": self.component_metrics_table_name,
             "user_metrics_table": self.user_metrics_table_name,
             "metrics_refreshes_table": self.metrics_refreshes_table_name,
@@ -505,6 +504,11 @@ class BaseDb(ABC):
             "mcp_oauth_refresh_tokens_table": self.mcp_oauth_refresh_tokens_table_name,
             "mcp_oauth_keys_table": self.mcp_oauth_keys_table_name,
         }
+        # The deprecated metrics_table is kept only when it was renamed, so loading a database that never set it does
+        # not warn
+        if self.metrics_table_name != "agno_metrics":
+            config["metrics_table"] = self.metrics_table_name
+        return config
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "BaseDb":
@@ -2853,8 +2857,8 @@ class AsyncBaseDb(ABC):
             self.runs_table_name = "agno_runs"
         self.memory_table_name = memory_table or "agno_memories"
         self.metrics_table_name = metrics_table or "agno_metrics"
-        # Derived from a custom session table like the runs table, so two databases sharing one schema never
-        # rebuild each other's metrics. Bound as index names are, so a long session table name stays a valid name
+        # Named after a custom session table, so two databases sharing one schema never rebuild each other's metrics.
+        # On Postgres the name is cut to the 63 characters Postgres keeps, so it is the name the table is stored under
         from agno.db.utils import bound_index_name
 
         if component_metrics_table:
@@ -2923,12 +2927,11 @@ class AsyncBaseDb(ABC):
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize common async database configuration and table overrides."""
-        return {
+        config = {
             "id": self.id,
             "session_table": self.session_table_name,
             "runs_table": self.runs_table_name,
             "memory_table": self.memory_table_name,
-            "metrics_table": self.metrics_table_name,
             "component_metrics_table": self.component_metrics_table_name,
             "user_metrics_table": self.user_metrics_table_name,
             "metrics_refreshes_table": self.metrics_refreshes_table_name,
@@ -2950,6 +2953,11 @@ class AsyncBaseDb(ABC):
             "auth_tokens_table": self.auth_tokens_table_name,
             "service_accounts_table": self.service_accounts_table_name,
         }
+        # The deprecated metrics_table is kept only when it was renamed, so loading a database that never set it does
+        # not warn
+        if self.metrics_table_name != "agno_metrics":
+            config["metrics_table"] = self.metrics_table_name
+        return config
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "AsyncBaseDb":

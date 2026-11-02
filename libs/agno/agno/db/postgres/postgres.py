@@ -329,23 +329,14 @@ class PostgresDb(BaseDb):
             mcp_oauth_refresh_tokens_table=mcp_oauth_refresh_tokens_table,
             mcp_oauth_keys_table=mcp_oauth_keys_table,
         )
-        if metrics_table is not None and metrics_table != "agno_metrics":
-            log_warning(
-                "The metrics_table argument is deprecated. Metrics are stored in "
-                f"{self.component_metrics_table_name} and {self.user_metrics_table_name}; {metrics_table} is "
-                "read only until they are built, and no longer written."
-            )
+        if metrics_table is not None:
+            log_warning("metrics_table is deprecated; use component_metrics_table and user_metrics_table.")
 
         self.db_schema: str = db_schema if db_schema is not None else "ai"
         self.metadata: MetaData = MetaData(schema=self.db_schema)
         self.create_schema: bool = create_schema
         # The bindings table has a foreign key to one session table, so each gets its own.
         self.sandbox_table_name: str = sandbox_table or default_sandbox_table_name(self.session_table_name)
-        # The days whose metrics a write could not reopen, retried by the next write
-        self._metrics_days_not_reopened: Set[date] = set()
-        # Zero means never refreshed; get_metrics uses this to refresh lazily, at most once per minute. AgentOS sets
-        # it to infinity on a database its background calculation keeps current, so its reads never calculate.
-        self._metrics_refreshed_at: float = 0.0
 
         # Initialize database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine, expire_on_commit=False))
@@ -355,6 +346,11 @@ class PostgresDb(BaseDb):
         # contract. Per adapter instance, so it can never serve runs across
         # databases.
         self._run_object_cache = SessionRunObjectCache()
+        # Zero means never refreshed; get_metrics uses this to refresh lazily, at most once per minute.
+        # stop_metrics_refresh_on_read sets it to infinity, so reads never calculate
+        self._metrics_refreshed_at: float = 0.0
+        # The days whose metrics a write could not reopen, retried by the next write
+        self._metrics_days_not_reopened: Set[date] = set()
 
     # -- Serialization methods --
     def to_dict(self):
@@ -3105,6 +3101,15 @@ class PostgresDb(BaseDb):
                     ):
                         self._metrics_days_not_reopened.clear()
                         return
+                    if not is_valid_table(
+                        db_engine=self.db_engine,
+                        table_name=self.user_metrics_table_name,
+                        table_type="user_metrics",
+                        db_schema=self.db_schema,
+                    ):
+                        raise table_schema_mismatch_error(
+                            f"{self.db_schema}.{self.user_metrics_table_name}", table_type="user_metrics"
+                        )
                     with self._resolve_lock:
                         user_metrics_table = Table(
                             self.user_metrics_table_name,
@@ -3125,11 +3130,7 @@ class PostgresDb(BaseDb):
     def _get_metrics_reopen_session_ids(
         self, sess: Any, table: Table, session_records: List[Dict[str, Any]]
     ) -> Set[str]:
-        """Get the id of each session the given rows add, or move to another owner or component.
-
-        A session is counted on the day it was created, under its owner and component, so a write that changes
-        none of them leaves its day as it is.
-        """
+        """Get the id of each session the given rows add, or move to another owner or component."""
         stored_sessions = {
             row.session_id: row
             for row in sess.execute(
@@ -3216,12 +3217,7 @@ class PostgresDb(BaseDb):
             return dict(row._mapping) if row is not None else None
 
     def _heartbeat_metrics_refresh(self, sess: Any, refreshes_table: Table, worker_id: str) -> bool:
-        """Refresh locked_at for this worker's metrics refresh, in the given transaction. False when another process
-        took it over.
-
-        The row stays locked until the transaction ends, so rows written in it are never written after another
-        process took the refresh over.
-        """
+        """Refresh locked_at for this worker's metrics refresh. False when another process took it over."""
         result = sess.execute(
             update(refreshes_table)
             .where(refreshes_table.c.id == METRICS_REFRESH_ID, refreshes_table.c.locked_by == worker_id)
@@ -3448,13 +3444,7 @@ class PostgresDb(BaseDb):
         worker_id: str,
         should_stop: Optional[Callable[[], bool]] = None,
     ) -> bool:
-        """Rebuild one day's component metrics rows and user metrics row, in one transaction. False when another
-        process took the refresh over, or should_stop returned True between the day's batches, and nothing was
-        written.
-
-        The day is completed only while its user metrics row still has the version read before its runs, so a write that
-        reopened it during the rebuild keeps it open for the next calculation.
-        """
+        """Rebuild one day's component and user metrics rows in one transaction. False when nothing was written."""
         start_timestamp = int(
             datetime.combine(date_to_process, datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
         )
@@ -3489,7 +3479,7 @@ class PostgresDb(BaseDb):
             runs: List[Dict[str, Any]] = []
             stored_run_ids: Set[str] = set()
             if runs_table is not None:
-                # JIT compiling this query takes 150 ms, against 6 ms to read a day of 50 runs
+                # JIT compiling this query costs more than reading a day of runs
                 sess.execute(text("SET LOCAL jit = off"))
                 run_rows = sess.execute(
                     build_component_metrics_runs_query(runs_table, start_timestamp, end_timestamp)
@@ -3713,9 +3703,9 @@ class PostgresDb(BaseDb):
                 )
                 if legacy_runs_table is not None:
                     with self.Session() as sess, sess.begin():
-                        # JIT compiling this query takes 150 ms, against 6 ms to read a day of 50 runs
+                        # JIT compiling this query costs more than reading a day of runs
                         sess.execute(text("SET LOCAL jit = off"))
-                        # Planned for every row, not a cursor's first: 0.7 s against 45 s on 12,500 sessions
+                        # Planned for every row, not a cursor's first: the whole result is always read
                         sess.execute(text("SET LOCAL cursor_tuple_fraction = 1.0"))
                         legacy_runs_result = sess.execute(
                             build_component_metrics_runs_query(legacy_runs_table, start_timestamp, end_timestamp),
@@ -3787,16 +3777,20 @@ class PostgresDb(BaseDb):
         self._release_metrics_refresh(refreshes_table, worker_id, fingerprint=fingerprint)
 
         if not calculated_dates:
-            log_debug("Metrics already calculated for all relevant dates.")
+            log_info("Metrics already calculated for all relevant dates.")
             return []
 
         log_debug("Updated metrics calculations")
         return calculated_dates
 
+    def stop_metrics_refresh_on_read(self) -> None:
+        """Stop calculating metrics before a read, for a database whose metrics are calculated in the background."""
+        self._metrics_refreshed_at = float("inf")
+
     def _get_metrics_by_owner(
         self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
     ) -> Tuple[List[dict], Optional[int]]:
-        """Get the metrics of each user and day from the component metrics, in the shape of agno_metrics."""
+        """Get the metrics of each user and day from the component metrics, in the shape of the metrics table."""
         table = self._get_table(table_type="component_metrics")
         if table is None:
             return [], None
@@ -3818,7 +3812,7 @@ class PostgresDb(BaseDb):
     def _get_user_metrics_rows(
         self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
     ) -> Tuple[List[dict], Optional[int]]:
-        """Get the day rows of the user metrics table in the shape of agno_metrics: the everyone rows for ``""``, one
+        """Get the day rows of the user metrics table in the shape of the metrics table: the everyone rows for ``""``, one
         user's rows for a name, and every user's rows for ``None``."""
         user_metrics_table = self._get_table(table_type="user_metrics")
         if user_metrics_table is None:
@@ -3893,23 +3887,30 @@ class PostgresDb(BaseDb):
         refresh_row = self._get_metrics_refresh_row(refreshes_table)[0] if refreshes_table is not None else None
         return refresh_row is not None and refresh_row["finished_at"] is not None
 
-    def stop_metrics_refresh_on_read(self) -> None:
-        """Stop calculating metrics before a read, for a database whose metrics are calculated in the background."""
-        self._metrics_refreshed_at = float("inf")
+    def _has_deprecated_metrics(self) -> bool:
+        """Whether the deprecated metrics table has rows, which reads serve until a first build has finished."""
+        table = self._get_table(table_type="metrics")
+        if table is None:
+            return False
+        with self.Session() as sess, sess.begin():
+            return sess.execute(select(table.c.id).limit(1)).first() is not None
 
     def _refresh_metrics_before_read(self) -> None:
-        """Calculate metrics before a read, at most once per minute per process, once a first calculate_metrics has
-        finished and unless metrics calculation is turned off. Another process calculating them holds the metrics
-        refresh, so the read goes on at once."""
+        """Calculate metrics before a read, at most once per minute per process, unless metrics calculation is turned
+        off or the deprecated metrics table is served until a first calculate_metrics has finished. Another process
+        calculating them holds the metrics refresh, so the read goes on at once."""
         if time.time() - self._metrics_refreshed_at < 60:
             return
         # Stamp first so failed runs are throttled too instead of retried on every read
         self._metrics_refreshed_at = time.time()
         try:
-            # A first build reads every run, so a read never waits for one: until it has finished, reads serve the
-            # deprecated metrics table
-            if not metrics_calculation_enabled() or not self._metrics_calculated(
-                self._get_table(table_type="metrics_refreshes")
+            if not metrics_calculation_enabled():
+                return
+            # A first build reads every run, so a read runs one only when the deprecated metrics table has no rows to
+            # serve meanwhile
+            if (
+                not self._metrics_calculated(self._get_table(table_type="metrics_refreshes"))
+                and self._has_deprecated_metrics()
             ):
                 return
             self.calculate_metrics_dates()
@@ -3926,7 +3927,7 @@ class PostgresDb(BaseDb):
 
         Metrics are read from the user metrics and component metrics once the first calculate_metrics has finished,
         and from the deprecated metrics table until then. They are refreshed first, at most once per minute per
-        process, unless AgentOS calculates them in the background.
+        process, unless stop_metrics_refresh_on_read was called.
 
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.

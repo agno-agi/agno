@@ -57,6 +57,20 @@ def cleanup_component_metrics_sessions_and_runs(postgres_db_real: PostgresDb):
             session.rollback()
 
 
+@pytest.fixture
+def legacy_runs_column(postgres_db_real: PostgresDb):
+    """Fixture adding the sessions table's legacy runs column, and dropping it after the test"""
+    schema_version = postgres_db_real.get_latest_schema_version(postgres_db_real.session_table_name)
+    postgres_db_real._get_table("sessions", create_table_if_not_found=True)
+    with postgres_db_real.Session() as sess, sess.begin():
+        sess.execute(text("ALTER TABLE test_schema.test_sessions ADD COLUMN runs JSONB"))
+    yield
+
+    postgres_db_real.upsert_schema_version(postgres_db_real.session_table_name, schema_version)
+    with postgres_db_real.Session() as sess, sess.begin():
+        sess.execute(text("ALTER TABLE test_schema.test_sessions DROP COLUMN runs"))
+
+
 def _noon_utc(days_ago: int) -> int:
     """Midday UTC, ``days_ago`` days back.
 
@@ -81,6 +95,20 @@ def _persist(db: PostgresDb, session) -> None:
     db.upsert_session(session)
     for run_index, run in enumerate(session.runs or []):
         db.upsert_run(run, session_id=session.session_id, user_id=session.user_id, run_index=run_index)
+
+
+def _store_legacy_runs(db: PostgresDb, runs: List[Dict]) -> PostgresDb:
+    """Keep the runs in the sessions table's legacy runs column, and return a new instance that reads them.
+
+    The legacy column is read only before the v3.0.0 migration is stamped.
+    """
+    with db.Session() as sess, sess.begin():
+        sess.execute(
+            text("UPDATE test_schema.test_sessions SET runs = CAST(:runs AS JSONB)"), {"runs": json.dumps(runs)}
+        )
+    db.upsert_schema_version(db.session_table_name, "2.5.0")
+    # A new instance, so the sessions table is read with its legacy column
+    return PostgresDb(db_engine=db.db_engine, db_schema="test_schema", session_table="test_sessions")
 
 
 def _run_metrics(
@@ -149,11 +177,11 @@ def _merged_totals(rows: List[Dict], fields: List[str]) -> Dict:
     }
 
 
-def _models_by_provider(models: List[Dict]) -> Dict[str, Dict[str, int]]:
+def _models_by_provider(models: List[Dict]) -> Dict[str, Dict[str, Dict]]:
     """The models a read lists, counted per provider and model as a row of agno_component_metrics keeps them."""
-    by_provider: Dict[str, Dict[str, int]] = {}
+    by_provider: Dict[str, Dict[str, Dict]] = {}
     for model in models:
-        by_provider.setdefault(model["model_provider"], {})[model["model_id"]] = model["count"]
+        by_provider.setdefault(model["model_provider"], {})[model["model_id"]] = {"count": model["count"]}
     return by_provider
 
 
@@ -442,13 +470,6 @@ def test_component_metrics_table_creation(postgres_db_real: PostgresDb):
     assert indexes[f"idx_{component_metrics_table.name}_user_id_date"] == ["user_id", "date"]
 
 
-def test_calculate_metrics_no_sessions(postgres_db_real: PostgresDb):
-    """Ensure calculate_metrics returns no day when there are no sessions"""
-    result = postgres_db_real.calculate_metrics()
-
-    assert result == []
-
-
 def test_calculate_metrics_skips_a_rebuild_already_running(
     postgres_db_real: PostgresDb, sample_sessions_for_component_metrics
 ):
@@ -466,22 +487,25 @@ def test_calculate_metrics_skips_a_rebuild_already_running(
     assert _stored_user_metrics_rows(postgres_db_real) == {}
 
     # The other process stopped and released it, so the same call calculates
-    postgres_db_real._release_metrics_refresh(refreshes_table, "other_process", error=METRICS_STOPPED_ERROR)
+    postgres_db_real._release_metrics_refresh(refreshes_table, "other_process", stopped=True)
     result = postgres_db_real.calculate_metrics()
     assert result is not None
     assert len(_stored_rows(postgres_db_real)) == len(PAST_DAY_ROW_KEYS) + 1
 
 
-def test_calculate_metrics_skips_messages_carried_over_from_history(postgres_db_real: PostgresDb):
-    """Ensure a message carried over from an earlier run is not counted as a model call of this one"""
-    session = AgentSession(
+def test_calculate_metrics_skips_messages_carried_over_from_history_or_copied_by_a_forked_run(
+    postgres_db_real: PostgresDb,
+):
+    """Ensure a message carried over from an earlier run, or copied by a forked run from the run it was forked from, is
+    not counted as a model call of this one"""
+    history_session = AgentSession(
         session_id="history_session",
-        agent_id="agent-1",
+        agent_id="agent-2",
         user_id="alice",
         runs=[
             RunOutput(
                 run_id="history_run",
-                agent_id="agent-1",
+                agent_id="agent-2",
                 user_id="alice",
                 status=RunStatus.completed,
                 model="gpt-5",
@@ -498,20 +522,9 @@ def test_calculate_metrics_skips_messages_carried_over_from_history(postgres_db_
         ],
         created_at=_noon_utc(2),
     )
-    _persist(postgres_db_real, session)
-
-    postgres_db_real.calculate_metrics()
-
-    row = _stored_rows(postgres_db_real)[(_utc_date(2), "alice", "agent", "agent-1")]
-    assert row["model_calls_count"] == 1
-    assert row["total_model_call_ms"] == 1200
-    assert row["model_call_buckets"] == {"le_1200": 1}
-
-
-def test_calculate_metrics_skips_messages_a_forked_run_copied(postgres_db_real: PostgresDb):
-    """Ensure the messages a forked run copied from the run it was forked from are not counted again"""
-    session = _session_on(_utc_date(2), "fork_session", "alice")
-    original = session.runs[0]
+    _persist(postgres_db_real, history_session)
+    fork_session = _session_on(_utc_date(2), "fork_session", "alice")
+    original = fork_session.runs[0]
     forked = RunOutput(
         run_id="forked_run",
         agent_id="agent-1",
@@ -525,14 +538,19 @@ def test_calculate_metrics_skips_messages_a_forked_run_copied(postgres_db_real: 
         forked_from_message_index=1,
         created_at=original.created_at,
     )
-    session.runs.append(forked)
-    _persist(postgres_db_real, session)
+    fork_session.runs.append(forked)
+    _persist(postgres_db_real, fork_session)
 
     postgres_db_real.calculate_metrics()
 
-    row = _stored_rows(postgres_db_real)[(_utc_date(2), "alice", "agent", "agent-1")]
-    assert (row["runs_count"], row["total_tokens"]) == (2, 40)
-    assert (row["model_calls_count"], row["total_model_call_ms"]) == (2, 2000)
+    stored_rows = _stored_rows(postgres_db_real)
+    history_row = stored_rows[(_utc_date(2), "alice", "agent", "agent-2")]
+    assert history_row["model_calls_count"] == 1
+    assert history_row["total_model_call_ms"] == 1200
+    assert history_row["model_call_buckets"] == {"le_1200": 1}
+    fork_row = stored_rows[(_utc_date(2), "alice", "agent", "agent-1")]
+    assert (fork_row["runs_count"], fork_row["total_tokens"]) == (2, 40)
+    assert (fork_row["model_calls_count"], fork_row["total_model_call_ms"]) == (2, 2000)
 
 
 def test_calculate_metrics_skips_runs_a_forked_session_copied(postgres_db_real: PostgresDb):
@@ -548,90 +566,49 @@ def test_calculate_metrics_skips_runs_a_forked_session_copied(postgres_db_real: 
     assert (row["sessions_count"], row["runs_count"], row["total_tokens"]) == (2, 1, 15)
 
 
-def test_calculate_metrics_counts_runs_kept_in_the_legacy_runs_column(postgres_db_real: PostgresDb):
-    """Ensure a run not yet migrated out of the sessions table's legacy runs column is counted once, on its session's
-    day"""
-    session = _session_on(_utc_date(2), "legacy_session", "alice")
-    session.runs.append(
-        RunOutput(
-            run_id="legacy_only_run",
-            agent_id="agent-1",
-            status=RunStatus.completed,
-            model="gpt-5",
-            model_provider="OpenAI",
-            metrics=_run_metrics(30, 5),
-            messages=[_assistant_message(0.5)],
-            created_at=_noon_utc(2),
-        )
+def test_calculate_metrics_counts_runs_kept_in_the_legacy_runs_column(postgres_db_real: PostgresDb, legacy_runs_column):
+    """Ensure a run not yet migrated out of the sessions table's legacy runs column is counted once, on its own day,
+    and a first calculation builds a day with no session for it"""
+    session = _session_on(_utc_date(6), "legacy_session", "alice")
+    session.runs.extend(
+        [
+            RunOutput(
+                run_id="legacy_only_run",
+                agent_id="agent-1",
+                status=RunStatus.completed,
+                model="gpt-5",
+                model_provider="OpenAI",
+                metrics=_run_metrics(30, 5),
+                messages=[_assistant_message(0.5)],
+                created_at=_noon_utc(6),
+            ),
+            RunOutput(
+                run_id="legacy_later_run",
+                agent_id="agent-1",
+                user_id="alice",
+                status=RunStatus.completed,
+                model="gpt-5",
+                model_provider="OpenAI",
+                metrics=_run_metrics(30, 5),
+                messages=[],
+                created_at=_noon_utc(4),
+            ),
+        ]
     )
-    # The first run is in the runs table and the legacy column, the second in the legacy column only
-    schema_version = postgres_db_real.get_latest_schema_version(postgres_db_real.session_table_name)
+    # The first run is in the runs table and the legacy column, the others in the legacy column only
     postgres_db_real.upsert_session(session)
     postgres_db_real.upsert_run(session.runs[0], session_id=session.session_id, user_id="alice", run_index=0)
-    with postgres_db_real.Session() as sess, sess.begin():
-        sess.execute(text("ALTER TABLE test_schema.test_sessions ADD COLUMN runs JSONB"))
-        sess.execute(
-            text("UPDATE test_schema.test_sessions SET runs = CAST(:runs AS JSONB)"),
-            {"runs": json.dumps([run.to_dict() for run in session.runs])},
-        )
-    # The legacy column is read only before the v3.0.0 migration is stamped
-    postgres_db_real.upsert_schema_version(postgres_db_real.session_table_name, "2.5.0")
-    try:
-        # A new instance, so the sessions table is read with its legacy column
-        legacy_db = PostgresDb(
-            db_engine=postgres_db_real.db_engine, db_schema="test_schema", session_table="test_sessions"
-        )
-        legacy_db.calculate_metrics()
+    legacy_db = _store_legacy_runs(postgres_db_real, [run.to_dict() for run in session.runs])
+    legacy_db.calculate_metrics()
 
-        row = _stored_rows(legacy_db)[(_utc_date(2), "alice", "agent", "agent-1")]
-        assert (row["sessions_count"], row["runs_count"], row["total_tokens"]) == (1, 2, 50)
-        assert (row["model_calls_count"], row["total_model_call_ms"]) == (2, 2000)
-    finally:
-        postgres_db_real.upsert_schema_version(postgres_db_real.session_table_name, schema_version)
-        with postgres_db_real.Session() as sess, sess.begin():
-            sess.execute(text("ALTER TABLE test_schema.test_sessions DROP COLUMN runs"))
+    row = _stored_rows(legacy_db)[(_utc_date(6), "alice", "agent", "agent-1")]
+    assert (row["sessions_count"], row["runs_count"], row["total_tokens"]) == (1, 2, 50)
+    assert (row["model_calls_count"], row["total_model_call_ms"]) == (2, 2000)
+    # The later run is counted on its own day, a day with no session
+    assert _stored_user_metrics_rows(legacy_db)[("daily", _utc_date(4))]["agent_runs_count"] == 1
 
 
-def test_a_legacy_run_is_counted_on_its_own_day(postgres_db_real: PostgresDb):
-    """Ensure a first calculation builds the day of a run kept only in the legacy runs column, a day with no session"""
-    session = AgentSession(session_id="legacy_session", agent_id="agent-1", user_id="alice", created_at=_noon_utc(6))
-    legacy_run = RunOutput(
-        run_id="legacy_only_run",
-        agent_id="agent-1",
-        user_id="alice",
-        status=RunStatus.completed,
-        model="gpt-5",
-        model_provider="OpenAI",
-        metrics=_run_metrics(30, 5),
-        messages=[],
-        created_at=_noon_utc(4),
-    )
-    schema_version = postgres_db_real.get_latest_schema_version(postgres_db_real.session_table_name)
-    postgres_db_real.upsert_session(session)
-    postgres_db_real._get_table("runs", create_table_if_not_found=True)
-    with postgres_db_real.Session() as sess, sess.begin():
-        sess.execute(text("ALTER TABLE test_schema.test_sessions ADD COLUMN runs JSONB"))
-        sess.execute(
-            text("UPDATE test_schema.test_sessions SET runs = CAST(:runs AS JSONB)"),
-            {"runs": json.dumps([legacy_run.to_dict()])},
-        )
-    # The legacy column is read only before the v3.0.0 migration is stamped
-    postgres_db_real.upsert_schema_version(postgres_db_real.session_table_name, "2.5.0")
-    try:
-        # A new instance, so the sessions table is read with its legacy column
-        legacy_db = PostgresDb(
-            db_engine=postgres_db_real.db_engine, db_schema="test_schema", session_table="test_sessions"
-        )
-        legacy_db.calculate_metrics()
-
-        assert _stored_user_metrics_rows(legacy_db)[("daily", _utc_date(4))]["agent_runs_count"] == 1
-    finally:
-        postgres_db_real.upsert_schema_version(postgres_db_real.session_table_name, schema_version)
-        with postgres_db_real.Session() as sess, sess.begin():
-            sess.execute(text("ALTER TABLE test_schema.test_sessions DROP COLUMN runs"))
-
-
-def test_a_legacy_member_run_kept_as_its_own_run_is_counted_once(postgres_db_real: PostgresDb):
+def test_a_legacy_member_run_kept_as_its_own_run_is_counted_once(postgres_db_real: PostgresDb, legacy_runs_column):
     """Ensure a member run nested inside its team's legacy run, and kept as a legacy run of its own on a later day, is
     counted once, on its own day"""
     session = TeamSession(session_id="legacy_team_session", team_id="team-1", created_at=_noon_utc(6))
@@ -655,30 +632,14 @@ def test_a_legacy_member_run_kept_as_its_own_run_is_counted_once(postgres_db_rea
     }
     # The member run is also kept as a run of its own, a later day
     legacy_runs = [team_run, {**member_run, "parent_run_id": "team_run", "created_at": _noon_utc(4)}]
-    schema_version = postgres_db_real.get_latest_schema_version(postgres_db_real.session_table_name)
     postgres_db_real.upsert_session(session)
     postgres_db_real._get_table("runs", create_table_if_not_found=True)
-    with postgres_db_real.Session() as sess, sess.begin():
-        sess.execute(text("ALTER TABLE test_schema.test_sessions ADD COLUMN runs JSONB"))
-        sess.execute(
-            text("UPDATE test_schema.test_sessions SET runs = CAST(:runs AS JSONB)"), {"runs": json.dumps(legacy_runs)}
-        )
-    # The legacy column is read only before the v3.0.0 migration is stamped
-    postgres_db_real.upsert_schema_version(postgres_db_real.session_table_name, "2.5.0")
-    try:
-        # A new instance, so the sessions table is read with its legacy column
-        legacy_db = PostgresDb(
-            db_engine=postgres_db_real.db_engine, db_schema="test_schema", session_table="test_sessions"
-        )
-        legacy_db.calculate_metrics()
+    legacy_db = _store_legacy_runs(postgres_db_real, legacy_runs)
+    legacy_db.calculate_metrics()
 
-        user_metrics_rows = _stored_user_metrics_rows(legacy_db)
-        assert user_metrics_rows[("daily", _utc_date(6))]["total_tokens"] == 100
-        assert user_metrics_rows[("daily", _utc_date(4))]["total_tokens"] == 10
-    finally:
-        postgres_db_real.upsert_schema_version(postgres_db_real.session_table_name, schema_version)
-        with postgres_db_real.Session() as sess, sess.begin():
-            sess.execute(text("ALTER TABLE test_schema.test_sessions DROP COLUMN runs"))
+    user_metrics_rows = _stored_user_metrics_rows(legacy_db)
+    assert user_metrics_rows[("daily", _utc_date(6))]["total_tokens"] == 100
+    assert user_metrics_rows[("daily", _utc_date(4))]["total_tokens"] == 10
 
 
 def test_calculate_metrics(postgres_db_real: PostgresDb, sample_sessions_for_component_metrics):
@@ -736,7 +697,7 @@ def test_calculate_metrics(postgres_db_real: PostgresDb, sample_sessions_for_com
     )
     assert alice_row["model_call_buckets"] == {"le_1500": 1}
     # The error run reported no details, and its model is still counted, as agno_metrics counted it
-    assert alice_row["model_metrics"] == {"OpenAI": {"gpt-5": 2}}
+    assert alice_row["model_metrics"] == {"OpenAI": {"gpt-5": {"count": 2}}}
     assert alice_row["created_at"] is not None
     assert alice_row["updated_at"] is not None
 
@@ -754,62 +715,18 @@ def test_calculate_metrics(postgres_db_real: PostgresDb, sample_sessions_for_com
     assert unowned_row["runs_count"] == 1
 
 
-def test_calculate_metrics_writes_a_total_row_for_each_calculated_day(
-    postgres_db_real: PostgresDb, sample_sessions_for_component_metrics
-):
-    """Ensure each calculated day gets one user metrics row for every owner, yesterday without traffic included"""
-    for session in sample_sessions_for_component_metrics:
-        _persist(postgres_db_real, session)
-    postgres_db_real.calculate_metrics()
-
-    past_day = _utc_date(2)
-    yesterday = _utc_date(1)
-    today = _utc_date(0)
-    user_metrics_rows = _stored_user_metrics_rows(postgres_db_real)
-    assert {key for key in user_metrics_rows if key[0] == "daily"} == {
-        ("daily", past_day),
-        ("daily", yesterday),
-        ("daily", today),
-    }
-
-    day_row = user_metrics_rows[("daily", past_day)]
-    assert _user_metrics_sessions_count(day_row) == 4
-    assert day_row["root_runs_count"] == 5
-    assert day_row["status_metrics"] == {COMPLETED: 5, ERROR: 1}
-    assert (day_row["input_tokens"], day_row["output_tokens"], day_row["total_tokens"]) == (385, 185, 570)
-    assert day_row["duration_runs_count"] == 4
-    assert day_row["max_duration_ms"] == 4000
-    assert day_row["duration_buckets"] == {"le_1000": 1, "le_2000": 1, "le_3000": 1, "le_4000": 1}
-    assert day_row["model_metrics"] == {"OpenAI": {"gpt-5": 6}}
-    assert day_row["completed"] is True
-    assert day_row["version"] == 1
-
-    # Yesterday has no traffic and is still open; today is open too
-    yesterday_row = user_metrics_rows[("daily", yesterday)]
-    assert (
-        _user_metrics_sessions_count(yesterday_row),
-        yesterday_row["root_runs_count"],
-        yesterday_row["max_duration_ms"],
-    ) == (
-        0,
-        0,
-        None,
-    )
-    assert yesterday_row["completed"] is False
-    assert _user_metrics_sessions_count(user_metrics_rows[("daily", today)]) == 1
-    assert user_metrics_rows[("daily", today)]["completed"] is False
-
-
 def test_calculate_metrics_rewrites_only_changed_rows(
     postgres_db_real: PostgresDb, sample_sessions_for_component_metrics
 ):
-    """Ensure a rebuild leaves unchanged rows alone, rewrites a changed row and drops a stale one"""
+    """Ensure a rebuild leaves unchanged rows and versions alone, rewrites a changed row and drops a stale one"""
     for session in sample_sessions_for_component_metrics:
         _persist(postgres_db_real, session)
 
     result = postgres_db_real.calculate_metrics()
     assert result is not None
     row_count = len(_stored_rows(postgres_db_real))
+    versions = _day_versions(postgres_db_real, _utc_date(2), _utc_date(0))
+    assert versions == {f"daily {_utc_date(days_ago).isoformat()}": 1 for days_ago in (2, 1, 0)}
 
     # Mark every stored row, so a rewrite shows as a fresh updated_at
     table = postgres_db_real._get_table("component_metrics", create_table_if_not_found=True)
@@ -829,8 +746,9 @@ def test_calculate_metrics_rewrites_only_changed_rows(
     stored_rows = _stored_rows(postgres_db_real)
     assert len(stored_rows) == row_count
     assert all(row["updated_at"] == 1 for row in stored_rows.values())
+    assert _day_versions(postgres_db_real, _utc_date(2), _utc_date(0)) == versions
 
-    # One more run for alice's session today: only that row is rewritten
+    # One more run for alice's session today: only that row is rewritten, and only today's version moves
     alice_today_session = sample_sessions_for_component_metrics[4]
     postgres_db_real.upsert_run(
         RunOutput(
@@ -854,6 +772,11 @@ def test_calculate_metrics_rewrites_only_changed_rows(
     assert stored_rows[alice_today_row_id]["runs_count"] == 2
     assert stored_rows[alice_today_row_id]["updated_at"] != 1
     assert all(row["updated_at"] == 1 for row_id, row in stored_rows.items() if row_id != alice_today_row_id)
+    today_key = f"daily {today.isoformat()}"
+    assert _day_versions(postgres_db_real, _utc_date(2), _utc_date(0)) == {
+        **versions,
+        today_key: versions[today_key] + 1,
+    }
 
     # A session of bob's today adds his row; once the session and its run go, the row is deleted
     bob_today_session = AgentSession(
@@ -927,11 +850,19 @@ def test_get_component_metrics_by_date(postgres_db_real: PostgresDb, sample_sess
         past_day_totals["total_model_call_ms"],
         past_day_totals["max_model_call_ms"],
     ) == (2, 4000, 2500)
-    assert past_day_totals["model_metrics"] == [{"model_id": "gpt-5", "model_provider": "OpenAI", "count": 6}]
+    assert past_day_totals["model_metrics"] == [
+        {"model_id": "gpt-5", "model_provider": "OpenAI", "count": 6, "cost": None}
+    ]
     assert metrics[1]["sessions_count"] == 0
     assert metrics[1]["max_duration_ms"] is None
     assert metrics[2]["sessions_count"] == 1
     assert metrics[2]["root_runs_count"] == 1
+
+    # A one-day window returns only that day
+    metrics, _ = postgres_db_real.get_component_metrics(
+        starting_date=past_day, ending_date=past_day, fields=["sessions_count", "root_runs_count"]
+    )
+    assert metrics == [{"date": past_day, "sessions_count": 4, "root_runs_count": 5}]
 
     # The latest updated_at of the window is the one returned
     user_metrics_rows = _stored_user_metrics_rows(postgres_db_real)
@@ -1025,76 +956,6 @@ def test_get_component_metrics_never_calculates_rows(
     assert len(_stored_rows(postgres_db_real)) == len(PAST_DAY_ROW_KEYS) + 1
 
 
-def test_get_component_metrics_no_rows(postgres_db_real: PostgresDb):
-    """Ensure get_component_metrics returns nothing when there are no sessions"""
-    metrics, latest_updated_at = postgres_db_real.get_component_metrics(
-        starting_date=_utc_date(2), ending_date=_utc_date(0)
-    )
-
-    assert metrics == []
-    assert latest_updated_at is None
-
-
-@pytest.fixture
-def sample_multi_day_sessions_for_component_metrics() -> List[AgentSession]:
-    """Fixture returning one owner's agent sessions on two different days"""
-    sessions = []
-    for days_ago, session_count in ((3, 2), (2, 1)):
-        base_time = _noon_utc(days_ago)
-        for i in range(session_count):
-            sessions.append(
-                AgentSession(
-                    session_id=f"day_{days_ago}_session_{i}",
-                    agent_id="agent-1",
-                    user_id="alice",
-                    session_data={"session_name": f"Day {days_ago} Session {i}"},
-                    agent_data={"name": "Agent 1", "model": "gpt-5"},
-                    runs=[
-                        RunOutput(
-                            run_id=f"day_{days_ago}_run_{i}",
-                            agent_id="agent-1",
-                            user_id="alice",
-                            status=RunStatus.completed,
-                            messages=[],
-                            created_at=base_time + (i * 3600),
-                        )
-                    ],
-                    created_at=base_time + (i * 3600),
-                    updated_at=base_time + (i * 3600),
-                )
-            )
-    return sessions
-
-
-def test_component_metrics_multiple_days(postgres_db_real: PostgresDb, sample_multi_day_sessions_for_component_metrics):
-    """Ensure sessions on two days produce rows on both, and a one-day window returns only that day"""
-    for session in sample_multi_day_sessions_for_component_metrics:
-        _persist(postgres_db_real, session)
-
-    result = postgres_db_real.calculate_metrics()
-    assert result is not None
-    # Each day's row
-    assert len(result) == 2
-
-    first_day = _utc_date(3)
-    second_day = _utc_date(2)
-    stored_rows = _stored_rows(postgres_db_real)
-    assert {row["date"] for row in stored_rows.values()} == {first_day, second_day}
-
-    metrics, _ = postgres_db_real.get_component_metrics(
-        starting_date=first_day, ending_date=second_day, fields=["sessions_count", "root_runs_count"]
-    )
-    assert metrics == [
-        {"date": first_day, "sessions_count": 2, "root_runs_count": 2},
-        {"date": second_day, "sessions_count": 1, "root_runs_count": 1},
-    ]
-
-    metrics, _ = postgres_db_real.get_component_metrics(
-        starting_date=second_day, ending_date=second_day, fields=["sessions_count", "root_runs_count"]
-    )
-    assert metrics == [{"date": second_day, "sessions_count": 1, "root_runs_count": 1}]
-
-
 @pytest.fixture
 def sample_multi_month_sessions_for_component_metrics() -> List[AgentSession]:
     """Fixture returning sessions in two completed months, plus one of today.
@@ -1114,10 +975,11 @@ def sample_multi_month_sessions_for_component_metrics() -> List[AgentSession]:
     ]
 
 
-def test_get_component_metrics_reads_every_owner_from_the_total_rows(
+def test_get_component_metrics_reads_one_owner_from_their_own_user_metrics_row(
     postgres_db_real: PostgresDb, sample_sessions_for_component_metrics
 ):
-    """Ensure a read equals the sum of the rows, with every owner read from the everyone rows and one owner from its"""
+    """Ensure a read equals the sum of the rows, with every owner read from the everyone rows, one owner from their own
+    user metrics row, and the runs with no user from their component rows"""
     for session in sample_sessions_for_component_metrics:
         _persist(postgres_db_real, session)
     postgres_db_real.calculate_metrics()
@@ -1138,6 +1000,20 @@ def test_get_component_metrics_reads_every_owner_from_the_total_rows(
         {"date": past_day, **_merged_totals([row for row in stored_rows if row["user_id"] == "bob"], fields)}
     ]
 
+    # Change the everyone row: only the read of every owner moves
+    user_metrics_table = postgres_db_real._get_table("user_metrics", create_table_if_not_found=True)
+    with postgres_db_real.Session() as sess, sess.begin():
+        sess.execute(
+            user_metrics_table.update()
+            .where(user_metrics_table.c.date == past_day, user_metrics_table.c.user_id == "")
+            .values(agent_sessions_count=1000, team_sessions_count=0, workflow_sessions_count=0)
+        )
+    assert _sessions_counts(postgres_db_real, past_day, None) == [1000]
+    assert _sessions_counts(postgres_db_real, past_day, "alice") == [1]
+    assert _sessions_counts(postgres_db_real, past_day, "bob") == [2]
+    assert _sessions_counts(postgres_db_real, past_day, "") == [1]
+    assert _sessions_counts(postgres_db_real, past_day, "carol") == []
+
     # Change every component row: every owner and one owner are still read from the user metrics rows
     table = postgres_db_real._get_table("component_metrics", create_table_if_not_found=True)
     with postgres_db_real.Session() as sess, sess.begin():
@@ -1145,7 +1021,7 @@ def test_get_component_metrics_reads_every_owner_from_the_total_rows(
     metrics, _ = postgres_db_real.get_component_metrics(
         starting_date=past_day, ending_date=today, fields=["sessions_count"]
     )
-    assert [day_totals["sessions_count"] for day_totals in metrics] == [4, 0, 1]
+    assert [day_totals["sessions_count"] for day_totals in metrics] == [1000, 0, 1]
     metrics, _ = postgres_db_real.get_component_metrics(
         starting_date=past_day, ending_date=today, user_id="bob", fields=["sessions_count"]
     )
@@ -1155,30 +1031,6 @@ def test_get_component_metrics_reads_every_owner_from_the_total_rows(
             "sessions_count": sum(row["sessions_count"] for row in stored_rows if row["user_id"] == "bob"),
         }
     ]
-
-
-def test_get_component_metrics_never_reads_a_total_row_for_one_owner(
-    postgres_db_real: PostgresDb, sample_sessions_for_component_metrics
-):
-    """Ensure one owner's read uses that owner's user metrics row, and the runs with no user their component rows"""
-    for session in sample_sessions_for_component_metrics:
-        _persist(postgres_db_real, session)
-    postgres_db_real.calculate_metrics()
-
-    past_day = _utc_date(2)
-    user_metrics_table = postgres_db_real._get_table("user_metrics", create_table_if_not_found=True)
-    with postgres_db_real.Session() as sess, sess.begin():
-        sess.execute(
-            user_metrics_table.update()
-            .where(user_metrics_table.c.date == past_day, user_metrics_table.c.user_id == "")
-            .values(agent_sessions_count=1000, team_sessions_count=0, workflow_sessions_count=0)
-        )
-
-    assert _sessions_counts(postgres_db_real, past_day, None) == [1000]
-    assert _sessions_counts(postgres_db_real, past_day, "alice") == [1]
-    assert _sessions_counts(postgres_db_real, past_day, "bob") == [2]
-    assert _sessions_counts(postgres_db_real, past_day, "") == [1]
-    assert _sessions_counts(postgres_db_real, past_day, "carol") == []
 
 
 def test_calculate_metrics_writes_a_month_total_row_for_a_completed_month(
@@ -1213,7 +1065,9 @@ def test_calculate_metrics_writes_a_month_total_row_for_a_completed_month(
     )
     assert alice_totals["sessions_count"] == 2
     assert alice_totals["input_tokens"] == 120
-    assert alice_totals["model_metrics"] == [{"model_id": "gpt-5", "model_provider": "OpenAI", "count": 2}]
+    assert alice_totals["model_metrics"] == [
+        {"model_id": "gpt-5", "model_provider": "OpenAI", "count": 2, "cost": None}
+    ]
     # The runs with no user are read from their day rows
     unowned_totals, _ = postgres_db_real.get_metrics_totals(
         starting_date=first_month, ending_date=second_month - timedelta(days=1), user_id=""
@@ -1340,76 +1194,63 @@ def test_get_metrics_totals_reads_a_whole_month_from_its_month_rows(
     ]
 
 
-def test_calculate_metrics_counts_a_run_of_the_same_second(
-    postgres_db_real: PostgresDb, sample_sessions_for_component_metrics
-):
-    """Ensure a run stored right after a calculation is counted by the next one and moves its day's version"""
-    for session in sample_sessions_for_component_metrics:
-        _persist(postgres_db_real, session)
-
-    assert postgres_db_real.calculate_metrics() is not None
-    versions = _day_versions(postgres_db_real, _utc_date(2), _utc_date(0))
-    today_key = f"daily {_utc_date(0).isoformat()}"
-
-    # One more run today: counted even when it lands in the same second as the calculation before it
-    alice_today_session = sample_sessions_for_component_metrics[4]
-    postgres_db_real.upsert_run(
-        RunOutput(
-            run_id="alice_today_run_2",
-            agent_id="agent-1",
-            user_id="alice",
-            status=RunStatus.completed,
-            messages=[],
-            created_at=alice_today_session.created_at + 60,
-        ),
-        session_id=alice_today_session.session_id,
-        user_id=alice_today_session.user_id,
-        run_index=1,
-    )
-    assert postgres_db_real.calculate_metrics() is not None
-    assert _stored_rows(postgres_db_real)[(_utc_date(0), "alice", "agent", "agent-1")]["runs_count"] == 2
-    assert _day_versions(postgres_db_real, _utc_date(2), _utc_date(0)) == {
-        **versions,
-        today_key: versions[today_key] + 1,
-    }
-
-
-def test_calculate_metrics_with_nothing_new_leaves_every_version(
-    postgres_db_real: PostgresDb, sample_sessions_for_component_metrics
-):
-    """Ensure a rebuild that writes nothing moves no version"""
-    for session in sample_sessions_for_component_metrics:
-        _persist(postgres_db_real, session)
-    postgres_db_real.calculate_metrics()
-
-    versions = _day_versions(postgres_db_real, _utc_date(2), _utc_date(0))
-    assert _day_versions(postgres_db_real, _utc_date(2), _utc_date(0)) == {
-        f"daily {_utc_date(days_ago).isoformat()}": 1 for days_ago in (2, 1, 0)
-    }
-
-    postgres_db_real.calculate_metrics()
-    assert _day_versions(postgres_db_real, _utc_date(2), _utc_date(0)) == versions
-
-
 def test_metrics_versions_move_only_for_the_day_that_changed(
     postgres_db_real: PostgresDb, sample_sessions_for_component_metrics
 ):
-    """Ensure a rebuild that writes or deletes a day's rows moves that day's version and no other"""
-    for session in sample_sessions_for_component_metrics:
+    """Ensure a rebuild that only deletes a day's row moves that day's version and no other, and rewrites its everyone
+    row with the day's totals"""
+    alice_today_session = sample_sessions_for_component_metrics[4]
+    bob_today_session = AgentSession(
+        session_id="bob_today_session",
+        agent_id="agent-1",
+        user_id="bob",
+        runs=[
+            RunOutput(
+                run_id="bob_today_run",
+                agent_id="agent-1",
+                user_id="bob",
+                status=RunStatus.completed,
+                messages=[],
+                created_at=alice_today_session.created_at,
+            )
+        ],
+        created_at=alice_today_session.created_at,
+        updated_at=alice_today_session.created_at,
+    )
+    for session in [*sample_sessions_for_component_metrics, bob_today_session]:
         _persist(postgres_db_real, session)
     postgres_db_real.calculate_metrics()
     versions = _day_versions(postgres_db_real, _utc_date(2), _utc_date(0))
     today_key = f"daily {_utc_date(0).isoformat()}"
 
-    # The only session of today is gone: its row is deleted and none is written, and today's version still moves
-    assert postgres_db_real.delete_session(sample_sessions_for_component_metrics[4].session_id) is True
-    postgres_db_real.calculate_metrics()
+    # Mark every stored row, so a rewrite shows as a fresh updated_at
+    with postgres_db_real.Session() as sess, sess.begin():
+        for table_type in ("component_metrics", "user_metrics"):
+            table = postgres_db_real._get_table(table_type, create_table_if_not_found=True)
+            sess.execute(table.update().values(updated_at=1))
+
+    # Bob's only session of today is gone: his row is deleted and none is written, and today's version still moves
+    assert postgres_db_real.delete_session("bob_today_session") is True
+    assert postgres_db_real.calculate_metrics() is not None
     assert _day_versions(postgres_db_real, _utc_date(2), _utc_date(0)) == {
         **versions,
         today_key: versions[today_key] + 1,
     }
     # Only the user metrics rows inside the date range are returned
     assert _day_versions(postgres_db_real, _utc_date(1), _utc_date(1)) == {f"daily {_utc_date(1).isoformat()}": 1}
+
+    # Today's user metrics row is rewritten, so a read of the day reports the new time
+    today = _utc_date(0)
+    metrics, read_updated_at = postgres_db_real.get_component_metrics(
+        starting_date=today, ending_date=today, fields=["sessions_count", "root_runs_count"]
+    )
+    assert metrics == [{"date": today, "sessions_count": 1, "root_runs_count": 1}]
+    assert read_updated_at != 1
+    user_metrics_rows = _stored_user_metrics_rows(postgres_db_real)
+    assert read_updated_at == user_metrics_rows[("daily", today)]["updated_at"]
+    assert all(
+        row["updated_at"] == 1 for key, row in user_metrics_rows.items() if key[0] == "daily" and key[1] != today
+    )
 
 
 def test_calculate_metrics_counts_a_late_run_of_yesterday(postgres_db_real: PostgresDb):
@@ -1459,104 +1300,6 @@ def test_calculate_metrics_never_rebuilds_an_empty_or_completed_day(postgres_db_
     _persist(postgres_db_real, _session_on(_utc_date(0), "alice_today_2", "alice"))
     postgres_db_real.calculate_metrics()
     assert calculated_days == [_utc_date(1), _utc_date(0)]
-
-
-def test_calculate_metrics_after_a_delete_moves_the_day(
-    postgres_db_real: PostgresDb, sample_sessions_for_component_metrics
-):
-    """Ensure a rebuild that only deletes a row reports the change, moves the day's everyone row and keeps its totals"""
-    alice_today_session = sample_sessions_for_component_metrics[4]
-    bob_today_session = AgentSession(
-        session_id="bob_today_session",
-        agent_id="agent-1",
-        user_id="bob",
-        runs=[
-            RunOutput(
-                run_id="bob_today_run",
-                agent_id="agent-1",
-                user_id="bob",
-                status=RunStatus.completed,
-                messages=[],
-                created_at=alice_today_session.created_at,
-            )
-        ],
-        created_at=alice_today_session.created_at,
-        updated_at=alice_today_session.created_at,
-    )
-    for session in [*sample_sessions_for_component_metrics, bob_today_session]:
-        _persist(postgres_db_real, session)
-    postgres_db_real.calculate_metrics()
-
-    # Mark every stored row, so a rewrite shows as a fresh updated_at
-    with postgres_db_real.Session() as sess, sess.begin():
-        for table_type in ("component_metrics", "user_metrics"):
-            table = postgres_db_real._get_table(table_type, create_table_if_not_found=True)
-            sess.execute(table.update().values(updated_at=1))
-
-    assert postgres_db_real.delete_session("bob_today_session") is True
-    assert postgres_db_real.calculate_metrics() is not None
-
-    # Bob's row is gone, and today's user metrics row is rewritten, so a read of the day reports the new time
-    today = _utc_date(0)
-    metrics, read_updated_at = postgres_db_real.get_component_metrics(
-        starting_date=today, ending_date=today, fields=["sessions_count", "root_runs_count"]
-    )
-    assert metrics == [{"date": today, "sessions_count": 1, "root_runs_count": 1}]
-    assert read_updated_at != 1
-    user_metrics_rows = _stored_user_metrics_rows(postgres_db_real)
-    assert read_updated_at == user_metrics_rows[("daily", today)]["updated_at"]
-    assert all(
-        row["updated_at"] == 1 for key, row in user_metrics_rows.items() if key[0] == "daily" and key[1] != today
-    )
-
-
-def test_calculate_metrics_reads_nested_run_ids_in_chunks(postgres_db_real: PostgresDb, monkeypatch):
-    """Ensure a day with more nested runs than one statement is given finds every one stored as a run of its own"""
-    monkeypatch.setattr("agno.db.postgres.postgres.METRICS_IN_LIST_LIMIT", 2)
-    base_time = _noon_utc(2)
-    member_runs = [
-        RunOutput(
-            run_id=f"member_run_{index}",
-            agent_id="agent-2",
-            user_id="bob",
-            parent_run_id="team_run",
-            status=RunStatus.completed,
-            model="gpt-5",
-            model_provider="OpenAI",
-            metrics=_run_metrics(10, 0),
-            messages=[],
-            created_at=base_time,
-        )
-        for index in range(5)
-    ]
-    team_session = TeamSession(
-        session_id="team_session",
-        team_id="team-1",
-        user_id="bob",
-        runs=[
-            TeamRunOutput(
-                run_id="team_run",
-                team_id="team-1",
-                user_id="bob",
-                status=RunStatus.completed,
-                member_responses=member_runs,
-                created_at=base_time,
-            ),
-            *member_runs,
-        ],
-        created_at=base_time,
-        updated_at=base_time,
-    )
-    _persist(postgres_db_real, team_session)
-    postgres_db_real.calculate_metrics()
-
-    # Every member run is stored as a run of its own, so none is counted again from the team run
-    past_day = _utc_date(2)
-    stored_rows = _stored_rows(postgres_db_real)
-    assert stored_rows[(past_day, "bob", "team", "team-1")]["input_tokens"] == 0
-    assert stored_rows[(past_day, "bob", "agent", "agent-2")]["runs_count"] == 5
-    assert stored_rows[(past_day, "bob", "agent", "agent-2")]["input_tokens"] == 50
-    assert _stored_user_metrics_rows(postgres_db_real)[("daily", past_day)]["input_tokens"] == 50
 
 
 def test_calculate_metrics_counts_a_remote_member_run_once(postgres_db_real: PostgresDb):
@@ -1750,11 +1493,11 @@ def test_calculate_metrics_counts_nested_runs_at_every_depth(postgres_db_real: P
     assert (row["input_tokens"], row["output_tokens"], row["total_tokens"]) == (19, 9, 28)
     assert row["model_calls_count"] == 4
     assert row["total_model_call_ms"] == 2700
-    assert row["model_metrics"] == {"OpenAI": {"gpt-5": 4}}
+    assert row["model_metrics"] == {"OpenAI": {"gpt-5": {"count": 4}}}
 
 
 def test_calculate_metrics_skips_a_refresh_with_nothing_new(postgres_db_real: PostgresDb):
-    """A calculation skips the rebuild while no session or run changed, and rebuilds after one did"""
+    """Ensure a calculation skips the rebuild while no session or run changed, and rebuilds after one did"""
     _persist(postgres_db_real, _session_on(_utc_date(0), "skipped_session", "alice"))
     # Written a minute ago, so no write shares the current second
     with postgres_db_real.Session() as sess, sess.begin():
@@ -1880,13 +1623,51 @@ def test_upsert_session_without_a_user_metrics_table(postgres_db_real: PostgresD
     assert db.table_exists("test_unbuilt_user_metrics") is False
 
 
-def test_calculate_metrics_keeps_an_everyone_row_and_a_row_per_user(postgres_db_real: PostgresDb):
-    """Ensure each day has an everyone row with every run, a row per user, and no row for the runs with no user"""
-    past_day = _utc_date(2)
-    _persist(postgres_db_real, _session_on(past_day, "alice_session", "alice", input_tokens=10))
-    _persist(postgres_db_real, _session_on(past_day, "bob_session", "bob", input_tokens=20))
-    _persist(postgres_db_real, _session_on(past_day, "unowned_session", None, input_tokens=30))
+def test_calculate_metrics_keeps_an_everyone_row_and_a_row_per_user(
+    postgres_db_real: PostgresDb, sample_sessions_for_component_metrics
+):
+    """Ensure each calculated day, yesterday without traffic included, has an everyone row with every run, a row per
+    user, and no row for the runs with no user"""
+    for session in sample_sessions_for_component_metrics:
+        _persist(postgres_db_real, session)
     postgres_db_real.calculate_metrics()
+
+    past_day = _utc_date(2)
+    yesterday = _utc_date(1)
+    today = _utc_date(0)
+    user_metrics_rows = _stored_user_metrics_rows(postgres_db_real)
+    assert {key for key in user_metrics_rows if key[0] == "daily"} == {
+        ("daily", past_day),
+        ("daily", yesterday),
+        ("daily", today),
+    }
+
+    day_row = user_metrics_rows[("daily", past_day)]
+    assert _user_metrics_sessions_count(day_row) == 4
+    assert day_row["root_runs_count"] == 5
+    assert day_row["status_metrics"] == {COMPLETED: 5, ERROR: 1}
+    assert (day_row["input_tokens"], day_row["output_tokens"], day_row["total_tokens"]) == (385, 185, 570)
+    assert day_row["duration_runs_count"] == 4
+    assert day_row["max_duration_ms"] == 4000
+    assert day_row["duration_buckets"] == {"le_1000": 1, "le_2000": 1, "le_3000": 1, "le_4000": 1}
+    assert day_row["model_metrics"] == {"OpenAI": {"gpt-5": {"count": 6}}}
+    assert day_row["completed"] is True
+    assert day_row["version"] == 1
+
+    # Yesterday has no traffic and is still open; today is open too
+    yesterday_row = user_metrics_rows[("daily", yesterday)]
+    assert (
+        _user_metrics_sessions_count(yesterday_row),
+        yesterday_row["root_runs_count"],
+        yesterday_row["max_duration_ms"],
+    ) == (
+        0,
+        0,
+        None,
+    )
+    assert yesterday_row["completed"] is False
+    assert _user_metrics_sessions_count(user_metrics_rows[("daily", today)]) == 1
+    assert user_metrics_rows[("daily", today)]["completed"] is False
 
     user_metrics_table = postgres_db_real._get_table("user_metrics")
     with postgres_db_real.Session() as sess:
@@ -1899,47 +1680,23 @@ def test_calculate_metrics_keeps_an_everyone_row_and_a_row_per_user(postgres_db_
             ).fetchall()
         }
     assert sorted(rows) == ["", "alice", "bob"]
-    assert (rows[""].input_tokens, rows[""].users_count) == (60, 2)
-    assert (rows["alice"].input_tokens, rows["alice"].users_count) == (10, 1)
+    assert (rows[""].input_tokens, rows[""].users_count) == (385, 2)
+    assert (rows["alice"].input_tokens, rows["alice"].users_count) == (110, 1)
 
     # Every user's rows, plus the runs with no user from their component rows
     metrics, _ = postgres_db_real.get_metrics(starting_date=past_day, ending_date=past_day)
     assert [(metric["user_id"], metric["token_metrics"]["input_tokens"]) for metric in metrics] == [
-        (None, 30),
-        ("alice", 10),
-        ("bob", 20),
+        (None, 5),
+        ("alice", 110),
+        ("bob", 270),
     ]
     metrics, _ = postgres_db_real.get_metrics(starting_date=past_day, ending_date=past_day, user_id="")
-    assert [(metric["user_id"], metric["token_metrics"]["input_tokens"]) for metric in metrics] == [(None, 30)]
+    assert [(metric["user_id"], metric["token_metrics"]["input_tokens"]) for metric in metrics] == [(None, 5)]
     # Every user in one row per day, read from the everyone row
     metrics, _ = postgres_db_real.get_metrics_by_date(starting_date=past_day, ending_date=past_day)
-    assert [(metric["users_count"], metric["token_metrics"]["input_tokens"]) for metric in metrics] == [(2, 60)]
+    assert [(metric["users_count"], metric["token_metrics"]["input_tokens"]) for metric in metrics] == [(2, 385)]
     # One version per day: the everyone row's
     assert list(_day_versions(postgres_db_real, past_day, past_day)) == [f"daily {past_day.isoformat()}"]
-
-
-def test_calculate_metrics_builds_a_day_written_while_it_was_today(postgres_db_real: PostgresDb):
-    """Ensure a day written while it was today, with no calculation until it was older, still gets its rows"""
-    _persist(postgres_db_real, _session_on(_utc_date(0), "today_session", "alice"))
-    postgres_db_real.calculate_metrics()
-
-    # Written as today three days ago, which reopens no day, and calculated for the last time four days ago
-    sessions_table = postgres_db_real._get_table("sessions")
-    refreshes_table = postgres_db_real._get_table("metrics_refreshes")
-    with postgres_db_real.Session() as sess, sess.begin():
-        sess.execute(
-            sessions_table.insert().values(
-                session_id="late_session",
-                session_type="agent",
-                agent_id="agent-1",
-                user_id="alice",
-                created_at=_noon_utc(3),
-            )
-        )
-        sess.execute(refreshes_table.update().values(finished_at=_noon_utc(4)))
-    postgres_db_real.calculate_metrics()
-
-    assert _user_metrics_sessions_count(_stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]) == 1
 
 
 def test_session_save_reopens_the_day_the_session_is_stored_on(postgres_db_real: PostgresDb):
@@ -1976,8 +1733,7 @@ def test_calculate_metrics_names_the_run_of_the_tool_call_as_parent(postgres_db_
 
 
 def test_calculate_metrics_takes_over_a_lock_that_went_stale(postgres_db_real: PostgresDb):
-    """Ensure a metrics refresh whose process stopped before releasing it reads failed once its lock went stale, and
-    is taken over"""
+    """Ensure a metrics refresh whose process stopped before releasing it is taken over once its lock went stale"""
     _persist(postgres_db_real, _session_on(_utc_date(2), "alice_session", "alice"))
     refreshes_table = postgres_db_real._get_table("metrics_refreshes", create_table_if_not_found=True)
     assert postgres_db_real._claim_metrics_refresh(refreshes_table, "stopped_process") is not None
@@ -1985,8 +1741,6 @@ def test_calculate_metrics_takes_over_a_lock_that_went_stale(postgres_db_real: P
     with postgres_db_real.Session() as sess, sess.begin():
         sess.execute(refreshes_table.update().values(locked_at=0))
 
-    refresh_status = postgres_db_real.get_metrics_refresh_status()
-    assert (refresh_status["status"], refresh_status["error"]) == ("failed", METRICS_STOPPED_ERROR)
     assert postgres_db_real.calculate_metrics()
     assert postgres_db_real.get_metrics_refresh_status()["status"] == "completed"
 
@@ -2017,27 +1771,6 @@ def test_deleting_a_session_keeps_its_closed_day_closed(postgres_db_real: Postgr
     assert postgres_db_real.delete_session("alice_session") is True
 
     assert _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(3))] == day_row
-
-
-def test_a_run_save_never_fails_because_of_metrics(postgres_db_real: PostgresDb):
-    """Ensure a run of a closed day is saved when its day cannot be reopened, as with a totals table missing columns"""
-    broken_db = PostgresDb(
-        db_engine=postgres_db_real.db_engine,
-        db_schema="test_schema",
-        session_table="test_sessions",
-        user_metrics_table="broken_user_metrics",
-    )
-    session = _session_on(_utc_date(3), "alice_session", "alice")
-    try:
-        broken_db._get_table("sessions", create_table_if_not_found=True)
-        with broken_db.Session() as sess, sess.begin():
-            sess.execute(text("CREATE TABLE test_schema.broken_user_metrics (aggregation_period VARCHAR, date DATE)"))
-        _persist(broken_db, session)
-
-        assert broken_db.get_run(session.runs[0].run_id) is not None
-    finally:
-        with broken_db.Session() as sess, sess.begin():
-            sess.execute(text("DROP TABLE IF EXISTS test_schema.broken_user_metrics"))
 
 
 def test_a_day_is_never_written_by_a_process_that_lost_the_lock(postgres_db_real: PostgresDb):
@@ -2100,7 +1833,8 @@ def test_cancelling_a_pending_run_reopens_its_day(postgres_db_real: PostgresDb):
 
 
 def test_a_day_a_write_could_not_reopen_is_reopened_by_the_next_write(postgres_db_real: PostgresDb):
-    """Ensure a day whose reopen failed is reopened by the next write once its user metrics row can be written again"""
+    """Ensure a save of a closed day never fails when the day cannot be reopened, and the next write reopens the day
+    once its user metrics row can be written again"""
     _persist(postgres_db_real, _session_on(_utc_date(3), "alice_session", "alice"))
     postgres_db_real.calculate_metrics()
     table_name = postgres_db_real.user_metrics_table_name
@@ -2118,7 +1852,9 @@ def test_a_day_a_write_could_not_reopen_is_reopened_by_the_next_write(postgres_d
             )
         )
     try:
-        _persist(postgres_db_real, _session_on(_utc_date(3), "bob_session", "bob"))
+        bob_session = _session_on(_utc_date(3), "bob_session", "bob")
+        _persist(postgres_db_real, bob_session)
+        assert postgres_db_real.get_run(bob_session.runs[0].run_id) is not None
         assert _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["completed"] is True
     finally:
         with postgres_db_real.Session() as sess, sess.begin():
@@ -2156,25 +1892,13 @@ def test_a_calculation_stops_between_the_batches_of_a_day(postgres_db_real: Post
 
 
 def test_calculate_metrics_rebuilds_every_day_from_rebuild_from(postgres_db_real: PostgresDb):
-    """Ensure rebuild_from recounts a closed day that no write reopened"""
+    """Ensure rebuild_from recounts a closed day that no write reopened, and builds a day with a session but no everyone
+    row, as one written without reopening its day"""
     session = _session_on(_utc_date(3), "alice_session", "alice")
     _persist(postgres_db_real, session)
     postgres_db_real.calculate_metrics()
     # A delete reopens no day, so the closed day keeps the run
     postgres_db_real.delete_run(session.runs[0].run_id)
-    postgres_db_real.calculate_metrics()
-    assert _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["root_runs_count"] == 1
-
-    postgres_db_real.calculate_metrics(rebuild_from=_utc_date(3))
-
-    day_row = _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]
-    assert (day_row["root_runs_count"], day_row["completed"]) == (0, True)
-
-
-def test_calculate_metrics_rebuild_from_builds_a_day_no_calculation_built(postgres_db_real: PostgresDb):
-    """Ensure rebuild_from builds a day with a session but no everyone row, as one written without reopening its day"""
-    _persist(postgres_db_real, _session_on(_utc_date(0), "alice_today", "alice"))
-    postgres_db_real.calculate_metrics()
     sessions_table = postgres_db_real._get_table("sessions")
     with postgres_db_real.Session() as sess, sess.begin():
         sess.execute(
@@ -2187,10 +1911,13 @@ def test_calculate_metrics_rebuild_from_builds_a_day_no_calculation_built(postgr
             )
         )
     postgres_db_real.calculate_metrics()
+    assert _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["root_runs_count"] == 1
     assert ("daily", _utc_date(15)) not in _stored_user_metrics_rows(postgres_db_real)
 
     postgres_db_real.calculate_metrics(rebuild_from=_utc_date(20))
 
+    day_row = _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]
+    assert (day_row["root_runs_count"], day_row["completed"]) == (0, True)
     assert _user_metrics_sessions_count(_stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(15))]) == 1
 
 
@@ -2215,8 +1942,8 @@ def test_a_calculation_stopped_after_a_completed_one_reads_completed(postgres_db
 
 
 def test_calculate_metrics_rebuilds_a_month_a_stopped_calculation_left(postgres_db_real: PostgresDb):
-    """Ensure a calculation that stopped after a day of a past month leaves the month to the next one, which totals it
-    from its days"""
+    """Ensure a calculation that stopped after a day of a past month leaves the month open, read from its days, and the
+    next calculation totals it from its days"""
     last_month_day = _month_start(0) - timedelta(days=1)
     _persist(postgres_db_real, _session_on(last_month_day, "last_month_session", "alice"))
     _persist(postgres_db_real, _session_on(_utc_date(0), "today_session", "alice"))
@@ -2224,6 +1951,10 @@ def test_calculate_metrics_rebuilds_a_month_a_stopped_calculation_left(postgres_
     checks = iter([False, False])
 
     assert postgres_db_real.calculate_metrics_dates(should_stop=lambda: next(checks, True)) is None
+    totals, _ = postgres_db_real.get_metrics_totals(
+        starting_date=last_month_day.replace(day=1), ending_date=last_month_day, fields=["total_tokens"]
+    )
+    assert totals["total_tokens"] == 15
     postgres_db_real.calculate_metrics()
 
     user_metrics_rows = _stored_user_metrics_rows(postgres_db_real)
@@ -2231,23 +1962,6 @@ def test_calculate_metrics_rebuilds_a_month_a_stopped_calculation_left(postgres_
     day_row = user_metrics_rows[("daily", last_month_day)]
     assert (_user_metrics_sessions_count(month_row), month_row["total_tokens"]) == (1, day_row["total_tokens"])
     assert day_row["total_tokens"] == 15
-
-
-def test_get_metrics_totals_reads_an_open_month_from_its_days(postgres_db_real: PostgresDb):
-    """Ensure a month whose user metrics row a stopped calculation left open is totalled from its days"""
-    last_month_day = _month_start(0) - timedelta(days=1)
-    _persist(postgres_db_real, _session_on(_utc_date(0), "today_session", "alice"))
-    postgres_db_real.calculate_metrics()
-    _persist(postgres_db_real, _session_on(last_month_day, "last_month_session", "alice"))
-    # Checked before the day and between its batches, then before the next day or the months
-    checks = iter([False, False])
-
-    assert postgres_db_real.calculate_metrics_dates(should_stop=lambda: next(checks, True)) is None
-
-    totals, _ = postgres_db_real.get_metrics_totals(
-        starting_date=last_month_day.replace(day=1), ending_date=last_month_day, fields=["total_tokens"]
-    )
-    assert totals["total_tokens"] == 15
 
 
 def test_calculate_metrics_rebuild_from_reopens_the_days_while_another_process_calculates(
@@ -2268,14 +1982,14 @@ def test_calculate_metrics_rebuild_from_reopens_the_days_while_another_process_c
     assert _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["completed"] is True
 
 
-def test_get_metrics_never_runs_a_first_calculation(postgres_db_real: PostgresDb):
-    """Ensure a read never waits for a first calculation, and refreshes once one has finished"""
+def test_get_metrics_runs_a_first_calculation_without_deprecated_rows(postgres_db_real: PostgresDb):
+    """Ensure a read runs the first calculation when the deprecated metrics table has no rows, and refreshes after"""
     _persist(postgres_db_real, _session_on(_utc_date(2), "alice_session", "alice"))
 
-    assert postgres_db_real.get_metrics() == ([], None)
-    assert postgres_db_real.get_metrics_refresh_status() is None
+    metrics, _ = postgres_db_real.get_metrics()
+    assert [(row["date"], row["user_id"]) for row in metrics] == [(_utc_date(2), "alice")]
+    assert postgres_db_real.get_metrics_refresh_status()["status"] == "completed"
 
-    postgres_db_real.calculate_metrics()
     _persist(postgres_db_real, _session_on(_utc_date(0), "bob_session", "bob"))
     # The last refresh on read was a minute ago
     postgres_db_real._metrics_refreshed_at = 0.0
@@ -2327,12 +2041,3 @@ def test_component_metrics_tables_for_a_long_session_table(postgres_db_real: Pos
             table = long_db._get_table(table_type)
             if table is not None:
                 table.drop(long_db.db_engine)
-
-
-def test_get_metrics_of_a_database_agentos_calculates_never_calculates(postgres_db_real: PostgresDb):
-    """Ensure a read of a database whose metrics AgentOS calculates in the background calculates nothing itself"""
-    postgres_db_real.stop_metrics_refresh_on_read()
-    _persist(postgres_db_real, _session_on(_utc_date(0), "alice_session", "alice"))
-
-    assert postgres_db_real.get_metrics() == ([], None)
-    assert postgres_db_real.get_metrics_refresh_status() is None

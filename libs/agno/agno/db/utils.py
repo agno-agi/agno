@@ -8,8 +8,6 @@ from os import getenv
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 from uuid import UUID
 
-from pydantic import TypeAdapter
-
 from agno import __version__
 from agno.exceptions import MigrationRequiredError, SchemaMismatchError
 from agno.metrics import ModelMetrics, RunMetrics, SessionMetrics
@@ -786,7 +784,7 @@ _METRIC_COUNT_FIELDS = (
 
 
 def _merge_model_metrics(target: List[dict], extra: List[dict]) -> None:
-    """Merge extra model_metrics into target in place, summing counts per model."""
+    """Merge extra model_metrics into target in place, summing counts and costs per model."""
     index: Dict[Any, dict] = {}
     for m in [*target, *extra]:
         key = (m.get("model_id"), m.get("model_provider"))
@@ -795,6 +793,8 @@ def _merge_model_metrics(target: List[dict], extra: List[dict]) -> None:
             index[key] = dict(m)
         else:
             entry["count"] = (entry.get("count") or 0) + (m.get("count") or 0)
+            if m.get("cost") is not None:
+                entry["cost"] = (entry.get("cost") or 0) + m["cost"]
     target[:] = list(index.values())
 
 
@@ -840,7 +840,12 @@ def aggregate_metrics_by_date(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]
         for field in _METRIC_COUNT_FIELDS:
             agg[field] = (agg.get(field) or 0) + (row.get(field) or 0)
         for token, value in (row.get("token_metrics") or {}).items():
-            agg["token_metrics"][token] = (agg["token_metrics"].get(token) or 0) + (value or 0)
+            if token == "cost":
+                # A cost no run reported stays None, not 0
+                if value is not None:
+                    agg["token_metrics"][token] = (agg["token_metrics"].get(token) or 0) + value
+            else:
+                agg["token_metrics"][token] = (agg["token_metrics"].get(token) or 0) + (value or 0)
         _merge_model_metrics(agg["model_metrics"], row.get("model_metrics") or [])
         agg["created_at"] = _merge_timestamp(agg.get("created_at"), row.get("created_at"), latest=False)
         agg["updated_at"] = _merge_timestamp(agg.get("updated_at"), row.get("updated_at"), latest=True)
@@ -866,14 +871,14 @@ def identify_metrics_by_owner(rows: Sequence[Dict[str, Any]], user_id: str) -> L
     return identified
 
 
-def list_metrics_models(model_metrics: Dict[str, Dict[str, int]]) -> List[Dict[str, Any]]:
+def list_metrics_models(model_metrics: Dict[str, Dict[str, Dict[str, Any]]]) -> List[Dict[str, Any]]:
     """List the models of a model_metrics map as agno_metrics lists them: one entry per model and provider, with its
-    count, sorted by model and provider."""
+    count and its cost, sorted by model and provider."""
     return sorted(
         (
-            {"model_id": model_id, "model_provider": provider, "count": count}
-            for provider, counts in model_metrics.items()
-            for model_id, count in counts.items()
+            {"model_id": model_id, "model_provider": provider, "count": model["count"], "cost": model.get("cost")}
+            for provider, models in model_metrics.items()
+            for model_id, model in models.items()
         ),
         key=lambda model: (model["model_id"], model["model_provider"]),
     )
@@ -888,7 +893,7 @@ def list_metrics_totals_models(totals: Dict[str, Any]) -> Dict[str, Any]:
 
 # The periods a row of agno_user_metrics covers. A month row is dated the first day of
 # its month.
-METRICS_PERIODS = ("daily", "monthly")
+_METRICS_PERIODS = ("daily", "monthly")
 
 # What a row of agno_component_metrics is counted under, by the type of the session or run.
 METRICS_COMPONENT_TYPES = ("agent", "team", "workflow")
@@ -925,6 +930,10 @@ METRICS_TOKEN_FIELDS = (
 # The token counts kept as the keys of one JSON column, token_details, instead of a column each. The audio total,
 # audio_total_tokens, is not kept: a read adds it up from the audio counts.
 METRICS_TOKEN_DETAILS_FIELDS = ("cache_read_tokens", "cache_write_tokens", "audio_input_tokens", "audio_output_tokens")
+
+# The cost of a row's runs, also kept in token_details: the total cost of the runs that reported one, and how many
+# runs did. A row none of whose runs reported a cost keeps neither.
+METRICS_COST_FIELDS = ("cost", "cost_runs_count")
 
 # The upper bounds, in milliseconds, of the buckets each timing is counted into. They never change: buckets counted
 # under different bounds cannot be added up.
@@ -1045,28 +1054,28 @@ METRICS_FIELDS = (
     "additional_metrics",
 )
 
-# Every field that is added up: the columns, the runs no other run started, and the token counts of token_details.
-METRICS_SUM_FIELDS = (*METRICS_SUM_COLUMNS, "root_runs_count", *METRICS_TOKEN_DETAILS_FIELDS, "audio_total_tokens")
+# Every field that is added up: the columns, the runs no other run started, and the token counts and cost of
+# token_details.
+METRICS_SUM_FIELDS = (
+    *METRICS_SUM_COLUMNS,
+    "root_runs_count",
+    *METRICS_TOKEN_DETAILS_FIELDS,
+    "audio_total_tokens",
+    *METRICS_COST_FIELDS,
+)
 
 # What get_component_metrics can total, and totals when the caller names none: every column but token_details, whose
-# token counts are totalled one by one, with the runs no other run started in place of every run.
+# token counts and cost are totalled one by one, with the runs no other run started in place of every run.
 METRICS_READ_FIELDS = (
     *["root_runs_count" if field == "runs_count" else field for field in METRICS_FIELDS if field != "token_details"],
     *METRICS_TOKEN_DETAILS_FIELDS,
     "audio_total_tokens",
+    *METRICS_COST_FIELDS,
 )
 
 # The counts a row of agno_user_metrics keeps beside the columns of agno_component_metrics, as agno_metrics
 # keeps them.
-USER_METRICS_COUNT_COLUMNS = (
-    "agent_runs_count",
-    "team_runs_count",
-    "workflow_runs_count",
-    "agent_sessions_count",
-    "team_sessions_count",
-    "workflow_sessions_count",
-    "users_count",
-)
+USER_METRICS_COUNT_COLUMNS = _METRIC_COUNT_FIELDS
 
 
 def resolve_metrics_fields(fields: Optional[Sequence[str]]) -> List[str]:
@@ -1080,13 +1089,13 @@ def resolve_metrics_fields(fields: Optional[Sequence[str]]) -> List[str]:
 
 
 def empty_metrics_totals(fields: Sequence[str] = METRICS_FIELDS) -> Dict[str, Any]:
-    """The totals of no row: zero counts, no maximum, empty maps and no models."""
+    """The totals of no row: zero counts, no maximum and no cost, empty maps and no models."""
     totals: Dict[str, Any] = {}
     for field in fields:
-        if field in METRICS_SUM_FIELDS:
-            totals[field] = 0
-        elif field in METRICS_MAX_COLUMNS:
+        if field in METRICS_MAX_COLUMNS or field == "cost":
             totals[field] = None
+        elif field in METRICS_SUM_FIELDS:
+            totals[field] = 0
         else:
             totals[field] = {}
     return totals
@@ -1095,26 +1104,35 @@ def empty_metrics_totals(fields: Sequence[str] = METRICS_FIELDS) -> Dict[str, An
 def add_metrics_totals(target: Dict[str, Any], extra: Dict[str, Any], fields: Sequence[str] = METRICS_FIELDS) -> None:
     """Add the totals of extra to target in place.
 
-    Counts and maps are summed, maximums keep the larger value, and additional_metrics is merged
-    the way RunMetrics.additional_metrics is.
+    Counts and maps are summed, maximums keep the larger value, a cost no run reported stays None, and
+    additional_metrics is merged the way RunMetrics.additional_metrics is.
     """
     for field in fields:
         value = extra.get(field)
-        # Nothing to add: a zero count, no maximum or an empty map leaves the total as it is
-        if field in target and (value is None or (not value and field not in METRICS_MAX_COLUMNS)):
+        # Nothing to add: a zero count, no maximum or an empty map leaves the total as it is, but a cost of 0 is added
+        if field in target and (value is None or (not value and field not in METRICS_MAX_COLUMNS and field != "cost")):
             continue
-        if field in METRICS_SUM_FIELDS:
+        if field == "cost":
+            if value is not None:
+                target[field] = (target.get(field) or 0) + value
+        elif field in METRICS_SUM_FIELDS:
             target[field] = (target.get(field) or 0) + (value or 0)
         elif field in METRICS_MAX_COLUMNS:
             if value is not None and (target.get(field) is None or value > target[field]):
                 target[field] = value
         elif field == "model_metrics":
-            # Each provider's models, counted per model
-            model_metrics = {provider: dict(counts) for provider, counts in (target.get(field) or {}).items()}
-            for provider, counts in (value or {}).items():
-                provider_counts = model_metrics.setdefault(provider, {})
-                for model_id, count in counts.items():
-                    provider_counts[model_id] = provider_counts.get(model_id, 0) + (count or 0)
+            # Each provider's models, counted and costed per model
+            model_metrics = {
+                provider: {model_id: dict(model) for model_id, model in models.items()}
+                for provider, models in (target.get(field) or {}).items()
+            }
+            for provider, models in (value or {}).items():
+                provider_models = model_metrics.setdefault(provider, {})
+                for model_id, model in models.items():
+                    model_totals = provider_models.setdefault(model_id, {"count": 0})
+                    model_totals["count"] += model.get("count") or 0
+                    if model.get("cost") is not None:
+                        model_totals["cost"] = (model_totals.get("cost") or 0) + model["cost"]
             target[field] = model_metrics
         elif field == "additional_metrics":
             # Merge additional_metrics (sum numeric values, keep latest for others)
@@ -1334,6 +1352,9 @@ def _calculate_run_metrics(run: Dict[str, Any], seen_run_ids: Set[str]) -> Dict[
                 totals[field] += tokens
             elif field in METRICS_TOKEN_DETAILS_FIELDS and tokens:
                 totals["token_details"][field] = totals["token_details"].get(field, 0) + tokens
+        if call_metrics.get("cost") is not None:
+            totals["token_details"]["cost"] = totals["token_details"].get("cost", 0) + call_metrics["cost"]
+            totals["token_details"]["cost_runs_count"] = totals["token_details"].get("cost_runs_count", 0) + 1
         # The rest a run reports beside its tokens, such as eval_duration, merged as RunMetrics merges it
         add_metrics_totals(totals, call_metrics, ["additional_metrics"])
         for seconds in _metrics_request_durations(call):
@@ -1354,21 +1375,31 @@ def _calculate_run_metrics(run: Dict[str, Any], seen_run_ids: Set[str]) -> Dict[
             if isinstance(model_metrics, dict) and model_metrics.get("id") == call["model"]
         }
         # The call's own model, as agno_metrics counted it whether or not it reported usage, and every other model it
-        # used, such as its output model, once
-        models = {(call["model"], call.get("model_provider") or "")}
-        models.update(
-            (
-                model_metrics["id"],
-                provider_labels.get(model_metrics.get("provider"))
-                or _metrics_model_provider(model_metrics.get("provider") or ""),
-            )
-            for model_type_metrics in model_type_metrics_lists
-            for model_metrics in model_type_metrics
-            if isinstance(model_metrics, dict) and model_metrics.get("id") not in (None, "", call["model"])
-        )
-        for model_id, provider in models:
-            provider_counts = totals["model_metrics"].setdefault(provider, {})
-            provider_counts[model_id] = provider_counts.get(model_id, 0) + 1
+        # used, such as its output model, once, each with the cost its details report for it
+        call_model = (call["model"], call.get("model_provider") or "")
+        model_costs: Dict[Tuple[str, str], Optional[float]] = {call_model: None}
+        for model_type_metrics in model_type_metrics_lists:
+            for model_metrics in model_type_metrics:
+                if not isinstance(model_metrics, dict) or model_metrics.get("id") in (None, ""):
+                    continue
+                model = (
+                    call_model
+                    if model_metrics["id"] == call["model"]
+                    else (
+                        model_metrics["id"],
+                        provider_labels.get(model_metrics.get("provider"))
+                        or _metrics_model_provider(model_metrics.get("provider") or ""),
+                    )
+                )
+                cost = model_costs.get(model)
+                if model_metrics.get("cost") is not None:
+                    cost = (cost or 0) + model_metrics["cost"]
+                model_costs[model] = cost
+        for (model_id, provider), cost in model_costs.items():
+            model_totals = totals["model_metrics"].setdefault(provider, {}).setdefault(model_id, {"count": 0})
+            model_totals["count"] += 1
+            if cost is not None:
+                model_totals["cost"] = (model_totals.get("cost") or 0) + cost
     return totals
 
 
@@ -1488,7 +1519,7 @@ def calculate_date_component_metrics(
 def metrics_calculation_enabled() -> bool:
     """Whether metrics calculation is turned on by the metrics_calculation_enabled setting AgentOS reads, so the
     switch also stops the refresh on read of a database no AgentOS runs."""
-    return TypeAdapter(bool).validate_python(getenv("METRICS_CALCULATION_ENABLED", "true"))
+    return getenv("METRICS_CALCULATION_ENABLED", "true").lower() in ("true", "1", "yes")
 
 
 def metrics_day_completed(day: date) -> bool:
@@ -1540,7 +1571,7 @@ def build_user_metrics_row(
     Returns:
         Dict[str, Any]: The row. Its version is set when it is written.
     """
-    if aggregation_period not in METRICS_PERIODS:
+    if aggregation_period not in _METRICS_PERIODS:
         raise ValueError(f"Unknown metrics aggregation period: {aggregation_period}")
     counts = {column: 0 for column in USER_METRICS_COUNT_COLUMNS}
     for row in rows:
@@ -1781,9 +1812,9 @@ def build_metrics_by_owner(rows: Sequence[Any], model_rows: Sequence[Any]) -> Li
 
     Args:
         rows (Sequence[Any]): The totals of each user, day and component type: date, user_id, component_type,
-            sessions_count, runs_count, every token column, created_at and updated_at.
+            sessions_count, runs_count, every token column, cost, created_at and updated_at.
         model_rows (Sequence[Any]): The model counts of each user and day: date, user_id, model_id,
-            model_provider and count.
+            model_provider, count and cost.
 
     Returns:
         List[Dict[str, Any]]: The rows, oldest first, with the keys of agno_metrics. The unowned row has user_id
@@ -1808,7 +1839,7 @@ def build_metrics_by_owner(rows: Sequence[Any], model_rows: Sequence[Any]) -> Li
                 "agent_runs_count": 0,
                 "team_runs_count": 0,
                 "workflow_runs_count": 0,
-                "token_metrics": {field: 0 for field in METRICS_TOKEN_FIELDS},
+                "token_metrics": {**{field: 0 for field in METRICS_TOKEN_FIELDS}, "cost": None},
                 "model_metrics": [],
                 "completed": metrics_day_completed(row.date),
                 "created_at": row.created_at,
@@ -1819,6 +1850,8 @@ def build_metrics_by_owner(rows: Sequence[Any], model_rows: Sequence[Any]) -> Li
         metric[f"{row.component_type}_runs_count"] += int(row.runs_count or 0)
         for field in METRICS_TOKEN_FIELDS:
             metric["token_metrics"][field] += int(getattr(row, field) or 0)
+        if row.cost is not None:
+            metric["token_metrics"]["cost"] = (metric["token_metrics"]["cost"] or 0) + float(row.cost)
         metric["created_at"] = _merge_timestamp(metric["created_at"], row.created_at, latest=False)
         metric["updated_at"] = _merge_timestamp(metric["updated_at"], row.updated_at, latest=True)
 
@@ -1826,14 +1859,22 @@ def build_metrics_by_owner(rows: Sequence[Any], model_rows: Sequence[Any]) -> Li
         metric = metrics_by_owner.get((row.date, row.user_id or ""))
         if metric is not None:
             metric["model_metrics"].append(
-                {"model_id": row.model_id, "model_provider": row.model_provider, "count": int(row.count)}
+                {
+                    "model_id": row.model_id,
+                    "model_provider": row.model_provider,
+                    "count": int(row.count),
+                    "cost": None if row.cost is None else float(row.cost),
+                }
             )
 
     return [metrics_by_owner[key] for key in sorted(metrics_by_owner)]
 
 
-def _metrics_token_count(row: Dict[str, Any], field: str) -> int:
-    """A token count of a stored row: its column, its key of token_details, or the total of the audio counts."""
+def _metrics_token_count(row: Dict[str, Any], field: str) -> Any:
+    """A token count of a stored row: its column, its key of token_details, or the total of the audio counts, or the
+    cost kept in token_details, None when no run reported one."""
+    if field == "cost":
+        return (row["token_details"] or {}).get(field)
     if field == "audio_total_tokens":
         return sum(
             _metrics_token_count(row, audio_field) for audio_field in ["audio_input_tokens", "audio_output_tokens"]
@@ -1848,7 +1889,7 @@ def build_metrics_from_user_metrics(rows: Sequence[Any]) -> List[Dict[str, Any]]
     agno_user_metrics.
 
     Args:
-        rows (Sequence[Dict[str, Any]]): The everyone rows or user rows, as stored.
+        rows (Sequence[Any]): The everyone rows or user rows, as stored.
 
     Returns:
         List[Dict[str, Any]]: The rows, in the given order, with the keys of agno_metrics. The everyone row has user_id
@@ -1864,7 +1905,7 @@ def build_metrics_from_user_metrics(rows: Sequence[Any]) -> List[Dict[str, Any]]
                 "aggregation_period": "daily",
                 "user_id": user_id,
                 **{column: row[column] for column in USER_METRICS_COUNT_COLUMNS},
-                "token_metrics": {field: _metrics_token_count(row, field) for field in METRICS_TOKEN_FIELDS},
+                "token_metrics": {field: _metrics_token_count(row, field) for field in [*METRICS_TOKEN_FIELDS, "cost"]},
                 "model_metrics": list_metrics_models(row["model_metrics"]),
                 "completed": metrics_day_completed(row["date"]),
                 "created_at": row["created_at"],

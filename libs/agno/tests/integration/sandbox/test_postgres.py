@@ -5,7 +5,7 @@ import os
 import threading
 import time
 from dataclasses import replace
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -1704,8 +1704,6 @@ async def test_repository_marker_pin_published_at_commit(store, tmp_path, monkey
 
 
 async def test_a_prepared_run_of_a_closed_day_reopens_the_day(store):
-    from datetime import datetime, timezone
-
     from agno.db.utils import build_user_metrics_row
     from agno.run.agent import RunInput, RunOutput
     from agno.run.base import RunStatus

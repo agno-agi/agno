@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.utils import (
     COMPONENT_METRICS_KEY_COLUMNS,
+    METRICS_COST_FIELDS,
     METRICS_COUNT_MAP_COLUMNS,
     METRICS_MAX_COLUMNS,
     METRICS_SUM_FIELDS,
@@ -279,13 +280,15 @@ def get_dates_to_calculate_metrics_for(starting_date: date) -> list[date]:
 
 
 # -- Component metrics util methods --
-def bulk_upsert_component_metrics(session: Session, table: Table, component_metrics_records: list[dict]) -> None:
+def bulk_upsert_component_metrics(
+    session: Session, table: Table, component_metrics_records: List[Dict[str, Any]]
+) -> None:
     """Bulk upsert component metrics into the database, in the session's transaction.
 
     Args:
         session (Session): The session to upsert with.
         table (Table): The table to upsert into.
-        component_metrics_records (list[dict]): The component metrics records to upsert.
+        component_metrics_records (List[Dict[str, Any]]): The component metrics records to upsert.
     """
     if not component_metrics_records:
         return
@@ -305,14 +308,14 @@ def bulk_upsert_component_metrics(session: Session, table: Table, component_metr
 
 
 async def abulk_upsert_component_metrics(
-    session: AsyncSession, table: Table, component_metrics_records: list[dict]
+    session: AsyncSession, table: Table, component_metrics_records: List[Dict[str, Any]]
 ) -> None:
     """Bulk upsert component metrics into the database, in the session's transaction.
 
     Args:
         session (AsyncSession): The session to upsert with.
         table (Table): The table to upsert into.
-        component_metrics_records (list[dict]): The component metrics records to upsert.
+        component_metrics_records (List[Dict[str, Any]]): The component metrics records to upsert.
     """
     if not component_metrics_records:
         return
@@ -735,13 +738,15 @@ def build_component_metrics_run(row: Any) -> Dict[str, Any]:
 
 
 def _metrics_column(table: Table, field: str) -> Any:
-    """Build a column of a metrics row to total: the column itself, its key of token_details for a token count kept
-    there, the total of the audio counts, the sessions of every type, or the runs no other run started."""
+    """Build a column of a metrics row to total: the column itself, its key of token_details for a token count or the
+    cost kept there, the total of the audio counts, the sessions of every type, or the runs no other run started."""
     if field == "audio_total_tokens":
         return func.coalesce(_metrics_column(table, "audio_input_tokens"), 0) + func.coalesce(
             _metrics_column(table, "audio_output_tokens"), 0
         )
-    if field in METRICS_TOKEN_DETAILS_FIELDS:
+    if field == "cost":
+        return cast(table.c.token_details[field].astext, Numeric)
+    if field in (*METRICS_TOKEN_DETAILS_FIELDS, *METRICS_COST_FIELDS):
         return cast(table.c.token_details[field].astext, BigInteger)
     # The user metrics table keeps the sessions of each type only
     if field == "sessions_count" and field not in table.c:
@@ -752,18 +757,19 @@ def _metrics_column(table: Table, field: str) -> Any:
     return table.c[field]
 
 
-def _metrics_models(table: Table) -> Tuple[Any, Any, Any, Any]:
+def _metrics_models(table: Table) -> Tuple[Any, Any, Any, Any, Any]:
     """Build the rows of a metrics table joined to each model of their model_metrics, which maps each provider to the
-    count of each of its models, and the provider, the id and the count of the model."""
+    count and cost of each of its models, and the provider, the id, the count and the cost of the model."""
     provider = func.jsonb_each(table.c.model_metrics).table_valued(
         column("key", Text), column("value", postgresql.JSONB)
     )
-    model = func.jsonb_each_text(provider.c.value).table_valued("key", "value")
+    model = func.jsonb_each(provider.c.value).table_valued(column("key", Text), column("value", postgresql.JSONB))
     return (
         table.join(provider, true()).join(model, true()),
         provider.c.key.label("model_provider"),
         model.c.key.label("model_id"),
-        cast(model.c.value, BigInteger),
+        cast(model.c.value["count"].astext, BigInteger),
+        cast(model.c.value["cost"].astext, Numeric),
     )
 
 
@@ -848,9 +854,9 @@ def build_component_metrics_totals_queries(
         )
 
     if "model_metrics" in fields:
-        models, model_provider, model_id, count = _metrics_models(table)
+        models, model_provider, model_id, count, cost = _metrics_models(table)
         queries["model_metrics"] = (
-            select(table.c.date, model_id, model_provider, func.sum(count).label("count"))
+            select(table.c.date, model_id, model_provider, func.sum(count).label("count"), func.sum(cost).label("cost"))
             .select_from(models)
             .where(where)
             .group_by(table.c.date, model_id, model_provider)
@@ -878,7 +884,10 @@ def build_component_metrics_totals(
     for row in rows_by_query.get("totals", []):
         day_totals: Dict[str, Any] = {"date": row.date, **empty_metrics_totals(fields)}
         for field in fields:
-            if field in METRICS_SUM_FIELDS:
+            # No cost when no run reported one
+            if field == "cost":
+                day_totals[field] = None if getattr(row, field) is None else float(getattr(row, field))
+            elif field in METRICS_SUM_FIELDS:
                 day_totals[field] = int(getattr(row, field) or 0)
             elif field in METRICS_MAX_COLUMNS and getattr(row, field) is not None:
                 day_totals[field] = int(getattr(row, field))
@@ -895,7 +904,10 @@ def build_component_metrics_totals(
         totals_by_date[row.date]["additional_metrics"][row.key] = value
 
     for row in rows_by_query.get("model_metrics", []):
-        totals_by_date[row.date]["model_metrics"].setdefault(row.model_provider, {})[row.model_id] = int(row.count)
+        model: Dict[str, Any] = {"count": int(row.count)}
+        if row.cost is not None:
+            model["cost"] = float(row.cost)
+        totals_by_date[row.date]["model_metrics"].setdefault(row.model_provider, {})[row.model_id] = model
 
     return [totals_by_date[day] for day in sorted(totals_by_date)], latest_updated_at
 
@@ -928,12 +940,12 @@ def build_metrics_by_owner_queries(
         table.c.component_type,
         func.sum(table.c.sessions_count).label("sessions_count"),
         func.sum(table.c.runs_count).label("runs_count"),
-        *[func.sum(_metrics_column(table, field)).label(field) for field in METRICS_TOKEN_FIELDS],
+        *[func.sum(_metrics_column(table, field)).label(field) for field in [*METRICS_TOKEN_FIELDS, "cost"]],
         func.min(table.c.created_at).label("created_at"),
         func.max(table.c.updated_at).label("updated_at"),
     ).where(*filters)
 
-    models, model_provider, model_id, count = _metrics_models(table)
+    models, model_provider, model_id, count, cost = _metrics_models(table)
     model_metrics = (
         select(
             table.c.date,
@@ -941,6 +953,7 @@ def build_metrics_by_owner_queries(
             model_id,
             model_provider,
             func.sum(count).label("count"),
+            func.sum(cost).label("cost"),
         )
         .select_from(models)
         .where(*filters)

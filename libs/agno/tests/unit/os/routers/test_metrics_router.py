@@ -43,6 +43,11 @@ def _make_metric(user_id, *, date="2026-01-01", runs=1, tokens=10, model="gpt-5-
     }
 
 
+def _refresh_status(status, *, error=None):
+    """Create a refresh status as the db layer emits it."""
+    return {"status": status, "started_at": 1767225600, "finished_at": None, "error": error}
+
+
 @pytest.fixture
 def alice_row():
     return _make_metric("alice", runs=2, tokens=100)
@@ -124,27 +129,19 @@ class TestGetMetrics:
         assert row["token_metrics"]["total_tokens"] == 145
         assert row["model_metrics"] == [{"model_id": "gpt-5-mini", "model_provider": "OpenAI", "count": 6}]
 
-    def test_read_never_calculates_and_carries_the_refresh_status(self, lock_row_client, lock_row_db):
-        lock_row_db.get_metrics_refresh_status.return_value = {
-            "status": "running",
-            "started_at": 1767225600,
-            "finished_at": None,
-            "error": None,
-        }
+    def test_unscoped_read_takes_one_row_per_day_and_carries_the_refresh_status(
+        self, lock_row_client, lock_row_db, alice_row
+    ):
+        """A database with its own read of every user's day is not asked for each user's rows, nor to calculate."""
+        lock_row_db.get_metrics_by_date = MagicMock(return_value=([alice_row], int(time.time())))
+        lock_row_db.get_metrics_refresh_status.return_value = _refresh_status("running")
         with _scope(None):
             resp = lock_row_client.get("/metrics")
 
         assert resp.status_code == 200
         assert resp.json()["refresh"]["status"] == "running"
-        lock_row_db.calculate_metrics.assert_not_called()
-
-    def test_unscoped_read_takes_one_row_per_day_from_the_database(self, lock_row_client, lock_row_db, alice_row):
-        """A database with its own read of every user's day is not asked for each user's rows."""
-        lock_row_db.get_metrics_by_date = MagicMock(return_value=([alice_row], int(time.time())))
-        with _scope(None):
-            resp = lock_row_client.get("/metrics")
-
         assert [metric["agent_runs_count"] for metric in resp.json()["metrics"]] == [2]
+        lock_row_db.calculate_metrics.assert_not_called()
         lock_row_db.get_metrics.assert_not_called()
 
     def test_aggregate_row_carries_no_user_identity(self, client):
@@ -298,8 +295,7 @@ class TestRefreshMetrics:
         lock_row_db.calculate_metrics_dates.assert_not_called()
 
     def test_a_refresh_reads_the_days_it_calculated_back_from_the_tables(self, lock_row_client, lock_row_db):
-        """The build gives only the days it calculated, so a first build never holds every row it wrote; their rows
-        are read back, one per day."""
+        """The build gives only the days it calculated, so their rows are read back from the tables, one per day."""
         rows = [_make_metric("", date=date(2026, 1, 1), runs=5, tokens=140), _make_metric("", date=date(2026, 1, 2))]
         lock_row_db.get_metrics_by_date = MagicMock(return_value=(rows, int(time.time())))
         with _scope(None):
@@ -313,60 +309,53 @@ class TestRefreshMetrics:
             "ending_date": date(2026, 1, 1),
         }
 
-    def test_a_background_caller_sees_a_refresh_running_in_any_process(self, lock_row_client, lock_row_db):
-        lock_row_db.get_metrics_refresh_status.return_value = {
-            "status": "running",
-            "started_at": 1767225600,
-            "finished_at": None,
-            "error": None,
-        }
+    def test_a_refresh_lists_a_day_it_calculated_to_no_sessions_or_runs(self, lock_row_client, lock_row_db):
+        """A day whose sessions were deleted is rebuilt to zeros, which reads leave out, and still comes back."""
+        lock_row_db.calculate_metrics_dates.return_value = [date(2026, 1, 1), date(2026, 1, 2)]
+        rows = [_make_metric("", date=date(2026, 1, 1), runs=5, tokens=140)]
+        lock_row_db.get_metrics_by_date = MagicMock(return_value=(rows, int(time.time())))
         with _scope(None):
-            resp = lock_row_client.post("/metrics/refresh?background=true")
+            resp = lock_row_client.post("/metrics/refresh", params={"rebuild_from": "2026-01-01"})
 
-        assert resp.status_code == 202
-        assert resp.json()["status"] == "already_running"
-        lock_row_db.calculate_metrics.assert_not_called()
+        assert resp.status_code == 200
+        days = [(day["date"], day["agent_runs_count"], day["token_metrics"]["total_tokens"]) for day in resp.json()]
+        assert days == [
+            ("2026-01-01T00:00:00Z", 5, 140),
+            ("2026-01-02T00:00:00Z", 0, 0),
+        ]
 
     def test_a_background_rebuild_during_a_running_refresh_still_reopens_its_days(self, lock_row_client, lock_row_db):
         """The days of a rebuild asked while a refresh runs are reopened, so the next refresh rebuilds them."""
-        lock_row_db.get_metrics_refresh_status.return_value = {
-            "status": "running",
-            "started_at": 1767225600,
-            "finished_at": None,
-            "error": None,
-        }
+        lock_row_db.get_metrics_refresh_status.return_value = _refresh_status("running")
         lock_row_db.calculate_metrics_dates.return_value = None
         with _scope(None):
             resp = lock_row_client.post("/metrics/refresh?background=true&rebuild_from=2026-01-01")
 
+        assert resp.status_code == 202
         assert resp.json()["status"] == "already_running"
         assert lock_row_db.calculate_metrics_dates.call_args.kwargs["rebuild_from"] == date(2026, 1, 1)
+        lock_row_db.calculate_metrics.assert_not_called()
 
     def test_status_is_read_from_the_database(self, lock_row_client, lock_row_db):
-        lock_row_db.get_metrics_refresh_status.return_value = {
-            "status": "failed",
-            "started_at": 1767225600,
-            "finished_at": None,
-            "error": "boom",
-        }
         with _scope(None):
+            before = lock_row_client.get("/metrics/refresh/status").json()
+            lock_row_db.get_metrics_refresh_status.return_value = _refresh_status("failed", error="boom")
             status = lock_row_client.get("/metrics/refresh/status").json()
 
+        # Idle before any refresh
+        assert before["status"] == "idle"
         assert status["status"] == "failed"
         assert status["error"] == "boom"
         assert status["started_at"] is not None
 
-    def test_status_is_idle_before_any_refresh(self, lock_row_client):
-        with _scope(None):
-            status = lock_row_client.get("/metrics/refresh/status").json()
-
-        assert status["status"] == "idle"
-
-    def test_refresh_is_refused_when_calculation_is_turned_off(self, mock_db):
+    def test_refresh_is_refused_and_a_read_never_calculates_when_calculation_is_turned_off(self, lock_row_db):
+        """A database that calculates its metrics on read is stopped from doing so."""
         app = FastAPI()
         with patch("agno.os.routers.metrics.metrics.get_authentication_dependency", return_value=lambda: True):
             app.include_router(
-                get_metrics_router(dbs={"db-1": [mock_db]}, settings=AgnoAPISettings(metrics_calculation_enabled=False))
+                get_metrics_router(
+                    dbs={"db-1": [lock_row_db]}, settings=AgnoAPISettings(metrics_calculation_enabled=False)
+                )
             )
         with _scope(None):
             resp = TestClient(app).post("/metrics/refresh")
@@ -375,15 +364,9 @@ class TestRefreshMetrics:
         assert (resp.status_code, resp.json()["status"]) == (200, "disabled")
         # A background refresh never starts either, so it is answered the same way
         assert (background.status_code, background.json()["status"]) == (200, "disabled")
-        mock_db.calculate_metrics.assert_not_called()
-
-    def test_a_read_never_calculates_when_calculation_is_turned_off(self):
-        """A database that calculates its metrics on read is stopped from doing so."""
-        db = MagicMock(spec=PostgresDb)
-        with patch("agno.os.routers.metrics.metrics.get_authentication_dependency", return_value=lambda: True):
-            get_metrics_router(dbs={"db-1": [db]}, settings=AgnoAPISettings(metrics_calculation_enabled=False))
-
-        db.stop_metrics_refresh_on_read.assert_called_once()
+        lock_row_db.calculate_metrics.assert_not_called()
+        lock_row_db.calculate_metrics_dates.assert_not_called()
+        lock_row_db.stop_metrics_refresh_on_read.assert_called_once()
 
     def test_background_refresh_of_a_remote_database_forwards_the_user(self, settings):
         remote_db = MagicMock(spec=RemoteDb)

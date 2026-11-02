@@ -33,9 +33,9 @@ Enable flags:
 Read-only:
     * No tool mutates platform state, and no tool writes. Schedule, approval and
       component management are deliberately not exposed. ``get_platform_metrics``
-      reads the stored metrics; on a database whose ``db.get_metrics()`` still
-      refreshes stale rollups for every caller, it inherits that write and whatever
-      throttling the database applies.
+      reads the stored metrics; on a database whose ``db.get_metrics_by_date()``
+      still refreshes stale rollups for every caller, it inherits that write and
+      whatever throttling the database applies.
     * Span attributes payloads, approval tool arguments and schedule run
       input/output are never returned -- they can hold full conversation content.
     * Schedule run errors are redacted: an error carrying a non-2xx status code is
@@ -56,7 +56,6 @@ import json
 from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union, cast
 
-from agno.db.utils import aggregate_metrics_by_date
 from agno.run.authorization import requires_permission
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import logger
@@ -196,7 +195,7 @@ class AgentOSTools(Toolkit):
         try:
             days = _window_days(days)
             start_date, end_date = _metrics_window(days)
-            rows, _ = self._sync_db().get_metrics(starting_date=start_date, ending_date=end_date)
+            rows, _ = self._sync_db().get_metrics_by_date(starting_date=start_date, ending_date=end_date)
             return _format_platform_metrics(rows, days, start_date, end_date)
         except Exception:
             logger.exception("Failed to get platform metrics")
@@ -217,7 +216,7 @@ class AgentOSTools(Toolkit):
         try:
             days = _window_days(days)
             start_date, end_date = _metrics_window(days)
-            rows, _ = await self._async_db().get_metrics(starting_date=start_date, ending_date=end_date)
+            rows, _ = await self._async_db().get_metrics_by_date(starting_date=start_date, ending_date=end_date)
             return _format_platform_metrics(rows, days, start_date, end_date)
         except Exception:
             logger.exception("Failed to get platform metrics")
@@ -718,9 +717,6 @@ def _epoch_to_iso(value: Optional[int]) -> Optional[str]:
 
 
 def _format_platform_metrics(rows: List[Any], days: int, start_date: date, end_date: date) -> str:
-    # Stored metrics are one row per owner, and this reports a day: without collapsing them a
-    # day with three users arrives as three unlabelled entries carrying one user count each.
-    rows = aggregate_metrics_by_date(rows)
     daily = []
     totals = {
         "agent_runs": 0,

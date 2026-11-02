@@ -18,8 +18,10 @@ class DayAggregatedMetrics(BaseModel):
     workflow_runs_count: int = Field(..., description="Total number of workflow runs", ge=0)
     workflow_sessions_count: int = Field(..., description="Total number of workflow sessions", ge=0)
     users_count: int = Field(..., description="Total number of unique users", ge=0)
-    token_metrics: Dict[str, Any] = Field(..., description="Token usage metrics (input, output, cached, etc.)")
-    model_metrics: List[Dict[str, Any]] = Field(..., description="Metrics grouped by model (model_id, provider, count)")
+    token_metrics: Dict[str, Any] = Field(..., description="Token usage metrics (input, output, cached, cost, etc.)")
+    model_metrics: List[Dict[str, Any]] = Field(
+        ..., description="Metrics grouped by model (model_id, provider, count, cost)"
+    )
 
     date: datetime = Field(..., description="Date for which these metrics are aggregated")
     created_at: datetime = Field(..., description="Timestamp when metrics were created")

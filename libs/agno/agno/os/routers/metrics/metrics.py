@@ -6,7 +6,7 @@ from collections import OrderedDict
 from datetime import date, datetime, timedelta, timezone
 from itertools import chain
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, List, Optional, Union
 
 from fastapi import BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from fastapi.routing import APIRouter
@@ -14,6 +14,7 @@ from starlette.concurrency import run_in_threadpool
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.utils import (
+    METRICS_TOKEN_FIELDS,
     aggregate_metrics_by_date,
     database_error_message,
     identify_metrics_by_owner,
@@ -23,7 +24,7 @@ from agno.db.utils import (
 )
 from agno.exceptions import AgnoError
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
-from agno.os.authz.admin_router import _make_require_admin
+from agno.os.authz.admin_router import _day_bounds, _make_require_admin
 from agno.os.middleware.user_scope import get_scoped_user_id, resolve_db_and_scope
 from agno.os.routers.metrics.schemas import (
     DayAggregatedMetrics,
@@ -71,11 +72,9 @@ logger = logging.getLogger(__name__)
 # equal to the ending_date covers that one day.
 _DEFAULT_WINDOW_DAYS = 30
 
-# The /os/metrics routes read every database of the AgentOS at the same time, this many at once. A database
-# that has not answered within the timeout, or has not finished its first metrics calculation yet, is left out of the
-# response and named in skipped_db_ids.
+# How many databases the /os/metrics routes read at once
 _MAX_CONCURRENT_OS_METRICS_READS = 8
-
+# How many answers of the /os/metrics routes are kept for reuse
 _MAX_OS_METRICS_RESPONSES = 256
 # An answer for a longer window is returned but not kept
 _MAX_OS_METRICS_KEPT_WINDOW_DAYS = 366
@@ -164,19 +163,6 @@ def _os_metrics_location(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> tuple[Opti
     return (address, *(name for name in store_names if isinstance(name, str)), *table_names)
 
 
-def _registered_os_dbs(
-    os_db: Optional[Union[BaseDb, AsyncBaseDb]],
-    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
-) -> dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]]:
-    """Collect every database of the AgentOS by id."""
-    registered_dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]] = {}
-    if os_db is not None:
-        registered_dbs[str(os_db.id)] = [os_db]
-    for registered_db_id, db_list in dbs.items():
-        registered_dbs.setdefault(registered_db_id, []).extend(db_list)
-    return registered_dbs
-
-
 def _unique_os_dbs(
     os_dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
 ) -> dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]]:
@@ -192,7 +178,7 @@ def _unique_os_dbs(
     return unique_dbs
 
 
-def _merge_totals(totals: List[Dict[str, Any]], fields: List[str]) -> Dict[str, Any]:
+def _merge_totals(totals: list[dict[str, Any]], fields: list[str]) -> dict[str, Any]:
     """Merge the totals of several dates or databases into one set of totals, their models listed as the reads list
     them."""
     merged = merge_metrics_totals(totals, [field for field in fields if field != "model_metrics"])
@@ -201,10 +187,96 @@ def _merge_totals(totals: List[Dict[str, Any]], fields: List[str]) -> Dict[str, 
     return merged
 
 
+def _owner(request: Request, user_id: Optional[str]) -> Optional[str]:
+    """The owner a read covers: the caller's own scope, else the requested user_id, else every owner."""
+    scoped_user_id = get_scoped_user_id(request)
+    return scoped_user_id if scoped_user_id is not None else user_id
+
+
+def _remote_os_db(os_dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]]) -> Optional[RemoteDb]:
+    """A remote database a read covers when every database it covers is on one remote AgentOS, so that AgentOS
+    answers the read for the ids of those databases and no other."""
+    os_db_list = [db for db_list in os_dbs.values() for db in db_list]
+    remote_dbs = [db for db in os_db_list if isinstance(db, RemoteDb)]
+    if remote_dbs and len(remote_dbs) == len(os_db_list) and len({db.client.base_url for db in remote_dbs}) == 1:
+        return remote_dbs[0]
+    return None
+
+
+def _seconds_left(deadline: float) -> float:
+    """The seconds a request has left before its deadline."""
+    return max(deadline - asyncio.get_running_loop().time(), 0.0)
+
+
+def _os_metrics_answer(request: Request, response: Response, os_metrics_response: Any) -> Any:
+    """The answer of a read route with its ETag, or 304 with no body for a caller that already holds it."""
+    etag = f'"{hashlib.sha256(os_metrics_response.model_dump_json().encode()).hexdigest()[:32]}"'
+    # If-None-Match lists the ETags a caller holds, each maybe marked weak, or * for any of them
+    held_etags = [held_etag.strip() for held_etag in request.headers.get("if-none-match", "").split(",")]
+    if "*" in held_etags or etag in [held_etag.removeprefix("W/") for held_etag in held_etags]:
+        return Response(status_code=304, headers={"ETag": etag})
+    response.headers["ETag"] = etag
+    return os_metrics_response
+
+
+def _days(starting_date: date, ending_date: date) -> list[date]:
+    """Every day of the window, a day without rows included."""
+    return [starting_date + timedelta(days=offset) for offset in range((ending_date - starting_date).days + 1)]
+
+
+def _previous_starting_date(starting_date: date, ending_date: date) -> date:
+    """The first day of the window of the same length that ends the day before this one starts."""
+    days = (ending_date - starting_date).days + 1
+    if (starting_date - date.min).days < days:
+        raise HTTPException(status_code=422, detail="starting_date is too early to compare with the window before it")
+    return starting_date - timedelta(days=days)
+
+
+def _change_percent(total: int, previous_total: int) -> Optional[float]:
+    """The change from the previous total to this one, in percent."""
+    # Nothing before means no rate to compare against, rather than an infinite rise
+    return round((total - previous_total) / previous_total * 100, 1) if previous_total else None
+
+
+def _average(total: int, count: int) -> Optional[int]:
+    """The average of a total over its count, rounded."""
+    return round(total / count) if count else None
+
+
+def _latency(totals: dict[str, Any]) -> dict[str, Optional[int]]:
+    """The latency numbers of one set of totals: the runs, and the average, median, p95 and max of each timing."""
+    return {
+        "runs_count": totals.get("duration_runs_count", 0),
+        "avg_duration_ms": _average(totals.get("total_duration_ms", 0), totals.get("duration_runs_count", 0)),
+        "median_duration_ms": metrics_percentile(
+            totals.get("duration_buckets", {}), 0.5, totals.get("max_duration_ms")
+        ),
+        "p95_duration_ms": metrics_percentile(totals.get("duration_buckets", {}), 0.95, totals.get("max_duration_ms")),
+        "max_duration_ms": totals.get("max_duration_ms"),
+        "avg_time_to_first_token_ms": _average(
+            totals.get("total_time_to_first_token_ms", 0), totals.get("time_to_first_token_runs_count", 0)
+        ),
+        "median_time_to_first_token_ms": metrics_percentile(
+            totals.get("time_to_first_token_buckets", {}), 0.5, totals.get("max_time_to_first_token_ms")
+        ),
+        "p95_time_to_first_token_ms": metrics_percentile(
+            totals.get("time_to_first_token_buckets", {}), 0.95, totals.get("max_time_to_first_token_ms")
+        ),
+        "max_time_to_first_token_ms": totals.get("max_time_to_first_token_ms"),
+        "avg_model_call_ms": _average(totals.get("total_model_call_ms", 0), totals.get("model_calls_count", 0)),
+        "median_model_call_ms": metrics_percentile(
+            totals.get("model_call_buckets", {}), 0.5, totals.get("max_model_call_ms")
+        ),
+        "p95_model_call_ms": metrics_percentile(
+            totals.get("model_call_buckets", {}), 0.95, totals.get("max_model_call_ms")
+        ),
+        "max_model_call_ms": totals.get("max_model_call_ms"),
+    }
+
+
 def get_metrics_router(
     dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
     settings: AgnoAPISettings = AgnoAPISettings(),
-    os_db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
     role_store: "Optional[Authorization]" = None,
     auth_enabled: bool = True,
     **kwargs,
@@ -221,16 +293,13 @@ def get_metrics_router(
             500: {"description": "Internal Server Error", "model": InternalServerErrorResponse},
         },
     )
-    return attach_routes(
-        router=router, dbs=dbs, settings=settings, os_db=os_db, role_store=role_store, auth_enabled=auth_enabled
-    )
+    return attach_routes(router=router, dbs=dbs, settings=settings, role_store=role_store, auth_enabled=auth_enabled)
 
 
 def attach_routes(
     router: APIRouter,
     dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
     settings: AgnoAPISettings = AgnoAPISettings(),
-    os_db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
     role_store: "Optional[Authorization]" = None,
     auth_enabled: bool = True,
 ) -> APIRouter:
@@ -262,7 +331,7 @@ def attach_routes(
         starting_date: Optional[date],
         ending_date: Optional[date],
         user_id: Optional[str],
-    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+    ) -> tuple[list[dict[str, Any]], Optional[int]]:
         """The stored metrics of the date range, and when they were last updated."""
         # A read of one owner keeps that owner's rows; every other read takes one row per day
         if user_id is None:
@@ -323,8 +392,16 @@ def attach_routes(
                                         "cached_tokens": 0,
                                         "cache_write_tokens": 0,
                                         "reasoning_tokens": 0,
+                                        "cost": 0.0042,
                                     },
-                                    "model_metrics": [{"model_id": "gpt-4o", "model_provider": "OpenAI", "count": 5}],
+                                    "model_metrics": [
+                                        {
+                                            "model_id": "gpt-4o",
+                                            "model_provider": "OpenAI",
+                                            "count": 5,
+                                            "cost": 0.0042,
+                                        }
+                                    ],
                                     "date": "2025-07-31T00:00:00Z",
                                     "created_at": "2025-07-31T12:38:52Z",
                                     "updated_at": "2025-07-31T12:49:01Z",
@@ -438,7 +515,7 @@ def attach_routes(
         except Exception as e:
             logger.error(f"Metrics refresh failed: {e}")
             if not has_metrics_lock_row(db):
-                _record_refresh_outcome(refresh_key, error=str(e))
+                _record_refresh_outcome(refresh_key, error=database_error_message(e))
         else:
             if not has_metrics_lock_row(db):
                 _record_refresh_outcome(refresh_key)
@@ -479,8 +556,11 @@ def attach_routes(
                                     "input_tokens": 256,
                                     "output_tokens": 441,
                                     "total_tokens": 697,
+                                    "cost": 0.0051,
                                 },
-                                "model_metrics": [{"model_id": "gpt-5.5", "model_provider": "OpenAI", "count": 2}],
+                                "model_metrics": [
+                                    {"model_id": "gpt-5.5", "model_provider": "OpenAI", "count": 2, "cost": 0.0051}
+                                ],
                                 "date": "2025-08-12T00:00:00Z",
                                 "created_at": "2025-08-12T08:01:47Z",
                                 "updated_at": "2025-08-12T08:01:47Z",
@@ -581,7 +661,7 @@ def attach_routes(
                     result = await run_in_threadpool(calculate)
             except Exception as e:
                 if not has_lock_row:
-                    _record_refresh_outcome(refresh_key, error=str(e))
+                    _record_refresh_outcome(refresh_key, error=database_error_message(e))
                 raise
             if not has_lock_row:
                 _record_refresh_outcome(refresh_key)
@@ -594,7 +674,22 @@ def attach_routes(
                 # Nothing changed: today's metrics come back, as they did when every refresh calculated today
                 days = result or [datetime.now(timezone.utc).date()]
                 metrics, _ = await _read_metrics(db, days[0], days[-1], effective_user_id)
-                return [DayAggregatedMetrics.from_dict(metric) for metric in metrics if metric["date"] in days]
+                metrics_by_date = {metric["date"]: metric for metric in metrics if metric["date"] in days}
+                # A day calculated to no sessions or runs keeps a row of zeros, which reads leave out, so it comes
+                # back with zero counts
+                for day in result:
+                    metrics_by_date.setdefault(
+                        day,
+                        {
+                            "id": f"{day.isoformat()}_daily"
+                            if effective_user_id is None
+                            else f"{day.isoformat()}_{effective_user_id}_daily",
+                            "date": day,
+                            "token_metrics": {field: 0 for field in METRICS_TOKEN_FIELDS},
+                            "model_metrics": [],
+                        },
+                    )
+                return [DayAggregatedMetrics.from_dict(metrics_by_date[day]) for day in sorted(metrics_by_date)]
 
             # A read of one owner keeps that owner's rows; every other read collapses to the
             # legacy one-row-per-day shape.
@@ -668,31 +763,18 @@ def attach_routes(
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error getting metrics refresh status: {str(e)}")
 
-    def _owner(request: Request, user_id: Optional[str]) -> Optional[str]:
-        """The owner a read covers: the caller's own scope, else the requested user_id, else every owner."""
-        scoped_user_id = get_scoped_user_id(request)
-        return scoped_user_id if scoped_user_id is not None else user_id
-
     def _os_dbs(db_ids: Optional[list[str]]) -> dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]]:
         """The databases a read covers, by id: the requested ones, else every database of the AgentOS, each once."""
-        registered_dbs = _registered_os_dbs(os_db, dbs)
-        if not any(registered_dbs.values()):
+        if not any(dbs.values()):
             raise HTTPException(status_code=400, detail="No database is configured on this AgentOS")
         if not db_ids:
-            return _unique_os_dbs(registered_dbs)
+            return _unique_os_dbs(dbs)
         os_dbs = {}
         for db_id in db_ids:
-            if db_id not in registered_dbs:
+            if db_id not in dbs:
                 raise HTTPException(status_code=404, detail=f"No database found with id '{db_id}'")
-            os_dbs[db_id] = registered_dbs[db_id]
+            os_dbs[db_id] = dbs[db_id]
         return _unique_os_dbs(os_dbs)
-
-    def _remote_os_db(os_dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]]) -> Optional[RemoteDb]:
-        """The remote database a read covers when it is the only one, so its AgentOS answers the read."""
-        os_db_list = [db for db_list in os_dbs.values() for db in db_list]
-        if len(os_db_list) == 1 and isinstance(os_db_list[0], RemoteDb):
-            return os_db_list[0]
-        return None
 
     async def _read_os_metrics(
         db: Union[BaseDb, AsyncBaseDb],
@@ -765,8 +847,7 @@ def attach_routes(
             try:
                 return await asyncio.wait_for(asyncio.shield(task), timeout=timeout_seconds)
             except (asyncio.TimeoutError, asyncio.CancelledError):
-                # The read finishes in the background, so a rebuild it started is not rolled
-                # back; retrieve its eventual result so it never warns
+                # The read finishes in the background; retrieve its eventual result so it never warns
                 task.add_done_callback(lambda t: t.cancelled() or t.exception())
                 raise
 
@@ -871,10 +952,6 @@ def attach_routes(
     # Per-process: every server asks the databases for their versions before it reuses an answer.
     os_metrics_responses: "OrderedDict[str, Any]" = OrderedDict()
 
-    def _seconds_left(deadline: float) -> float:
-        """The seconds a request has left before its deadline."""
-        return max(deadline - asyncio.get_running_loop().time(), 0.0)
-
     async def _os_metrics_response_key(
         route: str,
         os_dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
@@ -890,8 +967,6 @@ def attach_routes(
         """
         # The routes also read the window before this one, to compare against
         versions_starting_date = _previous_starting_date(starting_date, ending_date)
-
-        # A rebuild that changes a day moves its version, so a reused answer is never older than the rows
 
         async def _versions_of(db: Union[BaseDb, AsyncBaseDb, RemoteDb], seconds_left: float) -> Any:
             if isinstance(db, RemoteDb) or not _keeps_metrics_versions(db):
@@ -934,6 +1009,7 @@ def attach_routes(
         # answer kept for it
         if any(isinstance(outcome, BaseException) or outcome is None for outcome in versions):
             return None, skipped_db_ids
+        # A rebuild that changes a day moves its version, so a reused answer is never older than the rows
         try:
             return json.dumps(
                 [
@@ -973,68 +1049,6 @@ def attach_routes(
         os_metrics_responses.move_to_end(key)
         while len(os_metrics_responses) > _MAX_OS_METRICS_RESPONSES:
             os_metrics_responses.popitem(last=False)
-
-    def _os_metrics_answer(request: Request, response: Response, os_metrics_response: Any) -> Any:
-        """The answer of a read route with its ETag, or 304 with no body for a caller that already holds it."""
-        etag = f'"{hashlib.sha256(os_metrics_response.model_dump_json().encode()).hexdigest()[:32]}"'
-        # If-None-Match lists the ETags a caller holds, each maybe marked weak, or * for any of them
-        held_etags = [held_etag.strip() for held_etag in request.headers.get("if-none-match", "").split(",")]
-        if "*" in held_etags or etag in [held_etag.removeprefix("W/") for held_etag in held_etags]:
-            return Response(status_code=304, headers={"ETag": etag})
-        response.headers["ETag"] = etag
-        return os_metrics_response
-
-    def _days(starting_date: date, ending_date: date) -> list[date]:
-        """Every day of the window, a day without rows included."""
-        return [starting_date + timedelta(days=offset) for offset in range((ending_date - starting_date).days + 1)]
-
-    def _previous_starting_date(starting_date: date, ending_date: date) -> date:
-        """The first day of the window of the same length that ends the day before this one starts."""
-        days = (ending_date - starting_date).days + 1
-        if (starting_date - date.min).days < days:
-            raise HTTPException(
-                status_code=422, detail="starting_date is too early to compare with the window before it"
-            )
-        return starting_date - timedelta(days=days)
-
-    def _change_percent(total: int, previous_total: int) -> Optional[float]:
-        # Nothing before means no rate to compare against, rather than an infinite rise
-        return round((total - previous_total) / previous_total * 100, 1) if previous_total else None
-
-    def _average(total: int, count: int) -> Optional[int]:
-        return round(total / count) if count else None
-
-    def _latency(totals: dict[str, Any]) -> dict[str, Optional[int]]:
-        """The latency numbers of one set of totals: the runs, and the average, median, p95 and max of each timing."""
-        return {
-            "runs_count": totals.get("duration_runs_count", 0),
-            "avg_duration_ms": _average(totals.get("total_duration_ms", 0), totals.get("duration_runs_count", 0)),
-            "median_duration_ms": metrics_percentile(
-                totals.get("duration_buckets", {}), 0.5, totals.get("max_duration_ms")
-            ),
-            "p95_duration_ms": metrics_percentile(
-                totals.get("duration_buckets", {}), 0.95, totals.get("max_duration_ms")
-            ),
-            "max_duration_ms": totals.get("max_duration_ms"),
-            "avg_time_to_first_token_ms": _average(
-                totals.get("total_time_to_first_token_ms", 0), totals.get("time_to_first_token_runs_count", 0)
-            ),
-            "median_time_to_first_token_ms": metrics_percentile(
-                totals.get("time_to_first_token_buckets", {}), 0.5, totals.get("max_time_to_first_token_ms")
-            ),
-            "p95_time_to_first_token_ms": metrics_percentile(
-                totals.get("time_to_first_token_buckets", {}), 0.95, totals.get("max_time_to_first_token_ms")
-            ),
-            "max_time_to_first_token_ms": totals.get("max_time_to_first_token_ms"),
-            "avg_model_call_ms": _average(totals.get("total_model_call_ms", 0), totals.get("model_calls_count", 0)),
-            "median_model_call_ms": metrics_percentile(
-                totals.get("model_call_buckets", {}), 0.5, totals.get("max_model_call_ms")
-            ),
-            "p95_model_call_ms": metrics_percentile(
-                totals.get("model_call_buckets", {}), 0.95, totals.get("max_model_call_ms")
-            ),
-            "max_model_call_ms": totals.get("max_model_call_ms"),
-        }
 
     @router.get(
         "/os/metrics/sessions",
@@ -1099,7 +1113,7 @@ def attach_routes(
                     starting_date=starting_date,
                     ending_date=ending_date,
                     user_id=_owner(request, user_id),
-                    db_id=db_id,
+                    db_id=list(os_dbs),
                     timeout_seconds=timeout_seconds,
                     headers=headers,
                 )
@@ -1225,7 +1239,7 @@ def attach_routes(
                     starting_date=starting_date,
                     ending_date=ending_date,
                     user_id=_owner(request, user_id),
-                    db_id=db_id,
+                    db_id=list(os_dbs),
                     timeout_seconds=timeout_seconds,
                     headers=headers,
                 )
@@ -1331,10 +1345,19 @@ def attach_routes(
         try:
             user_store = getattr(request.app.state, "user_store", None)
             if user_store is None:
+                # An AgentOS whose databases are all on one remote AgentOS has its users in that AgentOS's directory
+                remote_db = _remote_os_db(dbs)
+                if remote_db is not None:
+                    auth_token = get_auth_token_from_request(request)
+                    headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+                    return await remote_db.get_os_user_metrics(
+                        starting_date=starting_date, ending_date=ending_date, headers=headers
+                    )
                 raise HTTPException(
                     status_code=503,
                     detail="User metrics not available: pass a `user_directory` to AgentOS to enable this feature.",
                 )
+            # In the handler, not a route dependency, so an AgentOS without a user directory answers 503 before 403
             await require_user_admin(request)
             # A security key names no user, so nobody is ever added to the directory
             if getattr(request.state, "security_key_verified", False):
@@ -1346,10 +1369,7 @@ def attach_routes(
                     )
 
             starting_date, ending_date = _window(starting_date, ending_date, settings.os_metrics_max_window_days)
-            starting_at = int(datetime.combine(starting_date, datetime.min.time(), tzinfo=timezone.utc).timestamp())
-            ending_before = (
-                int(datetime.combine(ending_date, datetime.min.time(), tzinfo=timezone.utc).timestamp()) + 24 * 60 * 60
-            )
+            starting_at, ending_before = _day_bounds(starting_date, ending_date)
             # Every user created before the end of the window, so both windows come from one read
             created_by_day = await user_store.acreated_by_day(ending_before=ending_before)
 
@@ -1452,7 +1472,7 @@ def attach_routes(
                     starting_date=starting_date,
                     ending_date=ending_date,
                     user_id=_owner(request, user_id),
-                    db_id=db_id,
+                    db_id=list(os_dbs),
                     timeout_seconds=timeout_seconds,
                     headers=headers,
                 )
@@ -1590,7 +1610,7 @@ def attach_routes(
                     starting_date=starting_date,
                     ending_date=ending_date,
                     user_id=_owner(request, user_id),
-                    db_id=db_id,
+                    db_id=list(os_dbs),
                     timeout_seconds=timeout_seconds,
                     headers=headers,
                 )
@@ -1764,7 +1784,7 @@ def attach_routes(
                     starting_date=starting_date,
                     ending_date=ending_date,
                     user_id=_owner(request, user_id),
-                    db_id=db_id,
+                    db_id=list(os_dbs),
                     timeout_seconds=timeout_seconds,
                     headers=headers,
                 )

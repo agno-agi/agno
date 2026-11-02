@@ -882,14 +882,13 @@ async def get_db(
 
 
 def has_metrics_lock_row(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> bool:
-    """Whether the database builds its metrics tables behind the lock row of its metrics refreshes table, which keeps
-    the refresh status for every process."""
-    method = getattr(type(db), "get_metrics_refresh_status", None)
-    if isinstance(db, AsyncBaseDb):
-        return method is not AsyncBaseDb.get_metrics_refresh_status
-    if isinstance(db, BaseDb):
-        return method is not BaseDb.get_metrics_refresh_status
-    return False
+    """Whether the database keeps the status of its metrics refreshes in a lock row, for every process."""
+    if not isinstance(db, (BaseDb, AsyncBaseDb)):
+        return False
+    return getattr(type(db), "get_metrics_refresh_status", None) not in (
+        BaseDb.get_metrics_refresh_status,
+        AsyncBaseDb.get_metrics_refresh_status,
+    )
 
 
 def get_metrics_calculation(
@@ -897,9 +896,7 @@ def get_metrics_calculation(
     should_stop: Optional[Callable[[], bool]] = None,
     rebuild_from: Optional[date] = None,
 ) -> Callable[[], Any]:
-    """The calculation a refresh runs: of a database that builds its metrics tables, only the days it calculated, so a
-    first build never holds every row it wrote. It stops between days or a day's batches once should_stop returns True,
-    and also rebuilds every day from rebuild_from."""
+    """The calculation a refresh runs, stopping once should_stop returns True and rebuilding from rebuild_from."""
     if has_metrics_lock_row(db):
         return partial(db.calculate_metrics_dates, should_stop=should_stop, rebuild_from=rebuild_from)
     return db.calculate_metrics

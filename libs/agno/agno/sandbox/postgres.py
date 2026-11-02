@@ -306,9 +306,11 @@ class _SandboxStore:
         # Cancelling to_thread leaves the thread running; wait so a cancelled call never commits later.
         return await _settled(asyncio.to_thread(transact), undo)
 
-    def _queue_metrics_reopen(self, connection: Connection, created_at: Optional[int]) -> None:
-        """Queue the day a run write changed, which _transaction reopens through the database's own
-        _reopen_metrics_days when the transaction ends, as the database's own run saves do."""
+    @staticmethod
+    def _queue_metrics_reopen(connection: Connection, created_at: Optional[int]) -> None:
+        """Queue the day a run write changed, for _transaction to reopen."""
+        # The async path runs the write as sync code through run_sync, which cannot await the reopen, so the days are
+        # kept on the connection and reopened when the transaction ends, in the same transaction.
         connection.info.setdefault(_METRICS_CREATED_ATS, []).append(created_at)
 
     @staticmethod
