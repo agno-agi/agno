@@ -148,6 +148,99 @@ METRICS_TABLE_SCHEMA = {
     ],
 }
 
+COMPONENT_METRICS_TABLE_SCHEMA = {
+    "aggregation_period": {"type": String, "primary_key": True, "nullable": False},
+    "date": {"type": Date, "primary_key": True, "nullable": False},
+    # Empty string for no owner, since Postgres treats NULLs as distinct
+    "user_id": {"type": String, "primary_key": True, "nullable": False, "default": ""},
+    "component_type": {"type": String, "primary_key": True, "nullable": False},
+    "component_id": {"type": String, "primary_key": True, "nullable": False},
+    "parent_component_id": {"type": String, "primary_key": True, "nullable": False, "default": ""},
+    "root_component_id": {"type": String, "primary_key": True, "nullable": False, "default": ""},
+    "sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "input_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "output_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "reasoning_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "status_metrics": {"type": JSONB, "nullable": False, "default": {}},
+    "model_metrics": {"type": JSONB, "nullable": False, "default": {}},
+    "duration_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_duration_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_duration_ms": {"type": BigInteger, "nullable": True},
+    "duration_buckets": {"type": JSONB, "nullable": False, "default": {}},
+    "time_to_first_token_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_time_to_first_token_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_time_to_first_token_ms": {"type": BigInteger, "nullable": True},
+    "time_to_first_token_buckets": {"type": JSONB, "nullable": False, "default": {}},
+    "model_calls_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_model_call_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_model_call_ms": {"type": BigInteger, "nullable": True},
+    "model_call_buckets": {"type": JSONB, "nullable": False, "default": {}},
+    "additional_metrics": {"type": JSONB, "nullable": False, "default": {}},
+    "token_details": {"type": JSONB, "nullable": False, "default": {}},
+    "created_at": {"type": BigInteger, "nullable": False},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "__composite_indexes__": [
+        # One user's rows of a date range
+        {"name": "user_id_date", "columns": ["user_id", "date"]},
+    ],
+}
+
+USER_METRICS_TABLE_SCHEMA = {
+    "aggregation_period": {"type": String, "primary_key": True, "nullable": False},
+    "date": {"type": Date, "primary_key": True, "nullable": False},
+    # Empty string for the everyone row, since Postgres treats NULLs as distinct
+    "user_id": {"type": String, "primary_key": True, "nullable": False, "default": ""},
+    "agent_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "team_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "workflow_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "root_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "agent_sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "team_sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "workflow_sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "users_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "input_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "output_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "reasoning_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "status_metrics": {"type": JSONB, "nullable": False, "default": {}},
+    "model_metrics": {"type": JSONB, "nullable": False, "default": {}},
+    "duration_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_duration_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_duration_ms": {"type": BigInteger, "nullable": True},
+    "duration_buckets": {"type": JSONB, "nullable": False, "default": {}},
+    "time_to_first_token_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_time_to_first_token_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_time_to_first_token_ms": {"type": BigInteger, "nullable": True},
+    "time_to_first_token_buckets": {"type": JSONB, "nullable": False, "default": {}},
+    "model_calls_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_model_call_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_model_call_ms": {"type": BigInteger, "nullable": True},
+    "model_call_buckets": {"type": JSONB, "nullable": False, "default": {}},
+    "additional_metrics": {"type": JSONB, "nullable": False, "default": {}},
+    "token_details": {"type": JSONB, "nullable": False, "default": {}},
+    # The agno version that built the row
+    "metrics_version": {"type": String, "nullable": False},
+    "created_at": {"type": BigInteger, "nullable": False},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "completed": {"type": Boolean, "nullable": False, "default": False},
+    "version": {"type": Integer, "nullable": False, "default": 1},
+}
+
+METRICS_REFRESHES_TABLE_SCHEMA = {
+    # One row, which one refresh of the metrics tables at a time holds
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "locked_by": {"type": String, "nullable": True},
+    "locked_at": {"type": BigInteger, "nullable": True},  # heartbeat-refreshed
+    "started_at": {"type": BigInteger, "nullable": False},
+    "finished_at": {"type": BigInteger, "nullable": True},  # of the last refresh that completed
+    # running | completed | failed
+    "status": {"type": String, "nullable": False},
+    "error": {"type": Text, "nullable": True},
+    "fingerprint": {"type": JSONB, "nullable": True},
+}
+
 VERSIONS_TABLE_SCHEMA = {
     "table_name": {"type": String, "nullable": False, "primary_key": True},
     "version": {"type": String, "nullable": False},
@@ -670,6 +763,9 @@ def get_table_schema_definition(
         # "runs" is handled by _get_run_table_schema above (needs session_table_name)
         "evals": EVAL_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
+        "component_metrics": COMPONENT_METRICS_TABLE_SCHEMA,
+        "user_metrics": USER_METRICS_TABLE_SCHEMA,
+        "metrics_refreshes": METRICS_REFRESHES_TABLE_SCHEMA,
         "memories": MEMORY_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
         "versions": VERSIONS_TABLE_SCHEMA,

@@ -17,6 +17,12 @@ class AgnoAPISettings(BaseSettings):
     # Set to False to disable docs server at /docs and /redoc
     docs_enabled: bool = True
 
+    # Set to False to stop calculating metrics; the metrics already calculated are still served
+    metrics_calculation_enabled: bool = True
+
+    # Seconds between metrics calculations in the background
+    metrics_calculation_interval: int = 60
+
     # Authentication settings
     os_security_key: Optional[str] = Field(default=None, description="Bearer token for API authentication")
 
@@ -29,6 +35,11 @@ class AgnoAPISettings(BaseSettings):
     # revoke). Set to 0 for strict instant revocation (verify against the DB every time).
     service_account_cache_ttl_seconds: int = Field(
         default=30, description="TTL (seconds) for the in-process service-account verification cache; 0 disables it"
+    )
+
+    # Days one OS metrics route may cover; a longer window gets a 422
+    os_metrics_max_window_days: int = Field(
+        default=3660, description="Maximum number of days one OS metrics request may cover"
     )
 
     # Cors origin list to allow requests from.

@@ -1701,3 +1701,40 @@ async def test_repository_marker_pin_published_at_commit(store, tmp_path, monkey
     assert committed["metadata"]["sandbox"]["checkpoint"]
     persisted, _, _ = await rows(store)
     assert persisted["run_data"]["metadata"]["sandbox"]["repository"] == marker
+
+
+async def test_a_prepared_run_of_a_closed_day_reopens_the_day(store):
+    from datetime import datetime, timezone
+
+    from agno.db.utils import build_user_metrics_row
+    from agno.run.agent import RunInput, RunOutput
+    from agno.run.base import RunStatus
+
+    totals = await store._table("user_metrics", store.db.user_metrics_table_name)
+    created_at = int(time.time()) - 5 * 86400
+    # The day as a finished calculation leaves it: completed, at version 1
+    day = datetime.fromtimestamp(created_at, tz=timezone.utc).date()
+    await store._transaction(
+        lambda c: c.execute(
+            insert(totals).values({**build_user_metrics_row([], "daily", day, completed=True), "version": 1})
+        )
+    )
+    pending = RunOutput(
+        run_id="run",
+        session_id="session",
+        agent_id="agent",
+        user_id="user",
+        input=RunInput(input_content="input"),
+        status=RunStatus.pending,
+        created_at=created_at,
+    ).to_dict()
+    try:
+        await store.aprepare(pending)
+        reopened = await store._transaction(
+            lambda c: c.execute(
+                select(totals.c.completed, totals.c.version).where(totals.c.aggregation_period == "daily")
+            ).all()
+        )
+        assert [tuple(row) for row in reopened] == [(False, 2)]
+    finally:
+        await store._transaction(lambda c: totals.drop(c))

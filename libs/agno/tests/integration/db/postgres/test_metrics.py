@@ -23,6 +23,12 @@ def cleanup_metrics_and_sessions(postgres_db_real: PostgresDb):
         try:
             metrics_table = postgres_db_real._get_table("metrics", create_table_if_not_found=True)
             session.execute(metrics_table.delete())
+            component_metrics_table = postgres_db_real._get_table("component_metrics", create_table_if_not_found=True)
+            session.execute(component_metrics_table.delete())
+            user_metrics_table = postgres_db_real._get_table("user_metrics", create_table_if_not_found=True)
+            session.execute(user_metrics_table.delete())
+            metrics_refreshes_table = postgres_db_real._get_table("metrics_refreshes", create_table_if_not_found=True)
+            session.execute(metrics_refreshes_table.delete())
             sessions_table = postgres_db_real._get_table("sessions", create_table_if_not_found=True)
             session.execute(sessions_table.delete())
             session.commit()
@@ -50,6 +56,8 @@ def _persist(db: PostgresDb, session) -> None:
     """
     db.upsert_session(session)
     for run_index, run in enumerate(session.runs or []):
+        # A run is counted on the day it was created, so it is dated with its session
+        run.created_at = session.created_at
         db.upsert_run(run, session_id=session.session_id, user_id=session.user_id, run_index=run_index)
 
 
@@ -82,76 +90,11 @@ def sample_agent_sessions_for_metrics() -> List[AgentSession]:
     return sessions
 
 
-def test_get_all_sessions_for_metrics_calculation(postgres_db_real: PostgresDb, sample_agent_sessions_for_metrics):
-    """Test the _get_all_sessions_for_metrics_calculation util method"""
-    # Insert test sessions
-    for session in sample_agent_sessions_for_metrics:
-        _persist(postgres_db_real, session)
-
-    # Test getting all sessions
-    sessions = postgres_db_real._get_all_sessions_for_metrics_calculation()
-
-    assert len(sessions) == 3
-    assert all("user_id" in session for session in sessions)
-    assert all("session_data" in session for session in sessions)
-    assert all("runs" in session for session in sessions)
-    assert all("created_at" in session for session in sessions)
-    assert all("session_type" in session for session in sessions)
-
-
-def test_get_all_sessions_for_metrics_calculation_with_timestamp_filter(
-    postgres_db_real: PostgresDb, sample_agent_sessions_for_metrics
-):
-    """Test the _get_all_sessions_for_metrics_calculation util method with timestamp filters"""
-    # Insert test sessions
-    for session in sample_agent_sessions_for_metrics:
-        _persist(postgres_db_real, session)
-
-    # Test with start timestamp filter
-    start_time = sample_agent_sessions_for_metrics[1].created_at
-    sessions = postgres_db_real._get_all_sessions_for_metrics_calculation(start_timestamp=start_time)
-
-    assert len(sessions) == 2  # Should get the last 2 sessions
-
-    # Test with end timestamp filter
-    end_time = sample_agent_sessions_for_metrics[1].created_at
-    sessions = postgres_db_real._get_all_sessions_for_metrics_calculation(end_timestamp=end_time)
-
-    assert len(sessions) == 2  # Should get the first 2 sessions
-
-
-def test_get_metrics_calculation_starting_date_no_metrics_no_sessions(postgres_db_real: PostgresDb):
-    """Test the _get_metrics_calculation_starting_date util method with no metrics and no sessions"""
-    metrics_table = postgres_db_real._get_table("metrics", create_table_if_not_found=True)
-
-    result = postgres_db_real._get_metrics_calculation_starting_date(metrics_table)
-
-    assert result is None
-
-
-def test_get_metrics_calculation_starting_date_no_metrics_with_sessions(
-    postgres_db_real: PostgresDb, sample_agent_sessions_for_metrics
-):
-    """Test the _get_metrics_calculation_starting_date util method with no metrics but with sessions"""
-    # Insert test sessions
-    for session in sample_agent_sessions_for_metrics:
-        _persist(postgres_db_real, session)
-
-    metrics_table = postgres_db_real._get_table("metrics", create_table_if_not_found=True)
-    result = postgres_db_real._get_metrics_calculation_starting_date(metrics_table)
-
-    assert result is not None
-
-    # Should return the date of the first session
-    first_session_date = datetime.fromtimestamp(sample_agent_sessions_for_metrics[0].created_at, tz=timezone.utc).date()
-    assert result == first_session_date
-
-
 def test_calculate_metrics_no_sessions(postgres_db_real: PostgresDb):
-    """Ensure the calculate_metrics method returns None when there are no sessions"""
+    """Ensure the calculate_metrics method returns no day when there are no sessions"""
     result = postgres_db_real.calculate_metrics()
 
-    assert result is None
+    assert result == []
 
 
 def test_calculate_metrics(postgres_db_real: PostgresDb, sample_agent_sessions_for_metrics):
@@ -255,7 +198,8 @@ def test_metrics_flow(postgres_db_real: PostgresDb, sample_agent_sessions_for_me
     assert sum(m["agent_runs_count"] for m in metrics) == 3
 
     metrics_obj = metrics[0]
-    assert metrics_obj["completed"] is True
+    # A run of yesterday can still be written today, so yesterday is completed a day later
+    assert metrics_obj["completed"] is False
     assert metrics_obj["agent_runs_count"] == 1
     assert metrics_obj["team_runs_count"] == 0
     assert metrics_obj["workflow_runs_count"] == 0
@@ -362,7 +306,10 @@ def test_calculate_metrics_multiple_days(postgres_db_real: PostgresDb, sample_mu
         for field in day:
             day[field] += row[field]
     metrics_sorted = [by_date[d] for d in sorted(by_date)]
-    assert all(row["completed"] is True for row in metrics)
+    # A run of yesterday can still be written today, so only the days before it are completed
+    assert all(
+        row["completed"] is (row["date"] < datetime.now(timezone.utc).date() - timedelta(days=1)) for row in metrics
+    )
 
     # Verify Day 1 metrics (2 sessions)
     day1_metrics = metrics_sorted[0]
@@ -619,7 +566,11 @@ def test_calculate_metrics_past_query_parameter_limit(postgres_db_real: Postgres
                     "run_id": f"r_{i}",
                     "session_id": f"s_{i}",
                     "run_type": "agent",
-                    "run_data": {"model": "gpt-5.5", "model_provider": "OpenAI"},
+                    "run_data": {
+                        "model": "gpt-5.5",
+                        "model_provider": "OpenAI",
+                        "metrics": {"details": {"model": [{"id": "gpt-5.5"}]}},
+                    },
                     "created_at": created_at,
                 }
                 for i in range(SESSIONS_PAST_PARAMETER_LIMIT)

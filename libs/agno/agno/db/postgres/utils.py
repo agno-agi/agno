@@ -1,18 +1,49 @@
 """Utility functions for the Postgres database class."""
 
-import time
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
-from uuid import uuid4
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy import Engine
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from agno.db.postgres.schemas import get_table_schema_definition
+from agno.db.utils import (
+    COMPONENT_METRICS_KEY_COLUMNS,
+    METRICS_COUNT_MAP_COLUMNS,
+    METRICS_MAX_COLUMNS,
+    METRICS_SUM_FIELDS,
+    METRICS_TOKEN_DETAILS_FIELDS,
+    METRICS_TOKEN_FIELDS,
+    USER_METRICS_KEY_COLUMNS,
+    build_user_metrics_row,
+    empty_metrics_totals,
+    metrics_day_ranges,
+    metrics_days_to_read,
+)
 from agno.utils.log import log_debug, log_error, log_warning
 
 try:
-    from sqlalchemy import Table, func
+    from sqlalchemy import (
+        BigInteger,
+        Integer,
+        Numeric,
+        Table,
+        Text,
+        and_,
+        case,
+        cast,
+        column,
+        false,
+        func,
+        literal,
+        literal_column,
+        or_,
+        select,
+        true,
+        union_all,
+        update,
+        values,
+    )
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.exc import NoSuchTableError
     from sqlalchemy.inspection import inspect
@@ -20,6 +51,26 @@ try:
     from sqlalchemy.sql.expression import text
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
+
+
+# PostgreSQL has a hard limit of 65,535 bind parameters per statement, so IN lists are sent in chunks
+METRICS_IN_LIST_LIMIT = 10000
+
+# An IN list of 10,000 row values exceeds PostgreSQL's stack depth, so stale rows are deleted 1,000 at a time
+METRICS_STALE_KEYS_LIMIT = 1000
+
+# Every assistant message's request duration, skipping messages carried over from an earlier run: those from
+# history, and the first $skip a forked run copied from the run it was forked from
+_METRICS_CALL_DURATIONS_PATH: Any = literal_column(
+    """'$.messages[$skip to last] ? (@.role == "assistant" && (!exists(@.from_history) || @.from_history == false))"""
+    """.metrics.duration'::jsonpath"""
+)
+
+# The keys of a stored run that hold the runs nested inside it, in the order the rollup walks them
+_METRICS_NESTED_RUN_KEYS = ("step_executor_runs", "member_responses", "workflow_agent_run")
+
+# Every run of one of those lists, or the one run a key holds on its own. A key stored as null holds none
+_METRICS_NESTED_RUNS_PATH: Any = literal_column("""'$[*] ? (@.type() == "object")'::jsonpath""")
 
 
 # -- DB util methods --
@@ -211,214 +262,6 @@ def _get_table_columns(conn, table_name: str, db_schema: str) -> set[str]:
 
 
 # -- Metrics util methods --
-def bulk_upsert_metrics(session: Session, table: Table, metrics_records: list[dict]) -> list[dict]:
-    """Bulk upsert metrics into the database.
-
-    Args:
-        table (Table): The table to upsert into.
-        metrics_records (list[dict]): The metrics records to upsert.
-
-    Returns:
-        list[dict]: The upserted metrics records.
-    """
-    if not metrics_records:
-        return []
-
-    results = []
-    stmt = postgresql.insert(table)
-
-    # Columns to update in case of conflict. user_id is part of the conflict key, so never overwrite it.
-    update_columns = {
-        col.name: stmt.excluded[col.name]
-        for col in table.columns
-        if col.name not in ["id", "date", "created_at", "aggregation_period", "user_id"]
-    }
-
-    stmt = stmt.on_conflict_do_update(
-        index_elements=["user_id", "date", "aggregation_period"], set_=update_columns
-    ).returning(  # type: ignore
-        table
-    )
-    result = session.execute(stmt, metrics_records)
-    results = [row._mapping for row in result.fetchall()]
-    session.commit()
-
-    return results  # type: ignore
-
-
-async def abulk_upsert_metrics(session: AsyncSession, table: Table, metrics_records: list[dict]) -> list[dict]:
-    """Bulk upsert metrics into the database.
-
-    Args:
-        table (Table): The table to upsert into.
-        metrics_records (list[dict]): The metrics records to upsert.
-
-    Returns:
-        list[dict]: The upserted metrics records.
-    """
-    if not metrics_records:
-        return []
-
-    results = []
-    stmt = postgresql.insert(table)
-
-    # Columns to update in case of conflict. user_id is part of the conflict key, so never overwrite it.
-    update_columns = {
-        col.name: stmt.excluded[col.name]
-        for col in table.columns
-        if col.name not in ["id", "date", "created_at", "aggregation_period", "user_id"]
-    }
-
-    stmt = stmt.on_conflict_do_update(
-        index_elements=["user_id", "date", "aggregation_period"], set_=update_columns
-    ).returning(  # type: ignore
-        table
-    )
-    result = await session.execute(stmt, metrics_records)
-    results = [row._mapping for row in result.fetchall()]
-    await session.commit()
-
-    return results  # type: ignore
-
-
-def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[dict]:
-    """Calculate metrics for the given single date, bucketed per user.
-
-    Args:
-        date_to_process (date): The date to calculate metrics for.
-        sessions_data (dict): The sessions data to calculate metrics for.
-
-    Returns:
-        List[dict]: The calculated metrics, one record per user. Sessions without a
-            ``user_id`` are bucketed under ``""``.
-    """
-
-    def _empty_metric_record() -> Dict[str, Any]:
-        return {
-            "users_count": 0,
-            "agent_sessions_count": 0,
-            "team_sessions_count": 0,
-            "workflow_sessions_count": 0,
-            "agent_runs_count": 0,
-            "team_runs_count": 0,
-            "workflow_runs_count": 0,
-            "token_metrics": {
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "total_tokens": 0,
-                "audio_total_tokens": 0,
-                "audio_input_tokens": 0,
-                "audio_output_tokens": 0,
-                "cache_read_tokens": 0,
-                "cache_write_tokens": 0,
-                "reasoning_tokens": 0,
-            },
-            "model_counts": {},
-        }
-
-    session_types = [
-        ("agent", "agent_sessions_count", "agent_runs_count"),
-        ("team", "team_sessions_count", "team_runs_count"),
-        ("workflow", "workflow_sessions_count", "workflow_runs_count"),
-    ]
-
-    per_user: Dict[str, Dict[str, Any]] = {}
-
-    for session_type, sessions_count_key, runs_count_key in session_types:
-        sessions = sessions_data.get(session_type, []) or []
-
-        for session in sessions:
-            bucket_key = session.get("user_id") or ""
-            bucket = per_user.setdefault(bucket_key, _empty_metric_record())
-            bucket[sessions_count_key] += 1
-
-            runs = session.get("runs", []) or []
-            bucket[runs_count_key] += len(runs)
-            for run in runs:
-                if model_id := run.get("model"):
-                    model_provider = run.get("model_provider", "")
-                    key = f"{model_id}:{model_provider}"
-                    bucket["model_counts"][key] = bucket["model_counts"].get(key, 0) + 1
-
-            session_data = session.get("session_data", {}) or {}
-            session_metrics = session_data.get("session_metrics", {}) or {}
-            for field in bucket["token_metrics"]:
-                bucket["token_metrics"][field] += session_metrics.get(field, 0)
-
-    current_time = int(time.time())
-    completed = date_to_process < datetime.now(timezone.utc).date()
-
-    records: List[dict] = []
-    for user_id, bucket in per_user.items():
-        model_metrics = []
-        for model, count in bucket["model_counts"].items():
-            model_id, model_provider = model.rsplit(":", 1)
-            model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
-
-        # One distinct user per bucket, and none for the unowned one, so summed counts stay correct.
-        users_count = 0 if user_id == "" else 1
-
-        records.append(
-            {
-                "id": str(uuid4()),
-                "date": date_to_process,
-                "completed": completed,
-                "token_metrics": bucket["token_metrics"],
-                "model_metrics": model_metrics,
-                "created_at": current_time,
-                "updated_at": current_time,
-                "aggregation_period": "daily",
-                "user_id": user_id,
-                "users_count": users_count,
-                "agent_sessions_count": bucket["agent_sessions_count"],
-                "team_sessions_count": bucket["team_sessions_count"],
-                "workflow_sessions_count": bucket["workflow_sessions_count"],
-                "agent_runs_count": bucket["agent_runs_count"],
-                "team_runs_count": bucket["team_runs_count"],
-                "workflow_runs_count": bucket["workflow_runs_count"],
-            }
-        )
-
-    return records
-
-
-def fetch_all_sessions_data(
-    sessions: List[Dict[str, Any]], dates_to_process: list[date], start_timestamp: int
-) -> Optional[dict]:
-    """Return all session data for the given dates, for all session types.
-
-    Args:
-        dates_to_process (list[date]): The dates to fetch session data for.
-
-    Returns:
-        dict: A dictionary with dates as keys and session data as values, for all session types.
-
-    Example:
-    {
-        "2000-01-01": {
-            "agent": [<session1>, <session2>, ...],
-            "team": [...],
-            "workflow": [...],
-        }
-    }
-    """
-    if not dates_to_process:
-        return None
-
-    all_sessions_data: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
-        date_to_process.isoformat(): {"agent": [], "team": [], "workflow": []} for date_to_process in dates_to_process
-    }
-
-    for session in sessions:
-        session_date = (
-            datetime.fromtimestamp(session.get("created_at", start_timestamp), tz=timezone.utc).date().isoformat()
-        )
-        if session_date in all_sessions_data:
-            all_sessions_data[session_date][session["session_type"]].append(session)
-
-    return all_sessions_data
-
-
 def get_dates_to_calculate_metrics_for(starting_date: date) -> list[date]:
     """Return the list of dates to calculate metrics for.
 
@@ -433,3 +276,677 @@ def get_dates_to_calculate_metrics_for(starting_date: date) -> list[date]:
     if days_diff <= 0:
         return []
     return [starting_date + timedelta(days=x) for x in range(days_diff)]
+
+
+# -- Component metrics util methods --
+def bulk_upsert_component_metrics(session: Session, table: Table, component_metrics_records: list[dict]) -> None:
+    """Bulk upsert component metrics into the database, in the session's transaction.
+
+    Args:
+        session (Session): The session to upsert with.
+        table (Table): The table to upsert into.
+        component_metrics_records (list[dict]): The component metrics records to upsert.
+    """
+    if not component_metrics_records:
+        return
+
+    stmt = postgresql.insert(table)
+
+    # Columns to update in case of conflict. The conflict key and created_at are never overwritten.
+    update_columns = {
+        col.name: stmt.excluded[col.name]
+        for col in table.columns
+        if col.name not in [*COMPONENT_METRICS_KEY_COLUMNS, "created_at"]
+    }
+
+    stmt = stmt.on_conflict_do_update(index_elements=list(COMPONENT_METRICS_KEY_COLUMNS), set_=update_columns)
+    # No RETURNING: no caller reads the rows back
+    session.execute(stmt, component_metrics_records)
+
+
+async def abulk_upsert_component_metrics(
+    session: AsyncSession, table: Table, component_metrics_records: list[dict]
+) -> None:
+    """Bulk upsert component metrics into the database, in the session's transaction.
+
+    Args:
+        session (AsyncSession): The session to upsert with.
+        table (Table): The table to upsert into.
+        component_metrics_records (list[dict]): The component metrics records to upsert.
+    """
+    if not component_metrics_records:
+        return
+
+    stmt = postgresql.insert(table)
+
+    # Columns to update in case of conflict. The conflict key and created_at are never overwritten.
+    update_columns = {
+        col.name: stmt.excluded[col.name]
+        for col in table.columns
+        if col.name not in [*COMPONENT_METRICS_KEY_COLUMNS, "created_at"]
+    }
+
+    stmt = stmt.on_conflict_do_update(index_elements=list(COMPONENT_METRICS_KEY_COLUMNS), set_=update_columns)
+    # No RETURNING: no caller reads the rows back
+    await session.execute(stmt, component_metrics_records)
+
+
+def _user_metrics_upsert(table: Table, user_metrics_row: Dict[str, Any], read_version: Optional[int]) -> Any:
+    """Build the upsert of a user metrics row.
+
+    A new row starts at version 1, and every write of a stored one moves its version by one in the same
+    statement, so two writers never give it the same version.
+
+    Args:
+        table (Table): The user metrics table.
+        user_metrics_row (Dict[str, Any]): The row, from build_user_metrics_row.
+        read_version (Optional[int]): The version of the stored row read before its rows were rebuilt. None when
+            there was no stored row.
+
+    Returns:
+        Any: The upsert statement.
+    """
+    stmt = postgresql.insert(table).values({**user_metrics_row, "version": 1})
+
+    # Columns to update in case of conflict. The conflict key and created_at are never overwritten.
+    update_columns: Dict[str, Any] = {
+        col.name: stmt.excluded[col.name]
+        for col in table.columns
+        if col.name not in [*USER_METRICS_KEY_COLUMNS, "created_at", "version"]
+    }
+    update_columns["version"] = table.c.version + 1
+    # Compared in the statement, so a reopen written since the version was read keeps the period open
+    update_columns["completed"] = (
+        and_(table.c.version == read_version, stmt.excluded.completed) if read_version is not None else false()
+    )
+
+    return stmt.on_conflict_do_update(index_elements=list(USER_METRICS_KEY_COLUMNS), set_=update_columns)
+
+
+def upsert_user_metrics_row(
+    session: Session, table: Table, user_metrics_row: Dict[str, Any], read_version: Optional[int]
+) -> None:
+    """Upsert a user metrics row into the database, in the session's transaction.
+
+    Args:
+        session (Session): The session to upsert with.
+        table (Table): The table to upsert into.
+        user_metrics_row (Dict[str, Any]): The row, from build_user_metrics_row.
+        read_version (Optional[int]): The version of the stored row read before its rows were rebuilt.
+    """
+    session.execute(_user_metrics_upsert(table, user_metrics_row, read_version))
+
+
+async def aupsert_user_metrics_row(
+    session: AsyncSession, table: Table, user_metrics_row: Dict[str, Any], read_version: Optional[int]
+) -> None:
+    """Upsert a user metrics row into the database, in the session's transaction.
+
+    Args:
+        session (AsyncSession): The session to upsert with.
+        table (Table): The table to upsert into.
+        user_metrics_row (Dict[str, Any]): The row, from build_user_metrics_row.
+        read_version (Optional[int]): The version of the stored row read before its rows were rebuilt.
+    """
+    await session.execute(_user_metrics_upsert(table, user_metrics_row, read_version))
+
+
+def _user_metrics_rows_upsert(table: Table) -> Any:
+    """Build the bulk upsert of user rows of the user metrics table. A user row is written with its period's
+    everyone row, so its completed and version are never compared."""
+    stmt = postgresql.insert(table)
+
+    # Columns to update in case of conflict. The conflict key and created_at are never overwritten.
+    update_columns: Dict[str, Any] = {
+        col.name: stmt.excluded[col.name]
+        for col in table.columns
+        if col.name not in [*USER_METRICS_KEY_COLUMNS, "created_at", "version"]
+    }
+    update_columns["version"] = table.c.version + 1
+    # No RETURNING: no caller reads the rows back
+    return stmt.on_conflict_do_update(index_elements=list(USER_METRICS_KEY_COLUMNS), set_=update_columns)
+
+
+def bulk_upsert_user_metrics_rows(session: Session, table: Table, user_metrics_rows: List[Dict[str, Any]]) -> None:
+    """Bulk upsert the user rows of a period into the user metrics table, in the session's transaction.
+
+    Args:
+        session (Session): The session to upsert with.
+        table (Table): The user metrics table.
+        user_metrics_rows (List[Dict[str, Any]]): The user rows, from build_user_metrics_rows.
+    """
+    if not user_metrics_rows:
+        return
+    session.execute(_user_metrics_rows_upsert(table), [{**row, "version": 1} for row in user_metrics_rows])
+
+
+async def abulk_upsert_user_metrics_rows(
+    session: AsyncSession, table: Table, user_metrics_rows: List[Dict[str, Any]]
+) -> None:
+    """Bulk upsert the user rows of a period into the user metrics table, in the session's transaction.
+
+    Args:
+        session (AsyncSession): The session to upsert with.
+        table (Table): The user metrics table.
+        user_metrics_rows (List[Dict[str, Any]]): The user rows, from build_user_metrics_rows.
+    """
+    if not user_metrics_rows:
+        return
+    await session.execute(_user_metrics_rows_upsert(table), [{**row, "version": 1} for row in user_metrics_rows])
+
+
+def _reopen_metrics_row(table: Table, row_date: date, aggregation_period: str) -> Any:
+    """Build the reopen of a day's or a month's everyone row of the user metrics table, inserting an empty open row
+    when it has none."""
+    stmt = postgresql.insert(table).values(
+        {**build_user_metrics_row([], aggregation_period, row_date, completed=False), "version": 1}
+    )
+    return stmt.on_conflict_do_update(
+        index_elements=list(USER_METRICS_KEY_COLUMNS),
+        set_={"completed": False, "version": table.c.version + 1},
+    )
+
+
+def reopen_metrics_day(session: Session, table: Table, day: date) -> None:
+    """Reopen a day's user metrics row, in the session's transaction, so the next refresh rebuilds the day.
+
+    Args:
+        session (Session): The session of the write that changed the day.
+        table (Table): The user metrics table.
+        day (date): The day, from metrics_day_to_reopen.
+    """
+    session.execute(_reopen_metrics_row(table, day, "daily"))
+
+
+async def areopen_metrics_day(session: AsyncSession, table: Table, day: date) -> None:
+    """Reopen a day's user metrics row, in the session's transaction, so the next refresh rebuilds the day.
+
+    Args:
+        session (AsyncSession): The session of the write that changed the day.
+        table (Table): The user metrics table.
+        day (date): The day, from metrics_day_to_reopen.
+    """
+    await session.execute(_reopen_metrics_row(table, day, "daily"))
+
+
+def _reopen_metrics_days_from(table: Table, starting_date: date) -> Any:
+    """Build the reopen of every day's everyone row of the user metrics table from the given date on."""
+    return (
+        update(table)
+        .where(table.c.aggregation_period == "daily", table.c.user_id == "", table.c.date >= starting_date)
+        .values(completed=False, version=table.c.version + 1)
+    )
+
+
+def reopen_metrics_days_from(session: Session, table: Table, starting_date: date) -> None:
+    """Reopen every day's user metrics row from the given date on, in the session's transaction, as a write reopens
+    a day, so the next refresh rebuilds them.
+
+    Args:
+        session (Session): The session to reopen with.
+        table (Table): The user metrics table.
+        starting_date (date): The first day to reopen.
+    """
+    session.execute(_reopen_metrics_days_from(table, starting_date))
+
+
+async def areopen_metrics_days_from(session: AsyncSession, table: Table, starting_date: date) -> None:
+    """Reopen every day's user metrics row from the given date on, in the session's transaction, as a write reopens
+    a day, so the next refresh rebuilds them.
+
+    Args:
+        session (AsyncSession): The session to reopen with.
+        table (Table): The user metrics table.
+        starting_date (date): The first day to reopen.
+    """
+    await session.execute(_reopen_metrics_days_from(table, starting_date))
+
+
+def reopen_metrics_month(session: Session, table: Table, month_start: date) -> None:
+    """Reopen a month's user metrics row, in the session's transaction, so the next refresh rebuilds the month.
+
+    Args:
+        session (Session): The session of the day rebuilt in the month.
+        table (Table): The user metrics table.
+        month_start (date): The first day of the month.
+    """
+    session.execute(_reopen_metrics_row(table, month_start, "monthly"))
+
+
+async def areopen_metrics_month(session: AsyncSession, table: Table, month_start: date) -> None:
+    """Reopen a month's user metrics row, in the session's transaction, so the next refresh rebuilds the month.
+
+    Args:
+        session (AsyncSession): The session of the day rebuilt in the month.
+        table (Table): The user metrics table.
+        month_start (date): The first day of the month.
+    """
+    await session.execute(_reopen_metrics_row(table, month_start, "monthly"))
+
+
+def _metrics_call_durations(run_data: Any) -> Any:
+    """Build each request duration of a stored run, skipping the messages a forked run copied."""
+    skip = func.coalesce(cast(run_data["forked_from_message_index"].astext, Integer), 0)
+    return func.jsonb_path_query_array(run_data, _METRICS_CALL_DURATIONS_PATH, func.jsonb_build_object("skip", skip))
+
+
+def metrics_parent_run_id(table: Table) -> Any:
+    """Build the id of the run that started a stored run: its team's or workflow's run, or the run whose tool call
+    started it."""
+    return func.coalesce(table.c.parent_run_id, table.c.run_data["called_from_run_id"].astext)
+
+
+def build_component_metrics_runs_query(table: Table, start_timestamp: int, end_timestamp: int) -> Any:
+    """Build the query that reads the runs created in the given time range, with only what component metrics count.
+
+    Args:
+        table (Table): The runs table.
+        start_timestamp (int): The start of the range, included.
+        end_timestamp (int): The end of the range, not included.
+
+    Returns:
+        Any: The query. Of the messages it reads only each request's duration, of the metrics only what
+            component metrics count, and of the runs nested inside a run, at any depth, only the same.
+    """
+    # Read in the database, so a run is never read whole
+    nested_keys = values(column("position"), column("key"), name="nested_keys").data(
+        list(enumerate(_METRICS_NESTED_RUN_KEYS))
+    )
+    nested_run = (
+        func.jsonb_path_query(table.c.run_data.op("->")(nested_keys.c.key), _METRICS_NESTED_RUNS_PATH)
+        .table_valued(column("value", postgresql.JSONB), with_ordinality="ordinality")
+        .render_derived()
+    )
+    # One row per nested run, read a level at a time. The path orders them the way the rollup walks them
+    nested = (
+        select(
+            postgresql.array([nested_keys.c.position, nested_run.c.ordinality]).label("path"),
+            literal(1).label("depth"),
+            nested_keys.c.key.label("key"),
+            nested_run.c.value.label("run_data"),
+        )
+        .select_from(nested_keys.join(nested_run, true()))
+        .correlate(table)
+        .cte("nested", recursive=True, nesting=True)
+    )
+    nested_run = (
+        func.jsonb_path_query(nested.c.run_data.op("->")(nested_keys.c.key), _METRICS_NESTED_RUNS_PATH)
+        .table_valued(column("value", postgresql.JSONB), with_ordinality="ordinality")
+        .render_derived()
+    )
+    nested = nested.union_all(
+        select(
+            nested.c.path.op("||")(postgresql.array([nested_keys.c.position, nested_run.c.ordinality])),
+            nested.c.depth + 1,
+            nested_keys.c.key,
+            nested_run.c.value,
+        ).select_from(nested.join(nested_keys, true()).join(nested_run, true()))
+    )
+    nested_runs = select(
+        func.jsonb_agg(
+            postgresql.aggregate_order_by(
+                func.jsonb_build_object(
+                    "depth",
+                    nested.c.depth,
+                    "key",
+                    nested.c.key,
+                    "run_id",
+                    nested.c.run_data["run_id"],
+                    "agent_id",
+                    nested.c.run_data["agent_id"],
+                    "team_id",
+                    nested.c.run_data["team_id"],
+                    "metrics",
+                    nested.c.run_data["metrics"],
+                    "model",
+                    nested.c.run_data["model"],
+                    "model_provider",
+                    nested.c.run_data["model_provider"],
+                    "call_durations",
+                    _metrics_call_durations(nested.c.run_data),
+                ),
+                nested.c.path,
+            )
+        )
+    ).scalar_subquery()
+    return select(
+        table.c.run_id,
+        table.c.run_type,
+        table.c.agent_id,
+        table.c.team_id,
+        table.c.workflow_id,
+        table.c.user_id,
+        metrics_parent_run_id(table).label("parent_run_id"),
+        table.c.status,
+        table.c.run_data["metrics"].label("metrics"),
+        table.c.run_data["model"].astext.label("model"),
+        table.c.run_data["model_provider"].astext.label("model_provider"),
+        _metrics_call_durations(table.c.run_data).label("call_durations"),
+        # Walked only for a run with runs nested inside it
+        case((table.c.run_data.has_any(postgresql.array(list(_METRICS_NESTED_RUN_KEYS))), nested_runs)).label(
+            "nested_runs"
+        ),
+        table.c.created_at,
+    ).where(
+        table.c.created_at >= start_timestamp,
+        table.c.created_at < end_timestamp,
+        # A run copied into a forked session repeats a run counted in the session it was made in
+        table.c.run_data["forked_from_session_id"].astext.is_(None),
+    )
+
+
+def build_component_metrics_legacy_runs_table(
+    sessions_table: Table, runs_table: Optional[Table], start_timestamp: int, end_timestamp: int
+) -> Optional[Any]:
+    """Build the runs not yet migrated out of the sessions table's legacy runs column, in the runs table's shape.
+
+    Args:
+        sessions_table (Table): The sessions table.
+        runs_table (Optional[Table]): The runs table. A run it also holds is read from there.
+        start_timestamp (int): The start of the range the legacy runs are read for, included.
+        end_timestamp (int): The end of that range, not included.
+
+    Returns:
+        Optional[Any]: The legacy runs, for build_component_metrics_runs_query. None when there is no legacy runs
+            column.
+    """
+    if "runs" not in sessions_table.c:
+        return None
+
+    # Extracted in the database instead of loading the column, as calculate_metrics does
+    legacy_runs = cast(sessions_table.c.runs, postgresql.JSONB)
+    legacy_run = func.jsonb_array_elements(
+        case(
+            (func.jsonb_typeof(legacy_runs) == "array", legacy_runs),
+            else_=func.jsonb_build_array(),
+        ),
+        type_=postgresql.JSONB,
+    ).column_valued("legacy_run", joins_implicitly=True)
+    # A legacy run is dated and typed the way the v3.0.0 migration writes it to the runs table
+    legacy_runs_stmt = select(
+        legacy_run["run_id"].astext.label("run_id"),
+        case(
+            (func.coalesce(legacy_run["agent_id"].astext, "") != "", "agent"),
+            (func.coalesce(legacy_run["team_id"].astext, "") != "", "team"),
+            else_="workflow",
+        ).label("run_type"),
+        legacy_run["agent_id"].astext.label("agent_id"),
+        legacy_run["team_id"].astext.label("team_id"),
+        legacy_run["workflow_id"].astext.label("workflow_id"),
+        sessions_table.c.user_id,
+        legacy_run["parent_run_id"].astext.label("parent_run_id"),
+        legacy_run["status"].astext.label("status"),
+        legacy_run.label("run_data"),
+        func.coalesce(cast(legacy_run["created_at"].astext, BigInteger), sessions_table.c.created_at).label(
+            "created_at"
+        ),
+    ).select_from(sessions_table)
+    legacy_runs_stmt = legacy_runs_stmt.where(
+        # A session holds runs created after it started and before it was last written
+        sessions_table.c.created_at < end_timestamp,
+        func.coalesce(sessions_table.c.updated_at, sessions_table.c.created_at) >= start_timestamp,
+        # The migration skips what is no run
+        func.jsonb_typeof(legacy_run) == "object",
+        legacy_run["run_id"].astext.isnot(None),
+    )
+    if runs_table is not None:
+        # The runs table wins on a run in both, as merge_runs_table_with_legacy_blob does
+        legacy_runs_stmt = legacy_runs_stmt.where(
+            ~select(runs_table.c.run_id).where(runs_table.c.run_id == legacy_run["run_id"].astext).exists()
+        )
+    return legacy_runs_stmt.subquery("legacy_runs")
+
+
+def build_component_metrics_run(row: Any) -> Dict[str, Any]:
+    """Build a run in its stored shape from a row of the component metrics runs query.
+
+    Args:
+        row (Any): A row of build_component_metrics_runs_query.
+
+    Returns:
+        Dict[str, Any]: The run, with the run_data calculate_date_component_metrics reads.
+    """
+    run = dict(row._mapping)
+    nested_runs = run.pop("nested_runs") or []
+    run["run_data"] = {
+        "metrics": run.pop("metrics"),
+        "model": run.pop("model"),
+        "model_provider": run.pop("model_provider"),
+        "messages": [
+            {"role": "assistant", "metrics": {"duration": duration}} for duration in run.pop("call_durations") or []
+        ],
+    }
+    # A nested run comes after the run it is nested inside, so the last run met at each depth is its parent
+    parents = [run["run_data"]]
+    for nested_run in nested_runs:
+        depth = nested_run.pop("depth")
+        nested_run["messages"] = [
+            {"role": "assistant", "metrics": {"duration": duration}}
+            for duration in nested_run.pop("call_durations") or []
+        ]
+        key = nested_run.pop("key")
+        # A workflow agent's run is stored as the run itself, the other nested runs in lists
+        if key == "workflow_agent_run":
+            parents[depth - 1][key] = nested_run
+        else:
+            parents[depth - 1].setdefault(key, []).append(nested_run)
+        parents[depth:] = [nested_run]
+    return run
+
+
+def _metrics_column(table: Table, field: str) -> Any:
+    """Build a column of a metrics row to total: the column itself, its key of token_details for a token count kept
+    there, the total of the audio counts, the sessions of every type, or the runs no other run started."""
+    if field == "audio_total_tokens":
+        return func.coalesce(_metrics_column(table, "audio_input_tokens"), 0) + func.coalesce(
+            _metrics_column(table, "audio_output_tokens"), 0
+        )
+    if field in METRICS_TOKEN_DETAILS_FIELDS:
+        return cast(table.c.token_details[field].astext, BigInteger)
+    # The user metrics table keeps the sessions of each type only
+    if field == "sessions_count" and field not in table.c:
+        return table.c.agent_sessions_count + table.c.team_sessions_count + table.c.workflow_sessions_count
+    # The component metrics table keeps the runs of each component: the root runs are those no other run started
+    if field == "root_runs_count" and field not in table.c:
+        return case((table.c.parent_component_id == "", table.c.runs_count), else_=0)
+    return table.c[field]
+
+
+def _metrics_models(table: Table) -> Tuple[Any, Any, Any, Any]:
+    """Build the rows of a metrics table joined to each model of their model_metrics, which maps each provider to the
+    count of each of its models, and the provider, the id and the count of the model."""
+    provider = func.jsonb_each(table.c.model_metrics).table_valued(
+        column("key", Text), column("value", postgresql.JSONB)
+    )
+    model = func.jsonb_each_text(provider.c.value).table_valued("key", "value")
+    return (
+        table.join(provider, true()).join(model, true()),
+        provider.c.key.label("model_provider"),
+        model.c.key.label("model_id"),
+        cast(model.c.value, BigInteger),
+    )
+
+
+def build_component_metrics_totals_queries(
+    table: Table,
+    starting_date: date,
+    ending_date: date,
+    user_id: str,
+    fields: Sequence[str],
+    month_starts: Sequence[date] = (),
+) -> Dict[str, Any]:
+    """Build the queries that total the component metrics of each day in the given date range.
+
+    Args:
+        table (Table): The user metrics table, or the component metrics table to total the runs with no user.
+        starting_date (date): The first day to total.
+        ending_date (date): The last day to total.
+        user_id (str): The user whose rows are totalled: ``""`` totals the everyone rows of the totals table, or the
+            rows with no user of the component metrics table.
+        fields (Sequence[str]): The columns to total.
+        month_starts (Sequence[date]): The first day of every month inside the date range to total from its month
+            row instead of its days.
+
+    Returns:
+        Dict[str, Any]: The queries, keyed "totals", "count_maps", "additional_metrics" and "model_metrics".
+            Empty when there is no day to total.
+    """
+    # Days that follow one another are looked up as one range, which is planned by the rows it holds,
+    # where a list of days is planned as if each day held rows
+    day_ranges = [
+        and_(table.c.date >= first_day, table.c.date <= last_day)
+        for first_day, last_day in metrics_day_ranges(metrics_days_to_read(starting_date, ending_date, month_starts))
+    ]
+    filters = []
+    if day_ranges:
+        filters.append(and_(table.c.aggregation_period == "daily", or_(*day_ranges)))
+    if month_starts:
+        filters.append(and_(table.c.aggregation_period == "monthly", table.c.date.in_(month_starts)))
+    if not filters:
+        return {}
+    where = and_(table.c.user_id == user_id, or_(*filters))
+
+    totals = [func.max(table.c.updated_at).label("updated_at")]
+    for field in fields:
+        if field in METRICS_SUM_FIELDS:
+            totals.append(func.sum(_metrics_column(table, field)).label(field))
+        elif field in METRICS_MAX_COLUMNS:
+            totals.append(func.max(table.c[field]).label(field))
+    queries: Dict[str, Any] = {"totals": select(table.c.date, *totals).where(where).group_by(table.c.date)}
+
+    # Each key of a map of counts totalled on its own
+    count_map_queries = []
+    for field in fields:
+        if field in METRICS_COUNT_MAP_COLUMNS:
+            entry = func.jsonb_each_text(table.c[field]).table_valued("key", "value", joins_implicitly=True)
+            count_map_queries.append(
+                select(
+                    table.c.date,
+                    literal(field).label("field"),
+                    entry.c.key.label("key"),
+                    func.sum(cast(entry.c.value, BigInteger)).label("count"),
+                )
+                .where(where)
+                .group_by(table.c.date, entry.c.key)
+            )
+    if count_map_queries:
+        queries["count_maps"] = union_all(*count_map_queries)
+
+    # Only the numbers of additional_metrics are totalled; the rest keeps no meaning across rows
+    if "additional_metrics" in fields:
+        entry = func.jsonb_each(table.c.additional_metrics).table_valued(
+            column("key", Text), column("value", postgresql.JSONB), joins_implicitly=True
+        )
+        queries["additional_metrics"] = (
+            select(
+                table.c.date,
+                entry.c.key.label("key"),
+                func.sum(cast(cast(entry.c.value, Text), Numeric)).label("value"),
+            )
+            .where(where, func.jsonb_typeof(entry.c.value) == "number")
+            .group_by(table.c.date, entry.c.key)
+        )
+
+    if "model_metrics" in fields:
+        models, model_provider, model_id, count = _metrics_models(table)
+        queries["model_metrics"] = (
+            select(table.c.date, model_id, model_provider, func.sum(count).label("count"))
+            .select_from(models)
+            .where(where)
+            .group_by(table.c.date, model_id, model_provider)
+        )
+
+    return queries
+
+
+def build_component_metrics_totals(
+    fields: Sequence[str],
+    rows_by_query: Dict[str, Sequence[Any]],
+) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+    """Build the component metrics totals of each date from the rows of the totals queries.
+
+    Args:
+        fields (Sequence[str]): The columns that were totalled.
+        rows_by_query (Dict[str, Sequence[Any]]): The rows of each query of build_component_metrics_totals_queries.
+
+    Returns:
+        Tuple[List[Dict[str, Any]], Optional[int]]: One dict per date, oldest first, and when the rows were
+            last updated. A month totalled from its month row is one dict, dated its first day.
+    """
+    totals_by_date: Dict[date, Dict[str, Any]] = {}
+    latest_updated_at: Optional[int] = None
+    for row in rows_by_query.get("totals", []):
+        day_totals: Dict[str, Any] = {"date": row.date, **empty_metrics_totals(fields)}
+        for field in fields:
+            if field in METRICS_SUM_FIELDS:
+                day_totals[field] = int(getattr(row, field) or 0)
+            elif field in METRICS_MAX_COLUMNS and getattr(row, field) is not None:
+                day_totals[field] = int(getattr(row, field))
+        totals_by_date[row.date] = day_totals
+        if row.updated_at is not None and (latest_updated_at is None or row.updated_at > latest_updated_at):
+            latest_updated_at = row.updated_at
+
+    for row in rows_by_query.get("count_maps", []):
+        totals_by_date[row.date][row.field][row.key] = int(row.count)
+
+    for row in rows_by_query.get("additional_metrics", []):
+        # A whole number comes back a whole number
+        value = int(row.value) if row.value == int(row.value) else float(row.value)
+        totals_by_date[row.date]["additional_metrics"][row.key] = value
+
+    for row in rows_by_query.get("model_metrics", []):
+        totals_by_date[row.date]["model_metrics"].setdefault(row.model_provider, {})[row.model_id] = int(row.count)
+
+    return [totals_by_date[day] for day in sorted(totals_by_date)], latest_updated_at
+
+
+def build_metrics_by_owner_queries(
+    table: Table, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
+) -> Dict[str, Any]:
+    """Build the queries that total the component metrics of each user and day, for get_metrics.
+
+    Args:
+        table (Table): The component metrics table.
+        starting_date (Optional[date]): The first day to total.
+        ending_date (Optional[date]): The last day to total.
+        user_id (Optional[str]): Total only this user's rows. ``None`` totals every user's.
+
+    Returns:
+        Dict[str, Any]: The queries, keyed "totals" and "model_metrics", for build_metrics_by_owner.
+    """
+    filters = [table.c.aggregation_period == "daily"]
+    if starting_date:
+        filters.append(table.c.date >= starting_date)
+    if ending_date:
+        filters.append(table.c.date <= ending_date)
+    if user_id is not None:
+        filters.append(table.c.user_id == user_id)
+
+    totals = select(
+        table.c.date,
+        table.c.user_id,
+        table.c.component_type,
+        func.sum(table.c.sessions_count).label("sessions_count"),
+        func.sum(table.c.runs_count).label("runs_count"),
+        *[func.sum(_metrics_column(table, field)).label(field) for field in METRICS_TOKEN_FIELDS],
+        func.min(table.c.created_at).label("created_at"),
+        func.max(table.c.updated_at).label("updated_at"),
+    ).where(*filters)
+
+    models, model_provider, model_id, count = _metrics_models(table)
+    model_metrics = (
+        select(
+            table.c.date,
+            table.c.user_id,
+            model_id,
+            model_provider,
+            func.sum(count).label("count"),
+        )
+        .select_from(models)
+        .where(*filters)
+    )
+
+    return {
+        "totals": totals.group_by(table.c.date, table.c.user_id, table.c.component_type),
+        "model_metrics": model_metrics.group_by(table.c.date, table.c.user_id, model_id, model_provider),
+    }

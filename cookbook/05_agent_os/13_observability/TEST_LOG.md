@@ -82,7 +82,32 @@ registered. The scoped container was removed after the run.
 `POST /metrics/refresh`, and read the stored daily result from `GET /metrics`.
 
 **Result:** Refresh returned one aggregate for 2026-07-24. Readback reported
-one agent run, one agent session, one user, and 42 total tokens.
+one agent run, one agent session, one user, and 42 total tokens. Re-ran on
+2026-11-02 with the `refresh` field printed: one agent run, one session, one
+user, 43 total tokens, and the last refresh `completed`.
+
+---
+
+### os_metrics.py
+
+**Status:** PASS
+
+**Test mode:** LIVE
+
+**Description:** Ran `run_os_metrics_demo()` on 2026-11-02 against a local
+PostgreSQL that already held six runs of the day, one of them a team member run:
+`metrics-researcher` (`gpt-5.5`) and `metrics-summarizer` (`gpt-5.6-luna`) ran
+once each as `observability-user`. The six `/os/metrics` routes were called over
+HTTP on a served AgentOS over the same tables.
+
+**Result:** Printed 5 sessions today, 5 runs today (runs no other run started),
+6 completed runs today (the team member run included), 1696 tokens today, and
+1 run of `gpt-5.5` and 5 of `gpt-5.6-luna`. Over a 7-day window the session
+and token totals equalled `GET /metrics` and SQL over `agno_sessions` and
+`agno_runs`, the run total equalled the SQL count of runs with no parent, and a
+repeated read sent with its ETag answered 304 with no body.
+`GET /os/metrics/users` answered 503, since the example passes no
+`user_directory`.
 
 ---
 

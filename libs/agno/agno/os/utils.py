@@ -1,5 +1,6 @@
 import json
 from datetime import date, datetime, time, timezone
+from functools import partial
 from os import getenv
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Type, Union
 
@@ -818,6 +819,12 @@ async def get_db(
             and db.learnings_table_name == table_name
             or hasattr(db, "metrics_table_name")
             and db.metrics_table_name == table_name
+            or hasattr(db, "component_metrics_table_name")
+            and db.component_metrics_table_name == table_name
+            or hasattr(db, "user_metrics_table_name")
+            and db.user_metrics_table_name == table_name
+            or hasattr(db, "metrics_refreshes_table_name")
+            and db.metrics_refreshes_table_name == table_name
             or hasattr(db, "eval_table_name")
             and db.eval_table_name == table_name
             or hasattr(db, "knowledge_table_name")
@@ -872,6 +879,36 @@ async def get_db(
 
     # Return the first (and only) database
     return all_dbs[0]
+
+
+def has_metrics_lock_row(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> bool:
+    """Whether the database builds its metrics tables behind the lock row of its metrics refreshes table, which keeps
+    the refresh status for every process."""
+    method = getattr(type(db), "get_metrics_refresh_status", None)
+    if isinstance(db, AsyncBaseDb):
+        return method is not AsyncBaseDb.get_metrics_refresh_status
+    if isinstance(db, BaseDb):
+        return method is not BaseDb.get_metrics_refresh_status
+    return False
+
+
+def get_metrics_calculation(
+    db: Union[BaseDb, AsyncBaseDb],
+    should_stop: Optional[Callable[[], bool]] = None,
+    rebuild_from: Optional[date] = None,
+) -> Callable[[], Any]:
+    """The calculation a refresh runs: of a database that builds its metrics tables, only the days it calculated, so a
+    first build never holds every row it wrote. It stops between days or a day's batches once should_stop returns True,
+    and also rebuilds every day from rebuild_from."""
+    if has_metrics_lock_row(db):
+        return partial(db.calculate_metrics_dates, should_stop=should_stop, rebuild_from=rebuild_from)
+    return db.calculate_metrics
+
+
+def stop_metrics_refresh_on_read(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> None:
+    """Stop a database that calculates its metrics on read from calculating them: it reads them as just calculated."""
+    if isinstance(db, (BaseDb, AsyncBaseDb)):
+        db.stop_metrics_refresh_on_read()
 
 
 def _generate_knowledge_id(name: str, db_id: str, table_name: str) -> str:

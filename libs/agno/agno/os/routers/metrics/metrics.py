@@ -1,21 +1,47 @@
+import asyncio
+import hashlib
+import json
 import logging
-from datetime import date, datetime, timezone
-from typing import List, Optional, Union
+from collections import OrderedDict
+from datetime import date, datetime, timedelta, timezone
+from itertools import chain
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
 
 from fastapi import BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from fastapi.routing import APIRouter
 from starlette.concurrency import run_in_threadpool
 
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.db.utils import aggregate_metrics_by_date, identify_metrics_by_owner, is_legacy_metric
+from agno.db.utils import (
+    aggregate_metrics_by_date,
+    database_error_message,
+    identify_metrics_by_owner,
+    is_legacy_metric,
+    merge_metrics_totals,
+    metrics_percentile,
+)
 from agno.exceptions import AgnoError
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
-from agno.os.middleware.user_scope import resolve_db_and_scope
+from agno.os.authz.admin_router import _make_require_admin
+from agno.os.middleware.user_scope import get_scoped_user_id, resolve_db_and_scope
 from agno.os.routers.metrics.schemas import (
     DayAggregatedMetrics,
+    DayLatencyMetrics,
+    DayRunMetrics,
+    DaySessionMetrics,
+    DayTokenMetrics,
+    DayUserMetrics,
     MetricsRefreshResponse,
     MetricsRefreshStatusResponse,
     MetricsResponse,
+    ModelUsage,
+    OSLatencyMetricsResponse,
+    OSModelMetricsResponse,
+    OSRunMetricsResponse,
+    OSSessionMetricsResponse,
+    OSTokenMetricsResponse,
+    OSUserMetricsResponse,
 )
 from agno.os.schema import (
     BadRequestResponse,
@@ -25,14 +51,163 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import AgnoHTTPException, get_db, to_utc_datetime
+from agno.os.utils import (
+    AgnoHTTPException,
+    get_db,
+    get_metrics_calculation,
+    has_metrics_lock_row,
+    stop_metrics_refresh_on_read,
+    to_utc_datetime,
+)
 from agno.remote.base import RemoteDb
+from agno.run.base import RunStatus
+
+if TYPE_CHECKING:
+    from agno.os.authz.authorization import Authorization
 
 logger = logging.getLogger(__name__)
 
+# Without bounds a route covers the last 30 days. Both days are inclusive, so a starting_date
+# equal to the ending_date covers that one day.
+_DEFAULT_WINDOW_DAYS = 30
+
+# The /os/metrics routes read every database of the AgentOS at the same time, this many at once. A database
+# that has not answered within the timeout, or has not finished its first metrics calculation yet, is left out of the
+# response and named in skipped_db_ids.
+_MAX_CONCURRENT_OS_METRICS_READS = 8
+
+_MAX_OS_METRICS_RESPONSES = 256
+# An answer for a longer window is returned but not kept
+_MAX_OS_METRICS_KEPT_WINDOW_DAYS = 366
+
+# What the latency route reads: each timing's count, total and maximum, and the bucket counts its median and p95
+# are read from
+_LATENCY_FIELDS = [
+    "duration_runs_count",
+    "total_duration_ms",
+    "max_duration_ms",
+    "duration_buckets",
+    "time_to_first_token_runs_count",
+    "total_time_to_first_token_ms",
+    "max_time_to_first_token_ms",
+    "time_to_first_token_buckets",
+    "model_calls_count",
+    "total_model_call_ms",
+    "max_model_call_ms",
+    "model_call_buckets",
+]
+
+
+def _window(starting_date: Optional[date], ending_date: Optional[date], max_window_days: int) -> tuple[date, date]:
+    """Resolve the UTC days a route covers, ending today and covering _DEFAULT_WINDOW_DAYS days by default."""
+    if ending_date is None:
+        ending_date = datetime.now(timezone.utc).date()
+    if starting_date is None:
+        # A limit shorter than the default window shortens the default window to it
+        window_days = min(_DEFAULT_WINDOW_DAYS, max_window_days)
+        if (ending_date - date.min).days < window_days - 1:
+            raise HTTPException(status_code=422, detail="starting_date is required for an ending_date this early")
+        starting_date = ending_date - timedelta(days=window_days - 1)
+    if starting_date > ending_date:
+        raise HTTPException(status_code=422, detail="starting_date must be on or before ending_date")
+    if (ending_date - starting_date).days + 1 > max_window_days:
+        raise HTTPException(
+            status_code=422, detail=f"starting_date and ending_date can cover at most {max_window_days} days"
+        )
+    return starting_date, ending_date
+
+
+def _os_metrics_location(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> tuple[Optional[str], ...]:
+    """Where a database keeps its OS metrics rows: databases at one location hold the same rows."""
+    table_names = (getattr(db, "component_metrics_table_name", None), getattr(db, "user_metrics_table_name", None))
+    address: Optional[str] = None
+    db_engine = getattr(db, "db_engine", None)
+    connection_kwargs = getattr(
+        getattr(getattr(db, "redis_client", None), "connection_pool", None), "connection_kwargs", None
+    )
+    database_string = getattr(getattr(db, "db_client", None), "_database_string", None)
+    db_path = getattr(db, "db_path", None)
+    if db_engine is not None:
+        url = db_engine.url
+        # A URL that names no server, or no SQLite file, cannot tell two databases apart
+        if url.get_backend_name() == "sqlite":
+            named = bool(url.database) and url.query.get("mode") != "memory" and ":memory:" not in url.database
+        else:
+            # A PostgreSQL schema lives inside a database, while a MySQL schema is the database itself
+            named = url.host is not None and (bool(url.database) or url.get_backend_name() != "postgresql")
+        if named:
+            # The driver is left out, so a sync and an async adapter on one database share a location
+            address = url.set(drivername=url.get_backend_name()).render_as_string(hide_password=True)
+    elif isinstance(connection_kwargs, dict):
+        # A client on a unix socket names its path instead of a host and port, and a Sentinel client names neither
+        if connection_kwargs.get("path"):
+            address = f"unix://{connection_kwargs['path']}?db={connection_kwargs.get('db')}"
+        elif connection_kwargs.get("host") is not None:
+            address = (
+                f"redis://{connection_kwargs['host']}:{connection_kwargs.get('port')}/{connection_kwargs.get('db')}"
+            )
+    elif isinstance(database_string, str):
+        # A Firestore client names its project and database together
+        address = database_string
+    elif isinstance(db_path, Path):
+        address = str(db_path.resolve())
+    else:
+        for name in ("db_url", "_db_url", "project_id", "bucket_name"):
+            if isinstance(getattr(db, name, None), str):
+                address = getattr(db, name)
+                break
+    if address is None:
+        return (str(db.id), *table_names)
+    store_names = (
+        getattr(db, name, None) for name in ("db_schema", "db_name", "_db_ns", "_db_db", "db_prefix", "prefix")
+    )
+    return (address, *(name for name in store_names if isinstance(name, str)), *table_names)
+
+
+def _registered_os_dbs(
+    os_db: Optional[Union[BaseDb, AsyncBaseDb]],
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
+) -> dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]]:
+    """Collect every database of the AgentOS by id."""
+    registered_dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]] = {}
+    if os_db is not None:
+        registered_dbs[str(os_db.id)] = [os_db]
+    for registered_db_id, db_list in dbs.items():
+        registered_dbs.setdefault(registered_db_id, []).extend(db_list)
+    return registered_dbs
+
+
+def _unique_os_dbs(
+    os_dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
+) -> dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]]:
+    """Keep each location once, under the first id it is registered with, so its rows are read once."""
+    locations = set()
+    unique_dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]] = {}
+    for db_id, db_list in os_dbs.items():
+        for db in db_list:
+            location = _os_metrics_location(db)
+            if location not in locations:
+                locations.add(location)
+                unique_dbs.setdefault(db_id, []).append(db)
+    return unique_dbs
+
+
+def _merge_totals(totals: List[Dict[str, Any]], fields: List[str]) -> Dict[str, Any]:
+    """Merge the totals of several dates or databases into one set of totals, their models listed as the reads list
+    them."""
+    merged = merge_metrics_totals(totals, [field for field in fields if field != "model_metrics"])
+    if "model_metrics" in fields:
+        merged["model_metrics"] = [model for day_totals in totals for model in day_totals.get("model_metrics", [])]
+    return merged
+
 
 def get_metrics_router(
-    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]], settings: AgnoAPISettings = AgnoAPISettings(), **kwargs
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
+    settings: AgnoAPISettings = AgnoAPISettings(),
+    os_db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    role_store: "Optional[Authorization]" = None,
+    auth_enabled: bool = True,
+    **kwargs,
 ) -> APIRouter:
     """Create metrics router with comprehensive OpenAPI documentation for system metrics and analytics endpoints."""
     router = APIRouter(
@@ -46,10 +221,71 @@ def get_metrics_router(
             500: {"description": "Internal Server Error", "model": InternalServerErrorResponse},
         },
     )
-    return attach_routes(router=router, dbs=dbs)
+    return attach_routes(
+        router=router, dbs=dbs, settings=settings, os_db=os_db, role_store=role_store, auth_enabled=auth_enabled
+    )
 
 
-def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]]) -> APIRouter:
+def attach_routes(
+    router: APIRouter,
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
+    settings: AgnoAPISettings = AgnoAPISettings(),
+    os_db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    role_store: "Optional[Authorization]" = None,
+    auth_enabled: bool = True,
+) -> APIRouter:
+    require_user_admin = _make_require_admin(role_store, auth_enabled=auth_enabled)
+
+    if not settings.metrics_calculation_enabled:
+        for db in chain.from_iterable(dbs.values()):
+            stop_metrics_refresh_on_read(db)
+
+    async def _get_refresh_status(db: Union[BaseDb, AsyncBaseDb]) -> MetricsRefreshStatusResponse:
+        """The status of the most recent refresh: the database's, for every process, or this process's own."""
+        if not has_metrics_lock_row(db):
+            return refresh_states.get(str(db.id)) or MetricsRefreshStatusResponse(status="idle")
+        if isinstance(db, AsyncBaseDb):
+            refresh_status = await db.get_metrics_refresh_status()
+        else:
+            refresh_status = await run_in_threadpool(db.get_metrics_refresh_status)
+        if refresh_status is None:
+            return MetricsRefreshStatusResponse(status="idle")
+        return MetricsRefreshStatusResponse(
+            status=refresh_status["status"],
+            started_at=to_utc_datetime(refresh_status["started_at"]),
+            finished_at=to_utc_datetime(refresh_status["finished_at"]),
+            error=refresh_status["error"],
+        )
+
+    async def _read_metrics(
+        db: Union[BaseDb, AsyncBaseDb],
+        starting_date: Optional[date],
+        ending_date: Optional[date],
+        user_id: Optional[str],
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """The stored metrics of the date range, and when they were last updated."""
+        # A read of one owner keeps that owner's rows; every other read takes one row per day
+        if user_id is None:
+            if isinstance(db, AsyncBaseDb):
+                return await db.get_metrics_by_date(starting_date=starting_date, ending_date=ending_date)
+            return await run_in_threadpool(db.get_metrics_by_date, starting_date=starting_date, ending_date=ending_date)
+        if isinstance(db, AsyncBaseDb):
+            metrics, latest_updated_at = await db.get_metrics(
+                starting_date=starting_date, ending_date=ending_date, user_id=user_id
+            )
+        else:
+            metrics, latest_updated_at = await run_in_threadpool(
+                db.get_metrics,
+                starting_date=starting_date,
+                ending_date=ending_date,
+                user_id=user_id,
+            )
+        # The unowned bucket is asked for by the same sentinel the SQL adapters stamp
+        # pre-ownership records with, and those hold every user's traffic
+        if not user_id:
+            metrics = [metric for metric in metrics if not is_legacy_metric(metric)]
+        return identify_metrics_by_owner(metrics, user_id), latest_updated_at
+
     @router.get(
         "/metrics",
         response_model=MetricsResponse,
@@ -58,7 +294,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         summary="Get AgentOS Metrics",
         description=(
             "Retrieve AgentOS metrics and analytics data for a specified date range. "
-            "If no date range is specified, returns all available metrics."
+            "If no date range is specified, returns all available metrics. "
+            "Reading never calculates metrics; the response carries the status of the most recent refresh."
         ),
         responses={
             200: {
@@ -122,35 +359,20 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 auth_token = get_auth_token_from_request(request)
                 headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
                 return await db.get_metrics(
-                    starting_date=starting_date, ending_date=ending_date, db_id=db_id, table=table, headers=headers
-                )
-
-            if isinstance(db, AsyncBaseDb):
-                metrics, latest_updated_at = await db.get_metrics(
-                    starting_date=starting_date, ending_date=ending_date, user_id=effective_user_id
-                )
-            else:
-                metrics, latest_updated_at = await run_in_threadpool(
-                    db.get_metrics,
                     starting_date=starting_date,
                     ending_date=ending_date,
                     user_id=effective_user_id,
+                    db_id=db_id,
+                    table=table,
+                    headers=headers,
                 )
 
-            # A read of one owner keeps that owner's rows; every other read collapses to the
-            # legacy one-row-per-day shape.
-            if effective_user_id is None:
-                metrics = aggregate_metrics_by_date(metrics)
-            else:
-                # The unowned bucket is asked for by the same sentinel the SQL adapters stamp
-                # pre-ownership records with, and those hold every user's traffic
-                if not effective_user_id:
-                    metrics = [metric for metric in metrics if not is_legacy_metric(metric)]
-                metrics = identify_metrics_by_owner(metrics, effective_user_id)
+            metrics, latest_updated_at = await _read_metrics(db, starting_date, ending_date, effective_user_id)
 
             return MetricsResponse(
                 metrics=[DayAggregatedMetrics.from_dict(metric) for metric in metrics],
                 updated_at=to_utc_datetime(latest_updated_at),
+                refresh=await _get_refresh_status(db),
             )
 
         except HTTPException:
@@ -161,7 +383,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             logger.exception("GET /metrics failed")
             raise HTTPException(status_code=500, detail=f"Error getting metrics: {str(e)}")
 
-    # Most recent refresh state per db id, doubling as the in-flight guard ('running').
+    # Most recent refresh state per db id, doubling as the in-flight guard ('running'), for a database that
+    # keeps no refresh status of its own.
     # Only mutated on the event loop (the sync calculation itself runs in the threadpool),
     # so no lock is needed. Per-process: each worker tracks the refreshes it started.
     refresh_states: dict[str, MetricsRefreshStatusResponse] = {}
@@ -193,21 +416,32 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db: Union[BaseDb, AsyncBaseDb, RemoteDb],
         db_id: Optional[str],
         table: Optional[str],
+        user_id: Optional[str],
+        rebuild_from: Optional[date],
         headers: Optional[dict],
     ) -> None:
         refresh_key = str(db.id)
         try:
             if isinstance(db, RemoteDb):
-                await db.refresh_metrics(db_id=db_id, table=table, headers=headers, background=True)
+                await db.refresh_metrics(
+                    db_id=db_id,
+                    table=table,
+                    user_id=user_id,
+                    rebuild_from=rebuild_from,
+                    headers=headers,
+                    background=True,
+                )
             elif isinstance(db, AsyncBaseDb):
-                await db.calculate_metrics()
+                await get_metrics_calculation(db, rebuild_from=rebuild_from)()
             else:
-                await run_in_threadpool(db.calculate_metrics)
+                await run_in_threadpool(get_metrics_calculation(db, rebuild_from=rebuild_from))
         except Exception as e:
             logger.error(f"Metrics refresh failed: {e}")
-            _record_refresh_outcome(refresh_key, error=str(e))
+            if not has_metrics_lock_row(db):
+                _record_refresh_outcome(refresh_key, error=str(e))
         else:
-            _record_refresh_outcome(refresh_key)
+            if not has_metrics_lock_row(db):
+                _record_refresh_outcome(refresh_key)
 
     @router.post(
         "/metrics/refresh",
@@ -222,8 +456,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             "By default the refresh runs synchronously and returns the refreshed metrics. "
             "Pass background=true to run the refresh in the background instead: the endpoint "
             "returns 202 Accepted immediately and GET /metrics can be polled for results. "
-            "If a background refresh is already in progress for the target database, "
-            "returns status 'already_running' without starting a new one."
+            "If a refresh is already in progress for the target database, in any process on a database that keeps "
+            "its refresh status, returns status 'already_running' without starting a new one. "
+            "Returns status 'disabled' when metrics calculation is turned off."
         ),
         responses={
             200: {
@@ -277,6 +512,11 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         background: bool = Query(
             default=False, description="Run the refresh in the background and return 202 immediately"
         ),
+        rebuild_from: Optional[date] = Query(
+            default=None,
+            description="Also rebuild every day from this date to today, as after a release that changed how "
+            "metrics are counted",
+        ),
     ) -> Union[List[DayAggregatedMetrics], MetricsRefreshResponse]:
         try:
             # Resolved before the background branch so an identity-less token cannot start a refresh.
@@ -287,40 +527,74 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 auth_token = get_auth_token_from_request(request)
                 headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
 
-            refresh_key = str(db.id)
+            # Answered the same way for a background refresh, which never starts
+            if not isinstance(db, RemoteDb) and not settings.metrics_calculation_enabled:
+                return MetricsRefreshResponse(status="disabled", message="Metrics calculation is turned off")
 
             if background:
                 response.status_code = 202
-                if _refresh_is_running(refresh_key):
-                    return _already_running_response()
-
-                _mark_refresh_running(refresh_key)
-                background_tasks.add_task(_do_refresh, db, db_id, table, headers)
-
-                return MetricsRefreshResponse(status="started", message="Metrics refresh started in background")
 
             # A remote database keeps its own state, so it is left to guard itself
             if isinstance(db, RemoteDb):
-                return await db.refresh_metrics(db_id=db_id, table=table, headers=headers)
+                if background:
+                    background_tasks.add_task(_do_refresh, db, db_id, table, effective_user_id, rebuild_from, headers)
+                    return MetricsRefreshResponse(status="started", message="Metrics refresh started in background")
+                return await db.refresh_metrics(
+                    db_id=db_id, table=table, user_id=effective_user_id, rebuild_from=rebuild_from, headers=headers
+                )
 
-            # The same guard the background path has: without it every concurrent caller
-            # starts its own full recalculation of every date the database still needs
-            if _refresh_is_running(refresh_key):
-                return _already_running_response()
+            refresh_key = str(db.id)
+            has_lock_row = has_metrics_lock_row(db)
+            if rebuild_from is not None and not has_lock_row:
+                raise HTTPException(
+                    status_code=400, detail=f"rebuild_from needs a database that keeps {db.user_metrics_table_name}"
+                )
+            if rebuild_from is not None and rebuild_from > datetime.now(timezone.utc).date():
+                raise HTTPException(status_code=400, detail="rebuild_from cannot be a future date")
 
-            _mark_refresh_running(refresh_key)
+            # A database with a lock row lets one refresh run at a time for every process, and claims it when the
+            # refresh starts; without one, the same guard holds for this process
+            if has_lock_row:
+                if background and (await _get_refresh_status(db)).status == "running":
+                    # A rebuild still reopens its days, through a calculation that then finds the refresh held, so
+                    # the next refresh rebuilds them
+                    if rebuild_from is not None:
+                        background_tasks.add_task(
+                            _do_refresh, db, db_id, table, effective_user_id, rebuild_from, headers
+                        )
+                    return _already_running_response()
+            else:
+                if _refresh_is_running(refresh_key):
+                    return _already_running_response()
+                _mark_refresh_running(refresh_key)
+
+            if background:
+                background_tasks.add_task(_do_refresh, db, db_id, table, effective_user_id, rebuild_from, headers)
+
+                return MetricsRefreshResponse(status="started", message="Metrics refresh started in background")
+
+            calculate = get_metrics_calculation(db, rebuild_from=rebuild_from)
             try:
                 if isinstance(db, AsyncBaseDb):
-                    result = await db.calculate_metrics()
+                    result = await calculate()
                 else:
-                    result = await run_in_threadpool(db.calculate_metrics)
+                    result = await run_in_threadpool(calculate)
             except Exception as e:
-                _record_refresh_outcome(refresh_key, error=str(e))
+                if not has_lock_row:
+                    _record_refresh_outcome(refresh_key, error=str(e))
                 raise
-            _record_refresh_outcome(refresh_key)
+            if not has_lock_row:
+                _record_refresh_outcome(refresh_key)
 
             if result is None:
-                return []
+                # The claim of the lock row is the check: a refresh that lost it calculated nothing
+                return _already_running_response() if has_lock_row else []
+            # The days alone came back: their rows are read from the tables
+            if has_lock_row:
+                # Nothing changed: today's metrics come back, as they did when every refresh calculated today
+                days = result or [datetime.now(timezone.utc).date()]
+                metrics, _ = await _read_metrics(db, days[0], days[-1], effective_user_id)
+                return [DayAggregatedMetrics.from_dict(metric) for metric in metrics if metric["date"] in days]
 
             # A read of one owner keeps that owner's rows; every other read collapses to the
             # legacy one-row-per-day shape.
@@ -337,7 +611,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         except AgnoError as e:
             raise AgnoHTTPException(e)
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error refreshing metrics: {str(e)}")
+            # The database's own message, as the refresh status keeps it
+            raise HTTPException(status_code=500, detail=f"Error refreshing metrics: {database_error_message(e)}")
 
     @router.get(
         "/metrics/refresh/status",
@@ -346,11 +621,12 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         operation_id="get_metrics_refresh_status",
         summary="Get Metrics Refresh Status",
         description=(
-            "Get the status of the most recent metrics refresh for the target database. "
-            "Returns 'running' while a refresh is in progress, then 'completed' or 'failed' with "
-            "the finish timestamp — the state updates even when a refresh completes without "
-            "writing new data. Returns 'idle' if no refresh has been triggered since this server "
-            "process started. For remote databases the status is fetched from the remote AgentOS. "
+            "Get the status of the most recent metrics refresh for the target database: in any process on a database "
+            "that keeps its refresh status, otherwise in this server process. "
+            "Returns 'running' while a refresh is in progress, then 'completed' with the finish "
+            "timestamp or 'failed' with its error — the state updates even when a refresh completes "
+            "without writing new data. Returns 'idle' if no refresh has run on the database. "
+            "For remote databases the status is fetched from the remote AgentOS. "
             "Intended for polling after starting a background refresh via POST /metrics/refresh?background=true."
         ),
         responses={
@@ -385,14 +661,1170 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
                 return await db.get_metrics_refresh_status(db_id=db_id, table=table, headers=headers)
 
-            state = refresh_states.get(str(db.id))
-            if state is None:
-                return MetricsRefreshStatusResponse(status="idle")
-            return state
+            return await _get_refresh_status(db)
 
         except HTTPException:
             raise
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error getting metrics refresh status: {str(e)}")
+
+    def _owner(request: Request, user_id: Optional[str]) -> Optional[str]:
+        """The owner a read covers: the caller's own scope, else the requested user_id, else every owner."""
+        scoped_user_id = get_scoped_user_id(request)
+        return scoped_user_id if scoped_user_id is not None else user_id
+
+    def _os_dbs(db_ids: Optional[list[str]]) -> dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]]:
+        """The databases a read covers, by id: the requested ones, else every database of the AgentOS, each once."""
+        registered_dbs = _registered_os_dbs(os_db, dbs)
+        if not any(registered_dbs.values()):
+            raise HTTPException(status_code=400, detail="No database is configured on this AgentOS")
+        if not db_ids:
+            return _unique_os_dbs(registered_dbs)
+        os_dbs = {}
+        for db_id in db_ids:
+            if db_id not in registered_dbs:
+                raise HTTPException(status_code=404, detail=f"No database found with id '{db_id}'")
+            os_dbs[db_id] = registered_dbs[db_id]
+        return _unique_os_dbs(os_dbs)
+
+    def _remote_os_db(os_dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]]) -> Optional[RemoteDb]:
+        """The remote database a read covers when it is the only one, so its AgentOS answers the read."""
+        os_db_list = [db for db_list in os_dbs.values() for db in db_list]
+        if len(os_db_list) == 1 and isinstance(os_db_list[0], RemoteDb):
+            return os_db_list[0]
+        return None
+
+    async def _read_os_metrics(
+        db: Union[BaseDb, AsyncBaseDb],
+        effective_user_id: Optional[str],
+        starting_date: date,
+        ending_date: date,
+        fields: list[str],
+    ) -> tuple[list[dict[str, Any]], Optional[int]]:
+        """One database's OS metrics for the window, totalled by the database per day, oldest first."""
+        if isinstance(db, AsyncBaseDb):
+            return await db.get_component_metrics(
+                starting_date=starting_date,
+                ending_date=ending_date,
+                user_id=effective_user_id,
+                fields=fields,
+            )
+        return await run_in_threadpool(
+            db.get_component_metrics,
+            starting_date=starting_date,
+            ending_date=ending_date,
+            user_id=effective_user_id,
+            fields=fields,
+        )
+
+    async def _read_os_metrics_totals(
+        db: Union[BaseDb, AsyncBaseDb],
+        effective_user_id: Optional[str],
+        starting_date: date,
+        ending_date: date,
+        fields: list[str],
+    ) -> tuple[dict[str, Any], Optional[int]]:
+        """One database's OS metrics for the window, totalled by the database into one set of totals."""
+        try:
+            if isinstance(db, AsyncBaseDb):
+                return await db.get_metrics_totals(
+                    starting_date=starting_date,
+                    ending_date=ending_date,
+                    user_id=effective_user_id,
+                    fields=fields,
+                )
+            return await run_in_threadpool(
+                db.get_metrics_totals,
+                starting_date=starting_date,
+                ending_date=ending_date,
+                user_id=effective_user_id,
+                fields=fields,
+            )
+        except NotImplementedError:
+            # A database that totals per day only has its days totalled here
+            totals, latest_updated_at = await _read_os_metrics(
+                db, effective_user_id, starting_date, ending_date, fields
+            )
+            return _merge_totals(totals, fields), latest_updated_at
+
+    async def _read_os_dbs(
+        os_dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
+        read: Callable[[Union[BaseDb, AsyncBaseDb]], Awaitable[tuple[Any, Optional[int]]]],
+        timeout_seconds: float,
+        skipped_db_ids: dict[str, str],
+    ) -> tuple[list[Any], dict[str, Any]]:
+        """Read every database at the same time, at most _MAX_CONCURRENT_OS_METRICS_READS at once.
+
+        A database already in skipped_db_ids is not read, and is reported skipped for its reason.
+        """
+
+        async def _read_one(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> Any:
+            if isinstance(db, RemoteDb):
+                raise NotImplementedError
+            task = asyncio.ensure_future(read(db))
+            try:
+                return await asyncio.wait_for(asyncio.shield(task), timeout=timeout_seconds)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                # The read finishes in the background, so a rebuild it started is not rolled
+                # back; retrieve its eventual result so it never warns
+                task.add_done_callback(lambda t: t.cancelled() or t.exception())
+                raise
+
+        results: list[Any] = []
+        db_ids: dict[str, Optional[datetime]] = {}
+        skipped_db_ids = dict(skipped_db_ids)
+        sources = [(db_id, db) for db_id, db_list in os_dbs.items() if db_id not in skipped_db_ids for db in db_list]
+        for start in range(0, len(sources), _MAX_CONCURRENT_OS_METRICS_READS):
+            batch = sources[start : start + _MAX_CONCURRENT_OS_METRICS_READS]
+            outcomes = await asyncio.gather(*(_read_one(db) for _, db in batch), return_exceptions=True)
+            for (db_id, _), outcome in zip(batch, outcomes):
+                if isinstance(outcome, NotImplementedError):
+                    skipped_db_ids.setdefault(db_id, "unsupported")
+                elif isinstance(outcome, asyncio.TimeoutError):
+                    skipped_db_ids.setdefault(db_id, "timeout")
+                elif isinstance(outcome, BaseException):
+                    logger.warning(f"OS metrics read failed for database '{db_id}': {outcome}")
+                    skipped_db_ids.setdefault(db_id, "failed")
+                else:
+                    result, latest_updated_at = outcome
+                    results.append(result)
+                    updated_at = to_utc_datetime(latest_updated_at)
+                    current_updated_at = db_ids.get(db_id)
+                    if current_updated_at is None or (updated_at is not None and updated_at > current_updated_at):
+                        db_ids[db_id] = updated_at
+
+        # A response from no database at all would read as a window without traffic
+        if not db_ids:
+            if all(reason == "unsupported" for reason in skipped_db_ids.values()):
+                raise HTTPException(status_code=503, detail="OS metrics not supported by the configured database")
+            skipped = ", ".join(f"'{db_id}' ({reason})" for db_id, reason in skipped_db_ids.items())
+            raise HTTPException(status_code=503, detail=f"OS metrics not available from any database: {skipped}")
+        updated_ats = [updated_at for updated_at in db_ids.values() if updated_at is not None]
+        return results, {
+            "updated_at": max(updated_ats) if updated_ats else None,
+            "db_ids": db_ids,
+            "skipped_db_ids": skipped_db_ids,
+        }
+
+    async def _os_metrics(
+        os_dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
+        effective_user_id: Optional[str],
+        starting_date: date,
+        ending_date: date,
+        fields: list[str],
+        timeout_seconds: float,
+        skipped_db_ids: dict[str, str],
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """The window's OS metrics, totalled per day and added up across the databases, oldest first."""
+        results, databases = await _read_os_dbs(
+            os_dbs,
+            lambda db: _read_os_metrics(db, effective_user_id, starting_date, ending_date, fields),
+            timeout_seconds,
+            skipped_db_ids,
+        )
+        if len(results) == 1:
+            return results[0], databases
+        totals_by_date: dict[date, list[dict[str, Any]]] = {}
+        for totals in results:
+            for day_totals in totals:
+                totals_by_date.setdefault(day_totals["date"], []).append(day_totals)
+        return [
+            {"date": day, **_merge_totals(totals_by_date[day], fields)} for day in sorted(totals_by_date)
+        ], databases
+
+    async def _os_metrics_by_day(
+        os_dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
+        effective_user_id: Optional[str],
+        starting_date: date,
+        ending_date: date,
+        fields: list[str],
+        timeout_seconds: float,
+        skipped_db_ids: dict[str, str],
+    ) -> tuple[dict[date, dict[str, Any]], dict[str, Any]]:
+        """The window's OS metrics, totalled per day and added up across the databases, keyed by day."""
+        totals, databases = await _os_metrics(
+            os_dbs, effective_user_id, starting_date, ending_date, fields, timeout_seconds, skipped_db_ids
+        )
+        return {day_totals["date"]: day_totals for day_totals in totals}, databases
+
+    async def _os_metrics_totals(
+        os_dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
+        effective_user_id: Optional[str],
+        starting_date: date,
+        ending_date: date,
+        fields: list[str],
+        timeout_seconds: float,
+        skipped_db_ids: dict[str, str],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """The window's OS metrics, totalled into one set of totals and added up across the databases."""
+        results, databases = await _read_os_dbs(
+            os_dbs,
+            lambda db: _read_os_metrics_totals(db, effective_user_id, starting_date, ending_date, fields),
+            timeout_seconds,
+            skipped_db_ids,
+        )
+        if len(results) == 1:
+            return results[0], databases
+        return _merge_totals(results, fields), databases
+
+    # Answers of the read routes. Only read and written on the event loop, so no lock is needed.
+    # Per-process: every server asks the databases for their versions before it reuses an answer.
+    os_metrics_responses: "OrderedDict[str, Any]" = OrderedDict()
+
+    def _seconds_left(deadline: float) -> float:
+        """The seconds a request has left before its deadline."""
+        return max(deadline - asyncio.get_running_loop().time(), 0.0)
+
+    async def _os_metrics_response_key(
+        route: str,
+        os_dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
+        effective_user_id: Optional[str],
+        starting_date: date,
+        ending_date: date,
+        timeout_seconds: float,
+    ) -> tuple[Optional[str], dict[str, str]]:
+        """The key an answer of a read route is kept under, or None when the answer may not be reused, and the
+        databases that did not answer in time or have not finished a first calculation, which the read then skips.
+
+        A route gives this half the time of its request, so the rows can still be read within the other half.
+        """
+        # The routes also read the window before this one, to compare against
+        versions_starting_date = _previous_starting_date(starting_date, ending_date)
+
+        # A rebuild that changes a day moves its version, so a reused answer is never older than the rows
+
+        async def _versions_of(db: Union[BaseDb, AsyncBaseDb, RemoteDb], seconds_left: float) -> Any:
+            if isinstance(db, RemoteDb) or not _keeps_metrics_versions(db):
+                return "unsupported"
+            if isinstance(db, AsyncBaseDb):
+                task = asyncio.ensure_future(db.get_metrics_versions(versions_starting_date, ending_date))
+            else:
+                task = asyncio.ensure_future(
+                    run_in_threadpool(db.get_metrics_versions, versions_starting_date, ending_date)
+                )
+            try:
+                return await asyncio.wait_for(asyncio.shield(task), timeout=seconds_left)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                # The read finishes in the background, so a rebuild it started is not rolled
+                # back; retrieve its eventual result so it never warns
+                task.add_done_callback(lambda t: t.cancelled() or t.exception())
+                raise
+
+        sources = [(db_id, db) for db_id, db_list in os_dbs.items() for db in db_list]
+        deadline = asyncio.get_running_loop().time() + timeout_seconds
+        versions: list[Any] = []
+        skipped_db_ids: dict[str, str] = {}
+        # In the batches of _read_os_dbs, so no more rebuilds are started at once than a read without this starts
+        for start in range(0, len(sources), _MAX_CONCURRENT_OS_METRICS_READS):
+            if _seconds_left(deadline) <= 0:
+                return None, skipped_db_ids
+            batch = sources[start : start + _MAX_CONCURRENT_OS_METRICS_READS]
+            outcomes = await asyncio.gather(
+                *(_versions_of(db, _seconds_left(deadline)) for _, db in batch), return_exceptions=True
+            )
+            for (db_id, _), outcome in zip(batch, outcomes):
+                # Still calculating after half the request, or before its first calculation has finished, so its
+                # rows would be read half built
+                if isinstance(outcome, asyncio.TimeoutError):
+                    skipped_db_ids.setdefault(db_id, "timeout")
+                elif outcome is None:
+                    skipped_db_ids.setdefault(db_id, "incomplete")
+            versions.extend(outcomes)
+        # A database that cannot say its versions, did not answer, or has not finished a first calculation has no
+        # answer kept for it
+        if any(isinstance(outcome, BaseException) or outcome is None for outcome in versions):
+            return None, skipped_db_ids
+        try:
+            return json.dumps(
+                [
+                    route,
+                    starting_date.isoformat(),
+                    ending_date.isoformat(),
+                    effective_user_id,
+                    [[db_id, db_versions] for (db_id, _), db_versions in zip(sources, versions)],
+                ]
+            ), skipped_db_ids
+        except (TypeError, ValueError):
+            return None, skipped_db_ids
+
+    async def _keep_os_metrics_response(
+        key: Optional[str],
+        os_metrics_response: Any,
+        route: str,
+        os_dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
+        effective_user_id: Optional[str],
+        starting_date: date,
+        ending_date: date,
+        timeout_seconds: float,
+    ) -> None:
+        """Keep the answer of a read route under its key, when no database changed while it was read."""
+        if key is None or os_metrics_response.window_days > _MAX_OS_METRICS_KEPT_WINDOW_DAYS:
+            return
+        # A database that timed out or failed may answer the next request, so an answer without it is not kept
+        if any(reason != "unsupported" for reason in os_metrics_response.skipped_db_ids.values()):
+            return
+        # A rebuild that landed between the versions read and the rows read would be kept under the older versions
+        latest_key, _ = await _os_metrics_response_key(
+            route, os_dbs, effective_user_id, starting_date, ending_date, timeout_seconds
+        )
+        if latest_key != key:
+            return
+        os_metrics_responses[key] = os_metrics_response
+        os_metrics_responses.move_to_end(key)
+        while len(os_metrics_responses) > _MAX_OS_METRICS_RESPONSES:
+            os_metrics_responses.popitem(last=False)
+
+    def _os_metrics_answer(request: Request, response: Response, os_metrics_response: Any) -> Any:
+        """The answer of a read route with its ETag, or 304 with no body for a caller that already holds it."""
+        etag = f'"{hashlib.sha256(os_metrics_response.model_dump_json().encode()).hexdigest()[:32]}"'
+        # If-None-Match lists the ETags a caller holds, each maybe marked weak, or * for any of them
+        held_etags = [held_etag.strip() for held_etag in request.headers.get("if-none-match", "").split(",")]
+        if "*" in held_etags or etag in [held_etag.removeprefix("W/") for held_etag in held_etags]:
+            return Response(status_code=304, headers={"ETag": etag})
+        response.headers["ETag"] = etag
+        return os_metrics_response
+
+    def _days(starting_date: date, ending_date: date) -> list[date]:
+        """Every day of the window, a day without rows included."""
+        return [starting_date + timedelta(days=offset) for offset in range((ending_date - starting_date).days + 1)]
+
+    def _previous_starting_date(starting_date: date, ending_date: date) -> date:
+        """The first day of the window of the same length that ends the day before this one starts."""
+        days = (ending_date - starting_date).days + 1
+        if (starting_date - date.min).days < days:
+            raise HTTPException(
+                status_code=422, detail="starting_date is too early to compare with the window before it"
+            )
+        return starting_date - timedelta(days=days)
+
+    def _change_percent(total: int, previous_total: int) -> Optional[float]:
+        # Nothing before means no rate to compare against, rather than an infinite rise
+        return round((total - previous_total) / previous_total * 100, 1) if previous_total else None
+
+    def _average(total: int, count: int) -> Optional[int]:
+        return round(total / count) if count else None
+
+    def _latency(totals: dict[str, Any]) -> dict[str, Optional[int]]:
+        """The latency numbers of one set of totals: the runs, and the average, median, p95 and max of each timing."""
+        return {
+            "runs_count": totals.get("duration_runs_count", 0),
+            "avg_duration_ms": _average(totals.get("total_duration_ms", 0), totals.get("duration_runs_count", 0)),
+            "median_duration_ms": metrics_percentile(
+                totals.get("duration_buckets", {}), 0.5, totals.get("max_duration_ms")
+            ),
+            "p95_duration_ms": metrics_percentile(
+                totals.get("duration_buckets", {}), 0.95, totals.get("max_duration_ms")
+            ),
+            "max_duration_ms": totals.get("max_duration_ms"),
+            "avg_time_to_first_token_ms": _average(
+                totals.get("total_time_to_first_token_ms", 0), totals.get("time_to_first_token_runs_count", 0)
+            ),
+            "median_time_to_first_token_ms": metrics_percentile(
+                totals.get("time_to_first_token_buckets", {}), 0.5, totals.get("max_time_to_first_token_ms")
+            ),
+            "p95_time_to_first_token_ms": metrics_percentile(
+                totals.get("time_to_first_token_buckets", {}), 0.95, totals.get("max_time_to_first_token_ms")
+            ),
+            "max_time_to_first_token_ms": totals.get("max_time_to_first_token_ms"),
+            "avg_model_call_ms": _average(totals.get("total_model_call_ms", 0), totals.get("model_calls_count", 0)),
+            "median_model_call_ms": metrics_percentile(
+                totals.get("model_call_buckets", {}), 0.5, totals.get("max_model_call_ms")
+            ),
+            "p95_model_call_ms": metrics_percentile(
+                totals.get("model_call_buckets", {}), 0.95, totals.get("max_model_call_ms")
+            ),
+            "max_model_call_ms": totals.get("max_model_call_ms"),
+        }
+
+    @router.get(
+        "/os/metrics/sessions",
+        response_model=OSSessionMetricsResponse,
+        status_code=200,
+        operation_id="get_os_session_metrics",
+        summary="Get OS Session Metrics",
+        description=(
+            "Retrieve the sessions created on each day of a date range, their total, and how that total "
+            "compares with the date range of the same length before it. "
+            "If no date range is specified, covers the last 30 days."
+        ),
+        responses={
+            200: {
+                "description": "OS session metrics retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "metrics": [{"date": "2025-07-31T00:00:00Z", "sessions_count": 7}],
+                            "total_sessions": 200,
+                            "previous_total_sessions": 161,
+                            "change_percent": 24.2,
+                            "window_days": 30,
+                            "updated_at": "2025-07-31T12:49:01Z",
+                            "db_ids": {"agno-db": "2025-07-31T12:49:01Z"},
+                            "skipped_db_ids": {},
+                        }
+                    }
+                },
+            },
+            400: {"description": "No database configured", "model": BadRequestResponse},
+            404: {"description": "Database not found", "model": NotFoundResponse},
+            422: {"description": "Invalid date range parameters", "model": ValidationErrorResponse},
+            500: {"description": "Failed to get OS session metrics", "model": InternalServerErrorResponse},
+            503: {"description": "OS metrics not available from any database"},
+        },
+    )
+    async def get_os_session_metrics(
+        request: Request,
+        response: Response,
+        starting_date: Optional[date] = Query(
+            default=None, description="Starting date for metrics range (YYYY-MM-DD format)"
+        ),
+        ending_date: Optional[date] = Query(
+            default=None, description="Ending date for metrics range (YYYY-MM-DD format)"
+        ),
+        user_id: Optional[str] = Query(
+            default=None, description="Return only this user's sessions. Ignored for non-admin callers"
+        ),
+        db_id: Optional[List[str]] = Query(
+            default=None, description="Database ID to query metrics from; repeatable, every database by default"
+        ),
+        timeout_seconds: float = Query(default=30, gt=0, description="Seconds to wait for each database to answer"),
+    ) -> Union[OSSessionMetricsResponse, Response]:
+        try:
+            os_dbs = _os_dbs(db_id)
+            remote_db = _remote_os_db(os_dbs)
+            if remote_db is not None:
+                auth_token = get_auth_token_from_request(request)
+                headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+                remote_response = await remote_db.get_os_session_metrics(
+                    starting_date=starting_date,
+                    ending_date=ending_date,
+                    user_id=_owner(request, user_id),
+                    db_id=db_id,
+                    timeout_seconds=timeout_seconds,
+                    headers=headers,
+                )
+                return _os_metrics_answer(request, response, remote_response)
+            starting_date, ending_date = _window(starting_date, ending_date, settings.os_metrics_max_window_days)
+            effective_user_id = _owner(request, user_id)
+            deadline = asyncio.get_running_loop().time() + timeout_seconds
+            response_key, skipped_db_ids = await _os_metrics_response_key(
+                "sessions", os_dbs, effective_user_id, starting_date, ending_date, timeout_seconds / 2
+            )
+            if response_key is not None and response_key in os_metrics_responses:
+                os_metrics_responses.move_to_end(response_key)
+                return _os_metrics_answer(request, response, os_metrics_responses[response_key])
+            previous_starting_date = _previous_starting_date(starting_date, ending_date)
+            totals, databases = await _os_metrics_by_day(
+                os_dbs,
+                effective_user_id,
+                previous_starting_date,
+                ending_date,
+                ["sessions_count"],
+                _seconds_left(deadline),
+                skipped_db_ids,
+            )
+
+            metrics = [
+                DaySessionMetrics(
+                    date=to_utc_datetime(day), sessions_count=totals.get(day, {}).get("sessions_count", 0)
+                )
+                for day in _days(starting_date, ending_date)
+            ]
+            total_sessions = sum(day_metrics.sessions_count for day_metrics in metrics)
+            previous_total_sessions = sum(
+                day_totals["sessions_count"] for day, day_totals in totals.items() if day < starting_date
+            )
+            os_metrics_response = OSSessionMetricsResponse(
+                metrics=metrics,
+                total_sessions=total_sessions,
+                previous_total_sessions=previous_total_sessions,
+                change_percent=_change_percent(total_sessions, previous_total_sessions),
+                window_days=(ending_date - starting_date).days + 1,
+                **databases,
+            )
+            await _keep_os_metrics_response(
+                response_key,
+                os_metrics_response,
+                "sessions",
+                os_dbs,
+                effective_user_id,
+                starting_date,
+                ending_date,
+                _seconds_left(deadline),
+            )
+            return _os_metrics_answer(request, response, os_metrics_response)
+
+        except HTTPException:
+            raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
+        except Exception as e:
+            logger.exception("GET /os/metrics/sessions failed")
+            raise HTTPException(status_code=500, detail=f"Error getting OS session metrics: {str(e)}")
+
+    @router.get(
+        "/os/metrics/tokens",
+        response_model=OSTokenMetricsResponse,
+        status_code=200,
+        operation_id="get_os_token_metrics",
+        summary="Get OS Token Metrics",
+        description=(
+            "Retrieve the tokens used on each day of a date range, their total, and how that total "
+            "compares with the date range of the same length before it. "
+            "If no date range is specified, covers the last 30 days."
+        ),
+        responses={
+            200: {
+                "description": "OS token metrics retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "metrics": [{"date": "2025-07-31T00:00:00Z", "tokens_count": 5962}],
+                            "total_tokens": 184500,
+                            "previous_total_tokens": 150000,
+                            "change_percent": 23.0,
+                            "window_days": 30,
+                            "updated_at": "2025-07-31T12:49:01Z",
+                            "db_ids": {"agno-db": "2025-07-31T12:49:01Z"},
+                            "skipped_db_ids": {},
+                        }
+                    }
+                },
+            },
+            400: {"description": "No database configured", "model": BadRequestResponse},
+            404: {"description": "Database not found", "model": NotFoundResponse},
+            422: {"description": "Invalid date range parameters", "model": ValidationErrorResponse},
+            500: {"description": "Failed to get OS token metrics", "model": InternalServerErrorResponse},
+            503: {"description": "OS metrics not available from any database"},
+        },
+    )
+    async def get_os_token_metrics(
+        request: Request,
+        response: Response,
+        starting_date: Optional[date] = Query(
+            default=None, description="Starting date for metrics range (YYYY-MM-DD format)"
+        ),
+        ending_date: Optional[date] = Query(
+            default=None, description="Ending date for metrics range (YYYY-MM-DD format)"
+        ),
+        user_id: Optional[str] = Query(
+            default=None, description="Return only this user's tokens. Ignored for non-admin callers"
+        ),
+        db_id: Optional[List[str]] = Query(
+            default=None, description="Database ID to query metrics from; repeatable, every database by default"
+        ),
+        timeout_seconds: float = Query(default=30, gt=0, description="Seconds to wait for each database to answer"),
+    ) -> Union[OSTokenMetricsResponse, Response]:
+        try:
+            os_dbs = _os_dbs(db_id)
+            remote_db = _remote_os_db(os_dbs)
+            if remote_db is not None:
+                auth_token = get_auth_token_from_request(request)
+                headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+                remote_response = await remote_db.get_os_token_metrics(
+                    starting_date=starting_date,
+                    ending_date=ending_date,
+                    user_id=_owner(request, user_id),
+                    db_id=db_id,
+                    timeout_seconds=timeout_seconds,
+                    headers=headers,
+                )
+                return _os_metrics_answer(request, response, remote_response)
+            starting_date, ending_date = _window(starting_date, ending_date, settings.os_metrics_max_window_days)
+            effective_user_id = _owner(request, user_id)
+            deadline = asyncio.get_running_loop().time() + timeout_seconds
+            response_key, skipped_db_ids = await _os_metrics_response_key(
+                "tokens", os_dbs, effective_user_id, starting_date, ending_date, timeout_seconds / 2
+            )
+            if response_key is not None and response_key in os_metrics_responses:
+                os_metrics_responses.move_to_end(response_key)
+                return _os_metrics_answer(request, response, os_metrics_responses[response_key])
+            previous_starting_date = _previous_starting_date(starting_date, ending_date)
+            totals, databases = await _os_metrics_by_day(
+                os_dbs,
+                effective_user_id,
+                previous_starting_date,
+                ending_date,
+                ["total_tokens"],
+                _seconds_left(deadline),
+                skipped_db_ids,
+            )
+
+            metrics = [
+                DayTokenMetrics(date=to_utc_datetime(day), tokens_count=totals.get(day, {}).get("total_tokens", 0))
+                for day in _days(starting_date, ending_date)
+            ]
+            total_tokens = sum(day_metrics.tokens_count for day_metrics in metrics)
+            previous_total_tokens = sum(
+                day_totals["total_tokens"] for day, day_totals in totals.items() if day < starting_date
+            )
+            os_metrics_response = OSTokenMetricsResponse(
+                metrics=metrics,
+                total_tokens=total_tokens,
+                previous_total_tokens=previous_total_tokens,
+                change_percent=_change_percent(total_tokens, previous_total_tokens),
+                window_days=(ending_date - starting_date).days + 1,
+                **databases,
+            )
+            await _keep_os_metrics_response(
+                response_key,
+                os_metrics_response,
+                "tokens",
+                os_dbs,
+                effective_user_id,
+                starting_date,
+                ending_date,
+                _seconds_left(deadline),
+            )
+            return _os_metrics_answer(request, response, os_metrics_response)
+
+        except HTTPException:
+            raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
+        except Exception as e:
+            logger.exception("GET /os/metrics/tokens failed")
+            raise HTTPException(status_code=500, detail=f"Error getting OS token metrics: {str(e)}")
+
+    @router.get(
+        "/os/metrics/users",
+        response_model=OSUserMetricsResponse,
+        status_code=200,
+        operation_id="get_os_user_metrics",
+        summary="Get OS User Metrics",
+        description=(
+            "Retrieve the users in the user directory at the end of each day of a date range, their total, and "
+            "how that total compares with the date range of the same length before it. "
+            "If no date range is specified, covers the last 30 days."
+        ),
+        responses={
+            200: {
+                "description": "OS user metrics retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "metrics": [{"date": "2025-07-31T00:00:00Z", "users_count": 25}],
+                            "total_users": 25,
+                            "previous_total_users": 20,
+                            "change_percent": 25.0,
+                            "window_days": 30,
+                            "updated_at": "2025-07-31T12:49:01Z",
+                        }
+                    }
+                },
+            },
+            403: {"description": "The caller is not an admin"},
+            422: {"description": "Invalid date range parameters", "model": ValidationErrorResponse},
+            500: {"description": "Failed to get OS user metrics", "model": InternalServerErrorResponse},
+            503: {"description": "No user directory configured"},
+        },
+    )
+    async def get_os_user_metrics(
+        request: Request,
+        starting_date: Optional[date] = Query(
+            default=None, description="Starting date for metrics range (YYYY-MM-DD format)"
+        ),
+        ending_date: Optional[date] = Query(
+            default=None, description="Ending date for metrics range (YYYY-MM-DD format)"
+        ),
+    ) -> OSUserMetricsResponse:
+        try:
+            user_store = getattr(request.app.state, "user_store", None)
+            if user_store is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="User metrics not available: pass a `user_directory` to AgentOS to enable this feature.",
+                )
+            await require_user_admin(request)
+            # A security key names no user, so nobody is ever added to the directory
+            if getattr(request.state, "security_key_verified", False):
+                users_by_status = await user_store.acount_by_status()
+                if users_by_status["total"] == 0:
+                    raise HTTPException(
+                        status_code=503,
+                        detail="User metrics not available: a security key adds no user to the user directory.",
+                    )
+
+            starting_date, ending_date = _window(starting_date, ending_date, settings.os_metrics_max_window_days)
+            starting_at = int(datetime.combine(starting_date, datetime.min.time(), tzinfo=timezone.utc).timestamp())
+            ending_before = (
+                int(datetime.combine(ending_date, datetime.min.time(), tzinfo=timezone.utc).timestamp()) + 24 * 60 * 60
+            )
+            # Every user created before the end of the window, so both windows come from one read
+            created_by_day = await user_store.acreated_by_day(ending_before=ending_before)
+
+            created: dict[date, int] = {}
+            previous_total_users = 0
+            for row in created_by_day:
+                if row["date"] < starting_at:
+                    previous_total_users += row["count"]
+                else:
+                    day = datetime.fromtimestamp(row["date"], tz=timezone.utc).date()
+                    created[day] = created.get(day, 0) + row["count"]
+
+            # A day counts every user created up to its end, the ones created before the window included
+            total_users = previous_total_users
+            metrics = []
+            for day in _days(starting_date, ending_date):
+                total_users += created.get(day, 0)
+                metrics.append(DayUserMetrics(date=to_utc_datetime(day), users_count=total_users))
+            return OSUserMetricsResponse(
+                metrics=metrics,
+                total_users=total_users,
+                previous_total_users=previous_total_users,
+                change_percent=_change_percent(total_users, previous_total_users),
+                window_days=(ending_date - starting_date).days + 1,
+                updated_at=datetime.now(timezone.utc),
+            )
+
+        except HTTPException:
+            raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
+        except Exception as e:
+            logger.exception("GET /os/metrics/users failed")
+            raise HTTPException(status_code=500, detail=f"Error getting OS user metrics: {str(e)}")
+
+    @router.get(
+        "/os/metrics/models",
+        response_model=OSModelMetricsResponse,
+        status_code=200,
+        operation_id="get_os_model_metrics",
+        summary="Get OS Model Metrics",
+        description=(
+            "Retrieve how many runs each model served over a date range. "
+            "If no date range is specified, covers the last 30 days."
+        ),
+        responses={
+            200: {
+                "description": "OS model metrics retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "models": [
+                                {
+                                    "model_id": "gpt-5.5",
+                                    "model_provider": "OpenAI",
+                                    "runs_count": 96,
+                                    "runs_share": 80.0,
+                                }
+                            ],
+                            "total_model_runs": 120,
+                            "window_days": 30,
+                            "updated_at": "2025-07-31T12:49:01Z",
+                            "db_ids": {"agno-db": "2025-07-31T12:49:01Z"},
+                            "skipped_db_ids": {},
+                        }
+                    }
+                },
+            },
+            400: {"description": "No database configured", "model": BadRequestResponse},
+            404: {"description": "Database not found", "model": NotFoundResponse},
+            422: {"description": "Invalid date range parameters", "model": ValidationErrorResponse},
+            500: {"description": "Failed to get OS model metrics", "model": InternalServerErrorResponse},
+            503: {"description": "OS metrics not available from any database"},
+        },
+    )
+    async def get_os_model_metrics(
+        request: Request,
+        response: Response,
+        starting_date: Optional[date] = Query(
+            default=None, description="Starting date for metrics range (YYYY-MM-DD format)"
+        ),
+        ending_date: Optional[date] = Query(
+            default=None, description="Ending date for metrics range (YYYY-MM-DD format)"
+        ),
+        user_id: Optional[str] = Query(
+            default=None, description="Return only this user's metrics. Ignored for non-admin callers"
+        ),
+        db_id: Optional[List[str]] = Query(
+            default=None, description="Database ID to query metrics from; repeatable, every database by default"
+        ),
+        timeout_seconds: float = Query(default=30, gt=0, description="Seconds to wait for each database to answer"),
+    ) -> Union[OSModelMetricsResponse, Response]:
+        try:
+            os_dbs = _os_dbs(db_id)
+            remote_db = _remote_os_db(os_dbs)
+            if remote_db is not None:
+                auth_token = get_auth_token_from_request(request)
+                headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+                remote_response = await remote_db.get_os_model_metrics(
+                    starting_date=starting_date,
+                    ending_date=ending_date,
+                    user_id=_owner(request, user_id),
+                    db_id=db_id,
+                    timeout_seconds=timeout_seconds,
+                    headers=headers,
+                )
+                return _os_metrics_answer(request, response, remote_response)
+            starting_date, ending_date = _window(starting_date, ending_date, settings.os_metrics_max_window_days)
+            effective_user_id = _owner(request, user_id)
+            deadline = asyncio.get_running_loop().time() + timeout_seconds
+            response_key, skipped_db_ids = await _os_metrics_response_key(
+                "models", os_dbs, effective_user_id, starting_date, ending_date, timeout_seconds / 2
+            )
+            if response_key is not None and response_key in os_metrics_responses:
+                os_metrics_responses.move_to_end(response_key)
+                return _os_metrics_answer(request, response, os_metrics_responses[response_key])
+            totals, databases = await _os_metrics_totals(
+                os_dbs,
+                effective_user_id,
+                starting_date,
+                ending_date,
+                ["model_metrics"],
+                _seconds_left(deadline),
+                skipped_db_ids,
+            )
+
+            # A model stored without a provider is reported without one
+            run_counts: dict[tuple[str, Optional[str]], int] = {}
+            for model_metric in totals["model_metrics"]:
+                key = (model_metric["model_id"], model_metric["model_provider"] or None)
+                run_counts[key] = run_counts.get(key, 0) + model_metric["count"]
+
+            total_model_runs = sum(run_counts.values())
+            os_metrics_response = OSModelMetricsResponse(
+                models=[
+                    ModelUsage(
+                        model_id=model_id,
+                        model_provider=model_provider,
+                        runs_count=count,
+                        runs_share=round(count / total_model_runs * 100, 1),
+                    )
+                    for (model_id, model_provider), count in sorted(
+                        run_counts.items(), key=lambda item: (-item[1], item[0][0])
+                    )
+                ],
+                total_model_runs=total_model_runs,
+                window_days=(ending_date - starting_date).days + 1,
+                **databases,
+            )
+            await _keep_os_metrics_response(
+                response_key,
+                os_metrics_response,
+                "models",
+                os_dbs,
+                effective_user_id,
+                starting_date,
+                ending_date,
+                _seconds_left(deadline),
+            )
+            return _os_metrics_answer(request, response, os_metrics_response)
+
+        except HTTPException:
+            raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
+        except Exception as e:
+            logger.exception("GET /os/metrics/models failed")
+            raise HTTPException(status_code=500, detail=f"Error getting OS model metrics: {str(e)}")
+
+    @router.get(
+        "/os/metrics/runs",
+        response_model=OSRunMetricsResponse,
+        status_code=200,
+        operation_id="get_os_run_metrics",
+        summary="Get OS Run Metrics",
+        description=(
+            "Retrieve the runs started on each day of a date range by status, their total and success rate, and "
+            "how that total compares with the date range of the same length before it. "
+            "If no date range is specified, covers the last 30 days."
+        ),
+        responses={
+            200: {
+                "description": "OS run metrics retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "metrics": [
+                                {
+                                    "date": "2025-07-31T00:00:00Z",
+                                    "runs_count": 12,
+                                    "status_metrics": {"COMPLETED": 10, "ERROR": 1, "CANCELLED": 1},
+                                }
+                            ],
+                            "total_runs": 310,
+                            "status_metrics": {"COMPLETED": 281, "ERROR": 17, "CANCELLED": 8, "PAUSED": 4},
+                            "success_rate": 91.8,
+                            "previous_total_runs": 262,
+                            "change_percent": 18.3,
+                            "window_days": 30,
+                            "updated_at": "2025-07-31T12:49:01Z",
+                            "db_ids": {"agno-db": "2025-07-31T12:49:01Z"},
+                            "skipped_db_ids": {},
+                        }
+                    }
+                },
+            },
+            400: {"description": "No database configured", "model": BadRequestResponse},
+            404: {"description": "Database not found", "model": NotFoundResponse},
+            422: {"description": "Invalid date range parameters", "model": ValidationErrorResponse},
+            500: {"description": "Failed to get OS run metrics", "model": InternalServerErrorResponse},
+            503: {"description": "OS metrics not available from any database"},
+        },
+    )
+    async def get_os_run_metrics(
+        request: Request,
+        response: Response,
+        starting_date: Optional[date] = Query(
+            default=None, description="Starting date for metrics range (YYYY-MM-DD format)"
+        ),
+        ending_date: Optional[date] = Query(
+            default=None, description="Ending date for metrics range (YYYY-MM-DD format)"
+        ),
+        user_id: Optional[str] = Query(
+            default=None, description="Return only this user's runs. Ignored for non-admin callers"
+        ),
+        db_id: Optional[List[str]] = Query(
+            default=None, description="Database ID to query metrics from; repeatable, every database by default"
+        ),
+        timeout_seconds: float = Query(default=30, gt=0, description="Seconds to wait for each database to answer"),
+    ) -> Union[OSRunMetricsResponse, Response]:
+        try:
+            os_dbs = _os_dbs(db_id)
+            remote_db = _remote_os_db(os_dbs)
+            if remote_db is not None:
+                auth_token = get_auth_token_from_request(request)
+                headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+                remote_response = await remote_db.get_os_run_metrics(
+                    starting_date=starting_date,
+                    ending_date=ending_date,
+                    user_id=_owner(request, user_id),
+                    db_id=db_id,
+                    timeout_seconds=timeout_seconds,
+                    headers=headers,
+                )
+                return _os_metrics_answer(request, response, remote_response)
+            starting_date, ending_date = _window(starting_date, ending_date, settings.os_metrics_max_window_days)
+            effective_user_id = _owner(request, user_id)
+            deadline = asyncio.get_running_loop().time() + timeout_seconds
+            response_key, skipped_db_ids = await _os_metrics_response_key(
+                "runs", os_dbs, effective_user_id, starting_date, ending_date, timeout_seconds / 2
+            )
+            if response_key is not None and response_key in os_metrics_responses:
+                os_metrics_responses.move_to_end(response_key)
+                return _os_metrics_answer(request, response, os_metrics_responses[response_key])
+            previous_starting_date = _previous_starting_date(starting_date, ending_date)
+            totals, databases = await _os_metrics_by_day(
+                os_dbs,
+                effective_user_id,
+                previous_starting_date,
+                ending_date,
+                ["root_runs_count", "status_metrics"],
+                _seconds_left(deadline),
+                skipped_db_ids,
+            )
+
+            metrics = []
+            status_metrics: dict[str, int] = {}
+            for day in _days(starting_date, ending_date):
+                day_totals = totals.get(day, {})
+                day_status_metrics = day_totals.get("status_metrics", {})
+                metrics.append(
+                    DayRunMetrics(
+                        date=to_utc_datetime(day),
+                        runs_count=day_totals.get("root_runs_count", 0),
+                        status_metrics=day_status_metrics,
+                    )
+                )
+                for status, count in day_status_metrics.items():
+                    status_metrics[status] = status_metrics.get(status, 0) + count
+
+            total_runs = sum(day_metrics.runs_count for day_metrics in metrics)
+            previous_total_runs = sum(
+                day_totals["root_runs_count"] for day, day_totals in totals.items() if day < starting_date
+            )
+            # A run still pending, running or paused has no outcome to rate yet
+            finished_runs = sum(
+                status_metrics.get(status, 0)
+                for status in (RunStatus.completed.value, RunStatus.error.value, RunStatus.cancelled.value)
+            )
+            success_rate = (
+                round(status_metrics.get(RunStatus.completed.value, 0) / finished_runs * 100, 1)
+                if finished_runs
+                else None
+            )
+            os_metrics_response = OSRunMetricsResponse(
+                metrics=metrics,
+                total_runs=total_runs,
+                status_metrics=status_metrics,
+                success_rate=success_rate,
+                previous_total_runs=previous_total_runs,
+                change_percent=_change_percent(total_runs, previous_total_runs),
+                window_days=(ending_date - starting_date).days + 1,
+                **databases,
+            )
+            await _keep_os_metrics_response(
+                response_key,
+                os_metrics_response,
+                "runs",
+                os_dbs,
+                effective_user_id,
+                starting_date,
+                ending_date,
+                _seconds_left(deadline),
+            )
+            return _os_metrics_answer(request, response, os_metrics_response)
+
+        except HTTPException:
+            raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
+        except Exception as e:
+            logger.exception("GET /os/metrics/runs failed")
+            raise HTTPException(status_code=500, detail=f"Error getting OS run metrics: {str(e)}")
+
+    @router.get(
+        "/os/metrics/latency",
+        response_model=OSLatencyMetricsResponse,
+        status_code=200,
+        operation_id="get_os_latency_metrics",
+        summary="Get OS Latency Metrics",
+        description=(
+            "Retrieve the average, median, p95 and slowest duration, time to the first token and model call of the "
+            "completed runs on each day of a date range and across it. Medians and percentiles are approximate. "
+            "If no date range is specified, covers the last 30 days."
+        ),
+        responses={
+            200: {
+                "description": "OS latency metrics retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "metrics": [
+                                {
+                                    "date": "2025-07-31T00:00:00Z",
+                                    "runs_count": 40,
+                                    "avg_duration_ms": 3120,
+                                    "median_duration_ms": 2400,
+                                    "p95_duration_ms": 8100,
+                                    "max_duration_ms": 9404,
+                                    "avg_time_to_first_token_ms": 820,
+                                    "median_time_to_first_token_ms": 640,
+                                    "p95_time_to_first_token_ms": 1900,
+                                    "max_time_to_first_token_ms": 2210,
+                                    "avg_model_call_ms": 1410,
+                                    "median_model_call_ms": 1150,
+                                    "p95_model_call_ms": 3600,
+                                    "max_model_call_ms": 4120,
+                                }
+                            ],
+                            "runs_count": 310,
+                            "avg_duration_ms": 2987,
+                            "median_duration_ms": 2250,
+                            "p95_duration_ms": 9800,
+                            "max_duration_ms": 14210,
+                            "avg_time_to_first_token_ms": 790,
+                            "median_time_to_first_token_ms": 610,
+                            "p95_time_to_first_token_ms": 2400,
+                            "max_time_to_first_token_ms": 3104,
+                            "avg_model_call_ms": 1390,
+                            "median_model_call_ms": 1100,
+                            "p95_model_call_ms": 4600,
+                            "max_model_call_ms": 6100,
+                            "window_days": 30,
+                            "updated_at": "2025-07-31T12:49:01Z",
+                            "db_ids": {"agno-db": "2025-07-31T12:49:01Z"},
+                            "skipped_db_ids": {},
+                        }
+                    }
+                },
+            },
+            400: {"description": "No database configured", "model": BadRequestResponse},
+            404: {"description": "Database not found", "model": NotFoundResponse},
+            422: {"description": "Invalid date range parameters", "model": ValidationErrorResponse},
+            500: {"description": "Failed to get OS latency metrics", "model": InternalServerErrorResponse},
+            503: {"description": "OS metrics not available from any database"},
+        },
+    )
+    async def get_os_latency_metrics(
+        request: Request,
+        response: Response,
+        starting_date: Optional[date] = Query(
+            default=None, description="Starting date for metrics range (YYYY-MM-DD format)"
+        ),
+        ending_date: Optional[date] = Query(
+            default=None, description="Ending date for metrics range (YYYY-MM-DD format)"
+        ),
+        user_id: Optional[str] = Query(
+            default=None, description="Return only this user's runs. Ignored for non-admin callers"
+        ),
+        db_id: Optional[List[str]] = Query(
+            default=None, description="Database ID to query metrics from; repeatable, every database by default"
+        ),
+        timeout_seconds: float = Query(default=30, gt=0, description="Seconds to wait for each database to answer"),
+    ) -> Union[OSLatencyMetricsResponse, Response]:
+        try:
+            os_dbs = _os_dbs(db_id)
+            remote_db = _remote_os_db(os_dbs)
+            if remote_db is not None:
+                auth_token = get_auth_token_from_request(request)
+                headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+                remote_response = await remote_db.get_os_latency_metrics(
+                    starting_date=starting_date,
+                    ending_date=ending_date,
+                    user_id=_owner(request, user_id),
+                    db_id=db_id,
+                    timeout_seconds=timeout_seconds,
+                    headers=headers,
+                )
+                return _os_metrics_answer(request, response, remote_response)
+            starting_date, ending_date = _window(starting_date, ending_date, settings.os_metrics_max_window_days)
+            effective_user_id = _owner(request, user_id)
+            deadline = asyncio.get_running_loop().time() + timeout_seconds
+            response_key, skipped_db_ids = await _os_metrics_response_key(
+                "latency", os_dbs, effective_user_id, starting_date, ending_date, timeout_seconds / 2
+            )
+            if response_key is not None and response_key in os_metrics_responses:
+                os_metrics_responses.move_to_end(response_key)
+                return _os_metrics_answer(request, response, os_metrics_responses[response_key])
+            # The medians and p95s are read from each day's bucket counts
+            totals, databases = await _os_metrics_by_day(
+                os_dbs,
+                effective_user_id,
+                starting_date,
+                ending_date,
+                _LATENCY_FIELDS,
+                _seconds_left(deadline),
+                skipped_db_ids,
+            )
+
+            metrics = [
+                DayLatencyMetrics(date=to_utc_datetime(day), **_latency(totals.get(day, {})))
+                for day in _days(starting_date, ending_date)
+            ]
+
+            os_metrics_response = OSLatencyMetricsResponse(
+                metrics=metrics,
+                window_days=(ending_date - starting_date).days + 1,
+                **databases,
+                **_latency(_merge_totals(list(totals.values()), _LATENCY_FIELDS)),
+            )
+            await _keep_os_metrics_response(
+                response_key,
+                os_metrics_response,
+                "latency",
+                os_dbs,
+                effective_user_id,
+                starting_date,
+                ending_date,
+                _seconds_left(deadline),
+            )
+            return _os_metrics_answer(request, response, os_metrics_response)
+
+        except HTTPException:
+            raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
+        except Exception as e:
+            logger.exception("GET /os/metrics/latency failed")
+            raise HTTPException(status_code=500, detail=f"Error getting OS latency metrics: {str(e)}")
+
+    def _keeps_metrics_versions(db: Union[BaseDb, AsyncBaseDb]) -> bool:
+        """Whether the database implements get_metrics_versions, rather than the stub."""
+        return getattr(type(db), "get_metrics_versions", None) not in (
+            BaseDb.get_metrics_versions,
+            AsyncBaseDb.get_metrics_versions,
+        )
 
     return router

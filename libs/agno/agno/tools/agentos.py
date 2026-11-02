@@ -33,9 +33,9 @@ Enable flags:
 Read-only:
     * No tool mutates platform state, and no tool writes. Schedule, approval and
       component management are deliberately not exposed. ``get_platform_metrics``
-      can still cause a metrics rollup write, but only because ``db.get_metrics()``
-      refreshes stale rollups for every caller -- the toolkit does not ask for it,
-      so it inherits whatever throttling the database applies.
+      reads the stored metrics; on a database whose ``db.get_metrics()`` still
+      refreshes stale rollups for every caller, it inherits that write and whatever
+      throttling the database applies.
     * Span attributes payloads, approval tool arguments and schedule run
       input/output are never returned -- they can hold full conversation content.
     * Schedule run errors are redacted: an error carrying a non-2xx status code is

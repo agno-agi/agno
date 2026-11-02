@@ -10,6 +10,7 @@ Runs against the live pgvector container (localhost:5532) with a unique schema p
 test; skips cleanly when psycopg or the server is absent.
 """
 
+import json
 import subprocess
 import sys
 import time
@@ -88,6 +89,8 @@ def _seed_legacy_sessions(schema: str, sessions: int, first: int = 1, run_bytes:
                     "  (SELECT jsonb_agg(jsonb_build_object("
                     "      'run_id', 'r' || s || '_' || r, 'agent_id', 'a1', 'status', 'COMPLETED', "
                     "      'created_at', CAST(:created_at AS bigint) + r, 'model', 'gpt-5.5', 'model_provider', 'OpenAI', "
+                    "      'metrics', jsonb_build_object('details', jsonb_build_object('model', "
+                    "          jsonb_build_array(jsonb_build_object('id', 'gpt-5.5')))), "
                     "      'content', repeat(md5(random()::text), CAST(:reps AS int)))) "
                     "   FROM generate_series(1, CAST(:runs AS int)) r) "
                     "FROM generate_series(CAST(:first AS int), CAST(:last AS int)) s"
@@ -167,10 +170,14 @@ async def test_metrics_default_missing_model_provider_to_empty(schema, mode, mig
     engine = create_engine(DB_URL)
     try:
         with engine.begin() as conn:
-            conn.execute(
-                text(f'UPDATE "{schema}"."{SESSIONS_TABLE}" SET runs = :runs'),
-                {"runs": '[{"run_id": "r1", "model": "test-model"}]'},
-            )
+            # Dated with its session, so the run and the session are on one day
+            run = {
+                "run_id": "r1",
+                "model": "test-model",
+                "metrics": {"details": {"model": [{"id": "test-model"}]}},
+                "created_at": int(time.time()) - 86400,
+            }
+            conn.execute(text(f'UPDATE "{schema}"."{SESSIONS_TABLE}" SET runs = :runs'), {"runs": json.dumps([run])})
     finally:
         engine.dispose()
     if migrated:

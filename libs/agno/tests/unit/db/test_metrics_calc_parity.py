@@ -16,7 +16,6 @@ import pytest
 from agno.db.sqlite.utils import calculate_date_metrics as sqlite_calc
 
 STRICT = [
-    "agno.db.postgres.utils",
     "agno.db.mysql.utils",
     "agno.db.singlestore.utils",
     "agno.db.mongo.utils",
