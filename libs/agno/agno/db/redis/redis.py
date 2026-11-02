@@ -259,7 +259,7 @@ class RedisDb(BaseDb):
             log_error(f"Error deleting record {record_id}: {str(e)}")
             return False
 
-    def _get_all_records(self, table_type: str) -> List[Dict[str, Any]]:
+    def _get_all_records(self, table_type: str, *, raise_on_error: bool = False) -> List[Dict[str, Any]]:
         """Generic method to get all records for a table type.
 
         Args:
@@ -277,6 +277,8 @@ class RedisDb(BaseDb):
             records = []
             for key in keys:
                 data = self.redis_client.get(key)
+                if data is None and raise_on_error:
+                    raise RuntimeError(f"Indexed {table_type} record {key} is unavailable")
                 if data:
                     records.append(deserialize_data(data))  # type: ignore
 
@@ -284,6 +286,8 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error getting all records for {table_type}: {str(e)}")
+            if raise_on_error:
+                raise
             return []
 
     def _schema_version_key(self, table_name: str) -> str:
@@ -528,6 +532,8 @@ class RedisDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        *,
+        raise_on_error: bool = False,
     ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
         """Get all runs matching the given filters.
 
@@ -536,20 +542,28 @@ class RedisDb(BaseDb):
         """
         try:
             # Fast path: filter by session_id uses the index
-            if session_id is not None:
+            if session_id is not None and raise_on_error:
+                # The session index is updated separately from the run key. Verify
+                # against the complete store so an interrupted upsert is visible.
+                rows = [
+                    row
+                    for row in self._get_all_records("runs", raise_on_error=True)
+                    if row.get("session_id") == session_id
+                ]
+            elif session_id is not None:
                 index_key = self._runs_by_session_index_key(session_id)
                 try:
                     run_ids: List[Any] = list(self.redis_client.zrange(index_key, 0, -1))  # type: ignore[arg-type]
                 except Exception:
                     run_ids = []
-                rows: List[Dict[str, Any]] = []
+                rows = []
                 for rid in run_ids or []:
                     run_id = rid.decode() if isinstance(rid, bytes) else str(rid)
                     row = self._get_record("runs", run_id)
                     if row is not None:
                         rows.append(row)
             else:
-                rows = self._get_all_records("runs")
+                rows = self._get_all_records("runs", raise_on_error=raise_on_error)
 
             conditions: Dict[str, Any] = {}
             if user_id is not None:

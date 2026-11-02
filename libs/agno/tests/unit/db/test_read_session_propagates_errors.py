@@ -222,3 +222,88 @@ class TestDbNotInitialized:
         team.db = None
         with pytest.raises(ValueError, match="Db not initialized"):
             await _aread_session(team, session_id="s1")
+
+
+@pytest.mark.parametrize("store", ["dynamo", "firestore"])
+def test_strict_cloud_run_read_distinguishes_missing_store_from_empty(store):
+    if store == "dynamo":
+        from agno.db.dynamo import DynamoDb
+
+        db = DynamoDb(db_client=MagicMock(), runs_table="runs")
+        db.table_exists = MagicMock(return_value=False)
+    else:
+        from agno.db.firestore import FirestoreDb
+
+        client = MagicMock()
+        client.collections.return_value = []
+        db = FirestoreDb(db_client=client, runs_collection="runs")
+        db._get_collection = MagicMock(return_value=None)
+
+    assert db.get_runs(session_id="s1", deserialize=False) == ([], 0)
+    if store == "firestore":
+        del db._get_collection
+    with pytest.raises(RuntimeError, match="runs"):
+        db.get_runs(session_id="s1", deserialize=False, raise_on_error=True)
+
+    if store == "dynamo":
+        db.table_exists.return_value = True
+        db.client.query.return_value = {"Items": []}
+    else:
+        from types import SimpleNamespace
+
+        client.collections.return_value = [SimpleNamespace(id="runs")]
+        client.collection.return_value.where.return_value.order_by.return_value.order_by.return_value.stream.return_value = []
+    assert db.get_runs(session_id="s1", deserialize=False, raise_on_error=True) == ([], 0)
+
+
+def test_firestore_strict_read_finds_existing_collection_on_fresh_adapter():
+    from types import SimpleNamespace
+
+    from agno.db.firestore import FirestoreDb
+
+    client = MagicMock()
+    client.collections.return_value = [SimpleNamespace(id="runs")]
+    client.collection.return_value.where.return_value.order_by.return_value.order_by.return_value.stream.return_value = []
+    db = FirestoreDb(db_client=client, runs_collection="runs")
+    assert db.get_runs(session_id="s1", deserialize=False, raise_on_error=True) == ([], 0)
+    client.collection.assert_called_once_with("runs")
+
+
+def test_strict_dynamo_run_read_propagates_missing_table_during_scan():
+    from agno.db.dynamo import DynamoDb
+
+    class MissingTable(Exception):
+        pass
+
+    client = MagicMock()
+    client.exceptions.ResourceNotFoundException = MissingTable
+    client.query.side_effect = MissingTable("runs table disappeared")
+    client.scan.side_effect = MissingTable("runs table disappeared")
+    db = DynamoDb(db_client=client, runs_table="runs")
+    db.table_exists = MagicMock(return_value=True)
+    assert db.get_runs(session_id="s1", deserialize=False) == ([], 0)
+    with pytest.raises(MissingTable, match="disappeared"):
+        db.get_runs(session_id="s1", deserialize=False, raise_on_error=True)
+
+
+def test_strict_dynamo_session_read_uses_consistent_scan_across_pages():
+    from agno.db.dynamo import DynamoDb
+
+    client = MagicMock()
+    client.scan.side_effect = [
+        {"Items": [], "LastEvaluatedKey": {"run_id": {"S": "first"}}},
+        {"Items": []},
+    ]
+    db = DynamoDb(db_client=client, runs_table="runs")
+    db.table_exists = MagicMock(return_value=True)
+
+    assert db.get_runs(session_id="s1", deserialize=False, raise_on_error=True) == ([], 0)
+    assert client.scan.call_count == 2
+    assert client.scan.call_args_list[0].kwargs == {
+        "TableName": "runs",
+        "ConsistentRead": True,
+        "FilterExpression": "session_id = :sid",
+        "ExpressionAttributeValues": {":sid": {"S": "s1"}},
+    }
+    assert client.scan.call_args_list[1].kwargs["ExclusiveStartKey"] == {"run_id": {"S": "first"}}
+    client.query.assert_not_called()

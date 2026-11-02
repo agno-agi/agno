@@ -746,12 +746,15 @@ class AsyncMySQLDb(AsyncBaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        raise_on_error: bool = False,
     ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
         """Get all runs matching the given filters."""
         validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="runs")
             if table is None:
+                if raise_on_error:
+                    raise RuntimeError("The runs table is unavailable")
                 return [] if deserialize else ([], 0)
             async with self.async_session_factory() as sess:
                 stmt = select(table)
@@ -790,6 +793,8 @@ class AsyncMySQLDb(AsyncBaseDb):
             return [deserialize_run(row.get("run_type"), row["run_data"]) for row in run_rows]
         except Exception as e:
             log_error(f"Exception reading from runs table: {str(e)}")
+            if raise_on_error:
+                raise
             return [] if deserialize else ([], 0)
 
     async def _ascrub_run_ids_from_legacy_blob(self, run_ids: List[str]) -> None:

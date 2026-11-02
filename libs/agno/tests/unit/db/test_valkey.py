@@ -246,6 +246,36 @@ def valkey_db(mock_client):
     return db
 
 
+def test_strict_session_run_read_distinguishes_empty_from_failed_index(valkey_db, mock_client):
+    mock_client.zrange.return_value = []
+    assert valkey_db.get_runs(session_id="missing", deserialize=False, raise_on_error=True) == ([], 0)
+    mock_client.zrange.side_effect = ConnectionError("Valkey unavailable")
+    assert valkey_db.get_runs(session_id="missing", deserialize=False) == ([], 0)
+    mock_client.scan.side_effect = ConnectionError("Valkey unavailable")
+    with pytest.raises(ConnectionError, match="Valkey unavailable"):
+        valkey_db.get_runs(session_id="missing", deserialize=False, raise_on_error=True)
+
+
+def test_strict_session_run_read_refuses_partial_pipeline_error(valkey_db, mock_client):
+    from glide_sync import RequestError
+
+    mock_client.zrange.return_value = ["r1"]
+    mock_client.exec.return_value = [RequestError("run unavailable")]
+    assert valkey_db.get_runs(session_id="s1", deserialize=False) == ([], 0)
+    mock_client.scan.return_value = (b"0", [f"{valkey_db.db_prefix}:runs:r1".encode()])
+    with pytest.raises(RequestError, match="run unavailable"):
+        valkey_db.get_runs(session_id="s1", deserialize=False, raise_on_error=True)
+
+
+def test_strict_session_run_read_finds_run_missing_from_index(valkey_db, mock_client):
+    row = {"run_id": "orphan", "session_id": "s1", "status": "RUNNING", "run_index": 1}
+    mock_client.zrange.return_value = []
+    mock_client.scan.return_value = (b"0", [f"{valkey_db.db_prefix}:runs:orphan".encode()])
+    mock_client.exec.return_value = [json.dumps(row).encode()]
+    assert valkey_db.get_runs(session_id="s1", deserialize=False) == ([], 0)
+    assert valkey_db.get_runs(session_id="s1", deserialize=False, raise_on_error=True) == ([row], 1)
+
+
 def _make_session_data(session_id: str, **overrides: Any) -> Dict[str, Any]:
     """Helper to build a session record."""
     now = int(time.time())

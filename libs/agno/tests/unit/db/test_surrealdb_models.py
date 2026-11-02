@@ -1,6 +1,10 @@
 from datetime import date, datetime, timezone
+from unittest.mock import MagicMock
+
+import pytest
 
 from agno.db.surrealdb.models import desurrealize_dates, surrealize_dates
+from agno.db.surrealdb.surrealdb import SurrealDb
 
 
 def test_surrealize_int_timestamp_converts_to_correct_utc():
@@ -41,3 +45,23 @@ def test_epoch_round_trip_preserves_value():
     desurrealized = desurrealize_dates(surrealized)
     assert desurrealized["created_at"] == epoch
     assert desurrealized["updated_at"] == epoch
+
+
+def test_get_runs_strict_distinguishes_missing_table_from_empty_runs():
+    db = SurrealDb.__new__(SurrealDb)
+    db._get_table = MagicMock(return_value="runs")
+    db.table_exists = MagicMock(return_value=True)
+    db._count = MagicMock(return_value=0)
+    db._query = MagicMock(return_value=[])
+
+    assert db.get_runs(session_id="s1", deserialize=False, raise_on_error=True) == ([], 0)
+
+    db.table_exists.return_value = False
+    with pytest.raises(RuntimeError, match="runs table is unavailable"):
+        db.get_runs(session_id="s1", deserialize=False, raise_on_error=True)
+    db.table_exists.return_value = True
+
+    db._get_table.side_effect = RuntimeError("storage unavailable")
+    assert db.get_runs(session_id="s1", deserialize=False) == ([], 0)
+    with pytest.raises(RuntimeError, match="storage unavailable"):
+        db.get_runs(session_id="s1", deserialize=False, raise_on_error=True)

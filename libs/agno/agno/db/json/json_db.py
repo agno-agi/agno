@@ -95,7 +95,9 @@ class JsonDb(BaseDb):
         """JSON implementation, always returns True."""
         return True
 
-    def _read_json_file(self, filename: str, create_table_if_not_found: Optional[bool] = True) -> List[Dict[str, Any]]:
+    def _read_json_file(
+        self, filename: str, create_table_if_not_found: Optional[bool] = True, *, raise_on_error: bool = False
+    ) -> List[Dict[str, Any]]:
         """Read data from a JSON file, creating it if it doesn't exist.
 
         Args:
@@ -117,6 +119,8 @@ class JsonDb(BaseDb):
                 return json.load(f)
 
         except FileNotFoundError:
+            if raise_on_error:
+                raise RuntimeError(f"The {filename} file is unavailable")
             if create_table_if_not_found:
                 # Exclusive create so a table published by a concurrent writer is never truncated
                 try:
@@ -217,9 +221,13 @@ class JsonDb(BaseDb):
 
     # -- Run methods --
 
-    def _read_runs_file(self, create_table_if_not_found: Optional[bool] = True) -> List[Dict[str, Any]]:
+    def _read_runs_file(
+        self, create_table_if_not_found: Optional[bool] = True, *, raise_on_error: bool = False
+    ) -> List[Dict[str, Any]]:
         """Read the runs file. Returns [] if empty / not yet created."""
-        return self._read_json_file(self.runs_table_name, create_table_if_not_found=create_table_if_not_found)
+        return self._read_json_file(
+            self.runs_table_name, create_table_if_not_found=create_table_if_not_found, raise_on_error=raise_on_error
+        )
 
     def _write_runs_file(self, rows: List[Dict[str, Any]]) -> None:
         """Replace the runs file with the given list of rows."""
@@ -374,12 +382,14 @@ class JsonDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        *,
+        raise_on_error: bool = False,
     ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
         from agno.db.utils import validate_pagination
 
         validate_pagination(limit, page)
         try:
-            rows = self._read_runs_file(create_table_if_not_found=False)
+            rows = self._read_runs_file(create_table_if_not_found=False, raise_on_error=raise_on_error)
             if session_id is not None:
                 rows = [r for r in rows if r.get("session_id") == session_id]
             if user_id is not None:

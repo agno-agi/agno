@@ -432,10 +432,19 @@ class SurrealDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        *,
+        raise_on_error: bool = False,
     ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
         try:
             runs_table = self._get_table("runs", create_table_if_not_found=False)
         except Exception:
+            if raise_on_error:
+                raise
+            return [] if deserialize else ([], 0)
+
+        if runs_table is None or (raise_on_error and not self.table_exists(runs_table)):
+            if raise_on_error:
+                raise RuntimeError("The runs table is unavailable")
             return [] if deserialize else ([], 0)
 
         where = WhereClause()

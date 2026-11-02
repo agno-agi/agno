@@ -121,7 +121,7 @@ class FirestoreDb(BaseDb):
         Returns:
             bool: True if the collection exists in the database, False otherwise
         """
-        return table_name in self.db_client.list_collections()
+        return any(collection.id == table_name for collection in self.db_client.collections())
 
     def _get_collection(self, table_type: str, create_collection_if_not_found: Optional[bool] = True):
         """Get or create a collection based on table type.
@@ -236,7 +236,7 @@ class FirestoreDb(BaseDb):
 
             if not hasattr(self, f"_{collection_name}_initialized"):
                 if not create_collection_if_not_found:
-                    return None
+                    return collection_ref if self.table_exists(collection_name) else None
                 create_collection_indexes(self.db_client, collection_name, collection_type)
                 setattr(self, f"_{collection_name}_initialized", True)
 
@@ -430,11 +430,15 @@ class FirestoreDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        *,
+        raise_on_error: bool = False,
     ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
         """Get all runs matching the given filters."""
         try:
-            collection_ref = self._get_collection(table_type="runs")
+            collection_ref = self._get_collection(table_type="runs", create_collection_if_not_found=not raise_on_error)
             if collection_ref is None:
+                if raise_on_error:
+                    raise RuntimeError("The runs collection is unavailable")
                 return [] if deserialize else ([], 0)
 
             query = collection_ref

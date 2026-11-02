@@ -118,3 +118,18 @@ class TestReadSuccessPathStillWorks:
 
         result = db._read_json_file("sessions", create_table_if_not_found=False)
         assert result == [{"a": 1}, {"a": 2}]
+
+
+def test_strict_run_read_refuses_missing_blob_but_accepts_empty_blob():
+    from google.cloud.exceptions import NotFound
+
+    db, bucket = _make_db_with_mock_bucket()
+    db.runs_table_name = "agno_runs"
+    blob = bucket.blob.return_value
+    blob.download_as_bytes.side_effect = NotFound("runs missing")
+    with pytest.raises(RuntimeError, match="runs"):
+        db.get_runs(session_id="s1", deserialize=False, raise_on_error=True)
+
+    blob.download_as_bytes.side_effect = None
+    blob.download_as_bytes.return_value = b"[]"
+    assert db.get_runs(session_id="s1", deserialize=False, raise_on_error=True) == ([], 0)

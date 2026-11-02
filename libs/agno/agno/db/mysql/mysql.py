@@ -734,12 +734,15 @@ class MySQLDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        raise_on_error: bool = False,
     ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
         """Get all runs matching the given filters."""
         validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="runs")
             if table is None:
+                if raise_on_error:
+                    raise RuntimeError("The runs table is unavailable")
                 return [] if deserialize else ([], 0)
 
             with self.Session() as sess:

@@ -506,6 +506,8 @@ class InMemoryDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        *,
+        raise_on_error: bool = False,
     ) -> Union[List[Any], Tuple[List[Dict[str, Any]], int]]:
         """Read runs across in-memory sessions with the same filters as SQL adapters."""
         from agno.db.utils import deserialize_run, get_run_type

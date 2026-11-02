@@ -41,6 +41,42 @@ def make_stale(db: RedisDb, job_id: str, by_seconds: int = 1000) -> None:
     db.redis_client.zadd(db._q_key("running"), {job_id: job["locked_at"]})
 
 
+def test_strict_session_run_read_distinguishes_empty_from_failed_index(db, monkeypatch):
+    assert db.get_runs(session_id="missing", deserialize=False, raise_on_error=True) == ([], 0)
+
+    def unavailable(*args, **kwargs):
+        raise ConnectionError("Redis unavailable")
+
+    monkeypatch.setattr(db.redis_client, "zrange", unavailable)
+    assert db.get_runs(session_id="missing", deserialize=False) == ([], 0)
+    monkeypatch.setattr(db.redis_client, "scan_iter", unavailable)
+    with pytest.raises(ConnectionError, match="Redis unavailable"):
+        db.get_runs(session_id="missing", deserialize=False, raise_on_error=True)
+
+
+def test_strict_session_run_read_refuses_partial_record_failure(db, monkeypatch):
+    db.redis_client.zadd(db._runs_by_session_index_key("s1"), {"r1": 1})
+    db.redis_client.set(f"{db.db_prefix}:runs:r1", json.dumps({"run_id": "r1", "session_id": "s1"}))
+    original_get = db.redis_client.get
+
+    def unavailable(key):
+        if key.endswith(":runs:r1"):
+            raise ConnectionError("run unavailable")
+        return original_get(key)
+
+    monkeypatch.setattr(db.redis_client, "get", unavailable)
+    assert db.get_runs(session_id="s1", deserialize=False) == ([], 0)
+    with pytest.raises(ConnectionError, match="run unavailable"):
+        db.get_runs(session_id="s1", deserialize=False, raise_on_error=True)
+
+
+def test_strict_session_run_read_finds_run_missing_from_index(db):
+    row = {"run_id": "orphan", "session_id": "s1", "status": "RUNNING", "run_index": 1}
+    db.redis_client.set(f"{db.db_prefix}:runs:orphan", json.dumps(row))
+    assert db.get_runs(session_id="s1", deserialize=False) == ([], 0)
+    assert db.get_runs(session_id="s1", deserialize=False, raise_on_error=True) == ([row], 1)
+
+
 class TestContract:
     def test_enqueue_claim_complete_roundtrip(self, db):
         assert db.enqueue_job(make_job())["accepted"]
