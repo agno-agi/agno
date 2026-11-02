@@ -220,11 +220,9 @@ def test_session_compaction_metrics_are_counted_on_the_session_row():
         **_session("alice"),
         "compaction_metrics": {"input_tokens": 700, "output_tokens": 24, "total_tokens": 724},
     }
-    row = _only_row(sessions=[session], runs=[_run("run-1", user_id="alice")])
+    row = _only_row(sessions=[session], runs=[_run("run-1", user_id="alice", tokens={"total_tokens": 10})])
 
-    plain_row = _only_row(sessions=[_session("alice")], runs=[_run("run-1", user_id="alice")])
-    assert row["total_tokens"] == plain_row["total_tokens"] + 724
-    assert row["runs_count"] == plain_row["runs_count"]
+    assert (row["total_tokens"], row["runs_count"]) == (734, 1)
 
 
 def test_only_the_id_matching_the_component_type_is_used():

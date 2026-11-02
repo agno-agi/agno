@@ -941,8 +941,8 @@ METRICS_TOKEN_FIELDS = (
 # audio_total_tokens, is not kept: a read adds it up from the audio counts.
 METRICS_TOKEN_DETAILS_FIELDS = ("cache_read_tokens", "cache_write_tokens", "audio_input_tokens", "audio_output_tokens")
 
-# The cost of a row's runs, also kept in token_details: the total cost of the runs that reported one, and how many
-# runs did. A row none of whose runs reported a cost keeps neither.
+# The cost of a row's runs, also kept in token_details: the total cost of the runs, and of a session's manual
+# compactions, that reported one, and how many runs did. A row none of whose runs reported a cost keeps neither.
 METRICS_COST_FIELDS = ("cost", "cost_runs_count")
 
 # The upper bounds, in milliseconds, of the buckets each timing is counted into. They never change: buckets counted
@@ -1505,9 +1505,10 @@ def _calculate_session_compaction_metrics(session: Dict[str, Any]) -> Dict[str, 
         if field in METRICS_SUM_COLUMNS:
             totals[field] += tokens
         elif field in METRICS_TOKEN_DETAILS_FIELDS and tokens:
-            totals["token_details"][field] = tokens
+            totals["token_details"][field] = totals["token_details"].get(field, 0) + tokens
     if compaction_metrics.get("cost") is not None:
-        totals["token_details"]["cost"] = compaction_metrics["cost"]
+        totals["token_details"]["cost"] = totals["token_details"].get("cost", 0) + compaction_metrics["cost"]
+    add_metrics_totals(totals, compaction_metrics, ["additional_metrics"])
     return totals
 
 
@@ -1571,8 +1572,10 @@ def calculate_date_component_metrics(
         bucket_key = (session.get("user_id") or "", *component, "", component[1])
         bucket = per_owner.setdefault(bucket_key, empty_metrics_totals())
         bucket["sessions_count"] += 1
-        # A manual compaction no run carries is counted on its session's row, on the day the session started
-        add_metrics_totals(bucket, _calculate_session_compaction_metrics(session))
+        try:
+            add_metrics_totals(bucket, _calculate_session_compaction_metrics(session))
+        except (TypeError, ValueError, KeyError) as e:
+            log_warning(f"Skipping metrics record {session.get('session_id')}: {e}")
 
     day_run_ids = {run["run_id"] for run in runs if run.get("run_id")}
     seen_run_ids = day_run_ids | stored_run_ids
