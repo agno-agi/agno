@@ -26,7 +26,7 @@ from agno.company.execution import (
 )
 from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.db.schemas.tasks import task_run_fields, task_run_id
+from agno.db.schemas.tasks import task_next_attempt, task_run_fields, task_run_id
 from agno.os.auth import get_authentication_dependency
 from agno.os.job_queue import ticket_status_to_api, validate_seam_input
 from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id
@@ -133,6 +133,27 @@ def get_company_runs_router(os: Any) -> APIRouter:
         except ValueError as exc:
             raise HTTPException(503, str(exc)) from exc
 
+    def executor_database(value: Dict[str, Any], component: Any):
+        run_db = getattr(component, "db", None)
+        if run_db is None:
+            raise HTTPException(409, "Task executor requires a database for durable runs")
+        # Runs are read back through os.dbs by id, so they must be stored in an instance AgentOS serves.
+        if not any(store is run_db for store in os.dbs.get(run_db.id, [])):
+            raise HTTPException(409, "Task executor database must be a database AgentOS serves")
+        if value.get("job_id") and run_database(value) is not run_db:
+            raise HTTPException(409, "A Task session must stay in its original executor database")
+        return run_db
+
+    async def task_message(value: Dict[str, Any]) -> str:
+        try:
+            return await _task_input(manager, value, accepted_execution=True)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+        except ValueError as exc:
+            raise HTTPException(409, str(exc))
+        except NotImplementedError:
+            raise HTTPException(503, "Company wiki is not supported by the configured database")
+
     @router.post("/tasks/{task_id}/runs", status_code=202)
     async def start(task_id: str, request: Request, body: TaskRunCreate = TaskRunCreate(), _: bool = Depends(auth)):
         try:
@@ -144,6 +165,53 @@ def get_company_runs_router(os: Any) -> APIRouter:
 
     async def start_task(task_id: str, request: Request, body: TaskRunCreate):
         value = await task(task_id)
+        # A retry, after a failed or a successful start, finds the Task already accepted for the same executor.
+        accepted_for = value["status"] != "backlog" and (value.get("executor_type"), value.get("executor_id")) == (
+            body.executor_type,
+            body.executor_id,
+        )
+        if body.executor_type is not None and not accepted_for:
+            # Starting a Backlog Task with an executor accepts it first, with the same check as moving it to Ready.
+            if value["status"] != "backlog":
+                raise HTTPException(409, "Only a Backlog Task takes an executor when its run starts")
+            target = {"executor_type": body.executor_type, "executor_id": body.executor_id}
+            # Check what the start needs before accepting, so a refused start leaves the Task in Backlog.
+            component = executor(target)
+            await _require_endpoint_permission(request, endpoint(target), "POST", action="accept")
+            queue = worker(request)
+            executor_database(value, component)
+            # A withdrawn queued ticket stays live until the worker refuses it.
+            previous = await queue.store.get_job(value["job_id"]) if value.get("job_id") else None
+            if previous is not None and previous["status"] not in {"failed", "cancelled", "completed"}:
+                raise HTTPException(409, "The previous Task run is still active")
+            validate_seam_input(component, await task_message(value))
+            if body.attempt is not None and body.attempt != task_next_attempt(value):
+                raise HTTPException(409, "Start the next Task attempt, or retry the original attempt")
+            from agno.company.routines import _manager_call
+
+            try:
+                accepted = await _manager_call(
+                    manager,
+                    "transition_task",
+                    task_id=task_id,
+                    target="ready",
+                    reason="Accepted to start a run",
+                    accepted_by=getattr(request.state, "user_id", None),
+                    executor_type=body.executor_type,
+                    executor_id=body.executor_id,
+                    expected_updated_at=value["updated_at"],
+                )
+            except ValueError as exc:
+                accepted, detail = None, str(exc)
+            else:
+                detail = "Task changed while transitioning"
+            value = await task(task_id)
+            # A concurrent identical direct start may have accepted the Task first; join its run.
+            if accepted is None and (
+                value["status"] == "backlog"
+                or (value.get("executor_type"), value.get("executor_id")) != (body.executor_type, body.executor_id)
+            ):
+                raise HTTPException(409, detail)
         from agno.company.execution import _automatic_task
         from agno.company.sandbox import _is_sandboxed
         from agno.os.routers.company.sandbox import _sandbox_start_gate
@@ -195,14 +263,18 @@ def get_company_runs_router(os: Any) -> APIRouter:
         caller = resolve_run_user_id(request)
         if observed is not None:
             caller = value.get("accepted_by")
+        # An omitted attempt joins the reserved run, otherwise it starts the next attempt.
+        attempt = body.attempt
+        if attempt is None:
+            attempt = _pending_task_attempt(value) or task_next_attempt(value)
         # Review requests start the next attempt; an old attempt is not a revision.
         # Validate before looking up tickets so retained runs cannot bypass this gate.
-        if value["status"] in {"ready", "in_review"} or (value["status"] == "backlog" and body.attempt > 1):
+        if value["status"] in {"ready", "in_review"} or (value["status"] == "backlog" and attempt > 1):
             try:
-                task_run_fields(value, body.attempt, caller)
+                task_run_fields(value, attempt, caller)
             except ValueError as exc:
                 raise HTTPException(409, str(exc)) from exc
-        run_id = task_run_id(task_id, body.attempt)
+        run_id = task_run_id(task_id, attempt)
         existing = await queue.store.get_job(run_id)
         if existing is not None:
             if (existing.get("payload") or {}).get("company_task_id") != task_id:
@@ -247,14 +319,7 @@ def get_company_runs_router(os: Any) -> APIRouter:
                 )
         if value["status"] not in {"ready", "in_progress", "in_review"} or not value.get("executor_id"):
             raise HTTPException(409, "Only accepted work can be started")
-        run_db = getattr(component, "db", None)
-        if run_db is None:
-            raise HTTPException(409, "Task executor requires a database for durable runs")
-        # Runs are read back through os.dbs by id, so they must be stored in an instance AgentOS serves.
-        if not any(store is run_db for store in os.dbs.get(run_db.id, [])):
-            raise HTTPException(409, "Task executor database must be a database AgentOS serves")
-        if value.get("job_id") and run_database(value) is not run_db:
-            raise HTTPException(409, "A Task session must stay in its original executor database")
+        run_db = executor_database(value, component)
         if value.get("job_id") and value["job_id"] != run_id:
             previous = await queue.store.get_job(value["job_id"])
             previous_status = previous["status"] if previous else None
@@ -297,24 +362,17 @@ def get_company_runs_router(os: Any) -> APIRouter:
             raise HTTPException(409, "Start the next Task attempt after accepting a retry")
         owner = _task_session_owner(value, component)
         await _prepare_task_session(run_db, value, owner)
-        try:
-            message = await _task_input(manager, value, accepted_execution=True)
-        except LookupError as exc:
-            raise HTTPException(404, str(exc))
-        except ValueError as exc:
-            raise HTTPException(409, str(exc))
-        except NotImplementedError:
-            raise HTTPException(503, "Company wiki is not supported by the configured database")
+        message = await task_message(value)
         # Apply the ordinary run route's schema check before mutating the Task.
         # Rejected input must not consume an attempt or leave phantom active work.
         validate_seam_input(component, message)
         try:
-            if _pending_task_attempt(value) != body.attempt:
-                task_run_fields(value, body.attempt, caller, run_db.id)
+            if _pending_task_attempt(value) != attempt:
+                task_run_fields(value, attempt, caller, run_db.id)
         except ValueError as exc:
             raise HTTPException(409, str(exc))
         token = _task_submission.set(
-            {"db": db, "task": value, "attempt": body.attempt, "run_db_id": run_db.id, "started_by": caller}
+            {"db": db, "task": value, "attempt": attempt, "run_db_id": run_db.id, "started_by": caller}
         )
         try:
             return await _run_route(
@@ -329,7 +387,7 @@ def get_company_runs_router(os: Any) -> APIRouter:
                     "session_id": value["session_id"],
                     **({"user_id": owner} if owner is not None else {}),
                 },
-                key=f"company:{task_id}:{body.attempt}",
+                key=f"company:{task_id}:{attempt}",
                 checkout=(value.get("metadata") or {}).get("checkout"),
             )
         finally:
