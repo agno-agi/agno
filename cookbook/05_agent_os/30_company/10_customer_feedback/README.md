@@ -1,8 +1,8 @@
 # Customer feedback in the AgentOS UI
 
 Company Manager reviews local Markdown feedback with `gpt-6.1-sol`, proposes
-Projects for your approval. A later review creates evidence-backed Backlog Tasks
-under approved Projects. After you separately accept a Task, Feedback Analyst
+Projects and evidence-backed Backlog Tasks for your review. After you approve a
+Project and separately accept a Task, Feedback Analyst
 writes a product brief and regression test plan.
 Its complete response is saved on the Task for review. This example produces
 planning documents; implementing a code fix requires an engineering executor
@@ -44,7 +44,8 @@ reads the same `feedback/` folder.
 
 If this Product already exists, restarting with the updated example preserves
 its saved Routine instructions. Follow [Update saved Routine instructions](../README.md#update-saved-routine-instructions)
-to add the approval step to **review-feedback** through the existing Routine PATCH
+to allow Backlog proposals before approval while keeping acceptance gated in
+**review-feedback** through the existing Routine PATCH
 endpoint, retaining your customizations. Do this between runs and verify the saved
 text before continuing; there is no need to delete the Product or its history.
 
@@ -57,17 +58,14 @@ text before continuing; there is no need to delete the Product or its history.
    Source, Projects and Routines.
 3. Run **review-feedback** from the Product's Routines. You can trigger it now;
    the daily schedule is 09:00 UTC while the server is running.
-4. On a fresh instance, inspect the proposed Projects and the request for human
-   approval. There should be no Tasks under those proposed Projects. The sample evidence contains two
+4. On a fresh instance, inspect the proposed Projects and their Backlog Task drafts.
+   The sample evidence contains two
    actionable themes: cross-midnight CSV export failures and missing timezone
    labels. Positive onboarding feedback and an already resolved email issue
    should produce no work. Exact titles and Project grouping can vary.
 5. After the Routine finishes, review and approve a relevant Project, moving it
-   from **Proposed** to **Active**. Run the Routine again without changing the files.
-   It should reuse that Project and create evidence-backed **Backlog** Tasks.
-   Projects left proposed must still have no new Tasks. If an approved Project
-   already exists, the Routine can create its Tasks on the first review.
-6. Wait for the Routine to finish, then run it once more. Verify that it reuses
+   from **Proposed** to **Active**. Its Backlog Tasks remain unaccepted.
+6. Run the Routine again without changing the files. Verify that it reuses
    existing Tasks rather than duplicating them. Project approval alone must not
    accept or execute these Tasks.
 7. Open a Task and inspect its brief and evidence. Select **Feedback Analyst**

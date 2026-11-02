@@ -98,27 +98,28 @@ manually.
 A Product contains Projects and Routines. Every new Task belongs to a Project
 in that Product: `project_id` is required by Task creation and proposal/Intake
 tools. HTTP rejects omission with 422; Python managers and tools raise
-`ValueError`. New Tasks also require Project approval: creation under a `proposed`
-Project returns HTTP 422 or raises `ValueError`, including for Backlog drafts.
-When no approved Project fits, propose one with `propose_company_project` and wait
-for a human to transition it to `active`. On a later request or Routine run, pass
-its ID to the Task proposal. Project approval does not accept or execute Tasks.
+`ValueError`. Backlog drafts can be created under a `proposed` Project so people
+can review the plan. The Project must be approved before its Tasks move to Ready
+or start a run; creating a Task directly in Ready also requires approval.
+When no Project fits, propose one with `propose_company_project` and use its ID
+for Backlog proposals. A human can then transition it to `active`. Project approval
+does not accept or execute Tasks.
 Existing duplicate proposals remain retrievable. A Backlog Task can move between Projects
 but cannot clear its Project. Existing nullable storage rows remain readable.
 
 A proposal-only Company Manager prompt can make these two approval steps explicit:
 
 > Propose up to three improvements with evidence, expected impact and acceptance
-> criteria. Check existing work for duplicates. Create Backlog Tasks only under
-> suitable approved Projects. Otherwise propose a Project, report that it awaits
-> human approval, and wait until a later request after approval to create its Tasks.
+> criteria. Check existing work for duplicates. Create Backlog Tasks under a
+> suitable Project, proposing one if needed. Report that a proposed Project
+> needs human approval before those Tasks can be accepted or run.
 > Do not approve Projects, accept Tasks or execute work.
 
 Projects start `proposed` and move to `active`, then `done`. A Project can be
 `cancelled` from any non-terminal state, and its terminal states cannot transition.
 Tasks are created in `backlog` by default; `POST /company/tasks` also accepts
 `status` set to `ready` (with `executor_type` and `executor_id`, under the same
-acceptance checks as the Ready transition) or `cancelled`. Tasks move through
+acceptance checks as the Ready transition) or `cancelled` under an approved Project. Tasks move through
 `ready`, `in_progress`, `in_review`, and `done`. Each transition takes `target`
 and a non-empty `reason`; history is returned on the record. A Task can move to
 Backlog, Ready or Cancelled from any other state, including `done` and `cancelled`.
@@ -396,8 +397,8 @@ never overwrites saved schedule instructions.
 
 For an existing Routine, inspect its saved instructions before upgrading a
 proposal workflow. Keep its custom purpose, evidence requirements and constraints,
-and add the Project approval step: reuse an approved Project, or propose one and
-wait for human approval before creating its Tasks on a later run.
+and add the Project approval step: create Backlog proposals in a suitable Project,
+then wait for human approval before accepting or running its Tasks.
 
 Apply the **complete revised instruction text** with an authorized PATCH:
 
@@ -418,9 +419,9 @@ instead of replacing them wholesale with a new template.
 Make the update between runs. A scheduled Routine can be paused while editing
 and resumed afterward; on-demand Routines cannot be paused. An in-flight run may
 still use its original instructions. Read back the saved instructions, restart,
-and verify a subsequent run waits for Project approval, then creates Backlog
-proposals after approval. Existing Task auto-accept policies still apply where
-configured; this edit does not grant Project approval or change those policies.
+and verify a subsequent run can create Backlog proposals before Project approval.
+Acceptance and execution still wait for approval. Existing Task auto-accept policies
+still apply where configured; this edit does not grant Project approval or change them.
 
 ### Source readers
 
@@ -655,8 +656,8 @@ Every authorization names an exact executor type and ID. A proposal with no
 executor receives that authorized executor at acceptance. A proposal that names
 an executor must name the same one. It must belong to the Routine's Product and
 carry the framework's Routine origin. `propose_company_task` and
-`intake_product_source` require an approved Project for new Tasks and can name a proposed executor; neither can
-accept work. Source IDs and work scope are optional bounds. Omitted Source/scope
+`intake_product_source` can create Backlog drafts in a proposed Project and name a
+proposed executor; neither can accept work. Source IDs and work scope are optional bounds. Omitted Source/scope
 bounds impose no additional restriction; an empty allowed-ID list permits no matching work.
 `project_ids` can include `null` for legacy Tasks without a Project; new Tasks require a Project. Unknown fields and
 check names fail closed. A Source bound requires verified reader evidence.

@@ -66,6 +66,12 @@ async def exercise(db):
     await call(manager.delete_project, first["id"])
     assert await call(manager.get_task, task["id"])
     await call(
+        manager.transition_project,
+        project_id=second["id"],
+        target="active",
+        reason="Human approved Project scope",
+    )
+    await call(
         manager.transition_task,
         task_id=task["id"],
         target="ready",
