@@ -310,30 +310,6 @@ class TestMetricsProviderVariants:
         assert len(session.details) == 1
         assert session.details["model"][0].id == "gpt-4o"
 
-    def test_session_metrics_subtract_run_leaves_the_session_as_the_other_runs_made_it(self):
-        """Removing one run leaves the session as the other runs made it: no entry of its model, and their cost with
-        no float residue."""
-        kept = RunMetrics(
-            input_tokens=40,
-            total_tokens=40,
-            cost=0.1,
-            details={"model": [ModelMetrics(id="kept", provider="OpenAI", input_tokens=40, cost=0.1)]},
-        )
-        removed = RunMetrics(
-            input_tokens=100,
-            total_tokens=100,
-            cost=0.2,
-            details={"model": [ModelMetrics(id="gpt-5.6-luna", provider="OpenAI", input_tokens=100, cost=0.2)]},
-        )
-        session = SessionMetrics()
-        session.accumulate_from_run(kept)
-        session.accumulate_from_run(removed)
-        session.subtract_run(removed)
-
-        only_kept = SessionMetrics()
-        only_kept.accumulate_from_run(kept)
-        assert session.to_dict() == only_kept.to_dict()
-
 
 # ---------------------------------------------------------------------------
 # Agent init sets model_type

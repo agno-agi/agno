@@ -999,12 +999,8 @@ class BaseExternalAgent:
         """
         from agno.run.concurrency import get_worker_ownership
 
-        # The row this write replaces, such as a failed run run again, may be in the session totals already
-        stored_run = self._find_run_in_session(session, run_output.run_id or "")
-        if stored_run is not None:
-            self._remove_run_from_session_metrics(session, stored_run)
         session.upsert_run(run=run_output)
-        self._update_session_metrics(session, run_output)
+        self._update_session_metrics(session)
         worker_owned = get_worker_ownership(run_output.run_id or "") is not None
         try:
             if self.db is not None:
@@ -1844,30 +1840,15 @@ class BaseExternalAgent:
         return metrics
 
     @staticmethod
-    def _update_session_metrics(session: AgentSession, run_output: RunOutput) -> None:
-        """Add a finished run's metrics to the session totals AgentOS reads from session_data."""
-        # A failed or cancelled run keeps the tokens it used on its row, so the totals keep them too
-        if run_output.metrics is None or run_output.status not in METRICS_FINAL_STATUSES:
-            return
+    def _update_session_metrics(session: AgentSession) -> None:
+        """Add the completed, failed and cancelled runs of the session to the totals AgentOS reads from session_data."""
+        session_metrics = SessionMetrics()
+        for run in session.runs or []:
+            # A failed or cancelled run keeps the tokens it used on its row, so the totals keep them too
+            if run.metrics is not None and run.status in METRICS_FINAL_STATUSES:
+                session_metrics.accumulate_from_run(run.metrics)
         if session.session_data is None:
             session.session_data = {}
-        stored = session.session_data.get("session_metrics")
-        session_metrics = SessionMetrics.from_dict(stored) if isinstance(stored, dict) else SessionMetrics()
-        session_metrics.accumulate_from_run(run_output.metrics)
-        session.session_data["session_metrics"] = session_metrics.to_dict()
-
-    @staticmethod
-    def _remove_run_from_session_metrics(session: AgentSession, run_output: RunOutput) -> None:
-        """Take a finished run's metrics back out of the session totals, so its next write adds the run once."""
-        if run_output.metrics is None or run_output.status not in METRICS_FINAL_STATUSES:
-            return
-        if session.session_data is None:
-            return
-        stored = session.session_data.get("session_metrics")
-        if not isinstance(stored, dict):
-            return
-        session_metrics = SessionMetrics.from_dict(stored)
-        session_metrics.subtract_run(run_output.metrics)
         session.session_data["session_metrics"] = session_metrics.to_dict()
 
     def _finish_run_output(

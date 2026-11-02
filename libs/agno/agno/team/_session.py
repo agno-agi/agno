@@ -780,26 +780,27 @@ async def aget_session_metrics(team: "Team", session_id: Optional[str] = None) -
     return await aget_session_metrics_util(cast(Any, team), session_id=session_id)
 
 
-def update_session_metrics(team: "Team", session: TeamSession, run_response: TeamRunOutput) -> None:
-    """Calculate session metrics and write them to session_data.
+def update_session_metrics(team: "Team", session: TeamSession) -> None:
+    """Calculate session metrics from the session's runs and write them to session_data.
 
     Converts run-level Metrics (details: Dict[str, List[ModelMetrics]]) to
     session-level SessionMetrics (details: List[ModelMetrics]) using
     SessionMetrics.accumulate_from_run().
 
-    Accumulates metrics from the team leader's own model calls as well as
-    all member agent/team responses (recursively for nested teams).
+    Accumulates metrics from every run of the session, the team leader's and
+    its members' (recursively for nested teams), once each.
     """
-    from agno.team._storage import get_session_metrics_internal
+    session_metrics = SessionMetrics()
+    runs = session.runs or []
+    # A run of its own is counted from its row, never again from a copy kept inside its team's run
+    seen_run_ids: set[str] = {run.run_id for run in runs if run.run_id}
+    for run in runs:
+        if run.metrics is not None:
+            session_metrics.accumulate_from_run(run.metrics)
 
-    session_metrics = get_session_metrics_internal(team, session=session)
-    if session_metrics is None:
-        return
-    if run_response.metrics is not None:
-        session_metrics.accumulate_from_run(run_response.metrics)
-
-    # Accumulate metrics from member responses (agent and nested team runs)
-    _accumulate_member_metrics(session_metrics, run_response.member_responses)
+    # Accumulate metrics from member responses kept only inside a team's run (such as a remote member's)
+    for run in runs:
+        _accumulate_member_metrics(session_metrics, getattr(run, "member_responses", None) or [], seen_run_ids)
 
     if session.session_data is not None:
         session.session_data["session_metrics"] = session_metrics.to_dict()
@@ -808,44 +809,20 @@ def update_session_metrics(team: "Team", session: TeamSession, run_response: Tea
 def _accumulate_member_metrics(
     session_metrics: SessionMetrics,
     member_responses: "List",
+    seen_run_ids: set[str],
 ) -> None:
-    """Recursively accumulate metrics from member responses into session metrics."""
+    """Recursively accumulate metrics from member responses not counted yet into session metrics."""
     for member_response in member_responses:
+        run_id = member_response.run_id
+        if run_id and run_id in seen_run_ids:
+            continue
+        if run_id:
+            seen_run_ids.add(run_id)
         if member_response.metrics is not None:
             session_metrics.accumulate_from_run(member_response.metrics)
         # Recurse into nested team member responses
         if isinstance(member_response, TeamRunOutput) and member_response.member_responses:
-            _accumulate_member_metrics(session_metrics, member_response.member_responses)
-
-
-def remove_run_from_session_metrics(team: "Team", session: TeamSession, run_response: TeamRunOutput) -> None:
-    """Take a run's metrics, and its members', back out of the session metrics, so its next write adds the run once."""
-    from agno.team._storage import get_session_metrics_internal
-
-    session_metrics = get_session_metrics_internal(team, session=session)
-    if session_metrics is None:
-        return
-    if run_response.metrics is not None:
-        session_metrics.subtract_run(run_response.metrics)
-
-    # Remove metrics from member responses (agent and nested team runs)
-    _subtract_member_metrics(session_metrics, run_response.member_responses)
-
-    if session.session_data is not None:
-        session.session_data["session_metrics"] = session_metrics.to_dict()
-
-
-def _subtract_member_metrics(
-    session_metrics: SessionMetrics,
-    member_responses: "List",
-) -> None:
-    """Recursively remove metrics of member responses from session metrics."""
-    for member_response in member_responses:
-        if member_response.metrics is not None:
-            session_metrics.subtract_run(member_response.metrics)
-        # Recurse into nested team member responses
-        if isinstance(member_response, TeamRunOutput) and member_response.member_responses:
-            _subtract_member_metrics(session_metrics, member_response.member_responses)
+            _accumulate_member_metrics(session_metrics, member_response.member_responses, seen_run_ids)
 
 
 # ---------------------------------------------------------------------------
