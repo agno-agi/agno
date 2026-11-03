@@ -11,6 +11,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     AsyncIterator,
+    Awaitable,
     Callable,
     Dict,
     Iterator,
@@ -1159,6 +1160,8 @@ async def aprepare_confirmation_queue(agent: Agent, run: RunOutput, run_context:
     order = None
     if agent.confirmation_policy is not None and (run.metadata or {}).get("ordered_confirmations") is not None:
         pending = deepcopy(pending_confirmations(run))
+        if not pending:
+            return
         if getattr(getattr(getattr(agent.db, "db_engine", None), "dialect", None), "name", None) == "postgresql":
             order = await asyncio.to_thread(agent.confirmation_policy, pending, run_context)
         else:
@@ -1295,7 +1298,9 @@ def claim_confirmation(agent: Agent, run: RunOutput) -> None:
         raise RunNotContinuableError("This confirmation has already been claimed")
 
 
-async def aclaim_confirmation(agent: Agent, run: RunOutput) -> None:
+async def aclaim_confirmation(
+    agent: Agent, run: RunOutput, on_claim: Optional[Callable[[], Awaitable[None]]] = None
+) -> None:
     state = (run.metadata or {}).get("ordered_confirmations")
     if not state or (
         not state.get("active")
@@ -1309,14 +1314,16 @@ async def aclaim_confirmation(agent: Agent, run: RunOutput) -> None:
 
     if not has_async_db(agent):
         await asyncio.to_thread(claim_confirmation, agent, run)
-        return
-    db = cast(Any, agent.db)
-    stored = await db.get_run(run.run_id)
-    expected = _confirmation_claim(run, stored)
-    if not await db.update_run_if_matches(
-        run.run_id, run.session_id, expected, {"status": RunStatus.running.value}, user_id=run.user_id
-    ):
-        raise RunNotContinuableError("This confirmation has already been claimed")
+    else:
+        db = cast(Any, agent.db)
+        stored = await db.get_run(run.run_id)
+        expected = _confirmation_claim(run, stored)
+        if not await db.update_run_if_matches(
+            run.run_id, run.session_id, expected, {"status": RunStatus.running.value}, user_id=run.user_id
+        ):
+            raise RunNotContinuableError("This confirmation has already been claimed")
+    if on_claim is not None:
+        await on_claim()
 
 
 def advance_confirmation_queue(

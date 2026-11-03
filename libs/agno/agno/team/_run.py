@@ -11,6 +11,8 @@ from typing import (
     TYPE_CHECKING,
     Any,
     AsyncIterator,
+    Awaitable,
+    Callable,
     Dict,
     Iterator,
     List,
@@ -6676,6 +6678,7 @@ async def _aroute_requirements_to_members_stream(
     member_results: List[str],
     run_context: Optional[RunContext] = None,
     stream_events: bool = False,
+    on_confirmation_claim: Optional[Callable[[], Awaitable[None]]] = None,
 ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
     """Route member requirements back to the appropriate member agents (async, streaming).
 
@@ -6709,6 +6712,8 @@ async def _aroute_requirements_to_members_stream(
         # Forward team's run_context state to the member so dependencies and
         # session_state remain accessible to member tools after continue_run.
         member_continue_kwargs = _member_continue_kwargs_from_run_context(run_context)
+        if on_confirmation_claim is not None:
+            member_continue_kwargs["_on_confirmation_claim"] = on_confirmation_claim
 
         if member_run_output is not None:
             member_run_output.requirements = reqs
@@ -8772,6 +8777,9 @@ async def _acontinue_run_background_stream(
     # caller shape passed to _acontinue_run_stream unchanged.
     persist_run = run_response if run_response is not None else stored_run
     ordered_confirmation = any(
+        r.tool_execution and r.tool_execution.confirmation_id and r.tool_execution.requires_confirmation
+        for r in getattr(stored_run, "requirements", None) or []
+    ) or any(
         getattr(r.tool_execution, "confirmation_id", None) for r in _normalize_requirements_payload(requirements or [])
     )
 
@@ -8820,13 +8828,23 @@ async def _acontinue_run_background_stream(
         final_output: Optional[TeamRunOutput] = None
         ordered_started = False
 
-        async def _dispatch_sse(event: Any) -> None:
-            """Buffer and fan out an event, then hand it to the original client."""
+        async def on_confirmation_claim() -> None:
+            nonlocal ordered_started
+            if not ordered_started:
+                ordered_started = True
+                await amark_continue_stream_running(_run_id, component=team, session_id=session_id, user_id=user_id)
+
+        if ordered_confirmation:
+            kwargs["_on_confirmation_claim"] = on_confirmation_claim
+
+        async def _dispatch_sse(event: Any, publish: bool = True) -> None:
+            """Send an event to the requester, optionally publishing it to the stream."""
             event_index: Optional[int] = None
-            try:
-                event_index = await event_stream.add_event(_run_id, event)
-            except Exception:
-                log_warning(f"Failed to buffer event for continue-run {_run_id}")
+            if publish:
+                try:
+                    event_index = await event_stream.add_event(_run_id, event)
+                except Exception:
+                    log_warning(f"Failed to buffer event for continue-run {_run_id}")
 
             sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=_run_id)
 
@@ -8875,14 +8893,6 @@ async def _acontinue_run_background_stream(
                 if isinstance(event, TeamRunOutput):
                     final_output = event
                     continue
-                if (
-                    ordered_confirmation
-                    and not ordered_started
-                    and getattr(event, "event", None) not in {"RunError", "TeamRunError"}
-                ):
-                    ordered_started = True
-                    await amark_continue_stream_running(_run_id, component=team, session_id=session_id, user_id=user_id)
-
                 await _dispatch_sse(event)
 
         except asyncio.CancelledError:
@@ -9047,7 +9057,8 @@ async def _acontinue_run_background_stream(
                         run_id=_run_id, session_id=session_id, team_id=team.id, team_name=team.name
                     )
                 await _dispatch_sse(
-                    create_team_run_error_event(error_source, error=str(e), error_type=error_type_of(e))
+                    create_team_run_error_event(error_source, error=str(e), error_type=error_type_of(e)),
+                    publish=not (ordered_confirmation and refused),
                 )
             except Exception:
                 log_warning(f"Failed to emit error event for continue-run {_run_id}")
@@ -9869,6 +9880,10 @@ async def _acontinue_run_stream(
     from agno.team._tools import _aget_learning_tools, _check_and_refresh_mcp_tools, _determine_tools_for_model
     from agno.utils.events import create_team_run_continued_event
 
+    on_confirmation_claim = kwargs.pop("_on_confirmation_claim", None)
+    if not callable(on_confirmation_claim):
+        on_confirmation_claim = None
+
     log_debug(f"Team Continue Run Stream: {run_response.run_id if run_response else run_id}", center=True)
 
     team_session: Optional[TeamSession] = None
@@ -10073,6 +10088,7 @@ async def _acontinue_run_stream(
                             member_results=member_results,
                             run_context=run_context,
                             stream_events=stream_events,
+                            on_confirmation_claim=on_confirmation_claim,
                         ):
                             yield event
                     except Exception:

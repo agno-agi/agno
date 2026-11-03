@@ -3065,3 +3065,250 @@ def test_sequential_confirmation_external_response_validation_http(
         result = next(m for m in stored.messages if m.tool_call_id == "batch-external")
         assert result.content == content
         assert result.tool_call_error is (False if invalid == "error_flag" else None)
+
+
+@pytest.mark.parametrize("kind", ["external", "input", "feedback"])
+@pytest.mark.parametrize("stream,background", [(False, False), (True, False), (True, True)])
+@pytest.mark.parametrize("delegated", [False, True])
+@pytest.mark.parametrize("async_policy", [False, True])
+def test_sequential_confirmation_policy_skips_other_hitl_http(db, kind, stream, background, delegated, async_policy):
+    calls = []
+    name = {"external": "external", "input": "supplied", "feedback": "ask_user"}[kind]
+    os, member, model, base = confirmation_app(db, calls, (name,), delegated, hitl_kind=kind)
+    policy_calls = []
+
+    def policy(pending, context):
+        policy_calls.append(pending)
+        return [pending[0].tool_call_id]
+
+    async def apolicy(pending, context):
+        return policy(pending, context)
+
+    member.confirmation_policy = apolicy if async_policy else policy
+    data = {"stream": str(stream).lower(), "background": str(background).lower()}
+    with TestClient(os.get_app()) as client:
+        paused = confirmation_payload(client.post(base, data={**data, "message": "Act"}), stream)
+        assert policy_calls == []
+        assert calls == [] and model.calls == 1
+        assert len(paused["requirements"]) == 1
+        req = paused["requirements"][0]
+        te = req["tool_execution"]
+        assert te["tool_name"] == name and te["tool_call_id"] == "batch-" + name
+        assert {r.status for r in db.get_runs(agent_id=member.id)} == {"PAUSED"}
+        if kind == "external":
+            req["external_execution_result"] = te["result"] = "external result"
+        elif kind == "input":
+            for field in te["user_input_schema"]:
+                field["value"] = "provided"
+        else:
+            for question in te["user_feedback_schema"]:
+                question["selected_options"] = ["Text"]
+        final = confirmation_payload(
+            client.post(
+                base + "/" + paused["run_id"] + "/continue",
+                data={
+                    **data,
+                    "session_id": paused["session_id"],
+                    **({"requirements": json.dumps([req])} if delegated else {"tools": json.dumps([te])}),
+                },
+            ),
+            stream,
+        )
+        if stream:
+            assert final["event"] in {"RunCompleted", "TeamRunCompleted"}
+        else:
+            assert final["status"] == "COMPLETED"
+        assert policy_calls == [] and model.calls == 2
+        assert calls == (["provided"] if kind == "input" else [])
+        stored = next(r for r in db.get_runs(agent_id=member.id) if r.tools)
+        results = [m for m in stored.messages if m.tool_call_id == "batch-" + name]
+        assert len(results) == 1
+        assert (
+            ("Text" in results[0].content)
+            if kind == "feedback"
+            else results[0].content == ("provided" if kind == "input" else "external result")
+        )
+
+
+@pytest.mark.parametrize("delegated", [False, True])
+@pytest.mark.parametrize("confirmation", [True, False])
+def test_sequential_confirmation_background_without_events_resumes_while_tool_runs(
+    db, monkeypatch, delegated, confirmation
+):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from agno.os import event_streams
+    from agno.os.event_streams.in_memory import InMemoryEventStream
+    from agno.os.managers import EventsBuffer, SSESubscriberManager
+    from agno.run.base import RunStatus
+    from agno.tools import tool
+
+    entered, release, parked, attached = Event(), Event(), Event(), Event()
+
+    class ObservedStream(InMemoryEventStream):
+        async def complete_run(self, run_id, status, generation=None):
+            await super().complete_run(run_id, status, generation)
+            if status == RunStatus.paused:
+                parked.set()
+
+        async def tail(self, run_id, last_event_index=None):
+            attached.set()
+            async for item in super().tail(run_id, last_event_index):
+                yield item
+
+    buffer = EventsBuffer()
+    monkeypatch.setattr(event_streams, "_event_stream", ObservedStream(buffer, SSESubscriberManager()))
+    calls = []
+    order = ("first", "second") if confirmation else ("first",)
+    os, member, model, base = confirmation_app(db, calls, order, delegated)
+
+    @tool(requires_confirmation=confirmation, requires_user_input=not confirmation)
+    async def first() -> str:
+        entered.set()
+        assert await asyncio.to_thread(release.wait, 10), "Test did not release the confirmed tool"
+        calls.append("first")
+        return "first result"
+
+    member.tools = [first, *[function for function in member.tools if function.name != "first"]]
+    if delegated:
+        os.manager.stream_member_events = False
+    with TestClient(os.get_app()) as client, ThreadPoolExecutor(max_workers=2) as pool:
+        paused = confirmation_payload(
+            client.post(base, data={"message": "Act", "stream": "true", "background": "true"}), True
+        )
+        assert parked.wait(10), "Initial pause did not settle"
+        run_id = paused["run_id"]
+        assert buffer.get_run_status(run_id) == RunStatus.paused
+        cursor = buffer.get_last_index(run_id)
+        if confirmation:
+            decision = confirmation_decision(paused, True, delegated)
+        else:
+            req = paused["requirements"][0]
+            req["tool_execution"]["answered"] = True
+            decision = (
+                {"requirements": json.dumps([req])} if delegated else {"tools": json.dumps([req["tool_execution"]])}
+            )
+        continuing = pool.submit(
+            client.post,
+            base + "/" + run_id + "/continue",
+            data={
+                "session_id": paused["session_id"],
+                "stream": "true",
+                "background": "true",
+                "stream_events": "false",
+                **decision,
+            },
+        )
+        try:
+            assert entered.wait(10), "Confirmed tool did not start"
+            assert buffer.get_run_status(run_id) == RunStatus.running
+            assert calls == [] and model.calls == 1
+            resumed = pool.submit(
+                client.post,
+                base + "/" + run_id + "/resume",
+                data={"session_id": paused["session_id"], "last_event_index": cursor},
+            )
+            assert attached.wait(10), "Resume replayed the old pause instead of tailing the active leg"
+            assert not resumed.done()
+        finally:
+            release.set()
+        for response in (continuing.result(timeout=10), resumed.result(timeout=10)):
+            if confirmation:
+                payload = confirmation_payload(response, True)
+                assert payload["requirements"][0]["tool_execution"]["tool_name"] == "second"
+            else:
+                assert response.status_code == 200, response.text
+                events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
+                assert any(e.get("event") in {"RunContent", "TeamRunContent"} for e in events)
+                assert not any(e.get("event") in {"RunError", "TeamRunError"} for e in events)
+        assert calls == ["first"] and model.calls == (1 if confirmation else 2)
+        if not confirmation:
+            stored = next(r for r in db.get_runs(agent_id=member.id) if r.tools)
+            assert stored.status == RunStatus.completed
+            results = [m for m in stored.messages if m.tool_call_id == "batch-first"]
+            assert len(results) == 1 and results[0].content == "first result"
+
+
+@pytest.mark.parametrize("valid_winner", [False, True])
+def test_sequential_confirmation_team_background_missing_nonce_keeps_lifecycle(db, monkeypatch, valid_winner):
+    from concurrent.futures import ThreadPoolExecutor
+    from copy import deepcopy
+    from threading import Event
+
+    from agno.os import event_streams
+    from agno.os.event_streams.in_memory import InMemoryEventStream
+    from agno.os.managers import EventsBuffer, SSESubscriberManager
+    from agno.run.base import RunStatus
+    from agno.tools import tool
+
+    entered, release, parked = Event(), Event(), Event()
+    transitions = []
+
+    class ObservedStream(InMemoryEventStream):
+        async def register_run(self, run_id, status=RunStatus.pending):
+            transitions.append(("register", status))
+            await super().register_run(run_id, status)
+
+        async def reopen_run(self, run_id, include_error=False, floor=None):
+            transitions.append(("reopen", None))
+            return await super().reopen_run(run_id, include_error, floor)
+
+        async def complete_run(self, run_id, status, generation=None):
+            transitions.append(("complete", status))
+            await super().complete_run(run_id, status, generation)
+            if status == RunStatus.paused:
+                parked.set()
+
+    buffer = EventsBuffer()
+    monkeypatch.setattr(event_streams, "_event_stream", ObservedStream(buffer, SSESubscriberManager()))
+    calls = []
+    os, member, model, base = confirmation_app(db, calls, ("first", "second"), True)
+    os.manager.stream_member_events = False
+
+    @tool(requires_confirmation=True)
+    async def first() -> str:
+        entered.set()
+        assert await asyncio.to_thread(release.wait, 30), "Test did not release the confirmed tool"
+        calls.append("first")
+        return "first result"
+
+    member.tools = [first, *[function for function in member.tools if function.name != "first"]]
+    with TestClient(os.get_app()) as client, ThreadPoolExecutor(max_workers=1) as pool:
+        paused = confirmation_payload(
+            client.post(base, data={"message": "Act", "stream": "true", "background": "true"}), True
+        )
+        assert parked.wait(10), "Initial pause did not settle"
+        run_id = paused["run_id"]
+        continuation = base + "/" + run_id + "/continue"
+        data = {"session_id": paused["session_id"], "stream": "true", "background": "true", "stream_events": "false"}
+        try:
+            if valid_winner:
+                winner = pool.submit(
+                    client.post, continuation, data={**data, **confirmation_decision(paused, True, True)}
+                )
+                assert entered.wait(10), "Valid confirmation did not start"
+            before = {r.run_id: r.status for r in db.get_runs()}
+            assert buffer.get_run_status(run_id) == (RunStatus.running if valid_winner else RunStatus.paused)
+            transitions.clear()
+            bad = deepcopy(paused["requirements"])
+            bad[0]["confirmation"] = bad[0]["tool_execution"]["confirmed"] = True
+            bad[0]["tool_execution"].pop("confirmation_id")
+            cursor = buffer.get_last_index(run_id)
+            refused = client.post(continuation, data={**data, "requirements": json.dumps(bad)})
+            assert refused.status_code == 200, refused.text
+            errors = [json.loads(line[6:]) for line in refused.text.splitlines() if line.startswith("data: ")]
+            assert any(e.get("event") in {"RunError", "TeamRunError"} for e in errors)
+            assert calls == [] and model.calls == 1
+            assert {r.run_id: r.status for r in db.get_runs()} == before
+            if not valid_winner:
+                assert set(before.values()) == {RunStatus.paused}
+            assert buffer.get_run_status(run_id) == (RunStatus.running if valid_winner else RunStatus.paused)
+            assert transitions == []
+            assert buffer.get_last_index(run_id) == cursor
+        finally:
+            release.set()
+        if valid_winner:
+            next_card = confirmation_payload(winner.result(timeout=10), True)
+            assert next_card["requirements"][0]["tool_execution"]["tool_name"] == "second"
+            assert calls == ["first"] and model.calls == 1

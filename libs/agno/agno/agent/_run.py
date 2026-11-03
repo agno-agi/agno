@@ -4531,8 +4531,9 @@ async def _acontinue_run_background_stream(
     # below still receives the caller's run_response untouched.
     persist_run = run_response or cast(Optional[RunOutput], agent_session.get_run(_run_id))
     # Leave ordered runs PAUSED until the executor atomically claims the decision.
-    ordered_confirmation = (
-        isinstance((persist_run.metadata or {}).get("ordered_confirmations"), dict) if persist_run else False
+    ordered_state = (persist_run.metadata or {}).get("ordered_confirmations") if persist_run else None
+    ordered_confirmation = bool(isinstance(ordered_state, dict) and ordered_state.get("active")) or any(
+        req.tool_execution and req.tool_execution.confirmation_id for req in requirements or []
     )
     if persist_run and not ordered_confirmation:
         persist_run.status = RunStatus.pending
@@ -4565,6 +4566,15 @@ async def _acontinue_run_background_stream(
         slot_held = False
         producer_terminal: Optional[RunStatus] = None
         ordered_started = False
+
+        async def on_confirmation_claim() -> None:
+            nonlocal ordered_started
+            if not ordered_started:
+                ordered_started = True
+                await amark_continue_stream_running(_run_id, component=agent, session_id=session_id, user_id=user_id)
+
+        if ordered_confirmation:
+            kwargs["_on_confirmation_claim"] = on_confirmation_claim
         try:
             await slot_cm.__aenter__()
             slot_held = True
@@ -4602,12 +4612,6 @@ async def _acontinue_run_background_stream(
             ):
                 if isinstance(event, RunOutput):
                     continue
-
-                if ordered_confirmation and not ordered_started and getattr(event, "event", None) != "RunError":
-                    ordered_started = True
-                    await amark_continue_stream_running(
-                        _run_id, component=agent, session_id=session_id, user_id=user_id
-                    )
 
                 # Buffer + publish to live tails (the event stream owns the index)
                 event_index: Optional[int] = None
@@ -5342,6 +5346,10 @@ async def _acontinue_run_stream(
     from agno.agent._telemetry import alog_agent_telemetry
     from agno.agent._tools import ahandle_tool_call_updates_stream, determine_tools_for_model
 
+    on_confirmation_claim = kwargs.pop("_on_confirmation_claim", None)
+    if not callable(on_confirmation_claim):
+        on_confirmation_claim = None
+
     log_debug(f"Agent Run Continue: {run_response.run_id if run_response else run_id}", center=True)  # type: ignore
 
     agent_session: Optional[AgentSession] = None
@@ -5557,7 +5565,7 @@ async def _acontinue_run_stream(
                     run_response=run_response,
                 )
 
-                await aclaim_confirmation(agent, run_response)
+                await aclaim_confirmation(agent, run_response, on_claim=on_confirmation_claim)
 
                 # Reset the run state
                 run_response.status = RunStatus.running
