@@ -677,24 +677,47 @@ def guard_task_execution(
             provider: Any, component: Any, session: str, token: str, expected: Any = None, parents: Any = ()
         ) -> Any:
             descriptor = task_execution_store(component)
-            ids = await provider.aacquire(
-                session,
-                token,
-                expected_task_ids=expected if expected is not None else _task_execution_ids.get().get(session),
-                execution_store=descriptor,
+
+            def track(cleanup: Any) -> Any:
+                task = asyncio.create_task(cleanup)
+                provider._cleanups.add(task)
+                task.add_done_callback(provider._cleanups.discard)
+                return task
+
+            async def release(owned: Any) -> None:
+                for owner, owner_session in owned:
+                    try:
+                        await owner.arelease(owner_session, token)
+                    except Exception as exc:
+                        log_warning(f"Company execution claim release failed: {exc}")
+
+            async def acquire(owner: Any, owner_session: str, expected_ids: Any) -> Any:
+                pending = asyncio.create_task(
+                    owner.aacquire(owner_session, token, expected_task_ids=expected_ids, execution_store=descriptor)
+                )
+                try:
+                    return await asyncio.shield(pending)
+                except asyncio.CancelledError:
+
+                    async def settle() -> None:
+                        await asyncio.gather(pending, return_exceptions=True)
+                        await release([(owner, owner_session)])
+
+                    await asyncio.shield(track(settle()))
+                    raise
+
+            ids = await acquire(
+                provider, session, expected if expected is not None else _task_execution_ids.get().get(session)
             )
             owners = [(provider, session, tuple(ids))] if ids else []
             try:
                 for owner, parent_session, parent_ids in parents:
                     if owner is provider and parent_session == session:
                         continue
-                    await owner.aacquire(
-                        parent_session, token, expected_task_ids=parent_ids, execution_store=descriptor
-                    )
+                    await acquire(owner, parent_session, parent_ids)
                     owners.append((owner, parent_session, parent_ids))
-            except ValueError:
-                for owner, owner_session, _ in owners:
-                    await owner.arelease(owner_session, token)
+            except (ValueError, asyncio.CancelledError):
+                await asyncio.shield(track(release([(owner, owner_session) for owner, owner_session, _ in owners])))
                 raise
             claim = {
                 "provider": provider,

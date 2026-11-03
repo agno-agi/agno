@@ -752,6 +752,137 @@ async def test_task_execution_provider_shutdown_drains_owned_write(tmp_path, syn
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("repeat_cancel", [False, True])
+async def test_cancel_during_claim_acquisition_releases_committed_claim(tmp_path, repeat_cancel):
+    from threading import Event
+
+    from agno.company.manager import AsyncCompanyManager
+    from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS
+    from agno.db.sqlite import AsyncSqliteDb
+
+    db = AsyncSqliteDb(db_file=str(tmp_path / "cancel-acquire.db"))
+    manager = AsyncCompanyManager(db)
+    product = await manager.create(name="Cancelled acquisition")
+    project = await manager.create_project(product_id=product["id"], name="Draft")
+    task = await manager.create_task(product_id=product["id"], project_id=project["id"], title="Work")
+    provider = concurrency._TaskExecutionProvider(db)
+    await provider.ainitialize()
+    entered, finish, committed = Event(), Event(), Event()
+    original = provider._owned_db.acquire_task_execution
+
+    async def delayed_acquire(*args, **kwargs):
+        entered.set()
+        await asyncio.to_thread(finish.wait)
+        result = await original(*args, **kwargs)
+        committed.set()
+        return result
+
+    provider._owned_db.acquire_task_execution = delayed_acquire
+
+    class Runner:
+        def __init__(self, run_db):
+            self.db = run_db
+
+        @concurrency.guard_task_execution()
+        async def arun(self, session_id):
+            return "finished"
+
+    try:
+        with concurrency.task_execution_scope(provider):
+            run = asyncio.create_task(Runner(db).arun(task["session_id"]))
+            assert await asyncio.to_thread(entered.wait, 3)
+            run.cancel()
+            await asyncio.sleep(0)
+            if repeat_cancel:
+                run.cancel()
+                await asyncio.sleep(0)
+            finish.set()
+            with pytest.raises(asyncio.CancelledError):
+                await run
+            assert await asyncio.to_thread(committed.wait, 3)
+            if not repeat_cancel:
+                assert not (await db.get_task(task["id"]))["metadata"].get(TASK_EXECUTION_CLAIMS)
+            await provider.aclose()
+            assert not (await db.get_task(task["id"]))["metadata"].get(TASK_EXECUTION_CLAIMS)
+    finally:
+        finish.set()
+        await provider.aclose()
+        await db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("repeat_cancel", [False, True])
+async def test_cancel_during_parent_claim_acquisition_releases_both_claims(tmp_path, repeat_cancel):
+    from threading import Event
+
+    from agno.company.manager import AsyncCompanyManager
+    from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS
+    from agno.db.sqlite import AsyncSqliteDb
+
+    db = AsyncSqliteDb(db_file=str(tmp_path / "cancel-parent-acquire.db"))
+    manager = AsyncCompanyManager(db)
+    product = await manager.create(name="Cancelled parent acquisition")
+    project = await manager.create_project(product_id=product["id"], name="Draft")
+    parent = await manager.create_task(product_id=product["id"], project_id=project["id"], title="Parent")
+    child = await manager.create_task(product_id=product["id"], project_id=project["id"], title="Child")
+    provider = concurrency._TaskExecutionProvider(db)
+    await provider.ainitialize()
+    entered, finish, committed = Event(), Event(), Event()
+    original = provider._owned_db.acquire_task_execution
+    parent_acquisitions = 0
+
+    async def delayed_parent_acquire(session_id, *args, **kwargs):
+        nonlocal parent_acquisitions
+        if session_id == parent["session_id"]:
+            parent_acquisitions += 1
+            if parent_acquisitions == 2:
+                entered.set()
+                await asyncio.to_thread(finish.wait)
+                result = await original(session_id, *args, **kwargs)
+                committed.set()
+                return result
+        return await original(session_id, *args, **kwargs)
+
+    provider._owned_db.acquire_task_execution = delayed_parent_acquire
+
+    class Runner:
+        def __init__(self, run_db):
+            self.db = run_db
+
+        @concurrency.guard_task_execution()
+        async def root(self, session_id):
+            return await self.member(child["session_id"])
+
+        @concurrency.guard_task_execution()
+        async def member(self, session_id):
+            return "finished"
+
+    try:
+        with concurrency.task_execution_scope(provider):
+            run = asyncio.create_task(Runner(db).root(parent["session_id"]))
+            assert await asyncio.to_thread(entered.wait, 3)
+            run.cancel()
+            await asyncio.sleep(0)
+            if repeat_cancel:
+                run.cancel()
+                await asyncio.sleep(0)
+            finish.set()
+            with pytest.raises(asyncio.CancelledError):
+                await run
+            assert await asyncio.to_thread(committed.wait, 3)
+            if not repeat_cancel:
+                for task in (parent, child):
+                    assert not (await db.get_task(task["id"]))["metadata"].get(TASK_EXECUTION_CLAIMS)
+            await provider.aclose()
+            for task in (parent, child):
+                assert not (await db.get_task(task["id"]))["metadata"].get(TASK_EXECUTION_CLAIMS)
+    finally:
+        finish.set()
+        await provider.aclose()
+        await db.close()
+
+
+@pytest.mark.asyncio
 async def test_task_execution_provider_failed_init_disposes_owned_loop(tmp_path):
     from agno.db.sqlite import AsyncSqliteDb
 
