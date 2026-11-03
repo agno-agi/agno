@@ -234,9 +234,10 @@ class FirestoreDb(BaseDb):
         try:
             collection_ref = self.db_client.collection(collection_name)
 
+            if not create_collection_if_not_found:
+                return collection_ref if self.table_exists(collection_name) else None
+
             if not hasattr(self, f"_{collection_name}_initialized"):
-                if not create_collection_if_not_found:
-                    return collection_ref if self.table_exists(collection_name) else None
                 create_collection_indexes(self.db_client, collection_name, collection_type)
                 setattr(self, f"_{collection_name}_initialized", True)
 
