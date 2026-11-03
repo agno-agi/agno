@@ -39,7 +39,10 @@ class RecursiveChunking(ChunkingStrategy):
             if end < len(content):
                 for sep in ["\n", "."]:
                     last_sep = content[start:end].rfind(sep)
-                    if last_sep != -1:
+                    # Only split at a separator past the overlap tail. A cut inside
+                    # the tail reuses the separator that ended the previous chunk,
+                    # so the next chunk starts inside the previous one (issue #11431).
+                    if last_sep != -1 and last_sep + 1 > self.overlap:
                         end = start + last_sep + 1
                         break
 
