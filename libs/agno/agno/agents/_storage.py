@@ -350,6 +350,11 @@ def bind_loaded_agent(
     return agent
 
 
+def _with_component_id(config: Any, id: str) -> Any:
+    """The config with the component id, so defaults derived from the id at construction are stable."""
+    return {**config, "id": id} if isinstance(config, dict) else config
+
+
 def external_agent_from_config(
     config: Dict[str, Any],
     id: str,
@@ -360,7 +365,7 @@ def external_agent_from_config(
     """Rebuild a stored external agent the way the db loaders rebuild an Agent."""
     from agno.agents.base import BaseExternalAgent
 
-    agent = BaseExternalAgent.from_dict(config, registry=registry, strict=strict)
+    agent = BaseExternalAgent.from_dict(_with_component_id(config, id), registry=registry, strict=strict)
     return bind_loaded_agent(agent, id, db, config, strict)
 
 
@@ -450,7 +455,7 @@ def load(
     if config is None:
         return None
 
-    agent = cls.from_dict(config, registry=registry, strict=strict)
+    agent = cls.from_dict(_with_component_id(config, id), registry=registry, strict=strict)
     return bind_loaded_agent(agent, id, db, config, strict)
 
 

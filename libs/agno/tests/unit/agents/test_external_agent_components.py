@@ -477,6 +477,28 @@ class TestPersistence:
         assert by_id["coder"]._version == 1
         assert by_id["coder"]._stage == "published"
 
+    @pytest.mark.parametrize(
+        "config, expected_key",
+        [
+            ({"sdk": "claude-agent-sdk"}, "coder"),
+            ({"sdk": "claude-agent-sdk", "name": "My Coder"}, "coder"),
+            ({"sdk": "claude-agent-sdk", "project_key": "explicit"}, "explicit"),
+        ],
+    )
+    def test_project_key_is_stable_across_loads(self, db, registry, config, expected_key):
+        db.upsert_component(component_id="coder", component_type=ComponentType.AGENT, name="coder")
+        db.upsert_config(component_id="coder", config=config, stage="published")
+
+        loads = [
+            get_agent_by_id(db=db, id="coder", registry=registry),
+            get_agent_by_id(db=db, id="coder", registry=registry),
+            ClaudeAgent.load("coder", db=db, registry=registry),
+            ClaudeAgent.load("coder", db=db, registry=registry),
+        ]
+
+        assert [agent.project_key for agent in loads] == [expected_key] * 4
+        assert all(agent.to_dict() == loads[0].to_dict() for agent in loads)
+
     def test_save_refuses_to_change_what_an_id_loads_as(self, db):
         ClaudeAgent(id="coder").save(db=db)
 
