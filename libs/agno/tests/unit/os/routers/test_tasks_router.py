@@ -335,6 +335,92 @@ def test_bulk_permanent_delete_reports_each_result(client):
     assert get_default_scope_mappings(company=True)["DELETE /company/tasks"] == ["tasks:delete"]
 
 
+def test_bulk_permanent_delete_reports_later_permission_failure(client, monkeypatch):
+    from fastapi import HTTPException
+
+    from agno.os.routers.company import tasks as tasks_router
+
+    safe, refused = create(client), create(client)
+    original = tasks_router._verify_task_purge
+
+    async def verify(os, rows, queue_worker):
+        if rows[0]["id"] == refused["id"]:
+            raise HTTPException(403, "Task deletion refused")
+        return await original(os, rows, queue_worker)
+
+    monkeypatch.setattr(tasks_router, "_verify_task_purge", verify)
+    response = client.request("DELETE", "/company/tasks", json={"task_ids": [safe["id"], refused["id"]]})
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "deleted": [safe["id"]],
+        "failed": [{"task_id": refused["id"], "status_code": 403, "detail": "Task deletion refused"}],
+    }
+    assert client.get(f"/company/tasks/{safe['id']}?include_deleted=true").status_code == 404
+    assert client.get(f"/company/tasks/{refused['id']}").status_code == 200
+
+
+def test_bulk_permanent_delete_reports_later_unmapped_failure(client, monkeypatch):
+    safe, refused = create(client), create(client)
+    db = client.app.state.task_test_db
+    original = db.purge_task
+
+    if isinstance(db, AsyncSqliteDb):
+
+        async def purge(task_id, *args, **kwargs):
+            if task_id == refused["id"]:
+                raise RuntimeError("simulated storage failure")
+            return await original(task_id, *args, **kwargs)
+
+    else:
+
+        def purge(task_id, *args, **kwargs):
+            if task_id == refused["id"]:
+                raise RuntimeError("simulated storage failure")
+            return original(task_id, *args, **kwargs)
+
+    monkeypatch.setattr(db, "purge_task", purge)
+    response = client.request("DELETE", "/company/tasks", json={"task_ids": [safe["id"], refused["id"]]})
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "deleted": [safe["id"]],
+        "failed": [{"task_id": refused["id"], "status_code": 500, "detail": "Task deletion failed"}],
+    }
+    assert client.get(f"/company/tasks/{safe['id']}?include_deleted=true").status_code == 404
+    assert client.get(f"/company/tasks/{refused['id']}").status_code == 200
+
+
+@pytest.mark.parametrize("error_type", [RuntimeError, ValueError, PermissionError])
+def test_bulk_permanent_delete_reports_post_commit_failure_as_deleted(client, monkeypatch, error_type):
+    safe, committed = create(client), create(client)
+    db = client.app.state.task_test_db
+    original = db.purge_task
+
+    if isinstance(db, AsyncSqliteDb):
+
+        async def purge(task_id, *args, **kwargs):
+            result = await original(task_id, *args, **kwargs)
+            if task_id == committed["id"]:
+                raise error_type("response failed after commit")
+            return result
+
+    else:
+
+        def purge(task_id, *args, **kwargs):
+            result = original(task_id, *args, **kwargs)
+            if task_id == committed["id"]:
+                raise error_type("response failed after commit")
+            return result
+
+    monkeypatch.setattr(db, "purge_task", purge)
+    response = client.request("DELETE", "/company/tasks", json={"task_ids": [safe["id"], committed["id"]]})
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"deleted": [safe["id"], committed["id"]], "failed": []}
+    assert client.get(f"/company/tasks/{committed['id']}?include_deleted=true").status_code == 404
+
+
 @pytest.mark.parametrize("body", [{"task_ids": []}, {"task_ids": [""]}, {"task_ids": ["other"], "extra": True}])
 def test_bulk_permanent_delete_rejects_invalid_body_without_deleting(client, body):
     task = create(client)

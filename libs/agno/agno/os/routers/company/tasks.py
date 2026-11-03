@@ -188,7 +188,17 @@ def get_tasks_router(
             if isinstance(exc, HTTPException):
                 raise
             raise HTTPException(503, "Cannot verify the records for permanent deletion") from exc
-        if not await _call("purge_task", task_id, user_id=None, expected_tasks=tasks):
+        try:
+            purged = await _call("purge_task", task_id, user_id=None, expected_tasks=tasks)
+        except Exception:
+            try:
+                remaining = await _call("get_task", task_id, user_id=None, include_deleted=True)
+            except Exception as exc:
+                raise HTTPException(503, "Deletion outcome unverified") from exc
+            if remaining is None:
+                return
+            raise
+        if not purged:
             raise HTTPException(404, "Task not found")
 
     @router.delete("/tasks", response_model=DeleteTasksResponse)
@@ -202,9 +212,12 @@ def get_tasks_router(
             try:
                 await _purge_task(task_id, request)
             except HTTPException as exc:
-                if exc.status_code not in {404, 409, 503}:
-                    raise
                 failed.append(TaskDeleteFailure(task_id=task_id, status_code=exc.status_code, detail=str(exc.detail)))
+            except Exception:
+                from agno.utils.log import log_exception
+
+                log_exception("Task deletion failed")
+                failed.append(TaskDeleteFailure(task_id=task_id, status_code=500, detail="Task deletion failed"))
             else:
                 deleted.append(task_id)
         return DeleteTasksResponse(deleted=deleted, failed=failed)
