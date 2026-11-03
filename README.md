@@ -16,8 +16,6 @@
 
 Agno is a self-managing agent platform. Build agents for your company, product, or customers. Run them as durable services on AgentOS. Put them to work automating company operations.
 
-Built-in managers help you inspect your platform, organize work, and run agents within configured permissions and human approval boundaries.
-
 - **Build** agents with the Agno, Claude Agent, or Codex SDKs. Combine agents into teams and workflows.
 - **Run** agents as durable services with built-in API and MCP. AgentOS handles authentication, role-based access, resume/replay, human approvals, scheduling, and durable execution.
 - **Automate** company operations with Company OS. Give agents responsibilities, organize work into projects and tasks, and configure recurring routines. People set direction and review results; agents own and execute.
