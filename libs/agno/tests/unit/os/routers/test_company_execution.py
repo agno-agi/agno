@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from agno.agent import Agent
 from agno.company import CompanyManager
 from agno.company.execution import _ExecutorAuthorization
+from agno.db.base import ComponentType
 from agno.db.sqlite import SqliteDb
 from agno.job_queue import QueueConfig
 from agno.job_queue.store import InMemoryQueueStore
@@ -113,6 +114,43 @@ def test_missing_executor_at_acceptance_and_registry_only_mount(system):
     )
     assert denied.status_code == 409
     assert client.get(f"/company/tasks/{other['id']}", headers=headers()).json()["status"] == "backlog"
+
+
+def test_published_studio_components_execute_tasks(system):
+    client, db, os, queue = system
+    for agent_id, stage in (("studio-writer", "published"), ("studio-draft", "draft")):
+        db.create_component_with_config(
+            component_id=agent_id,
+            component_type=ComponentType.AGENT,
+            name=agent_id,
+            config={"name": agent_id},
+            stage=stage,
+        )
+    _, task = accepted(client)
+
+    def accept(executor_id):
+        created = client.post(
+            "/company/tasks",
+            json={"product_id": task["product_id"], "project_id": task["project_id"], "title": executor_id},
+            headers=headers(),
+        ).json()
+        path = f"/company/tasks/{created['id']}"
+        response = client.post(
+            path + "/transitions",
+            json={"target": "ready", "reason": "Approved", "executor_type": "agent", "executor_id": executor_id},
+            headers=headers(scopes=[*SCOPES, f"agents:{executor_id}:run"]),
+        )
+        return path, response
+
+    path, response = accept("studio-writer")
+    assert response.status_code == 200, response.text
+    started = client.post(path + "/runs", headers=headers(scopes=[*SCOPES, "agents:studio-writer:run"]))
+    assert started.status_code == 202, started.text
+
+    # A draft-only Studio agent isn't runnable anywhere, so it can't take work either.
+    _, response = accept("studio-draft")
+    assert response.status_code == 409
+    assert "missing from the registry" in response.text
 
 
 @pytest.mark.parametrize("revision", [False, True])
