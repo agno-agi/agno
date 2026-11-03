@@ -4530,8 +4530,7 @@ async def _acontinue_run_background_stream(
     # loaded run is used ONLY for the status persists - the continue dispatch
     # below still receives the caller's run_response untouched.
     persist_run = run_response or cast(Optional[RunOutput], agent_session.get_run(_run_id))
-    # Ordered confirmations must remain PAUSED until the executor claims the
-    # decision atomically. The background wrapper does not own that transition.
+    # Leave ordered runs PAUSED until the executor atomically claims the decision.
     ordered_confirmation = (
         isinstance((persist_run.metadata or {}).get("ordered_confirmations"), dict) if persist_run else False
     )
@@ -4550,7 +4549,6 @@ async def _acontinue_run_background_stream(
             # Fail-open: a Redis blip must not strand an accepted run
             await get_event_stream().register_run(_run_id, RunStatus.pending)
 
-    if not ordered_confirmation:
         log_info(f"Background continue-run stream {_run_id} persisted with PENDING status")
 
     # 2. Create queue for forwarding SSE strings to the caller

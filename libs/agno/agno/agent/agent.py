@@ -194,15 +194,13 @@ class Agent:
     # Can also be a callable factory that returns a list of tools at runtime.
     tools: Optional[Union[List[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]] = None
 
-    # Maximum number of tool calls allowed.
-    # Present confirmation calls from one batch sequentially. Rejection cancels
-    # the remaining confirmations; ordinary calls retain their batch semantics.
-    # Requires a database with atomic run updates for stale/concurrent decisions.
+    # Present one confirmation at a time; rejection cancels the remaining batch.
+    # Requires atomic run updates. Ordinary calls keep their batch semantics.
     sequential_tool_confirmations: bool = False
-    # Optional per-pause policy: receive confirmation snapshots and RunContext,
-    # return eligible original tool-call IDs in order. Reattach like other
-    # callable hooks when rebuilding an Agent; the pending queue itself persists.
+    # Select eligible original call IDs from confirmation snapshots and RunContext.
+    # Reattach this callable when rebuilding the Agent; the pending queue persists.
     confirmation_policy: Optional[Callable] = None
+    # Maximum number of tool calls allowed.
     tool_call_limit: Optional[int] = None
     # Controls which (if any) tool is called by the model.
     # "none" means the model will not call a tool and instead generates a message.

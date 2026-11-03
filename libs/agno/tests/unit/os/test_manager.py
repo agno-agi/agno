@@ -2176,8 +2176,6 @@ def confirmation_app(db, calls, order, delegated=False, opted_in=True, store_too
         member = Agent(id="confirmation-batch", db=db, model=model, tools=[first, second, ordinary], telemetry=False)
         os = AgentOS(db=db, agents=[member], telemetry=False)
         base = "/agents/confirmation-batch/runs"
-    # Set the declared public option after construction so the pre-feature red
-    # exercises batching rather than stopping at an unknown constructor kwarg.
     member.sequential_tool_confirmations = opted_in
     member.store_tool_messages = store_tool_messages
     return os, member, model, base
@@ -2206,9 +2204,8 @@ def confirmation_decision(payload, confirmed, delegated=False):
     return {"requirements": json.dumps([req])} if delegated else {"tools": json.dumps([req["tool_execution"]])}
 
 
-@pytest.mark.parametrize("background", [False, True])
+@pytest.mark.parametrize("stream,background", [(False, False), (True, False), (True, True)])
 @pytest.mark.parametrize("delegated", [False, True])
-@pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("database", [SqliteDb, AsyncSqliteDb])
 @pytest.mark.parametrize("order", [("first", "second"), ("second", "first")])
 @pytest.mark.parametrize("decision", ["confirm", "reject_first", "reject_second"])
@@ -2226,8 +2223,7 @@ def test_sequential_confirmation_http(tmp_path, delegated, stream, database, ord
         assert calls == [] and model.calls == 1
         first_decision = confirmation_decision(initial, decision != "reject_first", delegated)
 
-    # A rebuilt app, Agent and model must use stored pending calls, even when
-    # the new model has never seen the original request.
+    # Rebuild the app to verify continuation uses persisted pending calls.
     os, member, resumed_model, base = confirmation_app(
         database(db_file=db_file), calls, order, delegated, store_tool_messages=False
     )

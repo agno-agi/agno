@@ -8798,7 +8798,6 @@ async def _acontinue_run_background_stream(
             # Fail-open: a Redis blip must not strand an accepted run.
             await get_event_stream().register_run(_run_id, RunStatus.pending)
 
-    if take_over_in_place and not ordered_confirmation:
         log_info(f"Background continue-run stream {_run_id} persisted with PENDING status")
 
     # 2. Create queue for forwarding SSE strings to the caller
