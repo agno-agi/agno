@@ -795,9 +795,6 @@ class RunSchema(BaseModel):
     regenerated_from: Optional[str] = Field(
         None, description="If this run was produced via regenerate=true, the source run's ID"
     )
-    called_from_run_id: Optional[str] = Field(
-        None, description="If this run was started inside a tool call, the ID of the run that made the call"
-    )
     last_checkpoint_at_message_index: Optional[int] = Field(
         None, description="Message index of the most recent mid-run checkpoint (checkpoint='tool-batch' runs)"
     )
@@ -848,7 +845,6 @@ class RunSchema(BaseModel):
             forked_from_message_index=run_dict.get("forked_from_message_index"),
             forked_from_session_id=run_dict.get("forked_from_session_id"),
             regenerated_from=run_dict.get("regenerated_from"),
-            called_from_run_id=run_dict.get("called_from_run_id"),
             last_checkpoint_at_message_index=run_dict.get("last_checkpoint_at_message_index"),
         )
 
@@ -947,9 +943,6 @@ class TeamRunSchema(BaseModel):
     regenerated_from: Optional[str] = Field(
         None, description="If this team run was produced via regenerate=true, the source run's ID"
     )
-    called_from_run_id: Optional[str] = Field(
-        None, description="If this team run was started inside a tool call, the ID of the run that made the call"
-    )
     last_checkpoint_at_message_index: Optional[int] = Field(
         None, description="Message index of the most recent mid-run checkpoint (checkpoint='tool-batch' runs)"
     )
@@ -990,7 +983,6 @@ class TeamRunSchema(BaseModel):
             forked_from_message_index=run_dict.get("forked_from_message_index"),
             forked_from_session_id=run_dict.get("forked_from_session_id"),
             regenerated_from=run_dict.get("regenerated_from"),
-            called_from_run_id=run_dict.get("called_from_run_id"),
             last_checkpoint_at_message_index=run_dict.get("last_checkpoint_at_message_index"),
         )
 
@@ -1001,9 +993,6 @@ class WorkflowRunSchema(BaseModel):
     run_input: Optional[str] = Field(None, description="Input provided to the workflow")
     events: Optional[List[dict]] = Field(None, description="Events generated during the workflow")
     workflow_id: Optional[str] = Field(None, description="Workflow ID that was executed")
-    called_from_run_id: Optional[str] = Field(
-        None, description="If this workflow run was started inside a tool call, the ID of the run that made the call"
-    )
     user_id: Optional[str] = Field(None, description="User ID associated with the run")
     content: Optional[Union[str, dict]] = Field(None, description="Output content from the workflow")
     content_type: Optional[str] = Field(None, description="Type of content returned")
@@ -1040,7 +1029,6 @@ class WorkflowRunSchema(BaseModel):
             run_input=run_input,
             events=run_response.get("events", []),
             workflow_id=run_response.get("workflow_id", ""),
-            called_from_run_id=run_response.get("called_from_run_id"),
             user_id=run_response.get("user_id", ""),
             content=run_response.get("content", ""),
             content_type=run_response.get("content_type", ""),

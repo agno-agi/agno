@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
 from agno.agent._init import _initialize_session_state
 from agno.agent._run_options import resolve_run_options
-from agno.agent._session import initialize_session, saves_its_runs, update_session_metrics
+from agno.agent._session import initialize_session, update_session_metrics
 from agno.agent._tools import result_store_kwargs
 from agno.exceptions import (
     InputCheckError,
@@ -125,7 +125,6 @@ from agno.utils.log import (
     log_info,
     log_warning,
 )
-from agno.utils.nested_runs import register_nested_run
 from agno.utils.response import get_paused_content
 
 # Cancel raises immediately on every event. Only terminal events bypass so the
@@ -1473,9 +1472,6 @@ def run_dispatch(
     run_response.metrics = RunMetrics()
     run_response.metrics.start_timer()
 
-    # Link a run started inside a tool call to that run; a team's member call runs apart from it
-    nested_runs = register_nested_run(run_response, stored=saves_its_runs(agent))
-
     if opts.stream:
         response_iterator = _run_stream(
             agent,
@@ -1494,24 +1490,23 @@ def run_dispatch(
             pre_session=agent_session,
             **kwargs,
         )
-        return nested_runs.iterate(response_iterator) if nested_runs is not None else response_iterator
+        return response_iterator
     else:
-        with nested_runs.collect() if nested_runs is not None else contextlib.nullcontext():
-            response = _run(
-                agent,
-                run_response=run_response,
-                run_context=run_context,
-                session_id=session_id,
-                user_id=user_id,
-                add_history_to_context=opts.add_history_to_context,
-                add_dependencies_to_context=opts.add_dependencies_to_context,
-                add_session_state_to_context=opts.add_session_state_to_context,
-                response_format=response_format,
-                debug_mode=debug_mode,
-                background_tasks=background_tasks,
-                pre_session=agent_session,
-                **kwargs,
-            )
+        response = _run(
+            agent,
+            run_response=run_response,
+            run_context=run_context,
+            session_id=session_id,
+            user_id=user_id,
+            add_history_to_context=opts.add_history_to_context,
+            add_dependencies_to_context=opts.add_dependencies_to_context,
+            add_session_state_to_context=opts.add_session_state_to_context,
+            response_format=response_format,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            pre_session=agent_session,
+            **kwargs,
+        )
         return response
 
 
@@ -2869,9 +2864,6 @@ def arun_dispatch(  # type: ignore
     run_response.metrics = RunMetrics()
     run_response.metrics.start_timer()
 
-    # Link a run started inside a tool call to that run; a team's member call runs apart from it
-    nested_runs = register_nested_run(run_response, stored=saves_its_runs(agent))
-
     # Background execution
     if background:
         if not agent.db:
@@ -2880,7 +2872,7 @@ def arun_dispatch(  # type: ignore
             )
         if opts.stream:
             # background=True, stream=True: run in background task, stream events via queue
-            background_stream = _arun_background_stream(
+            return _arun_background_stream(  # type: ignore[return-value]
                 agent,
                 run_response=run_response,
                 run_context=run_context,
@@ -2896,8 +2888,7 @@ def arun_dispatch(  # type: ignore
                 background_tasks=background_tasks,
                 **kwargs,
             )
-            return nested_runs.aiterate(background_stream) if nested_runs is not None else background_stream  # type: ignore[arg-type, return-value]
-        response = _arun_background(
+        return _arun_background(  # type: ignore[return-value]
             agent,
             run_response=run_response,
             run_context=run_context,
@@ -2911,11 +2902,10 @@ def arun_dispatch(  # type: ignore
             background_tasks=background_tasks,
             **kwargs,
         )
-        return nested_runs.acollect(response) if nested_runs is not None else response  # type: ignore[return-value]
 
     # Pass the new run_response to _arun
     if opts.stream:
-        response_stream = _arun_stream(
+        return _arun_stream(  # type: ignore[return-value]
             agent,
             run_response=run_response,
             run_context=run_context,
@@ -2932,9 +2922,8 @@ def arun_dispatch(  # type: ignore
             pre_session=_pre_session,
             **kwargs,
         )
-        return nested_runs.aiterate(response_stream) if nested_runs is not None else response_stream  # type: ignore[arg-type, return-value]
     else:
-        response = _arun(
+        return _arun(  # type: ignore[return-value]
             agent,
             run_response=run_response,
             run_context=run_context,
@@ -2949,7 +2938,6 @@ def arun_dispatch(  # type: ignore
             pre_session=_pre_session,
             **kwargs,
         )
-        return nested_runs.acollect(response) if nested_runs is not None else response  # type: ignore[return-value]
 
 
 def _truncate_run_to_checkpoint(run_response: RunOutput, message_index: int) -> None:

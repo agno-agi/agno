@@ -822,10 +822,6 @@ class TeamRunOutput:
     # run was regenerated from.
     regenerated_from: Optional[str] = None
 
-    # Tool-call lineage: the run whose tool call started this team run. Distinct from parent_run_id; see the
-    # corresponding field on RunOutput.
-    called_from_run_id: Optional[str] = None
-
     # === FOREIGN KEY RELATIONSHIPS ===
     # These fields establish relationships to parent workflow/step structures
     # and should be treated as foreign keys for data integrity

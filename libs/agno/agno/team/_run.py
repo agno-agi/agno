@@ -133,7 +133,6 @@ from agno.utils.log import (
     log_info,
     log_warning,
 )
-from agno.utils.nested_runs import register_nested_run
 
 # Cancel raises immediately on every event. Only terminal events bypass so the
 # member's own cancel handler can yield them to the stream. RunError is excluded —
@@ -1931,7 +1930,6 @@ def run_dispatch(
     from agno.team._init import _has_async_db, _initialize_session, _initialize_session_state
     from agno.team._response import get_response_format
     from agno.team._run_options import resolve_run_options
-    from agno.team._session import saves_its_runs
     from agno.team._storage import _load_session_state, _read_or_create_session, _update_metadata
 
     if _has_async_db(team):
@@ -2079,14 +2077,12 @@ def run_dispatch(
         run_response.metrics = RunMetrics()
         run_response.metrics.start_timer()
 
-        # Link a run started inside a tool call to that run; a team's member call runs apart from it
-        nested_runs = register_nested_run(run_response, stored=saves_its_runs(team))
     except Exception:
         cleanup_run(run_id)
         raise
 
     if opts.stream:
-        response_stream = _run_stream(
+        return _run_stream(  # type: ignore[return-value]
             team,
             run_response=run_response,
             run_context=run_context,
@@ -2102,24 +2098,22 @@ def run_dispatch(
             background_tasks=background_tasks,
             **kwargs,
         )
-        return nested_runs.iterate(response_stream) if nested_runs is not None else response_stream  # type: ignore[arg-type, return-value]
 
     else:
-        with nested_runs.collect() if nested_runs is not None else contextlib.nullcontext():
-            response = _run(
-                team,
-                run_response=run_response,
-                run_context=run_context,
-                session=team_session,
-                user_id=user_id,
-                add_history_to_context=opts.add_history_to_context,
-                add_dependencies_to_context=opts.add_dependencies_to_context,
-                add_session_state_to_context=opts.add_session_state_to_context,
-                response_format=response_format,
-                debug_mode=debug_mode,
-                background_tasks=background_tasks,
-                **kwargs,
-            )
+        response = _run(
+            team,
+            run_response=run_response,
+            run_context=run_context,
+            session=team_session,
+            user_id=user_id,
+            add_history_to_context=opts.add_history_to_context,
+            add_dependencies_to_context=opts.add_dependencies_to_context,
+            add_session_state_to_context=opts.add_session_state_to_context,
+            response_format=response_format,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            **kwargs,
+        )
         return response
 
 
@@ -4170,7 +4164,6 @@ def arun_dispatch(  # type: ignore
     from agno.team._init import _initialize_session
     from agno.team._response import get_response_format
     from agno.team._run_options import resolve_run_options
-    from agno.team._session import saves_its_runs
 
     run_id = run_id or str(uuid4())
 
@@ -4282,9 +4275,6 @@ def arun_dispatch(  # type: ignore
     run_response.metrics = RunMetrics()
     run_response.metrics.start_timer()
 
-    # Link a run started inside a tool call to that run; a team's member call runs apart from it
-    nested_runs = register_nested_run(run_response, stored=saves_its_runs(team))
-
     # Background execution: return immediately with PENDING status
     if background:
         if not team.db:
@@ -4293,7 +4283,7 @@ def arun_dispatch(  # type: ignore
             )
         if opts.stream:
             # background=True, stream=True: run in background task, stream events via queue
-            background_stream = _arun_background_stream(
+            return _arun_background_stream(  # type: ignore[return-value]
                 team,
                 run_response=run_response,
                 run_context=run_context,
@@ -4309,8 +4299,7 @@ def arun_dispatch(  # type: ignore
                 background_tasks=background_tasks,
                 **kwargs,
             )
-            return nested_runs.aiterate(background_stream) if nested_runs is not None else background_stream  # type: ignore[arg-type, return-value]
-        response = _arun_background(
+        return _arun_background(  # type: ignore[return-value]
             team,
             run_response=run_response,
             run_context=run_context,
@@ -4324,10 +4313,9 @@ def arun_dispatch(  # type: ignore
             background_tasks=background_tasks,
             **kwargs,
         )
-        return nested_runs.acollect(response) if nested_runs is not None else response  # type: ignore[return-value]
 
     if opts.stream:
-        response_stream = _arun_stream(
+        return _arun_stream(  # type: ignore[return-value]
             team,
             run_response=run_response,
             run_context=run_context,
@@ -4343,9 +4331,8 @@ def arun_dispatch(  # type: ignore
             background_tasks=background_tasks,
             **kwargs,
         )
-        return nested_runs.aiterate(response_stream) if nested_runs is not None else response_stream  # type: ignore[arg-type, return-value]
     else:
-        response = _arun(
+        return _arun(  # type: ignore[return-value]
             team,
             run_response=run_response,
             run_context=run_context,
@@ -4359,7 +4346,6 @@ def arun_dispatch(  # type: ignore
             background_tasks=background_tasks,
             **kwargs,
         )
-        return nested_runs.acollect(response) if nested_runs is not None else response  # type: ignore[return-value]
 
 
 def _record_opted_out_media(
