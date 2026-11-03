@@ -2206,12 +2206,13 @@ def confirmation_decision(payload, confirmed, delegated=False):
     return {"requirements": json.dumps([req])} if delegated else {"tools": json.dumps([req["tool_execution"]])}
 
 
+@pytest.mark.parametrize("background", [False, True])
 @pytest.mark.parametrize("delegated", [False, True])
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("database", [SqliteDb, AsyncSqliteDb])
 @pytest.mark.parametrize("order", [("first", "second"), ("second", "first")])
 @pytest.mark.parametrize("decision", ["confirm", "reject_first", "reject_second"])
-def test_sequential_confirmation_http(tmp_path, delegated, stream, database, order, decision):
+def test_sequential_confirmation_http(tmp_path, delegated, stream, database, order, decision, background):
     calls = []
     db_file = str(tmp_path / "ordered.db")
     db = database(db_file=db_file)
@@ -2238,7 +2239,12 @@ def test_sequential_confirmation_http(tmp_path, delegated, stream, database, ord
         after_first = confirmation_payload(
             client.post(
                 continuation,
-                data={"session_id": initial["session_id"], "stream": str(stream).lower(), **first_decision},
+                data={
+                    "session_id": initial["session_id"],
+                    "stream": str(stream).lower(),
+                    "background": str(background and stream).lower(),
+                    **first_decision,
+                },
             ),
             stream,
         )
@@ -2261,6 +2267,7 @@ def test_sequential_confirmation_http(tmp_path, delegated, stream, database, ord
                     data={
                         "session_id": initial["session_id"],
                         "stream": str(stream).lower(),
+                        "background": str(background and stream).lower(),
                         **confirmation_decision(after_first, decision != "reject_second", delegated),
                     },
                 ),
@@ -2288,8 +2295,9 @@ def test_sequential_confirmation_mixed_batch_and_default(db, delegated, opted_in
         assert calls == ["ordinary"] and model.calls == 1
 
 
+@pytest.mark.parametrize("background", [False, True])
 @pytest.mark.parametrize("delegated", [False, True])
-def test_sequential_confirmation_concurrent_http(db, delegated):
+def test_sequential_confirmation_concurrent_http(db, delegated, background):
     from concurrent.futures import ThreadPoolExecutor
 
     calls = []
@@ -2297,11 +2305,33 @@ def test_sequential_confirmation_concurrent_http(db, delegated):
     with TestClient(os.get_app()) as client:
         paused = confirmation_payload(client.post(base, data={"message": "Act", "stream": "false"}), False)
         assert len(paused["requirements"]) == 1
-        data = {"session_id": paused["session_id"], "stream": "false", **confirmation_decision(paused, True, delegated)}
+        data = {
+            "session_id": paused["session_id"],
+            "stream": str(background).lower(),
+            "background": str(background).lower(),
+            **confirmation_decision(paused, True, delegated),
+        }
         path = base + "/" + paused["run_id"] + "/continue"
         with ThreadPoolExecutor(max_workers=2) as pool:
             responses = list(pool.map(lambda _: client.post(path, data=data), range(2)))
-        assert sorted(r.status_code for r in responses) == [200, 409], [r.text for r in responses]
+        if background:
+            events = [
+                [json.loads(line[6:]) for line in r.text.splitlines() if line.startswith("data: ")] for r in responses
+            ]
+            assert sum(any(e.get("event") in {"RunPaused", "TeamRunPaused"} for e in es) for es in events) == 1
+            assert (
+                sum(
+                    r.status_code == 409 or any(e.get("event") in {"RunError", "TeamRunError"} for e in es)
+                    for r, es in zip(responses, events)
+                )
+                == 1
+            )
+        else:
+            assert sorted(r.status_code for r in responses) == [200, 409], [r.text for r in responses]
+        stored = member.db.get_run(next(r.run_id for r in member.db.get_runs(agent_id=member.id) if r.tools))
+        assert str(stored.status.value) == "PAUSED"
+        assert len(stored.active_requirements) == 1
+        assert stored.active_requirements[0].tool_execution.tool_name == "second"
         assert calls == ["first"] and model.calls == 1
 
 
@@ -2485,3 +2515,46 @@ def test_sequential_confirmation_policy_excluded_approval_has_no_pending_record(
         assert total == (1 if selection == "second" else 0)
         assert all(r["tool_name"] == "second" for r in records)
         assert calls == [] and model.calls == 1
+
+
+@pytest.mark.parametrize("delegated", [False, True])
+def test_sequential_confirmation_background_reopens_before_execution(db, monkeypatch, delegated):
+    from agno.os import event_streams
+    from agno.os.event_streams.in_memory import InMemoryEventStream
+    from agno.os.managers import EventsBuffer, SSESubscriberManager
+    from agno.run.base import RunStatus
+
+    buffer = EventsBuffer()
+    monkeypatch.setattr(event_streams, "_event_stream", InMemoryEventStream(buffer, SSESubscriberManager()))
+    parent = []
+    observed = []
+
+    class Calls(list):
+        def append(self, value):
+            observed.append(buffer.run_metadata[parent[0]]["status"])
+            super().append(value)
+
+    calls = Calls()
+    os, member, model, base = confirmation_app(db, calls, ("first", "second"), delegated)
+    with TestClient(os.get_app()) as client:
+        paused = confirmation_payload(
+            client.post(base, data={"message": "Act", "stream": "true", "background": "true"}), True
+        )
+        parent.append(paused["run_id"])
+        assert buffer.run_metadata[parent[0]]["status"] == RunStatus.paused
+        next_card = confirmation_payload(
+            client.post(
+                base + "/" + parent[0] + "/continue",
+                data={
+                    "session_id": paused["session_id"],
+                    "stream": "true",
+                    "background": "true",
+                    **confirmation_decision(paused, True, delegated),
+                },
+            ),
+            True,
+        )
+        assert calls == ["first"]
+        assert observed == [RunStatus.running]
+        assert next_card["requirements"][0]["tool_execution"]["tool_name"] == "second"
+        assert buffer.run_metadata[parent[0]]["status"] == RunStatus.paused
