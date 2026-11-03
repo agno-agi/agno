@@ -37,7 +37,7 @@ from agno.os.middleware.user_scope import (
     resolve_run_user_id,
     verify_run_in_session,
 )
-from agno.os.utils import get_agent_by_id, get_request_kwargs, get_team_by_id, get_workflow_by_id
+from agno.os.utils import get_agent_by_id, get_request_kwargs, get_team_by_id, get_workflow_by_id, public_scheme
 from agno.team import RemoteTeam, Team
 from agno.workflow import RemoteWorkflow, Workflow
 
@@ -71,7 +71,7 @@ def attach_routes(
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        base_url = str(request.base_url).rstrip("/")
+        base_url = str(request.base_url.replace(scheme=public_scheme(request))).rstrip("/")
         agent_description = getattr(agent, "description", None) or ""
         skill = AgentSkill(
             id=agent.id or "",
@@ -406,7 +406,7 @@ def attach_routes(
         if not team:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        base_url = str(request.base_url).rstrip("/")
+        base_url = str(request.base_url.replace(scheme=public_scheme(request))).rstrip("/")
         skill = AgentSkill(
             id=team.id or "",
             name=team.name or "",
@@ -733,7 +733,7 @@ def attach_routes(
         if not workflow:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
-        base_url = str(request.base_url).rstrip("/")
+        base_url = str(request.base_url.replace(scheme=public_scheme(request))).rstrip("/")
         skill = AgentSkill(
             id=workflow.id or "",
             name=workflow.name or "",

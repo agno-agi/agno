@@ -242,6 +242,8 @@ def _config(agent: "BaseExternalAgent", output_schema: Any) -> Dict[str, Any]:
         )
     if output_schema is not None:
         config["output_schema"] = output_schema
+    if agent._uses_native_hitl:
+        config["_native_hitl"] = True
     return config
 
 
@@ -331,6 +333,9 @@ def _execution(agent: "BaseExternalAgent", input: Any, kwargs: Dict[str, Any]) -
     # Metadata for the session the turn creates, set by the host for a team member; not a run option.
     session_metadata = kwargs.pop("_session_metadata", None)
     options = submission(agent, input, kwargs)
+    config = _config(agent, options.get("output_schema"))
+    if session_metadata and (session_metadata.get("team_id") or session_metadata.get("workflow_id")):
+        config["_nested_native_hitl"] = True
     run_id = kwargs.get("run_id") or str(uuid4())
     owner = get_worker_ownership(run_id)
     return dict(
@@ -340,7 +345,7 @@ def _execution(agent: "BaseExternalAgent", input: Any, kwargs: Dict[str, Any]) -
         sdk=agent._sandbox_runtime,
         user_id=kwargs.get("user_id"),
         agent_name=agent.name,
-        config=_config(agent, options.get("output_schema")),
+        config=config,
         env=env(agent),
         queue_attempt=owner.attempt if owner is not None else None,
         execution_timeout=_sandbox(agent).execution_timeout,

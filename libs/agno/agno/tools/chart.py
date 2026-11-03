@@ -63,6 +63,9 @@ class ChartSpec(TypedDict):
     # Optional supporting copy shown with the chart.
     description: NotRequired[str]
 
+    # Optional preformatted headline figure shown beside the title, for example "200M".
+    value: NotRequired[str]
+
     # Cartesian chart category/date key, for example "month" or "date".
     xKey: NotRequired[str]
 
@@ -123,6 +126,7 @@ class ChartTools(Toolkit):
         config: Dict[str, str],
         title: Optional[str] = None,
         description: Optional[str] = None,
+        value: Optional[str] = None,
         x_key: Optional[str] = None,
         y_keys: Optional[List[str]] = None,
         name_key: Optional[str] = None,
@@ -137,6 +141,7 @@ class ChartTools(Toolkit):
             config (Dict[str, str]): Maps each series key to its display label, for example {"revenue": "Revenue ($)"}.
             title (Optional[str]): Optional heading shown above the chart.
             description (Optional[str]): Optional supporting copy shown with the chart.
+            value (Optional[str]): Optional headline figure for the whole chart, shown large beside the title. Pass it preformatted, for example a total or the latest value such as "200M", "$22.3K", or "94%". Leave it out when no single number summarizes the chart; never invent one.
             x_key (Optional[str]): Category or date field for cartesian charts, for example "month". Required for non-pie charts.
             y_keys (Optional[List[str]]): Explicit series order for cartesian charts. Defaults to the config keys.
             name_key (Optional[str]): Slice label field for pie charts, for example "provider". Required for pie charts.
@@ -152,6 +157,7 @@ class ChartTools(Toolkit):
                 config=config,
                 title=title,
                 description=description,
+                value=value,
                 x_key=x_key,
                 y_keys=y_keys,
                 name_key=name_key,
@@ -170,6 +176,7 @@ class ChartTools(Toolkit):
         config: Dict[str, str],
         title: Optional[str],
         description: Optional[str],
+        value: Optional[str],
         x_key: Optional[str],
         y_keys: Optional[List[str]],
         name_key: Optional[str],
@@ -203,6 +210,8 @@ class ChartTools(Toolkit):
             spec["title"] = title
         if description is not None:
             spec["description"] = description
+        if value is not None:
+            spec["value"] = value
 
         if resolved_type == ChartType.PIE:
             if not name_key or not value_key:

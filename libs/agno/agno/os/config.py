@@ -658,9 +658,10 @@ class ChatConfig(BaseModel):
 class Manifest(BaseModel):
     """OS-level UI metadata for an agent/team/workflow.
 
-    Fields here are AgentOS UI metadata only. ``description`` is unrelated to
-    ``Agent.description`` / ``Team.description`` / ``Workflow.description``,
-    which are sent to the model.
+    Fields here are presentation metadata. OS Manager also uses ``description``
+    as a discovery fallback when a component has no description. This does not
+    set ``Agent.description`` / ``Team.description`` / ``Workflow.description``
+    or change the component's system prompt.
 
     Rendering surfaces:
     - ``description``, ``labels``: home/landing card

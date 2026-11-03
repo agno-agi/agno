@@ -15,6 +15,11 @@ the agent, quick prompts, and app are registered.
 **Result:** Wiring valid. Chart behaviour for this file is covered by the
 toolkit unit tests in `libs/agno/tests/unit/tools/test_chart.py`.
 
+Re-tested 2026-10-16 after adding the headline `value` argument. Ran the agent
+with the revenue quick prompt. It called `create_chart` once and returned a
+line chart with `"value": "$139K"`, the correct sum of the six months. Without
+inline data the agent asked for the figures instead of inventing them.
+
 ---
 
 ### agentos_chart_team.py
