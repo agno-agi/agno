@@ -743,27 +743,31 @@ def handle_external_execution_update(
     agent.model = cast(Model, agent.model)
 
     if tool.result is not None:
-        for msg in run_messages.messages:
-            # Skip if the message is already in the run_messages
-            if msg.tool_call_id == tool.tool_call_id:
+        # Only results after the owning assistant call are duplicates.
+        for msg in reversed(run_messages.messages):
+            if msg.role == agent.model.assistant_message_role and any(
+                call.get("id") == tool.tool_call_id for call in msg.tool_calls or []
+            ):
                 break
-        else:
-            # Only text is offloaded. A list result is structured content the
-            # model must receive as it is. The ToolExecution carries the
-            # envelope too, so the persisted session row stays small.
-            if isinstance(tool.result, str):
-                tool.result = _offload_continue_result(agent, run_response, tool, tool.result)
-            run_messages.messages.append(
-                Message(
-                    role=agent.model.tool_message_role,
-                    content=tool.result,
-                    tool_call_id=tool.tool_call_id,
-                    tool_name=tool.tool_name,
-                    tool_args=tool.tool_args,
-                    tool_call_error=tool.tool_call_error,
-                    stop_after_tool_call=tool.stop_after_tool_call,
-                )
+            if msg.role == agent.model.tool_message_role and msg.tool_call_id == tool.tool_call_id:
+                tool.external_execution_required = False
+                return
+        # Only text is offloaded. A list result is structured content the
+        # model must receive as it is. The ToolExecution carries the
+        # envelope too, so the persisted session row stays small.
+        if isinstance(tool.result, str):
+            tool.result = _offload_continue_result(agent, run_response, tool, tool.result)
+        run_messages.messages.append(
+            Message(
+                role=agent.model.tool_message_role,
+                content=tool.result,
+                tool_call_id=tool.tool_call_id,
+                tool_name=tool.tool_name,
+                tool_args=tool.tool_args,
+                tool_call_error=tool.tool_call_error,
+                stop_after_tool_call=tool.stop_after_tool_call,
             )
+        )
         tool.external_execution_required = False
     else:
         raise ValueError(f"Tool {tool.tool_name} requires external execution, cannot continue run")
@@ -1196,11 +1200,78 @@ def _confirmation_claim(run: RunOutput, stored: Optional[RunOutput]) -> Dict[str
         original.tool_args,
     ):
         raise RunNotContinuableError("The decision does not match the current confirmation")
-    # Do not accept caller-supplied results, arguments, queue state or metadata.
+    updates = [r.tool_execution for r in run.requirements or [] if r.tool_execution] or list(run.tools or [])
+    requirements = [RunRequirement(tool_execution=original)]
+    for tool in stored.tools or []:
+        if tool.requires_confirmation or not tool.is_paused:
+            continue
+        matches = [
+            t
+            for t in updates
+            if (t.tool_call_id, t.tool_name, t.tool_args) == (tool.tool_call_id, tool.tool_name, tool.tool_args)
+        ]
+        if len(matches) != 1:
+            raise RunNotContinuableError("Resend each pending requirement exactly as issued")
+        update = matches[0]
+        requirement = next(
+            (
+                r
+                for r in stored.requirements or []
+                if r.tool_execution
+                and r.tool_execution.is_paused
+                and (r.tool_execution.tool_call_id, r.tool_execution.tool_name, r.tool_execution.tool_args)
+                == (tool.tool_call_id, tool.tool_name, tool.tool_args)
+            ),
+            None,
+        )
+        if requirement is None:
+            requirement = RunRequirement(tool_execution=tool)
+        requirement.tool_execution = tool
+        requirement.user_input_schema = tool.user_input_schema
+        requirement.user_feedback_schema = tool.user_feedback_schema
+        if tool.external_execution_required:
+            if update.result is None:
+                raise RunNotContinuableError("Provide the pending external execution result")
+            if not isinstance(update.result, (str, list)):
+                raise RunNotContinuableError("External execution results must be text or a list")
+            if update.tool_call_error is not None and type(update.tool_call_error) is not bool:
+                raise RunNotContinuableError("External execution error flags must be boolean")
+            requirement.set_external_execution_result(update.result)
+            tool.tool_call_error = update.tool_call_error
+        else:
+            # Fill only stored open answers; wire schemas cannot change fixed arguments.
+            if requirement.needs_user_input and tool.user_input_schema:
+                open_names = {f.name for f in tool.user_input_schema if f.value is None}
+                requirement.provide_user_input(
+                    {
+                        f.name: f.value
+                        for f in update.user_input_schema or []
+                        if f.name in open_names and f.value is not None
+                    }
+                )
+            if requirement.needs_user_feedback:
+                open_questions = {q.question for q in tool.user_feedback_schema or [] if q.selected_options is None}
+                requirement.provide_user_feedback(
+                    {
+                        q.question: q.selected_options
+                        for q in update.user_feedback_schema or []
+                        if q.question in open_questions and q.selected_options is not None
+                    }
+                )
+            if (
+                update.answered is True
+                and not any(f.value is None for f in tool.user_input_schema or [])
+                and not any(q.selected_options is None for q in tool.user_feedback_schema or [])
+            ):
+                tool.answered = True
+            if not requirement.is_resolved():
+                raise RunNotContinuableError("Provide all pending user responses before continuing")
+        requirements.append(requirement)
+    # Only response fields cross over; results on confirmation calls remain untrusted.
     original.confirmed = decision.confirmed
     original.confirmation_note = decision.confirmation_note
     run.tools = stored.tools
-    run.requirements = [RunRequirement(tool_execution=original)]
+    run.requirements = requirements
     run.metadata = deepcopy(stored.metadata)
     return {"status": RunStatus.paused.value, "metadata.ordered_confirmations.active": state["active"]}
 

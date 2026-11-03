@@ -2113,6 +2113,7 @@ class ConfirmationBatchModel(OfflineModel):
     def __init__(self, order):
         super().__init__()
         self.order = order
+        self.arguments = {}
         self.calls = 0
 
     def invoke(self, messages, *args, **kwargs):
@@ -2121,7 +2122,11 @@ class ConfirmationBatchModel(OfflineModel):
             return ModelResponse(
                 role="assistant",
                 tool_calls=[
-                    {"id": "batch-" + name, "type": "function", "function": {"name": name, "arguments": "{}"}}
+                    {
+                        "id": "batch-" + name,
+                        "type": "function",
+                        "function": {"name": name, "arguments": json.dumps(self.arguments.get(name, {}))},
+                    }
                     for name in self.order
                 ],
                 response_usage=MessageMetrics(),
@@ -2142,7 +2147,7 @@ class ConfirmationBatchModel(OfflineModel):
         yield self.invoke(messages, *args, **kwargs)
 
 
-def confirmation_app(db, calls, order, delegated=False, opted_in=True, store_tool_messages=True):
+def confirmation_app(db, calls, order, delegated=False, opted_in=True, store_tool_messages=True, hitl_kind=None):
     from agno.tools import tool
 
     @tool(requires_confirmation=True)
@@ -2176,6 +2181,34 @@ def confirmation_app(db, calls, order, delegated=False, opted_in=True, store_too
         member = Agent(id="confirmation-batch", db=db, model=model, tools=[first, second, ordinary], telemetry=False)
         os = AgentOS(db=db, agents=[member], telemetry=False)
         base = "/agents/confirmation-batch/runs"
+    if hitl_kind == "external":
+
+        @tool(external_execution=True)
+        def external() -> str:
+            raise AssertionError("External execution must never run on the server")
+
+        member.tools.append(external)
+    elif hitl_kind == "input":
+
+        @tool(requires_user_input=True)
+        def supplied(value: str) -> str:
+            calls.append(value)
+            return value
+
+        member.tools.append(supplied)
+    elif hitl_kind == "feedback":
+        from agno.tools.user_feedback import UserFeedbackTools
+
+        member.tools.append(UserFeedbackTools())
+        model.arguments["ask_user"] = {
+            "questions": [
+                {
+                    "question": "Which format?",
+                    "header": "Format",
+                    "options": [{"label": "Text"}, {"label": "PDF"}],
+                }
+            ]
+        }
     member.sequential_tool_confirmations = opted_in
     member.store_tool_messages = store_tool_messages
     return os, member, model, base
@@ -2554,3 +2587,481 @@ def test_sequential_confirmation_background_reopens_before_execution(db, monkeyp
         assert observed == [RunStatus.running]
         assert next_card["requirements"][0]["tool_execution"]["tool_name"] == "second"
         assert buffer.run_metadata[parent[0]]["status"] == RunStatus.paused
+
+
+@pytest.mark.parametrize("stream,background", [(False, False), (True, False), (True, True)])
+@pytest.mark.parametrize("delegated", [False, True])
+@pytest.mark.parametrize("database", [SqliteDb, AsyncSqliteDb])
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("kind", ["external", "input", "feedback"])
+def test_sequential_confirmation_mixed_hitl_http(tmp_path, stream, background, delegated, database, reverse, kind):
+    calls = []
+    middle = {"external": "external", "input": "supplied", "feedback": "ask_user"}[kind]
+    order = ("second", middle, "first") if reverse else ("first", middle, "second")
+    path = str(tmp_path / "mixed.db")
+    os, member, model, base = confirmation_app(database(db_file=path), calls, order, delegated, hitl_kind=kind)
+    with TestClient(os.get_app()) as client:
+        paused = confirmation_payload(client.post(base, data={"message": "Act", "stream": "false"}), False)
+    assert len(paused["requirements"]) == 2
+    assert calls == [] and model.calls == 1
+    requirements = paused["requirements"]
+    for req in requirements:
+        tool_execution = req["tool_execution"]
+        if tool_execution["tool_name"] == middle:
+            if kind == "external":
+                req["external_execution_result"] = tool_execution["result"] = "external result"
+                tool_execution["tool_call_error"] = True
+            elif kind == "input":
+                for field in tool_execution["user_input_schema"]:
+                    field["value"] = "provided"
+            else:
+                for question in tool_execution["user_feedback_schema"]:
+                    question["selected_options"] = ["Text"]
+        else:
+            req["confirmation"] = tool_execution["confirmed"] = True
+
+    os, member, resumed_model, base = confirmation_app(database(db_file=path), calls, order, delegated, hitl_kind=kind)
+    resumed_model.calls = 1
+    if delegated:
+        os.manager.model.calls = 1
+    with TestClient(os.get_app()) as client:
+        continuation = base + "/" + paused["run_id"] + "/continue"
+        next_card = confirmation_payload(
+            client.post(
+                continuation,
+                data={
+                    "session_id": paused["session_id"],
+                    "stream": str(stream).lower(),
+                    "background": str(background).lower(),
+                    **(
+                        {"requirements": json.dumps(requirements)}
+                        if delegated
+                        else {"tools": json.dumps([r["tool_execution"] for r in requirements])}
+                    ),
+                },
+            ),
+            stream,
+        )
+        assert calls == (["provided", order[0]] if kind == "input" else [order[0]])
+        assert resumed_model.calls == 1
+        assert len(next_card["requirements"]) == 1
+        assert next_card["requirements"][0]["tool_execution"]["tool_name"] == order[-1]
+        final = confirmation_payload(
+            client.post(
+                continuation,
+                data={
+                    "session_id": paused["session_id"],
+                    "stream": str(stream).lower(),
+                    "background": str(background).lower(),
+                    **confirmation_decision(next_card, True, delegated),
+                },
+            ),
+            stream,
+        )
+        assert final.get("status", "COMPLETED") == "COMPLETED"
+        assert calls == (["provided", order[0], order[-1]] if kind == "input" else [order[0], order[-1]])
+        assert resumed_model.calls == 2
+        runs = (
+            member.db.get_runs(agent_id=member.id)
+            if database is SqliteDb
+            else asyncio.run(member.db.get_runs(agent_id=member.id))
+        )
+        stored = next(r for r in runs if r.tools)
+        result = next(m for m in stored.messages if m.tool_call_id == "batch-" + middle)
+        if kind == "feedback":
+            assert "Text" in result.content
+        else:
+            assert result.content == ("external result" if kind == "external" else "provided")
+        assert bool(result.tool_call_error) is (kind == "external")
+
+
+@pytest.mark.parametrize("kind", ["external", "input", "feedback"])
+@pytest.mark.parametrize("invalid", ["missing", "identity", "duplicate"])
+def test_sequential_confirmation_mixed_hitl_refusal_keeps_pause(db, kind, invalid):
+    from copy import deepcopy
+
+    calls = []
+    middle = {"external": "external", "input": "supplied", "feedback": "ask_user"}[kind]
+    os, member, model, base = confirmation_app(db, calls, ("first", middle, "second"), hitl_kind=kind)
+    with TestClient(os.get_app()) as client:
+        paused = confirmation_payload(client.post(base, data={"message": "Act", "stream": "false"}), False)
+        valid = deepcopy(paused["requirements"])
+        for req in valid:
+            te = req["tool_execution"]
+            if te["tool_name"] == "first":
+                req["confirmation"] = te["confirmed"] = True
+            elif kind == "external":
+                te["result"] = ""
+            elif kind == "input":
+                te["user_input_schema"][0]["value"] = "provided"
+            else:
+                te["user_feedback_schema"][0]["selected_options"] = ["Text"]
+        bad = deepcopy(valid)
+        other = next(r for r in bad if r["tool_execution"]["tool_name"] == middle)
+        if invalid == "missing":
+            if kind == "external":
+                other["tool_execution"]["result"] = None
+            elif kind == "input":
+                other["tool_execution"]["user_input_schema"][0]["value"] = None
+                other["tool_execution"]["answered"] = True
+            else:
+                other["tool_execution"]["user_feedback_schema"][0]["selected_options"] = None
+                other["tool_execution"]["answered"] = True
+        elif invalid == "identity":
+            other["tool_execution"]["tool_args"] = {"injected": True}
+        else:
+            bad.append(deepcopy(other))
+        continuation = base + "/" + paused["run_id"] + "/continue"
+        response = client.post(
+            continuation,
+            data={
+                "session_id": paused["session_id"],
+                "stream": "false",
+                "tools": json.dumps([r["tool_execution"] for r in bad]),
+            },
+        )
+        assert response.status_code == 409, response.text
+        assert db.get_run(paused["run_id"]).status.value == "PAUSED"
+        assert calls == [] and model.calls == 1
+        next_card = confirmation_payload(
+            client.post(
+                continuation,
+                data={
+                    "session_id": paused["session_id"],
+                    "stream": "false",
+                    "tools": json.dumps([r["tool_execution"] for r in valid]),
+                },
+            ),
+            False,
+        )
+        assert next_card["requirements"][0]["tool_execution"]["tool_name"] == "second"
+        assert calls == (["provided", "first"] if kind == "input" else ["first"])
+        assert model.calls == 1
+
+
+@pytest.mark.parametrize("mode", ["sync", "async", "sync_stream", "async_stream"])
+@pytest.mark.parametrize("kind", ["external", "input", "feedback"])
+@pytest.mark.parametrize("approve", [False, True])
+def test_sequential_confirmation_mixed_hitl_direct_twins(db, mode, kind, approve):
+    calls = []
+    middle = {"external": "external", "input": "supplied", "feedback": "ask_user"}[kind]
+    _, agent, model, _ = confirmation_app(db, calls, ("first", middle, "second"), hitl_kind=kind)
+    paused = agent.run("Act")
+    for req in paused.active_requirements:
+        if req.needs_confirmation:
+            req.confirm() if approve else req.reject()
+        elif req.needs_external_execution:
+            req.set_external_execution_result("")
+        elif req.needs_user_feedback:
+            req.provide_user_feedback({"Which format?": ["Text"]})
+        else:
+            req.provide_user_input({"value": "provided"})
+
+    async def acontinue(response):
+        if mode == "async":
+            return await agent.acontinue_run(response)
+        async for _ in agent.acontinue_run(response, stream=True, stream_events=True):
+            pass
+        return await agent.aget_last_run_output()
+
+    for step in range(2 if approve else 1):
+        if step:
+            paused.active_requirements[0].confirm()
+        if mode.startswith("async"):
+            paused = asyncio.run(acontinue(paused))
+        elif mode == "sync":
+            paused = agent.continue_run(paused)
+        else:
+            list(agent.continue_run(paused, stream=True, stream_events=True))
+            paused = agent.get_last_run_output()
+        assert calls == (
+            (["provided"] if kind == "input" else []) + (["first", "second"][: step + 1] if approve else [])
+        )
+        assert model.calls == (1 if approve and step == 0 else 2)
+    assert paused.status.value == "COMPLETED"
+
+
+@pytest.mark.parametrize("stream,background", [(False, False), (True, False), (True, True)])
+@pytest.mark.parametrize("entity", ["agent", "ordered_agent", "manager", "team"])
+def test_sequential_confirmation_mixed_hitl_reused_ids(db, stream, background, entity):
+    from collections import Counter
+    from copy import deepcopy
+
+    calls = []
+    order = ("first", "external")
+    delegated = entity == "manager"
+    team_route = entity in {"manager", "team"}
+    opted_in = entity in {"ordered_agent", "manager"}
+
+    class RepeatedBatch(ConfirmationBatchModel):
+        def invoke(self, messages, *args, **kwargs):
+            self.calls += 1
+            assert Counter(m.tool_call_id for m in messages if m.role == "tool") == Counter(
+                {
+                    "batch-first": self.calls - 1,
+                    "batch-external": self.calls - 1,
+                }
+            )
+            external_results = [m for m in messages if m.tool_call_id == "batch-external"]
+            assert [m.content for m in external_results] == ["", "result 1"][: self.calls - 1]
+            assert [bool(m.tool_call_error) for m in external_results] == [False, True][: self.calls - 1]
+            if self.calls <= 2:
+                return ModelResponse(
+                    role="assistant",
+                    tool_calls=[
+                        {"id": "batch-" + name, "type": "function", "function": {"name": name, "arguments": "{}"}}
+                        for name in self.order
+                    ],
+                    response_usage=MessageMetrics(),
+                )
+            return ModelResponse(role="assistant", content="done", response_usage=MessageMetrics())
+
+    first_decision = {}
+    for index in range(2):
+        os, member, _, base = confirmation_app(db, calls, order, delegated, opted_in, hitl_kind="external")
+        model = RepeatedBatch(order)
+        model.calls = 2 if index else 0
+        member.model = model
+        if delegated and index:
+            os.manager.model.calls = 1
+        if entity == "team":
+            from agno.team import Team
+
+            member = Team(id="external-batch-team", members=[], model=model, tools=member.tools, db=db, telemetry=False)
+            os = AgentOS(db=db, teams=[member], telemetry=False)
+            base = "/teams/external-batch-team/runs"
+        with TestClient(os.get_app()) as client:
+            if index == 0:
+                paused = confirmation_payload(client.post(base, data={"message": "Act", "stream": "false"}), False)
+                assert calls == [] and model.calls == 1
+            continuation = base + "/" + paused["run_id"] + "/continue"
+            if index and opted_in:
+                stale = client.post(continuation, data={**first_decision, "stream": "false", "background": "false"})
+                assert stale.status_code == 409, stale.text
+                assert calls == ["first"] and model.calls == 2
+            pending = [
+                r
+                for r in deepcopy(paused["requirements"])
+                if (
+                    r["tool_execution"].get("requires_confirmation")
+                    or r["tool_execution"].get("external_execution_required")
+                )
+            ]
+            assert len(pending) == 2
+            for req in pending:
+                te = req["tool_execution"]
+                if te.get("requires_confirmation"):
+                    req["confirmation"] = te["confirmed"] = True
+                else:
+                    req["external_execution_result"] = te["result"] = "result 1" if index else ""
+                    te["tool_call_error"] = bool(index)
+            decision = {
+                "session_id": paused["session_id"],
+                "stream": str(stream).lower(),
+                "background": str(background).lower(),
+                **(
+                    {"requirements": json.dumps(pending)}
+                    if team_route
+                    else {"tools": json.dumps([r["tool_execution"] for r in pending])}
+                ),
+            }
+            if index == 0:
+                first_decision = decision
+            paused = confirmation_payload(
+                client.post(continuation, data=decision),
+                stream,
+            )
+            assert calls == ["first"] * (index + 1)
+            assert model.calls == index + 2
+            if index == 0:
+                assert paused.get("status", "PAUSED") == "PAUSED"
+            else:
+                assert paused.get("status", "COMPLETED") == "COMPLETED"
+                if opted_in:
+                    repeated = client.post(continuation, data={**decision, "stream": "false", "background": "false"})
+                    assert repeated.status_code == 409, repeated.text
+                    assert calls == ["first", "first"] and model.calls == 3
+    stored = next(r for r in db.get_runs() if any(t.tool_name == "external" for t in r.tools or []))
+    results = [m for m in stored.messages if m.role == "tool"]
+    assert Counter(m.tool_call_id for m in results) == Counter({"batch-first": 2, "batch-external": 2})
+    external_results = [m for m in results if m.tool_call_id == "batch-external"]
+    assert [m.content for m in external_results] == ["", "result 1"]
+    assert [bool(m.tool_call_error) for m in external_results] == [False, True]
+
+
+@pytest.mark.parametrize("scenario", ["same", "later", "legacy", "text", "unrelated", "wrong_role", "custom_roles"])
+@pytest.mark.parametrize("result,error", [("new result", False), ([{"type": "text", "text": "new result"}], True)])
+def test_external_execution_result_occurrence_deduplication(scenario, result, error):
+    from copy import deepcopy
+
+    from agno.agent._tools import handle_external_execution_update
+    from agno.models.message import Message
+    from agno.models.response import ToolExecution
+    from agno.run.messages import RunMessages
+
+    model = OfflineModel()
+    if scenario == "custom_roles":
+        model.assistant_message_role, model.tool_message_role = "agent", "function"
+    owner = Message(
+        role=model.assistant_message_role,
+        tool_calls=[{"id": "reused", "type": "function", "function": {"name": "external", "arguments": "{}"}}],
+    )
+    previous = Message(role=model.tool_message_role, tool_call_id="reused", content="old result")
+    messages = [owner, previous]
+    if scenario in {"later", "custom_roles"}:
+        messages.append(deepcopy(owner))
+    elif scenario == "legacy":
+        messages = [previous]
+    elif scenario == "text":
+        messages.append(Message(role=model.assistant_message_role, content="Progress update"))
+    elif scenario == "unrelated":
+        messages.extend(
+            [
+                Message(role=model.assistant_message_role, tool_calls=[{"id": "other", "type": "function"}]),
+                Message(role=model.tool_message_role, tool_call_id="other", content="Other result"),
+            ]
+        )
+    elif scenario == "wrong_role":
+        messages = [owner, Message(role="user", tool_call_id="reused", content="Not a tool result")]
+    run_messages = RunMessages(messages=messages)
+    agent = Agent(model=model, telemetry=False)
+    tool = ToolExecution(
+        tool_call_id="reused",
+        tool_name="external",
+        tool_args={},
+        external_execution_required=True,
+        result=result,
+        tool_call_error=error,
+        stop_after_tool_call=True,
+    )
+    before = len(messages)
+    handle_external_execution_update(agent, run_messages, tool)
+    added = scenario in {"later", "custom_roles", "wrong_role"}
+    assert len(messages) == before + int(added)
+    assert not tool.external_execution_required
+    if added:
+        appended = messages[-1]
+        assert appended.role == model.tool_message_role
+        assert appended.content == result and appended.tool_call_error is error
+        assert appended.tool_name == "external" and appended.tool_args == {}
+        assert appended.stop_after_tool_call
+    replay = deepcopy(tool)
+    replay.external_execution_required = True
+    handle_external_execution_update(agent, run_messages, replay)
+    assert not replay.external_execution_required
+    assert len(messages) == before + int(added)
+
+
+def test_sequential_confirmation_mixed_hitl_empty_input_schema(db):
+    from agno.tools import tool
+
+    calls = []
+
+    @tool(requires_user_input=True)
+    def acknowledge() -> str:
+        calls.append("acknowledged")
+        return "acknowledged"
+
+    os, member, model, base = confirmation_app(db, calls, ("first", "acknowledge"))
+    member.tools.append(acknowledge)
+    with TestClient(os.get_app()) as client:
+        paused = confirmation_payload(client.post(base, data={"message": "Act", "stream": "false"}), False)
+        tools = [r["tool_execution"] for r in paused["requirements"]]
+        for te in tools:
+            if te["tool_name"] == "first":
+                te["confirmed"] = True
+            else:
+                assert not te.get("user_input_schema")
+                te["answered"] = True
+        final = confirmation_payload(
+            client.post(
+                base + "/" + paused["run_id"] + "/continue",
+                data={
+                    "session_id": paused["session_id"],
+                    "stream": "false",
+                    "tools": json.dumps(tools),
+                },
+            ),
+            False,
+        )
+        assert final["status"] == "COMPLETED"
+        assert calls == ["acknowledged", "first"] and model.calls == 2
+
+
+@pytest.mark.parametrize("stream,background", [(False, False), (True, False), (True, True)])
+@pytest.mark.parametrize("delegated", [False, True])
+@pytest.mark.parametrize("database", [SqliteDb, AsyncSqliteDb])
+@pytest.mark.parametrize("invalid", ["error_flag", "result"])
+def test_sequential_confirmation_external_response_validation_http(
+    tmp_path, stream, background, delegated, database, invalid
+):
+    from copy import deepcopy
+
+    db = database(db_file=str(tmp_path / "external-validation.db"))
+    calls = []
+    os, member, model, base = confirmation_app(
+        db, calls, ("first", "external", "second"), delegated, hitl_kind="external"
+    )
+    content = "external result" if invalid == "error_flag" else [{"type": "text", "text": "external result"}]
+    with TestClient(os.get_app()) as client:
+        paused = confirmation_payload(client.post(base, data={"message": "Act", "stream": "false"}), False)
+        valid = deepcopy(paused["requirements"])
+        for req in valid:
+            te = req["tool_execution"]
+            if te["tool_name"] == "first":
+                req["confirmation"] = te["confirmed"] = True
+            else:
+                req["external_execution_result"] = te["result"] = content
+                te["tool_call_error"] = False if invalid == "error_flag" else None
+        bad = deepcopy(valid)
+        external = next(r["tool_execution"] for r in bad if r["tool_execution"]["tool_name"] == "external")
+        external["tool_call_error" if invalid == "error_flag" else "result"] = (
+            "not-a-boolean" if invalid == "error_flag" else {"not": "message content"}
+        )
+        continuation = base + "/" + paused["run_id"] + "/continue"
+        data = {
+            "session_id": paused["session_id"],
+            "stream": str(stream).lower(),
+            "background": str(background).lower(),
+        }
+        for index, requirements in enumerate((bad, valid)):
+            payload = (
+                {"requirements": json.dumps(requirements)}
+                if delegated
+                else {"tools": json.dumps([r["tool_execution"] for r in requirements])}
+            )
+            response = client.post(continuation, data={**data, **payload})
+            if index == 0:
+                runs = db.get_runs() if database is SqliteDb else asyncio.run(db.get_runs())
+                assert {r.status for r in runs} == {"PAUSED"}
+                assert calls == [] and model.calls == 1
+                if stream:
+                    events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
+                    assert any(e.get("event") in {"RunError", "TeamRunError"} for e in events)
+                else:
+                    assert response.status_code == 409, response.text
+            else:
+                next_card = confirmation_payload(response, stream)
+                assert calls == ["first"] and model.calls == 1
+                assert len(next_card["requirements"]) == 1
+                assert next_card["requirements"][0]["tool_execution"]["tool_name"] == "second"
+        final = confirmation_payload(
+            client.post(
+                continuation,
+                data={
+                    **data,
+                    **confirmation_decision(next_card, True, delegated),
+                },
+            ),
+            stream,
+        )
+        if stream:
+            assert final["event"] in {"RunCompleted", "TeamRunCompleted"}
+        else:
+            assert final["status"] == "COMPLETED"
+        assert calls == ["first", "second"] and model.calls == 2
+        runs = db.get_runs(agent_id=member.id) if database is SqliteDb else asyncio.run(db.get_runs(agent_id=member.id))
+        stored = next(r for r in runs if r.tools)
+        result = next(m for m in stored.messages if m.tool_call_id == "batch-external")
+        assert result.content == content
+        assert result.tool_call_error is (False if invalid == "error_flag" else None)
