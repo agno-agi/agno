@@ -9,7 +9,7 @@ from agno.db.mysql.schemas import get_table_schema_definition
 from agno.utils.log import log_debug, log_error, log_warning
 
 try:
-    from sqlalchemy import Engine, Table, func
+    from sqlalchemy import Engine, Table, case, func, null
     from sqlalchemy.dialects import mysql
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
     from sqlalchemy.inspection import inspect
@@ -495,3 +495,9 @@ def _get_table_columns(connection, table_name: str, db_schema: str) -> set[str]:
     inspector = inspect(connection)
     columns_info = inspector.get_columns(table_name, schema=db_schema)
     return {col["name"] for col in columns_info}
+
+
+def get_run_model_provider(run_data: Any) -> Any:
+    """A run's model_provider as text, with a missing or JSON null provider as "" like legacy runs."""
+    provider = func.json_extract(run_data, "$.model_provider")
+    return func.coalesce(case((func.json_type(provider) == "NULL", null()), else_=func.json_unquote(provider)), "")

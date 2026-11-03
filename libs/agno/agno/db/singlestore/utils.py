@@ -75,6 +75,18 @@ def create_schema(session: Session, db_schema: str) -> None:
         log_warning(f"Could not create schema {db_schema}: {str(e)}")
 
 
+def has_legacy_runs_column(session: Session, table_name: str, db_schema: Optional[str]) -> bool:
+    """Whether the live sessions table still has the legacy ``runs`` column.
+
+    Checked in the database: the adapter builds its tables from the current schema, which has no ``runs`` column.
+    """
+    query = text(
+        "SELECT 1 FROM information_schema.columns "
+        "WHERE table_schema = COALESCE(:schema, DATABASE()) AND table_name = :table AND column_name = 'runs'"
+    )
+    return session.execute(query, {"schema": db_schema, "table": table_name}).scalar() is not None
+
+
 def is_table_available(session: Session, table_name: str, db_schema: Optional[str]) -> bool:
     """
     Check if a table with the given name exists in the given schema.

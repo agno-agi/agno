@@ -25,12 +25,13 @@ import uuid
 from typing import Any, Callable, Dict, List, Optional
 
 import pytest
-from sqlalchemy import MetaData, Table, create_engine, inspect as sa_inspect, text
+from sqlalchemy import create_engine, text
 
 from agno.db.mongo import AsyncMongoDb, MongoDb
 from agno.db.mysql import AsyncMySQLDb, MySQLDb
 from agno.db.singlestore import SingleStoreDb
 from agno.db.sqlite import AsyncSqliteDb, SqliteDb
+from agno.db.utils import json_serializer
 
 MYSQL_URL = "mysql+pymysql://root:ai@localhost:3306"
 ASYNC_MYSQL_URL = "mysql+asyncmy://root:ai@localhost:3306"
@@ -46,9 +47,11 @@ LARGE_SESSIONS = 750
 RUN_BYTES = 10_000
 # Loading the legacy column costs the whole payload (>1x); reading model and provider costs a fraction.
 MAX_GROWTH_FRACTION = 0.5
-# Session ids long enough that this many overflow MongoDB's 16 MB query document in one $in.
-MONGO_SESSIONS_PAST_DOCUMENT_LIMIT = 17_000
-MONGO_LONG_SESSION_ID_BYTES = 1_000
+# Session ids long enough that this many overflow MongoDB's 16 MB query document in one $in, even batched by count.
+MONGO_SESSIONS_PAST_DOCUMENT_LIMIT = 5_000
+MONGO_LONG_SESSION_ID_BYTES = 4_000
+# Leave a run's model_provider key out instead of storing a value
+MISSING = object()
 
 
 def _created_at() -> int:
@@ -101,6 +104,12 @@ def _drop_sql_schema(url: str) -> Callable[[str], None]:
             engine.dispose()
 
     return drop
+
+
+def _singlestore(ns: str) -> SingleStoreDb:
+    # Own engine without the adapter's forced SSL, which the local dev image does not serve
+    engine = create_engine(SINGLESTORE_URL, json_serializer=json_serializer, connect_args={"charset": "utf8mb4"})
+    return SingleStoreDb(db_engine=engine, db_schema=ns)
 
 
 def _sqlite_file(ns: str) -> str:
@@ -168,8 +177,8 @@ BACKENDS: Dict[str, Backend] = {
         ),
         Backend(
             "singlestore",
-            lambda ns: SingleStoreDb(db_url=SINGLESTORE_URL, db_schema=ns),
-            lambda ns: SingleStoreDb(db_url=SINGLESTORE_URL, db_schema=ns),
+            _singlestore,
+            _singlestore,
             _sql_reachable(SINGLESTORE_URL),
             _drop_sql_schema(SINGLESTORE_URL),
         ),
@@ -234,11 +243,14 @@ def seed(
     provider: bool = True,
     table_run_sessions: int = 0,
     session_id_bytes: int = 0,
+    legacy_as_json_string: bool = False,
+    table_run_provider: Any = "OpenAI",
 ) -> int:
     """Add sessions created yesterday and return the bytes of legacy runs JSON added.
 
     ``legacy_sessions`` hold their runs in the legacy column, also copied to the runs table
     when ``migrated``. ``table_run_sessions`` hold one run in the runs table and no legacy runs.
+    ``legacy_as_json_string`` stores the legacy runs as a JSON string, as v2 SQLite and MongoDB before v2.1.1 did.
     """
     import json
 
@@ -250,7 +262,7 @@ def seed(
         session_id = f"s{s}"
         legacy = [_legacy_run(session_id, r, run_bytes, provider) for r in range(RUNS_PER_SESSION)]
         payload += len(json.dumps(legacy))
-        sessions.append({"session_id": session_id, "runs": legacy})
+        sessions.append({"session_id": session_id, "runs": json.dumps(legacy) if legacy_as_json_string else legacy})
         if migrated:
             runs.extend(
                 {"run_id": run["run_id"], "session_id": session_id, "model": "gpt-5.5", "provider": "OpenAI"}
@@ -259,7 +271,15 @@ def seed(
     for s in range(table_run_sessions):
         session_id = f"t{s}".ljust(session_id_bytes, "x")
         sessions.append({"session_id": session_id, "runs": None})
-        runs.append({"run_id": f"t{s}_r0", "session_id": session_id, "model": "gpt-5.5", "provider": "OpenAI"})
+        runs.append(
+            {"run_id": f"t{s}_r0", "session_id": session_id, "model": "gpt-5.5", "provider": table_run_provider}
+        )
+
+    def run_data(r: Dict[str, Any]) -> Dict[str, Any]:
+        data = {"model": r["model"]}
+        if r["provider"] is not MISSING:
+            data["model_provider"] = r["provider"]
+        return data
 
     if backend.is_mongo:
         sessions_collection = db._get_collection("sessions", create_collection_if_not_found=True)
@@ -278,7 +298,7 @@ def seed(
                     {
                         "run_id": r["run_id"],
                         "session_id": r["session_id"],
-                        "run_data": {"model": r["model"], "model_provider": r["provider"]},
+                        "run_data": run_data(r),
                     }
                     for r in runs
                 ]
@@ -290,7 +310,8 @@ def seed(
     engine = db.db_engine
     schema = getattr(db, "db_schema", None)
     qualified = f"`{schema}`.`{SESSIONS_TABLE}`" if schema else SESSIONS_TABLE
-    columns = {c["name"] for c in sa_inspect(engine).get_columns(SESSIONS_TABLE, schema=schema)}
+    with engine.connect() as conn:
+        columns = set(conn.execute(text(f"SELECT * FROM {qualified} LIMIT 0")).keys())
     if legacy_sessions and "runs" not in columns:
         with engine.begin() as conn:
             conn.execute(text(f"ALTER TABLE {qualified} ADD COLUMN runs JSON"))
@@ -298,21 +319,20 @@ def seed(
     session_rows = []
     for s in sessions:
         row = {"session_id": s["session_id"], "session_type": "agent", "user_id": "u1", "created_at": _created_at()}
-        if s["runs"] is not None:
-            row["runs"] = s["runs"]
+        if "runs" in columns or legacy_sessions:
+            row["runs"] = None if s["runs"] is None else json.dumps(s["runs"])
         session_rows.append(row)
-    sessions_name = f"{schema}.{SESSIONS_TABLE}" if schema else SESSIONS_TABLE
-    runs_name = f"{schema}.{RUNS_TABLE}" if schema else RUNS_TABLE
-    _sql_insert_qualified(engine, sessions_name, session_rows)
-    _sql_insert_qualified(
+    _sql_insert(engine, schema, SESSIONS_TABLE, session_rows)
+    _sql_insert(
         engine,
-        runs_name,
+        schema,
+        RUNS_TABLE,
         [
             {
                 "run_id": r["run_id"],
                 "session_id": r["session_id"],
                 "run_type": "agent",
-                "run_data": {"model": r["model"], "model_provider": r["provider"]},
+                "run_data": json.dumps(run_data(r)),
                 "created_at": _created_at(),
             }
             for r in runs
@@ -322,14 +342,16 @@ def seed(
     return payload
 
 
-def _sql_insert_qualified(engine, name: str, rows: List[Dict[str, Any]], chunk: int = 50) -> None:
+def _sql_insert(engine, schema: Optional[str], table_name: str, rows: List[Dict[str, Any]], chunk: int = 50) -> None:
+    """Insert rows with JSON values already encoded, without reflecting the table (SingleStore cannot be reflected)."""
     if not rows:
         return
-    schema, _, table_name = name.rpartition(".")
-    table = Table(table_name, MetaData(), schema=schema or None, autoload_with=engine)
+    qualified = f"`{schema}`.`{table_name}`" if schema else table_name
+    keys = list(rows[0])
+    stmt = text(f"INSERT INTO {qualified} ({', '.join(keys)}) VALUES ({', '.join(':' + k for k in keys)})")
     with engine.begin() as conn:
         for start in range(0, len(rows), chunk):
-            conn.execute(table.insert(), rows[start : start + chunk])
+            conn.execute(stmt, rows[start : start + chunk])
 
 
 def add_v3_session(backend: Backend, ns: str) -> None:
@@ -390,6 +412,34 @@ def test_metrics_count_migrated_unmigrated_and_v3_runs_once(ns, backend):
     ]
 
 
+@pytest.mark.parametrize("backend", ["sqlite", "async_sqlite", "mongo", "async_mongo"])
+def test_metrics_count_legacy_runs_stored_as_a_json_string(ns, backend):
+    """v2 SQLite and MongoDB before v2.1.1 stored legacy runs as a JSON string; they still count."""
+    b = BACKENDS[backend]
+    seed(b, ns, legacy_sessions=SMALL_SESSIONS, legacy_as_json_string=True)
+
+    result = calculate(b, ns)
+
+    assert result is not None and len(result) == 1
+    assert result[0]["agent_runs_count"] == SMALL_SESSIONS * RUNS_PER_SESSION
+    assert _model_metrics(result) == [
+        {"model_id": "gpt-5.5", "model_provider": "OpenAI", "count": SMALL_SESSIONS * RUNS_PER_SESSION}
+    ]
+
+
+@pytest.mark.parametrize("provider", [None, MISSING], ids=["null", "missing"])
+@pytest.mark.parametrize("backend", list(BACKENDS))
+def test_metrics_report_runs_table_run_without_provider_under_empty_provider(ns, backend, provider):
+    """A runs-table run with no provider is reported under "", as legacy runs are, not as "None" or "null"."""
+    b = BACKENDS[backend]
+    seed(b, ns, table_run_sessions=1, table_run_provider=provider)
+
+    result = calculate(b, ns)
+
+    assert result is not None and len(result) == 1
+    assert _model_metrics(result) == [{"model_id": "gpt-5.5", "model_provider": "", "count": 1}]
+
+
 # ---------------------------------------------------------------------------
 # Runs are matched without one bind value per session
 # ---------------------------------------------------------------------------
@@ -436,10 +486,11 @@ def _rename_column(backend: Backend, ns: str, table: str, column: str) -> None:
     """Break a table the way a schema mismatch would, so reading it raises."""
     db = backend.seeder(ns)
     schema = getattr(db, "db_schema", None)
+    qualified = f"`{schema}`.{table}" if schema else table
+    # SingleStore renames with CHANGE, the others with RENAME COLUMN
+    rename = f"CHANGE {column} {column}_old" if backend.name == "singlestore" else f"RENAME COLUMN {column} TO {column}_old"
     with db.db_engine.begin() as conn:
-        conn.execute(
-            text(f"ALTER TABLE {f'`{schema}`.' if schema else ''}{table} RENAME COLUMN {column} TO {column}_old")
-        )
+        conn.execute(text(f"ALTER TABLE {qualified} {rename}"))
 
 
 def _pin_starting_date(db) -> None:
@@ -463,7 +514,7 @@ def test_sql_metrics_raise_when_runs_cannot_be_read(ns, backend):
     seed(b, ns, table_run_sessions=1)
     _rename_column(b, ns, RUNS_TABLE, "run_data")
 
-    with pytest.raises(Exception, match="invalid schema"):
+    with pytest.raises(Exception, match="invalid schema|Unknown column"):
         calculate(b, ns, patch=_pin_starting_date)
 
 
@@ -473,7 +524,7 @@ def test_sql_metrics_raise_when_first_session_date_cannot_be_read(ns, backend):
     seed(b, ns, table_run_sessions=1)
     _rename_column(b, ns, SESSIONS_TABLE, "created_at")
 
-    with pytest.raises(Exception, match="invalid schema"):
+    with pytest.raises(Exception, match="invalid schema|Unknown column"):
         calculate(b, ns)
 
 

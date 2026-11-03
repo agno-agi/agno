@@ -22,8 +22,8 @@ if TYPE_CHECKING:
 
 LEGACY_METRICS_INDEX = "date_1_aggregation_period_1"
 INDEX_NOT_FOUND = 27  # MongoDB's IndexNotFound error code
-# Session ids per runs query in a metrics refresh: one $in over every id can overflow the 16 MB query document
-METRICS_SESSION_ID_BATCH_SIZE = 5_000
+# Session id bytes per runs query in a metrics refresh: one $in over every id can overflow the 16 MB query document
+METRICS_SESSION_ID_BATCH_BYTES = 4_000_000
 
 
 def get_metrics_sessions_pipeline(query: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -49,9 +49,44 @@ def get_metrics_sessions_pipeline(query: Dict[str, Any]) -> List[Dict[str, Any]]
                         "in": {"model": "$$run.model", "model_provider": {"$ifNull": ["$$run.model_provider", ""]}},
                     }
                 },
+                # Before v2.1.1 the runs were stored as a JSON string, which can only be decoded in Python
+                "legacy_runs_json": {"$cond": [{"$eq": [{"$type": "$runs"}, "string"]}, "$runs", "$$REMOVE"]},
             }
         },
     ]
+
+
+def reduce_metrics_session(session: Dict[str, Any]) -> Dict[str, Any]:
+    """Reduce legacy runs stored as a JSON string to model and provider, like the pipeline does for arrays."""
+    legacy_runs_json = session.pop("legacy_runs_json", None)
+    if legacy_runs_json:
+        runs = json.loads(legacy_runs_json)
+        session["legacy_runs"] = [
+            run_model_and_provider(run) for run in (runs if isinstance(runs, list) else []) if isinstance(run, dict)
+        ]
+    return session
+
+
+def run_model_and_provider(run: Dict[str, Any]) -> Dict[str, Any]:
+    """A run's model and provider, with a missing provider as "" like legacy runs."""
+    provider = run.get("model_provider")
+    return {"model": run.get("model"), "model_provider": "" if provider is None else provider}
+
+
+def iter_session_id_batches(session_ids: List[str], max_bytes: int = METRICS_SESSION_ID_BATCH_BYTES):
+    """Split session ids into batches whose $in fits well within the 16 MB query document."""
+    batch: List[str] = []
+    batch_bytes = 0
+    for session_id in session_ids:
+        # Each $in element also costs a few bytes of BSON framing
+        size = len(session_id.encode()) + 16
+        if batch and batch_bytes + size > max_bytes:
+            yield batch
+            batch, batch_bytes = [], 0
+        batch.append(session_id)
+        batch_bytes += size
+    if batch:
+        yield batch
 
 
 # -- DB util methods --

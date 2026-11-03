@@ -38,6 +38,7 @@ from agno.db.sqlite.utils import (
     calculate_date_metrics,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
+    legacy_runs_array,
 )
 from agno.db.utils import (
     HISTORY_SKIP_STATUSES,
@@ -2622,14 +2623,16 @@ class AsyncSqliteDb(AsyncBaseDb):
                         select(
                             runs_table.c.session_id,
                             func.json_extract(runs_table.c.run_data, "$.model").label("model"),
-                            func.json_extract(runs_table.c.run_data, "$.model_provider").label("model_provider"),
+                            func.coalesce(func.json_extract(runs_table.c.run_data, "$.model_provider"), "").label(
+                                "model_provider"
+                            ),
                         ).where(runs_table.c.session_id.in_(select(table.c.session_id).where(*filters)))
                     )
                 # Runs not yet migrated out of the legacy column, extracted in the database instead of loading the column
                 if "runs" in table.c:
-                    legacy_run = func.json_each(
-                        case((func.json_type(table.c.runs) == "array", table.c.runs), else_=func.json_array())
-                    ).table_valued("value", joins_implicitly=True)
+                    legacy_run = func.json_each(legacy_runs_array(table.c.runs)).table_valued(
+                        "value", joins_implicitly=True
+                    )
                     legacy_runs_stmt = select(
                         table.c.session_id,
                         func.json_extract(legacy_run.c.value, "$.model").label("model"),

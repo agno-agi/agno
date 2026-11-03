@@ -18,6 +18,7 @@ from agno.db.mysql.utils import (
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
     get_legacy_run_models_stmt,
+    get_run_model_provider,
     is_table_available,
     is_valid_table,
 )
@@ -2068,9 +2069,7 @@ class MySQLDb(BaseDb):
                         select(
                             runs_table.c.session_id,
                             func.json_unquote(func.json_extract(runs_table.c.run_data, "$.model")).label("model"),
-                            func.json_unquote(func.json_extract(runs_table.c.run_data, "$.model_provider")).label(
-                                "model_provider"
-                            ),
+                            get_run_model_provider(runs_table.c.run_data).label("model_provider"),
                         ).where(runs_table.c.session_id.in_(select(table.c.session_id).where(*filters)))
                     )
                 # Runs not yet migrated out of the legacy column, extracted in the database instead of loading the column

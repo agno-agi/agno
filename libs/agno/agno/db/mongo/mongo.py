@@ -15,7 +15,6 @@ if TYPE_CHECKING:
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.mongo.utils import (
-    METRICS_SESSION_ID_BATCH_SIZE,
     apply_pagination,
     apply_sorting,
     bulk_upsert_metrics,
@@ -24,6 +23,9 @@ from agno.db.mongo.utils import (
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
     get_metrics_sessions_pipeline,
+    iter_session_id_batches,
+    reduce_metrics_session,
+    run_model_and_provider,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -1695,21 +1697,20 @@ class MongoDb(BaseDb):
                 else:
                     query["created_at"] = {"$lte": end_timestamp}
 
-            sessions = list(collection.aggregate(get_metrics_sessions_pipeline(query)))
+            sessions = [reduce_metrics_session(s) for s in collection.aggregate(get_metrics_sessions_pipeline(query))]
 
             # Attach lightweight run info (model + provider) from the runs collection.
             # calculate_date_metrics only needs len(runs) and run["model"] / run["model_provider"].
             runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
             if runs_collection is not None and sessions:
                 session_ids = [s["session_id"] for s in sessions]
-                for start in range(0, len(session_ids), METRICS_SESSION_ID_BATCH_SIZE):
+                for batch in iter_session_id_batches(session_ids):
                     for doc in runs_collection.find(
-                        {"session_id": {"$in": session_ids[start : start + METRICS_SESSION_ID_BATCH_SIZE]}},
+                        {"session_id": {"$in": batch}},
                         {"session_id": 1, "run_data.model": 1, "run_data.model_provider": 1},
                     ):
-                        run_data = doc.get("run_data") or {}
                         runs_by_session.setdefault(doc["session_id"], []).append(
-                            {"model": run_data.get("model"), "model_provider": run_data.get("model_provider")}
+                            run_model_and_provider(doc.get("run_data") or {})
                         )
 
             # Runs not yet migrated count from the legacy field, already reduced to model and provider

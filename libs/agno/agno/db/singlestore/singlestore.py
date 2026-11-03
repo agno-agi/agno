@@ -21,6 +21,7 @@ from agno.db.singlestore.utils import (
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
     get_legacy_run_models_stmt,
+    has_legacy_runs_column,
     is_table_available,
     is_valid_table,
 )
@@ -2101,11 +2102,14 @@ class SingleStoreDb(BaseDb):
                         select(
                             runs_table.c.session_id,
                             func.JSON_EXTRACT_STRING(runs_table.c.run_data, "model").label("model"),
-                            func.JSON_EXTRACT_STRING(runs_table.c.run_data, "model_provider").label("model_provider"),
+                            # A missing provider counts as "", as legacy runs do
+                            func.coalesce(func.JSON_EXTRACT_STRING(runs_table.c.run_data, "model_provider"), "").label(
+                                "model_provider"
+                            ),
                         ).where(runs_table.c.session_id.in_(select(table.c.session_id).where(*filters)))
                     )
                 # Runs not yet migrated out of the legacy column, extracted in the database instead of loading the column
-                if "runs" in table.c:
+                if has_legacy_runs_column(sess, table.name, self.db_schema):
                     runs_stmts.append(
                         get_legacy_run_models_stmt(
                             self.db_engine.dialect, table, runs_table, start_timestamp, end_timestamp
