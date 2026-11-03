@@ -271,7 +271,11 @@ def get_tools(
         )
 
     if agent.enable_agentic_memory:
-        agent_tools.append(_default_tools.get_update_user_memory_function(agent, user_id=user_id, async_mode=False))
+        agent_tools.append(
+            _default_tools.get_update_user_memory_function(
+                agent, user_id=user_id, run_response=run_response, async_mode=False
+            )
+        )
 
     # Read-back tools for offloaded results
     if agent._result_store is not None:
@@ -287,6 +291,7 @@ def get_tools(
             session_id=session.session_id if session else None,
             agent_id=agent.id,
             run_context=run_context,
+            run_metrics=run_response.metrics,
         )
         agent_tools.extend(learning_tools)
 
@@ -418,7 +423,11 @@ async def aget_tools(
         )
 
     if agent.enable_agentic_memory:
-        agent_tools.append(_default_tools.get_update_user_memory_function(agent, user_id=user_id, async_mode=True))
+        agent_tools.append(
+            _default_tools.get_update_user_memory_function(
+                agent, user_id=user_id, run_response=run_response, async_mode=True
+            )
+        )
 
     # Read-back tools for offloaded results
     if agent._result_store is not None:
@@ -434,6 +443,7 @@ async def aget_tools(
             session_id=session.session_id if session else None,
             agent_id=agent.id,
             run_context=run_context,
+            run_metrics=run_response.metrics,
         )
         agent_tools.extend(learning_tools)
 
