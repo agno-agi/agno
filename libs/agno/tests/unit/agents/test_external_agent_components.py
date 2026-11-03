@@ -482,6 +482,7 @@ class TestPersistence:
         [
             ({"sdk": "claude-agent-sdk"}, "coder"),
             ({"sdk": "claude-agent-sdk", "name": "My Coder"}, "coder"),
+            ({"sdk": "claude-agent-sdk", "id": "stale"}, "coder"),
             ({"sdk": "claude-agent-sdk", "project_key": "explicit"}, "explicit"),
         ],
     )
