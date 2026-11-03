@@ -1,5 +1,5 @@
 """
-The Grid Structured Output
+The Grid AI Structured Output
 ==========================
 
 Cookbook example for `thegrid/structured_output.py`.

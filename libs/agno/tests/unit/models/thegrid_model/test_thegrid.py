@@ -1,6 +1,6 @@
-"""Unit tests for The Grid model class.
+"""Unit tests for The Grid AI model class.
 
-The Grid is an OpenAI-compatible inference market, so the class is a thin
+The Grid AI is an OpenAI-compatible inference market, so the class is a thin
 OpenAILike subclass. These tests pin the defaults and the missing-key behavior
 without any network access. (The to_dict/from_dict round-trip is covered
 generically by ``test_provider_resolution.py`` via the provider registry.)
@@ -14,7 +14,7 @@ from agno.models.thegrid import TheGrid
 
 
 def test_defaults():
-    """Defaults match The Grid OpenAI-compatible endpoint."""
+    """Defaults match The Grid AI OpenAI-compatible endpoint."""
     model = TheGrid(api_key="test-key")
     assert isinstance(model, OpenAILike)
     assert model.id == "text-standard"

@@ -1,5 +1,5 @@
 """
-The Grid Basic
+The Grid AI Basic
 ==============
 
 Cookbook example for `thegrid/basic.py`.

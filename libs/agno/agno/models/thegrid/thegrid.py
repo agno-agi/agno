@@ -9,9 +9,9 @@ from agno.models.openai.like import OpenAILike
 @dataclass
 class TheGrid(OpenAILike):
     """
-    A class for using instruments served by The Grid.
+    A class for using instruments served by The Grid AI.
 
-    The Grid is a spot market for inference. An id names a market instrument -- a
+    The Grid AI is a spot market for inference. An id names a market instrument -- a
     task type (text, code, agent) paired with a quality tier (standard, prime,
     max) -- rather than a fixed model, so the model that serves a request differs
     from the instrument that was requested.

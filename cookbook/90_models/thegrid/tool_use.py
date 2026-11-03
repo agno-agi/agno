@@ -1,5 +1,5 @@
 """
-The Grid Tool Use
+The Grid AI Tool Use
 =================
 
 Cookbook example for `thegrid/tool_use.py`.
