@@ -9,7 +9,7 @@ from typing import Optional
 
 from agno.agent import Agent
 from agno.eval.accuracy import AccuracyEval, AccuracyResult
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.calculator import CalculatorTools
 
 # ---------------------------------------------------------------------------
@@ -17,9 +17,9 @@ from agno.tools.calculator import CalculatorTools
 # ---------------------------------------------------------------------------
 evaluation = AccuracyEval(
     name="Tools Evaluation",
-    model=OpenAIChat(id="o4-mini"),
+    model=OpenAIResponses(id="gpt-5.6-terra"),
     agent=Agent(
-        model=OpenAIChat(id="gpt-5.2"),
+        model=OpenAIResponses(id="gpt-5.2"),
         tools=[CalculatorTools()],
     ),
     input="What is 10!?",

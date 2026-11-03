@@ -96,6 +96,7 @@ from agno.run.team import (
 )
 from agno.session import TeamSession
 from agno.session._utils import continue_history_session, resolve_run_index
+from agno.team._members import member_storage
 from agno.tools.function import Function
 from agno.utils.agent import (
     abuild_full_run_storage_copy,
@@ -5149,7 +5150,7 @@ def drop_opted_out_member_media(team: "Team", run_response: TeamRunOutput) -> No
             continue
 
         _, member = member_result
-        if not member.store_media:
+        if not member_storage(member).media:
             scrub_media_from_run_output(member_response, keep_references=False)
         elif isinstance(member, Team) and getattr(member_response, "member_responses", None):
             drop_opted_out_member_media(member, member_response)  # type: ignore[arg-type]
@@ -5182,7 +5183,7 @@ def _scrub_member_responses(team: "Team", member_responses: List[Union[TeamRunOu
 
         _, member = member_result
 
-        if not member.store_media or not member.store_tool_messages or not member.store_history_messages:
+        if not member_storage(member).keeps_all:
             from agno.agent._run import scrub_run_output_for_storage
 
             scrub_run_output_for_storage(member, run_response=member_response)  # type: ignore[arg-type]

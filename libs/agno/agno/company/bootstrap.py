@@ -108,6 +108,7 @@ async def arehydrate_product(
                     **fields,
                     user_id=routine_owner,
                     if_exists="skip",
+                    enabled_on_create=routine.enabled,
                     provenance={
                         "managed_by": "company",
                         "target_type": routine.executor_type,
@@ -126,7 +127,9 @@ async def arehydrate_product(
             or (schedule.payload or {}).get("metadata", {}).get("product_id") != product_id
         ):
             raise ValueError("Routine name is already used by another schedule")
-        row = await _call(db, "add_product_routine", product_id, schedule.id)
+        # An archived Routine stays out of the Product's routine_ids until it is restored.
+        if (schedule.payload or {}).get("metadata", {}).get("deleted_at") is None:
+            row = await _call(db, "add_product_routine", product_id, schedule.id)
     return row
 
 

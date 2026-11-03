@@ -25,6 +25,7 @@ from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
 from agno.session import TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
+from agno.team._members import member_storage
 from agno.utils.agent import (
     aget_session_metrics_util,
     aget_session_name_util,
@@ -281,18 +282,18 @@ def _storage_view_of_spared_run(
         _scrub_tool_results_keeping_unresolved(view)
         scrub_history_messages_from_run_output(view)
         return view
-    if member.store_media and member.store_tool_messages and member.store_history_messages:
+    if member_storage(member).keeps_all:
         return member_response
 
     view = copy(member_response)
     # The spared run is shared with the live tree, and the media scrub rewrites
     # Message objects in place.
     isolate_media_scrub_targets(view)
-    if not member.store_media:
+    if not member_storage(member).media:
         scrub_media_from_run_output(view)
-    if not member.store_tool_messages:
+    if not member_storage(member).tool_messages:
         _scrub_tool_results_keeping_unresolved(view)
-    if not member.store_history_messages:
+    if not member_storage(member).history_messages:
         scrub_history_messages_from_run_output(view)
     return view
 

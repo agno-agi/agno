@@ -100,9 +100,21 @@ def get_tasks_router(
             meta=PaginationInfo(page=page, limit=limit, total_count=total, total_pages=(total + limit - 1) // limit),
         )
 
+    async def _require_accept(request: Request, executor_type: Optional[str], executor_id: Optional[str]) -> None:
+        assert executor_type is not None  # Validated by TaskCreate and TaskTransition.
+        resource = {"agent": "agents", "team": "teams", "workflow": "workflows"}[executor_type]
+        await _require_endpoint_permission(request, f"/{resource}/{executor_id}/runs", "POST", action="accept")
+
     @router.post("/tasks", response_model=TaskResponse, status_code=201)
     async def create_task(body: TaskCreate, request: Request, _: bool = Depends(auth_dependency)) -> Dict[str, Any]:
-        return await _call("create_task", **body.model_dump(), user_id=resolve_run_user_id(request))
+        if body.status == "ready":
+            await _require_accept(request, body.executor_type, body.executor_id)
+        return await _call(
+            "create_task",
+            **body.model_dump(),
+            user_id=resolve_run_user_id(request),
+            accepted_by=getattr(request.state, "user_id", None),
+        )
 
     @router.get("/tasks/{task_id}", response_model=TaskResponse)
     async def get_task(
@@ -144,16 +156,34 @@ def get_tasks_router(
     async def transition_task(
         task_id: str, body: TaskTransition, request: Request, _: bool = Depends(auth_dependency)
     ) -> Dict[str, Any]:
-        await _existing(task_id)
+        existing = await _existing(task_id)
         if body.target == "in_progress":
-            raise HTTPException(
-                status_code=409,
-                detail=f"Start a run with POST /company/tasks/{task_id}/runs to enter In progress",
-            )
+            detail = f"Start a run with POST /company/tasks/{task_id}/runs to enter In progress"
+            # Runs start only on accepted work, so other stages go through Ready first.
+            if existing["status"] not in {"ready", "in_progress", "in_review"}:
+                detail = f"Move the Task to Ready, then start a run with POST /company/tasks/{task_id}/runs to enter In progress"
+            raise HTTPException(status_code=409, detail=detail)
+        from agno.company.execution import _pending_task_attempt
+        from agno.job_queue.session import HOLDING_STATUSES
+
+        # A queued attempt is withdrawn by the move; an executing or paused one must be cancelled first.
+        queue = getattr(request.app.state, "queue_worker", None)
+        if _pending_task_attempt(existing) is not None and queue is not None:
+            try:
+                # A failed lookup must not read as "no ticket" and let the move leave an executing run.
+                try:
+                    job = await queue.store.get_job(existing["job_id"], strict=True)
+                except TypeError:
+                    job = await queue.store.get_job(existing["job_id"])
+            except Exception:
+                raise HTTPException(status_code=503, detail="Could not verify the Task run; retry the request")
+            if job is not None and job["status"] in HOLDING_STATUSES:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Cancel the run with POST /company/runs/{existing['job_id']}/cancel to leave In progress",
+                )
         if body.target == "ready":
-            assert body.executor_type is not None  # Validated by TaskTransition.
-            resource = {"agent": "agents", "team": "teams", "workflow": "workflows"}[body.executor_type]
-            await _require_endpoint_permission(request, f"/{resource}/{body.executor_id}/runs", "POST", action="accept")
+            await _require_accept(request, body.executor_type, body.executor_id)
         record = await _call(
             "transition_task",
             task_id=task_id,

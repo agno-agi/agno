@@ -66,3 +66,13 @@ matched from the leader's executions and `search_news` from
 `cookbook/01_demo/evals` reliability cases run through the suite; spot-checked
 `local_wiki_reports_state_honestly` live on 2026-07-19: Judge PASS, Reliability PASS,
 exit 0 under execution matching.
+
+### team/ai_news.py
+
+**Status:** PASS
+
+**Description:** `OpenAIChat` rejects function tools for `gpt-5.6-luna`, so the team and member move to `OpenAIResponses`. The member's `WebSearchTools` is limited to `enable_search=False, enable_news=True`, so its calls match the expected `delegate_task_to_member` and `search_news`.
+
+**Result:** `ReliabilityEval` reports PASSED.
+
+---

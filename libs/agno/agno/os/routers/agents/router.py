@@ -111,6 +111,7 @@ from agno.run.base import RunStatus
 from agno.utils.log import log_debug, log_error, log_warning
 
 if TYPE_CHECKING:
+    from agno.agents.base import BaseExternalAgent
     from agno.os.app import AgentOS
 
 
@@ -493,7 +494,7 @@ async def agent_resumable_continue_response_streamer(
 
 
 async def _resume_stream_generator(
-    agent: Union[Agent, RemoteAgent],
+    agent: Union[Agent, RemoteAgent, "BaseExternalAgent"],
     run_id: str,
     last_event_index: Optional[int],
     session_id: Optional[str],
@@ -878,6 +879,8 @@ def get_agent_router(
         if isinstance(agent, BaseExternalAgent) and agent.sandbox is not None:
             from agno.os.routers.agents.sandbox import sandbox_run_response
 
+            if getattr(agent, "_uses_native_hitl", False):
+                background = True
             return await sandbox_run_response(
                 agent,
                 getattr(request.app.state, "queue_worker", None),
@@ -893,6 +896,10 @@ def get_agent_router(
                 files=input_files,
                 unsupported_media=bool(base64_audios or base64_videos),
             )
+
+        # A native permission request waits for its confirmation longer than a browser connection lives.
+        if getattr(agent, "_uses_native_hitl", False):
+            background = True
 
         # Background execution
         if background:
@@ -1592,6 +1599,81 @@ def get_agent_router(
         # error - so a paused-only check here can only block requests the
         # core supports. Teams are equally ungated; workflows still refuse
         # non-paused continues because their core requires PAUSED.
+
+        # A native permission request is answered here: the live native execution, still waiting for it,
+        # receives the chat's confirm or reject. Never requeue its turn.
+        from agno.agents.base import BaseExternalAgent
+
+        native_agent = agent if isinstance(agent, BaseExternalAgent) and agent._uses_native_hitl else None
+        native_run = None
+        if native_agent is not None:
+            native_run = await native_agent.aget_run_output(run_id, session_id=session_id, user_id=user_id)
+        from agno.agents._hitl import awaiting_decision, live_native_run
+
+        # A finished run keeps its HITL history and continues like any other run.
+        if native_agent is not None and live_native_run(native_run):
+            from agno.agents._hitl import read_run, submit_decisions, tail_stored
+            from agno.models.response import ToolExecution
+            from agno.os.event_streams import get_event_stream
+            from agno.os.utils import amark_continue_stream_running
+
+            if fork or regenerate or input is not None or continue_from != "end" or additional_instructions:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Continuing a native request only delivers its decision",
+                )
+            assert session_id
+            event_stream = get_event_stream()
+            # The live stream is shared only when this replica's event stream knows the run, which a
+            # Redis-backed stream always does; otherwise the continuation follows the stored run.
+            tracked = await event_stream.get_run_status(run_id) is not None
+            cursor = (await event_stream.get_event_count(run_id)) - 1 if tracked else -1
+            # Reopen only a stream that is paused on an unanswered request, before the decision lands, so the
+            # events it releases reach this client. A continuation that will be refused never touches it.
+            reopened = tracked and awaiting_decision(native_run)
+            if reopened:
+                await amark_continue_stream_running(
+                    run_id, component=native_agent, session_id=session_id, user_id=user_id
+                )
+            try:
+                parsed_tools = [ToolExecution.from_dict(t) for t in tools_data or []]
+                submitted = await submit_decisions(native_agent, run_id, session_id, user_id, parsed_tools)
+            except Exception as error:
+                if reopened:
+                    # The stream follows whichever continuation won: park it again only if the run is still
+                    # paused, which is also the safe reading when the run cannot be read.
+                    current = None
+                    with contextlib.suppress(Exception):
+                        current = await read_run(native_agent, run_id, session_id, user_id)
+                    if current is None or current.status == RunStatus.paused:
+                        with contextlib.suppress(Exception):
+                            await event_stream.complete_run(run_id, RunStatus.paused)
+                if isinstance(error, (ValueError, TypeError, KeyError)):
+                    raise HTTPException(status_code=409, detail=str(error))
+                raise
+            if stream:
+                if not tracked:
+
+                    async def stored_native_events():
+                        from agno.run.agent import RunOutput
+
+                        from agno.agents._hitl import hitl_state
+
+                        answered = set(hitl_state(submitted).get("decisions") or {})
+                        async for event in tail_stored(
+                            native_agent, run_id, session_id, user_id, len(submitted.events or []), answered
+                        ):
+                            if not isinstance(event, RunOutput):
+                                yield f"event: {event.event}\ndata: {event.to_json()}\n\n"
+
+                    return StreamingResponse(stored_native_events(), media_type="text/event-stream")
+                return StreamingResponse(
+                    _resume_stream_generator(native_agent, run_id, cursor, session_id, user_id),
+                    media_type="text/event-stream",
+                )
+            return JSONResponse(
+                status_code=202, content={"run_id": run_id, "session_id": session_id, "status": "RUNNING"}
+            )
 
         # Convert tools dict to RunRequirement and ToolExecution objects if provided
         requirements = None
