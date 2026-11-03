@@ -56,7 +56,6 @@ from agno.tools.function import (
     UserInputField,
 )
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.utils.nested_runs import NestedRuns
 from agno.utils.timer import Timer
 from agno.utils.tools import get_function_call_for_tool_call, get_function_call_for_tool_execution
 
@@ -757,7 +756,6 @@ class Model(ABC):
                     current_function_call_count=function_call_count,
                     function_call_limit=tool_call_limit,
                     result_store=result_store,
-                    run_response=run_response,
                 ):
                     if isinstance(function_call_response, ModelResponse):
                         # The session state is updated by the function call
@@ -982,7 +980,6 @@ class Model(ABC):
                     current_function_call_count=function_call_count,
                     function_call_limit=tool_call_limit,
                     result_store=result_store,
-                    run_response=run_response,
                 ):
                     if isinstance(function_call_response, ModelResponse):
                         # The session state is updated by the function call
@@ -1528,7 +1525,6 @@ class Model(ABC):
                     current_function_call_count=function_call_count,
                     function_call_limit=tool_call_limit,
                     result_store=result_store,
-                    run_response=run_response,
                 ):
                     if self.cache_response and isinstance(function_call_response, ModelResponse):
                         streaming_responses.append(function_call_response)
@@ -1810,7 +1806,6 @@ class Model(ABC):
                     current_function_call_count=function_call_count,
                     function_call_limit=tool_call_limit,
                     result_store=result_store,
-                    run_response=run_response,
                 ):
                     if self.cache_response and isinstance(function_call_response, ModelResponse):
                         streaming_responses.append(function_call_response)
@@ -2242,7 +2237,6 @@ class Model(ABC):
         function_call_results: List[Message],
         additional_input: Optional[List[Message]] = None,
         result_store: Optional["ResultStore"] = None,
-        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         # Start function call
         function_call_timer = Timer()
@@ -2263,10 +2257,8 @@ class Model(ABC):
         # Run function calls sequentially
         function_execution_result: FunctionExecutionResult = FunctionExecutionResult(status="failure")
         stop_after_tool_call_from_exception = False
-        nested_runs = NestedRuns(run_response)
         try:
-            with nested_runs.collect():
-                function_execution_result = function_call.execute()
+            function_execution_result = function_call.execute()
         except AgentRunException as a_exc:
             # Update additional messages from function call
             _handle_agent_exception(a_exc, additional_input)
@@ -2275,7 +2267,6 @@ class Model(ABC):
                 stop_after_tool_call_from_exception = True
             # Set function call success to False if an exception occurred
         except RunCancelledException:
-            nested_runs.add_to_run()
             raise
         except Exception as e:
             log_error(f"Error executing function {function_call.function.name}: {str(e)}")
@@ -2291,7 +2282,7 @@ class Model(ABC):
 
         if isinstance(function_execution_result.result, (GeneratorType, collections.abc.Iterator)):
             try:
-                for item in nested_runs.iterate(function_execution_result.result):
+                for item in function_execution_result.result:
                     # This function yields agent/team/workflow run events
                     if isinstance(item, _ALL_RUN_OUTPUT_EVENT_TYPES):
                         # We only capture content events for output accumulation
@@ -2329,7 +2320,6 @@ class Model(ABC):
                         if function_call.function.show_result and item is not None:
                             yield ModelResponse(content=str(item))
             except RunCancelledException:
-                nested_runs.add_to_run()
                 raise
             except Exception as e:
                 log_error(
@@ -2368,8 +2358,6 @@ class Model(ABC):
 
             if function_call.function.show_result and function_call_output is not None:
                 yield ModelResponse(content=function_call_output)
-
-        nested_runs.add_to_run()
 
         # Create ToolCallMetrics for the tool execution
         tool_metrics = None
@@ -2435,7 +2423,6 @@ class Model(ABC):
         current_function_call_count: int = 0,
         function_call_limit: Optional[int] = None,
         result_store: Optional["ResultStore"] = None,
-        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         from agno.offload.types import NEVER_OFFLOADED_TOOLS
 
@@ -2587,7 +2574,6 @@ class Model(ABC):
                 function_call_results=function_call_results,
                 additional_input=additional_input,
                 result_store=result_store,
-                run_response=run_response,
             )
 
         # Add any additional messages at the end
@@ -2645,7 +2631,6 @@ class Model(ABC):
         function_call_limit: Optional[int] = None,
         skip_pause_check: bool = False,
         result_store: Optional["ResultStore"] = None,
-        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         # Additional messages from function calls that will be added to the function call results
         if additional_input is None:
@@ -2830,30 +2815,20 @@ class Model(ABC):
                 )
             ]
 
-        # The runs started inside each function call, by its index in function_calls_to_run
-        function_call_nested_runs: Dict[int, NestedRuns] = {
-            i: NestedRuns(run_response) for i in range(len(function_calls_to_run))
-        }
-
         # gather even for a single call: its cancel bookkeeping re-raises
         # caller cancellation even when a tool swallows the CancelledError
         # thrown into it, and its task wrapper isolates the tool's contextvars.
         # A bare await loses both; replicating them needs Task.cancelling(),
         # which requires Python 3.11.
         results = await asyncio.gather(
-            *(
-                function_call_nested_runs[i].acollect(self.arun_function_call(fc))
-                for i, fc in enumerate(function_calls_to_run)
-            ),
-            return_exceptions=True,
+            *(self.arun_function_call(fc) for fc in function_calls_to_run), return_exceptions=True
         )
 
         # Separate async generators from other results for concurrent processing
         async_generator_results: List[Any] = []
-        async_generator_indices: List[int] = []
         non_async_generator_results: List[Any] = []
 
-        for i, result in enumerate(results):
+        for result in results:
             if isinstance(result, BaseException):
                 non_async_generator_results.append(result)
                 continue
@@ -2863,7 +2838,6 @@ class Model(ABC):
             # Check if this result contains an async generator
             if isinstance(function_call.result, (AsyncGeneratorType, AsyncIterator)):
                 async_generator_results.append(result)
-                async_generator_indices.append(i)
             else:
                 non_async_generator_results.append(result)
 
@@ -2878,8 +2852,7 @@ class Model(ABC):
             function_call_output = ""
 
             try:
-                nested_runs = function_call_nested_runs[async_generator_indices[generator_id]]
-                async for item in nested_runs.aiterate(function_call.result):
+                async for item in function_call.result:
                     # This function yields agent/team/workflow run events
                     if isinstance(item, _ALL_RUN_OUTPUT_EVENT_TYPES):
                         # We only capture content events
@@ -2957,8 +2930,6 @@ class Model(ABC):
             if isinstance(original_result, BaseException):
                 # Cancellation is intentional, not an error — re-raise without logging
                 if isinstance(original_result, RunCancelledException):
-                    for index in range(i, len(function_calls_to_run)):
-                        function_call_nested_runs[index].add_to_run()
                     raise original_result
                 log_error(f"Error during function call: {original_result}")
                 raise original_result
@@ -2981,8 +2952,6 @@ class Model(ABC):
                                     if error:
                                         # Re-raise cancellation — it is not an error
                                         if isinstance(error, RunCancelledException):
-                                            for index in range(i, len(function_calls_to_run)):
-                                                function_call_nested_runs[index].add_to_run()
                                             raise error
                                         # Handle async generator exceptions gracefully like sync generators
                                         log_error(
@@ -3016,7 +2985,7 @@ class Model(ABC):
                 # Events from async generators were already yielded in real-time above
             elif isinstance(function_call.result, (GeneratorType, collections.abc.Iterator)):
                 try:
-                    for item in function_call_nested_runs[i].iterate(function_call.result):
+                    for item in function_call.result:
                         # This function yields agent/team/workflow run events
                         if isinstance(item, _ALL_RUN_OUTPUT_EVENT_TYPES):
                             # We only capture content events
@@ -3042,8 +3011,6 @@ class Model(ABC):
                             if function_call.function.show_result and item is not None:
                                 yield ModelResponse(content=str(item))
                 except RunCancelledException:
-                    for index in range(i, len(function_calls_to_run)):
-                        function_call_nested_runs[index].add_to_run()
                     raise
                 except Exception as e:
                     log_error(
@@ -3091,8 +3058,6 @@ class Model(ABC):
 
                 if function_call.function.show_result and function_call_output is not None:
                     yield ModelResponse(content=function_call_output)
-
-            function_call_nested_runs[i].add_to_run()
 
             # Create ToolCallMetrics for the tool execution
             tool_metrics = None

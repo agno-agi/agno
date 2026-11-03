@@ -122,7 +122,6 @@ from agno.utils.log import (
     set_log_level_to_info,
     use_workflow_logger,
 )
-from agno.utils.nested_runs import NestedRuns, register_nested_run
 from agno.utils.print_response.workflow import (
     aprint_response,
     aprint_response_stream,
@@ -4999,9 +4998,6 @@ class Workflow:
         workflow_run_response.metrics = WorkflowMetrics(steps={})
         workflow_run_response.metrics.start_timer()
 
-        # Link a run started inside a tool call to that run; its steps then run apart from that tool call
-        nested_runs = register_nested_run(workflow_run_response, stored=self.db is not None)
-
         # Store PENDING response immediately - the workflow-agent case
         # included. The placeholder is what makes the 202'd run id visible to
         # pollers and verifiable by tenant-scoped cancel BEFORE execution
@@ -5118,12 +5114,10 @@ class Workflow:
 
         # Create and start asyncio task
         loop = asyncio.get_running_loop()
-        # The task copies the context, so the runs it starts are never linked to the tool call
-        with nested_runs.collect() if nested_runs is not None else contextlib.nullcontext():
-            task = loop.create_task(
-                execute_workflow_background(),
-                name=f"workflow-background-{workflow_run_response.run_id}",
-            )
+        task = loop.create_task(
+            execute_workflow_background(),
+            name=f"workflow-background-{workflow_run_response.run_id}",
+        )
         _workflow_background_tasks.add(task)
         task.add_done_callback(_workflow_background_tasks.discard)
 
@@ -5206,9 +5200,6 @@ class Workflow:
         # Start the run metrics timer
         workflow_run_response.metrics = WorkflowMetrics(steps={})
         workflow_run_response.metrics.start_timer()
-
-        # Link a run started inside a tool call to that run; its steps then run apart from that tool call
-        nested_runs = register_nested_run(workflow_run_response, stored=self.db is not None)
 
         # Prepare execution input
         inputs = WorkflowExecutionInput(
@@ -5393,12 +5384,10 @@ class Workflow:
 
         # Create and start asyncio task for background streaming execution
         loop = asyncio.get_running_loop()
-        # The task copies the context, so the runs it starts are never linked to the tool call
-        with nested_runs.collect() if nested_runs is not None else contextlib.nullcontext():
-            task = loop.create_task(
-                execute_workflow_background_stream(),
-                name=f"workflow-background-stream-ws-{workflow_run_response.run_id}",
-            )
+        task = loop.create_task(
+            execute_workflow_background_stream(),
+            name=f"workflow-background-stream-ws-{workflow_run_response.run_id}",
+        )
         _workflow_background_tasks.add(task)
         task.add_done_callback(_workflow_background_tasks.discard)
 
@@ -5476,9 +5465,6 @@ class Workflow:
         # Start the run metrics timer
         workflow_run_response.metrics = WorkflowMetrics(steps={})
         workflow_run_response.metrics.start_timer()
-
-        # Link a run started inside a tool call to that run; its steps then run apart from that tool call
-        nested_runs = register_nested_run(workflow_run_response, stored=self.db is not None)
 
         # Persist PENDING status so the run is visible in the DB immediately
         workflow_session.upsert_run(run=workflow_run_response)
@@ -5649,12 +5635,10 @@ class Workflow:
                 except (Exception, asyncio.CancelledError):
                     log_warning(f"Failed to mark workflow run {run_id} as completed in event stream")
 
-        # The task copies the context, so the runs it starts are never linked to the tool call
-        with nested_runs.collect() if nested_runs is not None else contextlib.nullcontext():
-            task = asyncio.create_task(
-                _background_producer(),
-                name=f"workflow-background-stream-{run_id}",
-            )
+        task = asyncio.create_task(
+            _background_producer(),
+            name=f"workflow-background-stream-{run_id}",
+        )
         _workflow_background_tasks.add(task)
         task.add_done_callback(_workflow_background_tasks.discard)
 
@@ -10730,19 +10714,15 @@ class Workflow:
 
         # Execute workflow agent if configured
         if self.agent is not None:
-            # The workflow keeps the agent's run and its steps' runs, so none of them is linked to a tool call
-            agent_nested_runs = NestedRuns(None)
-            with agent_nested_runs.collect():
-                response = self._execute_workflow_agent(
-                    user_input=input,  # type: ignore
-                    session=workflow_session,
-                    execution_input=inputs,
-                    run_context=run_context,
-                    stream=stream,
-                    stream_events=stream_events,
-                    **kwargs,
-                )
-            return agent_nested_runs.iterate(response) if stream else response  # type: ignore[arg-type]
+            return self._execute_workflow_agent(
+                user_input=input,  # type: ignore
+                session=workflow_session,
+                execution_input=inputs,
+                run_context=run_context,
+                stream=stream,
+                stream_events=stream_events,
+                **kwargs,
+            )
 
         # Create workflow run response for regular workflow execution
         workflow_run_response = WorkflowRunOutput(
@@ -10760,11 +10740,8 @@ class Workflow:
         workflow_run_response.metrics = WorkflowMetrics(steps={})
         workflow_run_response.metrics.start_timer()
 
-        # Link a run started inside a tool call to that run; its steps then run apart from that tool call
-        nested_runs = register_nested_run(workflow_run_response, stored=self.db is not None)
-
         if stream:
-            response_stream = self._execute_stream(
+            return self._execute_stream(
                 session=workflow_session,
                 execution_input=inputs,  # type: ignore[arg-type]
                 workflow_run_response=workflow_run_response,
@@ -10775,20 +10752,17 @@ class Workflow:
                 add_session_state_to_context=resolved["add_session_state_to_context"],
                 **kwargs,
             )
-            return nested_runs.iterate(response_stream) if nested_runs is not None else response_stream
         else:
-            with nested_runs.collect() if nested_runs is not None else contextlib.nullcontext():
-                response = self._execute(
-                    session=workflow_session,
-                    execution_input=inputs,  # type: ignore[arg-type]
-                    workflow_run_response=workflow_run_response,
-                    run_context=run_context,
-                    background_tasks=background_tasks,
-                    add_dependencies_to_context=resolved["add_dependencies_to_context"],
-                    add_session_state_to_context=resolved["add_session_state_to_context"],
-                    **kwargs,
-                )
-            return response
+            return self._execute(
+                session=workflow_session,
+                execution_input=inputs,  # type: ignore[arg-type]
+                workflow_run_response=workflow_run_response,
+                run_context=run_context,
+                background_tasks=background_tasks,
+                add_dependencies_to_context=resolved["add_dependencies_to_context"],
+                add_session_state_to_context=resolved["add_session_state_to_context"],
+                **kwargs,
+            )
 
     @overload
     async def arun(
@@ -11023,16 +10997,13 @@ class Workflow:
         self.update_agents_and_teams_session_info()
 
         if self.agent is not None:
-            # The workflow keeps the agent's run and its steps' runs, so none of them is linked to a tool call
-            agent_nested_runs = NestedRuns(None)
-            response = self._aexecute_workflow_agent(
+            return self._aexecute_workflow_agent(  # type: ignore
                 user_input=input,  # type: ignore
                 execution_input=inputs,
                 run_context=run_context,
                 stream=stream,
                 **kwargs,
             )
-            return agent_nested_runs.aiterate(response) if stream else agent_nested_runs.acollect(response)  # type: ignore[return-value]
 
         # Create workflow run response for regular workflow execution
         workflow_run_response = WorkflowRunOutput(
@@ -11050,11 +11021,8 @@ class Workflow:
         workflow_run_response.metrics = WorkflowMetrics(steps={})
         workflow_run_response.metrics.start_timer()
 
-        # Link a run started inside a tool call to that run; its steps then run apart from that tool call
-        nested_runs = register_nested_run(workflow_run_response, stored=self.db is not None)
-
         if stream:
-            response_stream = self._aexecute_stream(
+            return self._aexecute_stream(  # type: ignore
                 execution_input=inputs,
                 workflow_run_response=workflow_run_response,
                 session_id=session_id,
@@ -11069,9 +11037,8 @@ class Workflow:
                 add_session_state_to_context=resolved["add_session_state_to_context"],
                 **kwargs,
             )
-            return nested_runs.aiterate(response_stream) if nested_runs is not None else response_stream
         else:
-            response = self._aexecute(
+            return self._aexecute(  # type: ignore
                 execution_input=inputs,
                 workflow_run_response=workflow_run_response,
                 session_id=session_id,
@@ -11085,7 +11052,6 @@ class Workflow:
                 add_session_state_to_context=resolved["add_session_state_to_context"],
                 **kwargs,
             )
-            return nested_runs.acollect(response) if nested_runs is not None else response  # type: ignore[return-value]
 
     def _prepare_steps(self):
         """Prepare the steps for execution"""
