@@ -2076,13 +2076,12 @@ def run_dispatch(
         # Start the run metrics timer, to calculate the run duration
         run_response.metrics = RunMetrics()
         run_response.metrics.start_timer()
-
     except Exception:
         cleanup_run(run_id)
         raise
 
     if opts.stream:
-        return _run_stream(  # type: ignore[return-value]
+        return _run_stream(
             team,
             run_response=run_response,
             run_context=run_context,
@@ -2097,10 +2096,10 @@ def run_dispatch(
             debug_mode=debug_mode,
             background_tasks=background_tasks,
             **kwargs,
-        )
+        )  # type: ignore
 
     else:
-        response = _run(
+        return _run(
             team,
             run_response=run_response,
             run_context=run_context,
@@ -2114,7 +2113,6 @@ def run_dispatch(
             background_tasks=background_tasks,
             **kwargs,
         )
-        return response
 
 
 async def _arun_tasks(
@@ -4284,7 +4282,7 @@ def arun_dispatch(  # type: ignore
         if opts.stream:
             # background=True, stream=True: run in background task, stream events via queue
             return _arun_background_stream(  # type: ignore[return-value]
-                team,
+                team,  # type: ignore
                 run_response=run_response,
                 run_context=run_context,
                 session_id=session_id,
@@ -4300,7 +4298,7 @@ def arun_dispatch(  # type: ignore
                 **kwargs,
             )
         return _arun_background(  # type: ignore[return-value]
-            team,
+            team,  # type: ignore
             run_response=run_response,
             run_context=run_context,
             session_id=session_id,
@@ -4315,8 +4313,8 @@ def arun_dispatch(  # type: ignore
         )
 
     if opts.stream:
-        return _arun_stream(  # type: ignore[return-value]
-            team,
+        return _arun_stream(
+            team,  # type: ignore
             run_response=run_response,
             run_context=run_context,
             session_id=session_id,
@@ -4332,8 +4330,8 @@ def arun_dispatch(  # type: ignore
             **kwargs,
         )
     else:
-        return _arun(  # type: ignore[return-value]
-            team,
+        return _arun(
+            team,  # type: ignore
             run_response=run_response,
             run_context=run_context,
             session_id=session_id,

@@ -5114,7 +5114,6 @@ class Workflow:
 
         # Create and start asyncio task
         loop = asyncio.get_running_loop()
-        # The task copies the context, so the runs it starts are never linked to the tool call
         task = loop.create_task(
             execute_workflow_background(),
             name=f"workflow-background-{workflow_run_response.run_id}",
@@ -5385,7 +5384,6 @@ class Workflow:
 
         # Create and start asyncio task for background streaming execution
         loop = asyncio.get_running_loop()
-        # The task copies the context, so the runs it starts are never linked to the tool call
         task = loop.create_task(
             execute_workflow_background_stream(),
             name=f"workflow-background-stream-ws-{workflow_run_response.run_id}",
@@ -5637,7 +5635,6 @@ class Workflow:
                 except (Exception, asyncio.CancelledError):
                     log_warning(f"Failed to mark workflow run {run_id} as completed in event stream")
 
-        # The task copies the context, so the runs it starts are never linked to the tool call
         task = asyncio.create_task(
             _background_producer(),
             name=f"workflow-background-stream-{run_id}",
@@ -10744,7 +10741,7 @@ class Workflow:
         workflow_run_response.metrics.start_timer()
 
         if stream:
-            response_stream = self._execute_stream(
+            return self._execute_stream(
                 session=workflow_session,
                 execution_input=inputs,  # type: ignore[arg-type]
                 workflow_run_response=workflow_run_response,
@@ -10755,9 +10752,8 @@ class Workflow:
                 add_session_state_to_context=resolved["add_session_state_to_context"],
                 **kwargs,
             )
-            return response_stream
         else:
-            response = self._execute(
+            return self._execute(
                 session=workflow_session,
                 execution_input=inputs,  # type: ignore[arg-type]
                 workflow_run_response=workflow_run_response,
@@ -10767,7 +10763,6 @@ class Workflow:
                 add_session_state_to_context=resolved["add_session_state_to_context"],
                 **kwargs,
             )
-            return response
 
     @overload
     async def arun(
@@ -11027,7 +11022,7 @@ class Workflow:
         workflow_run_response.metrics.start_timer()
 
         if stream:
-            response_stream = self._aexecute_stream(
+            return self._aexecute_stream(  # type: ignore
                 execution_input=inputs,
                 workflow_run_response=workflow_run_response,
                 session_id=session_id,
@@ -11042,9 +11037,8 @@ class Workflow:
                 add_session_state_to_context=resolved["add_session_state_to_context"],
                 **kwargs,
             )
-            return response_stream
         else:
-            return self._aexecute(  # type: ignore[return-value]
+            return self._aexecute(  # type: ignore
                 execution_input=inputs,
                 workflow_run_response=workflow_run_response,
                 session_id=session_id,

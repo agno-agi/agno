@@ -2905,7 +2905,7 @@ def arun_dispatch(  # type: ignore
 
     # Pass the new run_response to _arun
     if opts.stream:
-        return _arun_stream(  # type: ignore[return-value]
+        return _arun_stream(  # type: ignore
             agent,
             run_response=run_response,
             run_context=run_context,
@@ -2921,9 +2921,9 @@ def arun_dispatch(  # type: ignore
             background_tasks=background_tasks,
             pre_session=_pre_session,
             **kwargs,
-        )
+        )  # type: ignore[assignment]
     else:
-        return _arun(  # type: ignore[return-value]
+        return _arun(  # type: ignore
             agent,
             run_response=run_response,
             run_context=run_context,
