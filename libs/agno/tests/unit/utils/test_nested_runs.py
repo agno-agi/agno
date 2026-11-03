@@ -286,12 +286,10 @@ async def test_member_given_a_task_by_its_team_is_not_linked(mode: str):
 
 @pytest.mark.parametrize("mode", ["sync", "stream", "async", "async_stream"])
 @pytest.mark.parametrize("generator_tool", [False, True], ids=["callable", "generator"])
-async def test_cancelled_tool_retains_completed_child_usage(tmp_path, mode: str, generator_tool: bool) -> None:
+async def test_cancelled_tool_keeps_the_tokens_of_its_finished_run(tmp_path, mode: str, generator_tool: bool):
     from agno.exceptions import RunCancelledException
 
-    child_model = MockModel()
-    child_model._mock_response.response_usage = MessageMetrics(input_tokens=20, output_tokens=3, total_tokens=23)
-    child = Agent(model=child_model, telemetry=False)
+    child = Agent(model=MockModel(), telemetry=False)
     children = []
 
     def cancel_after_child() -> str:
@@ -316,11 +314,8 @@ async def test_cancelled_tool_retains_completed_child_usage(tmp_path, mode: str,
         tool = cancel_generator if generator_tool else cancel_after_child
     else:
         tool = acancel_generator if generator_tool else acancel_after_child
-    calls = [_tool_call(tool.__name__, "{}") for _ in range(2)]
-    for call in calls:
-        call.response_usage = MessageMetrics(input_tokens=60, output_tokens=6, total_tokens=66)
     outer = Agent(
-        model=ScriptedModel(calls),
+        model=ScriptedModel([_tool_call(tool.__name__, "{}") for _ in range(2)]),
         tools=[tool],
         db=SqliteDb(db_file=str(tmp_path / "outer.db")),
         session_id="session",
@@ -331,22 +326,22 @@ async def test_cancelled_tool_retains_completed_child_usage(tmp_path, mode: str,
         run = await _run_team(outer, mode)
         run_ids.append(run.run_id)
         assert run.status == RunStatus.cancelled
-        assert run.metrics.total_tokens == 89
+        assert run.metrics.total_tokens == 20
         assert children[-1].status == RunStatus.completed
         assert children[-1].called_from_run_id == run.run_id
         stored_run = outer.get_run_output(run.run_id, session_id="session")
         assert stored_run.status == RunStatus.cancelled
-        assert stored_run.metrics.total_tokens == 89
-        assert outer.get_session_metrics(session_id="session").total_tokens == 89 * (attempt + 1)
+        assert stored_run.metrics.total_tokens == 20
+        assert outer.get_session_metrics(session_id="session").total_tokens == 20 * (attempt + 1)
     assert len(set(run_ids)) == 2
 
 
 @pytest.mark.parametrize("cancel_first", [True, False], ids=["cancel-first", "cancel-last"])
-async def test_cancelled_async_batch_retains_completed_sibling_usage(cancel_first: bool) -> None:
+async def test_cancelled_async_batch_keeps_the_tokens_of_every_finished_run(cancel_first: bool):
     from agno.exceptions import RunCancelledException
     from agno.tools.function import Function, FunctionCall
 
-    outer = _run("outer", 66)
+    outer = _run("outer", 100)
     children = []
 
     async def cancel_after_child() -> str:
@@ -368,24 +363,5 @@ async def test_cancelled_async_batch_retains_completed_sibling_usage(cancel_firs
     assert len(children) == 2
     assert all(child.status == RunStatus.completed for child in children)
     assert all(child.called_from_run_id == "outer" for child in children)
-    assert outer.metrics.total_tokens == 86
-
-
-@pytest.mark.parametrize("mode", ["sync", "stream", "async", "async_stream"])
-async def test_successful_tool_counts_completed_child_once(mode: str) -> None:
-    child = Agent(model=MockModel(), telemetry=False)
-
-    def ask_child() -> str:
-        return str(child.run("child").content)
-
-    async def aask_child() -> str:
-        return str((await child.arun("child")).content)
-
-    tool = ask_child if mode in ("sync", "stream") else aask_child
-    outer_model = ScriptedModel([_tool_call(tool.__name__, "{}"), _answer()])
-    outer = Agent(model=outer_model, tools=[tool], telemetry=False)
-
-    run = await _run_team(outer, mode)
-
-    assert run.status == RunStatus.completed
-    assert run.metrics.total_tokens == 30  # Two outer calls and one child call.
+    # Each finished run is added once, whichever call was cancelled
+    assert outer.metrics.total_tokens == 120

@@ -87,7 +87,7 @@ class NestedRuns:
                 await aclose()
 
     def add_to_run(self) -> None:
-        """Consume collected runs, adding finished no-db usage once, regardless of the calling run's outcome."""
+        """Add the tokens of the finished runs stored nowhere to the run whose tool started them."""
         if self.run_response is None or self.run_response.metrics is None:
             return
         added = []
@@ -102,7 +102,6 @@ class NestedRuns:
             if run_output.status in METRICS_FINAL_STATUSES:
                 added.append(_nested_run_metrics(run_output))
         merge_background_metrics(self.run_response.metrics, added)
-        self.runs.clear()
 
 
 def register_nested_run(

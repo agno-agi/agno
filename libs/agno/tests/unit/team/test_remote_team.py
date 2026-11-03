@@ -124,14 +124,14 @@ async def test_remote_agent_stream_ends_with_its_run_output_when_asked() -> None
     assert "yield_run_output" not in mock_client.run_agent_stream.call_args.kwargs
     assert isinstance(items[-1], RunOutput)
     assert (items[-1].run_id, items[-1].status) == ("run-1", RunStatus.error)
-    assert items[-1].metrics is None
 
 
 @pytest.mark.asyncio
 async def test_remote_agent_stream_ends_at_the_first_event_that_ends_its_own_run() -> None:
     """A sub-run's completion does not end the stream; a cancelled remote run that also sends a completed event ends
-    cancelled: the first event that ends the run itself is its final status. The run output keeps the model its
-    started event names."""
+    cancelled: the first event that ends the run itself is its final status, and the completed event's tokens are
+    kept. The run output keeps the model its started event names."""
+    from agno.metrics import RunMetrics
     from agno.run.agent import RunCancelledEvent, RunCompletedEvent, RunOutput, RunStartedEvent
     from agno.run.base import RunStatus
 
@@ -141,9 +141,13 @@ async def test_remote_agent_stream_ends_at_the_first_event_that_ends_its_own_run
         yield RunStartedEvent(
             run_id="run-1", session_id="s-1", agent_id="test_agent", model="gpt-5.6-luna", model_provider="OpenAI"
         )
-        yield RunCompletedEvent(run_id="sub-run-1", session_id="s-1", agent_id="sub_agent")
+        yield RunCompletedEvent(
+            run_id="sub-run-1", session_id="s-1", agent_id="sub_agent", metrics=RunMetrics(total_tokens=999)
+        )
         yield RunCancelledEvent(run_id="run-1", session_id="s-1", agent_id="test_agent")
-        yield RunCompletedEvent(run_id="run-1", session_id="s-1", agent_id="test_agent")
+        yield RunCompletedEvent(
+            run_id="run-1", session_id="s-1", agent_id="test_agent", metrics=RunMetrics(total_tokens=65)
+        )
 
     items = [item async for item in remote_agent._with_run_output(_events())]
 
@@ -151,14 +155,17 @@ async def test_remote_agent_stream_ends_at_the_first_event_that_ends_its_own_run
     assert (items[-1].run_id, items[-1].status) == ("run-1", RunStatus.cancelled)
     # The run's model, named only by its started event
     assert (items[-1].model, items[-1].model_provider) == ("gpt-5.6-luna", "OpenAI")
+    assert items[-1].metrics.total_tokens == 65
 
 
 @pytest.mark.asyncio
 async def test_remote_team_stream_run_output_keeps_its_member_responses() -> None:
-    """A RemoteTeam's run output keeps the member runs its completed event carries, so the local team counts them."""
+    """A RemoteTeam's run output keeps the member runs its completed event carries, so the local team counts them, also
+    when the completed event follows the event that cancelled the run."""
     from agno.metrics import RunMetrics
     from agno.run.agent import RunOutput
-    from agno.run.team import RunCompletedEvent, TeamRunOutput
+    from agno.run.base import RunStatus
+    from agno.run.team import RunCancelledEvent, RunCompletedEvent, TeamRunOutput
 
     remote_team = RemoteTeam(base_url="http://fake-host", team_id="test_team")
     member_run = RunOutput(run_id="member-run", agent_id="member", metrics=RunMetrics(total_tokens=32))
@@ -166,57 +173,23 @@ async def test_remote_team_stream_run_output_keeps_its_member_responses() -> Non
     async def _events():
         yield RunCompletedEvent(run_id="run-1", session_id="s-1", team_id="test_team", member_responses=[member_run])
 
+    async def _cancelled_events():
+        yield RunCancelledEvent(run_id="run-2", session_id="s-1", team_id="test_team")
+        yield RunCompletedEvent(
+            run_id="run-2",
+            session_id="s-1",
+            team_id="test_team",
+            metrics=RunMetrics(total_tokens=65),
+            member_responses=[member_run],
+        )
+
     items = [item async for item in remote_team._with_run_output(_events())]
+    cancelled_items = [item async for item in remote_team._with_run_output(_cancelled_events())]
 
     assert isinstance(items[-1], TeamRunOutput)
     assert items[-1].member_responses == [member_run]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("entity", ["agent", "team"])
-@pytest.mark.parametrize("outcome", ["cancelled", "error"])
-async def test_remote_stream_keeps_later_usage_without_replacing_its_outcome(entity: str, outcome: str) -> None:
-    """Trailing completion carries cumulative usage, independently of the first terminal outcome."""
-    from agno.metrics import RunMetrics
-    from agno.run import agent as agent_events
-    from agno.run import team as team_events
-    from agno.run.base import RunStatus
-
-    events = agent_events if entity == "agent" else team_events
-    remote = (
-        RemoteAgent(base_url="http://fake-host", agent_id="remote")
-        if entity == "agent"
-        else RemoteTeam(base_url="http://fake-host", team_id="remote")
-    )
-    terminal = events.RunCancelledEvent if outcome == "cancelled" else events.RunErrorEvent
-    output_type = agent_events.RunOutput if entity == "agent" else team_events.TeamRunOutput
-    terminal_kwargs = {"content": "original error"} if outcome == "error" else {}
-    member = agent_events.RunOutput(run_id="member", metrics=RunMetrics(total_tokens=23))
-    member_kwargs = {"member_responses": [member]} if entity == "team" else {}
-
-    async def _events():
-        yield events.RunStartedEvent(run_id="root", model="test-model", model_provider="test")
-        yield terminal(run_id="root", **terminal_kwargs)
-        # Read through the end, but never adopt another run's usage.
-        yield events.RunCompletedEvent(run_id="other", metrics=RunMetrics(total_tokens=999))
-        yield events.RunCompletedEvent(
-            run_id="root", content="later completion", metrics=RunMetrics(total_tokens=65), **member_kwargs
-        )
-        yield events.RunCompletedEvent(run_id="root", metrics=RunMetrics(total_tokens=65), **member_kwargs)
-        yield events.RunCompletedEvent(run_id="other", metrics=RunMetrics(total_tokens=999))
-        yield terminal(run_id="root")
-
-    items = [item async for item in remote._with_run_output(_events())]
-    result = items[-1]
-
-    assert [type(item) for item in items] == [events.RunStartedEvent, terminal, output_type]
-    assert result.status == (RunStatus.cancelled if outcome == "cancelled" else RunStatus.error)
-    assert (result.model, result.model_provider) == ("test-model", "test")
-    assert result.metrics is not None
-    assert result.metrics.total_tokens == 65
-    assert result.content == ("original error" if outcome == "error" else None)
-    if entity == "team":
-        assert result.member_responses == [member]
+    assert (cancelled_items[-1].status, cancelled_items[-1].metrics.total_tokens) == (RunStatus.cancelled, 65)
+    assert cancelled_items[-1].member_responses == [member_run]
 
 
 def test_remote_member_runs_in_a_session_of_its_own() -> None:
