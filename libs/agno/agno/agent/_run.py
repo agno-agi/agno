@@ -32,7 +32,14 @@ if TYPE_CHECKING:
 from agno.agent._init import _initialize_session_state
 from agno.agent._run_options import resolve_run_options
 from agno.agent._session import initialize_session, update_session_metrics
-from agno.agent._tools import result_store_kwargs
+from agno.agent._tools import (
+    aclaim_confirmation,
+    aprepare_confirmation_queue,
+    advance_confirmation_queue,
+    claim_confirmation,
+    prepare_confirmation_queue,
+    result_store_kwargs,
+)
 from agno.exceptions import (
     InputCheckError,
     OutputCheckError,
@@ -240,7 +247,10 @@ def handle_agent_run_paused(
     user_id: Optional[str] = None,
     run_context: Optional[RunContext] = None,
 ) -> RunOutput:
-    run_response.status = RunStatus.paused
+    prepare_confirmation_queue(agent, run_response, run_context)
+    run_response.status = (
+        RunStatus.paused if any(t.is_paused for t in run_response.tools or []) else RunStatus.completed
+    )
     if not run_response.content:
         run_response.content = get_paused_content(run_response)
 
@@ -265,7 +275,10 @@ def handle_agent_run_paused_stream(
     run_context: Optional[RunContext] = None,
     yield_run_output: bool = False,
 ) -> Iterator[Union[RunOutputEvent, RunOutput]]:
-    run_response.status = RunStatus.paused
+    prepare_confirmation_queue(agent, run_response, run_context)
+    run_response.status = (
+        RunStatus.paused if any(t.is_paused for t in run_response.tools or []) else RunStatus.completed
+    )
     if not run_response.content:
         run_response.content = get_paused_content(run_response)
 
@@ -280,7 +293,9 @@ def handle_agent_run_paused_stream(
             from_run_response=run_response,
             tools=run_response.tools,
             requirements=run_response.requirements,
-        ),
+        )
+        if run_response.status == RunStatus.paused
+        else create_run_completed_event(from_run_response=run_response),
         run_response,
         events_to_skip=agent.events_to_skip,  # type: ignore
         store_events=agent.store_events,
@@ -304,7 +319,10 @@ async def ahandle_agent_run_paused(
     user_id: Optional[str] = None,
     run_context: Optional[RunContext] = None,
 ) -> RunOutput:
-    run_response.status = RunStatus.paused
+    await aprepare_confirmation_queue(agent, run_response, run_context)
+    run_response.status = (
+        RunStatus.paused if any(t.is_paused for t in run_response.tools or []) else RunStatus.completed
+    )
     if not run_response.content:
         run_response.content = get_paused_content(run_response)
 
@@ -330,7 +348,10 @@ async def ahandle_agent_run_paused_stream(
     run_context: Optional[RunContext] = None,
     yield_run_output: bool = False,
 ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
-    run_response.status = RunStatus.paused
+    await aprepare_confirmation_queue(agent, run_response, run_context)
+    run_response.status = (
+        RunStatus.paused if any(t.is_paused for t in run_response.tools or []) else RunStatus.completed
+    )
     if not run_response.content:
         run_response.content = get_paused_content(run_response)
 
@@ -345,7 +366,9 @@ async def ahandle_agent_run_paused_stream(
             from_run_response=run_response,
             tools=run_response.tools,
             requirements=run_response.requirements,
-        ),
+        )
+        if run_response.status == RunStatus.paused
+        else create_run_completed_event(from_run_response=run_response),
         run_response,
         events_to_skip=agent.events_to_skip,  # type: ignore
         store_events=agent.store_events,
@@ -1356,6 +1379,9 @@ def run_dispatch(
     if isinstance(agent.media_storage, AsyncMediaStorage):
         raise ValueError("Cannot use sync run() with an AsyncMediaStorage. Use arun() instead.")
 
+    if agent.sequential_tool_confirmations and not callable(getattr(agent.db, "update_run_if_matches", None)):
+        raise ValueError("Sequential tool confirmations require a database with atomic run updates")
+
     # Set the id for the run and register it immediately for cancellation tracking
     run_id = run_id or str(uuid4())
 
@@ -1464,6 +1490,13 @@ def run_dispatch(
         session_state=run_context.session_state,
         input=run_input,
     )
+
+    if agent.sequential_tool_confirmations or "ordered_confirmations" in (run_response.metadata or {}):
+        run_response.metadata = dict(run_response.metadata or {})
+        run_response.metadata.pop("ordered_confirmations", None)
+        if agent.sequential_tool_confirmations:
+            run_response.metadata["ordered_confirmations"] = {"active": None, "queue": []}
+        run_context.metadata = run_response.metadata
 
     run_response.model = agent.model.id if agent.model is not None else None
     run_response.model_provider = agent.model.provider if agent.model is not None else None
@@ -2737,6 +2770,9 @@ def arun_dispatch(  # type: ignore
 ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
     """Async Run the Agent and return the response."""
 
+    if agent.sequential_tool_confirmations and not callable(getattr(agent.db, "update_run_if_matches", None)):
+        raise ValueError("Sequential tool confirmations require a database with atomic run updates")
+
     # Set the id for the run and register it immediately for cancellation tracking
     from agno.agent._response import get_response_format
 
@@ -2856,6 +2892,13 @@ def arun_dispatch(  # type: ignore
         session_state=run_context.session_state,
         input=run_input,
     )
+
+    if agent.sequential_tool_confirmations or "ordered_confirmations" in (run_response.metadata or {}):
+        run_response.metadata = dict(run_response.metadata or {})
+        run_response.metadata.pop("ordered_confirmations", None)
+        if agent.sequential_tool_confirmations:
+            run_response.metadata["ordered_confirmations"] = {"active": None, "queue": []}
+        run_context.metadata = run_response.metadata
 
     run_response.model = agent.model.id if agent.model is not None else None
     run_response.model_provider = agent.model.provider if agent.model is not None else None
@@ -3686,6 +3729,7 @@ def _continue_run(
     from agno.agent._telemetry import log_agent_telemetry
     from agno.agent._tools import handle_tool_call_updates
 
+    claim_confirmation(agent, run_response)
     register_run(run_response.run_id)  # type: ignore
 
     agent.model = cast(Model, agent.model)
@@ -3694,6 +3738,8 @@ def _continue_run(
     handle_tool_call_updates(agent, run_response=run_response, run_messages=run_messages, tools=tools)
 
     try:
+        if advance_confirmation_queue(agent, run_response, run_messages, tools):
+            return handle_agent_run_paused(agent, run_response, session, run_context=run_context, user_id=user_id)
         num_attempts = agent.retries + 1
         for attempt in range(num_attempts):
             try:
@@ -3909,6 +3955,7 @@ def _continue_run_stream(
     from agno.agent._telemetry import log_agent_telemetry
     from agno.agent._tools import handle_tool_call_updates_stream
 
+    claim_confirmation(agent, run_response)
     register_run(run_response.run_id)  # type: ignore
 
     # Set up retry logic
@@ -3942,6 +3989,17 @@ def _continue_run_stream(
                     if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                         raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
+
+                if advance_confirmation_queue(agent, run_response, run_messages, tools):
+                    yield from handle_agent_run_paused_stream(
+                        agent,
+                        run_response,
+                        session,
+                        run_context=run_context,
+                        user_id=user_id,
+                        yield_run_output=yield_run_output,
+                    )
+                    return
 
                 # 3. Process model response
                 for event in handle_model_response_stream(
@@ -4932,6 +4990,8 @@ async def _acontinue_run(
                     run_response=run_response,
                 )
 
+                await aclaim_confirmation(agent, run_response)
+
                 # Reset the run state
                 run_response.status = RunStatus.running
 
@@ -4942,6 +5002,11 @@ async def _acontinue_run(
                 await ahandle_tool_call_updates(
                     agent, run_response=run_response, run_messages=run_messages, tools=_tools
                 )
+
+                if advance_confirmation_queue(agent, run_response, run_messages, _tools):
+                    return await ahandle_agent_run_paused(
+                        agent, run_response, agent_session, run_context=run_context, user_id=user_id
+                    )
 
                 # 8. Get model response
                 model_response: ModelResponse = await acall_model_with_fallback(
@@ -5451,6 +5516,8 @@ async def _acontinue_run_stream(
                     run_response=run_response,
                 )
 
+                await aclaim_confirmation(agent, run_response)
+
                 # Reset the run state
                 run_response.status = RunStatus.running
 
@@ -5477,6 +5544,18 @@ async def _acontinue_run_stream(
                     if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                         await araise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
+
+                if advance_confirmation_queue(agent, run_response, run_messages, _tools):
+                    async for next_pause_event in ahandle_agent_run_paused_stream(
+                        agent,
+                        run_response,
+                        agent_session,
+                        run_context=run_context,
+                        user_id=user_id,
+                        yield_run_output=yield_run_output,
+                    ):
+                        yield next_pause_event
+                    return
 
                 # 8. Process model response
                 if agent.output_model is None:
@@ -5875,7 +5954,9 @@ def scrub_run_output_for_storage(agent: Agent, run_response: RunOutput) -> None:
         # store_media is off, so the media was never offloaded — the run keeps no pointer to it.
         scrub_media_from_run_output(run_response, keep_references=False)
 
-    if not agent.store_tool_messages:
+    if not agent.store_tool_messages and not (
+        run_response.status == RunStatus.paused and (run_response.metadata or {}).get("ordered_confirmations")
+    ):
         scrub_tool_results_from_run_output(run_response)
 
     if not agent.store_history_messages:

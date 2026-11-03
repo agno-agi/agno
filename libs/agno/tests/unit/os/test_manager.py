@@ -2105,3 +2105,383 @@ def test_standalone_company_manager_keeps_its_existing_execution_policy(db, with
         assert member.tool_call_limit == 7 and FOCUSED_EXECUTION_INSTRUCTIONS in member.instructions
         os.resync(os.get_app())
         assert os.company_manager.tool_call_limit is None and member.tool_call_limit == 7
+
+
+class ConfirmationBatchModel(OfflineModel):
+    """Emit one complete batch, then verify the transcript before finishing."""
+
+    def __init__(self, order):
+        super().__init__()
+        self.order = order
+        self.calls = 0
+
+    def invoke(self, messages, *args, **kwargs):
+        self.calls += 1
+        if self.calls == 1:
+            return ModelResponse(
+                role="assistant",
+                tool_calls=[
+                    {"id": "batch-" + name, "type": "function", "function": {"name": name, "arguments": "{}"}}
+                    for name in self.order
+                ],
+                response_usage=MessageMetrics(),
+            )
+        from collections import Counter
+
+        ids = [m.tool_call_id for m in messages if m.role == "tool"]
+        assert Counter(ids) == Counter("batch-" + name for name in self.order)
+        return ModelResponse(content="batch finished", role="assistant", response_usage=MessageMetrics())
+
+    async def ainvoke(self, messages, *args, **kwargs):
+        return self.invoke(messages, *args, **kwargs)
+
+    def invoke_stream(self, messages, *args, **kwargs):
+        yield self.invoke(messages, *args, **kwargs)
+
+    async def ainvoke_stream(self, messages, *args, **kwargs):
+        yield self.invoke(messages, *args, **kwargs)
+
+
+def confirmation_app(db, calls, order, delegated=False, opted_in=True, store_tool_messages=True):
+    from agno.tools import tool
+
+    @tool(requires_confirmation=True)
+    def first() -> str:
+        calls.append("first")
+        return "first result"
+
+    @tool(requires_confirmation=True)
+    def second() -> str:
+        calls.append("second")
+        return "second result"
+
+    @tool
+    def ordinary() -> str:
+        calls.append("ordinary")
+        return "ordinary result"
+
+    model = ConfirmationBatchModel(order)
+    if delegated:
+        manager_db = SqliteDb(db_file=db.db_file) if isinstance(db, AsyncSqliteDb) else db
+        os = AgentOS(db=manager_db, manager=OSManager(model=OfflineModel(), access_docs=False), telemetry=False)
+        member = manager_member(os, OPERATOR_ID)
+        member.model = model
+        member.db = db
+        member.tools = [first, second, ordinary]
+        os.manager.model = ManagerToolModel(
+            "delegate_task_to_member", {"member_id": OPERATOR_ID, "task": "Run the complete batch"}
+        )
+        base = f"/teams/{MANAGER_TEAM_ID}/runs"
+    else:
+        member = Agent(id="confirmation-batch", db=db, model=model, tools=[first, second, ordinary], telemetry=False)
+        os = AgentOS(db=db, agents=[member], telemetry=False)
+        base = "/agents/confirmation-batch/runs"
+    # Set the declared public option after construction so the pre-feature red
+    # exercises batching rather than stopping at an unknown constructor kwarg.
+    member.sequential_tool_confirmations = opted_in
+    member.store_tool_messages = store_tool_messages
+    return os, member, model, base
+
+
+def confirmation_payload(response, stream):
+    assert response.status_code == 200, response.text
+    if not stream:
+        return response.json()
+    events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
+    errors = [e for e in events if e.get("event") in {"RunError", "TeamRunError"}]
+    assert not errors, errors
+    return next(
+        e
+        for e in reversed(events)
+        if e.get("event") in {"RunPaused", "TeamRunPaused", "RunCompleted", "TeamRunCompleted"}
+    )
+
+
+def confirmation_decision(payload, confirmed, delegated=False):
+    from copy import deepcopy
+
+    req = deepcopy(payload["requirements"][-1])
+    req["confirmation"] = confirmed
+    req["tool_execution"]["confirmed"] = confirmed
+    return {"requirements": json.dumps([req])} if delegated else {"tools": json.dumps([req["tool_execution"]])}
+
+
+@pytest.mark.parametrize("delegated", [False, True])
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("database", [SqliteDb, AsyncSqliteDb])
+@pytest.mark.parametrize("order", [("first", "second"), ("second", "first")])
+@pytest.mark.parametrize("decision", ["confirm", "reject_first", "reject_second"])
+def test_sequential_confirmation_http(tmp_path, delegated, stream, database, order, decision):
+    calls = []
+    db_file = str(tmp_path / "ordered.db")
+    db = database(db_file=db_file)
+    os, member, model, base = confirmation_app(db, calls, order, delegated)
+    with TestClient(os.get_app()) as client:
+        initial = confirmation_payload(
+            client.post(base, data={"message": "Act", "stream": str(stream).lower()}), stream
+        )
+        assert len(initial["requirements"]) == 1
+        assert initial["requirements"][0]["tool_execution"]["tool_name"] == order[0]
+        assert calls == [] and model.calls == 1
+        first_decision = confirmation_decision(initial, decision != "reject_first", delegated)
+
+    # A rebuilt app, Agent and model must use stored pending calls, even when
+    # the new model has never seen the original request.
+    os, member, resumed_model, base = confirmation_app(
+        database(db_file=db_file), calls, order, delegated, store_tool_messages=False
+    )
+    resumed_model.calls = 1
+    if delegated:
+        os.manager.model.calls = 1
+    with TestClient(os.get_app()) as client:
+        continuation = base + "/" + initial["run_id"] + "/continue"
+        after_first = confirmation_payload(
+            client.post(
+                continuation,
+                data={"session_id": initial["session_id"], "stream": str(stream).lower(), **first_decision},
+            ),
+            stream,
+        )
+        if decision == "reject_first":
+            assert calls == []
+            assert resumed_model.calls == 2
+        else:
+            assert calls == [order[0]]
+            assert resumed_model.calls == 1
+            assert len(after_first["requirements"]) == 1
+            assert after_first["requirements"][0]["tool_execution"]["tool_name"] == order[1]
+            assert after_first["requirements"][0]["tool_execution"]["tool_call_id"] == "batch-" + order[1]
+            stale = client.post(
+                continuation, data={"session_id": initial["session_id"], "stream": "false", **first_decision}
+            )
+            assert stale.status_code == 409, stale.text
+            final = confirmation_payload(
+                client.post(
+                    continuation,
+                    data={
+                        "session_id": initial["session_id"],
+                        "stream": str(stream).lower(),
+                        **confirmation_decision(after_first, decision != "reject_second", delegated),
+                    },
+                ),
+                stream,
+            )
+            assert final.get("status", "COMPLETED") == "COMPLETED"
+            assert calls == (list(order) if decision == "confirm" else [order[0]])
+            assert resumed_model.calls == 2
+        repeated = client.post(
+            continuation, data={"session_id": initial["session_id"], "stream": "false", **first_decision}
+        )
+        assert repeated.status_code == 409, repeated.text
+
+
+@pytest.mark.parametrize("delegated", [False, True])
+@pytest.mark.parametrize("opted_in", [False, True])
+def test_sequential_confirmation_mixed_batch_and_default(db, delegated, opted_in):
+    calls = []
+    os, member, model, base = confirmation_app(db, calls, ("first", "ordinary", "second"), delegated, opted_in)
+    with TestClient(os.get_app()) as client:
+        paused = confirmation_payload(client.post(base, data={"message": "Act", "stream": "false"}), False)
+        assert [r["tool_execution"]["tool_name"] for r in paused["requirements"]] == (
+            ["first"] if opted_in else ["first", "second"]
+        )
+        assert calls == ["ordinary"] and model.calls == 1
+
+
+@pytest.mark.parametrize("delegated", [False, True])
+def test_sequential_confirmation_concurrent_http(db, delegated):
+    from concurrent.futures import ThreadPoolExecutor
+
+    calls = []
+    os, member, model, base = confirmation_app(db, calls, ("first", "second"), delegated)
+    with TestClient(os.get_app()) as client:
+        paused = confirmation_payload(client.post(base, data={"message": "Act", "stream": "false"}), False)
+        assert len(paused["requirements"]) == 1
+        data = {"session_id": paused["session_id"], "stream": "false", **confirmation_decision(paused, True, delegated)}
+        path = base + "/" + paused["run_id"] + "/continue"
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            responses = list(pool.map(lambda _: client.post(path, data=data), range(2)))
+        assert sorted(r.status_code for r in responses) == [200, 409], [r.text for r in responses]
+        assert calls == ["first"] and model.calls == 1
+
+
+@pytest.mark.parametrize("mode", ["sync", "async", "sync_stream", "async_stream"])
+def test_sequential_confirmation_direct_twins(db, mode):
+    calls = []
+    os, agent, model, _ = confirmation_app(db, calls, ("first", "second"))
+
+    async def arun():
+        if mode == "async":
+            return await agent.arun("Act")
+        async for _ in agent.arun("Act", stream=True, stream_events=True):
+            pass
+        return await agent.aget_last_run_output()
+
+    if mode.startswith("async"):
+        paused = asyncio.run(arun())
+    elif mode == "sync":
+        paused = agent.run("Act")
+    else:
+        list(agent.run("Act", stream=True, stream_events=True))
+        paused = agent.get_last_run_output()
+    assert len(paused.requirements) == 1
+    assert calls == [] and model.calls == 1
+    for index, name in enumerate(("first", "second")):
+        paused.requirements[0].confirm()
+        if mode == "sync":
+            paused = agent.continue_run(paused)
+        elif mode == "sync_stream":
+            list(agent.continue_run(paused, stream=True, stream_events=True))
+            paused = agent.get_last_run_output()
+        elif mode == "async":
+            paused = asyncio.run(agent.acontinue_run(paused))
+        else:
+
+            async def acontinue():
+                async for _ in agent.acontinue_run(paused, stream=True, stream_events=True):
+                    pass
+                return await agent.aget_last_run_output()
+
+            paused = asyncio.run(acontinue())
+        assert calls == list(("first", "second")[: index + 1])
+        assert model.calls == (1 if index == 0 else 2)
+
+
+def test_sequential_confirmation_option_round_trip(db):
+    from agno.models.openai import OpenAIResponses
+
+    agent = Agent(id="ordered-config", db=db, model=OpenAIResponses(id="fixture"), sequential_tool_confirmations=True)
+    restored = Agent.from_dict(agent.to_dict())
+    assert restored.sequential_tool_confirmations is True
+    assert Agent(model=OfflineModel()).sequential_tool_confirmations is False
+
+
+@pytest.mark.parametrize("delegated", [False, True])
+@pytest.mark.parametrize("alteration", ["nonce", "arguments", "result", "metadata"])
+def test_sequential_confirmation_untrusted_card(db, delegated, alteration):
+    calls = []
+    os, member, model, base = confirmation_app(db, calls, ("first", "second"), delegated)
+    with TestClient(os.get_app()) as client:
+        paused = confirmation_payload(client.post(base, data={"message": "Act", "stream": "false"}), False)
+        req = paused["requirements"][0]
+        req["confirmation"] = True
+        req["tool_execution"]["confirmed"] = True
+        if alteration == "nonce":
+            req["tool_execution"]["confirmation_id"] = "stale-confirmation"
+        elif alteration == "arguments":
+            req["tool_execution"]["tool_args"] = {"unexpected": "injected"}
+        elif alteration == "result":
+            req["tool_execution"]["result"] = "already executed"
+        data = {"session_id": paused["session_id"], "stream": "false"}
+        if alteration == "metadata":
+            data["metadata"] = json.dumps({"ordered_confirmations": {"active": "forged", "queue": []}})
+        data.update(
+            {"requirements": json.dumps([req])} if delegated else {"tools": json.dumps([req["tool_execution"]])}
+        )
+        response = client.post(base + "/" + paused["run_id"] + "/continue", data=data)
+        if alteration == "nonce" or (alteration == "arguments" and not delegated):
+            assert response.status_code == 409, response.text
+            assert calls == [] and model.calls == 1
+        else:
+            # Team binds argument identity to its stored requirement; supplied
+            # results and metadata must never skip execution or delete the queue.
+            next_pause = confirmation_payload(response, False)
+            assert calls == ["first"] and model.calls == 1
+            assert [r["tool_execution"]["tool_name"] for r in next_pause["requirements"]] == ["second"]
+
+
+def test_sequential_confirmation_interrupted_claim_does_not_replay(db):
+    calls = []
+    os, member, model, base = confirmation_app(db, calls, ("first", "second"))
+    with TestClient(os.get_app()) as client:
+        paused = confirmation_payload(client.post(base, data={"message": "Act", "stream": "false"}), False)
+        assert db.update_run_if_matches(
+            paused["run_id"], paused["session_id"], {"status": "PAUSED"}, {"status": "RUNNING"}
+        )
+        response = client.post(
+            base + "/" + paused["run_id"] + "/continue",
+            data={"session_id": paused["session_id"], "stream": "false", **confirmation_decision(paused, True)},
+        )
+        assert response.status_code == 409, response.text
+        assert calls == [] and model.calls == 1
+        assert db.get_run(paused["run_id"]).status.value == "RUNNING"
+
+
+def test_sequential_confirmation_run_state_is_not_shared(db):
+    calls = []
+    os, agent, model, _ = confirmation_app(db, calls, ("first", "second"))
+    first_run = agent.run("First", session_id="one")
+    model.calls = 0
+    second_run = agent.run("Second", session_id="two")
+    assert len(first_run.requirements) == len(second_run.requirements) == 1
+    assert (
+        first_run.requirements[0].tool_execution.confirmation_id
+        != second_run.requirements[0].tool_execution.confirmation_id
+    )
+    first_run.requirements[0].confirm()
+    agent.continue_run(first_run)
+    assert calls == ["first"]
+    persisted_second = db.get_run(second_run.run_id)
+    assert persisted_second.status.value == "PAUSED"
+    assert persisted_second.requirements[0].tool_execution.confirmed is None
+
+
+@pytest.mark.parametrize("delegated", [False, True])
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("async_policy", [False, True])
+@pytest.mark.parametrize("policy_mode", ["reverse", "deny"])
+def test_sequential_confirmation_policy(db, delegated, stream, async_policy, policy_mode):
+    calls = []
+    os, member, model, base = confirmation_app(db, calls, ("first", "second"), delegated)
+
+    def policy(pending, run_context):
+        assert run_context.run_id
+        if policy_mode == "deny":
+            return []
+        return [t.tool_call_id for t in reversed(pending)]
+
+    async def apolicy(pending, run_context):
+        return policy(pending, run_context)
+
+    member.confirmation_policy = apolicy if async_policy else policy
+    with TestClient(os.get_app()) as client:
+        result = confirmation_payload(client.post(base, data={"message": "Act", "stream": str(stream).lower()}), stream)
+        assert calls == [] and model.calls == 1
+        if policy_mode == "reverse":
+            assert [r["tool_execution"]["tool_name"] for r in result["requirements"]] == ["second"]
+        else:
+            assert not result.get("requirements")
+            assert result.get("status", "COMPLETED") == "COMPLETED"
+            run_id = result["run_id"]
+            if delegated:
+                from agno.db.base import SessionType
+
+                stored = db.get_session(result["session_id"], session_type=SessionType.TEAM)
+                runs = stored.runs
+                member_run = next(r for r in runs if getattr(r, "agent_id", None) == OPERATOR_ID)
+            else:
+                member_run = db.get_run(run_id)
+            assert sorted(m.tool_call_id for m in member_run.messages if m.role == "tool") == [
+                "batch-first",
+                "batch-second",
+            ]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("selection", ["none", "second"])
+def test_sequential_confirmation_policy_excluded_approval_has_no_pending_record(db, stream, selection):
+    calls = []
+    os, member, model, base = confirmation_app(db, calls, ("first", "second"))
+    for function in member.tools:
+        if function.name in {"first", "second"}:
+            function.approval_type = "required"
+    member.confirmation_policy = lambda pending, ctx: [
+        t.tool_call_id for t in pending if selection == "second" and t.tool_name == "second"
+    ]
+    with TestClient(os.get_app()) as client:
+        result = confirmation_payload(client.post(base, data={"message": "Act", "stream": str(stream).lower()}), stream)
+        assert len(result.get("requirements") or []) == (1 if selection == "second" else 0)
+        records, total = db.get_approvals()
+        assert total == (1 if selection == "second" else 0)
+        assert all(r["tool_name"] == "second" for r in records)
+        assert calls == [] and model.calls == 1

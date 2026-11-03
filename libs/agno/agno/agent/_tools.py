@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from collections import deque
+from copy import deepcopy
+from uuid import uuid4
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -23,13 +26,15 @@ if TYPE_CHECKING:
     from agno.fs.toolkit import FileSystemTools
     from agno.offload.store import ResultStore
 
+from agno.exceptions import RunNotContinuableError
 from agno.metrics import MessageMetrics
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
-from agno.run import RunContext
+from agno.run import RunContext, RunStatus
 from agno.run.agent import RunOutput, RunOutputEvent
 from agno.run.messages import RunMessages
+from agno.run.requirement import RunRequirement
 from agno.session import AgentSession
 from agno.tools import Toolkit
 from agno.tools.function import Function, entrypoint_accepts_media
@@ -1071,6 +1076,209 @@ async def arun_tool(
 
     if len(function_call_results) > 0:
         run_messages.messages.extend(function_call_results)
+
+
+def pending_confirmations(run: RunOutput) -> List[ToolExecution]:
+    state = (run.metadata or {}).get("ordered_confirmations") or {}
+    return [t for t in run.tools or [] if t.requires_confirmation and t.confirmed is None] + [
+        ToolExecution.from_dict(t) for t in state.get("queue", [])
+    ]
+
+
+def prepare_confirmation_queue(
+    agent: Agent, run: RunOutput, run_context: Optional[RunContext], order: Optional[List[str]] = None
+) -> None:
+    """Expose one eligible confirmation; retain remaining calls on this run."""
+    state = (run.metadata or {}).get("ordered_confirmations")
+    if state is None:
+        return
+    pending = pending_confirmations(run)
+    if not pending:
+        return
+    if order is None and agent.confirmation_policy is not None:
+        order = agent.confirmation_policy(deepcopy(pending), run_context)
+        if inspect.isawaitable(order):
+            if inspect.iscoroutine(order):
+                order.close()
+            raise ValueError("Use arun with an asynchronous confirmation policy")
+        if not isinstance(order, list):
+            raise ValueError("Confirmation policy must return a list of original tool-call IDs")
+    by_id = {t.tool_call_id: t for t in pending}
+    if len(by_id) != len(pending):
+        raise ValueError("Sequential confirmations require distinct tool-call IDs within a batch")
+    if order is not None and (len(set(order)) != len(order) or any(i not in by_id for i in order)):
+        raise ValueError("Confirmation policy must select distinct original tool-call IDs")
+    admitted = [by_id[i] for i in order] if order is not None else pending
+    admitted_objects = {id(t) for t in admitted}
+    pending_objects = {id(t) for t in pending}
+    run.tools = [t for t in run.tools or [] if id(t) not in pending_objects]
+    run.requirements = [
+        r for r in run.requirements or [] if not (r.tool_execution and r.tool_execution.requires_confirmation)
+    ]
+    state["active"] = None
+    state["queue"] = []
+    for tool in pending:
+        if id(tool) in admitted_objects:
+            continue
+        tool.confirmed = False
+        tool.requires_confirmation = False
+        tool.tool_call_error = True
+        # A call excluded before admission has no required approval to resolve.
+        tool.approval_type = None
+        tool.result = "Tool confirmation is not eligible"
+        run.tools.append(tool)
+        if run.messages is None:
+            run.messages = []
+        run.messages.append(
+            Message(
+                role=cast(Model, agent.model).tool_message_role,
+                content=tool.result,
+                tool_call_id=tool.tool_call_id,
+                tool_name=tool.tool_name,
+                tool_args=tool.tool_args,
+                tool_call_error=True,
+            )
+        )
+    if not admitted:
+        run.content = "No eligible tool confirmations"
+        return
+    head, *deferred = admitted
+    if head.confirmation_id is None:
+        head.confirmation_id = str(uuid4())
+    state["active"] = head.confirmation_id
+    state["queue"] = [t.to_dict() for t in deferred]
+    run.tools.append(head)
+    run.requirements.append(RunRequirement(tool_execution=head))
+
+
+async def aprepare_confirmation_queue(agent: Agent, run: RunOutput, run_context: Optional[RunContext]) -> None:
+    order = None
+    if agent.confirmation_policy is not None and (run.metadata or {}).get("ordered_confirmations") is not None:
+        pending = deepcopy(pending_confirmations(run))
+        if getattr(getattr(getattr(agent.db, "db_engine", None), "dialect", None), "name", None) == "postgresql":
+            order = await asyncio.to_thread(agent.confirmation_policy, pending, run_context)
+        else:
+            order = agent.confirmation_policy(pending, run_context)
+        if inspect.isawaitable(order):
+            order = await order
+        if not isinstance(order, list):
+            raise ValueError("Confirmation policy must return a list of original tool-call IDs")
+    prepare_confirmation_queue(agent, run, run_context, order)
+
+
+def _confirmation_claim(run: RunOutput, stored: Optional[RunOutput]) -> Dict[str, Any]:
+    """Bind only a decision to the authoritative paused action before any write."""
+    state = (getattr(stored, "metadata", None) or {}).get("ordered_confirmations")
+    if (
+        stored is None
+        or stored.status != RunStatus.paused
+        or not state
+        or not state.get("active")
+        or stored.agent_id != run.agent_id
+        or stored.session_id != run.session_id
+        or stored.user_id != run.user_id
+    ):
+        raise RunNotContinuableError("This confirmation is no longer waiting for a decision")
+    originals = [t for t in stored.tools or [] if t.confirmation_id == state["active"] and t.requires_confirmation]
+    submitted = [
+        r.tool_execution
+        for r in run.requirements or []
+        if r.tool_execution and r.tool_execution.confirmation_id == state["active"]
+    ]
+    if not submitted:
+        submitted = [t for t in run.tools or [] if t.confirmation_id == state["active"]]
+    if len(originals) != 1 or len(submitted) != 1:
+        raise RunNotContinuableError("Resend the current confirmation exactly as issued")
+    original, decision = originals[0], submitted[0]
+    if type(decision.confirmed) is not bool or (decision.tool_call_id, decision.tool_name, decision.tool_args) != (
+        original.tool_call_id,
+        original.tool_name,
+        original.tool_args,
+    ):
+        raise RunNotContinuableError("The decision does not match the current confirmation")
+    # Do not accept caller-supplied results, arguments, queue state or metadata.
+    original.confirmed = decision.confirmed
+    original.confirmation_note = decision.confirmation_note
+    run.tools = stored.tools
+    run.requirements = [RunRequirement(tool_execution=original)]
+    run.metadata = deepcopy(stored.metadata)
+    return {"status": RunStatus.paused.value, "metadata.ordered_confirmations.active": state["active"]}
+
+
+def claim_confirmation(agent: Agent, run: RunOutput) -> None:
+    state = (run.metadata or {}).get("ordered_confirmations")
+    if not state or (
+        not state.get("active")
+        and not any(
+            t.confirmation_id and t.requires_confirmation
+            for t in ([r.tool_execution for r in run.requirements or [] if r.tool_execution] + list(run.tools or []))
+        )
+    ):
+        return
+    db = cast(Any, agent.db)  # Atomic-update capability is checked before the run starts.
+    stored = db.get_run(run.run_id)
+    expected = _confirmation_claim(run, stored)
+    if not db.update_run_if_matches(
+        run.run_id, run.session_id, expected, {"status": RunStatus.running.value}, user_id=run.user_id
+    ):
+        raise RunNotContinuableError("This confirmation has already been claimed")
+
+
+async def aclaim_confirmation(agent: Agent, run: RunOutput) -> None:
+    state = (run.metadata or {}).get("ordered_confirmations")
+    if not state or (
+        not state.get("active")
+        and not any(
+            t.confirmation_id and t.requires_confirmation
+            for t in ([r.tool_execution for r in run.requirements or [] if r.tool_execution] + list(run.tools or []))
+        )
+    ):
+        return
+    from agno.agent._init import has_async_db
+
+    if not has_async_db(agent):
+        await asyncio.to_thread(claim_confirmation, agent, run)
+        return
+    db = cast(Any, agent.db)
+    stored = await db.get_run(run.run_id)
+    expected = _confirmation_claim(run, stored)
+    if not await db.update_run_if_matches(
+        run.run_id, run.session_id, expected, {"status": RunStatus.running.value}, user_id=run.user_id
+    ):
+        raise RunNotContinuableError("This confirmation has already been claimed")
+
+
+def advance_confirmation_queue(
+    agent: Agent, run: RunOutput, run_messages: RunMessages, tools: List[Union[Function, dict]]
+) -> bool:
+    """Return another pause before invoking the model, or finish cancelled calls."""
+    state = (run.metadata or {}).get("ordered_confirmations")
+    if not state or not state.get("active"):
+        return False
+    run.tools = list(run.tools or [])
+    head = next(t for t in run.tools if t.confirmation_id == state["active"])
+    state["active"] = None
+    if head.confirmed is False or head.tool_call_error:
+        functions = {t.name: t for t in tools if isinstance(t, Function)}
+        for data in state["queue"]:
+            tool = ToolExecution.from_dict(data)
+            tool.confirmed = False
+            tool.confirmation_note = "Cancelled because an earlier confirmation was rejected or failed"
+            reject_tool_call(agent, run_messages, tool, functions)
+            tool.requires_confirmation = False
+            tool.tool_call_error = True
+            tool.approval_type = None
+            tool.result = tool.confirmation_note
+            run.tools.append(tool)
+        state["queue"] = []
+    elif state["queue"]:
+        tool = ToolExecution.from_dict(state["queue"].pop(0))
+        run.tools.append(tool)
+        run.requirements = [RunRequirement(tool_execution=tool)]
+        run.messages = [m for m in run_messages.messages if m.add_to_agent_memory]
+        run.content = None
+        return True
+    return False
 
 
 def handle_tool_call_updates(

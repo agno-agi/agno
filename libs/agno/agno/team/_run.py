@@ -5975,6 +5975,11 @@ def _backfill_approval_to_requirements(
                 f"and tool call '{tool_call_id}' matches no stored requirement of this run. "
                 "The run remains paused."
             )
+        old_te = getattr(old_req, "tool_execution", None)
+        if getattr(old_te, "confirmation_id", None) is not None and getattr(old_te, "confirmation_id") != getattr(
+            te, "confirmation_id", None
+        ):
+            raise RunNotContinuableError("Resend the current confirmation exactly as issued")
         if id(old_req) in matched:
             raise RunNotContinuableError(
                 f"Cannot continue run {run_id}: two payload requirements both resolve to the stored "
@@ -7522,6 +7527,11 @@ def continue_run_dispatch(
             raise RunNotFoundError(f"No runs found for run ID {run_id}")
 
     run_response = cast(TeamRunOutput, run_response)
+
+    if run_response.status != RunStatus.paused and any(
+        getattr(r.tool_execution, "confirmation_id", None) for r in _normalize_requirements_payload(requirements or [])
+    ):
+        raise RunNotContinuableError("This confirmation is no longer waiting for a decision")
 
     if run_response.status == RunStatus.cancelled:
         raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
@@ -9402,6 +9412,12 @@ async def _acontinue_run(
 
                 run_response = cast(TeamRunOutput, run_response)
 
+                if run_response.status != RunStatus.paused and any(
+                    getattr(r.tool_execution, "confirmation_id", None)
+                    for r in _normalize_requirements_payload(requirements or [])
+                ):
+                    raise RunNotContinuableError("This confirmation is no longer waiting for a decision")
+
                 if run_response.status == RunStatus.cancelled:
                     raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
 
@@ -9884,6 +9900,12 @@ async def _acontinue_run_stream(
                         raise RunNotFoundError(f"No runs found for run ID {run_id}")
 
                 run_response = cast(TeamRunOutput, run_response)
+
+                if run_response.status != RunStatus.paused and any(
+                    getattr(r.tool_execution, "confirmation_id", None)
+                    for r in _normalize_requirements_payload(requirements or [])
+                ):
+                    raise RunNotContinuableError("This confirmation is no longer waiting for a decision")
 
                 if run_response.status == RunStatus.cancelled:
                     raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")

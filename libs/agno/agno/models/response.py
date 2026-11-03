@@ -45,6 +45,8 @@ class ToolExecution:
     # User control flow (HITL) fields
     requires_confirmation: Optional[bool] = None
     confirmed: Optional[bool] = None
+    # Identifies this human decision, independently of provider tool-call ID reuse.
+    confirmation_id: Optional[str] = None
     confirmation_note: Optional[str] = None
 
     requires_user_input: Optional[bool] = None
@@ -95,6 +97,7 @@ class ToolExecution:
             stop_after_tool_call=data.get("stop_after_tool_call", False),
             requires_confirmation=data.get("requires_confirmation"),
             confirmed=data.get("confirmed"),
+            confirmation_id=data.get("confirmation_id"),
             confirmation_note=data.get("confirmation_note"),
             requires_user_input=data.get("requires_user_input"),
             user_input_schema=[UserInputField.from_dict(field) for field in data["user_input_schema"]]

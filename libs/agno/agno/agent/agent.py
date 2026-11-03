@@ -195,6 +195,14 @@ class Agent:
     tools: Optional[Union[List[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]] = None
 
     # Maximum number of tool calls allowed.
+    # Present confirmation calls from one batch sequentially. Rejection cancels
+    # the remaining confirmations; ordinary calls retain their batch semantics.
+    # Requires a database with atomic run updates for stale/concurrent decisions.
+    sequential_tool_confirmations: bool = False
+    # Optional per-pause policy: receive confirmation snapshots and RunContext,
+    # return eligible original tool-call IDs in order. Reattach like other
+    # callable hooks when rebuilding an Agent; the pending queue itself persists.
+    confirmation_policy: Optional[Callable] = None
     tool_call_limit: Optional[int] = None
     # Controls which (if any) tool is called by the model.
     # "none" means the model will not call a tool and instead generates a message.
@@ -460,6 +468,8 @@ class Agent:
         skills: Optional[Skills] = None,
         metadata: Optional[Dict[str, Any]] = None,
         tools: Optional[Union[Sequence[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]] = None,
+        sequential_tool_confirmations: bool = False,
+        confirmation_policy: Optional[Callable] = None,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
@@ -638,6 +648,8 @@ class Agent:
             for tool in concrete_tools:
                 raise_if_component_tool(tool, "Agent", "To let this agent delegate to another agent, use a Team.")
             self.tools = concrete_tools
+        self.sequential_tool_confirmations = sequential_tool_confirmations
+        self.confirmation_policy = confirmation_policy
         self.tool_call_limit = tool_call_limit
         self.tool_choice = tool_choice
         self.tool_hooks = tool_hooks

@@ -1036,6 +1036,8 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         if serialized_tools:
             config["tools"] = serialized_tools
 
+    if agent.sequential_tool_confirmations:
+        config["sequential_tool_confirmations"] = True
     if agent.tool_call_limit is not None:
         config["tool_call_limit"] = agent.tool_call_limit
     if agent.tool_choice is not None:
@@ -1497,6 +1499,7 @@ def from_dict(
         references_format=config.get("references_format", "json"),
         # --- Tools ---
         tools=config.get("tools"),
+        sequential_tool_confirmations=config.get("sequential_tool_confirmations", False),
         tool_call_limit=config.get("tool_call_limit"),
         tool_choice=config.get("tool_choice"),
         # --- Reasoning settings ---
