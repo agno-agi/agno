@@ -544,6 +544,27 @@ class TestPersistence:
         same = ClaudeAgent.from_dict(ClaudeAgent(id="coder", db=registered).to_dict(), registry=registry, strict=True)
         assert same.db is registered
 
+    def test_async_db_table_overrides_survive_a_registry_load(self, db):
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        from agno.db.postgres import AsyncPostgresDb
+
+        url = "postgresql+asyncpg://ai:ai@localhost:5532/ai"
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        registered = AsyncPostgresDb(id="apg", db_url=url, db_engine=engine, create_schema=False)
+        registry = Registry(dbs=[registered], allow_host_external_agents=True)  # type: ignore[list-item]
+        session_db = AsyncPostgresDb(
+            id="apg", db_url=url, db_engine=engine, session_table="coder_sessions", create_schema=False
+        )
+
+        ClaudeAgent(id="coder", db=session_db).save(db=db)
+        loaded = get_agent_by_id(db=db, id="coder", registry=registry, strict=True)
+
+        assert isinstance(loaded, ClaudeAgent) and isinstance(loaded.db, AsyncPostgresDb)
+        assert loaded.db is not registered
+        assert loaded.db.db_engine is registered.db_engine
+        assert loaded.db.session_table_name == "coder_sessions"
+
     def test_agent_loaders_refuse_an_external_config(self, db, registry):
         ClaudeAgent(id="coder").save(db=db)
 
