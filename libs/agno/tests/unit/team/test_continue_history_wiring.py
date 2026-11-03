@@ -481,7 +481,9 @@ async def test_async_stream_member_only_branch_passes_run_id(monkeypatch: pytest
     team_session = _make_team_session()
     _patch_async_dispatch(monkeypatch, team_session)
 
-    async def fake_aroute_stream(team, run_response, session, member_results, run_context=None, stream_events=False):
+    async def fake_aroute_stream(
+        team, run_response, session, member_results, run_context=None, stream_events=False, on_confirmation_claim=None
+    ):
         member_results.append("[Member]: done")
         return
         yield  # pragma: no cover - makes this an async generator
