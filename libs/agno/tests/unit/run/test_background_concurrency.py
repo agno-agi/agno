@@ -408,8 +408,7 @@ async def test_task_execution_provider_opaque_async_database_stays_on_own_loop(t
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("stream_arg", [{}, {"stream": True}])
-async def test_streaming_workflow_background_run_remains_awaitable(monkeypatch, stream_arg):
+async def test_nonstreaming_workflow_background_run_remains_awaitable(monkeypatch):
     from inspect import isawaitable
 
     from agno.workflow import Workflow
@@ -428,10 +427,9 @@ async def test_streaming_workflow_background_run_remains_awaitable(monkeypatch, 
     async def submit(*args, **kwargs):
         return "submitted"
 
-    monkeypatch.setattr(workflow, "_arun_background_stream", submit)
     monkeypatch.setattr(workflow, "_arun_background", submit)
     with concurrency.task_execution_scope(Provider()):
-        run = workflow.arun("hi", session_id="s1", background=True, **stream_arg)
+        run = workflow.arun("hi", session_id="s1", background=True)
         assert isawaitable(run)
         assert await run == "submitted"
 

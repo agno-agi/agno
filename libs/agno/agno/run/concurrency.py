@@ -798,9 +798,11 @@ def guard_task_execution(
                 streaming = values.get("stream")
                 if streaming is None:
                     streaming = getattr(component, "stream", False)
-                # Background submission returns an acknowledgment, even when streaming its events.
+                # WebSocket background submission returns an awaitable; SSE returns an async iterator.
                 if values.get("background"):
-                    streaming = False
+                    streaming = bool(values.get("stream")) and not (
+                        values.get("enable_websocket") or values.get("websocket")
+                    )
 
                 async def invoke() -> Any:
                     async with ahold(provider, component, session, token, expected, parents) as identity:

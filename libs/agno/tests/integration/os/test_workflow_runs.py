@@ -13,6 +13,7 @@ from httpx import ASGITransport
 from pydantic import BaseModel
 
 from agno.client import AgentOSClient
+from agno.company import CompanyConfig
 from agno.db.base import ComponentType
 from agno.db.sqlite import SqliteDb
 from agno.os import AgentOS
@@ -83,6 +84,29 @@ def test_create_workflow_run_streaming(test_os_client, test_workflow: Workflow):
         # Verify content across chunks
         content_chunks = [chunk.get("content") for chunk in chunks if chunk.get("content")]
         assert len(content_chunks) > 0
+
+
+def test_company_background_workflow_sse_runs_step(tmp_path):
+    """The real SSE route must consume the Workflow's background async generator."""
+    worked = []
+
+    def step(step_input: StepInput) -> StepOutput:
+        worked.append(step_input.input)
+        return StepOutput(content="worked")
+
+    db = SqliteDb(db_file=str(tmp_path / "workflow.db"))
+    workflow = Workflow(id="background-wf", db=db, steps=[Step(name="step", executor=step)])
+    app = AgentOS(db=db, workflows=[workflow], company=CompanyConfig(), telemetry=False).get_app()
+    with TestClient(app) as client:
+        for _ in range(2):
+            response = client.post(
+                "/workflows/background-wf/runs",
+                data={"message": "go", "stream": "true", "background": "true"},
+            )
+            assert response.status_code == 200
+            assert "WorkflowError" not in response.text
+            assert "WorkflowCompleted" in response.text
+    assert worked == ["go", "go"]
 
 
 def test_running_unknown_workflow_returns_404(test_os_client):
