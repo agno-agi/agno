@@ -33,7 +33,6 @@ from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
 from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.utils import resolve_db_from_config
 from agno.exceptions import ComponentPinError, ComponentRehydrationError
-from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.utils import resolve_model
@@ -161,37 +160,6 @@ async def aget_last_run_output(team: "Team", session_id: Optional[str] = None) -
 
     session_id_to_load = session_id or team.session_id
     return cast(TeamRunOutput, await aget_last_run_output_util(cast(Any, team), session_id=session_id_to_load))
-
-
-# ---------------------------------------------------------------------------
-# Session metrics (internal)
-# ---------------------------------------------------------------------------
-
-
-def get_session_metrics_internal(team: "Team", session: TeamSession) -> SessionMetrics:
-    # Get the session_metrics from the database
-    if session.session_data is not None and "session_metrics" in session.session_data:
-        session_metrics_from_db = session.session_data.get("session_metrics")
-        if session_metrics_from_db is not None:
-            if isinstance(session_metrics_from_db, dict):
-                return SessionMetrics.from_dict(session_metrics_from_db)
-            elif isinstance(session_metrics_from_db, SessionMetrics):
-                return session_metrics_from_db
-            elif isinstance(session_metrics_from_db, RunMetrics):
-                # Convert legacy RunMetrics to SessionMetrics
-                return SessionMetrics(
-                    input_tokens=session_metrics_from_db.input_tokens,
-                    output_tokens=session_metrics_from_db.output_tokens,
-                    total_tokens=session_metrics_from_db.total_tokens,
-                    audio_input_tokens=session_metrics_from_db.audio_input_tokens,
-                    audio_output_tokens=session_metrics_from_db.audio_output_tokens,
-                    audio_total_tokens=session_metrics_from_db.audio_total_tokens,
-                    cache_read_tokens=session_metrics_from_db.cache_read_tokens,
-                    cache_write_tokens=session_metrics_from_db.cache_write_tokens,
-                    reasoning_tokens=session_metrics_from_db.reasoning_tokens,
-                    cost=session_metrics_from_db.cost,
-                )
-    return SessionMetrics()
 
 
 # ---------------------------------------------------------------------------
