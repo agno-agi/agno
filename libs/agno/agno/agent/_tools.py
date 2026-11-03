@@ -895,7 +895,6 @@ def run_tool(
         function_call=function_call,
         function_call_results=function_call_results,
         result_store=_active_result_store(agent),
-        run_response=run_response,
     ):
         if isinstance(call_result, ModelResponse):
             if call_result.event == ModelResponseEvent.tool_call_started.value:
@@ -1012,7 +1011,6 @@ async def arun_tool(
         function_call_results=function_call_results,
         skip_pause_check=True,
         result_store=_active_result_store(agent),
-        run_response=run_response,
     ):
         if isinstance(call_result, ModelResponse):
             if call_result.event == ModelResponseEvent.tool_call_started.value:
