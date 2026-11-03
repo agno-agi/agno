@@ -9,7 +9,7 @@ status intact. Only the last archive event may authorize a cascading restore.
 import time
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import func, literal, or_, select, union_all
+from sqlalchemy import case, func, literal, or_, select, union_all
 
 
 def active_parents(stmt: Any, table: Any, products: Any, projects: Any = None) -> Any:
@@ -27,6 +27,20 @@ def active_parents(stmt: Any, table: Any, products: Any, projects: Any = None) -
             )
         )
     return stmt
+
+
+def task_group_order(table: Any, group_by: Optional[str]) -> List[Any]:
+    """Leading sort keys that keep each group together across pages."""
+    from agno.db.schemas.tasks import TASK_TRANSITIONS
+
+    if group_by is None:
+        return []
+    if group_by == "status":
+        ranks = [(table.c.status == status, index) for index, status in enumerate(TASK_TRANSITIONS)]
+        return [case(*ranks, else_=len(TASK_TRANSITIONS))]
+    if group_by == "executor":
+        return [func.coalesce(table.c.executor_type, ""), func.coalesce(table.c.executor_id, "")]
+    raise ValueError("group_by must be status or executor")
 
 
 def lock_product(sess: Any, products: Any, product_id: str) -> None:

@@ -6993,9 +6993,10 @@ class AsyncPostgresDb(AsyncBaseDb):
         session_id: Optional[str] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        group_by: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         from agno.db.schemas.products import company_sort
-        from agno.db.sql.company import active_parents
+        from agno.db.sql.company import active_parents, task_group_order
 
         sort_by, sort_order = company_sort(sort_by, sort_order)
         if limit < 1 or page < 1:
@@ -7003,6 +7004,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         table = await self._get_table(table_type="tasks")
         if table is None:
             return [], 0
+        group_order = task_group_order(table, group_by)
         products = await self._get_table(table_type="products", create_table_if_not_found=True)
         projects = await self._get_table(table_type="projects", create_table_if_not_found=True)
         stmt = active_parents(select(table), table, products, projects)
@@ -7036,7 +7038,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             )
             order = column.asc() if sort_order == "asc" else column.desc()
             tie = table.c.id.asc() if sort_order == "asc" else table.c.id.desc()
-            stmt = stmt.order_by(order, tie).limit(limit).offset((page - 1) * limit)
+            stmt = stmt.order_by(*group_order, order, tie).limit(limit).offset((page - 1) * limit)
             rows = (await sess.execute(stmt)).fetchall()
             return [dict(row._mapping) for row in rows], total
 

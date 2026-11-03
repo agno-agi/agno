@@ -246,8 +246,8 @@ POST `/company/runs/{id}/cancel` uses the executor's existing cancellation route
 
 Each Task response carries `last_run` (status, attempt, run id and times of its latest
 run) and `allowed_transitions` (each target, whether the move is allowed now, and why
-not). GET `/company/tasks/groups` returns every status column of the board in one
-request, with the Task list's filters, paging and sort.
+not). GET `/company/tasks` with `group_by=status` or `group_by=executor` returns the
+page split into `groups`, sorted group-first, with one `meta` for the whole list.
 
 Start rechecks the registry, `tasks:write`, `wiki:read` and the executor's run
 permission. Registry-only executors receive their ordinary routes when Company

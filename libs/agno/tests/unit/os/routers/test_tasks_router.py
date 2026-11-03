@@ -176,25 +176,25 @@ def test_cross_product_status_pagination(client):
     )
 
 
-def test_board_groups_match_the_status_lists(client):
+def test_list_groups_by_status_and_executor(client):
     records = [create(client) for _ in range(3)]
     assert transition(client, "/company/tasks/" + records[0]["id"], "ready").status_code == 200
     assert transition(client, "/company/tasks/" + records[1]["id"], "cancelled").status_code == 200
-    board = client.get("/company/tasks/groups", params={"limit": 1})
-    assert board.status_code == 200, board.text
-    groups = board.json()["groups"]
-    assert [group["status"] for group in groups] == [
-        "backlog",
-        "ready",
-        "in_progress",
-        "in_review",
-        "done",
-        "cancelled",
+    pages = [
+        client.get("/company/tasks", params={"group_by": "status", "limit": 2, "page": page}).json() for page in [1, 2]
     ]
-    for group in groups:
-        listed = client.get("/company/tasks", params={"status": group["status"], "limit": 1}).json()
-        assert [task["id"] for task in group["data"]] == [task["id"] for task in listed["data"]]
-        assert group["meta"] == listed["meta"]
+    assert [[group["status"] for group in p["groups"]] for p in pages] == [["backlog", "ready"], ["cancelled"]]
+    assert [[task["id"] for group in p["groups"] for task in group["data"]] for p in pages] == [
+        [records[2]["id"], records[0]["id"]],
+        [records[1]["id"]],
+    ]
+    assert (pages[0]["meta"]["total_count"], pages[0]["meta"]["total_pages"]) == (3, 2)
+    groups = client.get("/company/tasks", params={"group_by": "executor"}).json()["groups"]
+    assert [(group["executor_type"], group["executor_id"], len(group["data"])) for group in groups] == [
+        (None, None, 2),
+        ("agent", "writer", 1),
+    ]
+    assert client.get("/company/tasks", params={"group_by": "project"}).status_code == 422
 
 
 def test_allowed_transitions_follow_the_transition_rules(client):

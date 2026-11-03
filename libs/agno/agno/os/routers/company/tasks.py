@@ -1,6 +1,7 @@
 """Collaborative Company task reads, edits and lifecycle transitions."""
 
 import asyncio
+from itertools import groupby
 from typing import Any, Dict, List, Literal, Optional, Union, get_args
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -11,10 +12,11 @@ from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id
 from agno.os.routers.company.schema import (
     TaskCreate,
-    TaskGroup,
+    TaskExecutorGroup,
     TaskGroupsResponse,
     TaskResponse,
     TaskStatus,
+    TaskStatusGroup,
     TaskTransition,
     TaskUpdate,
 )
@@ -178,7 +180,7 @@ def get_tasks_router(
     async def task_response(request: Request, task: Dict[str, Any]) -> Dict[str, Any]:
         return (await task_responses(request, [task]))[0]
 
-    @router.get("/tasks", response_model=PaginatedResponse[TaskResponse])
+    @router.get("/tasks", response_model=Union[PaginatedResponse[TaskResponse], TaskGroupsResponse])
     async def list_tasks(
         request: Request,
         limit: int = Query(20, ge=1, le=1000),
@@ -190,8 +192,9 @@ def get_tasks_router(
         status: Optional[TaskStatus] = Query(None),
         project_id: Optional[str] = Query(None),
         failed: Optional[bool] = Query(None),
+        group_by: Optional[Literal["status", "executor"]] = Query(None),
         _: bool = Depends(auth_dependency),
-    ) -> PaginatedResponse[TaskResponse]:
+    ) -> Union[PaginatedResponse[TaskResponse], TaskGroupsResponse]:
         rows, total = await _call(
             "list_tasks",
             user_id=None,
@@ -204,52 +207,24 @@ def get_tasks_router(
             status=status,
             project_id=project_id,
             failed=failed,
+            group_by=group_by,
         )
-        return PaginatedResponse(
-            data=[TaskResponse(**row) for row in await task_responses(request, rows)],
-            meta=PaginationInfo(page=page, limit=limit, total_count=total, total_pages=(total + limit - 1) // limit),
-        )
-
-    # Declared before /tasks/{task_id} so "groups" is not read as a Task id.
-    @router.get("/tasks/groups", response_model=TaskGroupsResponse)
-    async def list_task_groups(
-        request: Request,
-        limit: int = Query(20, ge=1, le=1000),
-        page: int = Query(1, ge=1),
-        include_deleted: bool = Query(False),
-        sort_by: Literal["created_at", "updated_at"] = Query("created_at"),
-        sort_order: Literal["asc", "desc"] = Query("desc"),
-        product_id: Optional[str] = Query(None),
-        project_id: Optional[str] = Query(None),
-        failed: Optional[bool] = Query(None),
-        _: bool = Depends(auth_dependency),
-    ) -> TaskGroupsResponse:
-        # One paged query per status keeps every column on the same indexed read as the Task list.
-        groups = []
-        for status in get_args(TaskStatus):
-            rows, total = await _call(
-                "list_tasks",
-                user_id=None,
-                limit=limit,
-                page=page,
-                include_deleted=include_deleted,
-                sort_by=sort_by,
-                sort_order=sort_order,
-                product_id=product_id,
-                status=status,
-                project_id=project_id,
-                failed=failed,
-            )
-            groups.append(
-                TaskGroup(
-                    status=status,
-                    data=[TaskResponse(**row) for row in await task_responses(request, rows)],
-                    meta=PaginationInfo(
-                        page=page, limit=limit, total_count=total, total_pages=(total + limit - 1) // limit
-                    ),
-                )
-            )
-        return TaskGroupsResponse(groups=groups)
+        data = [TaskResponse(**row) for row in await task_responses(request, rows)]
+        meta = PaginationInfo(page=page, limit=limit, total_count=total, total_pages=(total + limit - 1) // limit)
+        if group_by is None:
+            return PaginatedResponse(data=data, meta=meta)
+        # The page is sorted group-first, so each group is one run of rows and may continue on the next page.
+        groups: List[Union[TaskStatusGroup, TaskExecutorGroup]]
+        if group_by == "status":
+            groups = [
+                TaskStatusGroup(status=key, data=list(tasks)) for key, tasks in groupby(data, lambda task: task.status)
+            ]
+        else:
+            groups = [
+                TaskExecutorGroup(executor_type=key[0], executor_id=key[1], data=list(tasks))
+                for key, tasks in groupby(data, lambda task: (task.executor_type, task.executor_id))
+            ]
+        return TaskGroupsResponse(groups=groups, meta=meta)
 
     async def _require_accept(request: Request, executor_type: Optional[str], executor_id: Optional[str]) -> None:
         assert executor_type is not None  # Validated by TaskCreate and TaskTransition.

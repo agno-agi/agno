@@ -1,6 +1,6 @@
 """Product request and response schemas."""
 
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -221,14 +221,20 @@ class TaskResponse(BaseModel):
     allowed_transitions: List[TaskTransitionOption] = Field(default_factory=list)
 
 
-class TaskGroup(BaseModel):
+class TaskStatusGroup(BaseModel):
     status: TaskStatus
     data: List[TaskResponse]
-    meta: PaginationInfo
+
+
+class TaskExecutorGroup(BaseModel):
+    executor_type: Optional[str] = None
+    executor_id: Optional[str] = None
+    data: List[TaskResponse]
 
 
 class TaskGroupsResponse(BaseModel):
-    groups: List[TaskGroup]
+    groups: List[Union[TaskStatusGroup, TaskExecutorGroup]]
+    meta: PaginationInfo
 
 
 class TaskTransition(BaseModel):
