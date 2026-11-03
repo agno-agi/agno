@@ -11,6 +11,7 @@ from sqlalchemy import text
 from agno.agent import Agent
 from agno.company import AsyncCompanyManager, CompanyManager
 from agno.db.base import AsyncBaseDb
+from agno.db.schemas.scheduler import Schedule
 from agno.db.postgres import AsyncPostgresDb, PostgresDb
 from agno.db.sqlite import AsyncSqliteDb, SqliteDb
 from agno.os import AgentOS, CompanyConfig
@@ -936,6 +937,7 @@ async def test_purge_requires_verification_and_refuses_unfinished_reservation(db
 @pytest.mark.parametrize("archived", [False, True])
 async def test_purge_requires_matching_verified_routine_links(db, archived):
     m = manager(db)
+    await call(db._get_table, table_type="schedules", create_table_if_not_found=True)
     product = await call(m.create, name="Linked")
     await call(db.add_product_routine, product["id"], "old-routine")
     if archived:
@@ -946,6 +948,31 @@ async def test_purge_requires_matching_verified_routine_links(db, archived):
             await call(m.purge, product["id"], verified_routine_ids=ids)
         assert await call(db.get_product, product["id"], include_deleted=True) == saved
     assert await call(m.purge, product["id"], verified_routine_ids=("old-routine",))
+
+
+@pytest.mark.asyncio
+async def test_direct_product_purge_checks_archived_routine_missing_from_links(db):
+    m = manager(db)
+    product = await call(m.create, name="Routine owner")
+    routine = Schedule(
+        id="archived-routine",
+        name="Archived routine",
+        cron_expr="",
+        endpoint="/agents/writer/runs",
+        managed_by="company",
+        enabled=False,
+        payload={"metadata": {"product_id": product["id"], "deleted_at": 1}},
+    )
+    await call(db.create_schedule, routine.to_dict())
+    with pytest.raises(ValueError, match="Routine"):
+        await call(m.purge, product["id"], verified_routine_ids=())
+    assert await call(db.get_product, product["id"]) is not None
+
+
+@pytest.mark.asyncio
+async def test_direct_product_purge_missing_product_returns_false_without_schedule_catalog(db):
+    m = manager(db)
+    assert not await call(m.purge, "missing-product", verified_routine_ids=())
 
 
 @pytest.mark.asyncio
