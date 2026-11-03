@@ -86,13 +86,16 @@ async def _execute_background(
 class _BackgroundStream:
     """Publish indexed events and feed the attached client independently."""
 
-    def __init__(self, run: Any, *, yield_run_output: bool = False):
+    def __init__(self, run: Any, *, yield_run_output: bool = False, end_at_pause: bool = False):
         from agno.os.event_streams import get_event_stream
 
         self.run = run
         self.event_stream = get_event_stream()
         self.queue: asyncio.Queue[Any] = asyncio.Queue()
         self.yield_run_output = yield_run_output
+        # A harness's native permission request pauses a run that keeps executing: the attached client's
+        # stream ends at the pause, as for an Agno agent, and the continuation follows the reopened stream.
+        self.end_at_pause = end_at_pause
         self.attached = True
 
     async def register(self) -> None:
@@ -113,6 +116,12 @@ class _BackgroundStream:
             log_warning(f"Failed to buffer event for run {self.run.run_id}")
         if self.attached:
             await self.queue.put(format_sse_event_with_index(event, event_index=index, run_id=self.run.run_id))
+        if self.end_at_pause and getattr(event, "event", None) == "RunPaused":
+            if self.attached:
+                self.attached = False
+                await self.queue.put(None)
+            with suppress(Exception):
+                await self.event_stream.complete_run(self.run.run_id, RunStatus.paused)
 
     async def complete(self) -> None:
         # Release the primary client before waiting for coordination storage.

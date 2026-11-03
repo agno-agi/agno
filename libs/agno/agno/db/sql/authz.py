@@ -18,7 +18,7 @@ Two properties this layer must preserve, because the authorization model depends
 """
 
 import json
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, cast
 
 from sqlalchemy import case, delete, func, insert, or_, select
 from sqlalchemy.engine import Engine
@@ -196,7 +196,7 @@ def get_direct_roles_many(engine: Engine, table: Any, subjects: List[str]) -> Di
     pairs: List[Tuple[str, str]] = []
     with engine.connect() as conn:
         for stmt in _direct_roles_many_stmts(table, subjects):
-            pairs.extend((subject, role) for subject, role in conn.execute(stmt))
+            pairs.extend((cast(str, subject), cast(str, role)) for subject, role in conn.execute(stmt))
     return _collect_direct_roles(subjects, pairs)
 
 
@@ -658,7 +658,7 @@ async def aget_direct_roles_many(engine: "AsyncEngine", table: Any, subjects: Li
     async with engine.connect() as conn:
         for stmt in _direct_roles_many_stmts(table, subjects):
             result = await conn.execute(stmt)
-            pairs.extend((subject, role) for subject, role in result)
+            pairs.extend((cast(str, subject), cast(str, role)) for subject, role in result)
     return _collect_direct_roles(subjects, pairs)
 
 

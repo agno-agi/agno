@@ -46,6 +46,7 @@ from agno.os.services import sessions as session_service
 from agno.os.utils import (
     find_factory_by_id,
     get_db,
+    public_scheme,
     resolve_agent,
     resolve_team,
     resolve_workflow,
@@ -2171,6 +2172,12 @@ async def _server_card(
     ``allowed_hosts``: the header is attacker-controlled even on a request whose ``Host`` is
     allowed, and this response is publicly cacheable, so an unvalidated value would let a caller
     plant a card naming their own host.
+
+    ``X-Forwarded-Proto`` is read without that check. A proxy that terminates TLS often sends it
+    with no ``X-Forwarded-Host`` at all, and gating the two together published ``http://`` for an
+    endpoint its clients only ever reach over TLS. It is safe unvalidated because it can only
+    upgrade the scheme to ``https`` (any ``https`` in a proxy chain wins), never name a host or
+    another scheme.
     """
     from urllib.parse import urlparse
 
@@ -2178,17 +2185,13 @@ async def _server_card(
         host = urlparse(card_url).netloc or request.headers.get("host") or request.url.netloc
         url = card_url
     else:
-        scheme = request.url.scheme
+        scheme = public_scheme(request)
         host = request.headers.get("host") or request.url.netloc
         forwarded_host = request.headers.get("x-forwarded-host", "").split(",")[0].strip()
         if forwarded_host and allowed_hosts:
             host_set = {_mcp_request_hostname(h) for h in list(allowed_hosts) + list(_MCP_LOCALHOST_HOSTS)}
             if _mcp_host_allowed(_mcp_request_hostname(forwarded_host), host_set):
                 host = forwarded_host
-                # Only the two transport schemes; the header is caller-supplied, and anything
-                # else here would be published as the endpoint's URL.
-                forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
-                scheme = forwarded_proto if forwarded_proto in ("http", "https") else scheme
         endpoint = request.scope.get("_agno_mcp_public_endpoint", _MCP_PATH)
         url = f"{scheme}://{host}{endpoint}"
     remote: Dict[str, Any] = {"type": "streamable-http", "url": url}
@@ -3076,13 +3079,15 @@ def build_mcp_server(
         session_type_enum = SessionType(session_type) if session_type else None
 
         if isinstance(db, RemoteDb):
-            runs = await db.get_session_runs(
+            # No limit is passed (run_id may reference any run), so the endpoint returns every run as a list.
+            result = await db.get_session_runs(
                 session_id=session_id,
                 session_type=session_type_enum,
                 user_id=user_id,
                 db_id=db_id,
                 headers=_forwarded_auth_headers(),
             )
+            runs = result if isinstance(result, list) else result.data
         else:
             # SessionNotFoundError propagates as the tool error verbatim ("Session {id} not found").
             runs = await session_service.get_session_runs(
