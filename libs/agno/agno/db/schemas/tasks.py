@@ -3,13 +3,14 @@
 import time
 from typing import Any, Dict, Optional
 
+# In progress is entered only by starting a run; review and completion need an earlier attempt.
 TASK_TRANSITIONS = {
-    "backlog": {"ready", "cancelled"},
-    "ready": {"cancelled", "in_progress", "backlog"},
-    "in_progress": {"in_review", "cancelled", "backlog"},
-    "in_review": {"cancelled", "done", "in_progress", "backlog"},
-    "done": set(),
-    "cancelled": set(),
+    "backlog": {"ready", "in_review", "done", "cancelled"},
+    "ready": {"backlog", "in_progress", "in_review", "done", "cancelled"},
+    "in_progress": {"backlog", "ready", "in_review", "done", "cancelled"},
+    "in_review": {"backlog", "ready", "in_progress", "done", "cancelled"},
+    "done": {"backlog", "ready", "in_review", "cancelled"},
+    "cancelled": {"backlog", "ready", "in_review", "done"},
 }
 
 
@@ -53,6 +54,14 @@ def task_transition_fields(
         raise ValueError("A transition requires a non-empty reason")
     if target not in TASK_TRANSITIONS.get(existing["status"], set()):
         raise ValueError(f"Invalid task transition from {existing['status']} to {target}")
+    # Review and completion reached from anywhere but the step before them need an earlier attempt.
+    previous = {"in_review": "in_progress", "done": "in_review"}
+    if (
+        target in previous
+        and existing["status"] != previous[target]
+        and not any("attempt" in entry for entry in existing.get("transitions") or [])
+    ):
+        raise ValueError(("Review" if target == "in_review" else "Completion") + " requires a previous Task attempt")
     now = int(time.time())
     fields: Dict[str, Any] = {"status": target, "updated_at": now}
     if target == "ready":

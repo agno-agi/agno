@@ -486,6 +486,7 @@ def _set_telemetry(team: "Team") -> None:
 
 
 def _initialize_member(team: "Team", member: Union["Team", Agent], debug_mode: Optional[bool] = None) -> None:
+    from agno.agents.base import BaseExternalAgent
     from agno.team.team import Team
 
     # Set debug mode for all members
@@ -516,6 +517,13 @@ def _initialize_member(team: "Team", member: Union["Team", Agent], debug_mode: O
         if member.model is None and team.model is not None:
             member.model = team.model
             log_info(f"Agent '{member.name or member.id}' inheriting model from Team: {team.model.id}")
+
+    elif isinstance(member, BaseExternalAgent):
+        # A harness agent (Claude Code, Codex) runs its own model and tools. Nothing is set on it:
+        # the same instance can also run on its own, so the team passes its id on each member call.
+        # That makes the member keep its own state, and with a sandbox its own computer binding, in a
+        # session per team session and member.
+        pass
 
     elif isinstance(member, Team):
         member.parent_team_id = team.id

@@ -81,7 +81,7 @@ class ApifyTools(Toolkit):
                         )
                         raise ValueError(error_msg)
 
-                    run_id = details.get("id")
+                    run_id = response_to_dict(details).get("id")
                     if run_id is None:
                         error_msg = f"Run ID not found in the run details for Actor: {actor_id}"
                         raise ValueError(error_msg)
@@ -242,6 +242,25 @@ def create_apify_client(token: str) -> ApifyClient:
     return client
 
 
+def response_to_dict(response: Any) -> Dict[str, Any]:
+    """Return an Apify client response as a dict.
+
+    apify-client 2.x returns plain dicts, while 3.x returns Pydantic models.
+    Models are dumped by alias, so the keys match the API (and 2.x), e.g. "id" or "defaultDatasetId".
+
+    Args:
+        response (Any): A dict (apify-client 2.x) or a Pydantic model (apify-client 3.x)
+
+    Returns:
+        Dict[str, Any]: The response as a dict
+    """
+    if isinstance(response, dict):
+        return response
+    if hasattr(response, "model_dump"):
+        return response.model_dump(by_alias=True)
+    raise TypeError(f"Unexpected Apify client response type: {type(response).__name__}")
+
+
 def actor_id_to_tool_name(actor_id: str) -> str:
     """Turn actor_id into a valid tool name.
 
@@ -272,7 +291,7 @@ def get_actor_latest_build(apify_client: ApifyClient, actor_id: str) -> Dict[str
     if not (actor := apify_client.actor(actor_id).get()):
         raise ValueError(f"Actor {actor_id} not found.")
 
-    if not (actor_obj_id := actor.get("id")):
+    if not (actor_obj_id := response_to_dict(actor).get("id")):
         raise ValueError(f"Failed to get the Actor object ID for {actor_id}.")
 
     url = APIFY_API_ENDPOINT_GET_DEFAULT_BUILD.format(actor_id=actor_obj_id)

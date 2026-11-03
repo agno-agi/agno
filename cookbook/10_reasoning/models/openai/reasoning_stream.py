@@ -17,7 +17,7 @@ def run_example() -> None:
     # Create an agent with reasoning enabled
     agent = Agent(
         reasoning_model=OpenAIResponses(
-            id="o3-mini",
+            id="gpt-5.6-sol",
             reasoning_effort="low",
         ),
         instructions="Think step by step about the problem.",

@@ -2,7 +2,10 @@
 
 import asyncio
 import inspect
-from typing import Any, Dict, Literal, Optional, Union
+import json
+import time
+from typing import Any, Dict, List, Literal, Optional, Union
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.routing import APIRoute
@@ -12,11 +15,13 @@ from agno.company.declarations import AutoAccept, Product, Routine, Source
 from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.company.routines import _routine_executor_endpoint, _routine_message, _schedule_fields
 from agno.db.base import AsyncBaseDb
+from agno.db.utils import get_sort_value
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import caller_is_admin, get_scoped_user_id, resolve_run_user_id
 from agno.os.routers.schedules.router import get_schedule_router
 from agno.os.routers.schedules.schema import ScheduleCreate, ScheduleResponse, ScheduleRunResponse, ScheduleUpdate
 from agno.os.schema import PaginatedResponse, PaginationInfo
+from agno.scheduler.cron import is_on_demand
 
 
 class SourceCreate(Source):
@@ -40,6 +45,7 @@ class RoutineLastRun(BaseModel):
 class RoutineResponse(ScheduleResponse):
     schedule_type: Literal["scheduled", "on_demand"]
     last_run: Optional[RoutineLastRun] = None
+    deleted_at: Optional[int] = None
 
 
 class RoutineUpdate(BaseModel):
@@ -101,7 +107,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             raise HTTPException(404, "Product not found")
         return row
 
-    async def routine(routine_id, request):
+    async def routine(routine_id, request, include_deleted=False):
         from agno.db.schemas.scheduler import COMPANY_AUTOMATION_SCHEDULE_ID
 
         if routine_id == COMPANY_AUTOMATION_SCHEDULE_ID:
@@ -111,15 +117,69 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             raise HTTPException(404, "Routine not found")
         if not (row.get("payload") or {}).get("metadata", {}).get("product_id"):
             raise HTTPException(409, "Routine is missing its Product metadata")
+        if not include_deleted and row["payload"]["metadata"].get("deleted_at") is not None:
+            raise HTTPException(404, "Routine not found")
         return row
+
+    def outlived(run, row, request):
+        from agno.scheduler.executor import run_deadline
+
+        # The scheduler stops waiting for a run at its timeout, so past the deadline no process is left to settle it.
+        executor = getattr(request.app.state, "scheduler_executor", None)
+        timeout = row.get("timeout_seconds") or (executor.timeout if executor is not None else None)
+        return timeout is not None and run_deadline(run["triggered_at"], timeout) < time.time()
+
+    async def running_runs(row, request, include_outlived=False):
+        # An older run can still be running after a newer one finished, so read every run. A paused
+        # row is not counted: the scheduler stops polling at the pause and never updates it after approval.
+        runs: List[Dict[str, Any]] = []
+        page = 1
+        while True:
+            rows, total = await call(schedule_db.get_schedule_runs, row["id"], limit=100, page=page)
+            runs.extend(
+                run
+                for run in rows
+                if run["status"] == "running" and (include_outlived or not outlived(run, row, request))
+            )
+            if page * 100 >= total:
+                return runs
+            page += 1
+
+    def schedule_type(row):
+        return "on_demand" if is_on_demand(row["cron_expr"]) else "scheduled"
+
+    def sort_routines(rows, sort_by, sort_order):
+        reverse = sort_order == "desc"
+        if sort_by == "next_run_at":
+            # A paused or on-demand Routine has no next run, whatever timestamp is stored; those go last either way.
+            upcoming: List[Dict[str, Any]] = []
+            rest: List[Dict[str, Any]] = []
+            for row in rows:
+                has_next = row["enabled"] and schedule_type(row) == "scheduled" and row.get("next_run_at") is not None
+                (upcoming if has_next else rest).append(row)
+            upcoming.sort(key=lambda row: (row["next_run_at"], row.get("created_at") or 0, row["id"]), reverse=reverse)
+            rest.sort(key=lambda row: (row.get("created_at") or 0, row["id"]), reverse=reverse)
+            return upcoming + rest
+        if sort_by == "schedule_type":
+            # "on_demand" sorts before "scheduled".
+            return sorted(
+                rows, key=lambda row: (schedule_type(row), row.get("created_at") or 0, row["id"]), reverse=reverse
+            )
+        if sort_by == "enabled":
+            return sorted(
+                rows, key=lambda row: (bool(row["enabled"]), row.get("created_at") or 0, row["id"]), reverse=reverse
+            )
+        # One reverse flag orders equal timestamps by id in the same direction as the timestamp.
+        return sorted(rows, key=lambda row: (get_sort_value(row, sort_by), row["id"]), reverse=reverse)
 
     async def routine_responses(rows):
         latest = await call(schedule_db.get_latest_schedule_runs, [row["id"] for row in rows])
         return [
             {
                 **row,
-                "schedule_type": "scheduled" if row["cron_expr"] else "on_demand",
+                "schedule_type": schedule_type(row),
                 "last_run": latest.get(row["id"]),
+                "deleted_at": (row.get("payload") or {}).get("metadata", {}).get("deleted_at"),
             }
             for row in rows
         ]
@@ -177,6 +237,9 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         product_id: Optional[str] = None,
         limit: int = Query(20, ge=1, le=1000),
         page: int = Query(1, ge=1),
+        include_deleted: bool = False,
+        sort_by: Literal["created_at", "updated_at", "next_run_at", "schedule_type", "enabled"] = Query("created_at"),
+        sort_order: Literal["asc", "desc"] = Query("desc"),
         _: bool = Depends(auth),
     ):
         from agno.scheduler import ScheduleManager
@@ -189,13 +252,15 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             if row.managed_by == "company"
             and (row.payload or {}).get("metadata", {}).get("product_id")
             and (product_id is None or (row.payload or {}).get("metadata", {}).get("product_id") == product_id)
+            and (include_deleted or (row.payload or {}).get("metadata", {}).get("deleted_at") is None)
         ]
+        selected = sort_routines(selected, sort_by, sort_order)
         rows = await routine_responses(selected[(page - 1) * limit : page * limit])
         return page_response(rows, len(selected), limit, page)
 
     @router.get("/routines/{routine_id}", response_model=RoutineResponse)
-    async def get_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
-        return await routine_response(await routine(routine_id, request))
+    async def get_routine(routine_id: str, request: Request, include_deleted: bool = False, _: bool = Depends(auth)):
+        return await routine_response(await routine(routine_id, request, include_deleted=include_deleted))
 
     @router.post("/routines/{routine_id}/trigger", response_model=ScheduleRunResponse)
     async def trigger_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
@@ -221,10 +286,18 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             policy = body.auto_accept.model_dump()
             await _authorize_auto_accept(request, policy, agent_os)
             fields["payload"]["metadata"]["auto_accept"] = policy
+        if not body.enabled:
+            # Retry matching must distinguish disabled creation from a request to enable it.
+            fields["payload"]["metadata"]["initial_enabled"] = False
         schedule = await call(ScheduleCreate, **fields)
         row = await call(handlers["create_schedule"], schedule, request)
         await call(db.add_product_routine, body.product_id, row["id"])
-        return await routine_response(await call(handlers["enable_schedule"], row["id"], request))
+        if body.enabled:
+            row = await call(handlers["enable_schedule"], row["id"], request)
+        else:
+            # Finish creation without activation so duplicate requests cannot recover this as pending.
+            row = await call(handlers["disable_schedule"], row["id"], request)
+        return await routine_response(row)
 
     @router.patch("/routines/{routine_id}", response_model=RoutineResponse)
     async def update_routine(routine_id: str, body: RoutineUpdate, request: Request, _: bool = Depends(auth)):
@@ -248,6 +321,11 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         if "name" in updates:
             updates["name"] = product_id + "." + updates["name"]
         if "executor_type" in updates or "executor_id" in updates:
+            # Cancel reaches a live run through the Routine's executor, so the executor stays until it ends.
+            if await running_runs(row, request):
+                raise HTTPException(
+                    409, f"Wait for the run to stop, or cancel it with POST /company/routines/{routine_id}/cancel"
+                )
             executor_type = updates.pop("executor_type", row["target_type"])
             executor_id = updates.pop("executor_id", row["target_id"])
             updates["endpoint"] = await call(
@@ -274,6 +352,8 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
     async def pause_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
         row = await routine(routine_id, request)
         await product(row["payload"]["metadata"]["product_id"], include_deleted=True)
+        if is_on_demand(row["cron_expr"]):
+            raise HTTPException(409, "On-demand Routines cannot be paused")
         return await routine_response(await call(handlers["disable_schedule"], routine_id, request))
 
     @router.post("/routines/{routine_id}/resume", response_model=RoutineResponse)
@@ -281,6 +361,9 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         row = await routine(routine_id, request)
         product_id = row["payload"]["metadata"]["product_id"]
         await product(product_id)
+        # A disabled on-demand routine still resumes: that is its only checked way back to usable.
+        if is_on_demand(row["cron_expr"]) and row["enabled"]:
+            raise HTTPException(409, "On-demand Routine is already enabled")
         from agno.registry._reserved import RESERVED_MANAGER_IDS
 
         if row["target_id"] in RESERVED_MANAGER_IDS:
@@ -289,6 +372,94 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             )
         await call(db.add_product_routine, product_id, routine_id)
         return await routine_response(await call(handlers["enable_schedule"], routine_id, request))
+
+    @router.post("/routines/{routine_id}/cancel")
+    async def cancel_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
+        row = await routine(routine_id, request)
+        await product(row["payload"]["metadata"]["product_id"], include_deleted=True)
+        runs = [run for run in await running_runs(row, request, include_outlived=True) if run.get("run_id")]
+        if not runs:
+            raise HTTPException(409, "Routine has no running run")
+        from agno.os.routers.company.runs import _run_route
+        from agno.os.routers.run_permissions import _require_endpoint_permission
+        from agno.scheduler.executor import terminal_run_status
+
+        # Cancelling enters the executor route under the internal service token, so re-check the caller's own permission.
+        await _require_endpoint_permission(request, row["endpoint"], "POST")
+        responses = []
+        for run in runs:
+            path = row["endpoint"] + "/" + quote(run["run_id"], safe="")
+            owner, session_id = run.get("user_id"), run.get("session_id")
+            response = await _run_route(request, path + "/cancel", "POST", owner=owner, session_id=session_id)
+            if response.status_code < 300:
+                status: Optional[str] = None
+                error: Optional[str] = "Run was cancelled"
+                if outlived(run, row, request):
+                    status = "cancelled"
+                else:
+                    # A live run stops at its next checkpoint and its executor records the result, so only
+                    # a finished or missing run is recorded here.
+                    current = await _run_route(request, path, "GET", owner=owner, session_id=session_id)
+                    if current.status_code == 404:
+                        # The run no longer exists, so no executor is left to settle the row.
+                        status = "cancelled"
+                    elif current.status_code < 300:
+                        settled = terminal_run_status(json.loads(bytes(current.body)), company_routine=True)
+                        if settled is not None:
+                            status, error = settled
+                if status is not None:
+                    await call(
+                        schedule_db.update_schedule_run,
+                        run["id"],
+                        status=status,
+                        error=error,
+                        completed_at=int(time.time()),
+                    )
+            responses.append(response)
+        # A failed cancel is reported even when a later one succeeded.
+        return next((response for response in responses if response.status_code >= 300), responses[-1])
+
+    @router.post("/routines/{routine_id}/archive", response_model=RoutineResponse)
+    async def archive_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
+        row = await routine(routine_id, request)
+        await product(row["payload"]["metadata"]["product_id"], include_deleted=True)
+        if await running_runs(row, request):
+            raise HTTPException(
+                409, f"Wait for the run to stop, or cancel it with POST /company/routines/{routine_id}/cancel"
+            )
+        await call(handlers["disable_schedule"], routine_id, request)
+        metadata = {**row["payload"]["metadata"], "deleted_at": int(time.time())}
+        await call(schedule_db.update_schedule, routine_id, payload={**row["payload"], "metadata": metadata})
+        # An archived Routine leaves the Product's routine_ids, so Product Routine counts skip it.
+        await call(manager._unlink_routine, metadata["product_id"], routine_id)
+        return await routine_response(await routine(routine_id, request, include_deleted=True))
+
+    @router.delete("/routines/{routine_id}", status_code=204)
+    async def delete_routine(routine_id: str, request: Request, _: bool = Depends(auth)) -> None:
+        row = await routine(routine_id, request, include_deleted=True)
+        product_id = row["payload"]["metadata"]["product_id"]
+        await product(product_id, include_deleted=True)
+        if await running_runs(row, request):
+            raise HTTPException(
+                409, f"Wait for the run to stop, or cancel it with POST /company/routines/{routine_id}/cancel"
+            )
+        # Deleting the schedule also deletes its run history.
+        await call(handlers["delete_schedule"], routine_id, request)
+        await call(manager._unlink_routine, product_id, routine_id)
+
+    @router.post("/routines/{routine_id}/restore", response_model=RoutineResponse)
+    async def restore_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
+        row = await routine(routine_id, request, include_deleted=True)
+        await product(row["payload"]["metadata"]["product_id"])
+        metadata = dict(row["payload"]["metadata"])
+        if metadata.pop("deleted_at", None) is None:
+            raise HTTPException(409, "Routine is not archived")
+        await call(schedule_db.update_schedule, routine_id, payload={**row["payload"], "metadata": metadata})
+        # An on-demand Routine has no schedule to pause, so restore resumes it; a scheduled one stays paused.
+        if is_on_demand(row["cron_expr"]):
+            return await resume_routine(routine_id, request)
+        await call(db.add_product_routine, metadata["product_id"], routine_id)
+        return await routine_response(await routine(routine_id, request))
 
     @router.get("/routines/{routine_id}/runs")
     async def routine_runs(

@@ -47,7 +47,7 @@ if __name__ == "__main__":
         )
         assert ready["accepted_by"] == "alice"
         try:
-            manager.update_task(first["id"], brief="Changed after acceptance")
+            manager.update_task(first["id"], executor_id="other")
         except ValueError:
             print("Accepted scope is protected")
         else:
