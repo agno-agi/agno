@@ -583,6 +583,14 @@ class BaseRemote:
             async for event in event_stream:
                 if run_output is not None:
                     # The run has ended: read the rest, so the remote finishes writing it
+                    if final_statuses.get(type(event)) is not None and event.run_id == run_id:
+                        # A cancelled run's tokens arrive in the completed event sent after it; the status stays
+                        metrics = getattr(event, "metrics", None)
+                        member_responses = getattr(event, "member_responses", None)
+                        if metrics is not None:
+                            run_output.metrics = metrics
+                        if member_responses and isinstance(run_output, TeamRunOutput):
+                            run_output.member_responses = member_responses
                     continue
                 yield event
                 run_id = run_id or event.run_id

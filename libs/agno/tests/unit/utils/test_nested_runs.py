@@ -282,3 +282,86 @@ async def test_member_given_a_task_by_its_team_is_not_linked(mode: str):
 
     assert [member_run.called_from_run_id for member_run in team_run.member_responses] == [None]
     assert team_run.metrics.total_tokens == 10 * leader.calls
+
+
+@pytest.mark.parametrize("mode", ["sync", "stream", "async", "async_stream"])
+@pytest.mark.parametrize("generator_tool", [False, True], ids=["callable", "generator"])
+async def test_cancelled_tool_keeps_the_tokens_of_its_finished_run(tmp_path, mode: str, generator_tool: bool):
+    from agno.exceptions import RunCancelledException
+
+    child = Agent(model=MockModel(), telemetry=False)
+    children = []
+
+    def cancel_after_child() -> str:
+        children.append(child.run("child"))
+        raise RunCancelledException("stop after child")
+
+    def cancel_generator() -> Iterator[str]:
+        children.append(child.run("child"))
+        yield "child finished"
+        raise RunCancelledException("stop after child")
+
+    async def acancel_after_child() -> str:
+        children.append(await child.arun("child"))
+        raise RunCancelledException("stop after child")
+
+    async def acancel_generator() -> AsyncIterator[str]:
+        children.append(await child.arun("child"))
+        yield "child finished"
+        raise RunCancelledException("stop after child")
+
+    if mode in ("sync", "stream"):
+        tool = cancel_generator if generator_tool else cancel_after_child
+    else:
+        tool = acancel_generator if generator_tool else acancel_after_child
+    outer = Agent(
+        model=ScriptedModel([_tool_call(tool.__name__, "{}") for _ in range(2)]),
+        tools=[tool],
+        db=SqliteDb(db_file=str(tmp_path / "outer.db")),
+        session_id="session",
+        telemetry=False,
+    )
+    run_ids = []
+    for attempt in range(2):
+        run = await _run_team(outer, mode)
+        run_ids.append(run.run_id)
+        assert run.status == RunStatus.cancelled
+        assert run.metrics.total_tokens == 20
+        assert children[-1].status == RunStatus.completed
+        assert children[-1].called_from_run_id == run.run_id
+        stored_run = outer.get_run_output(run.run_id, session_id="session")
+        assert stored_run.status == RunStatus.cancelled
+        assert stored_run.metrics.total_tokens == 20
+        assert outer.get_session_metrics(session_id="session").total_tokens == 20 * (attempt + 1)
+    assert len(set(run_ids)) == 2
+
+
+@pytest.mark.parametrize("cancel_first", [True, False], ids=["cancel-first", "cancel-last"])
+async def test_cancelled_async_batch_keeps_the_tokens_of_every_finished_run(cancel_first: bool):
+    from agno.exceptions import RunCancelledException
+    from agno.tools.function import Function, FunctionCall
+
+    outer = _run("outer", 100)
+    children = []
+
+    async def cancel_after_child() -> str:
+        child = Agent(model=MockModel(), telemetry=False)
+        children.append(await child.arun("child"))
+        raise RunCancelledException("stop after child")
+
+    async def finish_after_child() -> str:
+        child = Agent(model=MockModel(), telemetry=False)
+        children.append(await child.arun("child"))
+        return "done"
+
+    tools = [cancel_after_child, finish_after_child] if cancel_first else [finish_after_child, cancel_after_child]
+    calls = [FunctionCall(function=Function.from_callable(tool), arguments={}, call_id=tool.__name__) for tool in tools]
+    with pytest.raises(RunCancelledException, match="stop after child"):
+        async for _ in MockModel().arun_function_calls(calls, [], run_response=outer):
+            pass
+
+    assert len(children) == 2
+    assert all(child.status == RunStatus.completed for child in children)
+    assert all(child.called_from_run_id == "outer" for child in children)
+    # Each finished run is added once, whichever call was cancelled
+    assert outer.metrics.total_tokens == 120
