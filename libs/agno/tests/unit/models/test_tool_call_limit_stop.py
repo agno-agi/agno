@@ -54,9 +54,12 @@ class _EchoModel(Model):
 class _RepeatedToolCallModel(Model):
     """Offline model that asks for the same tool after the limit is exhausted."""
 
-    def __init__(self, tool_name: str):
+    def __init__(self, tool_name: str, tool_turns: int = 2):
         super().__init__(id="repeated-tool-call", name="Repeated tool call", provider="test")
         self.tool_name = tool_name
+        # How many turns ask for a tool. A large value stands in for a provider
+        # that ignores tool_choice="none" and keeps asking.
+        self.tool_turns = tool_turns
         self.invocations = 0
         self.requested_tools: List[Any] = []
         self.requested_tool_choices: List[Any] = []
@@ -65,7 +68,7 @@ class _RepeatedToolCallModel(Model):
         self.invocations += 1
         self.requested_tools.append(kwargs.get("tools"))
         self.requested_tool_choices.append(kwargs.get("tool_choice"))
-        if self.invocations <= 2:
+        if self.invocations <= self.tool_turns:
             return ModelResponse(
                 role="assistant",
                 tool_calls=[
@@ -291,7 +294,7 @@ def test_response_stream_allows_one_tool_free_final_answer_after_limit_refusal()
 
     The second request is refused because the only tool slot was used by the
     first request. The model must still get one final chance to answer from
-    the first tool result, without being offered tools again.
+    the first tool result, with tool_choice="none".
     """
     model = _RepeatedToolCallModel("search")
 
@@ -304,7 +307,8 @@ def test_response_stream_allows_one_tool_free_final_answer_after_limit_refusal()
     )
 
     assert model.invocations == 3
-    assert model.requested_tools[2] == []
+    # Tool definitions stay in the final request; only tool_choice turns tools off.
+    assert model.requested_tools[2] and model.requested_tools[2] == model.requested_tools[0]
     assert model.requested_tool_choices[2] == "none"
     assert any(getattr(event, "content", None) == "fallback answer" for event in events)
 
@@ -324,7 +328,8 @@ async def test_aresponse_stream_allows_one_tool_free_final_answer_after_limit_re
     ]
 
     assert model.invocations == 3
-    assert model.requested_tools[2] == []
+    # Tool definitions stay in the final request; only tool_choice turns tools off.
+    assert model.requested_tools[2] and model.requested_tools[2] == model.requested_tools[0]
     assert model.requested_tool_choices[2] == "none"
     assert any(getattr(event, "content", None) == "fallback answer" for event in events)
 
@@ -340,7 +345,8 @@ def test_response_allows_one_tool_free_final_answer_after_limit_refusal():
     )
 
     assert model.invocations == 3
-    assert model.requested_tools[2] == []
+    # Tool definitions stay in the final request; only tool_choice turns tools off.
+    assert model.requested_tools[2] and model.requested_tools[2] == model.requested_tools[0]
     assert model.requested_tool_choices[2] == "none"
     assert response.content == "fallback answer"
 
@@ -357,9 +363,40 @@ async def test_aresponse_allows_one_tool_free_final_answer_after_limit_refusal()
     )
 
     assert model.invocations == 3
-    assert model.requested_tools[2] == []
+    # Tool definitions stay in the final request; only tool_choice turns tools off.
+    assert model.requested_tools[2] and model.requested_tools[2] == model.requested_tools[0]
     assert model.requested_tool_choices[2] == "none"
     assert response.content == "fallback answer"
+
+
+def test_response_stops_when_model_ignores_tool_choice_none():
+    """A provider that ignores tool_choice="none" gets no fourth turn."""
+    model = _RepeatedToolCallModel("search", tool_turns=100)
+
+    model.response(
+        messages=[Message(role="user", content="Find Agno")],
+        tools=[Function.from_callable(_search_knowledge, name="search")],
+        tool_call_limit=1,
+    )
+
+    assert model.invocations == 3
+
+
+@pytest.mark.asyncio
+async def test_aresponse_stream_stops_when_model_ignores_tool_choice_none():
+    """Async streaming also stops when the final turn still asks for a tool."""
+    model = _RepeatedToolCallModel("search", tool_turns=100)
+
+    _ = [
+        event
+        async for event in model.aresponse_stream(
+            messages=[Message(role="user", content="Find Agno")],
+            tools=[Function.from_callable(_search_knowledge, name="search")],
+            tool_call_limit=1,
+        )
+    ]
+
+    assert model.invocations == 3
 
 
 def test_agentic_rag_synthesizes_after_search_knowledge_exhausts_tool_budget():
@@ -387,7 +424,8 @@ def test_agentic_rag_synthesizes_after_search_knowledge_exhausts_tool_budget():
 
     assert retrieved_queries == ["Agno"]
     assert model.invocations == 3
-    assert model.requested_tools[2] == []
+    # Tool definitions stay in the final request; only tool_choice turns tools off.
+    assert model.requested_tools[2] and model.requested_tools[2] == model.requested_tools[0]
     assert model.requested_tool_choices[2] == "none"
     assert result.content == "fallback answer"
 

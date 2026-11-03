@@ -864,14 +864,14 @@ class Model(ABC):
                         break
 
                 # A model may use successful earlier tool results to synthesize a final
-                # answer after its budget is exhausted. Give it one final turn with no
-                # tools. If it still returns a tool call, stop rather than looping.
+                # answer after its budget is exhausted. Give it one final turn with
+                # tool_choice="none". The tool definitions stay in the request: some
+                # providers reject a history holding tool results when no tools are
+                # defined. If the model still returns a tool call, stop rather than
+                # looping; the spent budget refuses that call.
                 if tool_calls_disabled:
                     break
                 if function_call_results and all(m.tool_call_limit_reached for m in function_call_results):
-                    tools = []
-                    _tool_dicts = []
-                    _functions = {}
                     tool_choice = "none"
                     tool_calls_disabled = True
                     continue
@@ -1101,14 +1101,14 @@ class Model(ABC):
                         break
 
                 # A model may use successful earlier tool results to synthesize a final
-                # answer after its budget is exhausted. Give it one final turn with no
-                # tools. If it still returns a tool call, stop rather than looping.
+                # answer after its budget is exhausted. Give it one final turn with
+                # tool_choice="none". The tool definitions stay in the request: some
+                # providers reject a history holding tool results when no tools are
+                # defined. If the model still returns a tool call, stop rather than
+                # looping; the spent budget refuses that call.
                 if tool_calls_disabled:
                     break
                 if function_call_results and all(m.tool_call_limit_reached for m in function_call_results):
-                    tools = []
-                    _tool_dicts = []
-                    _functions = {}
                     tool_choice = "none"
                     tool_calls_disabled = True
                     continue
@@ -1623,14 +1623,14 @@ class Model(ABC):
                         break
 
                 # A model may use successful earlier tool results to synthesize a final
-                # answer after its budget is exhausted. Give it one final turn with no
-                # tools. If it still returns a tool call, stop rather than looping.
+                # answer after its budget is exhausted. Give it one final turn with
+                # tool_choice="none". The tool definitions stay in the request: some
+                # providers reject a history holding tool results when no tools are
+                # defined. If the model still returns a tool call, stop rather than
+                # looping; the spent budget refuses that call.
                 if tool_calls_disabled:
                     break
                 if function_call_results and all(m.tool_call_limit_reached for m in function_call_results):
-                    tools = []
-                    _tool_dicts = []
-                    _functions = {}
                     tool_choice = "none"
                     tool_calls_disabled = True
                     continue
@@ -1918,14 +1918,14 @@ class Model(ABC):
                         break
 
                 # A model may use successful earlier tool results to synthesize a final
-                # answer after its budget is exhausted. Give it one final turn with no
-                # tools. If it still returns a tool call, stop rather than looping.
+                # answer after its budget is exhausted. Give it one final turn with
+                # tool_choice="none". The tool definitions stay in the request: some
+                # providers reject a history holding tool results when no tools are
+                # defined. If the model still returns a tool call, stop rather than
+                # looping; the spent budget refuses that call.
                 if tool_calls_disabled:
                     break
                 if function_call_results and all(m.tool_call_limit_reached for m in function_call_results):
-                    tools = []
-                    _tool_dicts = []
-                    _functions = {}
                     tool_choice = "none"
                     tool_calls_disabled = True
                     continue
