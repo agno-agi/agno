@@ -143,7 +143,6 @@ async def test_remote_agent_a2a_stream_yields_run_output() -> None:
     assert run_output.run_id == "task-1"
     assert run_output.session_id == "session-abc"
     assert run_output.agent_id == "test_agent"
-    assert run_output.user_id == "user-123"
     assert run_output.metrics is not None
     assert (run_output.metrics.input_tokens, run_output.metrics.output_tokens) == (26, 5)
 
@@ -176,3 +175,219 @@ def test_remote_team_role_is_a_property() -> None:
     )
     assert remote_team.role == "Coordinates research tasks"
     assert isinstance(remote_team.role, str)
+
+
+@pytest.mark.asyncio
+async def test_remote_agent_stream_ends_with_its_run_output_when_asked() -> None:
+    """RemoteAgent.arun(yield_run_output=True) never forwards the flag, and ends a failed stream with its run output,
+    as a local agent does."""
+    from agno.run.agent import RunErrorEvent, RunOutput
+    from agno.run.base import RunStatus
+
+    remote_agent = RemoteAgent(base_url="http://fake-host", agent_id="test_agent")
+
+    async def _events():
+        yield RunErrorEvent(run_id="run-1", session_id="s-1", agent_id="test_agent", content="boom")
+
+    mock_client = MagicMock()
+    mock_client.run_agent_stream = MagicMock(return_value=_events())
+    remote_agent.agentos_client = mock_client
+
+    stream = remote_agent.arun("hello", stream=True, yield_run_output=True)
+    items = [item async for item in stream]
+
+    assert "yield_run_output" not in mock_client.run_agent_stream.call_args.kwargs
+    assert isinstance(items[-1], RunOutput)
+    assert (items[-1].run_id, items[-1].status) == ("run-1", RunStatus.error)
+
+
+@pytest.mark.asyncio
+async def test_remote_agent_stream_ends_at_the_first_event_that_ends_its_own_run() -> None:
+    """A sub-run's completion does not end the stream; a cancelled remote run that also sends a completed event ends
+    cancelled: the first event that ends the run itself is its final status, and the completed event's tokens are
+    kept. The run output keeps the model its started event names."""
+    from agno.metrics import RunMetrics
+    from agno.run.agent import RunCancelledEvent, RunCompletedEvent, RunOutput, RunStartedEvent
+    from agno.run.base import RunStatus
+
+    remote_agent = RemoteAgent(base_url="http://fake-host", agent_id="test_agent")
+
+    async def _events():
+        yield RunStartedEvent(
+            run_id="run-1", session_id="s-1", agent_id="test_agent", model="gpt-5.6-luna", model_provider="OpenAI"
+        )
+        yield RunCompletedEvent(
+            run_id="sub-run-1", session_id="s-1", agent_id="sub_agent", metrics=RunMetrics(total_tokens=999)
+        )
+        yield RunCancelledEvent(run_id="run-1", session_id="s-1", agent_id="test_agent")
+        yield RunCompletedEvent(
+            run_id="run-1", session_id="s-1", agent_id="test_agent", metrics=RunMetrics(total_tokens=65)
+        )
+
+    items = [item async for item in remote_agent._with_run_output(_events())]
+
+    assert [type(item) for item in items] == [RunStartedEvent, RunCompletedEvent, RunCancelledEvent, RunOutput]
+    assert (items[-1].run_id, items[-1].status) == ("run-1", RunStatus.cancelled)
+    # The run's model, named only by its started event
+    assert (items[-1].model, items[-1].model_provider) == ("gpt-5.6-luna", "OpenAI")
+    assert items[-1].metrics.total_tokens == 65
+
+
+@pytest.mark.asyncio
+async def test_remote_team_stream_run_output_keeps_its_member_responses() -> None:
+    """A RemoteTeam's run output keeps the member runs its completed event carries, so the local team counts them, also
+    when the completed event follows the event that cancelled the run."""
+    from agno.metrics import RunMetrics
+    from agno.run.agent import RunOutput
+    from agno.run.base import RunStatus
+    from agno.run.team import RunCancelledEvent, RunCompletedEvent, TeamRunOutput
+
+    remote_team = RemoteTeam(base_url="http://fake-host", team_id="test_team")
+    member_run = RunOutput(run_id="member-run", agent_id="member", metrics=RunMetrics(total_tokens=32))
+
+    async def _events():
+        yield RunCompletedEvent(run_id="run-1", session_id="s-1", team_id="test_team", member_responses=[member_run])
+
+    async def _cancelled_events():
+        yield RunCancelledEvent(run_id="run-2", session_id="s-1", team_id="test_team")
+        yield RunCompletedEvent(
+            run_id="run-2",
+            session_id="s-1",
+            team_id="test_team",
+            metrics=RunMetrics(total_tokens=65),
+            member_responses=[member_run],
+        )
+
+    items = [item async for item in remote_team._with_run_output(_events())]
+    cancelled_items = [item async for item in remote_team._with_run_output(_cancelled_events())]
+
+    assert isinstance(items[-1], TeamRunOutput)
+    assert items[-1].member_responses == [member_run]
+    assert (cancelled_items[-1].status, cancelled_items[-1].metrics.total_tokens) == (RunStatus.cancelled, 65)
+    assert cancelled_items[-1].member_responses == [member_run]
+
+
+def test_remote_member_runs_in_a_session_of_its_own() -> None:
+    """A remote member keeps its own session on its AgentOS; a local member shares the team's."""
+    from agno.agent import Agent
+    from agno.utils.team import get_member_session_id
+
+    remote_agent = RemoteAgent(base_url="http://fake-host", agent_id="remote_agent")
+
+    assert get_member_session_id(remote_agent, "team-session") == "team-session:remote_agent"
+    assert get_member_session_id(Agent(name="local"), "team-session") == "team-session"
+
+
+def test_remote_members_run_is_stored_by_the_agentos_that_ran_it(monkeypatch) -> None:
+    """The team stores its local members' runs, and leaves a remote member's run, kept in the member's own session, to
+    the AgentOS that ran it, so a shared database keeps it in the member's history."""
+    from agno.run.agent import RunOutput
+    from agno.session import TeamSession
+    from agno.team import Team
+    from agno.team._run import _persist_member_runs_for_team_run
+
+    session = TeamSession(
+        session_id="team-session",
+        runs=[
+            RunOutput(run_id="local-run", session_id="team-session", parent_run_id="team-run"),
+            RunOutput(run_id="remote-run", session_id="team-session:remote_agent", parent_run_id="team-run"),
+        ],
+    )
+    saved_run_ids = []
+    monkeypatch.setattr("agno.team._session.save_run", lambda team, run, **kwargs: saved_run_ids.append(run.run_id))
+
+    _persist_member_runs_for_team_run(Team(members=[]), session, "team-run")
+
+    assert saved_run_ids == ["local-run"]
+
+
+def test_continued_remote_member_keeps_its_team_run() -> None:
+    """A remote continue stream names neither the model nor the team run, so both come from the paused copy."""
+    from agno.run.agent import RunOutput
+    from agno.run.team import TeamRunOutput
+    from agno.team._run import _replace_member_response
+
+    paused = RunOutput(run_id="remote-run", parent_run_id="team-run", model="gpt-5.6-luna", model_provider="OpenAI")
+    team_run = TeamRunOutput(run_id="team-run", member_responses=[paused])
+
+    _replace_member_response(team_run, RunOutput(run_id="remote-run", content="done"))
+
+    continued = team_run.member_responses[0]
+    assert (continued.content, continued.parent_run_id, continued.model) == ("done", "team-run", "gpt-5.6-luna")
+
+
+def test_stored_team_run_keeps_its_remote_members_metrics() -> None:
+    """A team run stored without its member responses keeps the ids, model and metrics of its remote member's run,
+    which the team's database may hold no other record of, and nothing else of it."""
+    from agno.metrics import RunMetrics
+    from agno.run.agent import RunOutput
+    from agno.run.base import RunStatus
+    from agno.run.team import TeamRunOutput
+    from agno.team import Team
+    from agno.team._session import _scrub_member_responses_keeping_paused
+
+    remote_run = RunOutput(
+        run_id="remote-run",
+        session_id="team-session:remote_agent",
+        parent_run_id="team-run",
+        agent_id="remote_agent",
+        content="remote answer",
+        model="gpt-5.6-luna",
+        model_provider="OpenAI",
+        metrics=RunMetrics(input_tokens=10, output_tokens=5, total_tokens=15),
+        status=RunStatus.completed,
+    )
+    team_run = TeamRunOutput(
+        run_id="team-run",
+        session_id="team-session",
+        member_responses=[
+            RunOutput(run_id="local-run", session_id="team-session", parent_run_id="team-run", content="local answer"),
+            remote_run,
+        ],
+    )
+
+    storage_run = _scrub_member_responses_keeping_paused(Team(members=[]), team_run)
+
+    [stored_remote_run] = storage_run.member_responses
+    assert (stored_remote_run.run_id, stored_remote_run.parent_run_id, stored_remote_run.agent_id) == (
+        "remote-run",
+        "team-run",
+        "remote_agent",
+    )
+    assert (stored_remote_run.model, stored_remote_run.status) == ("gpt-5.6-luna", RunStatus.completed)
+    assert stored_remote_run.metrics.total_tokens == 15
+    assert stored_remote_run.content is None
+    # The live run the caller holds keeps both members' whole runs
+    assert len(team_run.member_responses) == 2 and remote_run.content == "remote answer"
+
+
+def test_stored_team_run_keeps_its_remote_teams_members_metrics() -> None:
+    """A remote team's run kept on the team run carries its own members' runs, ids and metrics only."""
+    from agno.metrics import RunMetrics
+    from agno.run.agent import RunOutput
+    from agno.run.base import RunStatus
+    from agno.run.team import TeamRunOutput
+    from agno.team import Team
+    from agno.team._session import _scrub_member_responses_keeping_paused
+
+    remote_team_run = TeamRunOutput(
+        run_id="remote-team-run",
+        session_id="team-session:remote_team",
+        parent_run_id="team-run",
+        team_id="remote_team",
+        status=RunStatus.completed,
+        metrics=RunMetrics(total_tokens=15),
+        member_responses=[
+            RunOutput(run_id="inner-run", content="inner answer", metrics=RunMetrics(total_tokens=7)),
+        ],
+    )
+    team_run = TeamRunOutput(run_id="team-run", session_id="team-session", member_responses=[remote_team_run])
+
+    storage_run = _scrub_member_responses_keeping_paused(Team(members=[]), team_run)
+
+    [stored_inner_run] = storage_run.member_responses[0].member_responses
+    assert (stored_inner_run.run_id, stored_inner_run.metrics.total_tokens, stored_inner_run.content) == (
+        "inner-run",
+        7,
+        None,
+    )

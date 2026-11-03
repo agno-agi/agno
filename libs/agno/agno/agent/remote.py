@@ -8,16 +8,7 @@ from agno.media import Audio, File, Image, Video
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.remote.base import BaseRemote, RemoteDb, RemoteKnowledge
-from agno.run.agent import (
-    RunCancelledEvent,
-    RunCompletedEvent,
-    RunContentEvent,
-    RunErrorEvent,
-    RunOutput,
-    RunOutputEvent,
-    RunPausedEvent,
-)
-from agno.run.base import RunStatus
+from agno.run.agent import RunOutput, RunOutputEvent
 from agno.run.requirement import RunRequirement
 from agno.utils.agent import validate_input
 from agno.utils.log import log_warning
@@ -263,7 +254,6 @@ class RemoteAgent(BaseRemote):
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         auth_token: Optional[str] = None,
-        yield_run_output: Optional[bool] = None,
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]: ...
 
@@ -288,7 +278,6 @@ class RemoteAgent(BaseRemote):
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         auth_token: Optional[str] = None,
-        yield_run_output: Optional[bool] = None,
         **kwargs: Any,
     ) -> Union[
         RunOutput,
@@ -297,6 +286,8 @@ class RemoteAgent(BaseRemote):
         validated_input = validate_input(input)
         serialized_input = serialize_input(validated_input)
         headers = self._get_auth_headers(auth_token)
+        # Read here, never forwarded: the remote stream route cannot send a RunOutput over SSE
+        yield_run_output = kwargs.pop("yield_run_output", False)
 
         # A2A protocol path
         if self.a2a_client:
@@ -311,7 +302,7 @@ class RemoteAgent(BaseRemote):
                 files=files,
                 metadata=metadata,
                 headers=headers,
-                yield_run_output=yield_run_output or False,
+                yield_run_output=yield_run_output,
             )
 
         # AgentOS protocol path (default)
@@ -339,9 +330,7 @@ class RemoteAgent(BaseRemote):
                     headers=headers,
                     **kwargs,
                 )
-                if yield_run_output:
-                    return self._astream_with_run_output(event_stream, user_id=user_id)
-                return event_stream
+                return self._with_run_output(event_stream) if yield_run_output else event_stream
             else:
                 return self.agentos_client.run_agent(  # type: ignore
                     agent_id=self.agent_id,
@@ -418,7 +407,7 @@ class RemoteAgent(BaseRemote):
             )
             run_events = map_stream_events_to_run_events(event_stream, agent_id=self.agent_id)
             if yield_run_output:
-                return self._astream_with_run_output(run_events, user_id=user_id)
+                return self._with_run_output(run_events)
             return run_events
         else:
             # Return coroutine for non-streaming
@@ -464,52 +453,6 @@ class RemoteAgent(BaseRemote):
         )
         return map_task_result_to_run_output(task_result, agent_id=self.agent_id, user_id=user_id)
 
-    async def _astream_with_run_output(
-        self,
-        event_stream: AsyncIterator[RunOutputEvent],
-        user_id: Optional[str],
-    ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
-        """Forward a remote stream, then yield the RunOutput its terminal event describes."""
-        terminal_event: Optional[RunOutputEvent] = None
-        cancelled_event: Optional[RunCancelledEvent] = None
-        run_id: Optional[str] = None
-        session_id: Optional[str] = None
-        accumulated_content = ""
-
-        async for event in event_stream:
-            run_id = event.run_id or run_id
-            session_id = event.session_id or session_id
-            if isinstance(event, RunContentEvent) and isinstance(event.content, str):
-                accumulated_content += event.content
-            if isinstance(event, (RunCompletedEvent, RunPausedEvent, RunCancelledEvent, RunErrorEvent)):
-                terminal_event = event
-            if isinstance(event, RunCancelledEvent):
-                cancelled_event = event
-            yield event
-
-        # A local Agent yields no RunOutput for a run that errored
-        if isinstance(terminal_event, RunErrorEvent):
-            return
-
-        # Without stream_events the server sends no terminal event, only the content
-        run_output = (
-            RunOutput.from_dict(terminal_event.to_dict())
-            if terminal_event is not None
-            else RunOutput(run_id=run_id, session_id=session_id)
-        )
-        run_output.agent_id = self.agent_id
-        run_output.user_id = user_id
-        if not run_output.content:
-            run_output.content = accumulated_content or (cancelled_event.reason if cancelled_event else None)
-        # A cancelled run also ends with a completed event, which must not hide the cancellation
-        if cancelled_event is not None:
-            run_output.status = RunStatus.cancelled
-        elif isinstance(terminal_event, RunPausedEvent):
-            run_output.status = RunStatus.paused
-        else:
-            run_output.status = RunStatus.completed
-        yield run_output
-
     @overload
     async def acontinue_run(
         self,
@@ -548,6 +491,11 @@ class RemoteAgent(BaseRemote):
         AsyncIterator[RunOutputEvent],
     ]:
         headers = self._get_auth_headers(auth_token)
+        # Local-only continue arguments; the remote route rebuilds them from the tools it receives
+        kwargs.pop("updated_tools", None)
+        kwargs.pop("background_tasks", None)
+        # Read here, never forwarded: the remote stream route cannot send a RunOutput over SSE
+        yield_run_output = kwargs.pop("yield_run_output", False)
 
         # A2A protocol path
         if self.a2a_client:
@@ -558,6 +506,7 @@ class RemoteAgent(BaseRemote):
                 user_id=user_id,
                 context_id=session_id,  # Map session_id → context_id for A2A
                 headers=headers,
+                yield_run_output=yield_run_output,
             )
 
         if self.agentos_client:
@@ -566,7 +515,7 @@ class RemoteAgent(BaseRemote):
             )
             if stream:
                 # Handle streaming response
-                return self.agentos_client.continue_agent_run_stream(  # type: ignore
+                event_stream = self.agentos_client.continue_agent_run_stream(
                     agent_id=self.agent_id,
                     run_id=run_id,
                     user_id=user_id,
@@ -575,6 +524,7 @@ class RemoteAgent(BaseRemote):
                     headers=headers,
                     **kwargs,
                 )
+                return self._with_run_output(event_stream) if yield_run_output else event_stream
             else:
                 return self.agentos_client.continue_agent_run(  # type: ignore
                     agent_id=self.agent_id,
@@ -597,7 +547,8 @@ class RemoteAgent(BaseRemote):
         user_id: Optional[str],
         context_id: Optional[str],
         headers: Optional[Dict[str, str]],
-    ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
+        yield_run_output: bool = False,
+    ) -> Union[RunOutput, AsyncIterator[Union[RunOutputEvent, RunOutput]]]:
         """Continue a paused run via A2A protocol.
 
         Args:
@@ -607,6 +558,7 @@ class RemoteAgent(BaseRemote):
             user_id: User identifier
             context_id: Session/context ID (maps to session_id)
             headers: HTTP headers to include in the request (optional)
+            yield_run_output: Whether to end the stream with the RunOutput (optional)
 
         Returns:
             RunOutput for non-streaming, AsyncIterator[RunOutputEvent] for streaming
@@ -626,7 +578,10 @@ class RemoteAgent(BaseRemote):
                 task_id=run_id,
                 data=data,
             )
-            return map_stream_events_to_run_events(event_stream, agent_id=self.agent_id)
+            run_events = map_stream_events_to_run_events(event_stream, agent_id=self.agent_id)
+            if yield_run_output:
+                return self._with_run_output(run_events)
+            return run_events
         else:
             # Return coroutine for non-streaming
             return self._acontinue_run_a2a_send(  # type: ignore[return-value]
