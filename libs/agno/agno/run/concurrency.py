@@ -320,7 +320,7 @@ class _TaskExecutionProvider:
 
     async def _acall(self, method: str, *args: Any, **kwargs: Any) -> Any:
         self._check()
-        if self._loop is not None:
+        if self._loop is not None or (self.asynchronous and asyncio.get_running_loop() is not self._origin_loop):
             future = self._submit(method, *args, **kwargs)
             try:
                 return await asyncio.shield(asyncio.wrap_future(future))
@@ -329,8 +329,6 @@ class _TaskExecutionProvider:
                     with self._lock:
                         self._pending.discard(future)
         if self.asynchronous:
-            if asyncio.get_running_loop() is not self._origin_loop:
-                raise RuntimeError("Company execution requires its owning event loop")
             return await getattr(self.db, method)(*args, **kwargs)
         return await asyncio.to_thread(getattr(self.db, method), *args, **kwargs)
 
@@ -406,11 +404,23 @@ class _TaskExecutionProvider:
 
     def release(self, session_id: str, token: str) -> None:
         if self.enabled:
-            self._call("release_task_execution", session_id, token)
+            for attempt in range(2):
+                try:
+                    self._call("release_task_execution", session_id, token)
+                    return
+                except Exception:
+                    if attempt:
+                        raise
 
     async def arelease(self, session_id: str, token: str) -> None:
         if self.enabled:
-            await self._acall("release_task_execution", session_id, token)
+            for attempt in range(2):
+                try:
+                    await self._acall("release_task_execution", session_id, token)
+                    return
+                except Exception:
+                    if attempt:
+                        raise
 
     async def aclose(self) -> None:
         if self._initialization is not None and self._initialization is not asyncio.current_task():
@@ -788,8 +798,8 @@ def guard_task_execution(
                 streaming = values.get("stream")
                 if streaming is None:
                     streaming = getattr(component, "stream", False)
-                # Workflow websocket submission returns an acknowledgment, not an iterator.
-                if values.get("background") and (values.get("websocket") or values.get("enable_websocket")):
+                # Background submission returns an acknowledgment, even when streaming its events.
+                if values.get("background"):
                     streaming = False
 
                 async def invoke() -> Any:

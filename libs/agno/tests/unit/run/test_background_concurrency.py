@@ -315,6 +315,76 @@ async def test_task_execution_provider_keeps_independent_claims(tmp_path, asynch
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("synchronous_run", [False, True])
+async def test_transient_claim_release_failure_does_not_leave_task_blocked(
+    tmp_path, monkeypatch, asynchronous, synchronous_run
+):
+    from agno.company.execution import _call
+    from agno.company.manager import AsyncCompanyManager, CompanyManager
+    from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS
+    from agno.db.sqlite import AsyncSqliteDb, SqliteDb
+
+    db = (AsyncSqliteDb if asynchronous else SqliteDb)(db_file=str(tmp_path / "release.db"))
+    manager = (AsyncCompanyManager if asynchronous else CompanyManager)(db)
+    product = await _call(manager, "create", name="Release")
+    project = await _call(manager, "create_project", product_id=product["id"], name="Release")
+    task = await _call(manager, "create_task", product_id=product["id"], project_id=project["id"], title="Run")
+    provider = concurrency._TaskExecutionProvider(db)
+    await provider.ainitialize()
+    guard_db = provider._owned_db or db
+    release = guard_db.release_task_execution
+    calls = 0
+
+    if asynchronous:
+
+        async def fail_once(session_id, token):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("transient release outage")
+            await release(session_id, token)
+
+    else:
+
+        def fail_once(session_id, token):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("transient release outage")
+            release(session_id, token)
+
+    monkeypatch.setattr(guard_db, "release_task_execution", fail_once)
+
+    class Runner:
+        def __init__(self, run_db):
+            self.db = run_db
+
+        @concurrency.guard_task_execution()
+        def run(self, session_id):
+            return "completed"
+
+        @concurrency.guard_task_execution()
+        async def arun(self, session_id):
+            return "completed"
+
+    try:
+        with concurrency.task_execution_scope(provider):
+            runner = Runner(db)
+            result = (
+                await asyncio.to_thread(runner.run, task["session_id"])
+                if synchronous_run
+                else await runner.arun(task["session_id"])
+            )
+            assert result == "completed"
+        assert calls == 2
+        assert not (await _call(db, "get_task", task["id"]))["metadata"].get(TASK_EXECUTION_CLAIMS)
+    finally:
+        await provider.aclose()
+        await _call(db, "close")
+
+
+@pytest.mark.asyncio
 async def test_task_execution_provider_opaque_async_database_stays_on_own_loop(tmp_path):
     from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -329,13 +399,41 @@ async def test_task_execution_provider_opaque_async_database_stays_on_own_loop(t
         assert await provider.aacquire("unrelated", "first") == []
         with pytest.raises(RuntimeError, match="async calling path"):
             provider.acquire("unrelated", "second")
-        with pytest.raises(RuntimeError, match="owning event loop"):
-            await asyncio.to_thread(lambda: asyncio.run(provider.aacquire("unrelated", "third")))
+        assert await asyncio.to_thread(lambda: asyncio.run(provider.aacquire("unrelated", "third"))) == []
     finally:
         await provider.aclose()
         # Provider must not close an injected engine owned by the application.
         assert await db.acquire_task_execution("unrelated", "fourth") == []
         await db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream_arg", [{}, {"stream": True}])
+async def test_streaming_workflow_background_run_remains_awaitable(monkeypatch, stream_arg):
+    from inspect import isawaitable
+
+    from agno.workflow import Workflow
+
+    class Provider:
+        enabled = True
+
+        async def aacquire(self, session_id, token, **kwargs):
+            return [session_id]
+
+        async def arelease(self, session_id, token):
+            return None
+
+    workflow = Workflow(name="Background stream", stream=True)
+
+    async def submit(*args, **kwargs):
+        return "submitted"
+
+    monkeypatch.setattr(workflow, "_arun_background_stream", submit)
+    monkeypatch.setattr(workflow, "_arun_background", submit)
+    with concurrency.task_execution_scope(Provider()):
+        run = workflow.arun("hi", session_id="s1", background=True, **stream_arg)
+        assert isawaitable(run)
+        assert await run == "submitted"
 
 
 @pytest.mark.asyncio
