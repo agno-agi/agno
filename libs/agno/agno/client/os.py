@@ -1,6 +1,6 @@
 import json
 from datetime import date
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Sequence, Union
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Sequence, Union, overload
 
 from fastapi import UploadFile
 from httpx import ConnectError, ConnectTimeout, TimeoutException
@@ -58,6 +58,8 @@ from agno.os.schema import (
     PaginatedResponse,
     PaginationInfo,
     RunSchema,
+    RunsPage,
+    RunsPageInfo,
     SessionRunPreviewSchema,
     SessionSchema,
     TeamRunSchema,
@@ -1872,6 +1874,7 @@ class AgentOSClient:
         else:
             raise ValueError(f"Could not determine session type for session {session_id}")
 
+    @overload
     async def get_session_runs(
         self,
         session_id: str,
@@ -1883,8 +1886,54 @@ class AgentOSClient:
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
         status: Optional[List[str]] = None,
-    ) -> List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]:
-        """Get all runs for a specific session.
+        limit: None = None,
+    ) -> List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]: ...
+
+    @overload
+    async def get_session_runs(
+        self,
+        session_id: str,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+        created_after: Optional[int] = None,
+        created_before: Optional[int] = None,
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+        status: Optional[List[str]] = None,
+        *,
+        limit: int,
+        before_run_index: Optional[int] = None,
+        after_run_index: Optional[int] = None,
+    ) -> RunsPage[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]: ...
+
+    async def get_session_runs(
+        self,
+        session_id: str,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+        created_after: Optional[int] = None,
+        created_before: Optional[int] = None,
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+        status: Optional[List[str]] = None,
+        limit: Optional[int] = None,
+        before_run_index: Optional[int] = None,
+        after_run_index: Optional[int] = None,
+    ) -> Union[
+        List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
+        RunsPage[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
+    ]:
+        """Get the runs for a specific session.
+
+        Pagination is opt-in: without ``limit`` the server returns every run as a list. With
+        ``limit`` it returns a :class:`RunsPage` holding the newest ``limit`` runs,
+        or those before ``before_run_index`` / after ``after_run_index``. Pages count top-level
+        runs; member and step runs come with their parent. Take the next cursor from
+        ``meta.oldest_run_index`` (as ``before_run_index``) / ``meta.newest_run_index``
+        (as ``after_run_index``). Runs are always in chronological
+        order and carry their ``run_index``.
 
         Args:
             session_id: ID of the session
@@ -1896,9 +1945,12 @@ class AgentOSClient:
             table: Optional table name to use
             headers: HTTP headers to include in the request (optional)
             status: Optional run status filter, matching any of the given statuses (case-insensitive)
+            limit: Maximum number of runs to return (enables pagination)
+            before_run_index: Return the newest runs with a lower run_index (requires limit)
+            after_run_index: Return the oldest runs with a higher run_index (requires limit)
 
         Returns:
-            List of runs (RunSchema, TeamRunSchema, or WorkflowRunSchema)
+            A list of runs, or a RunsPage of runs when limit is provided.
 
         Raises:
             HTTPStatusError: On HTTP errors
@@ -1909,23 +1961,35 @@ class AgentOSClient:
             "created_after": created_after,
             "created_before": created_before,
             "status": status,
+            "limit": limit,
+            "before_run_index": before_run_index,
+            "after_run_index": after_run_index,
             "db_id": db_id,
             "table": table,
         }
         params = {k: v for k, v in params.items() if v is not None}
 
-        data = await self._aget(f"/sessions/{session_id}/runs", params=params, headers=headers)
+        response = await self._aget(f"/sessions/{session_id}/runs", params=params, headers=headers)
 
-        # Parse runs based on session type and run content
+        # The server returns a bare list unless limit was passed, in which case it
+        # returns a {"data": [...], "meta": {...}} envelope.
+        raw_runs = response["data"] if isinstance(response, dict) else response
         runs: List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]] = []
-        for run in data:
+        for run in raw_runs:
             if run.get("workflow_id") is not None:
                 runs.append(WorkflowRunSchema.model_validate(run))
             elif run.get("team_id") is not None:
                 runs.append(TeamRunSchema.model_validate(run))
             else:
                 runs.append(RunSchema.model_validate(run))
-        return runs
+
+        if not isinstance(response, dict):
+            return runs
+
+        return RunsPage[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]](
+            data=runs,
+            meta=RunsPageInfo.model_validate(response["meta"]),
+        )
 
     @staticmethod
     def _session_run_preview_params(

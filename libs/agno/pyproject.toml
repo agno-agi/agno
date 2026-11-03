@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "3.1.11"
+version = "3.1.12"
 description = "The programming language for agentic software."
 requires-python = ">=3.9,<4"
 readme = "README.md"
@@ -429,6 +429,7 @@ embedders = [
 # All libraries for testing
 tests = [
     "claude-agent-sdk>=0.2.148",
+    "openai-codex==0.163.0; python_version >= '3.10'",
   "agno[pages]",
     "agno[a2a]",
     "agno[slack]",

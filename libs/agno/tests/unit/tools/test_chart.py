@@ -45,6 +45,7 @@ def test_bar_chart_happy_path(chart_tools):
         config={"revenue": "Revenue ($)", "expenses": "Expenses ($)"},
         title="Monthly Revenue",
         description="Revenue and expenses by month",
+        value="$7K",
         x_key="month",
     )
     spec = parse_chart_block(result)
@@ -52,6 +53,7 @@ def test_bar_chart_happy_path(chart_tools):
     assert spec["type"] == "bar"
     assert spec["title"] == "Monthly Revenue"
     assert spec["description"] == "Revenue and expenses by month"
+    assert spec["value"] == "$7K"
     assert spec["data"] == [
         {"month": "Jan", "revenue": 4000, "expenses": 2400},
         {"month": "Feb", "revenue": 3000, "expenses": 1398},
@@ -135,6 +137,7 @@ def test_optional_fields_omitted_when_absent(chart_tools):
     spec = parse_chart_block(result)
     assert "title" not in spec
     assert "description" not in spec
+    assert "value" not in spec
     assert "nameKey" not in spec
     assert "valueKey" not in spec
 

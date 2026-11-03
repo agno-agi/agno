@@ -33,6 +33,18 @@ Expect a JSON report. A missing `OPENAI_API_KEY` produces FAIL because the examp
 lists it as required. Disabled authorization produces WARN. These results show
 what needs configuring; running the script itself does not require either.
 
+To inspect the roster without a model call or API key:
+
+```bash
+.venvs/demo/bin/python cookbook/05_agent_os/29_manager/manager_discovery.py
+```
+
+OS Manager's `list_agents`, `list_teams`, and `list_workflows` tools use each
+component's description, falling back to `config.manifest[id].description` when
+it is missing or empty. This also works with a YAML config file. Manifest text
+stays discovery metadata and does not change the component's system prompt.
+The example checks both sync and async listings.
+
 For a conversation, set your API key and start one of the serving examples:
 
 ```bash
