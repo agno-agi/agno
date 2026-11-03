@@ -1063,6 +1063,8 @@ async def test_failed_inline_continue_verifies_task_identity(error, status):
         (True, "ERROR", None, "queue", 409),
         (True, "COMPLETED", 2, None, None),
         (False, "ERROR", 2, None, 409),
+        (None, "ERROR", 2, None, 409),
+        (None, "ERROR", None, "queue", 409),
         (True, "PENDING", 0, None, 409),
         (True, "RUNNING", 1, None, 409),
         (True, "PAUSED", 1, None, 409),
@@ -1079,7 +1081,7 @@ async def test_missing_ticket_checks_retained_queue_origin(enabled, status, atte
     from agno.run.agent import RunOutput
 
     worker = make_worker(InMemoryQueueStore())
-    worker._task_execution_provider = SimpleNamespace(enabled=enabled)
+    worker._task_execution_provider = SimpleNamespace(enabled=enabled) if enabled is not None else None
     run = RunOutput(status=status, queue_attempt=attempt)
     run.execution_origin = origin
     component = SimpleNamespace(aget_run_output=AsyncMock(return_value=run))
@@ -1137,6 +1139,35 @@ async def test_workerless_noncompany_continuation_accepts_old_paused_run(compone
     await araise_if_ticket_owns_continue(
         None, "old-run", component_type=component_type, component=component, session_id="s1", user_id="owner"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("component_type", ["agent", "team"])
+async def test_ticketless_old_noncompany_approval_continues_with_queue_worker(component_type):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from agno.os.job_queue import araise_if_ticket_owns_continue
+    from agno.run.agent import RunOutput
+
+    worker = make_worker(InMemoryQueueStore())
+    run = RunOutput(status="PAUSED", queue_attempt=None, execution_origin=None)
+    component = SimpleNamespace(aget_run_output=AsyncMock(return_value=run))
+    await araise_if_ticket_owns_continue(
+        worker, "old-run", component_type=component_type, component=component, session_id="s1", user_id="owner"
+    )
+
+
+@pytest.mark.asyncio
+async def test_continue_accepts_custom_queue_store_without_strict_keyword():
+    class LegacyStore(InMemoryQueueStore):
+        async def get_job(self, job_id):
+            return await super().get_job(job_id)
+
+    store = LegacyStore()
+    await _pause(store)
+    result = await acontinue_via_queue(make_worker(store), "r1", {"step_requirements": [{"step_id": "s"}]})
+    assert result["outcome"] == "queued"
 
 
 @pytest.mark.asyncio

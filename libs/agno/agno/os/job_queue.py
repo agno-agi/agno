@@ -2678,7 +2678,8 @@ async def araise_if_ticket_owns_continue(
         from agno.remote.base import BaseRemote
         from agno.run.concurrency import current_task_execution_provider
 
-        if queue_worker is None and current_task_execution_provider() is None:
+        company_provider = current_task_execution_provider() or getattr(queue_worker, "_task_execution_provider", None)
+        if queue_worker is None and company_provider is None:
             return
 
         if component is not None and component_type != "workflow" and not isinstance(component, BaseRemote):
@@ -2686,9 +2687,11 @@ async def araise_if_ticket_owns_continue(
                 run = await component.aget_run_output(run_id, session_id, user_id=user_id)
                 if run is None:
                     raise HTTPException(status_code=404, detail="Run not found")
+                origin = getattr(run, "execution_origin", None)
                 if run.status != "COMPLETED" and (
                     getattr(run, "queue_attempt", None) is not None
-                    or getattr(run, "execution_origin", None) != "inline"
+                    or origin == "queue"
+                    or (company_provider is not None and origin != "inline")
                 ):
                     raise HTTPException(
                         status_code=409,
@@ -2796,7 +2799,10 @@ async def acontinue_via_queue(
     from agno.company.execution import _prepare_queue_fallback
 
     with _queue_admission_errors():
-        job = await queue_worker.store.get_job(run_id, strict=True)
+        try:
+            job = await queue_worker.store.get_job(run_id, strict=True)
+        except TypeError:
+            job = await queue_worker.store.get_job(run_id)
     if job is None or job.get("job_type", "run") != "run":
         return None
     # Component identity: the ticket must belong to the component the caller
