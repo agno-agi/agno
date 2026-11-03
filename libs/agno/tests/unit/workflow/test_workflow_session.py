@@ -141,6 +141,40 @@ class TestHistoryZeroCount:
         assert len(_session_with_runs(3).get_chat_history(last_n_runs=1)) == 1
 
 
+def _session_with_nested_runs(n: int) -> WorkflowSession:
+    """Build a WorkflowSession where each parent turn has a nested workflow run linked by parent_run_id."""
+    session = WorkflowSession(session_id="s1", workflow_id="parent")
+    for i in range(n):
+        session.upsert_run(
+            WorkflowRunOutput(run_id=f"r{i}", status=RunStatus.completed, input=f"in{i}", content=f"out{i}")
+        )
+        session.upsert_run(
+            WorkflowRunOutput(
+                run_id=f"child{i}",
+                parent_run_id=f"r{i}",
+                workflow_id="child",
+                status=RunStatus.completed,
+                input=f"child in{i}",
+                content=f"child out{i}",
+            )
+        )
+    return session
+
+
+class TestHistorySkipsNestedRuns:
+    """Nested workflow runs share the parent's session but are not turns of their own."""
+
+    def test_get_workflow_history_counts_parent_turns_only(self):
+        session = _session_with_nested_runs(2)
+        assert session.get_workflow_history() == [("in0", "out0"), ("in1", "out1")]
+        assert session.get_workflow_history(num_runs=2) == [("in0", "out0"), ("in1", "out1")]
+
+    def test_get_chat_history_counts_parent_turns_only(self):
+        session = _session_with_nested_runs(2)
+        assert [(chat.input, chat.output) for chat in session.get_chat_history()] == [("in0", "out0"), ("in1", "out1")]
+        assert [chat.input for chat in session.get_chat_history(last_n_runs=1)] == ["in1"]
+
+
 class TestGetMessagesFromTeamRunsMemberFlag:
     """get_messages_from_team_runs must handle skip_member_messages=False."""
 
