@@ -434,6 +434,54 @@ async def test_nonstreaming_workflow_background_run_remains_awaitable(monkeypatc
         assert await run == "submitted"
 
 
+def test_sync_external_agent_with_injected_async_company_db_fails_without_deadlock():
+    """A sync bridge cannot wait on the event loop that owns its Company DB."""
+    import subprocess
+    import sys
+
+    script = """
+import asyncio
+from typing import Any
+from sqlalchemy.ext.asyncio import create_async_engine
+from agno.agents.base import BaseExternalAgent
+from agno.db.sqlite import AsyncSqliteDb
+from agno.run.concurrency import _TaskExecutionProvider, task_execution_scope
+from agno.run.base import RunStatus
+
+class Echo(BaseExternalAgent):
+    async def _arun_adapter(self, input: Any, **kwargs: Any) -> str:
+        return "ok"
+    async def _arun_adapter_stream(self, input: Any, **kwargs: Any):
+        yield None
+
+async def main():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    db = AsyncSqliteDb(db_engine=engine)
+    provider = _TaskExecutionProvider(db)
+    await provider.ainitialize()
+    try:
+        with task_execution_scope(provider):
+            for stream in (False, True):
+                try:
+                    run = Echo(id="echo", db=db).run("hi", session_id="unrelated", stream=stream)
+                    if stream:
+                        list(run)
+                except RuntimeError as error:
+                    assert "async calling path" in str(error)
+                else:
+                    raise AssertionError("Expected a clear compatibility error")
+            result = await Echo(id="echo", db=db).arun("hi", session_id="ordinary")
+            assert result.status == RunStatus.completed
+    finally:
+        await provider.aclose()
+        await db.close()
+
+asyncio.run(main())
+"""
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=5)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cancel", [False, True])
 async def test_sync_tool_in_async_company_task_uses_database_owning_loop(cancel):

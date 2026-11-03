@@ -54,7 +54,12 @@ from agno.run.agent import (
     ToolCallStartedEvent,
 )
 from agno.run.base import RunStatus
-from agno.run.concurrency import current_execution_origin, guard_task_execution, retain_task_execution
+from agno.run.concurrency import (
+    current_execution_origin,
+    current_task_execution_provider,
+    guard_task_execution,
+    retain_task_execution,
+)
 from agno.session.agent import AgentSession
 from agno.utils.events import error_type_of
 from agno.utils.log import log_exception, log_warning
@@ -99,13 +104,34 @@ def _sandbox_harness() -> Any:
     return _harness
 
 
-def run_coroutine_sync(coro: Awaitable[Any]) -> Any:
+def _check_company_sync_bridge() -> None:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    provider = current_task_execution_provider()
+    if (
+        provider is not None
+        and provider.enabled
+        and provider.asynchronous
+        and provider._loop is None
+        and provider._origin_loop is loop
+    ):
+        raise RuntimeError("This Company database requires the async calling path on its owning event loop")
+
+
+def run_coroutine_sync(coro: Coroutine[Any, Any, Any]) -> Any:
     """Run a coroutine from sync code.
 
     On a thread with a running event loop (a notebook, a sync call made inside an async
     server) the coroutine runs on a worker thread with its own loop; otherwise asyncio.run
     is used directly. Shared by the sync wrappers of every external agent.
     """
+    try:
+        _check_company_sync_bridge()
+    except RuntimeError:
+        coro.close()
+        raise
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
@@ -2437,6 +2463,7 @@ class BaseExternalAgent:
         import queue
         import threading
 
+        _check_company_sync_bridge()
         event_queue: queue.Queue = queue.Queue()
         _sentinel = object()
         thread_error: List[BaseException] = []
