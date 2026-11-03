@@ -2763,6 +2763,41 @@ async def test_component_only_resolution_does_not_acquire_task_execution(protect
 
 
 @pytest.mark.asyncio
+async def test_ticketless_pending_recovery_resolves_component_without_queue_admission(protected_queue, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from agno.company.execution import _cancel_ticketless_pending_run
+
+    worker, db, _ = protected_queue
+    agent = worker.resolve_component("agent", "agent-1")
+    agent.db = db
+    agent.acancel_run = AsyncMock()
+    pending = {
+        "run_id": "r1",
+        "session_id": "s1",
+        "run_type": "agent",
+        "agent_id": "agent-1",
+        "user_id": None,
+        "status": "PENDING",
+        "run_data": {},
+    }
+    cancelled = {**pending, "status": "CANCELLED"}
+    calls = []
+
+    async def db_call(_db, method, *args, **kwargs):
+        calls.append(method)
+        return pending if len(calls) == 1 else True if method == "cancel_pending_run" else cancelled
+
+    monkeypatch.setattr("agno.company.execution._call", db_call)
+    monkeypatch.setattr("agno.os.middleware.user_scope.assert_session_writable", AsyncMock())
+    observed = dict(pending)
+    await _cancel_ticketless_pending_run(db, {"job_id": "r1", "session_id": "s1"}, observed, None, worker)
+    assert observed["status"] == "CANCELLED"
+    assert calls == ["get_run", "cancel_pending_run", "get_run"]
+    agent.acancel_run.assert_awaited_once_with("r1")
+
+
+@pytest.mark.asyncio
 async def test_queue_admission_claims_before_observable_ticket(protected_queue, monkeypatch):
     from agno.os.job_queue import aenqueue_ticket
 

@@ -3547,6 +3547,36 @@ async def test_automation_reconciles_durable_run_without_resubmission(system, mo
 
 
 @pytest.mark.asyncio
+async def test_ticketless_pending_task_recovery_does_not_resubmit(system, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from agno.company.execution import _call
+
+    client, db, worker, os, _ = system
+    await _call(db, "_create_all_tables")
+    worker._task_execution_provider = os._task_execution_provider
+    task = await accepted(client)
+    started = await client.post(f"/company/tasks/{task['id']}/runs")
+    assert started.status_code == 202, started.text
+    run_id = started.json()["run_id"]
+    run = await _call(db, "get_run", run_id)
+    assert run.status == RunStatus.pending
+
+    table = worker.config.db._get_table("jobs")
+    with worker.config.db.Session() as session, session.begin():
+        session.execute(table.delete().where(table.c.id == run_id))
+    enqueue = AsyncMock(side_effect=AssertionError("Recovery must not resubmit the lost attempt"))
+    monkeypatch.setattr(worker.store, "enqueue_job", enqueue)
+
+    recovered = await client.post(f"/company/tasks/{task['id']}/runs")
+    assert recovered.status_code == 202, recovered.text
+    assert recovered.json()["status"] == "CANCELLED"
+    assert recovered.json()["run_id"] == run_id
+    assert (await _call(db, "get_task", task["id"]))["result"]["status"] == "CANCELLED"
+    enqueue.assert_not_called()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("conflict", ["session", "run", "acceptance", "session_owner"])
 async def test_terminal_reconciliation_preserves_task_and_session_guards(system, conflict):
     from fastapi import HTTPException

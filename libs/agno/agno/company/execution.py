@@ -366,15 +366,9 @@ async def _cancel_ticketless_pending_run(
             return
         # A lost Pending ticket must not replay possibly executed side effects.
         kind = current["run_type"]
-        job = {
-            "id": run["run_id"],
-            "session_id": task["session_id"],
-            "component_type": kind,
-            "component_id": current.get(kind + "_id"),
-            "user_id": current.get("user_id"),
-            "attempt": (current.get("run_data") or {}).get("queue_attempt"),
-        }
-        component = await worker._aresolve_job_component(job)
+        component = await worker._aresolve_job_component(
+            {"component_type": kind, "component_id": current.get(kind + "_id")}
+        )
         if component is None or getattr(component, "db", None) is not run_db:
             raise _TaskRunUnavailable("Original Task executor database is unavailable for recovery")
         reason = "Queue ticket lost before completion; this attempt was cancelled. Start the next attempt to retry."
