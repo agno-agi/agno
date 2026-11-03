@@ -8,7 +8,7 @@ import pytest
 
 from agno.agent import Agent
 from agno.tools.function import ToolResult
-from agno.tools.smallest import SMALLEST_TTS_URL, SMALLEST_VOICES_URLS, SmallestTools
+from agno.tools.smallest import SMALLEST_PRO_VOICES_URL, SMALLEST_TTS_URL, SMALLEST_VOICES_URLS, SmallestTools
 
 
 @pytest.fixture
@@ -28,8 +28,8 @@ def test_init_with_api_key():
     """Test initialization with API key."""
     tools = SmallestTools(api_key="test_key")
     assert tools.api_key == "test_key"
-    assert tools.model == "lightning_v3.1"
-    assert tools.voice_id == "magnus"
+    assert tools.model == "lightning_v3.1_pro"
+    assert tools.voice_id == "blake"
     assert tools.sample_rate == 24000
     assert tools.speed == 1.0
     assert tools.output_format == "wav"
@@ -130,8 +130,8 @@ def test_text_to_speech_success(smallest_tools, mock_agent):
     args, kwargs = mock_post.call_args
     assert args[0] == SMALLEST_TTS_URL
     assert kwargs["json"]["text"] == "Hello world"
-    assert kwargs["json"]["voice_id"] == "magnus"
-    assert kwargs["json"]["model"] == "lightning_v3.1"
+    assert kwargs["json"]["voice_id"] == "blake"
+    assert kwargs["json"]["model"] == "lightning_v3.1_pro"
     assert kwargs["json"]["sample_rate"] == 24000
     assert kwargs["json"]["speed"] == 1.0
     assert kwargs["json"]["output_format"] == "wav"
@@ -258,8 +258,8 @@ def test_get_voices_success(smallest_tools):
     mock_response.json.return_value = {
         "voices": [
             {
-                "voiceId": "magnus",
-                "displayName": "Magnus",
+                "voiceId": "blake",
+                "displayName": "Blake",
                 "tags": {"gender": "male", "accent": "american", "language": ["en"]},
             },
             {
@@ -274,13 +274,13 @@ def test_get_voices_success(smallest_tools):
         result = smallest_tools.get_voices()
 
     args, kwargs = mock_get.call_args
-    assert args[0] == SMALLEST_VOICES_URLS["lightning_v3.1"]
+    assert args[0] == SMALLEST_PRO_VOICES_URL
     assert kwargs["headers"]["Authorization"] == "Bearer test_key"
     assert kwargs["headers"]["X-Source"] == "agno"
 
     voices = json.loads(result)
     assert len(voices) == 2
-    assert voices[0]["id"] == "magnus"
+    assert voices[0]["id"] == "blake"
     assert voices[1]["id"] == "meher"
     assert voices[1]["languages"] == ["en", "hi"]
 
@@ -289,15 +289,15 @@ def test_get_voices_list_response(smallest_tools):
     """Test voice listing when the API returns a bare list."""
     mock_response = MagicMock()
     mock_response.raise_for_status.return_value = None
-    mock_response.json.return_value = [{"id": "magnus", "name": "Magnus"}]
+    mock_response.json.return_value = [{"id": "blake", "name": "Blake"}]
 
     with patch("agno.tools.smallest.httpx.get", return_value=mock_response):
         result = smallest_tools.get_voices()
 
     voices = json.loads(result)
     assert len(voices) == 1
-    assert voices[0]["id"] == "magnus"
-    assert voices[0]["name"] == "Magnus"
+    assert voices[0]["id"] == "blake"
+    assert voices[0]["name"] == "Blake"
 
 
 def test_get_voices_pro_model_uses_pro_catalog():
@@ -313,6 +313,12 @@ def test_get_voices_pro_model_uses_pro_catalog():
     args, _ = mock_get.call_args
     assert args[0] == SMALLEST_VOICES_URLS["lightning_v3.1_pro"]
     assert json.loads(result) == []
+
+
+def test_legacy_model_does_not_use_retired_route():
+    """lightning_v3.1 routes retire on 2026-11-30; the legacy model must list the Pro pool."""
+    assert SMALLEST_VOICES_URLS["lightning_v3.1"] == SMALLEST_PRO_VOICES_URL
+    assert all("/lightning-v3.1/" not in url for url in SMALLEST_VOICES_URLS.values())
 
 
 def test_get_voices_error(smallest_tools):

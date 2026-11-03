@@ -14,14 +14,17 @@ from agno.tools.function import ToolResult
 from agno.utils.log import log_error, log_info
 
 SMALLEST_TTS_URL = "https://api.smallest.ai/waves/v1/tts"
+SMALLEST_PRO_VOICES_URL = "https://api.smallest.ai/waves/v1/lightning-v3.1-pro/get_voices"
+# The legacy /waves/v1/lightning-v3.1/ routes retire on 2026-11-30 and lightning_v3.1
+# requests are served by lightning_v3.1_pro after that, so both models list the Pro pool.
 SMALLEST_VOICES_URLS = {
-    "lightning_v3.1": "https://api.smallest.ai/waves/v1/lightning-v3.1/get_voices",
-    "lightning_v3.1_pro": "https://api.smallest.ai/waves/v1/lightning-v3.1-pro/get_voices",
+    "lightning_v3.1": SMALLEST_PRO_VOICES_URL,
+    "lightning_v3.1_pro": SMALLEST_PRO_VOICES_URL,
 }
 
 SmallestModel = Literal[
-    "lightning_v3.1",  # 12 languages, supports cloned voices
-    "lightning_v3.1_pro",  # premium voice pool, 29 languages
+    "lightning_v3.1_pro",  # premium voice pool, 31 languages (recommended)
+    "lightning_v3.1",  # retiring 2026-11-30; served by lightning_v3.1_pro after that
 ]
 SMALLEST_MODELS = get_args(SmallestModel)
 
@@ -39,9 +42,9 @@ MIME_TYPES: Dict[str, str] = {
 class SmallestTools(Toolkit):
     def __init__(
         self,
-        voice_id: str = "magnus",
+        voice_id: str = "blake",
         api_key: Optional[str] = None,
-        model: SmallestModel = "lightning_v3.1",
+        model: SmallestModel = "lightning_v3.1_pro",
         language: str = "en",
         sample_rate: int = 24000,
         speed: float = 1.0,
@@ -91,8 +94,7 @@ class SmallestTools(Toolkit):
 
     def get_voices(self) -> str:
         """
-        Get all the voices available for the configured Smallest AI model. The standard
-        Lightning v3.1 and Lightning v3.1 Pro models have separate voice catalogs.
+        Get all the voices available for the Smallest AI Lightning v3.1 Pro voice pool.
 
         Returns:
             result (str): JSON string containing a list of voices with their metadata.
