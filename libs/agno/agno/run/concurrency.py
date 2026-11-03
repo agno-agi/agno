@@ -800,9 +800,11 @@ def guard_task_execution(
                     streaming = getattr(component, "stream", False)
                 # WebSocket background submission returns an awaitable; SSE returns an async iterator.
                 if values.get("background"):
-                    streaming = bool(values.get("stream")) and not (
-                        values.get("enable_websocket") or values.get("websocket")
-                    )
+                    from agno.workflow.workflow import Workflow
+
+                    if isinstance(component, Workflow):
+                        streaming = bool(values.get("stream"))
+                    streaming = bool(streaming) and not (values.get("enable_websocket") or values.get("websocket"))
 
                 async def invoke() -> Any:
                     async with ahold(provider, component, session, token, expected, parents) as identity:

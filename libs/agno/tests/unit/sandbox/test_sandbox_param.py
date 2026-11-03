@@ -567,3 +567,69 @@ def test_agentos_applies_the_sandbox_startup_checks_to_team_members(tmp_path):
     member = ClaudeAgent(id="coder", sandbox=named)
     AgentOS(teams=[team_with(member, nested=True)], db=db, queue=QueueConfig(durable=True), telemetry=False)
     assert member.db is db, "a sandboxed member without its own database coordinates on the OS database"
+
+
+@pytest.mark.parametrize("bridge", ["run", "stream"])
+def test_sync_coordinator_bridge_refuses_company_owning_loop(bridge):
+    """A copied Company context must not wait for its own blocked event loop."""
+    import subprocess
+    import sys
+    import textwrap
+
+    child = textwrap.dedent(
+        """
+        import asyncio
+        import sys
+        from sqlalchemy.ext.asyncio import create_async_engine
+        from agno.db.sqlite import AsyncSqliteDb
+        from agno.run.concurrency import _TaskExecutionProvider, current_task_execution_provider, task_execution_scope
+        from agno.sandbox.base import _sync
+        from agno.sandbox.coordinator import SandboxCoordinator
+
+        class Store:
+            db = object()
+            def _sync(self, function, *args, **kwargs):
+                return _sync(function(*args, **kwargs))
+
+        class Probe:
+            store = Store()
+            run = SandboxCoordinator.run
+            stream = SandboxCoordinator.stream
+            arun = SandboxCoordinator.arun
+            async def astream(self, session_id, **kwargs):
+                await current_task_execution_provider().aacquire(session_id, 'probe')
+                yield 'event'
+
+        async def main():
+            engine = create_async_engine('sqlite+aiosqlite:///:memory:')
+            db = AsyncSqliteDb(db_engine=engine, db_url='sqlite+aiosqlite:///unused.db')
+            provider = _TaskExecutionProvider(db)
+            await provider.ainitialize()
+            try:
+                with task_execution_scope(provider):
+                    args = dict(agent_id='agent', run_id='run', input='hi', sdk='test')
+                    try:
+                        if sys.argv[1] == 'stream':
+                            next(Probe().stream('ordinary', **args))
+                        else:
+                            Probe().run('ordinary', **args)
+                    except RuntimeError as exc:
+                        print('REFUSED', str(exc), flush=True)
+                    else:
+                        print('UNEXPECTED SUCCESS', flush=True)
+            finally:
+                await provider.aclose()
+                await db.close()
+
+        asyncio.run(main())
+        """
+    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", child, bridge], capture_output=True, text=True, timeout=5, check=False
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail(f"Sandbox {bridge} blocked the Company database's owning event loop")
+    assert result.returncode == 0, result.stderr
+    assert "REFUSED" in result.stdout, result.stdout
+    assert "async calling path" in result.stdout, result.stdout

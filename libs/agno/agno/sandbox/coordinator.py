@@ -157,6 +157,9 @@ class SandboxCoordinator:
         images: Optional[Sequence[Image]] = None,
         files: Optional[Sequence[File]] = None,
     ) -> RunOutput:
+        from agno.agents.base import _check_company_sync_bridge
+
+        _check_company_sync_bridge()
         return self.store._sync(
             self.arun,
             session_id,
@@ -329,6 +332,9 @@ class SandboxCoordinator:
     ) -> Iterator[Any]:
         """Synchronous ``astream``: the turn runs on its own loop in a worker thread and events
         arrive as they are produced. Stopping early detaches this caller like any disconnect."""
+        from agno.agents.base import _check_company_sync_bridge
+
+        _check_company_sync_bridge()
         if isinstance(self.store.db, AsyncPostgresDb):
             raise TypeError("Use astream with AsyncPostgresDb")
         done = object()

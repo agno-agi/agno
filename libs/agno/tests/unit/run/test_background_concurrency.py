@@ -434,6 +434,45 @@ async def test_nonstreaming_workflow_background_run_remains_awaitable(monkeypatc
         assert await run == "submitted"
 
 
+@pytest.mark.parametrize("component_type", ["agent", "team"])
+def test_background_run_inherits_agent_or_team_stream_default(tmp_path, component_type):
+    from inspect import isasyncgen, iscoroutine
+
+    from agno.agent import Agent
+    from agno.db.sqlite import SqliteDb
+    from agno.team import Team
+
+    class Provider:
+        enabled = True
+
+    db = SqliteDb(db_file=str(tmp_path / "runs.db"))
+    component = (
+        Agent(name="Streaming agent", db=db, stream=True)
+        if component_type == "agent"
+        else Team(name="Streaming team", members=[], db=db, stream=True)
+    )
+    with concurrency.task_execution_scope(None):
+        control = component.arun("hi", session_id="session", background=True)
+    assert isasyncgen(control)
+    asyncio.run(control.aclose())
+
+    with concurrency.task_execution_scope(Provider()):
+        explicit = component.arun("hi", session_id="session", background=True, stream=True)
+    assert isasyncgen(explicit)
+    asyncio.run(explicit.aclose())
+
+    with concurrency.task_execution_scope(Provider()):
+        result = component.arun("hi", session_id="session", background=True)
+    try:
+        assert isasyncgen(result), "Company guard changed the background stream into a coroutine"
+    finally:
+        if iscoroutine(result):
+            result.close()
+        else:
+            asyncio.run(result.aclose())
+    db.close()
+
+
 def test_sync_external_agent_with_injected_async_company_db_fails_without_deadlock():
     """A sync bridge cannot wait on the event loop that owns its Company DB."""
     import subprocess
