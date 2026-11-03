@@ -129,8 +129,9 @@ async def test_remote_agent_stream_ends_with_its_run_output_when_asked() -> None
 @pytest.mark.asyncio
 async def test_remote_agent_stream_ends_at_the_first_event_that_ends_its_own_run() -> None:
     """A sub-run's completion does not end the stream; a cancelled remote run that also sends a completed event ends
-    cancelled: the first event that ends the run itself is its final status. The run output keeps the model its
-    started event names."""
+    cancelled: the first event that ends the run itself is its final status, and the completed event's tokens are
+    kept. The run output keeps the model its started event names."""
+    from agno.metrics import RunMetrics
     from agno.run.agent import RunCancelledEvent, RunCompletedEvent, RunOutput, RunStartedEvent
     from agno.run.base import RunStatus
 
@@ -140,9 +141,13 @@ async def test_remote_agent_stream_ends_at_the_first_event_that_ends_its_own_run
         yield RunStartedEvent(
             run_id="run-1", session_id="s-1", agent_id="test_agent", model="gpt-5.6-luna", model_provider="OpenAI"
         )
-        yield RunCompletedEvent(run_id="sub-run-1", session_id="s-1", agent_id="sub_agent")
+        yield RunCompletedEvent(
+            run_id="sub-run-1", session_id="s-1", agent_id="sub_agent", metrics=RunMetrics(total_tokens=999)
+        )
         yield RunCancelledEvent(run_id="run-1", session_id="s-1", agent_id="test_agent")
-        yield RunCompletedEvent(run_id="run-1", session_id="s-1", agent_id="test_agent")
+        yield RunCompletedEvent(
+            run_id="run-1", session_id="s-1", agent_id="test_agent", metrics=RunMetrics(total_tokens=65)
+        )
 
     items = [item async for item in remote_agent._with_run_output(_events())]
 
@@ -150,14 +155,17 @@ async def test_remote_agent_stream_ends_at_the_first_event_that_ends_its_own_run
     assert (items[-1].run_id, items[-1].status) == ("run-1", RunStatus.cancelled)
     # The run's model, named only by its started event
     assert (items[-1].model, items[-1].model_provider) == ("gpt-5.6-luna", "OpenAI")
+    assert items[-1].metrics.total_tokens == 65
 
 
 @pytest.mark.asyncio
 async def test_remote_team_stream_run_output_keeps_its_member_responses() -> None:
-    """A RemoteTeam's run output keeps the member runs its completed event carries, so the local team counts them."""
+    """A RemoteTeam's run output keeps the member runs its completed event carries, so the local team counts them, also
+    when the completed event follows the event that cancelled the run."""
     from agno.metrics import RunMetrics
     from agno.run.agent import RunOutput
-    from agno.run.team import RunCompletedEvent, TeamRunOutput
+    from agno.run.base import RunStatus
+    from agno.run.team import RunCancelledEvent, RunCompletedEvent, TeamRunOutput
 
     remote_team = RemoteTeam(base_url="http://fake-host", team_id="test_team")
     member_run = RunOutput(run_id="member-run", agent_id="member", metrics=RunMetrics(total_tokens=32))
@@ -165,10 +173,23 @@ async def test_remote_team_stream_run_output_keeps_its_member_responses() -> Non
     async def _events():
         yield RunCompletedEvent(run_id="run-1", session_id="s-1", team_id="test_team", member_responses=[member_run])
 
+    async def _cancelled_events():
+        yield RunCancelledEvent(run_id="run-2", session_id="s-1", team_id="test_team")
+        yield RunCompletedEvent(
+            run_id="run-2",
+            session_id="s-1",
+            team_id="test_team",
+            metrics=RunMetrics(total_tokens=65),
+            member_responses=[member_run],
+        )
+
     items = [item async for item in remote_team._with_run_output(_events())]
+    cancelled_items = [item async for item in remote_team._with_run_output(_cancelled_events())]
 
     assert isinstance(items[-1], TeamRunOutput)
     assert items[-1].member_responses == [member_run]
+    assert (cancelled_items[-1].status, cancelled_items[-1].metrics.total_tokens) == (RunStatus.cancelled, 65)
+    assert cancelled_items[-1].member_responses == [member_run]
 
 
 def test_remote_member_runs_in_a_session_of_its_own() -> None:

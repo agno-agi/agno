@@ -2275,6 +2275,7 @@ class Model(ABC):
                 stop_after_tool_call_from_exception = True
             # Set function call success to False if an exception occurred
         except RunCancelledException:
+            nested_runs.add_to_run()
             raise
         except Exception as e:
             log_error(f"Error executing function {function_call.function.name}: {str(e)}")
@@ -2328,6 +2329,7 @@ class Model(ABC):
                         if function_call.function.show_result and item is not None:
                             yield ModelResponse(content=str(item))
             except RunCancelledException:
+                nested_runs.add_to_run()
                 raise
             except Exception as e:
                 log_error(
@@ -2955,6 +2957,8 @@ class Model(ABC):
             if isinstance(original_result, BaseException):
                 # Cancellation is intentional, not an error — re-raise without logging
                 if isinstance(original_result, RunCancelledException):
+                    for index in range(i, len(function_calls_to_run)):
+                        function_call_nested_runs[index].add_to_run()
                     raise original_result
                 log_error(f"Error during function call: {original_result}")
                 raise original_result
@@ -2977,6 +2981,8 @@ class Model(ABC):
                                     if error:
                                         # Re-raise cancellation — it is not an error
                                         if isinstance(error, RunCancelledException):
+                                            for index in range(i, len(function_calls_to_run)):
+                                                function_call_nested_runs[index].add_to_run()
                                             raise error
                                         # Handle async generator exceptions gracefully like sync generators
                                         log_error(
@@ -3036,6 +3042,8 @@ class Model(ABC):
                             if function_call.function.show_result and item is not None:
                                 yield ModelResponse(content=str(item))
                 except RunCancelledException:
+                    for index in range(i, len(function_calls_to_run)):
+                        function_call_nested_runs[index].add_to_run()
                     raise
                 except Exception as e:
                     log_error(
