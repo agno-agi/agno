@@ -153,6 +153,42 @@ def test_published_studio_components_execute_tasks(system):
     assert "missing from the registry" in response.text
 
 
+@pytest.mark.parametrize("store", ["table_override", "unregistered"])
+def test_studio_executor_with_unserved_database_is_refused_at_start(system, tmp_path, store):
+    client, db, os, queue = system
+    if store == "table_override":
+        db_config = {**db.to_dict(), "runs_table": "studio_runs"}
+    else:
+        db_config = SqliteDb(db_file=str(tmp_path / "private.db"), id="private-db").to_dict()
+    db.create_component_with_config(
+        component_id="studio-private",
+        component_type=ComponentType.AGENT,
+        name="studio-private",
+        config={"name": "studio-private", "db": db_config},
+        stage="published",
+    )
+    _, task = accepted(client)
+    created = client.post(
+        "/company/tasks",
+        json={"product_id": task["product_id"], "project_id": task["project_id"], "title": "Private"},
+        headers=headers(),
+    ).json()
+    path = f"/company/tasks/{created['id']}"
+    scopes = [*SCOPES, "agents:studio-private:run"]
+    accepted_response = client.post(
+        path + "/transitions",
+        json={"target": "ready", "reason": "Approved", "executor_type": "agent", "executor_id": "studio-private"},
+        headers=headers(scopes=scopes),
+    )
+    assert accepted_response.status_code == 200, accepted_response.text
+
+    # Company reads runs back through the db AgentOS serves, so a run stored elsewhere would be lost.
+    started = client.post(path + "/runs", headers=headers(scopes=scopes))
+    assert started.status_code == 409, started.text
+    assert "database AgentOS serves" in started.text
+    assert client.get(path, headers=headers()).json().get("job_id") is None
+
+
 @pytest.mark.parametrize("revision", [False, True])
 def test_start_requires_current_run_and_wiki_permissions(system, revision):
     client, db, os, queue = system
