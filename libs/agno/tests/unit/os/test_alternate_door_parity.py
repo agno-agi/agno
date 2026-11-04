@@ -191,6 +191,75 @@ class TestA2ACancelDelegatesToService:
         assert [(getattr(c, "id", None), r) for c, r in recorded] == [("a2a-team", "run-43")]
 
 
+class TestA2ACardTransportEndpoint:
+    @staticmethod
+    def _build_client(monkeypatch, recorded: List[Any]):
+        pytest.importorskip("a2a", reason="a2a-sdk not installed")
+        from fastapi import FastAPI
+        from fastapi.routing import APIRouter
+        from fastapi.testclient import TestClient
+
+        from agno.agent import Agent
+        from agno.os.interfaces.a2a.router import attach_routes
+        from agno.team import Team
+        from agno.workflow import Workflow
+
+        async def recording_cancel(component, run_id):
+            recorded.append((component, run_id))
+
+        monkeypatch.setattr("agno.os.services.runs.cancel_component_run", recording_cancel)
+
+        agent = Agent(id="a2a-agent", name="A2A Agent")
+        team = Team(id="a2a-team", name="A2A Team", members=[agent])
+        workflow = Workflow(id="a2a-workflow", name="A2A Workflow")
+        app = FastAPI()
+        app.include_router(attach_routes(APIRouter(), agents=[agent], teams=[team], workflows=[workflow]))
+        return TestClient(app)
+
+    def test_agent_card_url_points_to_jsonrpc_transport(self, monkeypatch):
+        client = self._build_client(monkeypatch, [])
+
+        resp = client.get("/agents/a2a-agent/.well-known/agent-card.json")
+
+        assert resp.status_code == 200
+        assert resp.json()["url"] == "http://testserver/a2a/agents/a2a-agent"
+
+    def test_team_and_workflow_card_urls_point_to_jsonrpc_transport(self, monkeypatch):
+        client = self._build_client(monkeypatch, [])
+
+        team_resp = client.get("/teams/a2a-team/.well-known/agent-card.json")
+        workflow_resp = client.get("/workflows/a2a-workflow/.well-known/agent-card.json")
+
+        assert team_resp.status_code == 200
+        assert team_resp.json()["url"] == "http://testserver/a2a/teams/a2a-team"
+        assert workflow_resp.status_code == 200
+        assert workflow_resp.json()["url"] == "http://testserver/a2a/workflows/a2a-workflow"
+
+    def test_card_transport_endpoint_dispatches_agent_jsonrpc_methods(self, monkeypatch):
+        recorded: List[Any] = []
+        client = self._build_client(monkeypatch, recorded)
+
+        resp = client.post(
+            "/agents/a2a-agent",
+            json={"id": "req-1", "method": "tasks/cancel", "params": {"id": "run-42", "contextId": "ctx-1"}},
+        )
+
+        assert resp.status_code == 200
+        assert [(getattr(c, "id", None), r) for c, r in recorded] == [("a2a-agent", "run-42")]
+
+    def test_card_transport_endpoint_dispatches_team_jsonrpc_methods(self, monkeypatch):
+        recorded: List[Any] = []
+        client = self._build_client(monkeypatch, recorded)
+
+        resp = client.post(
+            "/teams/a2a-team",
+            json={"id": "req-2", "method": "tasks/cancel", "params": {"id": "run-43", "contextId": "ctx-2"}},
+        )
+
+        assert resp.status_code == 200
+        assert [(getattr(c, "id", None), r) for c, r in recorded] == [("a2a-team", "run-43")]
+
+
 class TestAguiResumeSyncsStream:
     @pytest.mark.asyncio
     async def test_stream_synced_after_consumption(self, stream, monkeypatch):
