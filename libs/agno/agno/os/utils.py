@@ -1,6 +1,5 @@
 import json
 from datetime import date, datetime, time, timezone
-from os import getenv
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Type, Union
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
@@ -2115,6 +2114,7 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
     if not user_middleware:
         return blank
 
+    from agno.os.auth import is_jwt_env_configured
     from agno.os.middleware.jwt import JWTMiddleware, JWTValidator, jwt_kwargs_have_key_source
 
     for entry in user_middleware:
@@ -2125,15 +2125,14 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
             # source. Those entries are not JWT-intended: skip them so the WS
             # endpoint falls through to the PAT and security-key auth paths instead
             # of demanding JWTs nobody can mint. Env-configured keys still count --
-            # JWTValidator reads JWT_VERIFICATION_KEY / JWT_JWKS_FILE itself.
-            if not jwt_kwargs_have_key_source(kwargs) and not (
-                getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE")
-            ):
+            # JWTValidator reads JWT_VERIFICATION_KEY / JWT_JWKS_FILE / JWT_JWKS_URL itself.
+            if not jwt_kwargs_have_key_source(kwargs) and not is_jwt_env_configured():
                 continue
             try:
                 lazy_validator = JWTValidator(
                     verification_keys=kwargs.get("verification_keys"),
                     jwks_file=kwargs.get("jwks_file"),
+                    jwks_url=kwargs.get("jwks_url"),
                     algorithm=kwargs.get("algorithm", "RS256"),
                     validate=kwargs.get("validate", True),
                     scopes_claim=kwargs.get("scopes_claim", "scopes"),

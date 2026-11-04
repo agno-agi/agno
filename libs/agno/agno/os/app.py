@@ -25,6 +25,7 @@ from agno.exceptions import AgnoError, SessionBusyError
 from agno.job_queue import QueueConfig
 from agno.knowledge.knowledge import Knowledge
 from agno.media.storage.base import AsyncMediaStorage, MediaStorage
+from agno.os.auth import is_jwt_env_configured
 from agno.os.config import (
     AgentOSConfig,
     AuthorizationConfig,
@@ -554,6 +555,7 @@ class AgentOS:
         self._authz_role_store: Any = None
         self._authz_provider: Any = None
         self._authz_issuer: Optional[str] = None
+        self._authz_jwks_url: Optional[str] = None
 
         # authorization= takes the switch or the object, never the low-level config: one spelling
         # for the deprecated type is enough, and it is the keyword that already exists.
@@ -589,6 +591,7 @@ class AgentOS:
             self._authz_role_store = authorization if authorization.uses_roles else None
             self._authz_provider = authorization.provider
             self._authz_issuer = authorization.issuer
+            self._authz_jwks_url = authorization.jwks_url
             authorization = True
 
         self.authorization = authorization
@@ -2199,7 +2202,7 @@ class AgentOS:
         # covers the REST routes and the mounted /mcp app together (one middleware on
         # the parent app), so the mounted sub-app carries no auth code of its own.
         security_key = self.settings.os_security_key if self.settings else None
-        jwt_env_configured = bool(getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE"))
+        jwt_env_configured = is_jwt_env_configured()
         if not self.authorization and (self.user_directory is not None or self.user_isolation):
             # A user directory or per-user isolation without authorization is a valid, intentional
             # shape for local/demo use: a run's user_id registers the person (a roster fills in) and
@@ -2211,15 +2214,16 @@ class AgentOS:
                 "AgentOS has user_directory or user_isolation set without authorization. The user_id on each "
                 "request comes from the caller and is not verified, so a disabled user can send a different "
                 "user_id and any caller can read another user's data by sending theirs. This is fine for local "
-                "development. To enforce it, set AgentOS(authorization=True) and configure JWT_VERIFICATION_KEY "
-                "or JWT_JWKS_FILE."
+                "development. To enforce it, set AgentOS(authorization=True) and configure JWT_VERIFICATION_KEY, "
+                "JWT_JWKS_FILE or JWT_JWKS_URL."
             )
         if self.authorization:
             # Set authorization_enabled flag on settings so security key validation is skipped
             self.settings.authorization_enabled = True
             if jwt_env_configured and bool(security_key):
                 log_warning(
-                    "Both JWT configuration (JWT_VERIFICATION_KEY or JWT_JWKS_FILE) and OS_SECURITY_KEY are set. "
+                    "Both JWT configuration (JWT_VERIFICATION_KEY, JWT_JWKS_FILE or JWT_JWKS_URL) and OS_SECURITY_KEY "
+                    "are set. "
                     "With authorization=True, only JWT authorization will be used. "
                     "Consider removing OS_SECURITY_KEY from your environment."
                 )
@@ -2434,6 +2438,7 @@ class AgentOS:
             authorization=self.authorization,
             service_account_verifier=self._get_service_account_verifier(),
             issuer=self._authz_issuer,
+            jwks_url=self._authz_jwks_url,
         )
         # The top-level user_isolation flag is the primary spelling; OR it with the legacy
         # AuthorizationConfig(user_isolation=...) so either turns per-user scoping on.
@@ -2444,14 +2449,13 @@ class AgentOS:
         algorithm = middleware_kwargs["algorithm"]
         verification_keys = middleware_kwargs["verification_keys"]
         jwks_file = middleware_kwargs["jwks_file"]
+        jwks_url = middleware_kwargs["jwks_url"]
         verify_audience = middleware_kwargs["verify_audience"]
         audience = middleware_kwargs.get("audience")
         admin_scope: Optional[str] = middleware_kwargs.get("admin_scope")
         user_isolation = middleware_kwargs.get("user_isolation", False)
 
-        jwt_configured = bool(
-            verification_keys or jwks_file or getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE")
-        )
+        jwt_configured = bool(verification_keys or jwks_file or jwks_url or is_jwt_env_configured())
         # Fail fast at app construction (not on the first request) if RBAC was asked for
         # with no way to verify a JWT: otherwise every JWT and anonymous request would fall
         # through unauthenticated, silently serving an OPEN instance. AuthMiddleware enforces
@@ -2459,8 +2463,8 @@ class AgentOS:
         if self.authorization and not jwt_configured:
             raise ValueError(
                 "AgentOS(authorization=True) requires a JWT verification key: set "
-                "JWT_VERIFICATION_KEY or JWT_JWKS_FILE (or pass verification_keys / jwks_file via "
-                "authorization_config). Without one, tokens cannot be verified so no identity is established "
+                "JWT_VERIFICATION_KEY, JWT_JWKS_FILE or JWT_JWKS_URL (or pass verification_keys / jwks_file "
+                "via authorization_config, or jwks_url via Authorization). Without one, tokens cannot be verified so no identity is established "
                 "and RBAC is not enforced. For service-account-only enforcement, use a db without either flag."
             )
         log_info("Adding AgentOS auth middleware" + (f" (JWT algorithm: {algorithm})" if jwt_configured else ""))
@@ -2471,6 +2475,7 @@ class AgentOS:
             fastapi_app.state.jwt_validator = JWTValidator(
                 verification_keys=verification_keys,
                 jwks_file=jwks_file,
+                jwks_url=jwks_url,
                 algorithm=algorithm,
                 issuer=middleware_kwargs.get("issuer"),
             )
@@ -2606,7 +2611,7 @@ class AgentOS:
         install and the ``/users`` gate read, so they cannot disagree about whether a caller has
         a verified identity."""
         security_key = self.settings.os_security_key if self.settings else None
-        jwt_env_configured = bool(getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE"))
+        jwt_env_configured = is_jwt_env_configured()
         return bool(self.authorization or jwt_env_configured or security_key)
 
     def _seed_authorization_provider(self, fastapi_app: FastAPI) -> None:
