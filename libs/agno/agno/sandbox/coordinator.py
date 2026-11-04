@@ -568,7 +568,8 @@ class SandboxCoordinator:
                     # checkpoint in this attempt: the turn reruns either way, and the queue budgets reruns.
                     lost = SandboxHandle(**record["computer"])
                     current = await self.provider.aget(lost.provider_ref)
-                    if current is not None and current.state == "running":
+                    # A native approval turn is never replayed: its pending requests belong to the lost execution.
+                    if (current is not None and current.state == "running") or config.get("_native_hitl", False):
                         return record
                     await self.provider.adestroy(lost)
                     if await self.provider.aget(lost.provider_ref) is not None:

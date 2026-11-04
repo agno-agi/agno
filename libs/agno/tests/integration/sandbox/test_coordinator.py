@@ -1036,6 +1036,23 @@ async def test_the_attempt_that_finds_its_computer_lost_restores_and_completes(s
     assert await recovered_effects(coordinator, root) == ["first", "second"]
 
 
+async def test_a_native_approval_turn_whose_computer_is_lost_is_not_replayed(system):
+    coordinator, spec, _ = system
+    await run(coordinator, spec)
+    config = {"delay": 20, "steps": 20, "_native_hitl": True}
+    task = asyncio.create_task(run(coordinator, spec, "second", config=config))
+    await executing(coordinator)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await coordinator.provider.adestroy(handles_of(coordinator)[-1])
+    # Its pending approvals belong to the lost execution, so a fresh one must not stand in for it.
+    failed = await run(coordinator, spec, "second", config=config)
+    assert failed.status == RunStatus.error and failed.metadata["retryable"] is False
+    assert "computer was lost" in failed.content
+    assert len(handles_of(coordinator)) == 2
+
+
 async def test_a_replacement_lost_again_ends_the_attempt_retryable(system, monkeypatch):
     coordinator, spec, _ = system
     await run(coordinator, spec)
