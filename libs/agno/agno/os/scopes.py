@@ -502,6 +502,8 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
         "GET /os/metrics/models": ["metrics:read"],
         "GET /os/metrics/runs": ["metrics:read"],
         "GET /os/metrics/latency": ["metrics:read"],
+        "POST /os/metrics/refresh": ["metrics:write"],
+        "GET /os/metrics/refresh/status": ["metrics:read"],
         # Evaluation endpoints
         "GET /eval-runs": ["evals:read"],
         "GET /eval-runs/*": ["evals:read"],

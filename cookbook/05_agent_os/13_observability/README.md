@@ -67,8 +67,9 @@ Then open `GET /os/metrics/sessions`, `/runs`, `/tokens`,
 `/latency`, or `/models` for the last 30 days, or narrow them with
 `?starting_date=YYYY-MM-DD&ending_date=YYYY-MM-DD`. The AgentOS calculates the
 metrics in the background once a minute, so a new run can take up to a minute to
-show. `POST /metrics/refresh` calculates them at once, and
-`GET /metrics/refresh/status` reports the status of the last calculation.
+show. `POST /os/metrics/refresh` calculates them for every database the routes
+read, and `GET /os/metrics/refresh/status` reports the status of the last
+calculation.
 `GET /os/metrics/users` needs a `user_directory` on the AgentOS and answers 503
 without one.
 

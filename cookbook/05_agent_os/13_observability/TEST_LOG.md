@@ -1,8 +1,8 @@
 # Test Log: 13_observability
 
 Tested on 2026-07-24 against Agno source commit
-`74c0bfb1499c2636aa7c3f1ccd8935ceeb824b4b`. `os_metrics.py` and the `metrics.py`
-re-run were tested on 2026-11-02.
+`74c0bfb1499c2636aa7c3f1ccd8935ceeb824b4b`. The `metrics.py` re-run was tested
+on 2026-11-02 and `os_metrics.py` on 2026-11-04.
 
 ### basic.py
 
@@ -95,14 +95,15 @@ user, 43 total tokens, and the last refresh `completed`.
 
 **Test mode:** LIVE
 
-**Description:** Ran `run_os_metrics_demo()` on 2026-11-02 against a fresh local
-PostgreSQL: `metrics-researcher` and `metrics-summarizer` (`gpt-5.6-luna`) ran
-once each as `observability-user`, then `POST /metrics/refresh` and the
-`/os/metrics/sessions`, `/runs`, `/tokens` and `/models` routes were called for
-today on the in-process AgentOS app.
+**Description:** Ran `run_os_metrics_demo()` on 2026-11-04 against a fresh
+local PostgreSQL: `metrics-researcher` and `metrics-summarizer` (`gpt-5.6-luna`)
+ran once each as `observability-user`, then `POST /os/metrics/refresh`,
+`GET /os/metrics/refresh/status` and the `/os/metrics/sessions`, `/runs`,
+`/tokens` and `/models` routes were called for today on the in-process AgentOS
+app.
 
-**Result:** Printed 2 sessions today, 2 runs today, 2 completed runs today,
-121 tokens today, and 2 runs of `gpt-5.6-luna`.
+**Result:** Printed the refresh `completed`, 2 sessions today, 2 runs today,
+2 completed runs today, 99 tokens today, and 2 runs of `gpt-5.6-luna`.
 
 ---
 

@@ -2,10 +2,10 @@
 Serve AgentOS Metrics
 =====================
 
-Run two agents, refresh the metrics through POST /metrics/refresh, read today's
-OS metrics back through the /os/metrics routes, then serve them. The routes
-return the sessions, runs, tokens, latency and models of a date range, read
-from the agno_component_metrics and agno_user_metrics tables the AgentOS
+Run two agents, refresh the metrics through POST /os/metrics/refresh, read
+today's OS metrics back through the /os/metrics routes, then serve them. The
+routes return the sessions, runs, tokens, latency and models of a date range,
+read from the agno_component_metrics and agno_user_metrics tables the AgentOS
 calculates from its sessions and runs.
 
 Prerequisites: OPENAI_API_KEY and ./cookbook/scripts/run_pgvector.sh
@@ -82,11 +82,11 @@ async def run_os_metrics_demo() -> None:
         transport=transport,
         base_url="http://agent-os",
     ) as client:
-        refresh_response = await client.post(
-            "/metrics/refresh",
-            params={"db_id": DB_ID},
-        )
+        refresh_response = await client.post("/os/metrics/refresh")
         refresh_response.raise_for_status()
+        status_response = await client.get("/os/metrics/refresh/status")
+        status_response.raise_for_status()
+        refresh_status = status_response.json()
 
         os_metrics = {}
         for route in ["sessions", "runs", "tokens", "models"]:
@@ -97,6 +97,7 @@ async def run_os_metrics_demo() -> None:
     if os_metrics["runs"]["total_runs"] < 2:
         raise RuntimeError("The metrics omitted the new agent runs")
 
+    print(f"Refresh: {refresh_status['status']}")
     print(f"Sessions today: {os_metrics['sessions']['total_sessions']}")
     print(f"Runs today: {os_metrics['runs']['total_runs']}")
     print(
