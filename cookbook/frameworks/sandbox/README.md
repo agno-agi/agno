@@ -151,7 +151,8 @@ and removes the partial checkout before the model starts. Run attachments are st
 `git status` and `git add`.
 
 Sandboxed agents require PostgreSQL and an explicit checkpoint store. Redis is optional
-for AgentOS durable queue deployments; it adds live streams and resume from any replica. Docker needs `network="isolated"` (or another
+for AgentOS durable queue deployments; it adds live streams and resume from any replica (see
+`docker/README.md` for how clients recover a stream without it). Docker needs `network="isolated"` (or another
 network with GitHub/model egress); AgentCore needs egress. Size `workspace_mb` for the
 shallow checkout and generated files, within the 1 GiB checkpoint cap. With more than
 one host, use `S3CheckpointStore` or `PostgresCheckpointStore` so every replica can
