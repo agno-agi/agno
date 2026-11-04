@@ -60,6 +60,44 @@ class MetricsRefreshStatusResponse(BaseModel):
     error: Optional[str] = Field(None, description="Error message if the most recent refresh failed")
 
 
+class OSMetricsRefreshResponse(BaseModel):
+    db_ids: Dict[str, MetricsRefreshResponse] = Field(
+        default_factory=dict,
+        description=(
+            "Databases a refresh was asked of, each with its status: "
+            "'started', 'already_running', 'disabled' or 'failed'"
+        ),
+    )
+    skipped_db_ids: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Databases left out of the refresh, each with the reason: 'failed', 'timeout' or 'unsupported'",
+    )
+
+
+class OSMetricsRefreshStatusResponse(BaseModel):
+    status: str = Field(
+        ...,
+        description=(
+            "'running' while any database refreshes, else 'failed' if any refresh failed, "
+            "else 'idle' if any database has not refreshed, else 'completed'"
+        ),
+    )
+    finished_at: Optional[datetime] = Field(
+        None,
+        description=(
+            "When the most recent refresh of the database refreshed longest ago finished. "
+            "None while any database has no finished refresh"
+        ),
+    )
+    db_ids: Dict[str, MetricsRefreshStatusResponse] = Field(
+        default_factory=dict, description="Databases the status was read from, each with its most recent refresh"
+    )
+    skipped_db_ids: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Databases left out of the status, each with the reason: 'failed', 'timeout' or 'unsupported'",
+    )
+
+
 class MetricsResponse(BaseModel):
     metrics: List[DayAggregatedMetrics] = Field(..., description="List of daily aggregated metrics")
     updated_at: Optional[datetime] = Field(None, description="Timestamp of the most recent metrics update")
