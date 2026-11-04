@@ -271,3 +271,32 @@ def test_division_exception_handling(calculator_tools):
         result = calculator_tools.divide(1, 0)
         result_data = json.loads(result)
         assert "error" in result_data
+
+
+def test_is_prime_oversized_input_returns_error(calculator_tools):
+    """Trial division must not raise on integers far beyond float range."""
+    result = calculator_tools.is_prime(10**400)
+    result_data = json.loads(result)
+
+    assert result_data["operation"] == "prime_check"
+    assert "error" in result_data
+    assert result_data["result"] == "Error"
+
+
+def test_is_prime_above_bound_returns_error(calculator_tools):
+    """Anything above the documented bound is refused instead of looping."""
+    oversized = CalculatorTools.MAX_PRIME_CHECK + 39
+    result = calculator_tools.is_prime(oversized)
+    result_data = json.loads(result)
+
+    assert "error" in result_data
+    assert str(CalculatorTools.MAX_PRIME_CHECK) in result_data["error"]
+
+
+def test_is_prime_at_bound_is_still_evaluated(calculator_tools):
+    """The bound itself is a valid input, not an error."""
+    result = calculator_tools.is_prime(CalculatorTools.MAX_PRIME_CHECK)
+    result_data = json.loads(result)
+
+    assert "error" not in result_data
+    assert result_data["result"] is False

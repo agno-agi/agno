@@ -7,6 +7,9 @@ from agno.utils.log import log_debug, log_error
 
 
 class CalculatorTools(Toolkit):
+    # Trial division up to isqrt(n) is only practical for bounded input.
+    MAX_PRIME_CHECK = 10**12
+
     def __init__(
         self,
         **kwargs,
@@ -128,7 +131,16 @@ class CalculatorTools(Toolkit):
         """
         if n <= 1:
             return json.dumps({"operation": "prime_check", "result": False})
-        for i in range(2, int(math.sqrt(n)) + 1):
+        if n > self.MAX_PRIME_CHECK:
+            log_error(f"Prime check refused for {n}: above the {self.MAX_PRIME_CHECK} bound")
+            return json.dumps(
+                {
+                    "operation": "prime_check",
+                    "error": f"Prime check is limited to integers up to {self.MAX_PRIME_CHECK}",
+                    "result": "Error",
+                }
+            )
+        for i in range(2, math.isqrt(n) + 1):
             if n % i == 0:
                 return json.dumps({"operation": "prime_check", "result": False})
         return json.dumps({"operation": "prime_check", "result": True})
