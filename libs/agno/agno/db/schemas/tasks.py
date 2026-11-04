@@ -77,7 +77,7 @@ def task_transition_fields(
         raise ValueError("A transition requires a non-empty reason")
     if target not in TASK_TRANSITIONS.get(existing["status"], set()):
         raise ValueError(f"Invalid task transition from {existing['status']} to {target}")
-    # Runs, not direct moves, apply the run rules to In progress.
+    # In progress is entered only by starting a run, which applies its own rules.
     blocker = None if target == "in_progress" else task_transition_blocker(existing, target)
     if blocker is not None:
         raise ValueError(blocker)

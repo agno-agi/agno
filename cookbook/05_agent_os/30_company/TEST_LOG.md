@@ -412,3 +412,17 @@ routine, and startup preserves that choice. Uses temporary SQLite storage with n
 model calls or scheduler execution.
 
 ---
+
+### 12_task_board.py
+
+**Status:** PASS
+
+**Description:** Start a Backlog Task by naming its workflow executor, repeat the
+start while it runs and after it reaches In review, then read the board with
+`group_by=status`.
+
+**Result:** The repeat during the run joins it and the repeat after review returns
+409. The board lists all six statuses with their counts. Passed on temporary
+SQLite and with `COMPANY_DB=postgres`, with no model calls.
+
+---

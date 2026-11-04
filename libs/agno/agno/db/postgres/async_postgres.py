@@ -7031,7 +7031,6 @@ class AsyncPostgresDb(AsyncBaseDb):
         if not include_deleted:
             stmt = stmt.where(table.c.deleted_at.is_(None))
         async with self.async_session_factory() as sess:
-            total = (await sess.execute(select(func.count()).select_from(stmt.subquery()))).scalar() or 0
             column = (
                 func.coalesce(table.c.updated_at, table.c.created_at) if sort_by == "updated_at" else table.c.created_at
             )
@@ -7039,8 +7038,11 @@ class AsyncPostgresDb(AsyncBaseDb):
             tie = table.c.id.asc() if sort_order == "asc" else table.c.id.desc()
             if group_by is not None:
                 stmt = task_group_page(stmt, table, group_by, [order, tie], limit, page)
-            else:
-                stmt = stmt.order_by(order, tie).limit(limit).offset((page - 1) * limit)
+                grouped = [dict(row._mapping) for row in (await sess.execute(stmt)).fetchall()]
+                # Each group's first row carries its size, so the group sizes add up to the total.
+                return grouped, sum(row["group_total"] for row in grouped if row["position"] == 1)
+            total = (await sess.execute(select(func.count()).select_from(stmt.subquery()))).scalar() or 0
+            stmt = stmt.order_by(order, tie).limit(limit).offset((page - 1) * limit)
             rows = (await sess.execute(stmt)).fetchall()
             return [dict(row._mapping) for row in rows], total
 

@@ -94,7 +94,7 @@ def get_tasks_router(
             "attempt": history[index]["attempt"],
         }
         if ticket is not None and _pending_task_attempt(task) is not None:
-            status = ticket_status_to_api(ticket["status"]) or ticket["status"]
+            status = ticket_status_to_api(ticket["status"]) or ticket["status"].upper()
             # A pause also stamps the ticket's completed_at, though the run has not ended.
             completed_at = ticket.get("completed_at") if status in {"COMPLETED", "ERROR", "CANCELLED"} else None
             return {**run, "status": status, "completed_at": completed_at, "error": ticket.get("error")}
@@ -127,9 +127,13 @@ def get_tasks_router(
             ended = result.get("run_id") == task.get("job_id") and result.get("status") in {"ERROR", "CANCELLED"}
             return _pending_task_attempt(task) is not None or ended
 
+        def checks_withdrawn(task: Dict[str, Any]) -> bool:
+            # A withdrawn queued ticket stays live until the worker refuses it, and blocks the next start.
+            return task["status"] in {"backlog", "ready"} and bool(task.get("job_id"))
+
         # One lookup covers the page; a ticket removed by retention leaves the saved result.
         queue = getattr(request.app.state, "queue_worker", None)
-        sessions = list({task["session_id"] for task in tasks if reads_ticket(task)})
+        sessions = list({task["session_id"] for task in tasks if reads_ticket(task) or checks_withdrawn(task)})
         tickets: Optional[Dict[str, Dict[str, Any]]] = {}
         if queue is not None and sessions:
             # Grow a single page instead of offset paging a changing ticket set.
@@ -163,6 +167,15 @@ def get_tasks_router(
                 ):
                     # Starting again would only return the run that is already going.
                     reason = "A run is already in progress"
+                if target == "in_progress" and reason is None and checks_withdrawn(task):
+                    if tickets is None:
+                        reason = "Could not verify the Task run; retry the request"
+                    elif task["job_id"] in tickets and tickets[task["job_id"]]["status"] not in {
+                        "failed",
+                        "cancelled",
+                        "completed",
+                    }:
+                        reason = "The previous Task run is still active"
                 if reason is None and unverified:
                     reason = "Could not verify the Task run; retry the request"
                 options.append(

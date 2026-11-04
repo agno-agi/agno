@@ -154,6 +154,30 @@ def get_company_runs_router(os: Any) -> APIRouter:
         except NotImplementedError:
             raise HTTPException(503, "Company wiki is not supported by the configured database")
 
+    async def withdraw(task_id: str, request: Request, accepted: Dict[str, Any], reason: str) -> None:
+        from agno.utils.log import log_error
+
+        try:
+            current = await task(task_id)
+            # Withdraw only the unchanged, unstarted acceptance. Backlog and
+            # its transition reason expose the work for human attention.
+            if current["status"] != "ready" or current.get("job_id") != accepted.get("job_id"):
+                return
+            # A ticket committed before the start failed still runs this acceptance.
+            queue = getattr(request.app.state, "queue_worker", None)
+            if queue is not None:
+                run_id = task_run_id(task_id, task_next_attempt(current))
+                # A failed lookup must not read as "no ticket" and withdraw a committed run.
+                try:
+                    job = await queue.store.get_job(run_id, strict=True)
+                except TypeError:
+                    job = await queue.store.get_job(run_id)
+                if job is not None and job["status"] not in {"failed", "cancelled"}:
+                    return
+            await _call(db, "transition_task", task_id, "backlog", reason, expected_updated_at=current["updated_at"])
+        except Exception as exc:
+            log_error(f"Failed to withdraw Task {task_id} after a refused start: {exc}")
+
     @router.post("/tasks/{task_id}/runs", status_code=202)
     async def start(task_id: str, request: Request, body: TaskRunCreate = TaskRunCreate(), _: bool = Depends(auth)):
         try:
@@ -164,31 +188,46 @@ def get_company_runs_router(os: Any) -> APIRouter:
             raise HTTPException(409, str(exc)) from exc
 
     async def start_task(task_id: str, request: Request, body: TaskRunCreate):
+        import json
+
+        from agno.company.routines import _manager_call
+
         value = await task(task_id)
-        # A retry, after a failed or a successful start, finds the Task already accepted for the same executor.
-        accepted_for = value["status"] != "backlog" and (value.get("executor_type"), value.get("executor_id")) == (
-            body.executor_type,
-            body.executor_id,
-        )
+        # A retry joins the start while the Task is Ready or its attempt is unfinished; repeating it
+        # after the run has ended would start another attempt, so it is refused.
+        accepted_for = (value["status"] == "ready" or _pending_task_attempt(value) is not None) and (
+            value.get("executor_type"),
+            value.get("executor_id"),
+        ) == (body.executor_type, body.executor_id)
+        message: Optional[str] = None
+        accepted: Optional[Dict[str, Any]] = None
         if body.executor_type is not None and not accepted_for:
             # Starting a Backlog Task with an executor accepts it first, with the same check as moving it to Ready.
             if value["status"] != "backlog":
                 raise HTTPException(409, "Only a Backlog Task takes an executor when its run starts")
             target = {"executor_type": body.executor_type, "executor_id": body.executor_id}
-            # Check what the start needs before accepting, so a refused start leaves the Task in Backlog.
+            # Check what the start needs before accepting; a later refusal returns the Task to Backlog.
             component = executor(target)
             await _require_endpoint_permission(request, endpoint(target), "POST", action="accept")
             queue = worker(request)
             executor_database(value, component)
             # A withdrawn queued ticket stays live until the worker refuses it.
-            previous = await queue.store.get_job(value["job_id"]) if value.get("job_id") else None
+            previous = None
+            if value.get("job_id"):
+                try:
+                    # A failed lookup must not read as "no ticket" and accept over a live run.
+                    try:
+                        previous = await queue.store.get_job(value["job_id"], strict=True)
+                    except TypeError:
+                        previous = await queue.store.get_job(value["job_id"])
+                except Exception:
+                    raise HTTPException(503, "Could not verify the Task run; retry the request")
             if previous is not None and previous["status"] not in {"failed", "cancelled", "completed"}:
                 raise HTTPException(409, "The previous Task run is still active")
-            validate_seam_input(component, await task_message(value))
+            message = await task_message(value)
+            validate_seam_input(component, message)
             if body.attempt is not None and body.attempt != task_next_attempt(value):
                 raise HTTPException(409, "Start the next Task attempt, or retry the original attempt")
-            from agno.company.routines import _manager_call
-
             try:
                 accepted = await _manager_call(
                     manager,
@@ -212,6 +251,21 @@ def get_company_runs_router(os: Any) -> APIRouter:
                 or (value.get("executor_type"), value.get("executor_id")) != (body.executor_type, body.executor_id)
             ):
                 raise HTTPException(409, detail)
+        try:
+            response = await submit(task_id, request, body, value, message)
+        except Exception as exc:
+            if accepted is not None:
+                reason = str(exc.detail) if isinstance(exc, HTTPException) else str(exc)
+                await withdraw(task_id, request, accepted, reason)
+            raise
+        if accepted is not None and response.status_code >= 300:
+            refusal = json.loads(bytes(response.body)).get("detail") if response.body else None
+            await withdraw(task_id, request, accepted, str(refusal or "The run did not start"))
+        return response
+
+    async def submit(
+        task_id: str, request: Request, body: TaskRunCreate, value: Dict[str, Any], message: Optional[str]
+    ):
         from agno.company.execution import _automatic_task
         from agno.company.sandbox import _is_sandboxed
         from agno.os.routers.company.sandbox import _sandbox_start_gate
@@ -224,7 +278,7 @@ def get_company_runs_router(os: Any) -> APIRouter:
 
             async def admit():
                 async with _sandbox_start_gate(os, value, worker(request)):
-                    return await dispatch(task_id, request, body, value)
+                    return await dispatch(task_id, request, body, value, message)
 
             # A disconnected caller must not release admission while an off-thread
             # queue INSERT can still commit. Finish submission under the same lock.
@@ -236,9 +290,11 @@ def get_company_runs_router(os: Any) -> APIRouter:
                     await asyncio.shield(pending)
                 finally:
                     raise
-        return await dispatch(task_id, request, body, value)
+        return await dispatch(task_id, request, body, value, message)
 
-    async def dispatch(task_id: str, request: Request, body: TaskRunCreate, value: Dict[str, Any]):
+    async def dispatch(
+        task_id: str, request: Request, body: TaskRunCreate, value: Dict[str, Any], message: Optional[str]
+    ):
         from agno.company.execution import _automatic_task
 
         observed = _automatic_task.get()
@@ -362,7 +418,8 @@ def get_company_runs_router(os: Any) -> APIRouter:
             raise HTTPException(409, "Start the next Task attempt after accepting a retry")
         owner = _task_session_owner(value, component)
         await _prepare_task_session(run_db, value, owner)
-        message = await task_message(value)
+        if message is None:
+            message = await task_message(value)
         # Apply the ordinary run route's schema check before mutating the Task.
         # Rejected input must not consume an attempt or leave phantom active work.
         validate_seam_input(component, message)
