@@ -286,6 +286,8 @@ class RemoteAgent(BaseRemote):
         validated_input = validate_input(input)
         serialized_input = serialize_input(validated_input)
         headers = self._get_auth_headers(auth_token)
+        # Read here, never forwarded: the remote stream route cannot send a RunOutput over SSE
+        yield_run_output = kwargs.pop("yield_run_output", False)
 
         # A2A protocol path
         if self.a2a_client:
@@ -306,7 +308,7 @@ class RemoteAgent(BaseRemote):
         if self.agentos_client:
             if stream:
                 # Handle streaming response
-                return self.agentos_client.run_agent_stream(
+                event_stream = self.agentos_client.run_agent_stream(
                     agent_id=self.agent_id,
                     message=serialized_input,
                     session_id=session_id,
@@ -327,6 +329,7 @@ class RemoteAgent(BaseRemote):
                     headers=headers,
                     **kwargs,
                 )
+                return self._with_run_output(event_stream) if yield_run_output else event_stream
             else:
                 return self.agentos_client.run_agent(  # type: ignore
                     agent_id=self.agent_id,
@@ -482,6 +485,11 @@ class RemoteAgent(BaseRemote):
         AsyncIterator[RunOutputEvent],
     ]:
         headers = self._get_auth_headers(auth_token)
+        # Local-only continue arguments; the remote route rebuilds them from the tools it receives
+        kwargs.pop("updated_tools", None)
+        kwargs.pop("background_tasks", None)
+        # Read here, never forwarded: the remote stream route cannot send a RunOutput over SSE
+        yield_run_output = kwargs.pop("yield_run_output", False)
 
         if self.agentos_client:
             tools_list = (
@@ -489,7 +497,7 @@ class RemoteAgent(BaseRemote):
             )
             if stream:
                 # Handle streaming response
-                return self.agentos_client.continue_agent_run_stream(  # type: ignore
+                event_stream = self.agentos_client.continue_agent_run_stream(
                     agent_id=self.agent_id,
                     run_id=run_id,
                     user_id=user_id,
@@ -498,6 +506,7 @@ class RemoteAgent(BaseRemote):
                     headers=headers,
                     **kwargs,
                 )
+                return self._with_run_output(event_stream) if yield_run_output else event_stream
             else:
                 return self.agentos_client.continue_agent_run(  # type: ignore
                     agent_id=self.agent_id,

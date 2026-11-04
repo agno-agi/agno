@@ -26,7 +26,7 @@ from agno.db.base import BaseDb, ComponentType, SessionType
 from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.utils import resolve_db_from_config
 from agno.exceptions import ComponentRehydrationError
-from agno.metrics import RunMetrics, SessionMetrics
+from agno.metrics import SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.registry._reserved import RESERVED_MANAGER_IDS, _reserved_manager_id_message
@@ -609,40 +609,13 @@ def update_metadata(agent: Agent, session: AgentSession):
         session.metadata.update(merged)
 
 
-def get_session_metrics_internal(agent: Agent, session: AgentSession) -> SessionMetrics:
-    # Get the session_metrics from the database
-    if session.session_data is not None and "session_metrics" in session.session_data:
-        session_metrics_from_db = session.session_data.get("session_metrics")
-        if session_metrics_from_db is not None:
-            if isinstance(session_metrics_from_db, dict):
-                return SessionMetrics.from_dict(session_metrics_from_db)
-            elif isinstance(session_metrics_from_db, SessionMetrics):
-                return session_metrics_from_db
-            elif isinstance(session_metrics_from_db, RunMetrics):
-                # Convert legacy RunMetrics to SessionMetrics
-                return SessionMetrics(
-                    input_tokens=session_metrics_from_db.input_tokens,
-                    output_tokens=session_metrics_from_db.output_tokens,
-                    total_tokens=session_metrics_from_db.total_tokens,
-                    audio_input_tokens=session_metrics_from_db.audio_input_tokens,
-                    audio_output_tokens=session_metrics_from_db.audio_output_tokens,
-                    audio_total_tokens=session_metrics_from_db.audio_total_tokens,
-                    cache_read_tokens=session_metrics_from_db.cache_read_tokens,
-                    cache_write_tokens=session_metrics_from_db.cache_write_tokens,
-                    reasoning_tokens=session_metrics_from_db.reasoning_tokens,
-                    cost=session_metrics_from_db.cost,
-                )
-    return SessionMetrics()
-
-
-def update_session_metrics(agent: Agent, session: AgentSession, run_response: RunOutput) -> None:
-    """Calculate session metrics - convert run Metrics to SessionMetrics."""
-    session_metrics = get_session_metrics_internal(agent, session=session)
-    # Add the metrics for the current run to the session metrics
-    if session_metrics is None:
-        return
-    if run_response.metrics is not None:
-        session_metrics.accumulate_from_run(run_response.metrics)
+def update_session_metrics(agent: Agent, session: AgentSession) -> None:
+    """Calculate session metrics from the session's runs, so a run saved more than once is counted once."""
+    # A manual compaction with no finished run to carry its usage keeps it apart from the runs
+    session_metrics = SessionMetrics.from_dict((session.session_data or {}).get("compaction_metrics") or {})
+    for run in session.runs or []:
+        if run.metrics is not None:
+            session_metrics.accumulate_from_run(run.metrics)
 
     if session.session_data is not None:
         session.session_data["session_metrics"] = session_metrics.to_dict()
