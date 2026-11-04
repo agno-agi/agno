@@ -384,3 +384,10 @@ def test_search_youtube_client_side_truncation(api_tools):
         result = json.loads(api_tools.search_youtube("many", num_results=3))
     assert len(result["video_results"]) == 3
     assert [v["id"] for v in result["video_results"]] == ["vid0", "vid1", "vid2"]
+
+
+def test_search_youtube_zero_returns_no_videos(api_tools, mock_youtube_response):
+    """An explicit ``num_results=0`` must not fall back to the instance default."""
+    with patch("requests.get", return_value=mock_youtube_response):
+        result = json.loads(api_tools.search_youtube("python tutorial", num_results=0))
+    assert result["video_results"] == []
