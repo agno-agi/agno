@@ -1,6 +1,6 @@
 # Sandboxed agents
 
-Run each turn of a Claude Code or Codex agent in its own computer: a Docker container on a host you operate, or an Amazon Bedrock AgentCore microVM. The agent's workspace and native conversation are checkpointed after every turn, so the next turn can run on a fresh computer anywhere, and AgentOS runs these agents behind a durable queue.
+Run each turn of a Claude Code or Codex agent in its own computer: a Docker container on a host you operate, an Amazon Bedrock AgentCore microVM, or a Modal sandbox. The agent's workspace and native conversation are checkpointed after every turn, so the next turn can run on a fresh computer anywhere, and AgentOS runs these agents behind a durable queue.
 
 This is different from `DockerTools`, which gives an agent tools to manage containers on the host. `DockerSandbox` gives each session its own isolated container that the agent works inside.
 
@@ -23,6 +23,7 @@ The code is in `agno.sandbox`. `base.py` and `transfer.py` hold the protocols ev
 |---|---|
 | `agno.sandbox.docker` | `sandbox.py` (`DockerSandbox`), `transfer.py` (`DockerCheckpointTransfer`) |
 | `agno.sandbox.agentcore` | `sandbox.py` (`AgentCoreSandbox`), `transfer.py` (`AgentCoreCheckpointTransfer`), `server.py` (runs inside the microVM) |
+| `agno.sandbox.modal` | `sandbox.py` (`ModalSandbox`), `transfer.py` (`ModalCheckpointTransfer`) |
 
 Import the classes from the package, for example `from agno.sandbox.docker import DockerSandbox`. The checkpoint archive and stores in `checkpoint.py` and the runtime in `runtime.py` and `client.py` are shared by every provider.
 
@@ -32,8 +33,9 @@ Import the classes from the package, for example `from agno.sandbox.docker impor
 |---|---|
 | `docker/` | Cookbooks for `DockerSandbox`: execution, warm reuse, the runtime transport, checkpoints, the session coordinator and AgentOS. Start with [docker/README.md](docker/README.md). |
 | `agentcore/` | Deploying the runtime to Amazon Bedrock AgentCore and running the same agents there. Start with [agentcore/README.md](agentcore/README.md), which has the step-by-step setup. |
-| `Dockerfile`, `build_image.py` | The one runtime image both providers use; `build_image.py --tag agno-sandbox:local` builds it from the package sources. |
-| `warm_turns.py` | Provider-neutral: four coordinator turns on Docker or AgentCore showing warm reuse and the cold fallback, with create and restore counted per turn. |
+| `modal/` | Running the same agents in Modal sandboxes, with the runtime image built on Modal from the shared `Dockerfile`. Start with [modal/README.md](modal/README.md). |
+| `Dockerfile`, `build_image.py` | The one runtime image every provider uses; `build_image.py --tag agno-sandbox:local` builds it from the package sources. |
+| `warm_turns.py` | Provider-neutral: four coordinator turns on Docker, AgentCore or Modal showing warm reuse and the cold fallback, with create and restore counted per turn. |
 
 Each folder keeps its own `TEST_LOG.md`.
 
@@ -44,7 +46,7 @@ Each folder keeps its own `TEST_LOG.md`.
 AGNO_TEST_DOCKER_IMAGE=python:3.12-slim .venv/bin/python -m pytest libs/agno/tests/integration/sandbox -q
 ```
 
-Integration tests use unique namespaces and remove only their own containers. See [docker/TEST_LOG.md](docker/TEST_LOG.md) and [agentcore/TEST_LOG.md](agentcore/TEST_LOG.md) for the tested environment and limits.
+Integration tests use unique namespaces and remove only their own containers. See [docker/TEST_LOG.md](docker/TEST_LOG.md), [agentcore/TEST_LOG.md](agentcore/TEST_LOG.md) and [modal/TEST_LOG.md](modal/TEST_LOG.md) for the tested environment and limits.
 
 ## Checkpoint archive and storage
 
@@ -91,7 +93,7 @@ The store has no public API of its own, so these steps are walked against a real
 | `resume_after_disconnect.py` | The caller drops mid-turn, the turn keeps running in its container, and another coordinator reattaches to it |
 | `cancel_turn.py` | A cancelled turn publishes nothing; the next turn continues from the last completed one |
 | `open_checkpoint.py` | A completed run's checkpoint opened on the host through the agent (`checkpoint_store`, `open_run_checkpoint`) and restored to a directory; unknown, unfinished and other agents' runs are refused |
-| `warm_turns.py` | Four turns on Docker or AgentCore (`--provider agentcore`): which path each takes, what it costs, and the cold fallback after the warm window; counts create and restore on the provider rather than guessing from timing |
+| `warm_turns.py` | Four turns on Docker, AgentCore (`--provider agentcore`) or Modal (`--provider modal`): which path each takes, what it costs, and the cold fallback after the warm window; counts create and restore on the provider rather than guessing from timing |
 
 ```python
 coordinator = SandboxCoordinator(db, DockerSandbox(image), transfer)
@@ -111,7 +113,7 @@ Each commit records the native conversation id the checkpoint holds (Claude's se
 
 `SandboxCoordinator` stages the execution result before capturing an archive, persists that reference before removing compute, and atomically publishes conversation plus recovery metadata afterwards. A reconnect uses the same execution identity; a finalization retry never starts another model turn. Missing compute before capture fails visibly and preserves the previous checkpoint. A missing cleanup or commit acknowledgement can be reconciled with the same run ID and input. `run()` requires PostgresDb; `arun()` supports both Postgres adapters.
 
-Provider mutation operations hold the session ownership rows until their bounded transport calls drain. Takeover waits for an in-flight restore/capture instead of racing it. This costs a database connection and can delay cancellation until a transfer finishes. After a completed turn the computer is kept for `warm_computer_seconds` (default 300), paused on Docker and idle on AgentCore, and the next turn resumes it with nothing to restore. The checkpoint is still captured after every turn and remains the recovery point: a kept computer that is gone, expired, differently configured or past the provider's lifetime is retired and the turn runs on a fresh generation restored from the checkpoint, which is the only path with `warm_computer_seconds=0`. Cancellation and failures always retire the computer. A warm computer is retired by its session's next claim, so a session that never returns leaves a paused container until something sweeps it; deployments should sweep provider computers idle past the window.
+Provider mutation operations hold the session ownership rows until their bounded transport calls drain. Takeover waits for an in-flight restore/capture instead of racing it. This costs a database connection and can delay cancellation until a transfer finishes. After a completed turn the computer is kept for `warm_computer_seconds` (default 300), paused on Docker and idle on AgentCore and Modal, and the next turn resumes it with nothing to restore. The checkpoint is still captured after every turn and remains the recovery point: a kept computer that is gone, expired, differently configured or past the provider's lifetime is retired and the turn runs on a fresh generation restored from the checkpoint, which is the only path with `warm_computer_seconds=0`. Cancellation and failures always retire the computer. A warm computer is retired by its session's next claim, so a session that never returns leaves a paused container until something sweeps it; deployments should sweep provider computers idle past the window.
 
 Each active turn costs the database: one held connection during a provider call, a lease check per poll page, and a heartbeat renewal every third of the lease. Polls long-poll inside the container for up to `poll_wait` seconds (default 5) and return as soon as there are events, so an idle turn makes about one poll and one lease check per `poll_wait`. `poll_wait` also bounds how long a cancellation can go unnoticed while a turn emits nothing. Size the `PostgresDb` connection pool for the number of concurrently active sessions plus the rest of the application; the default pool is small.
 
@@ -152,7 +154,7 @@ and removes the partial checkout before the model starts. Run attachments are st
 
 Sandboxed agents require PostgreSQL and an explicit checkpoint store. AgentOS durable
 queue deployments also require Redis. Docker needs `network="isolated"` (or another
-network with GitHub/model egress); AgentCore needs egress. Size `workspace_mb` for the
+network with GitHub/model egress); AgentCore and Modal need egress. Size `workspace_mb` for the
 shallow checkout and generated files, within the 1 GiB checkpoint cap. With more than
 one host, use `S3CheckpointStore` or `PostgresCheckpointStore` so every replica can
 restore every checkpoint.

@@ -7,6 +7,7 @@ Filesystem checkpoints do not capture processes or undo external side effects.
 from __future__ import annotations
 
 import asyncio
+import copy
 import errno
 import gzip
 import hashlib
@@ -649,6 +650,114 @@ class CheckpointArchive:
 
     async def arestore(self, source: Path, destination: Path, *, absolute_links: bool = False) -> Dict[str, Any]:
         return await _thread(self.restore, source, destination, absolute_links=absolute_links)
+
+
+def _combine_exports(
+    archive: CheckpointArchive,
+    exports: Mapping[str, Path],
+    destination: Path,
+    state: Mapping[str, Any],
+    exclude: Sequence[str],
+) -> None:
+    """Repack one untrusted per-root tar export per root into a validated checkpoint archive."""
+    exclusions = set(exclude)
+
+    def excluded(name: str) -> bool:
+        return any(name == value or name.startswith(value + "/") for value in exclusions)
+
+    for value in exclusions:
+        path = _name(value)
+        if value == _MANIFEST or len(path.parts) == 1:
+            raise ValueError("Cannot exclude an entire root or the manifest")
+    manifest = json.dumps(
+        {"version": 1, "state": dict(state), "excluded": sorted(exclusions)}, allow_nan=False
+    ).encode()
+    if len(manifest) > archive.limits.max_manifest_bytes:
+        raise SandboxError("Checkpoint manifest exceeds its limit")
+    with (
+        destination.open("xb") as output,
+        _encoder(output, archive.compress) as sink,
+        tarfile.open(fileobj=sink, mode="w", format=tarfile.PAX_FORMAT) as target,
+    ):
+        info = tarfile.TarInfo(_MANIFEST)
+        info.size, info.mode = len(manifest), 0o600
+        target.addfile(info, io.BytesIO(manifest))
+        entries, total = 1, len(manifest)
+        for root, source in sorted(exports.items()):
+            with source.open("rb") as stream:
+                _preflight(stream, archive.limits)
+                with tarfile.open(fileobj=stream, mode="r:") as export:
+                    # Hardlinks share bytes, so an excluded alias would leak through a retained one.
+                    seen = set()
+                    for member in export.getmembers():
+                        if member.islnk():
+                            if member.linkname not in seen:
+                                raise SandboxError("Checkpoint export has a hardlink to a missing or later entry")
+                            if excluded(member.name) != excluded(member.linkname):
+                                raise CheckpointContentError(
+                                    "Excluded checkpoint path shares a hardlink with a retained path"
+                                )
+                        seen.add(member.name)
+                    for member in export:
+                        path = _name(member.name)
+                        if path.parts[0] != root:
+                            raise SandboxError("Checkpoint export escaped its declared root")
+                        if excluded(member.name):
+                            continue
+                        info = copy.copy(member)
+                        info.pax_headers = {}
+                        info.mode &= 0o777
+                        info.uid = info.gid = 0
+                        info.uname = info.gname = ""
+                        if info.islnk():
+                            if _name(info.linkname).parts[0] != root:
+                                raise SandboxError("Checkpoint hardlink escaped its declared root")
+                            linked = export.getmember(info.linkname)
+                            if not linked.isfile():
+                                raise SandboxError("Checkpoint export has an unsupported hardlink chain")
+                            info.type, info.size, info.linkname = tarfile.REGTYPE, linked.size, ""
+                            info.mode = linked.mode & 0o777
+                        entries += 1
+                        total += info.size
+                        if entries > archive.limits.max_entries or total > archive.limits.max_bytes:
+                            raise CheckpointContentError("Checkpoint export exceeds its limits")
+                        target.addfile(info, export.extractfile(member) if info.isfile() else None)
+            if target.offset > archive.limits.max_bytes:
+                raise CheckpointContentError("Checkpoint archive exceeds its limit")
+    archive.validate(destination)
+
+
+def _split_archive(archive: CheckpointArchive, checkpoint: Path, directory: Path) -> Tuple[Dict[str, Any], int]:
+    """Validate a stored archive and write one import tar per root, expanding it once.
+
+    Returns the manifest state and the captured native root mode.
+    """
+    limits = archive.limits
+    modes = {}
+    with _archive_bytes(checkpoint, limits) as stream:
+        _preflight(stream, limits)
+        with (
+            tarfile.open(fileobj=stream, mode="r:") as source,
+            tarfile.open(directory / "workspace.tar", "w", format=tarfile.PAX_FORMAT) as workspace,
+            tarfile.open(directory / "native.tar", "w", format=tarfile.PAX_FORMAT) as native,
+        ):
+            manifest, members = archive._inspect(source)
+            targets = {"workspace": workspace, "native": native}
+            for name, member in members.items():
+                root, _, relative = name.partition("/")
+                if root not in targets:
+                    continue
+                if not relative:
+                    modes[root] = member.mode & 0o777
+                    continue
+                info = copy.copy(member)
+                info.pax_headers = {}
+                info.name = relative
+                info.mode &= 0o777
+                info.uid = info.gid = 1000
+                info.uname = info.gname = ""
+                targets[root].addfile(info, source.extractfile(member) if member.isfile() else None)
+    return manifest["state"], modes.get("native", 0o700)
 
 
 @runtime_checkable

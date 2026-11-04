@@ -1,10 +1,7 @@
 """Checkpoint transport for Docker-managed bounded session volumes."""
 
 import asyncio
-import copy
-import io
 import json
-import tarfile
 import tempfile
 from contextlib import suppress
 from pathlib import Path
@@ -16,11 +13,9 @@ from agno.sandbox.checkpoint import (
     CheckpointContentError,
     CheckpointRef,
     CheckpointStore,
-    _archive_bytes,
+    _combine_exports,
     _drain,
-    _encoder,
-    _name,
-    _preflight,
+    _split_archive,
     _thread,
 )
 from agno.sandbox.docker.sandbox import DockerSandbox
@@ -123,71 +118,7 @@ class DockerCheckpointTransfer:
     def _combine(
         self, exports: Mapping[str, Path], destination: Path, state: Mapping[str, Any], exclude: Sequence[str]
     ) -> None:
-        exclusions = set(exclude)
-
-        def excluded(name: str) -> bool:
-            return any(name == value or name.startswith(value + "/") for value in exclusions)
-
-        for value in exclusions:
-            path = _name(value)
-            if value == "manifest.json" or len(path.parts) == 1:
-                raise ValueError("Cannot exclude an entire root or the manifest")
-        manifest = json.dumps(
-            {"version": 1, "state": dict(state), "excluded": sorted(exclusions)}, allow_nan=False
-        ).encode()
-        if len(manifest) > self.archive.limits.max_manifest_bytes:
-            raise SandboxError("Checkpoint manifest exceeds its limit")
-        with (
-            destination.open("xb") as output,
-            _encoder(output, self.archive.compress) as sink,
-            tarfile.open(fileobj=sink, mode="w", format=tarfile.PAX_FORMAT) as target,
-        ):
-            info = tarfile.TarInfo("manifest.json")
-            info.size, info.mode = len(manifest), 0o600
-            target.addfile(info, io.BytesIO(manifest))
-            entries, total = 1, len(manifest)
-            for root, source in sorted(exports.items()):
-                with source.open("rb") as stream:
-                    _preflight(stream, self.archive.limits)
-                    with tarfile.open(fileobj=stream, mode="r:") as archive:
-                        # Hardlinks share bytes, so an excluded alias would leak through a retained one.
-                        seen = set()
-                        for member in archive.getmembers():
-                            if member.islnk():
-                                if member.linkname not in seen:
-                                    raise SandboxError("Docker export has a hardlink to a missing or later entry")
-                                if excluded(member.name) != excluded(member.linkname):
-                                    raise CheckpointContentError(
-                                        "Excluded checkpoint path shares a hardlink with a retained path"
-                                    )
-                            seen.add(member.name)
-                        for member in archive:
-                            path = _name(member.name)
-                            if path.parts[0] != root:
-                                raise SandboxError("Docker export escaped its declared root")
-                            if excluded(member.name):
-                                continue
-                            info = copy.copy(member)
-                            info.pax_headers = {}
-                            info.mode &= 0o777
-                            info.uid = info.gid = 0
-                            info.uname = info.gname = ""
-                            if info.islnk():
-                                if _name(info.linkname).parts[0] != root:
-                                    raise SandboxError("Docker hardlink escaped its declared root")
-                                linked = archive.getmember(info.linkname)
-                                if not linked.isfile():
-                                    raise SandboxError("Docker export has an unsupported hardlink chain")
-                                info.type, info.size, info.linkname = tarfile.REGTYPE, linked.size, ""
-                                info.mode = linked.mode & 0o777
-                            entries += 1
-                            total += info.size
-                            if entries > self.archive.limits.max_entries or total > self.archive.limits.max_bytes:
-                                raise CheckpointContentError("Checkpoint export exceeds its limits")
-                            target.addfile(info, archive.extractfile(member) if info.isfile() else None)
-                if target.offset > self.archive.limits.max_bytes:
-                    raise CheckpointContentError("Checkpoint archive exceeds its limit")
-        self.archive.validate(destination)
+        _combine_exports(self.archive, exports, destination, state, exclude)
 
     async def _check_mounts(self, handle: SandboxHandle) -> None:
         if await self.provider._owned(handle) is None:
@@ -288,36 +219,7 @@ class DockerCheckpointTransfer:
         return _sync(self.acapture(handle, state=state, exclude=exclude))
 
     def _split(self, checkpoint: Path, directory: Path) -> Tuple[Dict[str, Any], int]:
-        """Validate a stored archive and write one import tar per root, expanding it once.
-
-        Returns the manifest state and the captured native root mode.
-        """
-        limits = self.archive.limits
-        modes = {}
-        with _archive_bytes(checkpoint, limits) as stream:
-            _preflight(stream, limits)
-            with (
-                tarfile.open(fileobj=stream, mode="r:") as source,
-                tarfile.open(directory / "workspace.tar", "w", format=tarfile.PAX_FORMAT) as workspace,
-                tarfile.open(directory / "native.tar", "w", format=tarfile.PAX_FORMAT) as native,
-            ):
-                manifest, members = self.archive._inspect(source)
-                targets = {"workspace": workspace, "native": native}
-                for name, member in members.items():
-                    root, _, relative = name.partition("/")
-                    if root not in targets:
-                        continue
-                    if not relative:
-                        modes[root] = member.mode & 0o777
-                        continue
-                    info = copy.copy(member)
-                    info.pax_headers = {}
-                    info.name = relative
-                    info.mode &= 0o777
-                    info.uid = info.gid = 1000
-                    info.uname = info.gname = ""
-                    targets[root].addfile(info, source.extractfile(member) if member.isfile() else None)
-        return manifest["state"], modes.get("native", 0o700)
+        return _split_archive(self.archive, checkpoint, directory)
 
     async def arestore(self, handle: SandboxHandle, reference: CheckpointRef) -> Mapping[str, Any]:
         await self._check_mounts(handle)
