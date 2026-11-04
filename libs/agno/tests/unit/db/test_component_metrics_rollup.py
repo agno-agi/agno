@@ -78,6 +78,21 @@ def _session(user_id="alice", session_type="agent", component_id="agent-1"):
     return {"session_type": session_type, "user_id": user_id, f"{session_type}_id": component_id}
 
 
+def _tool_call(tool_name, duration=None, error=None, toolkit=None, tool_call_id=None, **hitl):
+    """Build a tool call the way the runs query returns it, with the id a stored run keeps and its HITL fields when
+    given."""
+    tool_call = {
+        "toolkit": toolkit,
+        "tool_name": tool_name,
+        "tool_call_error": error,
+        "metrics": {"duration": duration},
+        **hitl,
+    }
+    if tool_call_id:
+        tool_call["tool_call_id"] = tool_call_id
+    return tool_call
+
+
 def _model_call(
     model="gpt-5",
     provider="OpenAI",
@@ -90,6 +105,7 @@ def _model_call(
     member_responses=None,
     run_id=None,
     history_durations=(),
+    tools=None,
 ):
     """Build the run_data of one model call: the run's own, a workflow step's or a team member's."""
     metrics = dict(tokens or {})
@@ -117,6 +133,8 @@ def _model_call(
         call["step_executor_runs"] = step_executor_runs
     if member_responses is not None:
         call["member_responses"] = member_responses
+    if tools is not None:
+        call["tools"] = tools
     return call
 
 
@@ -850,6 +868,126 @@ def test_model_metrics_are_listed_sorted_deterministically():
 
 
 # ---------------------------------------------------------------------------
+# Tools
+# ---------------------------------------------------------------------------
+
+
+def test_tool_calls_count_per_toolkit_and_tool():
+    """Each tool call adds a call to its tool under its toolkit, a failure when it errored, and its timing when it
+    recorded one; an entry that names no tool is not a tool call."""
+    first = _run(
+        run_id="run-1",
+        tools=[
+            _tool_call("search", duration=0.4),
+            _tool_call("search", duration=1.2, error=True),
+            _tool_call("create_issue", duration=0.05, toolkit="github"),
+            _tool_call(None, duration=9.0),
+            "not a tool call",
+        ],
+    )
+    second = _run(run_id="run-2", tools=[_tool_call("search", duration=0.1)])
+
+    row = _only_row(runs=[first, second])
+
+    assert row["tool_metrics"] == {
+        "": {
+            "search": {
+                "count": 3,
+                "failed_count": 1,
+                "total_ms": 1700,
+                "max_ms": 1200,
+                "buckets": {"le_100": 1, "le_400": 1, "le_1200": 1},
+            }
+        },
+        "github": {
+            "create_issue": {"count": 1, "failed_count": 0, "total_ms": 50, "max_ms": 50, "buckets": {"le_50": 1}}
+        },
+    }
+
+
+def test_a_stored_member_counts_its_tool_calls_on_its_own_row_only():
+    """A member run stored as a run of its own counts its tool calls on its row, never again on its team's."""
+    member_call = _model_call(run_id="member-run", agent_id="agent-1", tools=[_tool_call("search", duration=0.2)])
+    team_run = _run(
+        run_id="team-run",
+        run_type="team",
+        component_id="team-1",
+        member_responses=[member_call],
+        tools=[_tool_call("delegate_task_to_member", duration=0.3)],
+    )
+    member_run = _run(run_id="member-run", parent_run_id="team-run", tools=[_tool_call("search", duration=0.2)])
+
+    rows = _rows(runs=[team_run, member_run])
+
+    assert set(rows[("alice", "team", "team-1")]["tool_metrics"][""]) == {"delegate_task_to_member"}
+    assert rows[("alice", "agent", "agent-1")]["tool_metrics"][""]["search"]["count"] == 1
+
+
+def test_tool_calls_a_forked_run_copied_are_not_counted():
+    """A forked run's first messages are copies of the run it was forked from, which counts the tool calls they
+    answer."""
+    run = _run(
+        tools=[
+            _tool_call("search", duration=0.9, tool_call_id="copied-call"),
+            _tool_call("search", duration=0.2, tool_call_id="new-call"),
+        ]
+    )
+    run["run_data"]["messages"] = [
+        {"role": "tool", "tool_call_id": "copied-call"},
+        {"role": "tool", "tool_call_id": "new-call"},
+    ]
+    run["run_data"]["forked_from_message_index"] = 1
+    row = _only_row(runs=[run])
+
+    assert row["tool_metrics"] == {
+        "": {"search": {"count": 1, "failed_count": 0, "total_ms": 200, "max_ms": 200, "buckets": {"le_200": 1}}}
+    }
+
+
+def test_a_tool_call_the_user_rejected_is_not_counted():
+    """A tool call the user rejected is marked as an error but never ran, so it is no call and no failure."""
+    run = _run(
+        tools=[
+            _tool_call("delete_file", error=True, confirmed=False),
+            _tool_call("delete_file", duration=0.2, confirmed=True),
+        ]
+    )
+    row = _only_row(runs=[run])
+
+    assert row["tool_metrics"] == {
+        "": {"delete_file": {"count": 1, "failed_count": 0, "total_ms": 200, "max_ms": 200, "buckets": {"le_200": 1}}}
+    }
+
+
+def test_a_tool_call_still_paused_is_not_counted():
+    """A tool call waiting on a confirmation, a user's input or an external execution has not run yet."""
+    run = _run(
+        tools=[
+            _tool_call("delete_file", requires_confirmation=True),
+            _tool_call("get_user_input", requires_user_input=True),
+            _tool_call("send_email", external_execution_required=True),
+            _tool_call("send_email", duration=0.2, external_execution_required=False),
+        ]
+    )
+    row = _only_row(runs=[run])
+
+    assert row["tool_metrics"] == {
+        "": {"send_email": {"count": 1, "failed_count": 0, "total_ms": 200, "max_ms": 200, "buckets": {"le_200": 1}}}
+    }
+
+
+def test_a_run_with_no_model_counts_its_tool_calls():
+    """A run that records no model, such as an adapter's, counts no model call but still counts its tool calls."""
+    run = _run(model=None, tools=[_tool_call("search", duration=0.2)])
+    row = _only_row(runs=[run])
+
+    assert row["model_metrics"] == {}
+    assert row["tool_metrics"] == {
+        "": {"search": {"count": 1, "failed_count": 0, "total_ms": 200, "max_ms": 200, "buckets": {"le_200": 1}}}
+    }
+
+
+# ---------------------------------------------------------------------------
 # Rewrite
 # ---------------------------------------------------------------------------
 
@@ -1270,21 +1408,32 @@ def test_merge_metrics_totals():
             "max_duration_ms": 30,
             "duration_buckets": {"le_10": 1},
             "model_metrics": {"OpenAI": {"gpt-5": {"count": 3}}},
+            "tool_metrics": {
+                "": {
+                    "search": {"count": 2, "failed_count": 1, "total_ms": 500, "max_ms": 400, "buckets": {"le_400": 2}}
+                }
+            },
         },
     ]
-    fields = ["runs_count", "max_duration_ms", "duration_buckets", "model_metrics", "status_metrics"]
+    fields = ["runs_count", "max_duration_ms", "duration_buckets", "model_metrics", "tool_metrics", "status_metrics"]
 
     assert merge_metrics_totals(totals, fields) == {
         "runs_count": 5,
         "max_duration_ms": 30,
         "duration_buckets": {"le_10": 1},
         "model_metrics": {"OpenAI": {"gpt-5": {"count": 3}}},
+        "tool_metrics": {
+            "": {"search": {"count": 2, "failed_count": 1, "total_ms": 500, "max_ms": 400, "buckets": {"le_400": 2}}}
+        },
         "status_metrics": {},
     }
-    assert merge_metrics_totals([], ["sessions_count", "max_time_to_first_token_ms", "model_metrics"]) == {
+    assert merge_metrics_totals(
+        [], ["sessions_count", "max_time_to_first_token_ms", "model_metrics", "tool_metrics"]
+    ) == {
         "sessions_count": 0,
         "max_time_to_first_token_ms": None,
         "model_metrics": {},
+        "tool_metrics": {},
     }
     assert merge_metrics_totals(
         [{"cost": None, "cost_runs_count": 0}, {"cost": 0.0123, "cost_runs_count": 1}, {"cost": None}],
@@ -1297,15 +1446,18 @@ def test_merge_metrics_totals():
 
 
 def test_add_metrics_totals():
-    """Counts and maps are summed, a maximum keeps the larger value, and models of the same name add up; a missing
-    value or a None maximum adds nothing."""
+    """Counts and maps are summed, a maximum keeps the larger value, and models and tools of the same name add up; a
+    missing value or a None maximum adds nothing."""
     total = {
         "total_duration_ms": 10,
         "max_duration_ms": 30,
         "duration_buckets": {"le_10": 1},
         "model_metrics": {"OpenAI": {"gpt-5": {"count": 1}}},
+        "tool_metrics": {
+            "": {"search": {"count": 2, "failed_count": 1, "total_ms": 500, "max_ms": 400, "buckets": {"le_400": 2}}}
+        },
     }
-    fields = ["total_duration_ms", "max_duration_ms", "duration_buckets", "model_metrics"]
+    fields = ["total_duration_ms", "max_duration_ms", "duration_buckets", "model_metrics", "tool_metrics"]
 
     add_metrics_totals(
         total,
@@ -1314,6 +1466,14 @@ def test_add_metrics_totals():
             "max_duration_ms": 20,
             "duration_buckets": {"le_10": 2, "le_12": 1},
             "model_metrics": {"OpenAI": {"gpt-5": {"count": 2}}, "Anthropic": {"claude": {"count": 1}}},
+            "tool_metrics": {
+                "": {
+                    "search": {"count": 1, "failed_count": 0, "total_ms": 900, "max_ms": 900, "buckets": {"le_1000": 1}}
+                },
+                "github": {
+                    "create_issue": {"count": 1, "failed_count": 0, "total_ms": 0, "max_ms": None, "buckets": {}}
+                },
+            },
         },
         fields,
     )
@@ -1323,6 +1483,18 @@ def test_add_metrics_totals():
         "max_duration_ms": 30,
         "duration_buckets": {"le_10": 3, "le_12": 1},
         "model_metrics": {"OpenAI": {"gpt-5": {"count": 3}}, "Anthropic": {"claude": {"count": 1}}},
+        "tool_metrics": {
+            "": {
+                "search": {
+                    "count": 3,
+                    "failed_count": 1,
+                    "total_ms": 1400,
+                    "max_ms": 900,
+                    "buckets": {"le_400": 2, "le_1000": 1},
+                }
+            },
+            "github": {"create_issue": {"count": 1, "failed_count": 0, "total_ms": 0, "max_ms": None, "buckets": {}}},
+        },
     }
 
     partial = {"runs_count": 1, "max_duration_ms": None}
@@ -1363,6 +1535,7 @@ def test_build_component_metrics_run_rebuilds_the_stored_run_shape():
             model="gpt-5",
             model_provider="OpenAI",
             call_durations=[0.2, 0.3],
+            tools=[_tool_call("search", duration=0.4)],
             nested_runs=None,
         )
     )
@@ -1375,9 +1548,13 @@ def test_build_component_metrics_run_rebuilds_the_stored_run_shape():
             {"role": "assistant", "metrics": {"duration": 0.2}},
             {"role": "assistant", "metrics": {"duration": 0.3}},
         ],
+        "tools": [_tool_call("search", duration=0.4)],
     }
     row = _only_row(runs=[run])
     assert row["model_calls_count"] == 2
+    assert row["tool_metrics"] == {
+        "": {"search": {"count": 1, "failed_count": 0, "total_ms": 400, "max_ms": 400, "buckets": {"le_400": 1}}}
+    }
 
     # No call durations store no messages
     run = build_component_metrics_run(
@@ -1391,6 +1568,7 @@ def test_build_component_metrics_run_rebuilds_the_stored_run_shape():
             model=None,
             model_provider=None,
             call_durations=None,
+            tools=None,
             nested_runs=None,
         )
     )
@@ -1402,7 +1580,7 @@ def test_build_component_metrics_run_rebuilds_the_stored_run_shape():
 def test_build_component_metrics_run_nests_the_nested_runs_again():
     """The nested runs the runs query reads flat are put back inside the run each one is nested in."""
 
-    def nested_row(depth, key, run_id, call_durations=(), **ids):
+    def nested_row(depth, key, run_id, call_durations=(), tools=None, **ids):
         return {
             "depth": depth,
             "key": key,
@@ -1413,6 +1591,7 @@ def test_build_component_metrics_run_nests_the_nested_runs_again():
             "model": "gpt-5",
             "model_provider": "OpenAI",
             "call_durations": list(call_durations),
+            "tools": tools,
         }
 
     run = build_component_metrics_run(
@@ -1426,9 +1605,17 @@ def test_build_component_metrics_run_nests_the_nested_runs_again():
             model=None,
             model_provider=None,
             call_durations=[],
+            tools=None,
             nested_runs=[
                 nested_row(1, "step_executor_runs", "team-run", team_id="team-1"),
-                nested_row(2, "member_responses", "member-run", call_durations=[0.2], agent_id="agent-1"),
+                nested_row(
+                    2,
+                    "member_responses",
+                    "member-run",
+                    call_durations=[0.2],
+                    tools=[_tool_call("search", error=True)],
+                    agent_id="agent-1",
+                ),
                 nested_row(3, "member_responses", "unnamed-run"),
                 nested_row(1, "step_executor_runs", "agent-run", agent_id="agent-2"),
                 nested_row(1, "member_responses", "other-run", agent_id="agent-3"),
@@ -1448,10 +1635,15 @@ def test_build_component_metrics_run_nests_the_nested_runs_again():
     assert row["input_tokens"] == 50
     assert row["model_calls_count"] == 1
     assert row["model_metrics"] == {"OpenAI": {"gpt-5": {"count": 5}}}
+    # A nested run's tool call counts on the row of the run it is nested in, untimed when it recorded no duration
+    assert row["tool_metrics"] == {
+        "": {"search": {"count": 1, "failed_count": 1, "total_ms": 0, "max_ms": None, "buckets": {}}}
+    }
 
 
 def test_build_component_metrics_totals_assembles_each_query():
-    """The totals query fills the columns; the count map and model queries fill the maps and the model list."""
+    """The totals query fills the columns; the count map, model and tool queries fill the maps, the model list and
+    the tools."""
     fields = [
         "runs_count",
         "total_tokens",
@@ -1459,6 +1651,7 @@ def test_build_component_metrics_totals_assembles_each_query():
         "max_time_to_first_token_ms",
         "duration_buckets",
         "model_metrics",
+        "tool_metrics",
     ]
     user_metrics_row = {
         "date": date(2026, 1, 1),
@@ -1475,6 +1668,36 @@ def test_build_component_metrics_totals_assembles_each_query():
             _Row(date=date(2026, 1, 1), model_id="gpt-5-mini", model_provider="", count=1, cost=None),
             _Row(date=date(2026, 1, 1), model_id="gpt-5", model_provider="OpenAI", count=3, cost=None),
         ],
+        "tool_metrics": [
+            _Row(
+                date=date(2026, 1, 1),
+                tool_metrics={
+                    "": {
+                        "search": {
+                            "count": 2,
+                            "failed_count": 1,
+                            "total_ms": 500,
+                            "max_ms": 400,
+                            "buckets": {"le_400": 2},
+                        }
+                    }
+                },
+            ),
+            _Row(
+                date=date(2026, 1, 1),
+                tool_metrics={
+                    "": {
+                        "search": {
+                            "count": 1,
+                            "failed_count": 0,
+                            "total_ms": 900,
+                            "max_ms": 900,
+                            "buckets": {"le_1000": 1},
+                        }
+                    }
+                },
+            ),
+        ],
     }
 
     totals, latest = build_component_metrics_totals(fields, rows_by_query)
@@ -1489,9 +1712,21 @@ def test_build_component_metrics_totals_assembles_each_query():
         "max_time_to_first_token_ms": None,
         "duration_buckets": {"le_1000": 3},
         "model_metrics": {"OpenAI": {"gpt-5": {"count": 3}}, "": {"gpt-5-mini": {"count": 1}}},
+        "tool_metrics": {
+            "": {
+                "search": {
+                    "count": 3,
+                    "failed_count": 1,
+                    "total_ms": 1400,
+                    "max_ms": 900,
+                    "buckets": {"le_400": 2, "le_1000": 1},
+                }
+            }
+        },
     }
     assert totals[0]["duration_buckets"] == {}
     assert totals[0]["model_metrics"] == {}
+    assert totals[0]["tool_metrics"] == {}
 
 
 def test_build_component_metrics_totals_keeps_each_cost():

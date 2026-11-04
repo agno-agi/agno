@@ -1289,9 +1289,10 @@ class Function(BaseModel):
 
     # Name of the Toolkit this function was flattened from, if any. Set by
     # Registry.rehydrate_function and read by the agent/team storage serializers
-    # so toolkit attribution survives load -> save round trips. Excluded from
-    # to_dict: it is persisted via the storage layer's "toolkit" key and never
-    # sent to models.
+    # so toolkit attribution survives load -> save round trips. Also set on the
+    # per-run copy of each Toolkit function so its ToolExecution records the
+    # toolkit. Excluded from to_dict: it is persisted via the storage layer's
+    # "toolkit" key and never sent to models.
     owning_toolkit: Optional[str] = None
     # Live Toolkit this function was flattened from during registry
     # rehydration. It restores toolkit-level behavior without persisting the

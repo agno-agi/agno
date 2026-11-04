@@ -39,6 +39,8 @@ from agno.os.routers.metrics.schemas import (
     MetricsResponse,
     ModelUsage,
     OSLatencyMetricsResponse,
+    OSMetricsRefreshResponse,
+    OSMetricsRefreshStatusResponse,
     OSModelMetricsResponse,
     OSRunMetricsResponse,
     OSSessionMetricsResponse,
@@ -74,7 +76,7 @@ logger = logging.getLogger(__name__)
 # equal to the ending_date covers that one day.
 _DEFAULT_WINDOW_DAYS = 30
 
-# How many databases the /os/metrics routes read at once
+# How many databases the /os/metrics routes read or refresh at once
 _MAX_CONCURRENT_OS_METRICS_READS = 8
 # How many answers of the /os/metrics routes are kept for reuse
 _MAX_OS_METRICS_RESPONSES = 256
@@ -97,6 +99,9 @@ _LATENCY_FIELDS = [
     "max_model_call_ms",
     "model_call_buckets",
 ]
+
+# The refresh statuses in the order one answers for several databases: the first one any of them has
+_REFRESH_STATUS_ORDER = ["running", "failed", "idle", "completed"]
 
 
 def _window(starting_date: Optional[date], ending_date: Optional[date], max_window_days: int) -> tuple[date, date]:
@@ -244,6 +249,23 @@ def _remote_error(e: HTTPStatusError, message: str) -> HTTPException:
         body = None
     detail = body.get("detail") if isinstance(body, dict) else None
     return HTTPException(status_code=status_code, detail=detail if isinstance(detail, str) else message)
+
+
+def _refresh_status_rank(refresh_status: MetricsRefreshStatusResponse) -> int:
+    """Where a refresh status comes in _REFRESH_STATUS_ORDER, a status it does not name last."""
+    if refresh_status.status in _REFRESH_STATUS_ORDER:
+        return _REFRESH_STATUS_ORDER.index(refresh_status.status)
+    return len(_REFRESH_STATUS_ORDER)
+
+
+def _refresh_status_code(refreshes: dict[str, MetricsRefreshResponse]) -> int:
+    """207 when the refresh of a database could not be started, 202 when one was started or is already running, else
+    200."""
+    if any(refresh.status == "failed" for refresh in refreshes.values()):
+        return 207
+    if any(refresh.status in ("started", "already_running") for refresh in refreshes.values()):
+        return 202
+    return 200
 
 
 def _days(starting_date: date, ending_date: date) -> list[date]:
@@ -861,6 +883,16 @@ def attach_routes(
             )
             return _merge_totals(totals, fields), latest_updated_at
 
+    async def _wait_for_db(awaitable: Awaitable[Any], timeout_seconds: float) -> Any:
+        """Wait for a database at most timeout_seconds, leaving the call to finish in the background."""
+        task = asyncio.ensure_future(awaitable)
+        try:
+            return await asyncio.wait_for(asyncio.shield(task), timeout=timeout_seconds)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            # The call finishes in the background; retrieve its eventual result so it never warns
+            task.add_done_callback(lambda t: t.cancelled() or t.exception())
+            raise
+
     async def _read_os_dbs(
         os_dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
         read: Callable[[Union[BaseDb, AsyncBaseDb]], Awaitable[tuple[Any, Optional[int]]]],
@@ -875,13 +907,7 @@ def attach_routes(
         async def _read_one(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> Any:
             if isinstance(db, RemoteDb):
                 raise NotImplementedError
-            task = asyncio.ensure_future(read(db))
-            try:
-                return await asyncio.wait_for(asyncio.shield(task), timeout=timeout_seconds)
-            except (asyncio.TimeoutError, asyncio.CancelledError):
-                # The read finishes in the background; retrieve its eventual result so it never warns
-                task.add_done_callback(lambda t: t.cancelled() or t.exception())
-                raise
+            return await _wait_for_db(read(db), timeout_seconds)
 
         results: list[Any] = []
         db_ids: dict[str, Optional[datetime]] = {}
@@ -1884,5 +1910,264 @@ def attach_routes(
         except Exception as e:
             logger.exception("GET /os/metrics/latency failed")
             raise HTTPException(status_code=500, detail=f"Error getting OS latency metrics: {str(e)}")
+
+    async def _do_os_refreshes(refresh_dbs: list[Union[BaseDb, AsyncBaseDb]]) -> None:
+        """Refresh every database at the same time, at most _MAX_CONCURRENT_OS_METRICS_READS at once."""
+        for start in range(0, len(refresh_dbs), _MAX_CONCURRENT_OS_METRICS_READS):
+            batch = refresh_dbs[start : start + _MAX_CONCURRENT_OS_METRICS_READS]
+            await asyncio.gather(*(_do_refresh(db, None, None, None, None, None) for db in batch))
+
+    @router.post(
+        "/os/metrics/refresh",
+        response_model=OSMetricsRefreshResponse,
+        status_code=200,
+        operation_id="refresh_os_metrics",
+        summary="Refresh OS Metrics",
+        description=(
+            "Recalculate the metrics of every database the /os/metrics routes read, from their sessions and runs, in "
+            "the background. Returns immediately with the status of each database: 'started', "
+            "'already_running' if a refresh is already in progress for it, in any process, or 'disabled' when "
+            "metrics calculation is turned off. "
+            "Returns 202 Accepted when the refresh of a database was started or is already running, 200 when none "
+            "is, and 207 Multi-Status when the refresh of a database could not be started. A database that does not "
+            "answer within timeout_seconds is skipped. "
+            "GET /os/metrics/refresh/status can be polled for the outcome: the first reads after the POST can still "
+            "show the previous refresh, so poll until its finished_at is at or after the time of the POST, to the "
+            "second."
+        ),
+        responses={
+            200: {
+                "description": "No refresh started",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "db_ids": {
+                                "agno-db": {"status": "disabled", "message": "Metrics calculation is turned off"}
+                            },
+                            "skipped_db_ids": {},
+                        }
+                    }
+                },
+            },
+            202: {
+                "description": "Background refresh started",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "db_ids": {
+                                "agno-db": {"status": "started", "message": "Metrics refresh started in background"}
+                            },
+                            "skipped_db_ids": {},
+                        }
+                    }
+                },
+            },
+            207: {"description": "The refresh of some databases could not be started"},
+            400: {"description": "No database configured", "model": BadRequestResponse},
+            404: {"description": "Database not found", "model": NotFoundResponse},
+            500: {"description": "Failed to refresh OS metrics", "model": InternalServerErrorResponse},
+            503: {"description": "OS metrics not supported by the configured database"},
+        },
+    )
+    async def refresh_os_metrics(
+        request: Request,
+        response: Response,
+        background_tasks: BackgroundTasks,
+        db_id: Optional[List[str]] = Query(
+            default=None, description="Database ID to refresh metrics for; repeatable, every database by default"
+        ),
+        timeout_seconds: float = Query(default=30, gt=0, description="Seconds to wait for each database to answer"),
+    ) -> OSMetricsRefreshResponse:
+        try:
+            os_dbs = _os_dbs(db_id)
+            # Resolved before any refresh starts so an identity-less token cannot start one.
+            get_scoped_user_id(request)
+            remote_db = _remote_os_db(os_dbs)
+            if remote_db is not None:
+                auth_token = get_auth_token_from_request(request)
+                headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+                remote_response = await remote_db.refresh_os_metrics(
+                    db_id=list(os_dbs), timeout_seconds=timeout_seconds, headers=headers
+                )
+                response.status_code = _refresh_status_code(remote_response.db_ids)
+                return remote_response
+
+            async def _start_refresh(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> MetricsRefreshResponse:
+                if isinstance(db, RemoteDb) or not has_metrics_lock_row(db):
+                    raise NotImplementedError
+                if not settings.metrics_calculation_enabled:
+                    return MetricsRefreshResponse(status="disabled", message="Metrics calculation is turned off")
+                if (await _wait_for_db(_get_refresh_status(db), timeout_seconds)).status == "running":
+                    return _already_running_response()
+                return MetricsRefreshResponse(status="started", message="Metrics refresh started in background")
+
+            refreshes: dict[str, MetricsRefreshResponse] = {}
+            skipped_db_ids: dict[str, str] = {}
+            refresh_dbs: list[Union[BaseDb, AsyncBaseDb]] = []
+            sources = [(refresh_db_id, db) for refresh_db_id, db_list in os_dbs.items() for db in db_list]
+            for start in range(0, len(sources), _MAX_CONCURRENT_OS_METRICS_READS):
+                batch = sources[start : start + _MAX_CONCURRENT_OS_METRICS_READS]
+                outcomes = await asyncio.gather(*(_start_refresh(db) for _, db in batch), return_exceptions=True)
+                for (refresh_db_id, db), outcome in zip(batch, outcomes):
+                    if isinstance(outcome, NotImplementedError):
+                        skipped_db_ids.setdefault(refresh_db_id, "unsupported")
+                        continue
+                    if isinstance(outcome, asyncio.TimeoutError):
+                        skipped_db_ids.setdefault(refresh_db_id, "timeout")
+                        continue
+                    if isinstance(outcome, Exception):
+                        logger.warning(f"OS metrics refresh failed for database '{refresh_db_id}': {outcome}")
+                        refresh = MetricsRefreshResponse(status="failed", message=database_error_message(outcome))
+                    elif isinstance(outcome, BaseException):
+                        logger.warning(f"OS metrics refresh failed for database '{refresh_db_id}': {outcome}")
+                        skipped_db_ids.setdefault(refresh_db_id, "failed")
+                        continue
+                    else:
+                        refresh = outcome
+                        if refresh.status == "started" and not isinstance(db, RemoteDb):
+                            refresh_dbs.append(db)
+                    # A failure of any database under an id is reported over the others under it
+                    if refresh_db_id not in refreshes or refresh.status == "failed":
+                        refreshes[refresh_db_id] = refresh
+
+            # An answer that refreshed no database at all would read as a refresh of every database
+            if not refreshes:
+                if all(reason == "unsupported" for reason in skipped_db_ids.values()):
+                    raise HTTPException(status_code=503, detail="OS metrics not supported by the configured database")
+                skipped = ", ".join(f"'{db_id}' ({reason})" for db_id, reason in skipped_db_ids.items())
+                raise HTTPException(status_code=503, detail=f"OS metrics not available from any database: {skipped}")
+            if refresh_dbs:
+                background_tasks.add_task(_do_os_refreshes, refresh_dbs)
+            response.status_code = _refresh_status_code(refreshes)
+            return OSMetricsRefreshResponse(db_ids=refreshes, skipped_db_ids=skipped_db_ids)
+
+        except HTTPException:
+            raise
+        except HTTPStatusError as e:
+            raise _remote_error(e, "Error refreshing OS metrics") from e
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
+        except Exception as e:
+            logger.exception("POST /os/metrics/refresh failed")
+            raise HTTPException(status_code=500, detail=f"Error refreshing OS metrics: {str(e)}")
+
+    @router.get(
+        "/os/metrics/refresh/status",
+        response_model=OSMetricsRefreshStatusResponse,
+        status_code=200,
+        operation_id="get_os_metrics_refresh_status",
+        summary="Get OS Metrics Refresh Status",
+        description=(
+            "Get the status of the most recent metrics refresh of every database the /os/metrics routes read, in any "
+            "process. "
+            "The overall status is 'running' while any database refreshes, else 'failed' if any refresh failed, "
+            "else 'idle' if any database has not refreshed, else 'completed', and finished_at is the finish of the "
+            "database refreshed longest ago, so a database refreshed just now does not hide one that is not. "
+            "A database that does not answer within timeout_seconds is skipped. "
+            "Intended for polling after starting a refresh via POST /os/metrics/refresh: the first reads after it can "
+            "still show the previous refresh, so poll until finished_at is at or after the time of the POST, to the "
+            "second. "
+            "'idle' means no refresh of that database has finished, and a database the POST started no refresh for "
+            "stays 'idle'."
+        ),
+        responses={
+            200: {
+                "description": "Current refresh status",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "status": "completed",
+                            "finished_at": "2025-08-12T08:01:49Z",
+                            "db_ids": {
+                                "agno-db": {
+                                    "status": "completed",
+                                    "started_at": "2025-08-12T08:01:47Z",
+                                    "finished_at": "2025-08-12T08:01:49Z",
+                                    "error": None,
+                                }
+                            },
+                            "skipped_db_ids": {},
+                        }
+                    }
+                },
+            },
+            400: {"description": "No database configured", "model": BadRequestResponse},
+            404: {"description": "Database not found", "model": NotFoundResponse},
+            500: {"description": "Failed to get OS metrics refresh status", "model": InternalServerErrorResponse},
+            503: {"description": "OS metrics not available from any database"},
+        },
+    )
+    async def get_os_metrics_refresh_status(
+        request: Request,
+        db_id: Optional[List[str]] = Query(
+            default=None, description="Database ID to get the refresh status for; repeatable, every database by default"
+        ),
+        timeout_seconds: float = Query(default=30, gt=0, description="Seconds to wait for each database to answer"),
+    ) -> OSMetricsRefreshStatusResponse:
+        try:
+            os_dbs = _os_dbs(db_id)
+            remote_db = _remote_os_db(os_dbs)
+            if remote_db is not None:
+                auth_token = get_auth_token_from_request(request)
+                headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+                return await remote_db.get_os_metrics_refresh_status(
+                    db_id=list(os_dbs), timeout_seconds=timeout_seconds, headers=headers
+                )
+
+            async def _status_of(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> Any:
+                if isinstance(db, RemoteDb) or not has_metrics_lock_row(db):
+                    raise NotImplementedError
+                return await _wait_for_db(_get_refresh_status(db), timeout_seconds)
+
+            statuses: dict[str, MetricsRefreshStatusResponse] = {}
+            skipped_db_ids: dict[str, str] = {}
+            sources = [(status_db_id, db) for status_db_id, db_list in os_dbs.items() for db in db_list]
+            for start in range(0, len(sources), _MAX_CONCURRENT_OS_METRICS_READS):
+                batch = sources[start : start + _MAX_CONCURRENT_OS_METRICS_READS]
+                outcomes = await asyncio.gather(*(_status_of(db) for _, db in batch), return_exceptions=True)
+                for (status_db_id, _), outcome in zip(batch, outcomes):
+                    if isinstance(outcome, NotImplementedError):
+                        skipped_db_ids.setdefault(status_db_id, "unsupported")
+                    elif isinstance(outcome, asyncio.TimeoutError):
+                        skipped_db_ids.setdefault(status_db_id, "timeout")
+                    elif isinstance(outcome, BaseException):
+                        logger.warning(
+                            f"OS metrics refresh status read failed for database '{status_db_id}': {outcome}"
+                        )
+                        skipped_db_ids.setdefault(status_db_id, "failed")
+                    # The databases under one id answer with the status that answers for them all
+                    elif status_db_id not in statuses or _refresh_status_rank(outcome) < _refresh_status_rank(
+                        statuses[status_db_id]
+                    ):
+                        statuses[status_db_id] = outcome
+
+            # A status of no database at all would read as a refresh of every database
+            if not statuses:
+                if all(reason == "unsupported" for reason in skipped_db_ids.values()):
+                    raise HTTPException(status_code=503, detail="OS metrics not supported by the configured database")
+                skipped = ", ".join(f"'{db_id}' ({reason})" for db_id, reason in skipped_db_ids.items())
+                raise HTTPException(status_code=503, detail=f"OS metrics not available from any database: {skipped}")
+            # The earliest finish, so a database refreshed just now does not hide one that is not
+            finished_ats = [
+                refresh_status.finished_at
+                for refresh_status in statuses.values()
+                if refresh_status.finished_at is not None
+            ]
+            return OSMetricsRefreshStatusResponse(
+                status=min(statuses.values(), key=_refresh_status_rank).status,
+                finished_at=min(finished_ats) if len(finished_ats) == len(statuses) else None,
+                db_ids=statuses,
+                skipped_db_ids=skipped_db_ids,
+            )
+
+        except HTTPException:
+            raise
+        except HTTPStatusError as e:
+            raise _remote_error(e, "Error getting OS metrics refresh status") from e
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
+        except Exception as e:
+            logger.exception("GET /os/metrics/refresh/status failed")
+            raise HTTPException(status_code=500, detail=f"Error getting OS metrics refresh status: {str(e)}")
 
     return router

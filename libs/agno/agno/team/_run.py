@@ -7059,6 +7059,9 @@ def _fork_team_run(run_response: "TeamRunOutput", message_index: int) -> "TeamRu
     # Snap to a pair-safe boundary so fork metadata matches the truncation that
     # _truncate_team_run_to_checkpoint will actually perform.
     message_index = safe_truncation_index(run_response.messages or [], message_index)
+    # A negative index truncates nothing, so the fork copies every message
+    if message_index < 0:
+        message_index = len(run_response.messages or [])
 
     forked = copy.deepcopy(run_response)
     forked.run_id = str(uuid4())

@@ -881,6 +881,13 @@ class TestForkHelper:
         assert forked.forked_from_run_id == "origin-run"
         assert forked.forked_from_message_index == 3
 
+    def test_fork_at_negative_index_records_every_copied_message(self):
+        """A negative index truncates nothing, so the fork records every message as copied."""
+        original = self._build_run()
+        forked = _fork_run(original, -1)
+        assert len(forked.messages or []) == 4
+        assert forked.forked_from_message_index == 4
+
     def test_fork_preserves_session_id(self):
         original = self._build_run()
         forked = _fork_run(original, 2)
