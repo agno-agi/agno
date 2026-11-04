@@ -55,6 +55,11 @@ def stored_agent_sdk(db: BaseDb, component_id: str) -> Optional[Tuple[bool, Opti
     return True, sdk if isinstance(sdk, str) else None
 
 
+def with_agent_sdk(metadata: Optional[Dict[str, Any]], sdk: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Component row metadata naming the adapter, so catalog readers can tell it from an Agent."""
+    return metadata if sdk is None else {**(metadata or {}), "sdk": sdk}
+
+
 def require_same_agent_kind(db: BaseDb, component_id: str, sdk: Optional[str]) -> None:
     """Refuse a save that would change what a stored agent loads as.
 
@@ -413,11 +418,13 @@ def save(
 
     config = to_dict(agent)
     try:
+        component = db_.get_component(component_id=agent.id)
         db_.upsert_component(
             component_id=agent.id,
             component_type=ComponentType.AGENT,
             name=agent.name or agent.id,
             description=agent.description,
+            metadata=with_agent_sdk(component.get("metadata") if component else None, agent.sdk),
         )
         stored = db_.upsert_config(component_id=agent.id, config=config, label=label, stage=stage, notes=notes)
         return stored.get("version")
