@@ -1,5 +1,6 @@
-"""Tests for the GET /os/metrics/* routes on the metrics router."""
+"""Tests for the /os/metrics/* routes on the metrics router."""
 
+import time
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -208,13 +209,17 @@ def _users_client(dbs, user_store=None, require_admin=None):
 
 
 def _remote_db(db_id, remote_client, base_url="http://remote-os"):
-    """A RemoteDb with the given id, on a remote AgentOS that answers every read through the given test client."""
+    """A RemoteDb with the given id, on a remote AgentOS that answers every request through the given test client."""
     agentos_client = AgentOSClient(base_url=base_url)
 
     async def remote_get(endpoint, params=None, headers=None):
         return remote_client.get(endpoint, params=params, headers=headers).json()
 
+    async def remote_post(endpoint, params=None, headers=None):
+        return remote_client.post(endpoint, params=params, headers=headers).json()
+
     agentos_client._aget = AsyncMock(side_effect=remote_get)  # type: ignore[method-assign]
+    agentos_client._apost = AsyncMock(side_effect=remote_post)  # type: ignore[method-assign]
     return RemoteDb(id=db_id, client=agentos_client)
 
 
@@ -259,6 +264,23 @@ def _reads(db):
 
 def _databases():
     return {"updated_at": UPDATED_AT_ISO, "db_ids": {"db-1": UPDATED_AT_ISO}, "skipped_db_ids": {}}
+
+
+def _postgres_db(db_id, database="ai", refresh_status=None):
+    """A PostgreSQL database with the given id that keeps the given status of its most recent refresh."""
+    db = PostgresDb(db_url=f"postgresql+psycopg://ai:ai@localhost:5432/{database}", id=db_id)
+    db.get_metrics_refresh_status = MagicMock(return_value=refresh_status)  # type: ignore[method-assign]
+    db.calculate_metrics_dates = MagicMock(return_value=[])  # type: ignore[method-assign]
+    return db
+
+
+def _refresh_status(status, *, finished_at=None):
+    """A refresh status as get_metrics_refresh_status returns it, started a minute before UPDATED_AT."""
+    return {"status": status, "started_at": UPDATED_AT - 60, "finished_at": finished_at, "error": None}
+
+
+def _started():
+    return {"status": "started", "message": "Metrics refresh started in background"}
 
 
 # =============================================================================
@@ -545,6 +567,117 @@ class TestDatabases:
         assert list(body["db_ids"]) == ["db-1", "db-2"]
         assert gateway_dbs[0].client._aget.call_args.kwargs["params"]["db_id"] == ["db-1", "db-2"]  # type: ignore[attr-defined]
         gateway_dbs[1].client._aget.assert_not_called()  # type: ignore[attr-defined]
+
+
+# =============================================================================
+# POST /os/metrics/refresh and GET /os/metrics/refresh/status
+# =============================================================================
+
+
+class TestRefresh:
+    def test_refresh_starts_every_database_in_the_background(self, settings):
+        dbs = [_postgres_db("db-1", "one"), _postgres_db("db-2", "two")]
+        client = _client(settings, *dbs)
+        with _scope(None):
+            response = client.post("/os/metrics/refresh")
+
+        assert response.status_code == 202
+        assert response.json() == {"db_ids": {"db-1": _started(), "db-2": _started()}, "skipped_db_ids": {}}
+        for db in dbs:
+            db.calculate_metrics_dates.assert_called_once()
+
+    def test_refresh_starts_the_requested_database_only(self, settings):
+        dbs = [_postgres_db("db-1", "one"), _postgres_db("db-2", "two")]
+        client = _client(settings, *dbs)
+        with _scope(None):
+            response = client.post("/os/metrics/refresh?db_id=db-2")
+
+        assert response.json()["db_ids"] == {"db-2": _started()}
+        dbs[0].calculate_metrics_dates.assert_not_called()
+        dbs[1].calculate_metrics_dates.assert_called_once()
+
+    def test_one_database_under_two_ids_is_refreshed_once(self, settings):
+        """Two ids on one PostgreSQL database start one refresh, under the first id."""
+        dbs = [_postgres_db("db-1"), _postgres_db("db-2")]
+        client = _client(settings, *dbs)
+        with _scope(None):
+            body = client.post("/os/metrics/refresh").json()
+
+        assert body["db_ids"] == {"db-1": _started()}
+        dbs[0].calculate_metrics_dates.assert_called_once()
+        dbs[1].calculate_metrics_dates.assert_not_called()
+
+    def test_only_remote_database_is_refreshed_through_its_agentos_once(self, settings):
+        """A gateway whose one database is a RemoteDb forwards one background refresh, with the caller's token."""
+        remote_os_db = _postgres_db("db-1")
+        gateway_db = _remote_db("db-1", _client(settings, remote_os_db))
+        gateway = _client(settings, gateway_db)
+        with _scope(None):
+            response = gateway.post("/os/metrics/refresh", headers={"Authorization": "Bearer token-1"})
+
+        assert response.status_code == 202
+        assert response.json()["db_ids"] == {"db-1": _started()}
+        gateway_db.client._apost.assert_called_once()  # type: ignore[attr-defined]
+        endpoint = gateway_db.client._apost.call_args.args[0]  # type: ignore[attr-defined]
+        kwargs = gateway_db.client._apost.call_args.kwargs  # type: ignore[attr-defined]
+        assert endpoint == "/os/metrics/refresh"
+        assert kwargs["params"] == {"db_id": ["db-1"], "timeout_seconds": 30.0}
+        assert kwargs["headers"] == {"Authorization": "Bearer token-1"}
+        remote_os_db.calculate_metrics_dates.assert_called_once()
+
+    def test_remote_databases_of_one_agentos_are_refreshed_through_it_together(self, settings):
+        """A gateway whose databases are RemoteDbs of one remote AgentOS forwards one refresh and one status read."""
+        remote_client = _client(settings, _postgres_db("db-1", "one"), _postgres_db("db-2", "two"))
+        gateway_dbs = [_remote_db(db_id, remote_client) for db_id in ["db-1", "db-2"]]
+        gateway = _client(settings, *gateway_dbs)
+        with _scope(None):
+            response = gateway.post("/os/metrics/refresh")
+            gateway.get("/os/metrics/refresh/status")
+
+        assert response.status_code == 202
+        assert response.json()["db_ids"] == {"db-1": _started(), "db-2": _started()}
+        gateway_dbs[0].client._apost.assert_called_once()  # type: ignore[attr-defined]
+        assert gateway_dbs[0].client._apost.call_args.kwargs["params"]["db_id"] == ["db-1", "db-2"]  # type: ignore[attr-defined]
+        gateway_dbs[0].client._aget.assert_called_once()  # type: ignore[attr-defined]
+        assert gateway_dbs[0].client._aget.call_args.kwargs["params"]["db_id"] == ["db-1", "db-2"]  # type: ignore[attr-defined]
+        gateway_dbs[1].client._apost.assert_not_called()  # type: ignore[attr-defined]
+        gateway_dbs[1].client._aget.assert_not_called()  # type: ignore[attr-defined]
+
+    def test_database_that_does_not_answer_in_time_is_skipped(self, settings):
+        """A stalled database is reported as timed out by the status and the refresh, which answer for the others."""
+        dbs = [
+            _postgres_db("db-1", "one", _refresh_status("completed", finished_at=UPDATED_AT)),
+            _postgres_db("db-2", "two"),
+        ]
+        dbs[1].get_metrics_refresh_status.side_effect = lambda: time.sleep(0.5)  # type: ignore[attr-defined]
+        client = _client(settings, *dbs)
+        with _scope(None):
+            status = client.get("/os/metrics/refresh/status?timeout_seconds=0.05").json()
+            refresh = client.post("/os/metrics/refresh?timeout_seconds=0.05").json()
+
+        assert status["status"] == "completed"
+        assert status["skipped_db_ids"] == {"db-2": "timeout"}
+        assert refresh == {"db_ids": {"db-1": _started()}, "skipped_db_ids": {"db-2": "timeout"}}
+        dbs[1].calculate_metrics_dates.assert_not_called()
+
+    def test_status_is_the_one_that_answers_for_every_database_and_the_earliest_finish(self, settings):
+        """A database refreshed a minute ago is not hidden by one refreshed just now, nor a running one by both."""
+        dbs = [
+            _postgres_db("db-1", "one", _refresh_status("completed", finished_at=UPDATED_AT)),
+            _postgres_db("db-2", "two", _refresh_status("completed", finished_at=UPDATED_AT - 60)),
+        ]
+        client = _client(settings, *dbs)
+        with _scope(None):
+            completed = client.get("/os/metrics/refresh/status").json()
+            dbs[0].get_metrics_refresh_status.return_value = _refresh_status("running")  # type: ignore[attr-defined]
+            running = client.get("/os/metrics/refresh/status").json()
+
+        assert completed["status"] == "completed"
+        assert completed["finished_at"] == "2027-01-15T07:59:00Z"
+        assert completed["db_ids"]["db-1"]["finished_at"] == UPDATED_AT_ISO
+        assert completed["skipped_db_ids"] == {}
+        assert running["status"] == "running"
+        assert running["finished_at"] is None
 
 
 # =============================================================================

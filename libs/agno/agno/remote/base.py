@@ -48,6 +48,8 @@ if TYPE_CHECKING:
         MetricsRefreshStatusResponse,
         MetricsResponse,
         OSLatencyMetricsResponse,
+        OSMetricsRefreshResponse,
+        OSMetricsRefreshStatusResponse,
         OSModelMetricsResponse,
         OSRunMetricsResponse,
         OSSessionMetricsResponse,
@@ -328,6 +330,12 @@ class RemoteDb:
         self, starting_date: Optional[date] = None, ending_date: Optional[date] = None, **kwargs: Any
     ) -> "OSLatencyMetricsResponse":
         return await self.client.get_os_latency_metrics(starting_date=starting_date, ending_date=ending_date, **kwargs)
+
+    async def refresh_os_metrics(self, **kwargs: Any) -> "OSMetricsRefreshResponse":
+        return await self.client.refresh_os_metrics(**kwargs)
+
+    async def get_os_metrics_refresh_status(self, **kwargs: Any) -> "OSMetricsRefreshStatusResponse":
+        return await self.client.get_os_metrics_refresh_status(**kwargs)
 
     # OTHER
     async def migrate_database(self, target_version: Optional[str] = None) -> None:

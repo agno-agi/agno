@@ -40,6 +40,8 @@ from agno.os.routers.metrics.schemas import (
     MetricsRefreshStatusResponse,
     MetricsResponse,
     OSLatencyMetricsResponse,
+    OSMetricsRefreshResponse,
+    OSMetricsRefreshStatusResponse,
     OSModelMetricsResponse,
     OSRunMetricsResponse,
     OSSessionMetricsResponse,
@@ -3472,3 +3474,55 @@ class AgentOSClient:
 
         data = await self._aget("/os/metrics/latency", params=params, headers=headers)
         return OSLatencyMetricsResponse.model_validate(data)
+
+    async def refresh_os_metrics(
+        self,
+        db_id: Optional[List[str]] = None,
+        timeout_seconds: Optional[float] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> OSMetricsRefreshResponse:
+        """Recalculate the metrics of every database the /os/metrics routes read, in the background.
+
+        Returns at once with the status of each database. Poll get_os_metrics_refresh_status for the outcome.
+
+        Args:
+            db_id: Optional database IDs to refresh, every database by default
+            timeout_seconds: Optional seconds to wait for each database to answer
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            OSMetricsRefreshResponse: The status of the refresh of each database
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, Any] = {"db_id": db_id, "timeout_seconds": timeout_seconds}
+        params = {k: v for k, v in params.items() if v is not None}
+
+        data = await self._apost("/os/metrics/refresh", params=params, headers=headers)
+        return OSMetricsRefreshResponse.model_validate(data)
+
+    async def get_os_metrics_refresh_status(
+        self,
+        db_id: Optional[List[str]] = None,
+        timeout_seconds: Optional[float] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> OSMetricsRefreshStatusResponse:
+        """Get the status of the most recent metrics refresh of every database the /os/metrics routes read.
+
+        Args:
+            db_id: Optional database IDs to read, every database by default
+            timeout_seconds: Optional seconds to wait for each database to answer
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            OSMetricsRefreshStatusResponse: The status that answers for every database, and each database's own
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, Any] = {"db_id": db_id, "timeout_seconds": timeout_seconds}
+        params = {k: v for k, v in params.items() if v is not None}
+
+        data = await self._aget("/os/metrics/refresh/status", params=params, headers=headers)
+        return OSMetricsRefreshStatusResponse.model_validate(data)
