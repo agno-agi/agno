@@ -288,6 +288,8 @@ async def stream_run_events_to_task(
     content_run_ids: Set[Optional[str]] = set()
     # The text each workflow step streamed, by "<workflow run id>:<step name>"
     step_texts: Dict[str, str] = {}
+    # The reasoning each run sent, by run id
+    reasoning_texts: Dict[Optional[str], str] = {}
     reasoning_started = False
     root_run_id: Optional[str] = None
     is_team_run = False
@@ -301,6 +303,26 @@ async def stream_run_events_to_task(
         # Members and steps stream their own runs inside the root run. Only the root run
         # starts and ends the task, so a member that fails or completes never ends it early.
         is_root_event = root_run_id is None or getattr(event, "run_id", None) == root_run_id
+
+        # Send reasoning content as the model streams it, before the chain: one content chunk can hold reasoning and text
+        # The leader reasons for a team: a member's reasoning is only its part of the work
+        if (
+            isinstance(
+                event,
+                (ReasoningContentDeltaEvent, TeamReasoningContentDeltaEvent, RunContentEvent, TeamRunContentEvent),
+            )
+            and event.reasoning_content
+            and (is_root_event or not is_team_run)
+        ):
+            await updater.add_artifact(
+                parts=[new_text_part(event.reasoning_content)],
+                artifact_id=reasoning_artifact_id,
+                name=REASONING_ARTIFACT_NAME,
+                metadata={"agno_content_category": "reasoning", "agno_event_type": "reasoning_content_delta"},
+                append=reasoning_started,
+            )
+            reasoning_started = True
+            reasoning_texts[event.run_id] = reasoning_texts.get(event.run_id, "") + event.reasoning_content
 
         # 1. Send initial event
         if isinstance(event, (RunStartedEvent, TeamRunStartedEvent, WorkflowStartedEvent)):
@@ -349,9 +371,16 @@ async def stream_run_events_to_task(
 
         # Send reasoning steps
         elif isinstance(event, (ReasoningStepEvent, TeamReasoningStepEvent)):
-            if event.reasoning_content:
+            # A reasoning step carries all the reasoning of its run so far, so only what the run has not sent is sent
+            step_reasoning = event.reasoning_content or ""
+            sent_reasoning = reasoning_texts.get(event.run_id, "")
+            reasoning_content = step_reasoning
+            if reasoning_content.startswith(sent_reasoning):
+                reasoning_content = reasoning_content[len(sent_reasoning) :]
+            reasoning_texts[event.run_id] = step_reasoning
+            if reasoning_content:
                 # Send reasoning step as its own artifact, so it never mixes with the response
-                reasoning_part = new_text_part(event.reasoning_content)
+                reasoning_part = new_text_part(reasoning_content)
                 reasoning_part.metadata.update({"step_type": event.content_type if event.content_type else "str"})
                 await updater.add_artifact(
                     parts=[reasoning_part],
@@ -361,22 +390,6 @@ async def stream_run_events_to_task(
                     append=reasoning_started,
                 )
                 reasoning_started = True
-
-        # Send reasoning content as a native reasoning model streams it
-        # The leader reasons for a team: a member's reasoning is only its part of the work
-        elif (
-            isinstance(event, (ReasoningContentDeltaEvent, TeamReasoningContentDeltaEvent))
-            and event.reasoning_content
-            and (is_root_event or not is_team_run)
-        ):
-            await updater.add_artifact(
-                parts=[new_text_part(event.reasoning_content)],
-                artifact_id=reasoning_artifact_id,
-                name=REASONING_ARTIFACT_NAME,
-                metadata={"agno_content_category": "reasoning", "agno_event_type": "reasoning_content_delta"},
-                append=reasoning_started,
-            )
-            reasoning_started = True
 
         # Capture completion event for final task construction
         elif isinstance(event, (RunCompletedEvent, TeamRunCompletedEvent, WorkflowCompletedEvent)):

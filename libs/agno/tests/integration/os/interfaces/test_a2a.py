@@ -742,6 +742,161 @@ def test_a2a_streaming_with_reasoning_content(test_agent: Agent, test_client: Te
         assert final_status["result"]["status"]["state"] == "completed"
 
 
+def test_a2a_streaming_with_main_model_reasoning_content(test_agent: Agent, test_client: TestClient):
+    """Test A2A streaming with reasoning content streamed by the agent's main model."""
+
+    async def mock_event_stream() -> AsyncIterator[RunOutputEvent]:
+        """Mock event stream with reasoning content on the content events."""
+        yield RunStartedEvent(
+            session_id="context-789",
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
+            run_id="test-run-123",
+        )
+
+        yield RunContentEvent(
+            session_id="context-789",
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
+            run_id="test-run-123",
+            reasoning_content="First, I need to understand ",
+        )
+
+        # One chunk can hold reasoning and text together
+        yield RunContentEvent(
+            session_id="context-789",
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
+            run_id="test-run-123",
+            content="Based on my analysis, here's the answer.",
+            reasoning_content="what the user is asking.",
+        )
+
+        yield RunCompletedEvent(
+            session_id="context-789",
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
+            run_id="test-run-123",
+            content="Based on my analysis, here's the answer.",
+        )
+
+    with patch.object(test_agent, "arun") as mock_arun:
+        mock_arun.return_value = mock_event_stream()
+
+        request_body = _message_body("message/stream", "Help me think through this problem.")
+
+        response = test_client.post(f"/a2a/agents/{test_agent.id}", json=request_body)
+
+        assert response.status_code == 200
+        events = _parse_sse_events(response.text)
+
+        # Reasoning content streams as chunks of the reasoning artifact
+        reasoning_chunks = [
+            e
+            for e in events
+            if e["result"].get("kind") == "artifact-update"
+            and e["result"]["artifact"].get("metadata", {}).get("agno_content_category") == "reasoning"
+        ]
+        assert len(reasoning_chunks) == 2
+        assert reasoning_chunks[0]["result"]["artifact"]["parts"][0]["text"] == "First, I need to understand "
+        assert reasoning_chunks[1]["result"]["artifact"]["parts"][0]["text"] == "what the user is asking."
+        assert not reasoning_chunks[0]["result"].get("append")
+        assert reasoning_chunks[1]["result"]["append"] is True
+
+        # The text in the same chunk still streams as the response
+        content_chunks = [
+            e
+            for e in events
+            if e["result"].get("kind") == "artifact-update"
+            and not e["result"].get("lastChunk")
+            and e["result"]["artifact"].get("metadata", {}).get("agno_content_category") == "content"
+        ]
+        assert len(content_chunks) == 1
+        assert content_chunks[0]["result"]["artifact"]["parts"][0]["text"] == "Based on my analysis, here's the answer."
+
+        final_status = events[-1]
+        assert final_status["result"]["kind"] == "status-update"
+        assert final_status["result"]["status"]["state"] == "completed"
+
+
+def test_a2a_streaming_with_reasoning_step_after_reasoning_content(test_agent: Agent, test_client: TestClient):
+    """Test A2A streaming with a reasoning step that repeats the reasoning content already streamed."""
+
+    async def mock_event_stream() -> AsyncIterator[RunOutputEvent]:
+        """Mock event stream with reasoning content, then a reasoning step holding all the reasoning so far."""
+        yield RunStartedEvent(
+            session_id="context-789",
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
+            run_id="test-run-123",
+        )
+
+        yield RunContentEvent(
+            session_id="context-789",
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
+            run_id="test-run-123",
+            reasoning_content="First, I need to understand what the user is asking...",
+        )
+
+        yield ReasoningStepEvent(
+            session_id="context-789",
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
+            run_id="test-run-123",
+            reasoning_content="First, I need to understand what the user is asking...Then I should formulate a clear response.",
+            content_type="str",
+        )
+
+        yield RunContentEvent(
+            session_id="context-789",
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
+            run_id="test-run-123",
+            content="Based on my analysis, here's the answer.",
+        )
+
+        yield RunCompletedEvent(
+            session_id="context-789",
+            agent_id=test_agent.id,
+            agent_name=test_agent.name,
+            run_id="test-run-123",
+            content="Based on my analysis, here's the answer.",
+        )
+
+    with patch.object(test_agent, "arun") as mock_arun:
+        mock_arun.return_value = mock_event_stream()
+
+        request_body = _message_body("message/stream", "Help me think through this problem.")
+
+        response = test_client.post(f"/a2a/agents/{test_agent.id}", json=request_body)
+
+        assert response.status_code == 200
+        events = _parse_sse_events(response.text)
+
+        # The reasoning step sends only the reasoning not streamed yet
+        reasoning_chunks = [
+            e
+            for e in events
+            if e["result"].get("kind") == "artifact-update"
+            and e["result"]["artifact"].get("metadata", {}).get("agno_content_category") == "reasoning"
+        ]
+        assert len(reasoning_chunks) == 2
+        assert (
+            reasoning_chunks[0]["result"]["artifact"]["parts"][0]["text"]
+            == "First, I need to understand what the user is asking..."
+        )
+        assert (
+            reasoning_chunks[1]["result"]["artifact"]["parts"][0]["text"] == "Then I should formulate a clear response."
+        )
+        assert reasoning_chunks[1]["result"]["artifact"]["metadata"]["agno_event_type"] == "reasoning_step"
+        assert reasoning_chunks[1]["result"]["append"] is True
+
+        final_status = events[-1]
+        assert final_status["result"]["kind"] == "status-update"
+        assert final_status["result"]["status"]["state"] == "completed"
+
+
 def test_a2a_streaming_with_memory(test_agent: Agent, test_client: TestClient):
     """Test A2A streaming with memory update events."""
 
