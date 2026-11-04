@@ -120,6 +120,9 @@ def _window(starting_date: Optional[date], ending_date: Optional[date], max_wind
 
 def _os_metrics_location(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> tuple[Optional[str], ...]:
     """Where a database keeps its OS metrics rows: databases at one location hold the same rows."""
+    if isinstance(db, RemoteDb):
+        # Two remote AgentOSes can each have a database with the same id
+        return (db.client.base_url, str(db.id))
     table_names = (getattr(db, "component_metrics_table_name", None), getattr(db, "user_metrics_table_name", None))
     address: Optional[str] = None
     db_engine = getattr(db, "db_engine", None)
@@ -134,8 +137,10 @@ def _os_metrics_location(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> tuple[Opti
         if url.get_backend_name() == "sqlite":
             named = bool(url.database) and url.query.get("mode") != "memory" and ":memory:" not in url.database
         else:
+            # A unix socket is named in the query (host for PostgreSQL, unix_socket for MySQL) instead of the URL's host
+            host = url.host or url.query.get("host") or url.query.get("unix_socket")
             # A PostgreSQL schema lives inside a database, while a MySQL schema is the database itself
-            named = url.host is not None and (bool(url.database) or url.get_backend_name() != "postgresql")
+            named = bool(host) and (bool(url.database) or url.get_backend_name() != "postgresql")
         if named:
             # The driver is left out, so a sync and an async adapter on one database share a location
             address = url.set(drivername=url.get_backend_name()).render_as_string(hide_password=True)
