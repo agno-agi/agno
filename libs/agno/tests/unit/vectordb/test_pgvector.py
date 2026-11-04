@@ -588,9 +588,40 @@ def test_delete_by_id(mock_pgvector, sample_documents):
 
         # Test delete non-existent ID
         mock_delete_by_id.reset_mock()
-        mock_delete_by_id.return_value = True
+        mock_delete_by_id.return_value = False
         result = mock_pgvector.delete_by_id("nonexistent_id")
-        assert result is True
+        assert result is False
+
+
+def test_delete_by_id_checks_rowcount(mock_pgvector):
+    """delete_by_id returns True only when at least one row was deleted."""
+    sess = MagicMock()
+    cm = MagicMock()
+    cm.__enter__.return_value = sess
+    mock_pgvector.Session.return_value = cm
+
+    # Row exists and is deleted (rowcount = 1) -> True
+    exec_result = MagicMock()
+    exec_result.rowcount = 1
+    sess.execute.return_value = exec_result
+    assert mock_pgvector.delete_by_id("existing_id") is True
+    sess.commit.assert_called_once()
+
+    # Row does not exist (rowcount = 0) -> False
+    sess.reset_mock()
+    exec_result_zero = MagicMock()
+    exec_result_zero.rowcount = 0
+    sess.execute.return_value = exec_result_zero
+    assert mock_pgvector.delete_by_id("missing_id") is False
+    sess.commit.assert_called_once()
+
+    # Driver returns rowcount = None -> False
+    sess.reset_mock()
+    exec_result_none = MagicMock()
+    exec_result_none.rowcount = None
+    sess.execute.return_value = exec_result_none
+    assert mock_pgvector.delete_by_id("none_rowcount_id") is False
+    sess.commit.assert_called_once()
 
 
 def test_delete_by_name(mock_pgvector, sample_documents):
