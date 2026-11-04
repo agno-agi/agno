@@ -12,12 +12,13 @@ from uuid import uuid4
 import pytest
 import pytest_asyncio
 from sqlalchemy import select, update
+from sqlalchemy.exc import OperationalError
 
 from agno.db.postgres import AsyncPostgresDb, PostgresDb
 from agno.run.agent import RunCompletedEvent, RunInput, RunOutput
 from agno.run.base import RunStatus
 from agno.sandbox import SandboxError
-from agno.sandbox import coordinator as sandbox_coordinator
+from agno.sandbox import coordinator as coordinator_module
 from agno.sandbox.checkpoint import CheckpointObjectNotFound, CheckpointRef
 from agno.sandbox.coordinator import SandboxCoordinator
 from agno.sandbox.docker import DockerCheckpointTransfer, DockerSandbox
@@ -518,12 +519,17 @@ async def unlocked(coordinator, run_id):
         )
         connection.execute(select(store.bindings.c.session_id).with_for_update(nowait=True))
 
-    await store._transaction(probe)
+    try:
+        await store._transaction(probe)
+    except OperationalError:
+        return False
     return True
 
 
-async def stamp_attempt(store, run_id, attempt):
-    # The durable queue stamps the attempt on the run row before it re-drives the same run id.
+async def stamp_attempt(coordinator, run_id, attempt):
+    """Stamp the attempt on the run row, as the durable queue does before it re-drives the same run id."""
+    store = coordinator.store
+
     def stamp(connection):
         data = connection.execute(select(store.runs.c.run_data).where(store.runs.c.run_id == run_id)).scalar_one()
         connection.execute(
@@ -567,10 +573,10 @@ async def test_a_newer_attempt_replaces_a_computer_whose_restore_is_unconfirmed(
 
     monkeypatch.setattr(coordinator.transfer, "arestore", stalled)
     stale = asyncio.create_task(run(coordinator, spec, "second", queue_attempt=1))
-    await entered.wait()
+    await asyncio.wait_for(entered.wait(), 20)
     stalled_generation = (await binding(coordinator))["record"]["generation"]
     monkeypatch.setattr(coordinator.transfer, "arestore", restore)
-    await stamp_attempt(coordinator.store, "second", 2)
+    await stamp_attempt(coordinator, "second", 2)
     retried = await asyncio.wait_for(run(coordinator, spec, "second", queue_attempt=2), 120)
     assert retried.status == RunStatus.completed
     assert retried.metadata["sandbox"]["generation"] == stalled_generation + 1
@@ -580,6 +586,29 @@ async def test_a_newer_attempt_replaces_a_computer_whose_restore_is_unconfirmed(
     # The stalled attempt never executed: the turn ran once, on the replacement computer.
     assert await recovered_effects(coordinator, root) == ["first", "second"]
     assert await coordinator.provider.aget(handles_of(coordinator)[1].provider_ref) is None
+
+
+async def test_a_cancelled_restore_is_retried_on_a_fresh_generation(system, monkeypatch):
+    coordinator, spec, root = system
+    await run(coordinator, spec)
+    restore = coordinator.transfer.arestore
+    entered = asyncio.Event()
+
+    async def stalled(handle, reference):
+        entered.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(coordinator.transfer, "arestore", stalled)
+    cancelled = asyncio.create_task(run(coordinator, spec, "second"))
+    await asyncio.wait_for(entered.wait(), 20)
+    cancelled.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await cancelled
+    monkeypatch.setattr(coordinator.transfer, "arestore", restore)
+    retried = await run(coordinator, spec, "second")
+    assert retried.status == RunStatus.completed
+    assert retried.metadata["sandbox"]["generation"] == handles_of(coordinator)[1].generation + 1
+    assert await recovered_effects(coordinator, root) == ["first", "second"]
 
 
 async def test_a_takeover_during_a_capture_waits_for_its_pause_instead_of_retiring_the_computer(system, monkeypatch):
@@ -597,7 +626,7 @@ async def test_a_takeover_during_a_capture_waits_for_its_pause_instead_of_retiri
     monkeypatch.setattr(coordinator.transfer, "_copy", held)
     stale = asyncio.create_task(run(coordinator, spec, queue_attempt=1))
     await asyncio.wait_for(entered.wait(), 60)
-    await stamp_attempt(coordinator.store, "first", 2)
+    await stamp_attempt(coordinator, "first", 2)
     retried = asyncio.create_task(run(coordinator, spec, queue_attempt=2))
     await asyncio.sleep(3)
     assert not retried.done()
@@ -608,9 +637,43 @@ async def test_a_takeover_during_a_capture_waits_for_its_pause_instead_of_retiri
     assert await recovered_effects(coordinator, root) == ["first"]
 
 
+async def test_a_fenced_owner_never_resumes_the_computer_a_newer_owner_parked(system, monkeypatch):
+    coordinator, spec, root = system
+    coordinator.warm_computer_seconds = 300
+    monkeypatch.setattr(coordinator_module, "_CAPTURE_PAUSE_SECONDS", 0)
+    stage_result, aget = coordinator.store.astage_result, coordinator.provider.aget
+    staged, entered, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def staging(lease, result):
+        state = await stage_result(lease, result)
+        staged.set()
+        return state
+
+    async def held(provider_ref):
+        # The first look after the result is staged stalls until the newer attempt has parked the computer.
+        if staged.is_set() and not entered.is_set():
+            entered.set()
+            await release.wait()
+        return await aget(provider_ref)
+
+    monkeypatch.setattr(coordinator.store, "astage_result", staging)
+    monkeypatch.setattr(coordinator.provider, "aget", held)
+    stale = asyncio.create_task(run(coordinator, spec, queue_attempt=1))
+    await asyncio.wait_for(entered.wait(), 60)
+    await stamp_attempt(coordinator, "first", 2)
+    assert (await asyncio.wait_for(run(coordinator, spec, queue_attempt=2), 120)).status == RunStatus.completed
+    parked = handles_of(coordinator)[0]
+    assert (await aget(parked.provider_ref)).state == "paused"
+    release.set()
+    with pytest.raises(SandboxError):
+        await stale
+    assert (await aget(parked.provider_ref)).state == "paused"
+    assert await recovered_effects(coordinator, root) == ["first"]
+
+
 async def test_a_computer_left_paused_by_a_failed_capture_is_resumed(system, monkeypatch):
     coordinator, spec, root = system
-    monkeypatch.setattr(sandbox_coordinator, "_CAPTURE_PAUSE_GRACE", 0)
+    monkeypatch.setattr(coordinator_module, "_CAPTURE_PAUSE_SECONDS", 0)
     unpause = coordinator.transfer._unpause
 
     async def died_holding_the_pause(handle):

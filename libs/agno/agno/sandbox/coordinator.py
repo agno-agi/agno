@@ -44,9 +44,9 @@ from agno.sandbox.protocol import NATIVE_SESSION_KEYS
 from agno.sandbox.transfer import CheckpointTransfer
 from agno.utils.log import log_warning
 
-# Longer than a checkpoint capture keeps a computer paused: Docker pauses it for two copies of
-# at most 120 seconds each.
-_CAPTURE_PAUSE_GRACE = 300.0
+# How long finalization waits for another owner's capture to release a paused computer; Docker
+# pauses it for two copies of at most 120 seconds each.
+_CAPTURE_PAUSE_SECONDS = 300.0
 
 _CHECKPOINT_MISSING = (
     "This session's sandbox checkpoint is missing from checkpoint storage, so its workspace and conversation "
@@ -789,15 +789,12 @@ class SandboxCoordinator:
             log_warning(f"Sandbox checkpoint retention for session {session_id} failed: {error}")
 
     async def _arestore(self, lease: SandboxLease, state: SandboxState) -> SandboxState:
-        """Restore the committed checkpoint into the computer just bound, then confirm it under the lease.
-
-        No row lock is held while the files move. A newer owner that finds the restore unconfirmed
-        replaces the computer, so this owner's late writes land on compute nothing will run, and
-        its confirmation fails on the lease.
-        """
+        """Restore the committed checkpoint into the computer just bound, then confirm it under the lease."""
         computer, reference = state.record["computer"], state.record["restoring"]
         handle = SandboxHandle(**computer)
         try:
+            # No row lock is held while the files move. A newer owner that finds the restore unconfirmed
+            # replaces the computer, so this owner's late writes land on compute nothing will run.
             restored = await self.transfer.arestore(handle, CheckpointRef(**reference))
             if restored.get("binding") != state.record.get("checkpoint_identity"):
                 raise SandboxError("Checkpoint manifest does not match committed session identity")
@@ -812,10 +809,11 @@ class SandboxCoordinator:
         except BaseException:
 
             async def unbind(record: Dict[str, Any]) -> Dict[str, Any]:
-                # A partially restored computer must never run a turn; the next attempt creates a fresh one.
+                # A partially restored computer must never run a turn; the next attempt creates a fresh one
+                # on a fresh generation, since a provider may refuse to recreate a generation it destroyed.
                 if record.get("computer") == computer:
                     await self.provider.adestroy(handle)
-                    record.update(computer=None, restoring=None)
+                    record.update(generation=record["generation"] + 1, computer=None, restoring=None)
                 return record
 
             with suppress(Exception):
@@ -876,21 +874,20 @@ class SandboxCoordinator:
             return False
         return True
 
-    async def _arunning(self, handle: SandboxHandle) -> Optional[SandboxHandle]:
-        """The finished turn's computer once it is running again; None when it is gone.
-
-        A capture pauses the computer while it copies files, so an owner that takes over during
-        another owner's capture finds it paused, not lost. Wait for that capture to release it,
-        and resume it when the pause outlives any capture, since its owner died holding it.
-        """
-        deadline = time.monotonic() + _CAPTURE_PAUSE_GRACE
+    async def _arunning(self, lease: SandboxLease, handle: SandboxHandle) -> Optional[SandboxHandle]:
+        """The finished turn's computer once it is running again; None when it is gone."""
+        deadline = asyncio.get_running_loop().time() + _CAPTURE_PAUSE_SECONDS
         while True:
             current = await self.provider.aget(handle.provider_ref)
+            # One lease check per look: an owner that lost the turn must not resume a computer the new owner parked.
+            await self.store.aget(lease)
             if current is None or current.state not in ("running", "paused"):
                 return None
             if current.state == "running":
                 return current
-            if time.monotonic() >= deadline:
+            # Another owner's capture pauses the computer while it copies files: wait for it to release
+            # the computer, and resume it once the pause outlives any capture, since its owner died holding it.
+            if asyncio.get_running_loop().time() >= deadline:
                 try:
                     return await self.provider.aresume(current)
                 except (NotImplementedError, SandboxError):
@@ -903,8 +900,8 @@ class SandboxCoordinator:
         if record["phase"] != "finalizing":
             raise SandboxError("Only retained execution output can be finalized")
         if record.get("staged_checkpoint") is None:
-            computer = SandboxHandle(**record["computer"])
-            if await self._arunning(computer) is None:
+            handle = await self._arunning(lease, SandboxHandle(**record["computer"]))
+            if handle is None:
                 return await self._stop(
                     lease,
                     status="ERROR",
@@ -925,7 +922,7 @@ class SandboxCoordinator:
             ).hexdigest()
             # Outside the row locks: archiving and uploading a large workspace can take minutes.
             try:
-                reference = await self.transfer.acapture(computer, state={"binding": identity, "result_sha256": digest})
+                reference = await self.transfer.acapture(handle, state={"binding": identity, "result_sha256": digest})
             except CheckpointContentError as error:
                 # Capturing the same files again fails the same way; a retry would only keep the session busy.
                 return await self._stop(
