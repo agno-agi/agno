@@ -1201,6 +1201,7 @@ async def test_retire_computer_removes_the_warm_computer_and_keeps_the_checkpoin
 async def test_sweep_retires_only_expired_warm_computers(system):
     coordinator, spec, root = system
     coordinator.warm_computer_seconds = 300
+    coordinator.agent_ids.add(spec.agent_id)
     await run(coordinator, spec)
     kept = handles_of(coordinator)[0]
     assert await coordinator.asweep_warm() == 0
@@ -1216,6 +1217,51 @@ async def test_sweep_retires_only_expired_warm_computers(system):
     assert await coordinator.asweep_warm() == 1
     assert await coordinator.provider.aget(kept.provider_ref) is None
     assert await coordinator.asweep_warm() == 0
+
+
+async def test_a_sweep_leaves_other_agents_warm_computers_to_their_own_coordinator(system):
+    coordinator, spec, _ = system
+    coordinator.warm_computer_seconds = 300
+    coordinator.agent_ids.add(spec.agent_id)
+    # Another agent on the same session tables, served by a provider in another Docker namespace.
+    provider = DockerSandbox(IMAGE, namespace=coordinator.provider.namespace + "-b", memory_mb=512, workspace_mb=32)
+    created = []
+    original = provider.acreate
+
+    async def create(session_id, **kwargs):
+        handle = await original(session_id, **kwargs)
+        created.append(handle)
+        return handle
+
+    provider.acreate = create
+    other = SandboxCoordinator(
+        coordinator.store.db, provider, DockerCheckpointTransfer(provider, coordinator.transfer.store), poll_wait=1
+    )
+    other.agent_ids.add("other")
+    store = coordinator.store
+    try:
+        await run(coordinator, spec)
+        await run(other, replace(spec, agent_id="other", session_id="other-session"), "other-first")
+        await store._transaction(
+            lambda c: c.execute(
+                update(store.bindings).values(record=store.bindings.c.record.op("||")({"warm_until": time.time() - 1}))
+            )
+        )
+        assert await coordinator.asweep_warm() == 1
+        assert await coordinator.provider.aget(handles_of(coordinator)[0].provider_ref) is None
+        # Still named by its binding and still there, so its own coordinator can remove it.
+        record = await store._transaction(
+            lambda c: c.execute(
+                select(store.bindings.c.record).where(store.bindings.c.session_id == "other-session")
+            ).scalar_one()
+        )
+        assert record["computer"]["provider_ref"] == created[0].provider_ref
+        assert (await provider.aget(created[0].provider_ref)).state == "paused"
+        assert await other.asweep_warm() == 1
+        assert await provider.aget(created[0].provider_ref) is None
+    finally:
+        for handle in created:
+            await provider.adestroy(handle)
 
 
 async def restored_workspace(coordinator, tmp_path):

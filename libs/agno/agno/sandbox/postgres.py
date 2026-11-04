@@ -1360,13 +1360,16 @@ class _SandboxStore:
     ) -> Optional[Dict[str, Any]]:
         return self._sync(self.arelease_warm, session_id, agent_id=agent_id, user_id=user_id, before=before)
 
-    async def aexpired_warm(self, before: float) -> list:
-        """Sessions whose idle binding keeps a computer whose warm window ended before ``before``."""
+    async def aexpired_warm(self, before: float, agent_ids: List[str]) -> list:
+        """These agents' sessions whose idle binding keeps a computer whose warm window ended before ``before``."""
+        if not agent_ids:
+            return []
 
         def expired(connection: Connection) -> list:
             rows = connection.execute(
                 select(self.bindings.c.session_id, self.bindings.c.agent_id, self.bindings.c.user_id).where(
                     (self.bindings.c.namespace == self.namespace)
+                    & self.bindings.c.agent_id.in_(agent_ids)
                     & (self.bindings.c.record["phase"].astext == "idle")
                     & (self.bindings.c.record["warm_until"].astext.cast(Float) < before)
                 )

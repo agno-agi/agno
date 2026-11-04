@@ -245,9 +245,10 @@ class SandboxCoordinator:
         """Retire every warm computer whose window has ended. Returns how many were removed.
 
         A session's next claim retires its own stale computer, but a session that never
-        returns would otherwise keep a paused container forever. AgentOS's queue worker runs
-        this every few minutes; each release is a per-row compare-and-set, so replicas
-        sweeping at the same time are safe.
+        returns would otherwise keep a paused container forever. Only the sessions of
+        ``agent_ids`` are swept: another agent on the same tables may use another provider,
+        which this one cannot remove. AgentOS's queue worker runs this every few minutes;
+        each release is a per-row compare-and-set, so replicas sweeping at the same time are safe.
         """
         now = time.time()
         removed = 0
@@ -260,7 +261,7 @@ class SandboxCoordinator:
                 await self.provider.adestroy(SandboxHandle(**computer))
             return True
 
-        for session_id, agent_id, user_id in await self.store.aexpired_warm(now):
+        for session_id, agent_id, user_id in await self.store.aexpired_warm(now, sorted(self.agent_ids)):
             # Shielded: a computer released from its binding must still be removed if the sweep is cancelled.
             if await _settled(retire(session_id, agent_id, user_id)):
                 removed += 1
