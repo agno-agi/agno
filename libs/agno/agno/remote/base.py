@@ -9,9 +9,23 @@ from pydantic import BaseModel
 from agno.db.base import SessionType
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
-from agno.run.agent import RunOutput, RunOutputEvent
+from agno.run.agent import (
+    RunCancelledEvent,
+    RunCompletedEvent,
+    RunErrorEvent,
+    RunOutput,
+    RunOutputEvent,
+    RunPausedEvent,
+    RunStartedEvent,
+)
+from agno.run.base import RunStatus
 from agno.run.requirement import RunRequirement
-from agno.run.team import TeamRunOutput, TeamRunOutputEvent
+from agno.run.team import BaseTeamRunEvent, TeamRunOutput, TeamRunOutputEvent
+from agno.run.team import RunCancelledEvent as TeamRunCancelledEvent
+from agno.run.team import RunCompletedEvent as TeamRunCompletedEvent
+from agno.run.team import RunErrorEvent as TeamRunErrorEvent
+from agno.run.team import RunPausedEvent as TeamRunPausedEvent
+from agno.run.team import RunStartedEvent as TeamRunStartedEvent
 from agno.run.workflow import WorkflowRunOutput, WorkflowRunOutputEvent
 
 if TYPE_CHECKING:
@@ -40,6 +54,7 @@ if TYPE_CHECKING:
         ConfigResponse,
         PaginatedResponse,
         RunSchema,
+        RunsPage,
         SessionSchema,
         TeamRunSchema,
         TeamSessionDetailSchema,
@@ -142,7 +157,10 @@ class RemoteDb:
 
     async def get_session_runs(
         self, session_id: str, **kwargs: Any
-    ) -> List[Union["RunSchema", "TeamRunSchema", "WorkflowRunSchema"]]:
+    ) -> Union[
+        "List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]",
+        "RunsPage[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]",
+    ]:
         return await self.client.get_session_runs(session_id, **kwargs)
 
     async def create_session(
@@ -539,6 +557,85 @@ class BaseRemote:
         if auth_token:
             return {"Authorization": f"Bearer {auth_token}"}
         return None
+
+    async def _with_run_output(
+        self, event_stream: AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]
+    ) -> AsyncIterator[Any]:
+        """Yield the remote events, then the RunOutput or TeamRunOutput a caller asked for with yield_run_output, when
+        the run completes, pauses, fails or is cancelled, as a local agent or team yields it."""
+        # The status each event that ends a run leaves it in
+        final_statuses = {
+            RunCompletedEvent: RunStatus.completed,
+            RunPausedEvent: RunStatus.paused,
+            RunErrorEvent: RunStatus.error,
+            RunCancelledEvent: RunStatus.cancelled,
+            TeamRunCompletedEvent: RunStatus.completed,
+            TeamRunPausedEvent: RunStatus.paused,
+            TeamRunErrorEvent: RunStatus.error,
+            TeamRunCancelledEvent: RunStatus.cancelled,
+        }
+        # The run's own events carry the first event's run_id; a sub-team's or member's events carry their own
+        run_id = None
+        # The model the run's own started event names, which no event that ends a run carries
+        model = model_provider = None
+        run_output: Optional[Union[RunOutput, TeamRunOutput]] = None
+        try:
+            async for event in event_stream:
+                if run_output is not None:
+                    # The run has ended: read the rest, so the remote finishes writing it
+                    if final_statuses.get(type(event)) is not None and event.run_id == run_id:
+                        # A cancelled run's tokens arrive in the completed event sent after it; the status stays
+                        metrics = getattr(event, "metrics", None)
+                        member_responses = getattr(event, "member_responses", None)
+                        if metrics is not None:
+                            run_output.metrics = metrics
+                        if member_responses and isinstance(run_output, TeamRunOutput):
+                            run_output.member_responses = member_responses
+                    continue
+                yield event
+                run_id = run_id or event.run_id
+                if isinstance(event, (RunStartedEvent, TeamRunStartedEvent)) and event.run_id == run_id:
+                    model, model_provider = event.model or None, event.model_provider or None
+                status = final_statuses.get(type(event))
+                if status is not None and event.run_id == run_id:
+                    if isinstance(event, BaseTeamRunEvent):
+                        run_output = TeamRunOutput(
+                            run_id=event.run_id,
+                            session_id=event.session_id,
+                            team_id=event.team_id,
+                            team_name=event.team_name,
+                            model=model,
+                            model_provider=model_provider,
+                            content=event.content,
+                            content_type=getattr(event, "content_type", "str"),
+                            tools=getattr(event, "tools", None),
+                            requirements=getattr(event, "requirements", None),
+                            metrics=getattr(event, "metrics", None),
+                            member_responses=getattr(event, "member_responses", None) or [],
+                            metadata=getattr(event, "metadata", None),
+                            status=status,
+                        )
+                    else:
+                        run_output = RunOutput(
+                            run_id=event.run_id,
+                            session_id=event.session_id,
+                            agent_id=event.agent_id,
+                            agent_name=event.agent_name,
+                            model=model,
+                            model_provider=model_provider,
+                            content=event.content,
+                            content_type=getattr(event, "content_type", "str"),
+                            tools=event.tools,
+                            requirements=getattr(event, "requirements", None),
+                            metrics=getattr(event, "metrics", None),
+                            metadata=getattr(event, "metadata", None),
+                            status=status,
+                        )
+            if run_output is not None:
+                yield run_output
+        finally:
+            # Close the remote stream when the caller stops reading it early
+            await event_stream.aclose()  # type: ignore[attr-defined]
 
     def get_agent_card(self) -> Optional["AgentCard"]:
         """Get agent card for A2A protocol agents, cached with TTL.
