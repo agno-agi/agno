@@ -204,12 +204,14 @@ class _ModelBuilder:
     # Refs --------------------------------------------------------------
 
     def _lookup_ref(self, ref: Any, path: str) -> Dict[str, Any]:
-        match = re.fullmatch(r"#/(\$defs|definitions)/([^/]+)", ref) if isinstance(ref, str) else None
-        if match is None:
+        # A ref is a URI fragment holding a JSON Pointer: percent-decode before splitting, so %2F
+        # separates tokens, then unescape each token, ~1 before ~0
+        is_fragment = isinstance(ref, str) and ref.startswith("#")
+        tokens = unquote(ref[1:]).split("/") if is_fragment else []
+        if len(tokens) != 3 or tokens[0] or tokens[1] not in ("$defs", "definitions") or not tokens[2]:
             raise UnsupportedJsonSchemaError(f"{_at(path)}only local refs into $defs or definitions are supported")
-        defs = self.root.get(match.group(1))
-        # A ref is a URI fragment holding a JSON Pointer: percent-decode, then unescape ~1 before ~0
-        token = unquote(match.group(2)).replace("~1", "/").replace("~0", "~")
+        defs = self.root.get(tokens[1])
+        token = tokens[2].replace("~1", "/").replace("~0", "~")
         target = defs.get(token) if isinstance(defs, dict) else None
         if not isinstance(target, dict):
             raise UnsupportedJsonSchemaError(f"{_at(path)}{ref} does not resolve")
@@ -421,7 +423,7 @@ class _ModelBuilder:
 
         # JSON Schema allows undeclared keys unless additionalProperties is false: keep them rather than drop them
         config = ConfigDict(extra="forbid" if additional is False else "allow", protected_namespaces=())
-        if additional is not True:
+        if "additionalProperties" not in schema:
             # Keeping undeclared keys must not add additionalProperties the schema never declared
             config["json_schema_extra"] = _drop_additional_properties
         if isinstance(schema.get("title"), str):

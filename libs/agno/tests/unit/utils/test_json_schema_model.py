@@ -186,6 +186,21 @@ def test_declared_additional_properties_stay_in_the_model_schema():
     assert model.model_json_schema()["additionalProperties"] is True
 
 
+def test_additional_properties_false_stays_in_the_model_schema_at_every_level():
+    model = json_schema_to_model(
+        {
+            "type": "object",
+            "properties": {
+                "n": {"type": "object", "properties": {"x": {"type": "string"}}, "additionalProperties": False}
+            },
+            "additionalProperties": False,
+        }
+    )
+    schema = model.model_json_schema()
+    assert schema["additionalProperties"] is False
+    assert schema["$defs"]["N"]["additionalProperties"] is False
+
+
 def test_one_of_with_null_in_two_members_is_refused():
     schema = {
         "type": "object",
@@ -253,6 +268,35 @@ def test_ref_tokens_are_decoded(ref, name):
     assert model.model_validate({"a": "x"}).a == "x"
     with pytest.raises(ValidationError):
         model.model_validate({"a": 1})
+
+
+def test_a_percent_encoded_slash_separates_tokens_and_is_refused_as_a_nested_pointer():
+    schema = {
+        "type": "object",
+        "properties": {"a": {"$ref": "#/$defs/a%2Fb"}},
+        "$defs": {"a/b": {"type": "string"}, "a": {"b": {"type": "integer"}}},
+    }
+    with pytest.raises(UnsupportedJsonSchemaError, match="only local refs"):
+        json_schema_to_model(schema)
+
+
+def test_a_percent_encoded_defs_keyword_resolves():
+    model = json_schema_to_model(
+        {
+            "type": "object",
+            "properties": {"a": {"$ref": "#/%24defs/s"}},
+            "$defs": {"s": {"type": "string"}},
+            "required": ["a"],
+        }
+    )
+    assert model.model_validate({"a": "x"}).a == "x"
+
+
+@pytest.mark.parametrize("ref", ["%23/$defs/s", "#/$defs/", "#/$defs", "#", "/$defs/s"])
+def test_refs_that_are_not_fragments_into_defs_are_refused(ref):
+    schema = {"type": "object", "properties": {"a": {"$ref": ref}}, "$defs": {"s": {"type": "string"}}}
+    with pytest.raises(UnsupportedJsonSchemaError, match="only local refs"):
+        json_schema_to_model(schema)
 
 
 def test_an_escaped_ref_never_selects_the_literally_named_definition():
