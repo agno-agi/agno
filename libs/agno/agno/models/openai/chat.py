@@ -17,6 +17,7 @@ from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
 from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.models.json_schema_model import non_strict_response_format
 from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
 from agno.utils.reasoning import extract_thinking_content
 
@@ -226,6 +227,7 @@ class OpenAIChat(Model):
 
         # Handle response format - always use JSON schema approach
         if response_format is not None:
+            response_format = non_strict_response_format(response_format)
             if isinstance(response_format, type) and issubclass(response_format, BaseModel):
                 # Convert Pydantic to JSON schema for regular endpoint
                 from agno.utils.models.schema_utils import get_response_schema_for_provider

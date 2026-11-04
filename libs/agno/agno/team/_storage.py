@@ -1221,7 +1221,7 @@ def from_dict(
             del config["input_schema"]
 
     if "output_schema" in config and isinstance(config["output_schema"], dict):
-        rehydrate_inline_output_schema(config, strict, component_label)
+        rehydrate_inline_output_schema(config, component_label)
     if "output_schema" in config and isinstance(config["output_schema"], str):
         schema_cls = registry.get_schema(config["output_schema"]) if registry else None
         if schema_cls:

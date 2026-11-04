@@ -1,13 +1,18 @@
 """json_schema_to_model builds a Pydantic model that keeps what the JSON Schema says, or refuses."""
 
+import json
 import re
 import warnings
+from typing import Any, Optional
 
 import pytest
 from pydantic import BaseModel, ValidationError
 
 from agno.agent import Agent
-from agno.exceptions import ComponentRehydrationError
+from agno.models.anthropic import Claude
+from agno.models.openai import OpenAIChat, OpenAIResponses
+from agno.run.agent import RunOutput
+from agno.team import Team
 from agno.utils.models.json_schema_model import (
     UnsupportedJsonSchemaError,
     json_schema_to_model,
@@ -112,10 +117,193 @@ def test_a_required_property_stays_non_nullable():
         model.model_validate({"name": None})
 
 
-def test_an_optional_property_with_a_default_accepts_null():
-    model = json_schema_to_model({"type": "object", "properties": {"n": {"type": "integer", "default": 3}}})
-    assert model.model_validate({}).n == 3
-    assert model.model_validate({"n": None}).n is None
+def test_null_for_an_optional_property_with_a_default_becomes_the_default():
+    model = json_schema_to_model(
+        {
+            "type": "object",
+            "properties": {"unit": {"enum": ["c", "f"], "default": "c"}, "n": {"type": "integer", "default": 3}},
+        }
+    )
+    assert model.model_validate({}).unit == "c"
+    parsed = model.model_validate({"unit": None, "n": None})
+    assert (parsed.unit, parsed.n) == ("c", 3)
+    assert model.model_validate({"unit": "f"}).unit == "f"
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        {"type": ["string", "null"], "default": "x"},
+        {"type": "string", "nullable": True, "default": "x"},
+        {"enum": ["x", None], "default": "x"},
+        {"anyOf": [{"type": "string"}, {"type": "null"}], "default": "x"},
+        {"$ref": "#/$defs/N", "default": "x"},
+    ],
+    ids=["type-list", "nullable", "enum", "any-of", "ref"],
+)
+def test_null_stays_null_when_the_schema_allows_it(field):
+    model = json_schema_to_model(
+        {"type": "object", "properties": {"a": field}, "$defs": {"N": {"type": ["string", "null"]}}}
+    )
+    assert model.model_validate({"a": None}).a is None
+    assert model.model_validate({}).a == "x"
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        {"type": "integer", "default": "5"},
+        {"type": "boolean", "default": "true"},
+        {"type": "string", "default": 5},
+        {"type": "integer", "default": 3.5},
+        {"type": "array", "items": {"type": "integer"}, "default": ["1"]},
+    ],
+    ids=["str-for-int", "str-for-bool", "int-for-str", "fraction-for-int", "str-in-int-array"],
+)
+def test_a_default_that_only_passes_by_coercion_is_refused(field):
+    with pytest.raises(UnsupportedJsonSchemaError, match="does not match"):
+        json_schema_to_model({"type": "object", "properties": {"a": field}})
+
+
+def test_an_integral_float_default_becomes_an_integer():
+    value = (
+        json_schema_to_model({"type": "object", "properties": {"a": {"type": "integer", "default": 3.0}}})
+        .model_validate({})
+        .a
+    )
+    assert value == 3 and isinstance(value, int)
+
+
+@pytest.mark.parametrize(
+    "field, defs, expected",
+    [
+        ({"$ref": "#/$defs/I", "default": 3.0}, {"I": {"type": "integer"}}, 3),
+        ({"anyOf": [{"type": "integer"}, {"type": "string"}], "default": 3.0}, {}, 3),
+        ({"type": "array", "items": {"type": "integer"}, "default": [1.0, 2.0]}, {}, [1, 2]),
+    ],
+    ids=["ref", "any-of", "array-items"],
+)
+def test_integral_float_defaults_work_at_any_depth(field, defs, expected):
+    model = json_schema_to_model({"type": "object", "properties": {"a": field}, "$defs": defs})
+    value = model.model_validate({}).a
+    assert value == expected
+    assert all(isinstance(item, int) for item in (value if isinstance(value, list) else [value]))
+
+
+def test_an_integral_float_default_in_a_nested_object_works():
+    model = json_schema_to_model(
+        {
+            "type": "object",
+            "properties": {
+                "a": {"type": "object", "properties": {"count": {"type": "integer"}}, "default": {"count": 3.0}}
+            },
+        }
+    )
+    count = model.model_validate({}).a.count
+    assert count == 3 and isinstance(count, int)
+
+
+def test_a_fractional_default_is_still_refused_at_depth():
+    with pytest.raises(UnsupportedJsonSchemaError, match="does not match"):
+        json_schema_to_model(
+            {
+                "type": "object",
+                "properties": {
+                    "a": {"type": "object", "properties": {"count": {"type": "integer"}}, "default": {"count": 3.5}}
+                },
+            }
+        )
+
+
+def test_an_integer_default_is_valid_for_a_number():
+    model = json_schema_to_model({"type": "object", "properties": {"a": {"type": "number", "default": 3}}})
+    assert model.model_validate({}).a == 3
+
+
+def test_an_object_default_is_applied_as_its_model():
+    model = json_schema_to_model(
+        {
+            "type": "object",
+            "properties": {"n": {"type": "object", "properties": {"x": {"type": "string"}}, "default": {"x": "a"}}},
+        }
+    )
+    assert model.model_validate({}).n.x == "a"
+
+
+def _nullable_model():
+    return json_schema_to_model(
+        {
+            "type": "object",
+            "properties": {
+                "city": {"type": "string"},
+                "alert": {"type": ["string", "null"]},
+                "note": {"type": "string"},
+                "n": {
+                    "type": "object",
+                    "properties": {"x": {"type": ["string", "null"]}},
+                    "required": ["x"],
+                },
+            },
+            "required": ["city", "alert", "n"],
+        }
+    )
+
+
+def test_run_output_keeps_a_required_null_and_drops_an_optional_one():
+    model = _nullable_model()
+    content = RunOutput(content=model(city="Paris", alert=None, n={"x": None})).to_dict()["content"]
+    assert content == {"city": "Paris", "alert": None, "n": {"x": None}}
+
+
+def test_a_required_null_survives_json_serialization():
+    model = _nullable_model()
+    dumped = model(city="Paris", alert=None, n={"x": None}).model_dump_json(exclude_none=True)
+    assert json.loads(dumped) == {"city": "Paris", "alert": None, "n": {"x": None}}
+
+
+@pytest.mark.parametrize(
+    "kwargs, expected",
+    [
+        ({}, {"city": "Paris", "alert": None, "note": None, "n": {"x": None}}),
+        ({"include": {"city"}}, {"city": "Paris"}),
+        ({"exclude": {"alert", "note", "n"}}, {"city": "Paris"}),
+        ({"exclude_none": True, "include": {"city"}}, {"city": "Paris"}),
+        ({"exclude_none": True, "exclude": {"alert"}}, {"city": "Paris", "n": {"x": None}}),
+        ({"exclude_none": True, "exclude": {"n": {"x"}}}, {"city": "Paris", "alert": None, "n": {}}),
+        ({"exclude_none": True, "include": {"n": {"x"}}}, {"n": {"x": None}}),
+    ],
+    ids=["no-filter", "include", "exclude", "none-and-include", "none-and-exclude", "nested-exclude", "nested-include"],
+)
+def test_serialization_filters_win_over_required_nulls(kwargs, expected):
+    instance = _nullable_model()(city="Paris", alert=None, n={"x": None})
+    assert instance.model_dump(**kwargs) == expected
+    assert json.loads(instance.model_dump_json(**kwargs)) == expected
+
+
+def test_a_filter_on_a_list_item_applies_to_that_item_only():
+    model = json_schema_to_model(
+        {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {"x": {"type": ["string", "null"]}},
+                        "required": ["x"],
+                    },
+                }
+            },
+            "required": ["items"],
+        }
+    )
+    instance = model(items=[{"x": None}, {"x": None}])
+    assert instance.model_dump(exclude_none=True, exclude={"items": {0: {"x"}}}) == {"items": [{}, {"x": None}]}
+
+
+def test_serializing_keeps_undeclared_keys():
+    model = json_schema_to_model({"type": "object", "properties": {"a": {"type": "string"}}})
+    assert model.model_validate({"other": 1}).model_dump(exclude_none=True) == {"other": 1}
 
 
 def test_format_survives_on_optional_and_required_properties_without_warnings():
@@ -253,7 +441,7 @@ def test_any_build_failure_is_a_refusal(schema):
     with pytest.raises(UnsupportedJsonSchemaError):
         json_schema_to_model(schema)
     config = {"output_schema": json_schema_response_format(schema)}
-    rehydrate_inline_output_schema(config, strict=False, component_label="Agent 'a'")
+    rehydrate_inline_output_schema(config, component_label="Agent 'a'")
     assert isinstance(config["output_schema"], dict)
 
 
@@ -652,7 +840,7 @@ def test_a_built_model_survives_a_save_and_load(ticket, owner):
 def test_rehydrate_replaces_a_stored_response_format_and_keeps_it_for_saving():
     stored = json_schema_response_format(TICKET, name="Ticket", strict=True)
     config = {"output_schema": stored}
-    rehydrate_inline_output_schema(config, strict=True, component_label="Agent 'a'")
+    rehydrate_inline_output_schema(config, component_label="Agent 'a'")
 
     model = config["output_schema"]
     assert issubclass(model, BaseModel)
@@ -661,17 +849,14 @@ def test_rehydrate_replaces_a_stored_response_format_and_keeps_it_for_saving():
 
 def test_rehydrate_leaves_provider_specific_dicts_alone():
     config = {"output_schema": {"type": "json_object"}}
-    rehydrate_inline_output_schema(config, strict=True, component_label="Agent 'a'")
+    rehydrate_inline_output_schema(config, component_label="Agent 'a'")
     assert config["output_schema"] == {"type": "json_object"}
 
 
-def test_rehydrate_unsupported_schema_raises_when_strict_and_keeps_the_dict_otherwise():
+def test_rehydrate_keeps_the_dict_of_an_unsupported_schema():
     bad = json_schema_response_format({"type": "object", "properties": {"a": {"not": {}}}})
-    with pytest.raises(ComponentRehydrationError, match="cannot be loaded"):
-        rehydrate_inline_output_schema({"output_schema": bad}, strict=True, component_label="Agent 'a'")
-
     config = {"output_schema": bad}
-    rehydrate_inline_output_schema(config, strict=False, component_label="Agent 'a'")
+    rehydrate_inline_output_schema(config, component_label="Agent 'a'")
     assert config["output_schema"] == bad
 
 
@@ -682,3 +867,102 @@ def test_a_saved_agent_keeps_a_schema_the_converter_refuses():
     loaded = Agent.from_dict(Agent(id="a", output_schema=stored).to_dict())
     assert loaded.output_schema == stored
     assert Agent.from_dict(loaded.to_dict()).output_schema == stored
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        {"type": "object", "properties": {"a": {"type": "string"}}, "minProperties": 1},
+        {"type": "object", "properties": {"a": {"type": "integer", "default": "x"}}},
+        {
+            "type": "object",
+            "properties": {
+                "a": {"oneOf": [{"type": "string", "nullable": True}, {"type": "integer", "nullable": True}]}
+            },
+        },
+    ],
+    ids=["unsupported-keyword", "bad-default", "one-of-nulls"],
+)
+def test_a_strict_load_keeps_a_schema_the_converter_refuses(schema):
+    stored = json_schema_response_format(schema)
+    assert Agent.from_dict(Agent(id="a", output_schema=stored).to_dict(), strict=True).output_schema == stored
+    team = Team(id="t", members=[], output_schema=stored)
+    assert Team.from_dict(team.to_dict(), strict=True).output_schema == stored
+
+
+STRICTLESS = {"type": "object", "properties": {"a": {"type": "string"}, "b": {"type": "string"}}, "required": ["a"]}
+
+
+def _loaded_schema(strict):
+    stored = json_schema_response_format(STRICTLESS, name="S", strict=strict)
+    return Agent.from_dict({"id": "x", "output_schema": stored}).output_schema
+
+
+def test_a_stored_strict_false_reaches_openai_responses_as_written():
+    params = OpenAIResponses(id="gpt-5.6-luna").get_request_params(response_format=_loaded_schema(False))
+    sent = params["text"]["format"]
+    assert (sent["name"], sent["strict"], sent["schema"]) == ("S", False, STRICTLESS)
+
+
+def test_a_stored_strict_false_reaches_openai_chat_as_written():
+    params = OpenAIChat(id="gpt-5.6-luna").get_request_params(response_format=_loaded_schema(False))
+    sent = params["response_format"]["json_schema"]
+    assert (sent["name"], sent["strict"], sent["schema"]) == ("S", False, STRICTLESS)
+
+
+@pytest.mark.parametrize("strict", [True, None])
+def test_only_a_stored_strict_false_leaves_the_pydantic_path(strict):
+    sent = OpenAIResponses(id="gpt-5.6-luna").get_request_params(response_format=_loaded_schema(strict))["text"][
+        "format"
+    ]
+    assert sent["strict"] is True
+    assert set(sent["schema"]["required"]) == {"a", "b"}
+
+
+def test_a_stored_strict_false_still_parses_as_a_model():
+    assert _loaded_schema(False).model_validate({"a": "x"}).a == "x"
+
+
+def test_claude_falls_back_on_a_mixed_enum():
+    model = json_schema_to_model(
+        {
+            "type": "object",
+            "properties": {
+                "a": {"enum": [1, "x"]},
+                "n": {"type": "object", "properties": {"x": {"type": "string"}}},
+            },
+            "required": ["a"],
+        }
+    )
+    schema = Claude()._build_output_format(model)["schema"]
+    assert schema["additionalProperties"] is False
+    assert schema["$defs"]["N"]["additionalProperties"] is False
+    assert schema["properties"]["a"]["enum"] == [1, "x"]
+
+
+@pytest.mark.parametrize(
+    "properties, path",
+    [
+        ({"a": {}}, "properties/a"),
+        ({"a": {"type": "array", "items": {}}}, "properties/a/items"),
+        ({"a": {"type": "object", "properties": {"b": {}}}}, "$defs/A/properties/b"),
+    ],
+    ids=["property", "array-items", "nested-object"],
+)
+def test_claude_refuses_an_untyped_node_and_names_it(properties, path):
+    model = json_schema_to_model({"type": "object", "properties": properties, "required": ["a"]})
+    with pytest.raises(ValueError, match=re.escape(path)):
+        Claude()._build_output_format(model)
+
+
+def test_claude_refuses_an_optional_any_field():
+    class Loose(BaseModel):
+        a: Optional[Any] = None
+
+    with pytest.raises(ValueError, match="properties/a"):
+        Claude()._build_output_format(Loose)
+
+
+def test_claude_keeps_a_fully_typed_schema_on_the_sdk_path():
+    model = json_schema_to_model({"type": "object", "properties": {"a": {"type": "string"}}, "required": ["a"]})
+    assert Claude()._build_output_format(model)["schema"]["properties"]["a"]["type"] == "string"

@@ -4,13 +4,25 @@ Models receive inline output schemas through the same Pydantic path as a hand-wr
 class, so every provider applies them the way it applies any other output_schema.
 """
 
+import json
 import re
 import warnings
 from keyword import iskeyword
-from typing import Any, Dict, List, Literal, Optional, Set, Tuple, Type, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple, Type, Union
 from urllib.parse import unquote
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, create_model
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    SerializationInfo,
+    SerializerFunctionWrapHandler,
+    TypeAdapter,
+    ValidationError,
+    create_model,
+    model_serializer,
+)
 from pydantic_core import SchemaError as PydanticSchemaError
 
 from agno.utils.models.schema_utils import json_schema_response_format, unwrap_json_schema_response_format
@@ -23,6 +35,24 @@ except ImportError:  # pragma: no cover
 
 class UnsupportedJsonSchemaError(ValueError):
     """The JSON Schema uses a construct that json_schema_to_model cannot represent faithfully."""
+
+
+class _InlineModel(BaseModel):
+    """Base of every built model."""
+
+    @model_serializer(mode="wrap")
+    def _keep_required_nulls(self, handler: SerializerFunctionWrapHandler, info: SerializationInfo) -> Dict[str, Any]:
+        # Run output serializes with exclude_none, which would drop a key the schema requires
+        data = handler(self)
+        if not info.exclude_none:
+            return data
+        for name, field in type(self).model_fields.items():
+            selected = (info.include is None or name in info.include) and (
+                info.exclude is None or name not in info.exclude
+            )
+            if selected and field.is_required() and getattr(self, name) is None:
+                data.setdefault(name, None)
+        return data
 
 
 # Attribute on a built model holding the dict it was built from, so it serializes back unchanged
@@ -109,6 +139,20 @@ def source_json_schema(model: Any) -> Optional[Dict[str, Any]]:
     return source if isinstance(source, dict) else None
 
 
+def stores_non_strict(model: Any) -> bool:
+    """True for a model built from a stored response format that sets strict to false."""
+    inline = unwrap_json_schema_response_format(source_json_schema(model))
+    return inline is not None and inline.strict is False
+
+
+def non_strict_response_format(response_format: Any) -> Any:
+    """The stored format of a model that stores strict false, sent as written; else response_format."""
+    if not stores_non_strict(response_format):
+        return response_format
+    inline = unwrap_json_schema_response_format(source_json_schema(response_format))
+    return json_schema_response_format(inline.schema, name=inline.name, strict=False)  # type: ignore[union-attr]
+
+
 def serialize_output_schema(output_schema: Any) -> Any:
     """The stored form of an agent or team output_schema.
 
@@ -123,13 +167,12 @@ def serialize_output_schema(output_schema: Any) -> Any:
     return None
 
 
-def rehydrate_inline_output_schema(config: Dict[str, Any], strict: bool, component_label: str) -> None:
+def rehydrate_inline_output_schema(config: Dict[str, Any], component_label: str) -> None:
     """Replace a stored JSON Schema response format in config["output_schema"] with the model it describes.
 
-    Other dicts (provider-specific response formats) are left for the model to pass through,
-    and so is a stored format the converter refuses, unless strict.
+    Other dicts (provider-specific response formats) are left for the model to pass through, and
+    so is a stored format the converter refuses: it stays usable, so a strict load must not fail.
     """
-    from agno.exceptions import ComponentRehydrationError
     from agno.utils.log import log_warning
 
     stored = config.get("output_schema")
@@ -139,11 +182,6 @@ def rehydrate_inline_output_schema(config: Dict[str, Any], strict: bool, compone
     try:
         model = json_schema_to_model(inline.schema, name=inline.name)
     except UnsupportedJsonSchemaError as e:
-        if strict:
-            raise ComponentRehydrationError(
-                f"{component_label} has an output schema that cannot be loaded: {e}. Fix the schema, "
-                "or pass strict=False to load it as a dict."
-            ) from e
         log_warning(f"{component_label} output schema cannot become a model, passing it as a dict: {e}")
         return
     setattr(model, SOURCE_SCHEMA_ATTR, stored)
@@ -254,6 +292,28 @@ class _ModelBuilder:
         del self.building[ref]
         self.ref_models[ref] = wrap(model)
         return self.ref_models[ref]
+
+    def _allows_null(self, schema: Any, seen: Optional[Set[str]] = None) -> bool:
+        """Whether the schema itself accepts null, as opposed to a property being left out."""
+        if schema is True or schema == {}:
+            return True
+        if not isinstance(schema, dict):
+            return False
+        if schema.get("nullable") is True or "null" in _types_of(schema):
+            return True
+        if "const" in schema:
+            return schema["const"] is None
+        if "enum" in schema:
+            return None in schema["enum"]
+        seen = seen if seen is not None else set()
+        ref = schema.get("$ref")
+        if ref is not None:
+            if ref in seen:
+                return False
+            seen.add(ref)
+            return self._allows_null(self._lookup_ref(ref, ""), seen)
+        members = [*schema.get("anyOf", []), *schema.get("oneOf", []), *schema.get("allOf", [])]
+        return any(self._allows_null(member, seen) for member in members)
 
     # Annotations -------------------------------------------------------
 
@@ -403,19 +463,22 @@ class _ModelBuilder:
         defaults: List[Tuple[str, Any, str]] = []
         for prop_name, prop_schema in properties.items():
             prop_path = f"{path}/properties/{prop_name}"
-            if not isinstance(prop_name, str) or prop_name.startswith("_") or _is_model_attribute(prop_name):
+            if not isinstance(prop_name, str) or prop_name.startswith("_") or _is_reserved_name(prop_name):
                 raise UnsupportedJsonSchemaError(
-                    f"{_at(prop_path)}property names starting with '_' or matching a Pydantic model_ attribute "
-                    "are not supported"
+                    f"{_at(prop_path)}property names starting with '_' or reserved by Pydantic are not supported"
                 )
             annotation = self._annotation(prop_schema, _pascal(prop_name), prop_path, with_docs=False)
             docs = _doc_kwargs(prop_schema) if isinstance(prop_schema, dict) else {}
             if prop_name in required:
                 fields[prop_name] = (annotation, Field(..., **docs))
             elif isinstance(prop_schema, dict) and "default" in prop_schema:
-                # Nullable like any optional field, so a model that answers null still parses
-                fields[prop_name] = (Optional[annotation], Field(prop_schema["default"], **docs))
-                defaults.append((prop_name, prop_schema["default"], prop_path))
+                default = _integral_floats_as_ints(prop_schema["default"])
+                typed: Any = Optional[annotation]
+                if not self._allows_null(prop_schema):
+                    # Strict providers mark every property required, so null is how a model leaves one out
+                    typed = Annotated[typed, BeforeValidator(_null_becomes(default))]
+                fields[prop_name] = (typed, Field(default, validate_default=True, **docs))
+                defaults.append((prop_name, default, prop_path))
             else:
                 # Strict providers mark every property required, so null is how a model leaves one
                 # out; the placeholder default stays out of the schema the model sees
@@ -432,7 +495,7 @@ class _ModelBuilder:
             # A property named like a BaseModel attribute (json, copy, schema) only shadows it
             warnings.filterwarnings("ignore", message=".*shadows an attribute in parent.*")
             try:
-                model = create_model(name, __config__=config or None, **fields)  # type: ignore[call-overload]
+                model = create_model(name, __base__=_InlineModel, __cls_kwargs__=dict(config), **fields)  # type: ignore[call-overload]
             except UnsupportedJsonSchemaError:
                 raise
             except Exception as e:
@@ -511,16 +574,32 @@ def _check_pattern(pattern: Any, path: str) -> None:
 
 
 def _check_default(model: Type[BaseModel], prop_name: str, default: Any, path: str) -> None:
-    """Refuse a default its own property would reject; Pydantic does not validate defaults."""
+    """Refuse a default its own property would reject, without coercing it: "5" is no integer."""
     try:
-        model.model_validate({prop_name: default})
+        model.model_validate_json(json.dumps({prop_name: default}), strict=True)
     except ValidationError as e:
         if any(error["loc"][:1] == (prop_name,) for error in e.errors()):
             raise UnsupportedJsonSchemaError(f"{_at(path)}default {default!r} does not match the schema") from e
 
 
-def _is_model_attribute(name: str) -> bool:
-    return name.startswith("model_") and hasattr(BaseModel, name)
+def _integral_floats_as_ints(value: Any) -> Any:
+    """JSON Schema treats 3.0 as an integer at any depth; a strict check of a default would not."""
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, list):
+        return [_integral_floats_as_ints(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _integral_floats_as_ints(item) for key, item in value.items()}
+    return value
+
+
+def _null_becomes(default: Any) -> Callable[[Any], Any]:
+    return lambda value: default if value is None else value
+
+
+def _is_reserved_name(name: str) -> bool:
+    # A field named Config would be read as class-based model configuration
+    return name == "Config" or (name.startswith("model_") and hasattr(BaseModel, name))
 
 
 def _drop_default(schema: Dict[str, Any]) -> None:
