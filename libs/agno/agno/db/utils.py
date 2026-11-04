@@ -1054,6 +1054,7 @@ METRICS_FIELDS = (
     *METRICS_MAX_COLUMNS,
     *METRICS_COUNT_MAP_COLUMNS,
     "model_metrics",
+    "tool_metrics",
     "additional_metrics",
 )
 
@@ -1104,6 +1105,21 @@ def empty_metrics_totals(fields: Sequence[str] = METRICS_FIELDS) -> Dict[str, An
     return totals
 
 
+def _empty_metrics_tool_totals() -> Dict[str, Any]:
+    """The totals of one tool in tool_metrics before any call: no calls, no failures and no timing."""
+    return {"calls": 0, "failed_calls": 0, "total_ms": 0, "max_ms": None, "buckets": {}}
+
+
+def _add_metrics_tool_totals(target: Dict[str, Any], extra: Dict[str, Any]) -> None:
+    """Add the totals of one tool in tool_metrics to another in place."""
+    for key in ("calls", "failed_calls", "total_ms"):
+        target[key] += extra.get(key) or 0
+    if extra.get("max_ms") is not None and (target["max_ms"] is None or extra["max_ms"] > target["max_ms"]):
+        target["max_ms"] = extra["max_ms"]
+    for bucket, count in (extra.get("buckets") or {}).items():
+        target["buckets"][bucket] = target["buckets"].get(bucket, 0) + (count or 0)
+
+
 def add_metrics_totals(target: Dict[str, Any], extra: Dict[str, Any], fields: Sequence[str] = METRICS_FIELDS) -> None:
     """Add the totals of extra to target in place.
 
@@ -1137,6 +1153,19 @@ def add_metrics_totals(target: Dict[str, Any], extra: Dict[str, Any], fields: Se
                     if model.get("cost") is not None:
                         model_totals["cost"] = (model_totals.get("cost") or 0) + model["cost"]
             target[field] = model_metrics
+        elif field == "tool_metrics":
+            # Each toolkit's tools, with their calls, failures and timings per tool
+            tool_metrics = {
+                toolkit: {
+                    tool_name: {**tool, "buckets": dict(tool.get("buckets") or {})} for tool_name, tool in tools.items()
+                }
+                for toolkit, tools in (target.get(field) or {}).items()
+            }
+            for toolkit, tools in (value or {}).items():
+                toolkit_tools = tool_metrics.setdefault(toolkit, {})
+                for tool_name, tool in tools.items():
+                    _add_metrics_tool_totals(toolkit_tools.setdefault(tool_name, _empty_metrics_tool_totals()), tool)
+            target[field] = tool_metrics
         elif field == "additional_metrics":
             # Merge additional_metrics (sum numeric values, keep latest for others)
             additional_metrics = dict(target.get(field) or {})
@@ -1375,6 +1404,29 @@ def _add_metrics_timing(totals: Dict[str, Any], timing: str, seconds: Optional[f
     totals[buckets_column][bucket] = totals[buckets_column].get(bucket, 0) + 1
 
 
+def _add_metrics_tool_calls(totals: Dict[str, Any], call: Dict[str, Any]) -> None:
+    """Add each tool call of a model call to tool_metrics, under its toolkit and tool name; a tool call that names no
+    toolkit is kept under ``""``."""
+    for tool_call in call.get("tools") or []:
+        if not isinstance(tool_call, dict) or not tool_call.get("tool_name"):
+            continue
+        tool = (
+            totals["tool_metrics"]
+            .setdefault(tool_call.get("toolkit") or "", {})
+            .setdefault(tool_call["tool_name"], _empty_metrics_tool_totals())
+        )
+        tool["calls"] += 1
+        if tool_call.get("tool_call_error"):
+            tool["failed_calls"] += 1
+        seconds = (tool_call.get("metrics") or {}).get("duration")
+        if isinstance(seconds, (int, float)):
+            milliseconds = int(round(seconds * 1000))
+            tool["total_ms"] += milliseconds
+            tool["max_ms"] = milliseconds if tool["max_ms"] is None else max(tool["max_ms"], milliseconds)
+            bucket = _metrics_bucket(milliseconds)
+            tool["buckets"][bucket] = tool["buckets"].get(bucket, 0) + 1
+
+
 def _calculate_run_metrics(run: Dict[str, Any], seen_run_ids: Set[str]) -> Dict[str, Any]:
     """The totals one stored run adds to its row."""
     totals = empty_metrics_totals()
@@ -1406,6 +1458,7 @@ def _calculate_run_metrics(run: Dict[str, Any], seen_run_ids: Set[str]) -> Dict[
         add_metrics_totals(totals, call_metrics, ["additional_metrics"])
         for seconds in _metrics_request_durations(call):
             _add_metrics_timing(totals, "model_call", seconds)
+        _add_metrics_tool_calls(totals, call)
 
         details = call_metrics.get("details")
         model_type_metrics_lists = [
@@ -2006,6 +2059,9 @@ def build_component_metrics_totals(
         if row.cost is not None:
             model["cost"] = float(row.cost)
         totals_by_date[row.date]["model_metrics"].setdefault(row.model_provider, {})[row.model_id] = model
+
+    for row in rows_by_query.get("tool_metrics", []):
+        add_metrics_totals(totals_by_date[row.date], {"tool_metrics": row.tool_metrics}, ["tool_metrics"])
 
     return [totals_by_date[day] for day in sorted(totals_by_date)], latest_updated_at
 

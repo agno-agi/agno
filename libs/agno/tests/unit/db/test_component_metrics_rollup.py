@@ -1363,6 +1363,7 @@ def test_build_component_metrics_run_rebuilds_the_stored_run_shape():
             model="gpt-5",
             model_provider="OpenAI",
             call_durations=[0.2, 0.3],
+            tools=[{"toolkit": None, "tool_name": "search", "tool_call_error": None, "metrics": {"duration": 0.4}}],
             nested_runs=None,
         )
     )
@@ -1375,9 +1376,13 @@ def test_build_component_metrics_run_rebuilds_the_stored_run_shape():
             {"role": "assistant", "metrics": {"duration": 0.2}},
             {"role": "assistant", "metrics": {"duration": 0.3}},
         ],
+        "tools": [{"toolkit": None, "tool_name": "search", "tool_call_error": None, "metrics": {"duration": 0.4}}],
     }
     row = _only_row(runs=[run])
     assert row["model_calls_count"] == 2
+    assert row["tool_metrics"] == {
+        "": {"search": {"calls": 1, "failed_calls": 0, "total_ms": 400, "max_ms": 400, "buckets": {"le_400": 1}}}
+    }
 
     # No call durations store no messages
     run = build_component_metrics_run(
@@ -1391,6 +1396,7 @@ def test_build_component_metrics_run_rebuilds_the_stored_run_shape():
             model=None,
             model_provider=None,
             call_durations=None,
+            tools=None,
             nested_runs=None,
         )
     )
@@ -1402,7 +1408,7 @@ def test_build_component_metrics_run_rebuilds_the_stored_run_shape():
 def test_build_component_metrics_run_nests_the_nested_runs_again():
     """The nested runs the runs query reads flat are put back inside the run each one is nested in."""
 
-    def nested_row(depth, key, run_id, call_durations=(), **ids):
+    def nested_row(depth, key, run_id, call_durations=(), tools=None, **ids):
         return {
             "depth": depth,
             "key": key,
@@ -1413,6 +1419,7 @@ def test_build_component_metrics_run_nests_the_nested_runs_again():
             "model": "gpt-5",
             "model_provider": "OpenAI",
             "call_durations": list(call_durations),
+            "tools": tools,
         }
 
     run = build_component_metrics_run(
@@ -1426,9 +1433,19 @@ def test_build_component_metrics_run_nests_the_nested_runs_again():
             model=None,
             model_provider=None,
             call_durations=[],
+            tools=None,
             nested_runs=[
                 nested_row(1, "step_executor_runs", "team-run", team_id="team-1"),
-                nested_row(2, "member_responses", "member-run", call_durations=[0.2], agent_id="agent-1"),
+                nested_row(
+                    2,
+                    "member_responses",
+                    "member-run",
+                    call_durations=[0.2],
+                    tools=[
+                        {"toolkit": None, "tool_name": "search", "tool_call_error": True, "metrics": {"duration": None}}
+                    ],
+                    agent_id="agent-1",
+                ),
                 nested_row(3, "member_responses", "unnamed-run"),
                 nested_row(1, "step_executor_runs", "agent-run", agent_id="agent-2"),
                 nested_row(1, "member_responses", "other-run", agent_id="agent-3"),
@@ -1448,6 +1465,10 @@ def test_build_component_metrics_run_nests_the_nested_runs_again():
     assert row["input_tokens"] == 50
     assert row["model_calls_count"] == 1
     assert row["model_metrics"] == {"OpenAI": {"gpt-5": {"count": 5}}}
+    # A nested run's tool call counts on the row of the run it is nested in, untimed when it recorded no duration
+    assert row["tool_metrics"] == {
+        "": {"search": {"calls": 1, "failed_calls": 1, "total_ms": 0, "max_ms": None, "buckets": {}}}
+    }
 
 
 def test_build_component_metrics_totals_assembles_each_query():
@@ -1543,3 +1564,96 @@ def test_a_read_never_calculates_when_calculation_is_turned_off(monkeypatch):
             db.get_metrics()
 
     calculate.assert_not_called()
+
+
+def _tool_call(tool_name, duration=None, error=None, toolkit=None):
+    """Build a tool call the way the runs query returns it."""
+    return {"toolkit": toolkit, "tool_name": tool_name, "tool_call_error": error, "metrics": {"duration": duration}}
+
+
+def test_tool_calls_count_per_toolkit_and_tool():
+    """Each tool call adds a call to its tool under its toolkit, a failure when it errored, and its timing when it
+    recorded one; an entry that names no tool is not a tool call."""
+    first = _run(run_id="run-1")
+    first["run_data"]["tools"] = [
+        _tool_call("search", duration=0.4),
+        _tool_call("search", duration=1.2, error=True),
+        _tool_call("create_issue", duration=0.05, toolkit="github"),
+        _tool_call(None, duration=9.0),
+        "not a tool call",
+    ]
+    second = _run(run_id="run-2")
+    second["run_data"]["tools"] = [_tool_call("search", duration=0.1)]
+
+    row = _only_row(runs=[first, second])
+
+    assert row["tool_metrics"] == {
+        "": {
+            "search": {
+                "calls": 3,
+                "failed_calls": 1,
+                "total_ms": 1700,
+                "max_ms": 1200,
+                "buckets": {"le_100": 1, "le_400": 1, "le_1200": 1},
+            }
+        },
+        "github": {
+            "create_issue": {"calls": 1, "failed_calls": 0, "total_ms": 50, "max_ms": 50, "buckets": {"le_50": 1}}
+        },
+    }
+
+
+def test_a_stored_member_counts_its_tool_calls_on_its_own_row_only():
+    """A member run stored as a run of its own counts its tool calls on its row, never again on its team's."""
+    member_call = _model_call(run_id="member-run", agent_id="agent-1")
+    member_call["tools"] = [_tool_call("search", duration=0.2)]
+    team_run = _run(run_id="team-run", run_type="team", component_id="team-1", member_responses=[member_call])
+    team_run["run_data"]["tools"] = [_tool_call("delegate_task_to_member", duration=0.3)]
+    member_run = _run(run_id="member-run", parent_run_id="team-run")
+    member_run["run_data"]["tools"] = [_tool_call("search", duration=0.2)]
+
+    rows = _rows(runs=[team_run, member_run])
+
+    assert set(rows[("alice", "team", "team-1")]["tool_metrics"][""]) == {"delegate_task_to_member"}
+    assert rows[("alice", "agent", "agent-1")]["tool_metrics"][""]["search"]["calls"] == 1
+
+
+def test_tool_metrics_add_up_across_rows():
+    """Rows add up each tool's calls, failures, total time and buckets, and keep the slowest call."""
+    day = {
+        "tool_metrics": {
+            "": {"search": {"calls": 2, "failed_calls": 1, "total_ms": 500, "max_ms": 400, "buckets": {"le_400": 2}}}
+        }
+    }
+    other_day = {
+        "tool_metrics": {
+            "": {"search": {"calls": 1, "failed_calls": 0, "total_ms": 900, "max_ms": 900, "buckets": {"le_1000": 1}}},
+            "github": {"create_issue": {"calls": 1, "failed_calls": 0, "total_ms": 0, "max_ms": None, "buckets": {}}},
+        }
+    }
+
+    merged = merge_metrics_totals([day, other_day], ["tool_metrics"])
+
+    assert merged["tool_metrics"] == {
+        "": {
+            "search": {
+                "calls": 3,
+                "failed_calls": 1,
+                "total_ms": 1400,
+                "max_ms": 900,
+                "buckets": {"le_400": 2, "le_1000": 1},
+            }
+        },
+        "github": {"create_issue": {"calls": 1, "failed_calls": 0, "total_ms": 0, "max_ms": None, "buckets": {}}},
+    }
+    # Adding up never changes the rows added
+    assert day["tool_metrics"][""]["search"]["calls"] == 2
+
+    totals, _ = build_component_metrics_totals(
+        ["tool_metrics"],
+        {
+            "totals": [_Row(date=TARGET_DATE, updated_at=1)],
+            "tool_metrics": [_Row(date=TARGET_DATE, tool_metrics=row["tool_metrics"]) for row in [day, other_day]],
+        },
+    )
+    assert totals[0]["tool_metrics"] == merged["tool_metrics"]

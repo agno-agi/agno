@@ -23,8 +23,9 @@ from agno.db.utils import (
     USER_METRICS_COUNT_COLUMNS,
     resolve_metrics_fields,
 )
-from agno.metrics import MessageMetrics, ModelMetrics, RunMetrics
+from agno.metrics import MessageMetrics, ModelMetrics, RunMetrics, ToolCallMetrics
 from agno.models.message import Message
+from agno.models.response import ToolExecution
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
@@ -745,3 +746,65 @@ async def test_calculate_metrics_dates_releases_the_lock_when_cancelled(
 
     refresh_status = await async_postgres_db_real.get_metrics_refresh_status()
     assert (refresh_status["status"], refresh_status["error"]) == ("failed", METRICS_STOPPED_ERROR)
+
+
+@pytest.mark.asyncio
+async def test_calculate_metrics_counts_tool_calls(async_postgres_db_real: AsyncPostgresDb):
+    """Ensure each tool call is counted under its tool from the stored run, including a nested member run's, and that
+    a read adds the tools up"""
+    base_time = _noon_utc(2)
+    member_run = RunOutput(
+        run_id="member_run",
+        agent_id="agent-1",
+        user_id="bob",
+        status=RunStatus.completed,
+        model="gpt-5",
+        model_provider="OpenAI",
+        metrics=_run_metrics(10, 0),
+        messages=[],
+        tools=[ToolExecution(tool_name="search", tool_call_error=True, metrics=ToolCallMetrics(duration=1.2))],
+        created_at=base_time,
+    )
+    team_session = TeamSession(
+        session_id="team_session",
+        team_id="team-1",
+        user_id="bob",
+        runs=[
+            TeamRunOutput(
+                run_id="team_run",
+                team_id="team-1",
+                user_id="bob",
+                status=RunStatus.completed,
+                model="gpt-5",
+                model_provider="OpenAI",
+                metrics=_run_metrics(5, 0),
+                tools=[ToolExecution(tool_name="delegate_task_to_member", metrics=ToolCallMetrics(duration=1.5))],
+                member_responses=[member_run],
+                created_at=base_time,
+            )
+        ],
+        created_at=base_time,
+        updated_at=base_time,
+    )
+    await _persist(async_postgres_db_real, team_session)
+    await async_postgres_db_real.calculate_metrics()
+
+    past_day = _utc_date(2)
+    expected = {
+        "": {
+            "delegate_task_to_member": {
+                "calls": 1,
+                "failed_calls": 0,
+                "total_ms": 1500,
+                "max_ms": 1500,
+                "buckets": {"le_1500": 1},
+            },
+            "search": {"calls": 1, "failed_calls": 1, "total_ms": 1200, "max_ms": 1200, "buckets": {"le_1200": 1}},
+        }
+    }
+    assert (await _stored_rows(async_postgres_db_real))[(past_day, "bob", "team", "team-1")]["tool_metrics"] == expected
+    assert (await _stored_user_metrics_rows(async_postgres_db_real))[("daily", past_day)]["tool_metrics"] == expected
+    metrics, _ = await async_postgres_db_real.get_component_metrics(
+        starting_date=past_day, ending_date=past_day, fields=["tool_metrics"]
+    )
+    assert metrics[0]["tool_metrics"] == expected

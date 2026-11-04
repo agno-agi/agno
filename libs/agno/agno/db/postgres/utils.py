@@ -538,6 +538,35 @@ def _metrics_call_durations(run_data: Any) -> Any:
     return func.jsonb_path_query_array(run_data, _METRICS_CALL_DURATIONS_PATH, func.jsonb_build_object("skip", skip))
 
 
+def _metrics_tool_calls(run_data: Any) -> Any:
+    """Build each tool call of a stored run with only what tool_metrics counts, never its arguments or result."""
+    tools = run_data["tools"]
+    tool_call = (
+        func.jsonb_array_elements(case((func.jsonb_typeof(tools) == "array", tools), else_=func.jsonb_build_array()))
+        .table_valued(column("value", postgresql.JSONB))
+        .render_derived()
+    )
+    return (
+        select(
+            func.jsonb_agg(
+                func.jsonb_build_object(
+                    "toolkit",
+                    tool_call.c.value["toolkit"],
+                    "tool_name",
+                    tool_call.c.value["tool_name"],
+                    "tool_call_error",
+                    tool_call.c.value["tool_call_error"],
+                    "metrics",
+                    func.jsonb_build_object("duration", tool_call.c.value["metrics"]["duration"]),
+                )
+            )
+        )
+        .select_from(tool_call)
+        .where(func.jsonb_typeof(tool_call.c.value) == "object")
+        .scalar_subquery()
+    )
+
+
 def metrics_parent_run_id(table: Table) -> Any:
     """Build the id of the run that started a stored run: its team's or workflow's run, or the run whose tool call
     started it."""
@@ -616,6 +645,8 @@ def build_component_metrics_runs_query(table: Table, start_timestamp: int, end_t
                     nested.c.run_data["model_provider"],
                     "call_durations",
                     _metrics_call_durations(nested.c.run_data),
+                    "tools",
+                    _metrics_tool_calls(nested.c.run_data),
                 ),
                 nested.c.path,
             )
@@ -635,6 +666,7 @@ def build_component_metrics_runs_query(table: Table, start_timestamp: int, end_t
         table.c.run_data["model"].astext.label("model"),
         table.c.run_data["model_provider"].astext.label("model_provider"),
         _metrics_call_durations(table.c.run_data).label("call_durations"),
+        _metrics_tool_calls(table.c.run_data).label("tools"),
         # Walked only for a run with runs nested inside it
         case((table.c.run_data.has_any(postgresql.array(list(_METRICS_NESTED_RUN_KEYS))), nested_runs)).label(
             "nested_runs"
@@ -729,6 +761,7 @@ def build_component_metrics_run(row: Any) -> Dict[str, Any]:
         "messages": [
             {"role": "assistant", "metrics": {"duration": duration}} for duration in run.pop("call_durations") or []
         ],
+        "tools": run.pop("tools"),
     }
     # A nested run comes after the run it is nested inside, so the last run met at each depth is its parent
     parents = [run["run_data"]]
@@ -871,6 +904,12 @@ def build_component_metrics_totals_queries(
             .select_from(models)
             .where(where)
             .group_by(table.c.date, model_id, model_provider)
+        )
+
+    # Each toolkit's tools hold several numbers and buckets each, so the maps are added up once read
+    if "tool_metrics" in fields:
+        queries["tool_metrics"] = select(table.c.date, table.c.tool_metrics).where(
+            where, table.c.tool_metrics != func.jsonb_build_object()
         )
 
     return queries
