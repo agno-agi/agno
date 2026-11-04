@@ -569,6 +569,7 @@ def get_websocket_router(
                             # Drop the claims of any JWT this socket authenticated with before,
                             # so no gate reads another identity's claims for the PAT.
                             websocket_user_context.pop("payload", None)
+                            websocket_user_context.pop("tenant_id", None)
                             await websocket_manager.authenticate_websocket(websocket)
                             await websocket.send_text(
                                 json.dumps(
@@ -691,6 +692,7 @@ def get_websocket_router(
                             websocket_user_context["user_id"] = claims["user_id"]
                             websocket_user_context["scopes"] = claims["scopes"]
                             websocket_user_context["payload"] = payload
+                            websocket_user_context["tenant_id"] = claims.get("tenant_id")
 
                             await websocket.send_text(
                                 json.dumps(

@@ -100,3 +100,21 @@ Authorization(
 
 - [AgentOS Security documentation](https://docs.agno.com/agent-os/security/overview)
 - `07_security` — authentication, JWT scopes, service accounts, user isolation
+
+### Verified tenant identity
+
+`16_verified_tenant_identity.py` runs locally with no model calls or external services. It configures
+`Authorization(tenant_claim="org_id")` and reads `RequestContext.tenant_id` from the verified JWT.
+The same user can carry different tenant identities; administrator status does not erase the tenant.
+A missing claim produces `None`; a present null, empty or non-string value rejects authentication.
+Body, query and header values cannot override this identity. `JWTMiddleware` supports the same option,
+but it cannot be combined with `validate=False`.
+
+This is identity propagation only. It does not tenant-scope sessions, skills, registries or database
+queries, and it does not persist a tenant into queued jobs. Resource endpoints must separately require
+and authorize the tenant they operate on. Operator keys, service accounts and scheduler credentials
+have no delegated tenant identity.
+
+```bash
+PYTHONPATH=libs/agno .venv/bin/python cookbook/05_agent_os/26_authorization/16_verified_tenant_identity.py
+```

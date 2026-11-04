@@ -188,7 +188,12 @@ class MCPIdentityBridgeMiddleware:
         user_name_claim: str = "name",
         user_directory_fail_closed: bool = False,
         role_store: Any = None,
+        tenant_claim: Optional[str] = None,
     ) -> None:
+        from agno.os.authz.identity import validate_tenant_claim
+
+        validate_tenant_claim(tenant_claim)
+        self.tenant_claim = tenant_claim
         self.app = app
         self.admin_scope = admin_scope
         self.user_isolation = user_isolation
@@ -220,6 +225,17 @@ class MCPIdentityBridgeMiddleware:
                 else:
                     user_id = getattr(access_token, "client_id", None)
                 service_account_name = claims.get(SERVICE_ACCOUNT_CLAIM)
+                from agno.os.authz.identity import tenant_id_from_claims
+
+                try:
+                    tenant_id = (
+                        None
+                        if service_account_name is not None or claims.get(INTERNAL_ISSUER_CLAIM)
+                        else tenant_id_from_claims(claims, self.tenant_claim)
+                    )
+                except ValueError:
+                    await _send_http_forbidden(send, "Invalid tenant claim")
+                    return
                 # A token must not claim a server-reserved principal (sa:/oauth:/scheduler)
                 # unless it comes from a trusted first-party source that owns that
                 # namespace: the PAT verifier (sa:) or the built-in AS (__oauth__:). An
@@ -270,6 +286,7 @@ class MCPIdentityBridgeMiddleware:
                 state = scope.setdefault("state", {})
                 state["authenticated"] = True
                 state["user_id"] = user_id
+                state["tenant_id"] = tenant_id
                 state["session_id"] = claims.get("session_id")
                 state["scopes"] = list(getattr(access_token, "scopes", None) or [])
                 state["authorization_enabled"] = bool(claims.get(AUTHORIZATION_ENABLED_CLAIM, True))
@@ -358,6 +375,7 @@ def _build_jwt_token_verifier(os: "AgentOS") -> Optional[JWTBearerTokenVerifier]
         getattr(os, "authorization_config", None),
         authorization=bool(getattr(os, "authorization", False)),
         issuer=getattr(os, "_authz_issuer", None),
+        tenant_claim=getattr(os, "_authz_tenant_claim", None),
     )
     jwt_configured = bool(
         kwargs["verification_keys"] or kwargs["jwks_file"] or getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE")
@@ -372,6 +390,7 @@ def _build_jwt_token_verifier(os: "AgentOS") -> Optional[JWTBearerTokenVerifier]
         # rejects would still verify on /mcp (the audience is threaded, but issuer was
         # dropped), so a multi-issuer deployment's pin did not hold on the MCP transport.
         issuer=kwargs.get("issuer"),
+        tenant_claim=kwargs.get("tenant_claim"),
     )
     return JWTBearerTokenVerifier(
         validator,

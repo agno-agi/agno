@@ -360,7 +360,7 @@ async def handle_workflow_via_websocket(
                 scopes = ws_user_context.get("scopes", frozenset())
                 if isinstance(scopes, (list, set)):
                     scopes = frozenset(scopes)
-                trusted = TrustedContext(claims=claims, scopes=scopes)
+                trusted = TrustedContext(claims=claims, scopes=scopes, tenant_id=ws_user_context.get("tenant_id"))
 
             ctx = RequestContext(
                 user_id=user_id,
