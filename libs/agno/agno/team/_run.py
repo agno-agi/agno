@@ -2202,7 +2202,7 @@ async def _arun_tasks(
         # 2. Determine tools for model (includes task management tools)
         team_run_context: Dict[str, Any] = {}
         await _check_and_refresh_mcp_tools(team)
-        learning_tools = await _aget_learning_tools(team, user_id, team_session)
+        learning_tools = await _aget_learning_tools(team, user_id, team_session, run_response)
         _tools = _determine_tools_for_model(
             team,
             model=team.model,
@@ -2585,7 +2585,7 @@ async def _arun_tasks_stream(
         # 2. Determine tools for model (includes task management tools)
         team_run_context: Dict[str, Any] = {}
         await _check_and_refresh_mcp_tools(team)
-        learning_tools = await _aget_learning_tools(team, user_id, team_session)
+        learning_tools = await _aget_learning_tools(team, user_id, team_session, run_response)
         _tools = _determine_tools_for_model(
             team,
             model=team.model,
@@ -3180,7 +3180,7 @@ async def _arun(
                 await _check_and_refresh_mcp_tools(
                     team,
                 )
-                learning_tools = await _aget_learning_tools(team, user_id, team_session)
+                learning_tools = await _aget_learning_tools(team, user_id, team_session, run_response)
                 _tools = _determine_tools_for_model(
                     team,
                     model=team.model,
@@ -3758,7 +3758,7 @@ async def _arun_stream(
                 await _check_and_refresh_mcp_tools(
                     team,
                 )
-                learning_tools = await _aget_learning_tools(team, user_id, team_session)
+                learning_tools = await _aget_learning_tools(team, user_id, team_session, run_response)
                 _tools = _determine_tools_for_model(
                     team,
                     model=team.model,
@@ -4511,6 +4511,9 @@ def _iter_member_runs_for_team_run(session: TeamSession, team_run_id: Optional[s
     with ``parent_run_id`` set to the parent team run (see
     ``_default_tools.py``), so we identify them by parent link.
 
+    A member team's own member runs, at every depth, are kept only inside its
+    run, so they are yielded after it, with no index.
+
     Yields (index_in_session_runs, member_run).
     """
     if not team_run_id or not session.runs:
@@ -4519,6 +4522,16 @@ def _iter_member_runs_for_team_run(session: TeamSession, team_run_id: Optional[s
         parent_id = getattr(entry, "parent_run_id", None)
         if parent_id == team_run_id:
             yield idx, entry
+            yield from ((None, nested_run) for nested_run in _iter_nested_member_runs(entry))
+
+
+def _iter_nested_member_runs(member_run: Any):
+    """Yield the runs of a member team's own members, at every depth."""
+    for nested_run in getattr(member_run, "member_responses", None) or []:
+        # A paused run stays only inside its team's run, where continue_run resumes it from
+        if getattr(nested_run, "status", None) != RunStatus.paused:
+            yield nested_run
+        yield from _iter_nested_member_runs(nested_run)
 
 
 def _media_offloaded(team: "Team", session: TeamSession, member_run: Any, cache: Any) -> Any:
@@ -4586,10 +4599,19 @@ def _persist_member_runs_for_team_run(
 ) -> None:
     from agno.team._session import save_run
     from agno.utils.media_offload import offload_cache_for
+    from agno.utils.team import is_remote_member_run
 
     cache = offload_cache_for(team_run) if team_run is not None else None
 
-    for idx, member_run in _iter_member_runs_for_team_run(session, team_run_id):
+    # Listed first: a member team's own member runs are added to session.runs below
+    for idx, member_run in list(_iter_member_runs_for_team_run(session, team_run_id)):
+        # A remote member's run is stored by the AgentOS that ran it, in the member's own session
+        if is_remote_member_run(member_run, session.session_id):
+            continue
+        if idx is None:
+            # A member team's own member run takes a position in the session, as a direct member run does
+            session.upsert_run(member_run)
+            idx = resolve_run_index(session, member_run)
         try:
             # The team owns this write, so the team's media_storage offloads the member rows too;
             # sharing the team run's cache keeps the same bytes from being uploaded twice.
@@ -4609,10 +4631,19 @@ async def _apersist_member_runs_for_team_run(
 ) -> None:
     from agno.team._session import asave_run
     from agno.utils.media_offload import offload_cache_for
+    from agno.utils.team import is_remote_member_run
 
     cache = offload_cache_for(team_run) if team_run is not None else None
 
-    for idx, member_run in _iter_member_runs_for_team_run(session, team_run_id):
+    # Listed first: a member team's own member runs are added to session.runs below
+    for idx, member_run in list(_iter_member_runs_for_team_run(session, team_run_id)):
+        # A remote member's run is stored by the AgentOS that ran it, in the member's own session
+        if is_remote_member_run(member_run, session.session_id):
+            continue
+        if idx is None:
+            # A member team's own member run takes a position in the session, as a direct member run does
+            session.upsert_run(member_run)
+            idx = resolve_run_index(session, member_run)
         try:
             await asave_run(
                 team,
@@ -4675,7 +4706,7 @@ def _cleanup_and_store(
     run_index = resolve_run_index(session, storage_copy)
 
     # Calculate session metrics
-    update_session_metrics(team, session=session, run_response=run_response)
+    update_session_metrics(team, session=session)
 
     # Update session state before saving the session
     if run_context is not None and run_context.session_state is not None:
@@ -4758,7 +4789,7 @@ async def _acleanup_and_store(
     run_index = resolve_run_index(session, storage_copy)
 
     # Calculate session metrics
-    update_session_metrics(team, session=session, run_response=run_response)
+    update_session_metrics(team, session=session)
 
     # Update session state before saving the session
     if run_context is not None and run_context.session_state is not None:
@@ -4902,7 +4933,7 @@ def _persist_team_run_in_session(
 
     session.upsert_run(run_response=storage_copy)
     run_index = resolve_run_index(session, storage_copy)
-    update_session_metrics(team, session=session, run_response=run_response)
+    update_session_metrics(team, session=session)
 
     if run_context is not None and run_context.session_state is not None:
         if session.session_data is not None:
@@ -4962,7 +4993,7 @@ async def _apersist_team_run_in_session(
 
     session.upsert_run(run_response=storage_copy)
     run_index = resolve_run_index(session, storage_copy)
-    update_session_metrics(team, session=session, run_response=run_response)
+    update_session_metrics(team, session=session)
 
     if run_context is not None and run_context.session_state is not None:
         if session.session_data is not None:
@@ -6407,6 +6438,31 @@ def _preflight_subteam_routes(
         _group_requirements_for_continue(member, target, session, None, _depth=depth + 1)
 
 
+def _replace_member_response(
+    run_response: TeamRunOutput, member_response: Optional[Union[RunOutput, TeamRunOutput]]
+) -> None:
+    """Put a member's continued run in place of its paused copy in the team run's member_responses.
+
+    A local member's run is continued in place, so its entry is already the continued run.
+    """
+    if member_response is None:
+        return
+    for member_run in run_response.member_responses:
+        if member_run.run_id != member_response.run_id:
+            continue
+        # A remote continue stream has no started event naming the model, so keep the paused copy's
+        if member_response.model is None:
+            member_response.model = member_run.model
+            member_response.model_provider = member_run.model_provider
+        # Nor the team run it belongs to
+        if not member_response.parent_run_id:
+            member_response.parent_run_id = member_run.parent_run_id
+    run_response.member_responses = [
+        member_response if member_run.run_id == member_response.run_id else member_run
+        for member_run in run_response.member_responses
+    ]
+
+
 def _route_requirements_to_members(
     team: "Team",
     run_response: TeamRunOutput,
@@ -6421,7 +6477,8 @@ def _route_requirements_to_members(
     Returns:
         List of member result strings.
     """
-    from agno.utils.team import get_member_id
+    from agno.remote.base import BaseRemote
+    from agno.utils.team import get_member_id, get_member_session_id
 
     groups = _group_requirements_for_continue(team, run_response, session, run_context)
     member_results: List[str] = []
@@ -6438,7 +6495,8 @@ def _route_requirements_to_members(
         # session_state remain accessible to member tools after continue_run.
         member_continue_kwargs = _member_continue_kwargs_from_run_context(run_context)
 
-        if member_run_output is not None:
+        # A remote member's run is kept by the AgentOS that ran it, so it is continued by its run id
+        if member_run_output is not None and not isinstance(member, BaseRemote):
             # Update requirements and tool executions on the member's run output
             member_run_output.requirements = reqs
             updated_tools = [req.tool_execution for req in reqs if req.tool_execution is not None]
@@ -6448,7 +6506,7 @@ def _route_requirements_to_members(
 
             member_response = member.continue_run(
                 run_response=member_run_output,  # type: ignore[arg-type]
-                session_id=session.session_id,
+                session_id=get_member_session_id(member, session.session_id),
                 **member_continue_kwargs,
             )
         else:
@@ -6456,9 +6514,12 @@ def _route_requirements_to_members(
             member_response = member.continue_run(  # type: ignore[arg-type]
                 run_id=member_run_id,
                 requirements=reqs,
-                session_id=session.session_id,
+                session_id=get_member_session_id(member, session.session_id),
                 **member_continue_kwargs,
             )
+
+        # A remote member's continue returns a new run: it takes the place of the paused copy in the team run
+        _replace_member_response(run_response, member_response)
 
         # Check if member is still paused (chained HITL)
         if getattr(member_response, "is_paused", False):
@@ -6504,7 +6565,8 @@ def _route_requirements_to_members_stream(
     Yields:
         Member streaming events (RunOutputEvent, TeamRunOutputEvent).
     """
-    from agno.utils.team import get_member_id
+    from agno.remote.base import BaseRemote
+    from agno.utils.team import get_member_id, get_member_session_id
 
     groups = _group_requirements_for_continue(team, run_response, session, run_context)
 
@@ -6520,7 +6582,8 @@ def _route_requirements_to_members_stream(
         # session_state remain accessible to member tools after continue_run.
         member_continue_kwargs = _member_continue_kwargs_from_run_context(run_context)
 
-        if member_run_output is not None:
+        # A remote member's run is kept by the AgentOS that ran it, so it is continued by its run id
+        if member_run_output is not None and not isinstance(member, BaseRemote):
             member_run_output.requirements = reqs
             updated_tools = [req.tool_execution for req in reqs if req.tool_execution is not None]
             if updated_tools and member_run_output.tools:
@@ -6529,7 +6592,7 @@ def _route_requirements_to_members_stream(
 
             member_response_stream = member.continue_run(  # type: ignore[call-overload]
                 run_response=member_run_output,  # type: ignore[arg-type]
-                session_id=session.session_id,
+                session_id=get_member_session_id(member, session.session_id),
                 stream=True,
                 stream_events=stream_events or team.stream_member_events,
                 yield_run_output=True,
@@ -6539,7 +6602,7 @@ def _route_requirements_to_members_stream(
             member_response_stream = member.continue_run(  # type: ignore[call-overload]
                 run_id=member_run_id,
                 requirements=reqs,
-                session_id=session.session_id,
+                session_id=get_member_session_id(member, session.session_id),
                 stream=True,
                 stream_events=stream_events or team.stream_member_events,
                 yield_run_output=True,
@@ -6568,6 +6631,8 @@ def _route_requirements_to_members_stream(
                     store_events=team.store_events,
                 )
 
+        # A remote member's continue returns a new run: it takes the place of the paused copy in the team run
+        _replace_member_response(run_response, member_response)
         if member_response is None:
             log_warning(f"Member {member_id} streaming did not yield a final RunOutput")
             member_results.append(f"[{member.name or member_id}]: Task completed (no final output)")
@@ -6600,7 +6665,8 @@ async def _aroute_requirements_to_members(
     Returns:
         List of member result strings.
     """
-    from agno.utils.team import get_member_id
+    from agno.remote.base import BaseRemote
+    from agno.utils.team import get_member_id, get_member_session_id
 
     groups = _group_requirements_for_continue(team, run_response, session, run_context)
 
@@ -6623,7 +6689,8 @@ async def _aroute_requirements_to_members(
         # session_state remain accessible to member tools after continue_run.
         member_continue_kwargs = _member_continue_kwargs_from_run_context(run_context)
 
-        if member_run_output is not None:
+        # A remote member's run is kept by the AgentOS that ran it, so it is continued by its run id
+        if member_run_output is not None and not isinstance(member, BaseRemote):
             member_run_output.requirements = reqs
             updated_tools = [req.tool_execution for req in reqs if req.tool_execution is not None]
             if updated_tools and member_run_output.tools:
@@ -6632,14 +6699,14 @@ async def _aroute_requirements_to_members(
 
             member_response = await member.acontinue_run(  # type: ignore[misc]
                 run_response=member_run_output,  # type: ignore[arg-type]
-                session_id=session.session_id,
+                session_id=get_member_session_id(member, session.session_id),
                 **member_continue_kwargs,
             )
         else:
             member_response = await member.acontinue_run(  # type: ignore[misc]
                 run_id=member_run_id,
                 requirements=reqs,
-                session_id=session.session_id,
+                session_id=get_member_session_id(member, session.session_id),
                 **member_continue_kwargs,
             )
 
@@ -6647,6 +6714,8 @@ async def _aroute_requirements_to_members(
         for req in reqs:
             req._member_run_response = None
 
+        # A remote member's continue returns a new run: it takes the place of the paused copy in the team run
+        _replace_member_response(run_response, member_response)
         if getattr(member_response, "is_paused", False):
             from agno.team._tools import _propagate_member_pause
 
@@ -6704,7 +6773,8 @@ async def _aroute_requirements_to_members_stream(
     Yields:
         Member streaming events (RunOutputEvent, TeamRunOutputEvent).
     """
-    from agno.utils.team import get_member_id
+    from agno.remote.base import BaseRemote
+    from agno.utils.team import get_member_id, get_member_session_id
 
     groups = _group_requirements_for_continue(team, run_response, session, run_context)
 
@@ -6720,7 +6790,8 @@ async def _aroute_requirements_to_members_stream(
         # session_state remain accessible to member tools after continue_run.
         member_continue_kwargs = _member_continue_kwargs_from_run_context(run_context)
 
-        if member_run_output is not None:
+        # A remote member's run is kept by the AgentOS that ran it, so it is continued by its run id
+        if member_run_output is not None and not isinstance(member, BaseRemote):
             member_run_output.requirements = reqs
             updated_tools = [req.tool_execution for req in reqs if req.tool_execution is not None]
             if updated_tools and member_run_output.tools:
@@ -6729,7 +6800,7 @@ async def _aroute_requirements_to_members_stream(
 
             member_response_stream = member.acontinue_run(  # type: ignore[call-overload]
                 run_response=member_run_output,  # type: ignore[arg-type]
-                session_id=session.session_id,
+                session_id=get_member_session_id(member, session.session_id),
                 stream=True,
                 stream_events=stream_events or team.stream_member_events,
                 yield_run_output=True,
@@ -6739,7 +6810,7 @@ async def _aroute_requirements_to_members_stream(
             member_response_stream = member.acontinue_run(  # type: ignore[call-overload]
                 run_id=member_run_id,
                 requirements=reqs,
-                session_id=session.session_id,
+                session_id=get_member_session_id(member, session.session_id),
                 stream=True,
                 stream_events=stream_events or team.stream_member_events,
                 yield_run_output=True,
@@ -6768,6 +6839,8 @@ async def _aroute_requirements_to_members_stream(
                     store_events=team.store_events,
                 )
 
+        # A remote member's continue returns a new run: it takes the place of the paused copy in the team run
+        _replace_member_response(run_response, member_response)
         if member_response is None:
             log_warning(f"Member {member_id} streaming did not yield a final RunOutput")
             member_results.append(f"[{member.name or member_id}]: Task completed (no final output)")
@@ -8223,6 +8296,10 @@ def _continue_run(
 
     register_run(run_response.run_id)  # type: ignore
 
+    # Resume the run metrics timer: the run's duration runs from its start to its end, the wait included
+    run_response.metrics = run_response.metrics or RunMetrics()
+    run_response.metrics.resume_timer(run_response.created_at)
+
     # Emit RunContinued event (matching streaming variant behaviour)
     handle_event(
         create_team_run_continued_event(run_response),
@@ -8412,6 +8489,10 @@ def _continue_run_stream(
     from agno.utils.events import create_team_run_continued_event
 
     register_run(run_response.run_id)  # type: ignore
+
+    # Resume the run metrics timer: the run's duration runs from its start to its end, the wait included
+    run_response.metrics = run_response.metrics or RunMetrics()
+    run_response.metrics.resume_timer(run_response.created_at)
 
     try:
         num_attempts = team.retries + 1
@@ -9541,6 +9622,10 @@ async def _acontinue_run(
                 has_member = _has_member_requirements(run_response.requirements or [])
                 has_team_level = _has_team_level_requirements(run_response.requirements or [])
 
+                # Resume the run metrics timer: the run's duration runs from its start to its end, the wait included
+                run_response.metrics = run_response.metrics or RunMetrics()
+                run_response.metrics.resume_timer(run_response.created_at)
+
                 # Guard: a member requirement the client left unresolved has to re-pause,
                 # not dispatch. Routing hands it to the member's continue_run, which reads
                 # the pause as settled and runs the gated tool with whatever the schema
@@ -9624,7 +9709,7 @@ async def _acontinue_run(
                     await _check_and_refresh_mcp_tools(team)
 
                     team_run_context: Dict[str, Any] = {}
-                    learning_tools = await _aget_learning_tools(team, user_id, team_session)
+                    learning_tools = await _aget_learning_tools(team, user_id, team_session, run_response)
                     _tools = _determine_tools_for_model(
                         team,
                         model=team.model,
@@ -9673,7 +9758,7 @@ async def _acontinue_run(
                     await _check_and_refresh_mcp_tools(team)
 
                     team_run_context: Dict[str, Any] = {}  # type: ignore[no-redef]
-                    learning_tools = await _aget_learning_tools(team, user_id, team_session)
+                    learning_tools = await _aget_learning_tools(team, user_id, team_session, run_response)
                     _tools = _determine_tools_for_model(
                         team,
                         model=team.model,
@@ -10015,6 +10100,10 @@ async def _acontinue_run_stream(
                 has_member = _has_member_requirements(run_response.requirements or [])
                 has_team_level = _has_team_level_requirements(run_response.requirements or [])
 
+                # Resume the run metrics timer: the run's duration runs from its start to its end, the wait included
+                run_response.metrics = run_response.metrics or RunMetrics()
+                run_response.metrics.resume_timer(run_response.created_at)
+
                 # Guard: a member requirement the client left unresolved has to re-pause,
                 # not dispatch. Routing hands it to the member's continue_run, which reads
                 # the pause as settled and runs the gated tool with whatever the schema
@@ -10111,7 +10200,7 @@ async def _acontinue_run_stream(
                     await _check_and_refresh_mcp_tools(team)
 
                     team_run_context: Dict[str, Any] = {}
-                    learning_tools = await _aget_learning_tools(team, user_id, team_session)
+                    learning_tools = await _aget_learning_tools(team, user_id, team_session, run_response)
                     _tools = _determine_tools_for_model(
                         team,
                         model=team.model,
@@ -10240,7 +10329,7 @@ async def _acontinue_run_stream(
                     await _check_and_refresh_mcp_tools(team)
 
                     team_run_context: Dict[str, Any] = {}  # type: ignore[no-redef]
-                    learning_tools = await _aget_learning_tools(team, user_id, team_session)
+                    learning_tools = await _aget_learning_tools(team, user_id, team_session, run_response)
                     _tools = _determine_tools_for_model(
                         team,
                         model=team.model,

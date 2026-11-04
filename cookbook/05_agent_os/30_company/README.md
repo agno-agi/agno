@@ -124,8 +124,9 @@ The HTTP routes use `/company/projects` and `/company/tasks`, with the same
 CRUD, paging, soft delete and restore conventions as Products, plus
 `POST /{id}/transitions`. Task Ready requests include `executor_type` and
 `executor_id`; the API applies the scheduler's caller run-permission check.
-Acceptance also validates the executor against the registry. Direct Python callers
-pass `registry=Registry(...)` to their Company manager.
+Acceptance also validates the executor against the registry, then the published
+Studio components in the AgentOS catalog, like the ordinary run routes. Direct Python
+callers pass `registry=Registry(...)` to their Company manager.
 
 Project and Task HTTP reads are company-wide for callers with the resource's
 read scope, matching Products. Edits and transitions are collaborative: callers with the resource write
@@ -757,7 +758,7 @@ Automatic executors must be local and have a database for durable run storage.
 | --- | --- |
 | `project_active` | The proposal's Project exists, belongs to the same Product, and is active. Independent Tasks fail this check. |
 | `has_source_evidence` | Evidence names an existing Source in this Product; a fresh read through its configured reader matches each content hash and link. An asserted hash or `passed` field is insufficient. |
-| `executor_registered` | The proposed executor exists in the current registry and passes the ordinary Company executor checks. Registry validation is also mandatory for every acceptance and dispatch. |
+| `executor_registered` | The proposed executor exists in the current registry, or as a published Studio component, and passes the ordinary Company executor checks. Registry validation is also mandatory for every acceptance and dispatch. |
 
 `limits.max_acceptances` defaults to **1**. Each distinct Task counts at most
 once per policy version, including archived Tasks; returning a Task to Backlog

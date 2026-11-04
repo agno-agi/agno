@@ -688,9 +688,11 @@ async def test_execution_keeps_routine_order_and_edit_changes_it(system, clock):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("winner", ["delete", "create"])
+@pytest.mark.parametrize("release_order", ["delete_first", "create_first"])
 @pytest.mark.parametrize("repeat", range(2))
-async def test_routine_creation_does_not_orphan_schedule_during_product_purge(system, monkeypatch, winner, repeat):
+async def test_routine_creation_does_not_orphan_schedule_during_product_purge(
+    system, monkeypatch, release_order, repeat
+):
     client, db, _, _, _ = system
     await _call(db, "_create_all_tables")
     product = (await client.post("/company/products", json={"name": "Concurrent routine"})).json()
@@ -734,11 +736,11 @@ async def test_routine_creation_does_not_orphan_schedule_during_product_purge(sy
             )
         )
         await asyncio.wait_for(schedule_saved.wait(), 10)
-        if winner == "delete":
+        if release_order == "delete_first":
             release_delete.set()
-            assert (await asyncio.wait_for(deletion, 10)).status_code == 204
+            assert (await asyncio.wait_for(deletion, 10)).status_code == 409
             release_create.set()
-            assert (await asyncio.wait_for(creation, 10)).status_code == 422
+            assert (await asyncio.wait_for(creation, 10)).status_code == 201
         else:
             release_create.set()
             assert (await asyncio.wait_for(creation, 10)).status_code == 201
@@ -750,8 +752,8 @@ async def test_routine_creation_does_not_orphan_schedule_during_product_purge(sy
         await asyncio.gather(deletion, *([creation] if creation else []), return_exceptions=True)
     schedules = await original_list(ScheduleManager(db))
     owned = [row for row in schedules if (row.payload or {}).get("metadata", {}).get("product_id") == product["id"]]
-    assert len(owned) == (1 if winner == "create" else 0)
-    assert (await _call(db, "get_product", product["id"]) is not None) == (winner == "create")
+    assert len(owned) == 1
+    assert await _call(db, "get_product", product["id"]) is not None
 
 
 @pytest.mark.asyncio
