@@ -1122,17 +1122,30 @@ def _grep(text: str, pattern: str, context_lines: int = 2, max_matches: int = 20
     context_lines = max(0, min(context_lines, _SEARCH_MAX_CONTEXT_LINES))
 
     lines = text.split("\n")
-    hits = {}
+    line_matches: List[Tuple[int, List[int]]] = []
+    total_matches = 0
     for i, line in enumerate(lines):
-        found = compiled.search(line)
-        if found:
-            hits[i] = found.start()
-    if not hits:
+        starts = [m.start() for m in compiled.finditer(line)]
+        if starts:
+            line_matches.append((i, starts))
+            total_matches += len(starts)
+    if not line_matches:
         return ""
 
-    hit_indexes = sorted(hits)
-    truncated = len(hit_indexes) > max_matches
-    hit_indexes = hit_indexes[:max_matches]
+    # Cap individual matches, not just lines, so a run of hits on one long line
+    # cannot crowd out every other match in the transcript.
+    truncated = total_matches > max_matches
+    hits: List[Tuple[int, List[int]]] = []
+    remaining = max_matches
+    for i, starts in line_matches:
+        take = starts[:remaining]
+        if take:
+            hits.append((i, take))
+        remaining -= len(take)
+        if remaining <= 0:
+            break
+    hit_starts = dict(hits)
+    hit_indexes = sorted(hit_starts)
 
     # Merge overlapping context windows so a dense run of matches reads as one block.
     spans: List[List[int]] = []
@@ -1145,7 +1158,22 @@ def _grep(text: str, pattern: str, context_lines: int = 2, max_matches: int = 20
 
     rendered = ""
     for span_start, span_end in spans:
-        block = "\n".join(f"{i + 1}: {_clip_line(lines[i], hits.get(i))}" for i in range(span_start, span_end))
+        rendered_lines: List[str] = []
+        for i in range(span_start, span_end):
+            line = lines[i]
+            starts = hit_starts.get(i)
+            if not starts or len(line) <= _SEARCH_LINE_CHARS:
+                rendered_lines.append(f"{i + 1}: {_clip_line(line, starts[0] if starts else None)}")
+            else:
+                # A long line can hold several matches far apart; show one clipped
+                # window per distinct window so later hits are not silently lost.
+                seen_windows = set()
+                for start in starts:
+                    window = _clip_line(line, start)
+                    if window not in seen_windows:
+                        seen_windows.add(window)
+                        rendered_lines.append(f"{i + 1}: {window}")
+        block = "\n".join(rendered_lines)
         candidate = block if not rendered else f"{rendered}\n--\n{block}"
         if len(candidate) > _SEARCH_OUTPUT_CHARS:
             truncated = True

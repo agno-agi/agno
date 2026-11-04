@@ -3803,3 +3803,36 @@ def test_a_later_folds_before_is_what_was_sent_not_the_whole_session():
     assert len(records) >= 2
     later = records[-1]
     assert later.tokens_before < whole_session * 0.75  # was the whole session, folded turns included
+
+
+def test_grep_reports_every_match_on_a_long_line():
+    """A single long line holding two matches far apart must not drop the second one."""
+    from agno.compaction.compaction import _SEARCH_LINE_CHARS, _grep
+
+    term_a = "needle-alpha"
+    term_b = "needle-omega"
+    padding = "x" * (_SEARCH_LINE_CHARS + 100)
+    long_line = f"{term_a}{padding}{term_b}"
+    text = f"header\n{long_line}\nfooter"
+
+    result = _grep(text, "needle-alpha|needle-omega", context_lines=0)
+
+    assert term_a in result
+    assert term_b in result
+
+
+def test_grep_keeps_a_single_window_for_nearby_matches_on_a_long_line():
+    """Two close matches on one long line should share one clipped window, not duplicate it."""
+    from agno.compaction.compaction import _SEARCH_LINE_CHARS, _grep
+
+    term_a = "needle-alpha"
+    term_b = "needle-omega"
+    gap = "x" * 10
+    long_line = f"{term_a}{gap}{term_b}" + "y" * _SEARCH_LINE_CHARS
+    text = f"header\n{long_line}\nfooter"
+
+    result = _grep(text, "needle-alpha|needle-omega", context_lines=0)
+
+    assert result.count("\n2:") + result.startswith("2:") == 1
+    assert term_a in result
+    assert term_b in result
