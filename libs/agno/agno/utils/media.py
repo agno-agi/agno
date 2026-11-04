@@ -14,7 +14,12 @@ mimetypes.add_type("image/webp", ".webp")
 
 def get_image_type(data: bytes) -> Optional[str]:
     """Returns the image format from magic bytes in the file header."""
-    if len(data) < 12:
+    # Every probe below slices the buffer, which is safe on short input.
+    # A PNG signature is 8 bytes, a GIF header 6 and a JPEG SOI marker only
+    # 3, so a flat 12-byte minimum rejects valid short headers and pushes
+    # resolve_image_mime_type() onto its "image/jpeg" fallback. Only the
+    # WebP probe needs 12 bytes, and it is guarded by its own slice.
+    if not data:
         return None
     # PNG: 8-byte signature
     if data[0:8] == b"\x89\x50\x4e\x47\x0d\x0a\x1a\x0a":
