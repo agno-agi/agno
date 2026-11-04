@@ -40,6 +40,8 @@ _RUNTIME_OWNED = frozenset(
         "strict_persistence",
         "delay_between_retries",
         "exponential_backoff",
+        # Shown to a team leader on the host; the harness inside the sandbox never reads it.
+        "role",
     }
 )
 # Host paths, process settings and native option objects have no meaning inside the sandbox.
@@ -240,7 +242,26 @@ def _config(agent: "BaseExternalAgent", output_schema: Any) -> Dict[str, Any]:
         )
     if output_schema is not None:
         config["output_schema"] = output_schema
+    if agent._uses_native_hitl:
+        config["_native_hitl"] = True
     return config
+
+
+# Run options a sandboxed turn takes. A sandbox refuses any other option; a team or workflow that
+# hands its agents native options (session state, dependencies, knowledge filters) forwards only these.
+SANDBOX_RUN_OPTIONS = frozenset(
+    {
+        "run_id",
+        "session_id",
+        "user_id",
+        "yield_run_output",
+        "stream_events",
+        "background_tasks",
+        "media",
+        "output_schema",
+        "metadata",
+    }
+)
 
 
 def submission(agent: "BaseExternalAgent", input: Any, kwargs: Dict[str, Any]) -> Dict[str, Any]:
@@ -251,12 +272,12 @@ def submission(agent: "BaseExternalAgent", input: Any, kwargs: Dict[str, Any]) -
     if not isinstance(input, str):
         raise ValueError("Sandboxed agent input must be text")
     extra = {key: value for key, value in kwargs.items() if value is not None}
+    unknown = set(extra) - SANDBOX_RUN_OPTIONS
+    if unknown:
+        raise ValueError("Unsupported sandbox run options: " + ", ".join(sorted(unknown)))
     for key in ("run_id", "session_id", "user_id", "yield_run_output", "stream_events", "background_tasks"):
         extra.pop(key, None)
     media = _media_wire(extra.pop("media", None))
-    unknown = set(extra) - {"output_schema", "metadata"}
-    if unknown:
-        raise ValueError("Unsupported sandbox run options: " + ", ".join(sorted(unknown)))
     schema = extra.get("output_schema", agent.output_schema)
     agent._check_output_schema(schema)
     if schema is not None and not isinstance(schema, dict):
@@ -309,7 +330,12 @@ def _execution(agent: "BaseExternalAgent", input: Any, kwargs: Dict[str, Any]) -
     from agno.run.concurrency import get_worker_ownership
     from agno.sandbox.media import decode_media
 
+    # Metadata for the session the turn creates, set by the host for a team member; not a run option.
+    session_metadata = kwargs.pop("_session_metadata", None)
     options = submission(agent, input, kwargs)
+    config = _config(agent, options.get("output_schema"))
+    if session_metadata and (session_metadata.get("team_id") or session_metadata.get("workflow_id")):
+        config["_nested_native_hitl"] = True
     run_id = kwargs.get("run_id") or str(uuid4())
     owner = get_worker_ownership(run_id)
     return dict(
@@ -319,12 +345,13 @@ def _execution(agent: "BaseExternalAgent", input: Any, kwargs: Dict[str, Any]) -
         sdk=agent._sandbox_runtime,
         user_id=kwargs.get("user_id"),
         agent_name=agent.name,
-        config=_config(agent, options.get("output_schema")),
+        config=config,
         env=env(agent),
         queue_attempt=owner.attempt if owner is not None else None,
         execution_timeout=_sandbox(agent).execution_timeout,
         **decode_media(options.get("media", [])),
         **({"metadata": options["metadata"]} if "metadata" in options else {}),
+        **({"session_metadata": session_metadata} if session_metadata else {}),
     )
 
 

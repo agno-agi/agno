@@ -54,22 +54,14 @@ async def test_playbook_persistence_scope_and_decisions(db):
     assert isinstance(provider, WikiContextProvider)
     assert (await call(m.list_wiki, pid))[1] == 2
     original = await call(m.read_wiki, pid, "status.md")
-    with pytest.raises(PermissionError):
-        await call(
-            m.write_wiki,
-            product_id=pid,
-            path="status.md",
-            content="foreign",
-            expected_version=original.metadata.version,
-            user_id="bob",
-        )
+    # Wiki pages are shared, so a member who did not create the Product may write them.
     await call(
         m.write_wiki,
         product_id=pid,
         path="status.md",
         content="reviewed",
         expected_version=original.metadata.version,
-        user_id="alice",
+        user_id="bob",
     )
     with pytest.raises(VersionConflictError):
         await call(

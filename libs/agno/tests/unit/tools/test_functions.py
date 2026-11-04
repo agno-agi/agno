@@ -10,7 +10,7 @@ from agno.models.message import Message
 from agno.run.base import RunContext
 from agno.tools import Toolkit
 from agno.tools.decorator import tool
-from agno.tools.function import Function, FunctionCall, ToolResult
+from agno.tools.function import Function, FunctionCall, ToolResult, UserInputField
 
 
 def test_function_initialization():
@@ -4499,3 +4499,32 @@ def test_annotated_optional_schema_and_validation(from_callable, strict):
     assert function.entrypoint(query="", limit="") == (None, None)
     assert function.entrypoint(query=None, limit=None) == (None, None)
     assert function.entrypoint(query="SDK", limit=5) == ("SDK", 5)
+
+
+def test_user_input_field_to_dict_with_pep604_union_type():
+    """UserInputField.to_dict() must not crash on PEP 604 annotations such as `int | None`.
+
+    A tool parameter annotated with a PEP 604 union previously raised
+    AttributeError: 'types.UnionType' object has no attribute '__name__' while
+    serializing a paused run, which prevented the run from being saved and
+    resumed by ID. See https://github.com/agno-agi/agno/issues/11144
+    """
+    field = UserInputField(name="quantity", field_type=int | None)
+    assert field.to_dict() == {
+        "name": "quantity",
+        "field_type": "int | None",
+        "description": None,
+        "value": None,
+    }
+
+    # Plain classes and typing special forms keep working.
+    assert UserInputField(name="count", field_type=int).to_dict()["field_type"] == "int"
+    assert UserInputField(name="count", field_type=Optional[int]).to_dict()["field_type"] == "typing.Optional[int]"
+
+    # Round-trip: from_dict maps the names it knows and falls back to str for the
+    # rest, so a union does not survive it. Nothing coerces or validates against
+    # field_type -- the resumed tool call takes the value the caller supplied --
+    # so the fallback costs a descriptive label, not behaviour.
+    restored = UserInputField.from_dict(field.to_dict())
+    assert restored.name == "quantity"
+    assert restored.field_type is str

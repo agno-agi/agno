@@ -42,19 +42,22 @@ from agno.run.agent import (
     RunCancelledEvent,
     RunCompletedEvent,
     RunContentEvent,
+    RunContinuedEvent,
     RunErrorEvent,
     RunEvent,
     RunInput,
     RunOutput,
     RunOutputEvent,
+    RunPausedEvent,
     RunStartedEvent,
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
 )
-from agno.run.base import RunStatus
+from agno.run.base import METRICS_FINAL_STATUSES, RunStatus
 from agno.session.agent import AgentSession
 from agno.utils.events import error_type_of
 from agno.utils.log import log_exception, log_warning
+from agno.utils.serialize import json_serializer
 from agno.utils.string import parse_response_dict_str, parse_response_model_str
 
 if TYPE_CHECKING:
@@ -235,6 +238,9 @@ class BaseExternalAgent:
     description: Optional[str] = None
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
     markdown: bool = True
+    # Seconds a native permission request or question waits for the person's decision, and a continuation client waits.
+    # Queue/sandbox execution also uses this as its cumulative human-wait budget.
+    hitl_timeout: float = 900
     # Fail closed when native context is missing; sandbox restoration requires exact continuity.
     require_native_resume: bool = False
     # Propagate local persistence failures before acknowledging a runtime result.
@@ -263,6 +269,9 @@ class BaseExternalAgent:
     # content is the parsed model (or dict), and stays the answer text if it cannot be parsed.
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
 
+    # Shown to a team leader next to the name and description when this agent is a team member.
+    role: Optional[str] = None
+
     # Adapters that pass output_schema to their framework set this; others reject the option.
     _supports_output_schema: ClassVar[bool] = False
     # A second concurrent turn on a session is refused, so the durable queue always serializes these.
@@ -279,6 +288,11 @@ class BaseExternalAgent:
         if self.events_to_skip is None:
             self.events_to_skip = [RunEvent.run_content]
         self._check_output_schema(self.output_schema)
+        if self._uses_native_hitl:
+            from agno.agents._hitl import validate_native_hitl
+
+            validate_native_hitl(self)
+            self.store_events = True
         if self.repository is not None:
             from agno.sandbox.repository import Repository
 
@@ -288,6 +302,11 @@ class BaseExternalAgent:
                 raise ValueError("agent.repository requires sandbox=")
         if self.sandbox is not None:
             _sandbox_harness().validate(self)
+
+    @property
+    def _uses_native_hitl(self) -> bool:
+        """Whether native policy can ask for permission and a database can hold the paused run."""
+        return False
 
     @property
     def sdk(self) -> str:
@@ -743,20 +762,179 @@ class BaseExternalAgent:
     # Session persistence helpers
     # ---------------------------------------------------------------------------
 
-    def _create_session(self, session_id: str, user_id: Optional[str] = None) -> AgentSession:
-        """Create a new AgentSession."""
+    def _create_session(
+        self,
+        session_id: str,
+        user_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+    ) -> AgentSession:
+        """Create a new AgentSession. ``team_id`` or ``workflow_id`` is set when this agent runs as
+        that team's member or that workflow's step."""
         return AgentSession(
             session_id=session_id,
             agent_id=self.get_id(),
+            team_id=team_id,
+            workflow_id=workflow_id,
             user_id=user_id,
             session_data={},
             agent_data={"agent_id": self.id, "agent_name": self.name, "sdk": self.sdk},
-            metadata={},
+            # A member's or step's own session says which team or workflow it belongs to; agent
+            # session rows do not store those ids, so the link is kept in the metadata.
+            metadata=self._parent_metadata(team_id, workflow_id),
             runs=[],
             created_at=int(time()),
         )
 
-    def read_or_create_session(self, session_id: str, user_id: Optional[str] = None) -> AgentSession:
+    @staticmethod
+    def _pop_run_parent(kwargs: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+        """The (team id, workflow id) a team or workflow passed for this call, removed from ``kwargs``.
+
+        A team passes ``_team_id`` for a member call and a workflow ``_workflow_id`` for a step; neither is
+        forwarded to the adapter."""
+        return kwargs.pop("_team_id", None), kwargs.pop("_workflow_id", None)
+
+    @staticmethod
+    def _parent_id(team_id: Optional[str], workflow_id: Optional[str]) -> Optional[str]:
+        """The id of the team or workflow this call runs for, or None for a standalone run."""
+        return team_id if team_id is not None else workflow_id
+
+    @staticmethod
+    def _parent_metadata(team_id: Optional[str], workflow_id: Optional[str]) -> Dict[str, str]:
+        """Session metadata that links this agent's own session back to its team or workflow."""
+        return {key: value for key, value in (("team_id", team_id), ("workflow_id", workflow_id)) if value is not None}
+
+    def _state_session_id(self, session_id: str, parent_id: Optional[str] = None) -> str:
+        """The session this agent keeps its own state in for a run on ``session_id``.
+
+        A team runs every member, and a workflow every step, under its own session id, and that
+        row is the team's or the workflow's. Run for one of them, this agent keeps its native
+        conversation (the Claude session, the Codex thread) in a session of its own, one per parent
+        session and agent, so two harness agents of one team or workflow never share a conversation
+        and the parent's session row is never overwritten. The parent stores the agent's runs in its
+        own session. ``parent_id`` is the team or workflow id passed on each call, so the same agent
+        instance still saves its standalone runs normally.
+        """
+        if parent_id is None:
+            return session_id
+        return f"{session_id}:{self.get_id()}"
+
+    def _sandboxed_member_kwargs(
+        self,
+        kwargs: Dict[str, Any],
+        team_session_id: str,
+        member_run_id: str,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """A sandboxed team member's or workflow step's run options: the ones a sandbox takes, on the
+        agent's own session and run. Pass ``team_id`` for a member or ``workflow_id`` for a step.
+
+        The member's sandbox session, which holds its computer binding, checkpoints and native
+        conversation, is the same per-member session a member without a sandbox keeps its
+        conversation in, so the team's session is never bound to one member's computer. The
+        sandbox also records the turn as a run of that session, under its own id: a run never
+        changes sessions once stored, and the team stores the member's result in the team
+        session under the id it assigned, so the two records cannot share one row.
+        """
+        from agno.sandbox._harness import SANDBOX_RUN_OPTIONS
+
+        # A team or workflow hands its agents native run options; the sandbox refuses the ones it does not take.
+        forwarded = {key: value for key, value in kwargs.items() if key in SANDBOX_RUN_OPTIONS}
+        if forwarded.get("metadata") is not None:
+            # The sandbox takes metadata as JSON. Values such as datetimes become text, as Agno stores them
+            # elsewhere; a value JSON cannot hold fails the member's run instead of the team's tool call.
+            forwarded["metadata"] = json.loads(json.dumps(forwarded["metadata"], default=json_serializer))
+        forwarded["session_id"] = self._state_session_id(team_session_id, self._parent_id(team_id, workflow_id))
+        # The sandbox creates this session; this links it back to its team or workflow, as for other agents.
+        forwarded["_session_metadata"] = self._parent_metadata(team_id, workflow_id)
+        forwarded["run_id"] = f"{member_run_id}.sandbox"
+        return forwarded
+
+    def _as_team_member_output(self, item: Any, team_session_id: str, member_run_id: str, sandbox_run_id: str) -> Any:
+        """Report a sandboxed member's run and events under the team's session and the run id it assigned.
+
+        The run keeps a pointer to the sandbox's own run in metadata.sandbox.run_id.
+        """
+        # Runs and run events carry session_id and run_id; anything else in a stream is passed through untouched.
+        if isinstance(item, (str, bytes)):
+            return item
+        # The sandbox keeps its own objects after yielding them (it records its events for its own run),
+        # so the team gets a copy under the team's ids and the sandbox's objects keep the sandbox's.
+        item = copy(item)
+        if getattr(item, "session_id", None) is not None:
+            item.session_id = team_session_id
+        if getattr(item, "run_id", None) == sandbox_run_id:
+            item.run_id = member_run_id
+        if isinstance(item, RunOutput):
+            sandbox = dict((item.metadata or {}).get("sandbox") or {})
+            sandbox["run_id"] = sandbox_run_id
+            item.metadata = {**(item.metadata or {}), "sandbox": sandbox}
+        return item
+
+    @staticmethod
+    async def _araise_if_member_cancelled(member_run_id: str) -> None:
+        """Raise when the team cancelled this member's run before it was linked to the sandbox's run.
+
+        Cancelling the member run cascades only to runs already linked to it, so a cancel that arrived
+        before the link would otherwise never reach the sandbox."""
+        from agno.run.cancel import ais_cancelled
+
+        if await ais_cancelled(member_run_id):
+            raise RunCancelledException("Run cancelled")
+
+    def _sandboxed_member_failure(
+        self, error: Exception, team_session_id: str, member_run_id: str, input: Any, kwargs: Dict[str, Any]
+    ) -> RunOutput:
+        """The member's run, recorded as cancelled or failed, for a sandboxed turn that did not complete.
+
+        The team stores it like any member run, and the leader reads its content instead of an exception."""
+        cancelled = isinstance(error, RunCancelledException)
+        if not cancelled:
+            log_warning(f"Sandboxed agent '{self.get_id()}' failed as a team member or workflow step: {error}")
+        run = self._build_run_output(
+            member_run_id,
+            team_session_id,
+            kwargs.get("user_id"),
+            input,
+            "Run cancelled" if cancelled else str(error),
+            RunStatus.cancelled if cancelled else RunStatus.error,
+            media=kwargs.get("media"),
+        )
+        if not cancelled:
+            run.metadata = self._failure_metadata(error)
+        return run
+
+    def _terminal_event_for(self, run: RunOutput) -> RunOutputEvent:
+        """The closing stream event for a member run that was cancelled or failed."""
+        if run.status == RunStatus.cancelled:
+            return RunCancelledEvent(
+                run_id=run.run_id, session_id=run.session_id, agent_id=self.get_id(), reason="Run cancelled"
+            )
+        return RunErrorEvent(
+            run_id=run.run_id,
+            session_id=run.session_id,
+            agent_id=self.get_id(),
+            content=str(run.content),
+            error_type=(run.metadata or {}).get("error_type"),
+        )
+
+    async def _apersist_member_state(self, session: AgentSession) -> None:
+        """Save a team member's own session, which holds its native conversation ids, without runs."""
+        try:
+            await self.aupsert_session(session)
+        except Exception as error:
+            log_warning(f"Failed to persist team member state for {self.sdk} agent '{self.id}': {error}")
+            if self.strict_persistence:
+                raise
+
+    def read_or_create_session(
+        self,
+        session_id: str,
+        user_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+    ) -> AgentSession:
         """Read a session from the DB, or create a new one."""
         session = None
         if self.db is not None and isinstance(self.db, BaseDb):
@@ -766,11 +944,17 @@ class BaseExternalAgent:
             session = AgentSession.from_dict(session)
 
         if session is None or not isinstance(session, AgentSession):
-            session = self._create_session(session_id, user_id)
+            session = self._create_session(session_id, user_id, team_id, workflow_id)
 
         return session
 
-    async def aread_or_create_session(self, session_id: str, user_id: Optional[str] = None) -> AgentSession:
+    async def aread_or_create_session(
+        self,
+        session_id: str,
+        user_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+    ) -> AgentSession:
         """Async read a session from the DB, or create a new one."""
         session = None
         if self.db is not None:
@@ -783,7 +967,7 @@ class BaseExternalAgent:
             session = AgentSession.from_dict(session)
 
         if session is None or not isinstance(session, AgentSession):
-            session = self._create_session(session_id, user_id)
+            session = self._create_session(session_id, user_id, team_id, workflow_id)
 
         return session
 
@@ -816,7 +1000,7 @@ class BaseExternalAgent:
         from agno.run.concurrency import get_worker_ownership
 
         session.upsert_run(run=run_output)
-        self._update_session_metrics(session, run_output)
+        self._update_session_metrics(session)
         worker_owned = get_worker_ownership(run_output.run_id or "") is not None
         try:
             if self.db is not None:
@@ -943,7 +1127,7 @@ class BaseExternalAgent:
         return registered
 
     async def _acancel_unowned_row(self, run_id: str) -> None:
-        """Mark this agent's pending or running row cancelled when this process holds no handle for it.
+        """Cancel an unfinished row, including an orphaned native permission wait, without a live handle.
 
         A row left pending or running by a process that stopped mid-run keeps its session busy,
         and nothing else finishes it, so cancelling it is how the session is freed. The
@@ -968,13 +1152,24 @@ class BaseExternalAgent:
                 row = RunOutput.from_dict(row)
             if not isinstance(row, RunOutput) or row.agent_id != self.get_id() or row.session_id is None:
                 return
-            if getattr(row.status, "value", row.status) not in (RunStatus.pending.value, RunStatus.running.value):
+            from agno.agents._hitl import KEY as native_key
+
+            native = (row.metadata or {}).get(native_key)
+            statuses = [RunStatus.pending.value, RunStatus.running.value]
+            if native:
+                statuses.extend([RunStatus.paused.value, RunStatus.cancelled.value])
+            if getattr(row.status, "value", row.status) not in statuses:
                 return
             row.status = RunStatus.cancelled
-            extra_fields = None
+            extra_fields: Dict[str, Any] = {}
             if not row.content:
                 row.content = "Run cancelled"
-                extra_fields = {"content": row.content}
+                extra_fields["content"] = row.content
+            if native:
+                # The waiting native execution reads the cancelled run and stops; no request stays pending.
+                row.requirements = []
+                row.metadata = {**(row.metadata or {}), native_key: {**native, "pending": []}}
+                extra_fields.update(requirements=[], metadata=row.metadata)
             await apersist_run_transition(
                 self, "agent", row.session_id, row, user_id=row.user_id, extra_fields=extra_fields
             )
@@ -1128,7 +1323,10 @@ class BaseExternalAgent:
         """Recorded on a run that ends in error. The durable job queue reads ``retryable`` so a
         failure that would repeat (a limit, authentication, billing, a bad request) fails the job
         at once instead of being re-driven for every remaining queue attempt."""
-        return {"retryable": self._is_retryable_error(error), "error_type": error_type_of(error)}
+        return {
+            "retryable": self._is_retryable_error(error),
+            "error_type": error_type_of(error),
+        }
 
     def _should_retry(self, error: Exception, attempt: int, num_attempts: int) -> bool:
         if attempt >= num_attempts - 1:
@@ -1265,7 +1463,11 @@ class BaseExternalAgent:
         self._assert_session_free(await self.aread_or_create_session(session_id, user_id), session_id, run_id)
         run = await self._aprepare_pending_run(run_id, session_id, user_id, input)
         await aregister_run(run_id)
-        transport = _BackgroundStream(run, yield_run_output=yield_run_output) if stream else None
+        transport = (
+            _BackgroundStream(run, yield_run_output=yield_run_output, end_at_pause=self._uses_native_hitl)
+            if stream
+            else None
+        )
         if transport is not None:
             await transport.register()
 
@@ -1442,7 +1644,11 @@ class BaseExternalAgent:
         """The session's unfinished run (pending or running), other than ``exclude_run_id``."""
         for run in getattr(session, "runs", None) or []:
             status = getattr(run.status, "value", run.status)
-            if run.run_id != exclude_run_id and status in (RunStatus.pending.value, RunStatus.running.value):
+            if run.run_id != exclude_run_id and status in (
+                RunStatus.pending.value,
+                RunStatus.running.value,
+                RunStatus.paused.value,
+            ):
                 return run
         return None
 
@@ -1468,7 +1674,7 @@ class BaseExternalAgent:
                 ahead = False
                 continue
             status = getattr(run.status, "value", run.status)
-            if status == RunStatus.running.value:
+            if status in (RunStatus.running.value, RunStatus.paused.value):
                 return run
             elected_ahead = queue_ordered and getattr(run, "queue_attempt", None) is not None
             if ahead and status == RunStatus.pending.value and not elected_ahead:
@@ -1634,15 +1840,15 @@ class BaseExternalAgent:
         return metrics
 
     @staticmethod
-    def _update_session_metrics(session: AgentSession, run_output: RunOutput) -> None:
-        """Add a completed run's metrics to the session totals AgentOS reads from session_data."""
-        if run_output.metrics is None or run_output.status != RunStatus.completed:
-            return
+    def _update_session_metrics(session: AgentSession) -> None:
+        """Add the completed, failed and cancelled runs of the session to the totals AgentOS reads from session_data."""
+        session_metrics = SessionMetrics()
+        for run in session.runs or []:
+            # A failed or cancelled run keeps the tokens it used on its row, so the totals keep them too
+            if run.metrics is not None and run.status in METRICS_FINAL_STATUSES:
+                session_metrics.accumulate_from_run(run.metrics)
         if session.session_data is None:
             session.session_data = {}
-        stored = session.session_data.get("session_metrics")
-        session_metrics = SessionMetrics.from_dict(stored) if isinstance(stored, dict) else SessionMetrics()
-        session_metrics.accumulate_from_run(run_output.metrics)
         session.session_data["session_metrics"] = session_metrics.to_dict()
 
     def _finish_run_output(
@@ -1732,6 +1938,34 @@ class BaseExternalAgent:
                 raise ValueError("Native conversation identity is missing; restore its checkpoint before continuing")
 
     @staticmethod
+    def _input_text(input: Any) -> Any:
+        """Text for input a team hands over as a Message or a list of them.
+
+        A team leader delegates a task string, but with determine_input_for_members=False it
+        forwards the team's own input, which can be a Message or a list of messages. The
+        harnesses take text, so each message becomes its role and content. Anything else,
+        including a plain string or a list of content blocks, is returned unchanged.
+        """
+        if isinstance(input, Message):
+            return input.get_content_string()
+        if not isinstance(input, list) or not input:
+            return input
+        lines: List[str] = []
+        for item in input:
+            role: str
+            content: str
+            if isinstance(item, Message):
+                role, content = item.role, item.get_content_string() if item.content else ""
+            elif isinstance(item, dict) and isinstance(item.get("role"), str):
+                raw = item.get("content")
+                role, content = item["role"], raw if isinstance(raw, str) else ("" if raw is None else str(raw))
+            else:
+                return input
+            if content:
+                lines.append(f"{role}: {content}")
+        return "\n".join(lines)
+
+    @staticmethod
     def _build_prompt(input: Any, history: Optional[List[Dict[str, Any]]], resumed: bool) -> str:
         """Plain prompt when the framework's own session carries the context; otherwise
         prepend the persisted chat history so a fresh session does not lose it.
@@ -1770,18 +2004,53 @@ class BaseExternalAgent:
     # ---------------------------------------------------------------------------
 
     async def _arun_non_stream(self, input: Any, **kwargs: Any) -> RunOutput:
+        if self._uses_native_hitl:
+            events = self._arun_stream(input, **{**kwargs, "yield_run_output": True, "_native_non_stream": True})
+            try:
+                async for item in events:
+                    if isinstance(item, RunOutput):
+                        return item
+            finally:
+                await events.aclose()  # type: ignore[attr-defined]
+            raise RuntimeError("Paused native run produced no result")
+        team_id, workflow_id = self._pop_run_parent(kwargs)
+        parent_id = self._parent_id(team_id, workflow_id)
         if self.sandbox is not None:
-            return await _sandbox_harness().arun(self, input, **kwargs)
+            if parent_id is None:
+                return await _sandbox_harness().arun(self, input, **kwargs)
+            from agno.run.cancel import acleanup_member_runs, aregister_member_run
+
+            team_session_id = kwargs.get("session_id") or str(uuid4())
+            member_run_id = kwargs.get("run_id") or str(uuid4())
+            text = self._input_text(input)
+            try:
+                forwarded = self._sandboxed_member_kwargs(kwargs, team_session_id, member_run_id, team_id, workflow_id)
+                # Cancelling the member run the team registered reaches the sandbox's run through this link.
+                await aregister_member_run(member_run_id, forwarded["run_id"])
+                try:
+                    await self._araise_if_member_cancelled(member_run_id)
+                    run = await _sandbox_harness().arun(self, text, **forwarded)
+                finally:
+                    await acleanup_member_runs(member_run_id)
+            except Exception as error:
+                return self._sandboxed_member_failure(error, team_session_id, member_run_id, text, kwargs)
+            return self._as_team_member_output(run, team_session_id, member_run_id, forwarded["run_id"])
         run_id = kwargs.pop("run_id", None) or str(uuid4())
         session_id = kwargs.get("session_id") or str(uuid4())
         kwargs["session_id"] = session_id
         user_id = kwargs.get("user_id")
         continuation: Optional[ExternalContinuation] = kwargs.get("continuation")
+        # Convert before claiming the session, so the stored input is the text the agent received
+        # and nothing between the claim and the try below can leave the session claimed.
+        input = self._input_text(input)
         record_input = input if continuation is None else continuation.record_input
         output_schema = self._resolve_output_schema(kwargs)
         run_state: Dict[str, Any] = {}
-        session = await self.aread_or_create_session(session_id, user_id) if self.db else None
-        self._claim_session(session, session_id, run_id)
+        state_session_id = self._state_session_id(session_id, parent_id)
+        session = (
+            await self.aread_or_create_session(state_session_id, user_id, team_id, workflow_id) if self.db else None
+        )
+        self._claim_session(session, state_session_id, run_id)
         try:
             history = (
                 self._get_history_from_session(session, exclude_run_id=run_id) if session and not continuation else None
@@ -1860,20 +2129,72 @@ class BaseExternalAgent:
             if attempts_made > 1:
                 run_output.metadata = {**(run_output.metadata or {}), "attempts": attempts_made}
             self._finish_run_output(run_output, run_state, continuation)
-            if session is not None:
+            if session is not None and parent_id is not None:
+                await self._apersist_member_state(session)
+            elif session is not None:
                 await self._apersist_run_in_session(session, run_output)
             return run_output
         finally:
-            self._release_session(session_id, run_id)
+            self._release_session(state_session_id, run_id)
+
+    async def _native_non_stream_events(self, input: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        """Keep the adapter's nonstreaming result contract while multiplexing permission events."""
+        result = await self._arun_adapter(input, **kwargs)
+        if isinstance(result, ExternalRunResult):
+            for tool in result.tools or []:
+                yield ToolCallCompletedEvent(tool=tool)
+            for warning in result.warnings or []:
+                yield ExternalRunWarningEvent(warning=warning)
+            if result.metrics is not None:
+                yield ExternalRunMetricsEvent(metrics=result.metrics)
+            if result.structured_output is not None:
+                yield ExternalRunStructuredOutputEvent(structured_output=result.structured_output)
+            yield RunContentEvent(content=result.content)
+        else:
+            yield RunContentEvent(content=result)
 
     async def _arun_stream(self, input: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        native_non_stream = kwargs.pop("_native_non_stream", False)
+        team_id, workflow_id = self._pop_run_parent(kwargs)
+        parent_id = self._parent_id(team_id, workflow_id)
         if self.sandbox is not None:
-            events = _sandbox_harness().astream(self, input, **kwargs)
+            if parent_id is None:
+                events = _sandbox_harness().astream(self, input, **kwargs)
+                try:
+                    async for item in events:
+                        yield item
+                finally:
+                    await events.aclose()
+                return
+            from agno.run.cancel import acleanup_member_runs, aregister_member_run
+
+            team_session_id = kwargs.get("session_id") or str(uuid4())
+            member_run_id = kwargs.get("run_id") or str(uuid4())
+            text = self._input_text(input)
+            failure: Optional[Exception] = None
             try:
-                async for item in events:
-                    yield item
-            finally:
-                await events.aclose()
+                forwarded = self._sandboxed_member_kwargs(kwargs, team_session_id, member_run_id, team_id, workflow_id)
+                await aregister_member_run(member_run_id, forwarded["run_id"])
+            except Exception as error:
+                failure = error
+            if failure is None:
+                try:
+                    await self._araise_if_member_cancelled(member_run_id)
+                    events = _sandbox_harness().astream(self, text, **forwarded)
+                    try:
+                        async for item in events:
+                            yield self._as_team_member_output(item, team_session_id, member_run_id, forwarded["run_id"])
+                    finally:
+                        await events.aclose()
+                except Exception as error:
+                    failure = error
+                finally:
+                    await acleanup_member_runs(member_run_id)
+            if failure is not None:
+                failed = self._sandboxed_member_failure(failure, team_session_id, member_run_id, text, kwargs)
+                yield self._terminal_event_for(failed)
+                if kwargs.get("yield_run_output", False):
+                    yield failed
             return
         run_id = kwargs.pop("run_id", None) or str(uuid4())
         session_id = kwargs.get("session_id") or str(uuid4())
@@ -1881,15 +2202,20 @@ class BaseExternalAgent:
         user_id = kwargs.get("user_id")
         yield_run_output = kwargs.pop("yield_run_output", False)
         continuation: Optional[ExternalContinuation] = kwargs.get("continuation")
+        # Convert before claiming the session, as in the non-streaming path.
+        input = self._input_text(input)
         output_schema = self._resolve_output_schema(kwargs)
         run_state: Dict[str, Any] = {}
-        session = await self.aread_or_create_session(session_id, user_id) if self.db else None
-        self._claim_session(session, session_id, run_id)
+        state_session_id = self._state_session_id(session_id, parent_id)
+        session = (
+            await self.aread_or_create_session(state_session_id, user_id, team_id, workflow_id) if self.db else None
+        )
+        self._claim_session(session, state_session_id, run_id)
         try:
             history = (
                 self._get_history_from_session(session, exclude_run_id=run_id) if session and not continuation else None
             )
-            stored_events: Optional[List[Any]] = [] if self.store_events else None
+            stored_events: Optional[List[Any]] = [] if self.store_events or self._uses_native_hitl else None
             skipped = {event.value for event in self.events_to_skip or []}
 
             def keep(event: Any) -> Any:
@@ -1906,6 +2232,13 @@ class BaseExternalAgent:
             accumulated_content = ""
             warnings: List[Dict[str, Any]] = []
             tools: Dict[str, ToolExecution] = {}
+            bridge = None
+            if self._uses_native_hitl:
+                from agno.agents._hitl import HITLBridge, validate_native_hitl
+
+                validate_native_hitl(self)
+                allow_requests = parent_id is None and not getattr(self, "_nested_native_hitl", False)
+                bridge = HITLBridge(self, run_id, session_id, user_id, allow_requests=allow_requests)
             status = RunStatus.completed
             run_error: Optional[Exception] = None
             attempts_made = 0
@@ -1923,34 +2256,82 @@ class BaseExternalAgent:
                         adapter_metrics = None
                         structured_output = None
                         try:
-                            async for event in self._arun_adapter_stream(
+                            adapter = self._arun_adapter_stream
+                            if native_non_stream and type(self)._arun_adapter is not BaseExternalAgent._arun_adapter:
+                                adapter = self._native_non_stream_events
+                            source = adapter(
                                 input, history=history, run_id=run_id, session=session, run_state=run_state, **kwargs
-                            ):
-                                if isinstance(event, ExternalRunMetricsEvent):
-                                    adapter_metrics = event.metrics
-                                    continue
-                                if isinstance(event, ExternalRunStructuredOutputEvent):
-                                    structured_output = event.structured_output
-                                    continue
-                                if isinstance(event, ExternalRunWarningEvent) and event.warning is not None:
-                                    warnings.append(event.warning)
-                                if isinstance(event, RunContentEvent):
-                                    if event.content:
-                                        timer.set_time_to_first_token()
-                                    accumulated_content += event.content or ""
-                                elif isinstance(event, (ToolCallStartedEvent, ToolCallCompletedEvent)) and event.tool:
-                                    key = event.tool.tool_call_id or str(uuid4())
-                                    if key not in tools:
-                                        tools[key] = copy(event.tool)
-                                    elif isinstance(event, ToolCallCompletedEvent):
-                                        tools[key].result = event.tool.result
-                                        tools[key].tool_call_error = event.tool.tool_call_error
-                                yield keep(event)
+                            )
+                            if bridge is not None:
+                                if bridge.closed:
+                                    bridge = HITLBridge(
+                                        self, run_id, session_id, user_id, allow_requests=allow_requests
+                                    )
+                                source = bridge.events(source)
+                            try:
+                                async for event in source:
+                                    if isinstance(event, ExternalRunMetricsEvent):
+                                        adapter_metrics = event.metrics
+                                        continue
+                                    if isinstance(event, ExternalRunStructuredOutputEvent):
+                                        structured_output = event.structured_output
+                                        continue
+                                    if isinstance(event, ExternalRunWarningEvent) and event.warning is not None:
+                                        warnings.append(event.warning)
+                                    if isinstance(event, RunContentEvent):
+                                        if event.content:
+                                            timer.set_time_to_first_token()
+                                        accumulated_content += event.content or ""
+                                    elif (
+                                        isinstance(event, (ToolCallStartedEvent, ToolCallCompletedEvent)) and event.tool
+                                    ):
+                                        key = event.tool.tool_call_id or str(uuid4())
+                                        if key not in tools:
+                                            tools[key] = copy(event.tool)
+                                        elif isinstance(event, ToolCallCompletedEvent):
+                                            tools[key].result = event.tool.result
+                                            tools[key].tool_call_error = event.tool.tool_call_error
+                                    if isinstance(event, (RunPausedEvent, RunContinuedEvent)) and bridge is not None:
+                                        if isinstance(event, RunPausedEvent):
+                                            for tool in event.tools or []:
+                                                tools[tool.tool_call_id or ""] = tool
+                                        from agno.agents._hitl import KEY as native_key
+
+                                        # The paused run is the shared state: its requirements are what the
+                                        # chat confirms, and its metadata is how the continuation finds them.
+                                        snapshot = self._build_run_output(
+                                            run_id,
+                                            session_id,
+                                            user_id,
+                                            input,
+                                            accumulated_content,
+                                            RunStatus.paused if bridge.pending else RunStatus.running,
+                                            list(tools.values()) or None,
+                                        )
+                                        snapshot.requirements = bridge.pending_requirements()
+                                        snapshot.metadata = {native_key: bridge.state()}
+                                        if isinstance(event, RunPausedEvent):
+                                            event.content = accumulated_content
+                                            event.tools = list(tools.values())
+                                        keep(event)
+                                        snapshot.events = list(stored_events or [])
+                                        if session is not None:
+                                            await self._apersist_run_in_session(session, snapshot, strict=True)
+                                        yield event
+                                    else:
+                                        yield keep(event)
+                            finally:
+                                if bridge is not None:
+                                    await source.aclose()  # type: ignore[attr-defined]
                             break
                         except RunCancelledException:
                             raise
                         except Exception as error:
-                            if not self._should_retry(error, attempt, num_attempts):
+                            if native_non_stream:
+                                self._collect_attempt_tools(run_state, tools)
+                            if (bridge is not None and bridge.requests) or not self._should_retry(
+                                error, attempt, num_attempts
+                            ):
                                 raise
                             # The failed attempt's events already reached the consumer. Say so before
                             # the retry streams a fresh answer, and keep it in the stored run's warnings.
@@ -1972,7 +2353,11 @@ class BaseExternalAgent:
                 str(run_error) if run_error else accumulated_content,
                 status,
                 list(tools.values()) or None,
-                metrics=self._finish_metrics(timer, adapter_metrics) if status == RunStatus.completed else None,
+                metrics=(
+                    self._finish_metrics(timer, adapter_metrics)
+                    if status == RunStatus.completed or adapter_metrics is not None
+                    else None
+                ),
                 media=kwargs.get("media"),
             )
             if warnings:
@@ -1981,6 +2366,12 @@ class BaseExternalAgent:
                 run.metadata = {**(run.metadata or {}), **self._failure_metadata(run_error)}
             if attempts_made > 1:
                 run.metadata = {**(run.metadata or {}), "attempts": attempts_made}
+            if bridge is not None and bridge.requests:
+                from agno.agents._hitl import KEY as native_key
+
+                run.metadata = {**(run.metadata or {}), native_key: {**bridge.state(), "pending": []}}
+                if run_error is not None:
+                    run.metadata["retryable"] = False
             self._apply_output_schema(run, output_schema, structured_output)
             self._finish_run_output(run, run_state, continuation)
             fields: Dict[str, Any] = dict(
@@ -2004,10 +2395,17 @@ class BaseExternalAgent:
             keep(terminal)
             if stored_events is not None:
                 run.events = list(stored_events)
-            if session is not None:
-                await self._apersist_run_in_session(session, run)
+            if session is not None and parent_id is not None:
+                await self._apersist_member_state(session)
+            elif session is not None:
+                await self._apersist_run_in_session(session, run, strict=bridge is not None)
             yield terminal
-            if stored_events is not None and session is not None and getattr(terminal, "event_index", None) is not None:
+            if (
+                stored_events is not None
+                and session is not None
+                and parent_id is None
+                and getattr(terminal, "event_index", None) is not None
+            ):
                 # The consumer stamped the terminal event with its stream index while we were suspended
                 # on the yield (the event stream writes it on the object). Write the row again so the
                 # stored event carries that index and a replay from the database stays in order.
@@ -2015,7 +2413,7 @@ class BaseExternalAgent:
             if yield_run_output:
                 yield run
         finally:
-            self._release_session(session_id, run_id)
+            self._release_session(state_session_id, run_id)
 
     def _run_stream(self, input: Any, **kwargs: Any) -> Iterator[Union[RunOutputEvent, RunOutput]]:
         """Sync streaming wrapper. Runs the async stream on a background thread."""

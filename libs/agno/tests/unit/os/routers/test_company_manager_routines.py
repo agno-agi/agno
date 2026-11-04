@@ -1,5 +1,6 @@
 """Framework-owned Routine executors use normal routes and caller authority."""
 
+import asyncio
 import json
 import time
 from contextlib import asynccontextmanager
@@ -13,11 +14,11 @@ from httpx import ASGITransport, AsyncClient
 from agno.agent import Agent
 from agno.company import Product, Routine
 from agno.company.bootstrap import arehydrate_product, rehydrate_product
-from agno.company.execution import _executor
-from agno.company.manager import CompanyManager
+from agno.company.execution import _call, _executor
+from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.company.routines import _routine_executor_endpoint, _routine_failure, _RoutineAuthorization
 from agno.company.scheduler import CompanyScheduleExecutor
-from agno.db.sqlite import SqliteDb
+from agno.db.sqlite import AsyncSqliteDb, SqliteDb
 from agno.models.base import Model
 from agno.models.message import MessageMetrics
 from agno.models.response import ModelResponse
@@ -261,10 +262,11 @@ def test_product_manager_names_remain_deprecated_aliases(tmp_path):
 
 
 @pytest.mark.parametrize("mode", ["sync", "async", "lifespan", "yaml"])
-def test_declarations_bootstrap_and_restart(tmp_path, mode):
+@pytest.mark.parametrize("enabled", [True, False])
+def test_declarations_bootstrap_and_restart(tmp_path, mode, enabled):
     kind, cid = "agent", COMPANY_MANAGER_ID
     db = SqliteDb(db_file=str(tmp_path / "bootstrap.db"))
-    product = Product(id="docs", name="Docs", user_id="alice", routines=[declaration(kind, cid)])
+    product = Product(id="docs", name="Docs", user_id="alice", routines=[declaration(kind, cid, enabled=enabled)])
     os = make_os(db, manager=True, products=[product] if mode == "lifespan" else [])
     if mode == "sync":
         rehydrate_product(db, product, os.registry, agent_os=os)
@@ -293,10 +295,11 @@ def test_declarations_bootstrap_and_restart(tmp_path, mode):
     assert row["endpoint"] == f"/{kind}s/{cid}/runs"
     assert row["managed_by"] == "company" and row["target_id"] == cid
     assert AUTHORIZATION_KEY not in row["payload"]
-    db.update_schedule(row["id"], enabled=False, payload={**row["payload"], "message": "Human edit"})
+    assert row["enabled"] is enabled
+    db.update_schedule(row["id"], enabled=not enabled, payload={**row["payload"], "message": "Human edit"})
     rehydrate_product(db, product, os.registry, agent_os=os)
     saved = db.get_schedule(row["id"])
-    assert not saved["enabled"] and saved["payload"]["message"] == "Human edit"
+    assert saved["enabled"] is not enabled and saved["payload"]["message"] == "Human edit"
     db.close()
 
 
@@ -353,9 +356,9 @@ async def test_setup_captures_authority_and_retry_retains_it(tmp_path):
 def review_steps(product, project, source, path):
     return [
         ("list_company_tasks", {"product_id": product["id"]}),
-        ("read_company_source", {"source_id": source["id"], "path": path.name}),
+        ("read_product_source", {"source_id": source["id"], "path": path.name}),
         (
-            "intake_company_source",
+            "intake_product_source",
             lambda results: {
                 "source_id": source["id"],
                 "project_id": project["id"],
@@ -368,7 +371,7 @@ def review_steps(product, project, source, path):
         ),
         ("read_company_wiki", {"product_id": product["id"], "path": "status.md"}),
         (
-            "update_company_status",
+            "update_product_status",
             lambda results: {
                 "product_id": product["id"],
                 "content": "Reviewed Sources; API guide proposed for human review.",
@@ -386,6 +389,7 @@ async def test_scheduled_review_persists_evidence_and_caller_authority(tmp_path,
         manager = CompanyManager(s.db)
         product = manager.create(name="Docs", user_id="alice")
         project = manager.create_project(product_id=product["id"], name="Guides", user_id="alice")
+        manager.transition_project(project_id=project["id"], target="active", reason="Approved")
         path = tmp_path / "source.md"
         path.write_text("The released API needs a guide.")
         source = manager.create_source(product_id=product["id"], type="markdown", reference=str(path))
@@ -450,7 +454,7 @@ async def test_routine_status_write_never_gains_permission(tmp_path, mode, ident
         product = manager.create(name="Docs", user_id="alice")
         before = manager.read_wiki(product["id"], "status.md")
         s.os.company_manager.model = ScriptedModel(
-            [("update_company_status", {"product_id": product["id"], "content": "Unauthorized", "expected_version": 1})]
+            [("update_product_status", {"product_id": product["id"], "content": "Unauthorized", "expected_version": 1})]
         )
         row = await create_routine(s, product["id"])
         result = await s.executor.execute(s.db.get_schedule(row["id"]), s.db, release_schedule=False)
@@ -464,6 +468,7 @@ async def test_routine_mutation_fence_holds_even_for_admin(tmp_path, mode):
         manager = CompanyManager(s.db)
         product = manager.create(name="Docs", user_id="alice")
         project = manager.create_project(product_id=product["id"], name="Guides", user_id="alice")
+        project = manager.transition_project(project_id=project["id"], target="active", reason="Approved")
         task = manager.create_task(product_id=product["id"], project_id=project["id"], title="Guide", user_id="alice")
         observed = []
 
@@ -514,9 +519,9 @@ async def test_other_product_source_and_status_are_refused(tmp_path, owner):
         before = manager.read_wiki(other["id"], "status.md")
         s.os.company_manager.model = ScriptedModel(
             [
-                ("read_company_source", {"source_id": source["id"], "path": path.name}),
+                ("read_product_source", {"source_id": source["id"], "path": path.name}),
                 (
-                    "update_company_status",
+                    "update_product_status",
                     {"product_id": other["id"], "content": "Wrong Product", "expected_version": 1},
                 ),
             ]
@@ -674,7 +679,7 @@ async def test_status_conflict_is_failed_without_overwriting_human_edit(tmp_path
             product_id=product["id"], path="status.md", content="Human edit", expected_version=1, user_id="alice"
         )
         s.os.company_manager.model = ScriptedModel(
-            [("update_company_status", {"product_id": product["id"], "content": "Stale review", "expected_version": 1})]
+            [("update_product_status", {"product_id": product["id"], "content": "Stale review", "expected_version": 1})]
         )
         row = await create_routine(s, product["id"])
         result = await s.executor.execute(s.db.get_schedule(row["id"]), s.db, release_schedule=False)
@@ -693,10 +698,10 @@ async def test_recovered_status_conflict_succeeds(tmp_path, mode):
         )
         s.os.company_manager.model = ScriptedModel(
             [
-                ("update_company_status", {"product_id": product["id"], "content": "Stale", "expected_version": 1}),
+                ("update_product_status", {"product_id": product["id"], "content": "Stale", "expected_version": 1}),
                 ("read_company_wiki", {"product_id": product["id"], "path": "status.md"}),
                 (
-                    "update_company_status",
+                    "update_product_status",
                     lambda results: {
                         "product_id": product["id"],
                         "content": json.loads(results[-1].content)["content"] + "\nReview complete",
@@ -739,13 +744,13 @@ def test_nested_member_terminal_failure_is_not_success(status):
 @pytest.mark.parametrize("case", ["denied", "other_product", "earlier_success", "failed_retry", "invalid_result"])
 def test_status_success_does_not_hide_unrecovered_failure(case):
     failed = {
-        "tool_name": "update_company_status",
+        "tool_name": "update_product_status",
         "tool_args": {"product_id": "docs", "expected_version": 1},
         "tool_call_error": True,
         "result": "version conflict on status.md: expected 1, actual 2",
     }
     success = {
-        "tool_name": "update_company_status",
+        "tool_name": "update_product_status",
         "tool_args": {"product_id": "docs", "expected_version": 2},
         "tool_call_error": False,
         "result": json.dumps({"path": "status.md", "version": 3}),
@@ -792,13 +797,14 @@ def test_user_components_cannot_claim_manager_ids(component_id):
 
 
 @pytest.mark.parametrize("mode", ["standalone", "member"])
-@pytest.mark.parametrize("tool", ["create_company_product", "create_company_routine"])
-async def test_human_chat_configures_owned_manager_routine(tmp_path, mode, tool):
+@pytest.mark.parametrize("tool", ["create_company_product", "create_product_routine"])
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_human_chat_configures_owned_manager_routine(tmp_path, mode, tool, enabled):
     async with system(tmp_path, mode=mode) as s:
-        kwargs = {"name": "Docs", "routines": [declaration().model_dump()]}
-        if tool == "create_company_routine":
+        kwargs = {"name": "Docs", "routines": [declaration(enabled=enabled).model_dump()]}
+        if tool == "create_product_routine":
             product = CompanyManager(s.db).create(name="Docs", user_id="alice")
-            kwargs = {"product_id": product["id"], **declaration().model_dump(exclude={"auto_accept"})}
+            kwargs = {"product_id": product["id"], **declaration(enabled=enabled).model_dump(exclude={"auto_accept"})}
         s.os.company_manager.model = ScriptedModel([(tool, kwargs)])
         response = await s.client.post(
             "/agents/" + COMPANY_MANAGER_ID + "/runs", headers=s.headers, data={"message": "Set up a weekly review"}
@@ -810,6 +816,7 @@ async def test_human_chat_configures_owned_manager_routine(tmp_path, mode, tool)
         assert row["target_id"] == COMPANY_MANAGER_ID and row["user_id"] == "alice"
         assert row["payload"][AUTHORIZATION_KEY]["context"]["principal_id"] == "alice"
         assert row["payload"]["metadata"]["auto_accept"] is False
+        assert row["enabled"] is enabled
 
 
 @pytest.mark.parametrize("tool", ["run_agent", "run_team", "run_workflow"])
@@ -829,3 +836,159 @@ def test_studio_dispatch_failures_fail_the_routine(tool, result, failed):
     assert bool(_routine_failure(output)) is failed
     assert bool(_routine_failure({"member_responses": [output]})) is failed
     assert _routine_failure({"tools": [{"tool_name": tool, "tool_call_error": True, "result": "raised"}]})
+
+
+@pytest.mark.parametrize("async_db", [False, True])
+@pytest.mark.parametrize("creation", ["manager", "bootstrap"])
+async def test_disabled_routine_is_inserted_disabled(tmp_path, monkeypatch, async_db, creation):
+    db = (AsyncSqliteDb if async_db else SqliteDb)(db_file=str(tmp_path / "disabled.db"))
+    os = make_os(db)
+    product = Product(id="docs", name="Docs", routines=[declaration(enabled=False)])
+    inserted = []
+    create = db.create_schedule
+
+    def observe(row):
+        assert row["enabled"] is False
+        inserted.append(row["id"])
+
+    if async_db:
+
+        async def create_disabled(row):
+            observe(row)
+            return await create(row)
+    else:
+
+        def create_disabled(row):
+            observe(row)
+            return create(row)
+
+    monkeypatch.setattr(db, "create_schedule", create_disabled)
+    try:
+        if creation == "bootstrap":
+            await arehydrate_product(db, product, os.registry, agent_os=os)
+        else:
+            manager = AsyncCompanyManager(db) if async_db else CompanyManager(db)
+            await _call(manager, "create", id="docs", name="Docs")
+            row = await _call(manager, "create_routine", product_id="docs", routine=product.routines[0], agent_os=os)
+            assert row["enabled"] is False
+        assert len(inserted) == 1
+        row = await _call(db, "get_schedule", inserted[0])
+        assert row["enabled"] is False
+        assert (await _call(db, "get_product", "docs"))["metadata"]["routine_ids"] == inserted
+        await _call(db, "update_schedule", row["id"], next_run_at=int(time.time()) - 60)
+        assert await _call(db, "claim_due_schedule", worker_id="test") is None
+    finally:
+        await _call(db, "close")
+
+
+@pytest.mark.parametrize("creation", ["api", "setup", "declaration"])
+@pytest.mark.parametrize("on_demand", [False, True])
+async def test_disabled_routine_visible_and_resume_survives_restart(tmp_path, creation, on_demand):
+    async with system(tmp_path) as s:
+        routine = declaration(enabled=False)
+        if on_demand:
+            routine.cron_expr = None
+        product = Product(id="docs", name="Docs", user_id="alice", routines=[routine])
+        if creation == "setup":
+            response = await s.client.post(
+                "/company/setup", headers=s.headers, json={"name": "Docs", "routines": [routine.model_dump()]}
+            )
+            assert response.status_code == 201, response.text
+            product.id = response.json()["id"]
+        elif creation == "api":
+            CompanyManager(s.db).create(id="docs", name="Docs", user_id="alice")
+            response = await s.client.post(
+                "/company/routines", headers=s.headers, json={"product_id": "docs", **routine.model_dump()}
+            )
+            assert response.status_code == 201, response.text
+            assert response.json()["enabled"] is False
+        else:
+            await arehydrate_product(s.db, product, s.os.registry, agent_os=s.os)
+        rows = (await s.client.get("/company/routines", headers=s.headers)).json()["data"]
+        assert len(rows) == 1 and rows[0]["enabled"] is False
+        path = "/company/routines/" + rows[0]["id"]
+        assert (await s.client.post(path + "/trigger", headers=s.headers)).status_code == 409
+        resumed = await s.client.post(path + "/resume", headers=s.headers)
+        assert resumed.status_code == 200, resumed.text
+        assert resumed.json()["enabled"] is True
+        await arehydrate_product(s.db, product, s.os.registry, agent_os=s.os)
+        saved = (await s.client.get(path, headers=s.headers)).json()
+        assert saved["enabled"] is True and saved["id"] == rows[0]["id"]
+        assert (await s.client.get("/company/routines", headers=s.headers)).json()["meta"]["total_count"] == 1
+
+
+@pytest.mark.parametrize("async_db", [False, True])
+@pytest.mark.parametrize("on_demand", [False, True])
+async def test_completed_disabled_routine_cannot_be_recovered_as_pending(tmp_path, async_db, on_demand):
+    db = (AsyncSqliteDb if async_db else SqliteDb)(db_file=str(tmp_path / "disabled-creation.db"))
+    os = make_os(db)
+    routine = declaration(enabled=False)
+    if on_demand:
+        routine.cron_expr = None
+    try:
+        async with AsyncClient(transport=ASGITransport(app=os.get_app()), base_url="http://test") as client:
+            product = await client.post("/company/products", json={"name": "Docs"})
+            assert product.status_code == 201, product.text
+            body = {"product_id": product.json()["id"], **routine.model_dump()}
+            response = await client.post("/company/routines", json=body)
+            assert response.status_code == 201, response.text
+            row = response.json()
+            assert row["enabled"] is False
+            assert "_agno_pending_creation" not in row["payload"]
+            for duplicate in (body, {**body, "enabled": True}, {k: v for k, v in body.items() if k != "enabled"}):
+                response = await client.post("/company/routines", json=duplicate)
+                assert response.status_code == 409, response.text
+                saved = await _call(db, "get_schedule", row["id"])
+                assert saved["enabled"] is False
+                assert "_agno_pending_creation" not in saved["payload"]
+            rows = (await client.get("/company/routines")).json()["data"]
+            assert [item["id"] for item in rows] == [row["id"]]
+            response = await client.post("/company/routines/" + row["id"] + "/resume")
+            assert response.status_code == 200, response.text
+            assert response.json()["enabled"] is True
+    finally:
+        await _call(db, "close")
+
+
+@pytest.mark.parametrize("async_db", [False, True])
+@pytest.mark.parametrize("on_demand", [False, True])
+async def test_pending_disabled_routine_rejects_overlapping_activation(tmp_path, monkeypatch, async_db, on_demand):
+    db = (AsyncSqliteDb if async_db else SqliteDb)(db_file=str(tmp_path / "overlapping-creation.db"))
+    os = make_os(db)
+    routine = declaration(enabled=False)
+    if on_demand:
+        routine.cron_expr = None
+    linked = asyncio.Event()
+    finish = asyncio.Event()
+    original = db.add_product_routine
+
+    async def pause_after_link(*args, **kwargs):
+        row = await original(*args, **kwargs) if async_db else await asyncio.to_thread(original, *args, **kwargs)
+        if not linked.is_set():
+            linked.set()
+            await asyncio.wait_for(finish.wait(), 10)
+        return row
+
+    monkeypatch.setattr(db, "add_product_routine", pause_after_link)
+    try:
+        async with AsyncClient(transport=ASGITransport(app=os.get_app()), base_url="http://test") as client:
+            product = await client.post("/company/products", json={"name": "Docs"})
+            assert product.status_code == 201, product.text
+            body = {"product_id": product.json()["id"], **routine.model_dump()}
+            first = asyncio.create_task(client.post("/company/routines", json=body))
+            try:
+                await asyncio.wait_for(linked.wait(), 10)
+                duplicate = await client.post("/company/routines", json={**body, "enabled": True})
+                assert duplicate.status_code == 409, duplicate.text
+            finally:
+                finish.set()
+                created = await first
+            assert created.status_code == 201, created.text
+            row = created.json()
+            assert row["enabled"] is False
+            assert (await _call(db, "get_schedule", row["id"]))["enabled"] is False
+            duplicate = await client.post("/company/routines", json={**body, "enabled": True})
+            assert duplicate.status_code == 409, duplicate.text
+            assert (await _call(db, "get_schedule", row["id"]))["enabled"] is False
+    finally:
+        await _call(db, "close")

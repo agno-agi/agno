@@ -77,7 +77,7 @@ if __name__ == "__main__":
             )
         )
         assert proposal["status"] == "backlog" and proposal["user_id"] == "alice"
-        tools.update_company_status(
+        tools.update_product_status(
             product["id"],
             "# Status\n\nRelease notes proposed.\n",
             1,

@@ -1,6 +1,7 @@
 """Execution gates, shared reads and existing run ownership rules."""
 
 import asyncio
+import json
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -11,6 +12,7 @@ from fastapi.testclient import TestClient
 from agno.agent import Agent
 from agno.company import CompanyManager
 from agno.company.execution import _ExecutorAuthorization
+from agno.db.base import ComponentType
 from agno.db.sqlite import SqliteDb
 from agno.job_queue import QueueConfig
 from agno.job_queue.store import InMemoryQueueStore
@@ -76,6 +78,11 @@ def accepted(client):
         json={"product_id": product["id"], "name": "Release"},
         headers=headers(scopes=["projects:write"]),
     ).json()
+    client.post(
+        f"/company/projects/{project['id']}/transitions",
+        json={"target": "active", "reason": "Approved"},
+        headers=headers(scopes=["projects:write"]),
+    )
     task = client.post(
         "/company/tasks",
         json={"product_id": product["id"], "project_id": project["id"], "title": "Draft", "brief": "Write"},
@@ -107,6 +114,79 @@ def test_missing_executor_at_acceptance_and_registry_only_mount(system):
     )
     assert denied.status_code == 409
     assert client.get(f"/company/tasks/{other['id']}", headers=headers()).json()["status"] == "backlog"
+
+
+def test_published_studio_components_execute_tasks(system):
+    client, db, os, queue = system
+    for agent_id, stage in (("studio-writer", "published"), ("studio-draft", "draft")):
+        db.create_component_with_config(
+            component_id=agent_id,
+            component_type=ComponentType.AGENT,
+            name=agent_id,
+            config={"name": agent_id},
+            stage=stage,
+        )
+    _, task = accepted(client)
+
+    def accept(executor_id):
+        created = client.post(
+            "/company/tasks",
+            json={"product_id": task["product_id"], "project_id": task["project_id"], "title": executor_id},
+            headers=headers(),
+        ).json()
+        path = f"/company/tasks/{created['id']}"
+        response = client.post(
+            path + "/transitions",
+            json={"target": "ready", "reason": "Approved", "executor_type": "agent", "executor_id": executor_id},
+            headers=headers(scopes=[*SCOPES, f"agents:{executor_id}:run"]),
+        )
+        return path, response
+
+    path, response = accept("studio-writer")
+    assert response.status_code == 200, response.text
+    started = client.post(path + "/runs", headers=headers(scopes=[*SCOPES, "agents:studio-writer:run"]))
+    assert started.status_code == 202, started.text
+
+    # A draft-only Studio agent isn't runnable anywhere, so it can't take work either.
+    _, response = accept("studio-draft")
+    assert response.status_code == 409
+    assert "missing from the registry" in response.text
+
+
+@pytest.mark.parametrize("store", ["table_override", "unregistered"])
+def test_studio_executor_with_unserved_database_is_refused_at_start(system, tmp_path, store):
+    client, db, os, queue = system
+    if store == "table_override":
+        db_config = {**db.to_dict(), "runs_table": "studio_runs"}
+    else:
+        db_config = SqliteDb(db_file=str(tmp_path / "private.db"), id="private-db").to_dict()
+    db.create_component_with_config(
+        component_id="studio-private",
+        component_type=ComponentType.AGENT,
+        name="studio-private",
+        config={"name": "studio-private", "db": db_config},
+        stage="published",
+    )
+    _, task = accepted(client)
+    created = client.post(
+        "/company/tasks",
+        json={"product_id": task["product_id"], "project_id": task["project_id"], "title": "Private"},
+        headers=headers(),
+    ).json()
+    path = f"/company/tasks/{created['id']}"
+    scopes = [*SCOPES, "agents:studio-private:run"]
+    accepted_response = client.post(
+        path + "/transitions",
+        json={"target": "ready", "reason": "Approved", "executor_type": "agent", "executor_id": "studio-private"},
+        headers=headers(scopes=scopes),
+    )
+    assert accepted_response.status_code == 200, accepted_response.text
+
+    # Company reads runs back through the db AgentOS serves, so a run stored elsewhere would be lost.
+    started = client.post(path + "/runs", headers=headers(scopes=scopes))
+    assert started.status_code == 409, started.text
+    assert "database AgentOS serves" in started.text
+    assert client.get(path, headers=headers()).json().get("job_id") is None
 
 
 @pytest.mark.parametrize("revision", [False, True])
@@ -168,6 +248,7 @@ def test_python_acceptance_also_validates_registry(tmp_path):
     manager = CompanyManager(db)
     product = manager.create(name="SDK")
     project = manager.create_project(product_id=product["id"], name="Release")
+    manager.transition_project(project_id=project["id"], target="active", reason="Approved")
     task = manager.create_task(product_id=product["id"], title="Draft", project_id=project["id"])
     with pytest.raises(ValueError, match="missing"):
         manager.transition_task(
@@ -291,6 +372,9 @@ async def test_automatic_pickup_keeps_accepting_identity_and_run_scope(system):
     job = await queue.store.get_job(result["run_id"])
     assert job["user_id"] == "alice", job
     assert "schedules:write" not in str(job["payload"].get(AUTHORIZATION_KEY))
+    context = json.loads(job["payload"]["input"])["execution_context"]
+    assert context["stage"] == "accepted_task_execution"
+    assert context["task_id"] == task["id"]
     # A different executor cannot reuse the caller's accepted run grant.
     with pytest.raises(PermissionError):
         from agno.os.authz.run_context import restore_authorization
@@ -771,3 +855,70 @@ def test_pending_routine_retry_rechecks_and_refreshes_human_grant(system, monkey
     assert grant["user_id"] == "alice"
     assert grant != pending["payload"]["_agno_company_acceptance"]
     assert grant[AUTHORIZATION_KEY] == current["payload"][AUTHORIZATION_KEY]
+
+
+def test_accepted_execution_preserves_scope_and_excludes_private_state(system):
+    client, db, os, queue = system
+    path, task = accepted(client)
+    response = client.post(
+        path + "/transitions", json={"target": "backlog", "reason": "Refine scope"}, headers=headers()
+    )
+    assert response.status_code == 200, response.text
+    brief = "Prepare the local patch and tests. Do not publish, deploy, or use production credentials."
+    response = client.patch(path, json={"brief": brief}, headers=headers())
+    assert response.status_code == 200, response.text
+    before = db.get_task(task["id"])
+    denied = client.post(path + "/runs", headers=headers())
+    assert denied.status_code == 409, denied.text
+    assert db.get_task(task["id"]) == before
+    assert asyncio.run(queue.store.list_jobs()) == ([], 0)
+    response = client.post(
+        path + "/transitions",
+        json={"target": "ready", "reason": "Approved", "executor_type": "agent", "executor_id": "writer"},
+        headers=headers(),
+    )
+    assert response.status_code == 200, response.text
+    response = client.post(path + "/runs", headers=headers())
+    assert response.status_code == 202, response.text
+    job = asyncio.run(queue.store.get_job(response.json()["run_id"]))
+    message = job["payload"]["input"]
+    payload = json.loads(message)
+    assert payload["brief"] == brief
+    assert payload["evidence"] == (task.get("evidence") or [])
+    assert set(payload) == {"brief", "wiki", "evidence", "execution_context"}
+    assert payload["execution_context"]["stage"] == "accepted_task_execution"
+    assert payload["execution_context"]["task_id"] == task["id"]
+    assert set(payload["execution_context"]) == {"stage", "task_id", "instructions"}
+    assert "restrictions" in payload["execution_context"]["instructions"]
+    assert "blocker" in payload["execution_context"]["instructions"]
+    assert "accepted_by" not in message
+    assert db.get_task(task["id"])["brief"] == brief
+
+
+@pytest.mark.asyncio
+async def test_input_builder_does_not_imply_acceptance(system):
+    from agno.company.execution import _task_input
+
+    client, db, os, queue = system
+    path, task = accepted(client)
+    manager = CompanyManager(db)
+    payload = json.loads(
+        await _task_input(manager, {**db.get_task(task["id"]), "metadata": {"private_marker": "not-for-executor"}})
+    )
+    assert set(payload) == {"brief", "wiki", "evidence"}
+
+
+def test_execution_context_does_not_bypass_input_schema(system):
+    from pydantic import BaseModel
+
+    class RequiredInput(BaseModel):
+        required_business_field: str
+
+    client, db, os, queue = system
+    path, task = accepted(client)
+    os.registry.agents[0].input_schema = RequiredInput
+    before = db.get_task(task["id"])
+    response = client.post(path + "/runs", headers=headers())
+    assert response.status_code == 400, response.text
+    assert db.get_task(task["id"]) == before
+    assert asyncio.run(queue.store.list_jobs()) == ([], 0)

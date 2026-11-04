@@ -80,7 +80,7 @@ def test_isolation_off_allows_scoped_readers_and_writers(make_client):
     assert c.post(path + "/restore", headers=headers("bob")).status_code == 200
 
 
-def test_isolation_on_shares_reads_and_scopes_writes(make_client):
+def test_isolation_on_shares_reads_and_writes(make_client):
     c = make_client(True)
     a = create(c, "alice")
     own = {create(c, "bob") for _ in range(3)}
@@ -92,20 +92,16 @@ def test_isolation_on_shares_reads_and_scopes_writes(make_client):
     path = "/company/products/" + a
     before = c.get(path, headers=headers("alice")).json()
     assert c.get(path, headers=headers("bob")).json() == before
-    # Writes are owner-scoped: a visible foreign Product is refused with 403, never 404.
-    for method, suffix, body in [
-        ("patch", "", {"name": "stolen"}),
-        ("delete", "", None),
-        ("post", "/restore", None),
-    ]:
-        response = c.request(method, path + suffix, json=body, headers=headers("bob"))
-        assert response.status_code == 403, response.text
-    assert c.get(path, headers=headers("alice")).json() == before
-    assert c.delete(path, headers=headers("alice")).status_code == 204
+    # Writes need the scope, not ownership: bob changes alice's Product and the creator stays recorded.
+    renamed = c.patch(path, json={"name": "renamed"}, headers=headers("bob"))
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["name"] == "renamed"
+    assert renamed.json()["user_id"] == "alice"
+    assert c.delete(path, headers=headers("bob")).status_code == 204
     assert c.get(path + "?include_deleted=true", headers=headers("bob")).status_code == 200
-    assert c.post(path + "/restore", headers=headers("bob")).status_code == 403
     assert c.get("/company/products?include_deleted=true", headers=headers("bob")).json()["meta"]["total_count"] == 4
-    assert c.post(path + "/restore", headers=headers("alice")).status_code == 200
+    assert c.post(path + "/restore", headers=headers("bob")).status_code == 200
+    assert c.get(path, headers=headers("alice")).json()["user_id"] == "alice"
 
 
 def test_admin_bypass_and_creator_attribution(make_client):

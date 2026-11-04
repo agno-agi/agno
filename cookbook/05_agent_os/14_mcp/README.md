@@ -13,6 +13,7 @@ an Agno agent consumes another MCP server belong in `cookbook/91_tools/mcp`.
 | `basic.py` | Serve the eight default AgentOS MCP tools. |
 | `agents_as_tools.py` | Expose agents directly as named MCP tools. |
 | `mcp_client.py` | Discover, pause, continue, cancel, and inspect runs with a protocol-level client. |
+| `inspect_tools.py` | List and run published tools over plain HTTP, the way MCP Inspector does. |
 | `custom_tools.py` | Expose one purpose-built tool. |
 | `server_identity.py` | Set the name, version and instructions the server reports to connecting clients. |
 | `toolkit_tools.py` | Serve a whole toolkit, flattened into one MCP tool per method. |

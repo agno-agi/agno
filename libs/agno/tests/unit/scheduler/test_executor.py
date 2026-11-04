@@ -206,7 +206,7 @@ class TestExecutorPollRun:
         mock_client.request = AsyncMock(return_value=mock_resp)
 
         result = await executor._poll_run(mock_client, {}, "agents", "a1", "run-1", "sess-1", 60)
-        assert result["status"] == "failed"
+        assert result["status"] == "cancelled"
         assert "cancelled" in result["error"].lower()
 
     @pytest.mark.asyncio

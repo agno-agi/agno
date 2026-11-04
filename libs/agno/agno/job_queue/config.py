@@ -105,10 +105,13 @@ class QueueConfig:
     max_queue_depth: int = 1000
     # At most this many executions ever, under any failure mode (reclaim
     # included). 1 = a crashed run is failed visibly, never silently re-run.
-    # Values > 1 are safe: a swept-but-alive attempt's writes are fenced on
-    # every surface - the ticket (CAS on locked_by/attempt), the run row
-    # (worker-owned saves route through the attempt-fenced primitive), and
-    # the event stream (per-run writer generations).
+    # Values > 1 keep stale writers out: a swept-but-alive attempt's writes
+    # are fenced on every surface - the ticket (CAS on locked_by/attempt), the
+    # run row (worker-owned saves route through the attempt-fenced primitive),
+    # and the event stream (per-run writer generations). They do NOT resume:
+    # a retry or reclaim re-executes the run from its original input under the
+    # same run_id, so tool calls and other side effects of the earlier attempt
+    # run again. A retry never resumes from where the earlier attempt stopped.
     max_attempts: int = 1
     # BASE retry delay: attempt N waits up to base * 2**(N-1) with full
     # jitter (capped at 10x base) - see QueueWorker._retry_delay

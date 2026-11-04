@@ -123,6 +123,8 @@ async def service(request, tmp_path):
 async def draft(client):
     product = (await client.post("/company/products", json={"name": "Repository"})).json()
     project = (await client.post("/company/projects", json={"product_id": product["id"], "name": "Change"})).json()
+    approval = {"target": "active", "reason": "Approved"}
+    await client.post("/company/projects/" + project["id"] + "/transitions", json=approval)
     response = await client.post(
         "/company/tasks",
         json={

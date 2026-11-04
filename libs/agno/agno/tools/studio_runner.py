@@ -42,7 +42,10 @@ Semantics:
       runs on a per-call copy or rebuild, each such run starts a session of
       its own. Construct the component with an explicit session_id to keep
       continuity across sessionless calls.
-    * Code-defined components are dispatched on a fresh deep copy per run, so
+    * External agents run on their registered adapter: run state is per call,
+      and sharing the adapter preserves its concurrent-session guard. They are
+      available for dispatch, not for Studio edits or persisted composition.
+    * Native code-defined components are dispatched on a fresh deep copy per run, so
       per-run mutation of a shared instance never bleeds across callers.
       DB-loaded components are reconstructed per call already. Two things sit
       outside that copy, both by the framework's own rules:
@@ -99,9 +102,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Sequence, Set, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union
 from uuid import uuid4
 
+from agno.agents.base import BaseExternalAgent
 from agno.db.schemas.scheduler import (
     DISPATCH_CHAIN_METADATA_KEY,
     DISPATCH_DEPTH_METADATA_KEY,
@@ -282,11 +286,19 @@ def _component_references(component_type: str, config: Dict[str, Any]) -> List[t
 
 
 class StudioRunnerTools(Toolkit):
+    """Discover and run admitted components.
+
+    ``description_fallback`` optionally resolves a component id to discovery
+    text when its description is absent or blank. It never changes the
+    component or its stored configuration. OS Manager uses this to read its
+    current manifest without copying UI text into component system prompts.
+    """
+
     def __init__(
         self,
         registry: Optional["Registry"] = None,
         db: Optional["BaseDb"] = None,
-        include_agents: Optional[Sequence["Agent"]] = None,
+        include_agents: Optional[Sequence[Union["Agent", BaseExternalAgent]]] = None,
         include_teams: Optional[Sequence["Team"]] = None,
         include_workflows: Optional[Sequence["Workflow"]] = None,
         run_agents: bool = True,
@@ -297,6 +309,7 @@ class StudioRunnerTools(Toolkit):
         self_dispatch: Literal["never", "once"] = "never",
         list_limit: int = 100,
         name: str = "studio_runners",
+        description_fallback: Optional[Callable[[str], Optional[str]]] = None,
         **kwargs: Any,
     ):
         # 0 disables dispatch outright and is a valid posture; "unlimited" is
@@ -324,6 +337,8 @@ class StudioRunnerTools(Toolkit):
         self.include_agents = include_agents
         self.include_teams = include_teams
         self.include_workflows = include_workflows
+        # Discovery metadata only: never copy these descriptions into component prompts.
+        self.description_fallback = description_fallback
         # Each run_* flag exposes that kind's whole surface, list tool
         # included: the list reports exactly what dispatch admits, so a kind
         # that cannot run has nothing to list either.
@@ -403,7 +418,7 @@ class StudioRunnerTools(Toolkit):
     def db(self, value: Optional["BaseDb"]) -> None:
         self._db = value
 
-    def _iter_agents(self, for_dispatch: bool = False) -> List["Agent"]:
+    def _iter_agents(self, for_dispatch: bool = False) -> List[Union["Agent", BaseExternalAgent]]:
         """Code-defined agents: passed-in list, else registry.
 
         The registry half is opt-in for dispatch (``include_all_components``).
@@ -413,18 +428,20 @@ class StudioRunnerTools(Toolkit):
         allowlist and always runs. ``list_*`` report exactly this admitted set
         alongside the database, so what can be run can be found.
         Lookups that are not dispatch (get, edit, members, steps) see the full
-        set either way."""
+        set either way. External adapters are dispatch-only, and only from an
+        explicit ``include_agents``: the registry holds every adapter the
+        application serves, which is not consent for a Studio to run them."""
         if for_dispatch and not self.include_all_components and self.include_agents is None:
             return []
         agents = (
             self.include_agents if self.include_agents is not None else (self.registry.agents if self.registry else [])
         )
-        from agno.agents.base import BaseExternalAgent
-
+        admit_external = for_dispatch and self.include_agents is not None
         return [
             agent
             for agent in agents
-            if not isinstance(agent, BaseExternalAgent) and getattr(agent, "id", None) not in RESERVED_MEMBER_IDS
+            if (admit_external or not isinstance(agent, BaseExternalAgent))
+            and getattr(agent, "id", None) not in RESERVED_MEMBER_IDS
         ]
 
     def _iter_teams(self, for_dispatch: bool = False) -> List["Team"]:
@@ -443,7 +460,9 @@ class StudioRunnerTools(Toolkit):
             return []
         return list(self.registry.workflows) if self.registry is not None else []
 
-    def _find_agent(self, agent_id: str, for_dispatch: bool = False, actor: Optional[str] = None) -> Optional["Agent"]:
+    def _find_agent(
+        self, agent_id: str, for_dispatch: bool = False, actor: Optional[str] = None
+    ) -> Optional[Union["Agent", BaseExternalAgent]]:
         """Lookup order: code-defined exact id, DB exact id, code-defined display
         name, DB display name (ambiguous -> AmbiguousComponentNameError), then
         the identifier's slug as an id. Exact ids always win over names.
@@ -464,7 +483,7 @@ class StudioRunnerTools(Toolkit):
 
     def _find_agent_by_exact_id(
         self, agent_id: str, for_dispatch: bool = False, actor: Optional[str] = None
-    ) -> Optional["Agent"]:
+    ) -> Optional[Union["Agent", BaseExternalAgent]]:
         for a in self._iter_agents(for_dispatch=for_dispatch):
             if getattr(a, "id", None) == agent_id:
                 return a
@@ -472,7 +491,7 @@ class StudioRunnerTools(Toolkit):
 
     def _find_agent_by_name(
         self, agent_id: str, for_dispatch: bool = False, actor: Optional[str] = None
-    ) -> Optional["Agent"]:
+    ) -> Optional[Union["Agent", BaseExternalAgent]]:
         named_agents = [a for a in self._iter_agents(for_dispatch=for_dispatch) if getattr(a, "name", None) == agent_id]
         if len(named_agents) > 1:
             raise AmbiguousComponentNameError("agent", agent_id, [str(getattr(a, "id", "")) for a in named_agents])
@@ -936,7 +955,7 @@ class StudioRunnerTools(Toolkit):
             "the component in the database."
         )
 
-    def _agent_for_run(self, agent_id: str, actor: Optional[str] = None) -> Optional["Agent"]:
+    def _agent_for_run(self, agent_id: str, actor: Optional[str] = None) -> Optional[Union["Agent", BaseExternalAgent]]:
         agent = self._find_agent(agent_id, for_dispatch=True, actor=actor)
         if agent is None:
             self._refuse_if_only_reachable_with_include_all("agent", agent_id, actor=actor)
@@ -947,6 +966,10 @@ class StudioRunnerTools(Toolkit):
         # workflows in the first place.
         self._require_inspectable_depth(agent, "agent", agent_id)
         self._warn_if_unverifiable_factory(agent, "agent", agent_id)
+        if isinstance(agent, BaseExternalAgent):
+            # External adapters keep run state per call and own a shared session-admission
+            # guard. Reuse the registered adapter, as the HTTP routes do.
+            return agent
         if any(a is agent for a in self._iter_agents(for_dispatch=True)):
             return self._fresh_copy(agent)
         self._warn_if_model_rebuilt(agent, "agent", agent_id)
@@ -2255,7 +2278,7 @@ class StudioRunnerTools(Toolkit):
             entry: Dict[str, Any] = {
                 "id": r.get("component_id"),
                 "name": r.get("name"),
-                "description": r.get("description"),
+                "description": self._listing_description(r["component_id"], r.get("description")),
             }
             # A caller following list-then-run needs the stage hint here, or
             # the refusal it hits is its first sign the row was a draft.
@@ -2419,6 +2442,17 @@ class StudioRunnerTools(Toolkit):
                 logger.warning("Failed to count %s for list disclosure", plural, exc_info=True)
         return {"other_components": counts} if counts else {}
 
+    def _listing_description(self, component_id: str, description: Optional[str]) -> Optional[str]:
+        """Keep component descriptions; consult the fallback only when one is absent or blank."""
+        if (description and description.strip()) or self.description_fallback is None:
+            return description
+        try:
+            return self.description_fallback(component_id)
+        except Exception:
+            # Missing discovery metadata must not fail the whole listing.
+            logger.warning("Description fallback failed for %s", component_id, exc_info=True)
+            return description
+
     def _admitted_code_components(self, component_type: str) -> List[Dict[str, Any]]:
         """The code-defined components this runner will dispatch, as list rows.
 
@@ -2443,7 +2477,7 @@ class StudioRunnerTools(Toolkit):
                 {
                     "id": component_id,
                     "name": getattr(component, "name", None),
-                    "description": getattr(component, "description", None),
+                    "description": self._listing_description(component_id, getattr(component, "description", None)),
                 }
             )
         return rows

@@ -60,7 +60,7 @@ def client(request, tmp_path):
     asyncio.run(db.close()) if request.param else db.close()
 
 
-def test_wiki_company_read_owner_write_and_versions(client):
+def test_wiki_shared_reads_writes_and_versions(client):
     product = client.post(
         "/company/products", json={"name": "SDK", "purpose": "Build"}, headers=headers("alice")
     ).json()
@@ -72,9 +72,9 @@ def test_wiki_company_read_owner_write_and_versions(client):
     assert client.get(url, headers=headers("bob", ["products:read"])).status_code == 403
     page = client.get(url + "/status.md", headers=headers("bob")).json()
     body = {"content": "Updated", "expected_version": page["metadata"]["version"]}
-    assert client.put(url + "/status.md", json=body, headers=headers("bob")).status_code == 403
-    assert client.put(url + "/status.md", json=body, headers=headers("alice", ["wiki:read"])).status_code == 403
-    assert client.put(url + "/status.md", json=body, headers=headers("alice")).status_code == 200
+    # Writes need wiki:write, not Product ownership; the version check still serializes them.
+    assert client.put(url + "/status.md", json=body, headers=headers("bob", ["wiki:read"])).status_code == 403
+    assert client.put(url + "/status.md", json=body, headers=headers("bob")).status_code == 200
     assert client.put(url + "/status.md", json=body, headers=headers("alice")).status_code == 409
     assert client.get(url + "/status.md", headers=headers("bob")).json()["content"] == "Updated"
     assert (
@@ -107,8 +107,10 @@ def test_wiki_company_read_owner_write_and_versions(client):
 
 def test_company_namespace_and_decision_identity(client):
     assert client.get("/company/wiki", headers=headers("reader")).status_code == 200
+    # Company pages are shared: members with wiki:write edit them, as admins do.
     body = {"content": "shared", "expected_version": 1}
-    assert client.put("/company/wiki/status.md", json=body, headers=headers("alice")).status_code == 403
+    assert client.put("/company/wiki/status.md", json=body, headers=headers("alice")).status_code == 200
+    body = {"content": "admin edit", "expected_version": 2}
     assert (
         client.put("/company/wiki/status.md", json=body, headers=headers("admin", ["agent_os:admin"])).status_code
         == 200

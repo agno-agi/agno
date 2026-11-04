@@ -48,9 +48,9 @@ if __name__ == "__main__":
             assert routine["schedule_type"] == "on_demand"
             assert routine["enabled"] and routine["next_run_at"] is None
             assert routine["last_run"] is None
-            client.post(path + "/pause").raise_for_status()
-            assert client.post(path + "/trigger").status_code == 409
-            assert client.post(path + "/resume").json()["next_run_at"] is None
+            # An on-demand Routine has no schedule to pause, and it is already enabled.
+            assert client.post(path + "/pause").status_code == 409
+            assert client.post(path + "/resume").status_code == 409
             scheduled = client.patch(path, json={"cron_expr": "0 9 * * *"}).json()
             assert (
                 scheduled["schedule_type"] == "scheduled" and scheduled["next_run_at"]
@@ -70,9 +70,9 @@ if __name__ == "__main__":
                 _agno_agent=researcher,
                 _agno_run_context=context,
             )
-            source = json.loads(tools.add_company_source(**arguments))
+            source = json.loads(tools.add_product_source(**arguments))
             assert (
-                json.loads(tools.add_company_source(**arguments))["id"] == source["id"]
+                json.loads(tools.add_product_source(**arguments))["id"] == source["id"]
             )
             assert source["config"]["metadata"]["agent_id"] == "researcher"
             print("Created a custom Routine without a template or initial Sources.")

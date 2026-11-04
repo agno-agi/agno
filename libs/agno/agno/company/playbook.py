@@ -36,12 +36,11 @@ def _defaults(product: Optional[Dict[str, Any]]) -> Dict[str, str]:
     return {"brief.md": f"# {title}\n\n{purpose}\n", "status.md": f"# {title} status\n\nNo status recorded yet.\n"}
 
 
-def _require_owner(record: Dict[str, Any], user_id: Optional[str]) -> None:
+def _require_product_scope(record: Dict[str, Any]) -> None:
+    """Keep a Routine's authority on its own Product; Company writes are not owner-scoped."""
     from agno.company.routines import _require_routine_product
 
     _require_routine_product(record.get("product_id") or record.get("id"))
-    if user_id is not None and record.get("user_id") != user_id:
-        raise PermissionError("Cannot modify a record owned by another user")
 
 
 def _seed(provider: WikiContextProvider, product: Optional[Dict[str, Any]]) -> None:

@@ -486,6 +486,7 @@ def _set_telemetry(team: "Team") -> None:
 
 
 def _initialize_member(team: "Team", member: Union["Team", Agent], debug_mode: Optional[bool] = None) -> None:
+    from agno.agents.base import BaseExternalAgent
     from agno.team.team import Team
 
     # Set debug mode for all members
@@ -516,6 +517,13 @@ def _initialize_member(team: "Team", member: Union["Team", Agent], debug_mode: O
         if member.model is None and team.model is not None:
             member.model = team.model
             log_info(f"Agent '{member.name or member.id}' inheriting model from Team: {team.model.id}")
+
+    elif isinstance(member, BaseExternalAgent):
+        # A harness agent (Claude Code, Codex) runs its own model and tools. Nothing is set on it:
+        # the same instance can also run on its own, so the team passes its id on each member call.
+        # That makes the member keep its own state, and with a sandbox its own computer binding, in a
+        # session per team session and member.
+        pass
 
     elif isinstance(member, Team):
         member.parent_team_id = team.id
@@ -810,14 +818,24 @@ def _has_async_db(team: "Team") -> bool:
 
 def _resolve_models(team: "Team") -> None:
     """Resolve model strings to Model instances."""
+    from agno.metrics import ModelType
+
     if team.model is not None:
         team.model = get_model(team.model)
+        if team.model is not None:
+            team.model.model_type = ModelType.MODEL
     if team.reasoning_model is not None:
         team.reasoning_model = get_model(team.reasoning_model)
+        if team.reasoning_model is not None:
+            team.reasoning_model.model_type = ModelType.REASONING_MODEL
     if team.parser_model is not None:
         team.parser_model = get_model(team.parser_model)
+        if team.parser_model is not None:
+            team.parser_model.model_type = ModelType.PARSER_MODEL
     if team.output_model is not None:
         team.output_model = get_model(team.output_model)
+        if team.output_model is not None:
+            team.output_model.model_type = ModelType.OUTPUT_MODEL
 
     # Follow-up slots resolve strings like the siblings but keep the instance's
     # model_type: follow-up metrics are attributed explicitly at the call site, and

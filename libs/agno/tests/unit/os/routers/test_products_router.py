@@ -6,7 +6,7 @@ import threading
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import inspect
 
@@ -15,7 +15,7 @@ from agno.db.base import AsyncBaseDb
 from agno.db.in_memory import InMemoryDb
 from agno.db.sqlite import AsyncSqliteDb, SqliteDb
 from agno.os import AgentOS, CompanyConfig
-from agno.os.routers.company.products import _require_write_ownership, get_products_router
+from agno.os.routers.company.products import get_products_router
 from agno.os.scopes import get_default_scope_mappings
 from agno.os.settings import AgnoAPISettings
 
@@ -244,11 +244,3 @@ def test_sync_database_does_not_run_on_event_loop(tmp_path):
     db = ThreadCheckingDb(db_file=str(tmp_path / "thread.db"))
     app.include_router(get_products_router(db, AgnoAPISettings()))
     assert TestClient(app).get("/company/products").status_code == 200
-
-
-def test_visible_foreign_owner_is_forbidden():
-    # A visible foreign row still requires an ownership check.
-    with pytest.raises(HTTPException) as exc:
-        _require_write_ownership({"user_id": "alice"}, "bob")
-    assert exc.value.status_code == 403
-    _require_write_ownership({"user_id": "alice"}, None)

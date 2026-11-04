@@ -1,6 +1,8 @@
 import asyncio
 import json
+import os
 import warnings
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from importlib import import_module
@@ -175,7 +177,12 @@ class CodexAgent(BaseExternalAgent):
         instructions: Developer instructions appended to the Codex system prompt.
         base_instructions: Replaces the Codex built-in system prompt entirely.
         sandbox_mode: "read-only", "workspace-write" or "full-access". Defaults to the Codex default.
-        approval_mode: "auto_review" or "deny_all" for escalated permission requests.
+        approval_mode: Native SDK "auto_review" or "deny_all" behavior, when explicitly selected.
+        approval_policy: Native Codex policy: "on-request", "untrusted", or "never".
+            With a database, a request for user review pauses the run for confirmation in the chat.
+        hitl_timeout: Seconds a permission request waits for confirmation in the chat, and a
+            continuation client waits (default 900).
+            Also bounds cumulative human waiting within a queued or sandboxed run.
         reasoning_effort: "minimal", "low", "medium", "high" or "xhigh".
         cwd: Working directory for the agent.
         keep_uploads: Keep files attached to a run under cwd/.agno/uploads/<run_id>/ after the run.
@@ -190,7 +197,8 @@ class CodexAgent(BaseExternalAgent):
         thread_options: Typed native thread settings. Named non-None settings take precedence.
         turn_options: Typed native turn settings. Named non-None settings take precedence.
         codex_bin: Path to a specific Codex executable. Defaults to the bundled one.
-        env: Environment variables for the Codex process.
+        env: Environment variables for the Codex process. OPENAI_API_KEY automatically
+            authenticates API-key sessions; existing non-API-key logins are preserved.
         thread_kwargs: Deprecated alias for thread_options.
         turn_kwargs: Deprecated alias for turn_options.
         retries: Number of times to retry a failed run. Cancelled runs, budget and usage limits and errors
@@ -238,6 +246,7 @@ class CodexAgent(BaseExternalAgent):
     keep_uploads: bool = False
     sandbox_mode: Optional[str] = None
     approval_mode: Optional[str] = None
+    approval_policy: Optional[str] = None
     ephemeral: Optional[bool] = None
     # Native runtime configuration
     client_options: Optional["CodexConfig"] = None
@@ -284,6 +293,34 @@ class CodexAgent(BaseExternalAgent):
                     stacklevel=3,
                 )
 
+    def _native_approval_settings(self) -> Tuple[str, str]:
+        thread = self.thread_options if self.thread_options is not None else self.thread_kwargs
+        turn = self.turn_options if self.turn_options is not None else self.turn_kwargs
+        mode = self.approval_mode or turn.get("approval_mode") or thread.get("approval_mode")
+        config = self.config if self.config is not None else thread.get("config") or {}
+        policy = self.approval_policy or config.get("approval_policy")
+        reviewer = config.get("approvals_reviewer", "user")
+        if mode is not None:
+            if mode not in ("auto_review", "deny_all"):
+                raise ValueError("Codex approval_mode must be 'auto_review' or 'deny_all'")
+            if policy is not None:
+                raise ValueError("Use Codex approval_policy or approval_mode, not both")
+            policy = "never" if mode == "deny_all" else "on-request"
+            reviewer = "auto_review" if mode == "auto_review" else reviewer
+        policy = policy or "on-request"
+        if policy not in ("on-request", "untrusted", "never"):
+            raise ValueError("Unsupported native Codex approval_policy")
+        if reviewer not in ("user", "auto_review"):
+            raise ValueError("Unsupported native Codex approvals_reviewer")
+        return policy, reviewer
+
+    @property
+    def _uses_native_hitl(self) -> bool:
+        if self.db is None:
+            return False
+        policy, reviewer = self._native_approval_settings()
+        return policy != "never" and reviewer == "user"
+
     def _validate_options(self) -> None:
         for name, schema in (("thread", ThreadOptions), ("turn", TurnOptions)):
             options = getattr(self, f"{name}_options")
@@ -302,6 +339,21 @@ class CodexAgent(BaseExternalAgent):
                 "CodexAgent input must be a string. Native Codex input objects are not supported; "
                 "use the native SDK for images, skills or external tool messages."
             )
+
+    def acontinue_run(self, run_response: Any = None, **kwargs: Any) -> Any:
+        """Deliver reviewed native permissions to the existing execution."""
+        from agno.agents._hitl import continue_run
+
+        if not self._uses_native_hitl:
+            raise ValueError("Codex continuation requires a pending native request")
+        return continue_run(self, run_response, **kwargs)
+
+    def continue_run(self, run_response: Any = None, **kwargs: Any) -> Any:
+        """Synchronous native permission continuation."""
+        from agno.agents._hitl import sync_events
+
+        continuation = self.acontinue_run(run_response, **kwargs)
+        return sync_events(continuation) if kwargs.get("stream") else run_coroutine_sync(continuation)
 
     def _refuse_host_operation(self, operation: str) -> None:
         if self.sandbox is not None:
@@ -447,11 +499,39 @@ class CodexAgent(BaseExternalAgent):
             config.env = dict(config.env)
         return config
 
-    def _new_client(self) -> Any:
+    @asynccontextmanager
+    async def _new_client(self) -> AsyncIterator[Any]:
         """Create an AsyncCodex client. One app-server process per run keeps the
         client bound to the current event loop."""
         sdk = _sdk()
-        return sdk.AsyncCodex(self._codex_config(sdk))
+        config = self._codex_config(sdk)
+        api_key = (config.env or {}).get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
+        thread = self.thread_options if self.thread_options is not None else self.thread_kwargs
+        native_config = self.config if self.config is not None else thread.get("config") or {}
+        policy = self.approval_policy or native_config.get("approval_policy")
+        if self._uses_native_hitl or (policy is not None and policy != "never"):
+            from agno.agents._hitl import active_bridge
+            from agno.agents.codex._hitl import human_client
+
+            client = human_client(
+                config, active_bridge(), approval_policy=policy, reviewer=self._native_approval_settings()[1]
+            )
+        else:
+            client = sdk.AsyncCodex(config)
+        async with client as codex:
+            if api_key:
+                # The app-server inherits the environment but requires an explicit login.
+                # Keep a user's ChatGPT or other non-API-key account, as sandbox runs do.
+                try:
+                    account = _item_root((await codex.account()).account)
+                    if account is None or account.type == "apiKey":
+                        await codex.login_api_key(api_key)
+                except Exception as error:
+                    message = str(error).replace(api_key, "[redacted]")[:500]
+                    # To preserve the original exception's traceback, build a new one from it.
+                    cause = RuntimeError(f"{type(error).__name__}: {message}").with_traceback(error.__traceback__)
+                    raise RuntimeError("Codex API-key authentication failed: " + message) from cause
+            yield codex
 
     @staticmethod
     def _to_sandbox(sdk: Any, value: str) -> Any:
@@ -531,6 +611,8 @@ class CodexAgent(BaseExternalAgent):
             options["sandbox"] = self._to_sandbox(sdk, options["sandbox"])
         if "approval_mode" in options:
             options["approval_mode"] = self._to_approval_mode(sdk, options["approval_mode"])
+        if self._native_approval_settings()[0] == "never":
+            options["approval_mode"] = self._to_approval_mode(sdk, "deny_all")
 
     def _turn_kwargs(self, sdk: Any, output_schema: Optional[Any] = None) -> Dict[str, Any]:
         self._validate_options()
