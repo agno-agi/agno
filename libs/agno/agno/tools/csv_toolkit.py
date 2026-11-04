@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from agno.tools import Toolkit
+from agno.utils._sql import _strip_backtick_identifier_quotes
 from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
 
 
@@ -159,8 +160,9 @@ class CsvTools(Toolkit):
             )
 
             # -*- Format the SQL Query
-            # Remove backticks
-            formatted_sql = sql_query.replace("`", "")
+            # Keep SQL literals, quoted identifiers, and comments intact when
+            # accepting the legacy backtick-delimited identifier spelling.
+            formatted_sql = _strip_backtick_identifier_quotes(sql_query)
             # If there are multiple statements, only run the first one
             formatted_sql = formatted_sql.split(";")[0]
             # -*- Run the SQL Query
