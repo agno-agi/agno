@@ -43,6 +43,12 @@ async def exercise(db):
     second = await call(
         manager.create_project, product_id=product["id"], name="Next release"
     )
+    await call(
+        manager.transition_project,
+        project_id=first["id"],
+        target="active",
+        reason="Human approved Project scope",
+    )
     old = await call(
         manager.create_task,
         product_id=product["id"],
@@ -59,6 +65,12 @@ async def exercise(db):
     await call(manager.update_task, task["id"], project_id=second["id"])
     await call(manager.delete_project, first["id"])
     assert await call(manager.get_task, task["id"])
+    await call(
+        manager.transition_project,
+        project_id=second["id"],
+        target="active",
+        reason="Human approved Project scope",
+    )
     await call(
         manager.transition_task,
         task_id=task["id"],

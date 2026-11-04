@@ -13,6 +13,7 @@ from agno.company.execution import (
     _executor,
     _pending_task_attempt,
     _prepare_task_session,
+    _project_unapproved,
     _reconcile_task_run,
     _reservation_owner,
     _reserve_task,
@@ -144,6 +145,8 @@ def get_company_runs_router(os: Any) -> APIRouter:
 
     async def start_task(task_id: str, request: Request, body: TaskRunCreate):
         value = await task(task_id)
+        if await _project_unapproved(db, value):
+            raise HTTPException(409, "Approve the Project before starting Task work")
         from agno.company.execution import _automatic_task
         from agno.company.sandbox import _is_sandboxed
         from agno.os.routers.company.sandbox import _sandbox_start_gate

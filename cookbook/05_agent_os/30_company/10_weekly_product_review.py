@@ -31,12 +31,14 @@ and Tasks before proposing anything. Inspect configured Sources with
 read_product_source, first discovering paths and then reading useful evidence.
 Propose work only when it addresses a concrete gap that existing work does not
 cover. Reuse a suitable Project; propose one only when necessary.
-Use intake_product_source with the Project id, observed evidence links and
+For a proposed Project, create Backlog Task drafts for review and report that
+human approval is required before accepting or running them. Use intake_product_source
+with the Project id, observed evidence links and
 content hashes, and a stable proposal_key for the underlying issue. Reuse the
 key on later reviews. Never use propose_company_task during a Routine.
 If nothing useful has changed, create no Tasks. Read status.md and use its current
 version to update a concise status with evidence, proposed work and open questions.
-Leave every Task in Backlog. Do not accept Tasks, complete Projects, or edit
+Leave every Task in Backlog. Do not approve Projects, accept Tasks, complete Projects, or edit
 schedules. Automatic acceptance is disabled."""
 
 

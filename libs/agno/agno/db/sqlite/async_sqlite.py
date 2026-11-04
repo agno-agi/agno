@@ -6120,6 +6120,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 task_data.get("project_id"),
                 task_data["product_id"],
                 task_data.get("status", "backlog"),
+                allow_proposed=task_data.get("status", "backlog") == "backlog",
             )
             if task_data.get("dedupe_key") is not None:
                 from sqlalchemy.dialects.sqlite import insert
@@ -6461,9 +6462,16 @@ class AsyncSqliteDb(AsyncBaseDb):
                 fields["transitions"][-1]["auto_accept"] = auto_accept
             else:
                 await sess.run_sync(lock_child, products, projects, table, task_id)
-            if existing["status"] in {"done", "cancelled"}:
-                # Reopened work must not land in a completed or cancelled Project.
-                await sess.run_sync(require_project, projects, existing["project_id"], existing["product_id"], target)
+            if target == "ready" or existing["status"] in {"done", "cancelled"}:
+                # Accepted or reopened work must not enter an ineligible Project.
+                await sess.run_sync(
+                    require_project,
+                    projects,
+                    existing["project_id"],
+                    existing["product_id"],
+                    target,
+                    allow_proposed=target != "ready",
+                )
             update = table.update().where(
                 table.c.id == task_id,
                 table.c.deleted_at.is_(None),

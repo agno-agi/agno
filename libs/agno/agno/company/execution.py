@@ -82,6 +82,14 @@ async def _call(target: Any, method: str, *args: Any, **kwargs: Any) -> Any:
     return await asyncio.to_thread(fn, *args, **kwargs)
 
 
+async def _project_unapproved(db: Any, task: Dict[str, Any]) -> bool:
+    project_id = task.get("project_id")
+    if project_id is None:
+        return False
+    project = await _call(db, "get_project", project_id)
+    return project is not None and project["status"] == "proposed"
+
+
 def _queued_run_id() -> str:
     submission = _task_submission.get()
     return task_run_id(submission["task"]["id"], submission["attempt"]) if submission else str(uuid4())
@@ -420,6 +428,9 @@ async def _check_task(worker: Any, job: Dict[str, Any]) -> None:
     db = getattr(worker, "_company_db", None)
     if db is None:
         raise ValueError("Company is unavailable for this queued Task")
+    current = await _call(db, "get_task", task_id)
+    if current is not None and await _project_unapproved(db, current):
+        raise _TaskRunRefused("Approve the Project before starting Task work")
     task = await _reserve_task(db, job)
     if (
         task is None

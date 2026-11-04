@@ -9677,7 +9677,12 @@ class PostgresDb(BaseDb):
             if proposal is not None:
                 return proposal
             require_project(
-                sess, projects, task_data.get("project_id"), task_data["product_id"], task_data.get("status", "backlog")
+                sess,
+                projects,
+                task_data.get("project_id"),
+                task_data["product_id"],
+                task_data.get("status", "backlog"),
+                allow_proposed=task_data.get("status", "backlog") == "backlog",
             )
             if task_data.get("dedupe_key") is not None:
                 from sqlalchemy.dialects.postgresql import insert
@@ -10009,9 +10014,16 @@ class PostgresDb(BaseDb):
                 fields["transitions"][-1]["auto_accept"] = auto_accept
             else:
                 lock_child(sess, products, projects, table, task_id)
-            if existing["status"] in {"done", "cancelled"}:
-                # Reopened work must not land in a completed or cancelled Project.
-                require_project(sess, projects, existing["project_id"], existing["product_id"], target)
+            if target == "ready" or existing["status"] in {"done", "cancelled"}:
+                # Accepted or reopened work must not enter an ineligible Project.
+                require_project(
+                    sess,
+                    projects,
+                    existing["project_id"],
+                    existing["product_id"],
+                    target,
+                    allow_proposed=target != "ready",
+                )
             update = table.update().where(
                 table.c.id == task_id,
                 table.c.deleted_at.is_(None),

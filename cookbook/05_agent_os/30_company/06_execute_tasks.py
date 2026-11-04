@@ -77,6 +77,11 @@ if __name__ == "__main__":
                         "evidence": [{"reference": "Reviewed release changes"}],
                     },
                 ).json()
+                approved = client.post(
+                    f"/company/projects/{project['id']}/transitions",
+                    json={"target": "active", "reason": "Human approved Project scope"},
+                )
+                assert approved.status_code == 200, approved.text
                 path = "/company/tasks/" + task["id"]
                 accepted = client.post(
                     path + "/transitions",
