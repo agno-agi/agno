@@ -751,6 +751,73 @@ class TestComposition:
         loaded = get_agent_by_id(db=db, id="coder", registry=registry, strict=True)
         assert isinstance(loaded, ClaudeAgent) and loaded.permission_mode == "plan"
 
+    def test_saved_components_name_their_adapter(self, db, components_client):
+        ClaudeAgent(id="claude").save(db=db)
+        CodexAgent(id="codex").save(db=db)
+        Agent(id="native", name="Native", db=db).save()
+
+        rows = components_client.get("/components").json()["data"]
+        listed = {row["component_id"]: row.get("metadata") for row in rows}
+
+        assert listed == {"claude": {"sdk": "claude-agent-sdk"}, "codex": {"sdk": "codex"}, "native": None}
+
+    def test_save_keeps_row_metadata(self, db, components_client):
+        ClaudeAgent(id="coder").save(db=db)
+        components_client.patch("/components/coder", json={"metadata": {"owner": "platform"}})
+
+        ClaudeAgent(id="coder").save(db=db)
+
+        assert db.get_component("coder")["metadata"] == {"owner": "platform", "sdk": "claude-agent-sdk"}
+
+    def test_components_api_create_names_the_adapter(self, components_client):
+        response = components_client.post(
+            "/components",
+            json={
+                "name": "Coder",
+                "component_id": "coder",
+                "component_type": "agent",
+                "config": {"sdk": "codex", "id": "coder"},
+                "metadata": {"owner": "platform"},
+                "stage": "published",
+            },
+        )
+
+        assert response.status_code == 201, response.text
+        assert response.json()["metadata"] == {"owner": "platform", "sdk": "codex"}
+
+    def test_components_api_create_leaves_a_native_agents_metadata_alone(self, components_client):
+        response = components_client.post(
+            "/components",
+            json={"name": "Native", "component_id": "native", "component_type": "agent", "config": {"id": "native"}},
+        )
+
+        assert response.status_code == 201, response.text
+        assert response.json().get("metadata") is None
+
+    def test_components_api_update_keeps_the_adapter(self, db, components_client):
+        ClaudeAgent(id="coder").save(db=db)
+
+        response = components_client.patch(
+            "/components/coder", json={"metadata": {"sdk": "codex", "owner": "platform"}}
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["metadata"] == {"sdk": "claude-agent-sdk", "owner": "platform"}
+
+    def test_publishing_config_metadata_keeps_the_adapter(self, db, components_client):
+        ClaudeAgent(id="coder").save(db=db)
+
+        response = components_client.post(
+            "/components/coder/configs",
+            json={
+                "config": {"sdk": "claude-agent-sdk", "id": "coder", "metadata": {"owner": "x"}},
+                "stage": "published",
+            },
+        )
+
+        assert response.status_code == 201, response.text
+        assert db.get_component("coder")["metadata"] == {"owner": "x", "sdk": "claude-agent-sdk"}
+
 
 class TestStudioRunner:
     """Stored external agents follow the code-registered ones in Studio: runnable, not buildable."""

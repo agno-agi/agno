@@ -505,6 +505,16 @@ def _config_agent_sdk(config: Optional[Dict[str, Any]]) -> Optional[str]:
     return str(config["sdk"])
 
 
+def _keep_agent_sdk(db: BaseDb, existing: Dict[str, Any], metadata: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Row metadata for a component update, keeping the adapter its stored config names."""
+    if str(existing.get("component_type")) != ComponentType.AGENT.value:
+        return metadata
+    from agno.agents._storage import stored_agent_sdk, with_agent_sdk
+
+    stored = stored_agent_sdk(db, str(existing["component_id"]))
+    return with_agent_sdk(metadata, stored[1] if stored else None)
+
+
 def _describe_agent_kind(sdk: Optional[str]) -> str:
     return "an Agent" if sdk is None else f"a {sdk!r} external agent"
 
@@ -935,12 +945,16 @@ def attach_routes(
                 db, config, links=links, scoped_user_id=scoped_user_id, own_component_id=component_id
             )
 
+            from agno.agents._storage import with_agent_sdk
+
             component, _config = db.create_component_with_config(
                 component_id=component_id,
                 component_type=DbComponentType(body.component_type.value),
                 name=body.name,
                 description=body.description,
-                metadata=body.metadata,
+                metadata=with_agent_sdk(
+                    body.metadata, _config_agent_sdk(config) if body.component_type == ComponentType.AGENT else None
+                ),
                 config=config,
                 label=body.label,
                 stage=body.stage or "draft",
@@ -1041,7 +1055,7 @@ def attach_routes(
             if body.description is not None:
                 update_kwargs["description"] = body.description
             if body.metadata is not None:
-                update_kwargs["metadata"] = body.metadata
+                update_kwargs["metadata"] = _keep_agent_sdk(db, existing, body.metadata)
             if body.component_type is not None:
                 update_kwargs["component_type"] = DbComponentType(body.component_type)
             # Whether this request changes anything of its own decides how a
