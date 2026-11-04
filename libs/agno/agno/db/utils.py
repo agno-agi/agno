@@ -1107,17 +1107,7 @@ def empty_metrics_totals(fields: Sequence[str] = METRICS_FIELDS) -> Dict[str, An
 
 def _empty_metrics_tool_totals() -> Dict[str, Any]:
     """The totals of one tool in tool_metrics before any call: no calls, no failures and no timing."""
-    return {"calls": 0, "failed_calls": 0, "total_ms": 0, "max_ms": None, "buckets": {}}
-
-
-def _add_metrics_tool_totals(target: Dict[str, Any], extra: Dict[str, Any]) -> None:
-    """Add the totals of one tool in tool_metrics to another in place."""
-    for key in ("calls", "failed_calls", "total_ms"):
-        target[key] += extra.get(key) or 0
-    if extra.get("max_ms") is not None and (target["max_ms"] is None or extra["max_ms"] > target["max_ms"]):
-        target["max_ms"] = extra["max_ms"]
-    for bucket, count in (extra.get("buckets") or {}).items():
-        target["buckets"][bucket] = target["buckets"].get(bucket, 0) + (count or 0)
+    return {"count": 0, "failed_count": 0, "total_ms": 0, "max_ms": None, "buckets": {}}
 
 
 def add_metrics_totals(target: Dict[str, Any], extra: Dict[str, Any], fields: Sequence[str] = METRICS_FIELDS) -> None:
@@ -1164,7 +1154,15 @@ def add_metrics_totals(target: Dict[str, Any], extra: Dict[str, Any], fields: Se
             for toolkit, tools in (value or {}).items():
                 toolkit_tools = tool_metrics.setdefault(toolkit, {})
                 for tool_name, tool in tools.items():
-                    _add_metrics_tool_totals(toolkit_tools.setdefault(tool_name, _empty_metrics_tool_totals()), tool)
+                    tool_totals = toolkit_tools.setdefault(tool_name, _empty_metrics_tool_totals())
+                    for key in ("count", "failed_count", "total_ms"):
+                        tool_totals[key] += tool.get(key) or 0
+                    if tool.get("max_ms") is not None and (
+                        tool_totals["max_ms"] is None or tool["max_ms"] > tool_totals["max_ms"]
+                    ):
+                        tool_totals["max_ms"] = tool["max_ms"]
+                    for bucket, count in (tool.get("buckets") or {}).items():
+                        tool_totals["buckets"][bucket] = tool_totals["buckets"].get(bucket, 0) + (count or 0)
             target[field] = tool_metrics
         elif field == "additional_metrics":
             # Merge additional_metrics (sum numeric values, keep latest for others)
@@ -1312,17 +1310,17 @@ def metrics_remote_member_team_session_ids(runs: Sequence[Dict[str, Any]]) -> Se
     return team_session_ids
 
 
-def _metrics_model_calls(run_data: Dict[str, Any], seen_run_ids: Set[str]) -> List[Dict[str, Any]]:
-    """Every model call a stored run holds, skipping nested runs already counted."""
-    calls = [run_data] if run_data.get("model") else []
+def _metrics_runs(run_data: Dict[str, Any], seen_run_ids: Set[str]) -> List[Dict[str, Any]]:
+    """A stored run and every run nested inside it, skipping nested runs already counted."""
+    runs = [run_data]
     for nested_run in _metrics_nested_runs(run_data):
         run_id = nested_run.get("run_id")
         if run_id in seen_run_ids:
             continue
         if run_id:
             seen_run_ids.add(run_id)
-        calls.extend(_metrics_model_calls(nested_run, seen_run_ids))
-    return calls
+        runs.extend(_metrics_runs(nested_run, seen_run_ids))
+    return runs
 
 
 def _metrics_request_durations(call: Dict[str, Any]) -> List[float]:
@@ -1404,27 +1402,43 @@ def _add_metrics_timing(totals: Dict[str, Any], timing: str, seconds: Optional[f
     totals[buckets_column][bucket] = totals[buckets_column].get(bucket, 0) + 1
 
 
-def _add_metrics_tool_calls(totals: Dict[str, Any], call: Dict[str, Any]) -> None:
-    """Add each tool call of a model call to tool_metrics, under its toolkit and tool name; a tool call that names no
-    toolkit is kept under ``""``."""
-    for tool_call in call.get("tools") or []:
+def _add_metrics_tool_calls(totals: Dict[str, Any], run_data: Dict[str, Any]) -> None:
+    """Add each tool call of a stored run to tool_metrics, under its toolkit, or "" for none, and its tool name."""
+    # The tool calls answered in the first messages of a forked run, copies of the run it was forked from
+    copied_tool_call_ids = {
+        message["tool_call_id"]
+        for message in (run_data.get("messages") or [])[: run_data.get("forked_from_message_index") or 0]
+        if message.get("role") == "tool" and message.get("tool_call_id")
+    }
+    for tool_call in run_data.get("tools") or []:
         if not isinstance(tool_call, dict) or not tool_call.get("tool_name"):
+            continue
+        # A tool call still paused or rejected by the user never ran, and one a forked run copied counts on the run it
+        # was forked from
+        if (
+            tool_call.get("requires_confirmation")
+            or tool_call.get("requires_user_input")
+            or tool_call.get("external_execution_required")
+            or tool_call.get("confirmed") is False
+            or tool_call.get("tool_call_id") in copied_tool_call_ids
+        ):
             continue
         tool = (
             totals["tool_metrics"]
             .setdefault(tool_call.get("toolkit") or "", {})
             .setdefault(tool_call["tool_name"], _empty_metrics_tool_totals())
         )
-        tool["calls"] += 1
+        tool["count"] += 1
         if tool_call.get("tool_call_error"):
-            tool["failed_calls"] += 1
+            tool["failed_count"] += 1
         seconds = (tool_call.get("metrics") or {}).get("duration")
-        if isinstance(seconds, (int, float)):
-            milliseconds = int(round(seconds * 1000))
-            tool["total_ms"] += milliseconds
-            tool["max_ms"] = milliseconds if tool["max_ms"] is None else max(tool["max_ms"], milliseconds)
-            bucket = _metrics_bucket(milliseconds)
-            tool["buckets"][bucket] = tool["buckets"].get(bucket, 0) + 1
+        if seconds is None:
+            continue
+        milliseconds = int(round(seconds * 1000))
+        tool["total_ms"] += milliseconds
+        tool["max_ms"] = milliseconds if tool["max_ms"] is None else max(tool["max_ms"], milliseconds)
+        bucket = _metrics_bucket(milliseconds)
+        tool["buckets"][bucket] = tool["buckets"].get(bucket, 0) + 1
 
 
 def _calculate_run_metrics(run: Dict[str, Any], seen_run_ids: Set[str]) -> Dict[str, Any]:
@@ -1443,48 +1457,51 @@ def _calculate_run_metrics(run: Dict[str, Any], seen_run_ids: Set[str]) -> Dict[
         _add_metrics_timing(totals, "duration", run_metrics.get("duration"))
         _add_metrics_timing(totals, "time_to_first_token", run_metrics.get("time_to_first_token"))
 
-    for call in _metrics_model_calls(run_data, seen_run_ids):
-        call_metrics = call.get("metrics") or {}
+    for nested_run in _metrics_runs(run_data, seen_run_ids):
+        # A run that records no model, such as an adapter's, still counts its tool calls
+        _add_metrics_tool_calls(totals, nested_run)
+        if not nested_run.get("model"):
+            continue
+        nested_run_metrics = nested_run.get("metrics") or {}
         for field in METRICS_TOKEN_FIELDS:
-            tokens = int(call_metrics.get(field) or 0)
+            tokens = int(nested_run_metrics.get(field) or 0)
             if field in METRICS_SUM_COLUMNS:
                 totals[field] += tokens
             elif field in METRICS_TOKEN_DETAILS_FIELDS and tokens:
                 totals["token_details"][field] = totals["token_details"].get(field, 0) + tokens
-        if call_metrics.get("cost") is not None:
-            totals["token_details"]["cost"] = totals["token_details"].get("cost", 0) + call_metrics["cost"]
+        if nested_run_metrics.get("cost") is not None:
+            totals["token_details"]["cost"] = totals["token_details"].get("cost", 0) + nested_run_metrics["cost"]
             totals["token_details"]["cost_runs_count"] = totals["token_details"].get("cost_runs_count", 0) + 1
         # The rest a run reports beside its tokens, such as eval_duration, merged as RunMetrics merges it
-        add_metrics_totals(totals, call_metrics, ["additional_metrics"])
-        for seconds in _metrics_request_durations(call):
+        add_metrics_totals(totals, nested_run_metrics, ["additional_metrics"])
+        for seconds in _metrics_request_durations(nested_run):
             _add_metrics_timing(totals, "model_call", seconds)
-        _add_metrics_tool_calls(totals, call)
 
-        details = call_metrics.get("details")
+        details = nested_run_metrics.get("details")
         model_type_metrics_lists = [
             model_type_metrics
             for model_type_metrics in (details.values() if isinstance(details, dict) else [])
             if isinstance(model_type_metrics, list)
         ]
-        # Each model labelled by its provider, as the call's own model is, not by the provider name details keep
+        # Each model labelled by its provider, as the run's own model is, not by the provider name details keep
         # for the model's class, such as "OpenAI Responses"
         provider_labels = {
-            model_metrics.get("provider"): call.get("model_provider") or ""
+            model_metrics.get("provider"): nested_run.get("model_provider") or ""
             for model_type_metrics in model_type_metrics_lists
             for model_metrics in model_type_metrics
-            if isinstance(model_metrics, dict) and model_metrics.get("id") == call["model"]
+            if isinstance(model_metrics, dict) and model_metrics.get("id") == nested_run["model"]
         }
-        # The call's own model, as agno_metrics counted it whether or not it reported usage, and every other model it
+        # The run's own model, as agno_metrics counted it whether or not it reported usage, and every other model it
         # used, such as its output model, once, each with the cost its details report for it
-        call_model = (call["model"], call.get("model_provider") or "")
-        model_costs: Dict[Tuple[str, str], Optional[float]] = {call_model: None}
+        nested_run_model = (nested_run["model"], nested_run.get("model_provider") or "")
+        model_costs: Dict[Tuple[str, str], Optional[float]] = {nested_run_model: None}
         for model_type_metrics in model_type_metrics_lists:
             for model_metrics in model_type_metrics:
                 if not isinstance(model_metrics, dict) or model_metrics.get("id") in (None, ""):
                     continue
                 model = (
-                    call_model
-                    if model_metrics["id"] == call["model"]
+                    nested_run_model
+                    if model_metrics["id"] == nested_run["model"]
                     else (
                         model_metrics["id"],
                         provider_labels.get(model_metrics.get("provider"))

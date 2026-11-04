@@ -556,6 +556,8 @@ def parse_tools(
                     continue
                 _function_names.append(name)
                 _func = _func._per_run_copy()
+                if isinstance(tool.name, str) and tool.name:
+                    _func.owning_toolkit = tool.name
                 _func._agent = agent
                 if agent._team is not None:
                     _func._team = agent._team
@@ -918,6 +920,7 @@ def run_tool(
                 tool_execution = call_result.tool_executions[0]
                 tool.result = tool_execution.result
                 tool.tool_call_error = tool_execution.tool_call_error
+                tool.metrics = tool_execution.metrics
                 if stream_events:
                     if team_mode:
                         yield handle_event(  # type: ignore
@@ -1033,6 +1036,7 @@ async def arun_tool(
                 tool_execution = call_result.tool_executions[0]
                 tool.result = tool_execution.result
                 tool.tool_call_error = tool_execution.tool_call_error
+                tool.metrics = tool_execution.metrics
                 if stream_events:
                     if team_mode:
                         yield handle_event(  # type: ignore

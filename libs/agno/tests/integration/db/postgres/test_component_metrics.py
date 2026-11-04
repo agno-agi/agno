@@ -2212,7 +2212,8 @@ def test_component_metrics_tables_for_a_long_session_table(postgres_db_real: Pos
 
 def test_calculate_metrics_counts_tool_calls(postgres_db_real: PostgresDb):
     """Ensure each tool call is counted under its tool from the stored run, including a nested member run's, without
-    reading its arguments or result, and that a read adds the tools up"""
+    reading its arguments or result, that a tool call a forked run copied, the user rejected or still waits on is not,
+    and that a read adds the tools up"""
     base_time = _noon_utc(2)
     member_run = RunOutput(
         run_id="member_run",
@@ -2256,21 +2257,51 @@ def test_calculate_metrics_counts_tool_calls(postgres_db_real: PostgresDb):
         updated_at=base_time,
     )
     _persist(postgres_db_real, team_session)
+    fork_session = _session_on(_utc_date(2), "fork_session", "bob")
+    original = fork_session.runs[0]
+    original.messages = [Message(role="tool", tool_call_id="copied_call", content="agno")]
+    original.tools = [
+        ToolExecution(tool_call_id="copied_call", tool_name="search", metrics=ToolCallMetrics(duration=0.4)),
+        ToolExecution(tool_name="delete_file", tool_call_error=True, requires_confirmation=False, confirmed=False),
+        ToolExecution(tool_name="send_email", requires_confirmation=True),
+    ]
+    forked = RunOutput(
+        run_id="forked_run",
+        agent_id="agent-1",
+        user_id="bob",
+        status=RunStatus.completed,
+        model="gpt-5",
+        model_provider="OpenAI",
+        metrics=_run_metrics(10, 0),
+        messages=[
+            Message(role="tool", tool_call_id="copied_call", content="agno"),
+            Message(role="tool", tool_call_id="new_call", content="agno"),
+        ],
+        tools=[
+            ToolExecution(tool_call_id="copied_call", tool_name="search", metrics=ToolCallMetrics(duration=0.4)),
+            ToolExecution(tool_call_id="new_call", tool_name="search", metrics=ToolCallMetrics(duration=0.1)),
+        ],
+        forked_from_run_id=original.run_id,
+        forked_from_message_index=1,
+        created_at=original.created_at,
+    )
+    fork_session.runs.append(forked)
+    _persist(postgres_db_real, fork_session)
     postgres_db_real.calculate_metrics()
 
     past_day = _utc_date(2)
     expected = {
         "": {
             "delegate_task_to_member": {
-                "calls": 1,
-                "failed_calls": 0,
+                "count": 1,
+                "failed_count": 0,
                 "total_ms": 1500,
                 "max_ms": 1500,
                 "buckets": {"le_1500": 1},
             },
             "search": {
-                "calls": 2,
-                "failed_calls": 1,
+                "count": 2,
+                "failed_count": 1,
                 "total_ms": 1400,
                 "max_ms": 1200,
                 "buckets": {"le_200": 1, "le_1200": 1},
@@ -2279,6 +2310,25 @@ def test_calculate_metrics_counts_tool_calls(postgres_db_real: PostgresDb):
     }
     # The member run is kept only inside its team run, so its tool calls count on the team's row
     assert _stored_rows(postgres_db_real)[(past_day, "bob", "team", "team-1")]["tool_metrics"] == expected
+    # The forked run counts only the tool call it made, and neither the rejected nor the paused call counts
+    assert _stored_rows(postgres_db_real)[(past_day, "bob", "agent", "agent-1")]["tool_metrics"] == {
+        "": {
+            "search": {
+                "count": 2,
+                "failed_count": 0,
+                "total_ms": 500,
+                "max_ms": 400,
+                "buckets": {"le_100": 1, "le_400": 1},
+            }
+        }
+    }
+    expected[""]["search"] = {
+        "count": 4,
+        "failed_count": 1,
+        "total_ms": 1900,
+        "max_ms": 1200,
+        "buckets": {"le_100": 1, "le_200": 1, "le_400": 1, "le_1200": 1},
+    }
     assert _stored_user_metrics_rows(postgres_db_real)[("daily", past_day)]["tool_metrics"] == expected
 
     for user_id in [None, "bob"]:

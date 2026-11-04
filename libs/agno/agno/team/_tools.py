@@ -410,6 +410,8 @@ def _determine_tools_for_model(
                     continue
                 _function_names.append(name)
                 _func = _func._per_run_copy()
+                if isinstance(tool.name, str) and tool.name:
+                    _func.owning_toolkit = tool.name
 
                 _func._team = team
                 # Respect the function's explicit strict setting if set
