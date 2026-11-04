@@ -298,6 +298,38 @@ def _storage_view_of_spared_run(
     return view
 
 
+def _remote_member_run_metrics(
+    member_response: Union[TeamRunOutput, "RunOutput"],
+) -> Union[TeamRunOutput, "RunOutput"]:
+    """The part of a remote member's run the team's run keeps when it stores no member responses: its ids, status,
+    model and metrics. The run itself is stored by the AgentOS that ran it, which may use another database."""
+    if isinstance(member_response, TeamRunOutput):
+        return TeamRunOutput(
+            run_id=member_response.run_id,
+            parent_run_id=member_response.parent_run_id,
+            session_id=member_response.session_id,
+            team_id=member_response.team_id,
+            status=member_response.status,
+            created_at=member_response.created_at,
+            model=member_response.model,
+            model_provider=member_response.model_provider,
+            metrics=member_response.metrics,
+            # The remote team's own members' runs, which the team's database holds no record of either
+            member_responses=[_remote_member_run_metrics(m) for m in member_response.member_responses or []],
+        )
+    return RunOutput(
+        run_id=member_response.run_id,
+        parent_run_id=member_response.parent_run_id,
+        session_id=member_response.session_id,
+        agent_id=member_response.agent_id,
+        status=member_response.status,
+        created_at=member_response.created_at,
+        model=member_response.model,
+        model_provider=member_response.model_provider,
+        metrics=member_response.metrics,
+    )
+
+
 def _scrub_member_responses_keeping_paused(
     team: "Team",
     run: Union[TeamRunOutput, "RunOutput"],
@@ -307,17 +339,21 @@ def _scrub_member_responses_keeping_paused(
     state for continue_run after a session reload, and the save after it
     completes scrubs it. Completed responses inside a spared paused sub-team
     run are removed too, and a spared run still passes through its own member's
-    storage flags.
+    storage flags. A remote member's run keeps its metrics.
 
     Copy-on-write: every level this rebuilds is shallow-copied, so the live run
     tree the caller holds keeps its member responses and its full messages."""
     from copy import copy
 
     from agno.team.team import Team
+    from agno.utils.team import is_remote_member_run
 
     spared = []
     for member_response in getattr(run, "member_responses", None) or []:
         if not getattr(member_response, "is_paused", False):
+            # The team's database may hold no other record of a remote member's run to count its tokens from
+            if is_remote_member_run(member_response, run.session_id):
+                spared.append(_remote_member_run_metrics(member_response))
             continue
         # Resolve the owner at THIS level before recursing: the response tree
         # mirrors the team tree, and carrying the owning sub-team down keeps a
@@ -430,6 +466,11 @@ async def asave_session(team: "Team", session: TeamSession) -> None:
         log_debug(f"Created or updated TeamSession record: {session.session_id}")
 
 
+def saves_its_runs(team: "Team") -> bool:
+    """Whether the team saves its own runs: a member team's or a workflow step's are saved by its team or workflow."""
+    return team.db is not None and team.parent_team_id is None and team.workflow_id is None
+
+
 def save_run(
     team: "Team",
     run: Union[TeamRunOutput, RunOutput],
@@ -448,7 +489,7 @@ def save_run(
     if _has_async_db(team):
         raise ValueError("Cannot use sync save_run() with an async database. Use asave_run() instead.")
 
-    if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
+    if saves_its_runs(team):
         storage_run = run
         if hasattr(run, "member_responses"):
             if not team.store_member_responses:
@@ -470,7 +511,7 @@ async def asave_run(
     from agno.team._run import _scrub_member_responses
     from agno.team._storage import _aupsert_run
 
-    if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
+    if saves_its_runs(team):
         storage_run = run
         if hasattr(run, "member_responses"):
             if not team.store_member_responses:
@@ -739,26 +780,27 @@ async def aget_session_metrics(team: "Team", session_id: Optional[str] = None) -
     return await aget_session_metrics_util(cast(Any, team), session_id=session_id)
 
 
-def update_session_metrics(team: "Team", session: TeamSession, run_response: TeamRunOutput) -> None:
-    """Calculate session metrics and write them to session_data.
+def update_session_metrics(team: "Team", session: TeamSession) -> None:
+    """Calculate session metrics from the session's runs and write them to session_data.
 
     Converts run-level Metrics (details: Dict[str, List[ModelMetrics]]) to
     session-level SessionMetrics (details: List[ModelMetrics]) using
     SessionMetrics.accumulate_from_run().
 
-    Accumulates metrics from the team leader's own model calls as well as
-    all member agent/team responses (recursively for nested teams).
+    Accumulates metrics from every run of the session, the team leader's and
+    its members' (recursively for nested teams), once each.
     """
-    from agno.team._storage import get_session_metrics_internal
+    session_metrics = SessionMetrics()
+    runs = session.runs or []
+    # A run of its own is counted from its row, never again from a copy kept inside its team's run
+    seen_run_ids: set[str] = {run.run_id for run in runs if run.run_id}
+    for run in runs:
+        if run.metrics is not None:
+            session_metrics.accumulate_from_run(run.metrics)
 
-    session_metrics = get_session_metrics_internal(team, session=session)
-    if session_metrics is None:
-        return
-    if run_response.metrics is not None:
-        session_metrics.accumulate_from_run(run_response.metrics)
-
-    # Accumulate metrics from member responses (agent and nested team runs)
-    _accumulate_member_metrics(session_metrics, run_response.member_responses)
+    # Accumulate metrics from member responses kept only inside a team's run (such as a remote member's)
+    for run in runs:
+        _accumulate_member_metrics(session_metrics, getattr(run, "member_responses", None) or [], seen_run_ids)
 
     if session.session_data is not None:
         session.session_data["session_metrics"] = session_metrics.to_dict()
@@ -767,14 +809,20 @@ def update_session_metrics(team: "Team", session: TeamSession, run_response: Tea
 def _accumulate_member_metrics(
     session_metrics: SessionMetrics,
     member_responses: "List",
+    seen_run_ids: set[str],
 ) -> None:
-    """Recursively accumulate metrics from member responses into session metrics."""
+    """Recursively accumulate metrics from member responses not counted yet into session metrics."""
     for member_response in member_responses:
+        run_id = member_response.run_id
+        if run_id and run_id in seen_run_ids:
+            continue
+        if run_id:
+            seen_run_ids.add(run_id)
         if member_response.metrics is not None:
             session_metrics.accumulate_from_run(member_response.metrics)
         # Recurse into nested team member responses
         if isinstance(member_response, TeamRunOutput) and member_response.member_responses:
-            _accumulate_member_metrics(session_metrics, member_response.member_responses)
+            _accumulate_member_metrics(session_metrics, member_response.member_responses, seen_run_ids)
 
 
 # ---------------------------------------------------------------------------

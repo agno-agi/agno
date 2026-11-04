@@ -1465,8 +1465,8 @@ class Team:
         # Metrics are now accumulated immediately during model calls
         return current_run_metrics or RunMetrics()
 
-    def _update_session_metrics(self, session: TeamSession, run_response: TeamRunOutput):
-        _session.update_session_metrics(self, session, run_response)
+    def _update_session_metrics(self, session: TeamSession):
+        _session.update_session_metrics(self, session)
 
     def _determine_tools_for_model(
         self,

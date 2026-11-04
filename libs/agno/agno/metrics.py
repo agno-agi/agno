@@ -24,6 +24,7 @@ class ModelType(str, Enum):
 
 if TYPE_CHECKING:
     from agno.models.base import Model
+    from agno.models.message import Message
     from agno.models.response import ModelResponse
 
 
@@ -429,6 +430,22 @@ class RunMetrics(BaseMetrics):
             self.timer = Timer()
         self.timer.start()
 
+    def resume_timer(self, created_at: Optional[int] = None):
+        """Start the timer again for a run that continues, so its duration runs from the run's start to its end.
+
+        A run continued in the process that started it keeps its timer. A run read back has no timer, so it counts
+        from created_at, which is in whole seconds.
+        """
+        if self.timer is not None and self.timer.start_time is not None:
+            # Running again: the timer measures from the run's start up to now
+            self.timer.end_time = None
+            self.timer.elapsed_time = None
+            return
+        self.timer = Timer()
+        self.timer.start()
+        if created_at is not None and self.timer.start_time is not None:
+            self.timer.start_time -= max(time() - created_at, 0)
+
     def stop_timer(self, set_duration: bool = True):
         if self.timer is not None:
             self.timer.stop()
@@ -711,6 +728,23 @@ def accumulate_model_metrics(
         metrics.cost = (metrics.cost or 0) + usage.cost
 
 
+def accumulate_tool_loop_metrics(
+    messages: "List[Message]",
+    model: "Model",
+    model_type: "Union[ModelType, str]",
+    run_metrics: Optional[RunMetrics] = None,
+) -> None:
+    """Accumulate every model call of a tool loop, one per assistant message it added, into run_metrics."""
+    if run_metrics is None:
+        return
+
+    from agno.models.response import ModelResponse
+
+    for message in messages:
+        if message.role == "assistant" and message.metrics.total_tokens:
+            accumulate_model_metrics(ModelResponse(response_usage=message.metrics), model, model_type, run_metrics)
+
+
 def accumulate_eval_metrics(
     eval_metrics: Optional[RunMetrics] = None,
     run_metrics: Optional[RunMetrics] = None,
@@ -771,7 +805,7 @@ def merge_background_metrics(
     run_metrics: Optional[RunMetrics],
     background_metrics: "Sequence[Optional[RunMetrics]]",
 ) -> None:
-    """Merge background task metrics into run_metrics on the main thread.
+    """Merge the metrics of a child or background run into run_metrics on the main thread.
 
     Each background task (memory, learning) accumulates metrics into its
     own isolated RunMetrics collector. After all tasks complete, this function

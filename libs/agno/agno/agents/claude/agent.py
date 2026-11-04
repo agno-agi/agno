@@ -20,6 +20,7 @@ from typing import (
 from uuid import uuid4
 
 from agno.agents._config import agent_dataclass
+from agno.agents._hitl import live_native_run
 from agno.agents._media import (
     accept_media,
     cleanup_run_media,
@@ -40,7 +41,6 @@ from agno.agents.base import (
     ExternalRunWarningEvent,
     run_coroutine_sync,
 )
-from agno.agents._hitl import live_native_run
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.exceptions import ModelProviderError, RunNotContinuableError
 from agno.metrics import BaseMetrics, ModelMetrics, RunMetrics
