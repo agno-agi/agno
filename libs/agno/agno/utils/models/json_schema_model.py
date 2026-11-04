@@ -6,9 +6,11 @@ class, so every provider applies them the way it applies any other output_schema
 
 import re
 import warnings
+from keyword import iskeyword
 from typing import Any, Dict, List, Literal, Optional, Set, Tuple, Type, Union
+from urllib.parse import unquote
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, create_model
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, create_model
 from pydantic_core import SchemaError as PydanticSchemaError
 
 from agno.utils.models.schema_utils import json_schema_response_format, unwrap_json_schema_response_format
@@ -90,7 +92,12 @@ def json_schema_to_model(schema: Dict[str, Any], name: Optional[str] = None) -> 
         raise UnsupportedJsonSchemaError("the schema must be a JSON object")
     builder = _ModelBuilder(schema)
     root_name = name or schema.get("title") or "OutputSchema"
-    model = builder.build_root(schema, str(root_name))
+    try:
+        model = builder.build_root(schema, str(root_name))
+    except UnsupportedJsonSchemaError:
+        raise
+    except Exception as e:
+        raise UnsupportedJsonSchemaError(f"cannot build a model: {e}") from e
     # Recorded as a response format, the shape rehydrate_inline_output_schema loads back
     setattr(model, SOURCE_SCHEMA_ATTR, json_schema_response_format(schema, name=model.__name__))
     return model
@@ -119,7 +126,8 @@ def serialize_output_schema(output_schema: Any) -> Any:
 def rehydrate_inline_output_schema(config: Dict[str, Any], strict: bool, component_label: str) -> None:
     """Replace a stored JSON Schema response format in config["output_schema"] with the model it describes.
 
-    Other dicts (provider-specific response formats) are left for the model to pass through.
+    Other dicts (provider-specific response formats) are left for the model to pass through,
+    and so is a stored format the converter refuses, unless strict.
     """
     from agno.exceptions import ComponentRehydrationError
     from agno.utils.log import log_warning
@@ -134,10 +142,9 @@ def rehydrate_inline_output_schema(config: Dict[str, Any], strict: bool, compone
         if strict:
             raise ComponentRehydrationError(
                 f"{component_label} has an output schema that cannot be loaded: {e}. Fix the schema, "
-                "or pass strict=False to load the component without it."
+                "or pass strict=False to load it as a dict."
             ) from e
-        log_warning(f"{component_label} output schema cannot be loaded, skipping: {e}")
-        del config["output_schema"]
+        log_warning(f"{component_label} output schema cannot become a model, passing it as a dict: {e}")
         return
     setattr(model, SOURCE_SCHEMA_ATTR, stored)
     config["output_schema"] = model
@@ -150,6 +157,7 @@ class _ModelBuilder:
         self.ref_models: Dict[str, Any] = {}
         self.building: Dict[str, str] = {}
         self.models: List[Type[BaseModel]] = []
+        self.defaults: List[Tuple[Type[BaseModel], str, Any, str]] = []
 
     def build_root(self, schema: Dict[str, Any], name: str) -> Type[BaseModel]:
         _check_keywords(schema, "")
@@ -172,15 +180,18 @@ class _ModelBuilder:
         for built in self.models:
             try:
                 built.model_rebuild(_types_namespace=namespace)
-            except (PydanticSchemaError, TypeError, ValueError) as e:
+            except Exception as e:
                 raise UnsupportedJsonSchemaError(f"cannot build a model: {e}") from e
+        for owner, prop_name, default, path in self.defaults:
+            _check_default(owner, prop_name, default, path)
         return model
 
     # Names -------------------------------------------------------------
 
     def _model_name(self, base: str) -> str:
         cleaned = re.sub(r"[^A-Za-z0-9_]", "_", base).strip("_") or "Model"
-        if cleaned[0].isdigit():
+        if cleaned[0].isdigit() or iskeyword(cleaned):
+            # A recursive ref names the model in a forward reference, which must parse as an expression
             cleaned = f"M{cleaned}"
         candidate = cleaned[:60]
         suffix = 2
@@ -197,7 +208,9 @@ class _ModelBuilder:
         if match is None:
             raise UnsupportedJsonSchemaError(f"{_at(path)}only local refs into $defs or definitions are supported")
         defs = self.root.get(match.group(1))
-        target = defs.get(match.group(2)) if isinstance(defs, dict) else None
+        # A ref is a URI fragment holding a JSON Pointer: percent-decode, then unescape ~1 before ~0
+        token = unquote(match.group(2)).replace("~1", "/").replace("~0", "~")
+        target = defs.get(token) if isinstance(defs, dict) else None
         if not isinstance(target, dict):
             raise UnsupportedJsonSchemaError(f"{_at(path)}{ref} does not resolve")
         return target
@@ -346,6 +359,8 @@ class _ModelBuilder:
                 raise UnsupportedJsonSchemaError(
                     f"{_at(path)}oneOf is only supported when its members' types cannot overlap"
                 )
+            if sum(m.get("nullable") is True or m.get("type") == "null" for m in members) > 1:
+                raise UnsupportedJsonSchemaError(f"{_at(path)}oneOf cannot allow null in more than one member")
         annotations = [self._annotation(m, f"{hint}Option{i + 1}", f"{path}/{i}") for i, m in enumerate(members)]
         return annotations[0] if len(annotations) == 1 else Union[tuple(annotations)]  # type: ignore[return-value]
 
@@ -383,25 +398,32 @@ class _ModelBuilder:
             raise UnsupportedJsonSchemaError(f"{_at(path)}required lists {missing} which are not in properties")
 
         fields: Dict[str, Tuple[Any, Any]] = {}
+        defaults: List[Tuple[str, Any, str]] = []
         for prop_name, prop_schema in properties.items():
             prop_path = f"{path}/properties/{prop_name}"
-            if not isinstance(prop_name, str) or prop_name.startswith("_") or prop_name.startswith("model_"):
+            if not isinstance(prop_name, str) or prop_name.startswith("_") or _is_model_attribute(prop_name):
                 raise UnsupportedJsonSchemaError(
-                    f"{_at(prop_path)}property names starting with '_' or 'model_' are not supported"
+                    f"{_at(prop_path)}property names starting with '_' or matching a Pydantic model_ attribute "
+                    "are not supported"
                 )
             annotation = self._annotation(prop_schema, _pascal(prop_name), prop_path, with_docs=False)
             docs = _doc_kwargs(prop_schema) if isinstance(prop_schema, dict) else {}
             if prop_name in required:
                 fields[prop_name] = (annotation, Field(..., **docs))
             elif isinstance(prop_schema, dict) and "default" in prop_schema:
-                fields[prop_name] = (annotation, Field(prop_schema["default"], **docs))
+                # Nullable like any optional field, so a model that answers null still parses
+                fields[prop_name] = (Optional[annotation], Field(prop_schema["default"], **docs))
+                defaults.append((prop_name, prop_schema["default"], prop_path))
             else:
-                # Not required means it may be absent, not that it may be null: keep the type,
-                # and keep the placeholder default out of the schema the model sees
-                fields[prop_name] = (annotation, Field(None, json_schema_extra=_drop_default, **docs))
+                # Strict providers mark every property required, so null is how a model leaves one
+                # out; the placeholder default stays out of the schema the model sees
+                fields[prop_name] = (Optional[annotation], Field(None, json_schema_extra=_drop_default, **docs))
 
         # JSON Schema allows undeclared keys unless additionalProperties is false: keep them rather than drop them
-        config = ConfigDict(extra="forbid" if additional is False else "allow")
+        config = ConfigDict(extra="forbid" if additional is False else "allow", protected_namespaces=())
+        if additional is not True:
+            # Keeping undeclared keys must not add additionalProperties the schema never declared
+            config["json_schema_extra"] = _drop_additional_properties
         if isinstance(schema.get("title"), str):
             config["title"] = schema["title"]
         with warnings.catch_warnings():
@@ -411,11 +433,12 @@ class _ModelBuilder:
                 model = create_model(name, __config__=config or None, **fields)  # type: ignore[call-overload]
             except UnsupportedJsonSchemaError:
                 raise
-            except (PydanticSchemaError, TypeError, ValueError) as e:
+            except Exception as e:
                 raise UnsupportedJsonSchemaError(f"{_at(path)}cannot build a model: {e}") from e
         if isinstance(schema.get("description"), str):
             model.__doc__ = schema["description"]
         self.models.append(model)
+        self.defaults.extend((model, prop_name, default, prop_path) for prop_name, default, prop_path in defaults)
         return model
 
 
@@ -462,7 +485,10 @@ def _check_keywords(schema: Dict[str, Any], path: str) -> None:
 
 def _matches_type(value: Any, json_type: str) -> bool:
     if json_type == "integer":
-        return isinstance(value, int) and not isinstance(value, bool)
+        # JSON Schema treats 1.0 as an integer
+        return (isinstance(value, int) and not isinstance(value, bool)) or (
+            isinstance(value, float) and value.is_integer()
+        )
     if json_type == "number":
         return isinstance(value, (int, float)) and not isinstance(value, bool)
     if json_type == "string":
@@ -482,12 +508,31 @@ def _check_pattern(pattern: Any, path: str) -> None:
         raise UnsupportedJsonSchemaError(f"{_at(path)}pattern {pattern!r} is not supported by the regex engine") from e
 
 
+def _check_default(model: Type[BaseModel], prop_name: str, default: Any, path: str) -> None:
+    """Refuse a default its own property would reject; Pydantic does not validate defaults."""
+    try:
+        model.model_validate({prop_name: default})
+    except ValidationError as e:
+        if any(error["loc"][:1] == (prop_name,) for error in e.errors()):
+            raise UnsupportedJsonSchemaError(f"{_at(path)}default {default!r} does not match the schema") from e
+
+
+def _is_model_attribute(name: str) -> bool:
+    return name.startswith("model_") and hasattr(BaseModel, name)
+
+
 def _drop_default(schema: Dict[str, Any]) -> None:
     schema.pop("default", None)
 
 
+def _drop_additional_properties(schema: Dict[str, Any]) -> None:
+    schema.pop("additionalProperties", None)
+
+
 def _doc_kwargs(schema: Dict[str, Any]) -> Dict[str, Any]:
     kwargs: Dict[str, Any] = {}
+    if isinstance(schema.get("title"), str):
+        kwargs["title"] = schema["title"]
     if isinstance(schema.get("description"), str):
         kwargs["description"] = schema["description"]
     if isinstance(schema.get("examples"), list):
@@ -505,6 +550,9 @@ def _types_of(schema: Dict[str, Any]) -> Set[str]:
 
 
 def _literal_value(value: Any, path: str) -> Any:
+    if isinstance(value, float) and value.is_integer():
+        # Literal[1.0] rejects an integer 1, which JSON Schema treats as the same number
+        return int(value)
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     raise UnsupportedJsonSchemaError(f"{_at(path)}enum and const values must be strings, numbers, booleans or null")

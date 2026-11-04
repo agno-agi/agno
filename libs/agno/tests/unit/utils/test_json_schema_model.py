@@ -6,6 +6,7 @@ import warnings
 import pytest
 from pydantic import BaseModel, ValidationError
 
+from agno.agent import Agent
 from agno.exceptions import ComponentRehydrationError
 from agno.utils.models.json_schema_model import (
     UnsupportedJsonSchemaError,
@@ -96,12 +97,189 @@ def test_output_breaking_the_schema_is_rejected(ticket, change):
         ticket.model_validate({**VALID, **change})
 
 
-def test_an_optional_property_may_be_absent_but_not_null():
-    model = json_schema_to_model({"type": "object", "properties": {"name": {"type": "string"}}})
-    assert model.model_json_schema()["properties"]["name"] == {"title": "Name", "type": "string"}
+def test_an_optional_property_may_be_absent_or_null():
+    model = json_schema_to_model({"type": "object", "properties": {"name": {"type": "string", "minLength": 2}}})
+    assert "default" not in model.model_json_schema()["properties"]["name"]
     assert model.model_validate({}).name is None
+    assert model.model_validate({"name": None}).name is None
+    with pytest.raises(ValidationError):
+        model.model_validate({"name": "x"})
+
+
+def test_a_required_property_stays_non_nullable():
+    model = json_schema_to_model({"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]})
     with pytest.raises(ValidationError):
         model.model_validate({"name": None})
+
+
+def test_an_optional_property_with_a_default_accepts_null():
+    model = json_schema_to_model({"type": "object", "properties": {"n": {"type": "integer", "default": 3}}})
+    assert model.model_validate({}).n == 3
+    assert model.model_validate({"n": None}).n is None
+
+
+def test_format_survives_on_optional_and_required_properties_without_warnings():
+    field = {"type": "string", "format": "date-time"}
+    schema = {"type": "object", "properties": {"a": field, "b": field}, "required": ["b"]}
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        props = json_schema_to_model(schema).model_json_schema()["properties"]
+    assert props["a"]["anyOf"][0]["format"] == "date-time"
+    assert props["b"]["format"] == "date-time"
+
+
+def test_a_property_title_is_kept():
+    model = json_schema_to_model({"type": "object", "properties": {"a": {"type": "string", "title": "Pretty A"}}})
+    assert model.model_json_schema()["properties"]["a"]["title"] == "Pretty A"
+
+
+@pytest.mark.parametrize(
+    "schema, reason",
+    [
+        ({"type": "integer", "default": "x"}, "does not match"),
+        ({"type": "integer", "minimum": 5, "default": 1}, "does not match"),
+        ({"enum": ["a"], "default": "b"}, "does not match"),
+    ],
+)
+def test_a_default_its_property_rejects_is_refused(schema, reason):
+    with pytest.raises(UnsupportedJsonSchemaError, match=reason):
+        json_schema_to_model({"type": "object", "properties": {"a": schema}})
+
+
+def test_a_default_is_checked_beside_a_required_property():
+    model = json_schema_to_model(
+        {
+            "type": "object",
+            "properties": {"a": {"type": "integer", "default": 1}, "b": {"type": "string"}},
+            "required": ["b"],
+        }
+    )
+    assert model.model_validate({"b": "x"}).a == 1
+
+
+def test_model_prefixed_names_that_are_not_pydantic_attributes_work_without_warnings():
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        model = json_schema_to_model(
+            {"type": "object", "properties": {"model_name": {"type": "string"}, "model_dump_id": {"type": "string"}}}
+        )
+    assert model.model_validate({"model_name": "m"}).model_name == "m"
+
+
+def test_undeclared_additional_properties_stay_out_of_the_model_schema():
+    model = json_schema_to_model(
+        {
+            "type": "object",
+            "properties": {"n": {"type": "object", "properties": {"x": {"type": "string"}}}},
+        }
+    )
+    schema = model.model_json_schema()
+    assert "additionalProperties" not in schema
+    assert "additionalProperties" not in schema["$defs"]["N"]
+    assert model.model_validate({"other": 1}).model_dump()["other"] == 1
+
+
+def test_declared_additional_properties_stay_in_the_model_schema():
+    model = json_schema_to_model(
+        {"type": "object", "properties": {"a": {"type": "string"}}, "additionalProperties": True}
+    )
+    assert model.model_json_schema()["additionalProperties"] is True
+
+
+def test_one_of_with_null_in_two_members_is_refused():
+    schema = {
+        "type": "object",
+        "properties": {"a": {"oneOf": [{"type": "string", "nullable": True}, {"type": "integer", "nullable": True}]}},
+    }
+    with pytest.raises(UnsupportedJsonSchemaError, match="null in more than one"):
+        json_schema_to_model(schema)
+
+
+def test_one_of_with_null_in_one_member_works():
+    model = json_schema_to_model(
+        {
+            "type": "object",
+            "properties": {"a": {"oneOf": [{"type": "string"}, {"type": "null"}]}},
+            "required": ["a"],
+        }
+    )
+    assert model.model_validate({"a": None}).a is None
+
+
+@pytest.mark.parametrize("name", ["class", "None", "True", "import"])
+def test_a_recursive_definition_named_like_a_keyword_works(name):
+    model = json_schema_to_model(
+        {
+            "type": "object",
+            "properties": {"c": {"$ref": f"#/$defs/{name}"}},
+            "$defs": {
+                name: {
+                    "type": "object",
+                    "properties": {"next": {"$ref": f"#/$defs/{name}"}, "v": {"type": "string"}},
+                }
+            },
+        }
+    )
+    assert model.model_validate({"c": {"next": {"v": "x"}}}).c.next.v == "x"
+    with pytest.raises(ValidationError):
+        model.model_validate({"c": {"next": {"v": 1}}})
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        {"type": "object", "properties": {"Config": {"type": "string"}}},
+        {"type": "object", "properties": {"a": {"type": {"x": 1}}}},
+        {"type": "object", "properties": {"a": {"type": "string"}}, "required": [["a"]]},
+    ],
+    ids=["pydantic-reserved-name", "unhashable-type", "unhashable-required"],
+)
+def test_any_build_failure_is_a_refusal(schema):
+    with pytest.raises(UnsupportedJsonSchemaError):
+        json_schema_to_model(schema)
+    config = {"output_schema": json_schema_response_format(schema)}
+    rehydrate_inline_output_schema(config, strict=False, component_label="Agent 'a'")
+    assert isinstance(config["output_schema"], dict)
+
+
+@pytest.mark.parametrize(
+    "ref, name",
+    [("#/$defs/a~1b", "a/b"), ("#/$defs/a~0b", "a~b"), ("#/$defs/a~01b", "a~1b"), ("#/$defs/a%20b", "a b")],
+)
+def test_ref_tokens_are_decoded(ref, name):
+    model = json_schema_to_model(
+        {"type": "object", "properties": {"a": {"$ref": ref}}, "$defs": {name: {"type": "string"}}, "required": ["a"]}
+    )
+    assert model.model_validate({"a": "x"}).a == "x"
+    with pytest.raises(ValidationError):
+        model.model_validate({"a": 1})
+
+
+def test_an_escaped_ref_never_selects_the_literally_named_definition():
+    model = json_schema_to_model(
+        {
+            "type": "object",
+            "properties": {"a": {"$ref": "#/$defs/a~1b"}},
+            "$defs": {"a/b": {"type": "string"}, "a~1b": {"type": "integer"}},
+            "required": ["a"],
+        }
+    )
+    assert model.model_validate({"a": "x"}).a == "x"
+    with pytest.raises(ValidationError):
+        model.model_validate({"a": 1})
+
+
+@pytest.mark.parametrize("field", [{"type": "integer", "enum": [1.0]}, {"type": "integer", "const": 1.0}])
+def test_an_integral_float_literal_matches_an_integer(field):
+    model = json_schema_to_model({"type": "object", "properties": {"a": field}, "required": ["a"]})
+    assert model.model_validate({"a": 1}).a == 1
+    with pytest.raises(ValidationError):
+        model.model_validate({"a": 2})
+
+
+def test_a_fractional_literal_still_fails_an_integer_type():
+    with pytest.raises(UnsupportedJsonSchemaError, match="do not match type"):
+        json_schema_to_model({"type": "object", "properties": {"a": {"type": "integer", "enum": [1.5]}}})
 
 
 def test_enum_with_a_matching_type_is_allowed():
@@ -268,7 +446,7 @@ def test_additional_properties_false_forbids_extra_keys():
         ({"type": "object", "properties": {"a": {"$ref": "#/$defs/Missing"}}}, "does not resolve"),
         ({"type": "object", "properties": {"a": {"type": "array", "items": [{"type": "string"}]}}}, "tuple-style"),
         ({"type": "object", "properties": {"_a": {"type": "string"}}}, "property names"),
-        ({"type": "object", "properties": {"model_name": {"type": "string"}}}, "property names"),
+        ({"type": "object", "properties": {"model_dump": {"type": "string"}}}, "property names"),
         ({"type": "object", "properties": {"a": {"enum": [{"x": 1}]}}}, "enum and const values"),
         ({"type": "object", "properties": {"a": {"type": "integer", "maxLength": 3}}}, "needs type string"),
         ({"type": "object", "properties": {"a": {"type": "strin"}}}, "unknown type 'strin'"),
@@ -443,11 +621,20 @@ def test_rehydrate_leaves_provider_specific_dicts_alone():
     assert config["output_schema"] == {"type": "json_object"}
 
 
-def test_rehydrate_unsupported_schema_raises_when_strict_and_drops_it_otherwise():
+def test_rehydrate_unsupported_schema_raises_when_strict_and_keeps_the_dict_otherwise():
     bad = json_schema_response_format({"type": "object", "properties": {"a": {"not": {}}}})
     with pytest.raises(ComponentRehydrationError, match="cannot be loaded"):
         rehydrate_inline_output_schema({"output_schema": bad}, strict=True, component_label="Agent 'a'")
 
     config = {"output_schema": bad}
     rehydrate_inline_output_schema(config, strict=False, component_label="Agent 'a'")
-    assert "output_schema" not in config
+    assert config["output_schema"] == bad
+
+
+def test_a_saved_agent_keeps_a_schema_the_converter_refuses():
+    stored = json_schema_response_format(
+        {"type": "object", "properties": {"t": {"type": "array", "items": {"type": "string"}, "uniqueItems": True}}}
+    )
+    loaded = Agent.from_dict(Agent(id="a", output_schema=stored).to_dict())
+    assert loaded.output_schema == stored
+    assert Agent.from_dict(loaded.to_dict()).output_schema == stored
