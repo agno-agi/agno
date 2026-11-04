@@ -428,5 +428,6 @@ class Cohere(Model):
         metrics.input_tokens = response_usage.tokens.input_tokens or 0
         metrics.output_tokens = response_usage.tokens.output_tokens or 0
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
+        metrics.cache_read_tokens = getattr(response_usage, "cached_tokens", None) or 0
 
         return metrics

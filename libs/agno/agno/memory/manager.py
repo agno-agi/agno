@@ -487,7 +487,9 @@ class MemoryManager:
 
         return response
 
-    def update_memory_task(self, task: str, user_id: Optional[str] = None) -> str:
+    def update_memory_task(
+        self, task: str, user_id: Optional[str] = None, run_metrics: Optional["RunMetrics"] = None
+    ) -> str:
         """Updates the memory with a task"""
 
         if not self.db:
@@ -518,6 +520,7 @@ class MemoryManager:
             update_memories=self.update_memories,
             add_memories=self.add_memories,
             clear_memories=self.clear_memories,
+            run_metrics=run_metrics,
         )
 
         # We refresh from the DB
@@ -525,7 +528,9 @@ class MemoryManager:
 
         return response
 
-    async def aupdate_memory_task(self, task: str, user_id: Optional[str] = None) -> str:
+    async def aupdate_memory_task(
+        self, task: str, user_id: Optional[str] = None, run_metrics: Optional["RunMetrics"] = None
+    ) -> str:
         """Updates the memory with a task"""
         self.set_log_level()
 
@@ -556,6 +561,7 @@ class MemoryManager:
             update_memories=self.update_memories,
             add_memories=self.add_memories,
             clear_memories=self.clear_memories,
+            run_metrics=run_metrics,
         )
 
         # We refresh from the DB
@@ -1098,11 +1104,12 @@ class MemoryManager:
             tools=_tools,
         )
 
-        # Accumulate memory model metrics
-        if run_metrics is not None and response.response_usage is not None:
-            from agno.metrics import ModelType, accumulate_model_metrics
+        # Accumulate memory model metrics, for every model call of the tool loop
+        from agno.metrics import ModelType, accumulate_tool_loop_metrics
 
-            accumulate_model_metrics(response, model_copy, ModelType.MEMORY_MODEL, run_metrics)
+        accumulate_tool_loop_metrics(
+            messages_for_model[len(messages) + 1 :], model_copy, ModelType.MEMORY_MODEL, run_metrics
+        )
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
             self.memories_updated = True
@@ -1182,11 +1189,12 @@ class MemoryManager:
             tools=_tools,
         )
 
-        # Accumulate memory model metrics
-        if run_metrics is not None and response.response_usage is not None:
-            from agno.metrics import ModelType, accumulate_model_metrics
+        # Accumulate memory model metrics, for every model call of the tool loop
+        from agno.metrics import ModelType, accumulate_tool_loop_metrics
 
-            accumulate_model_metrics(response, model_copy, ModelType.MEMORY_MODEL, run_metrics)
+        accumulate_tool_loop_metrics(
+            messages_for_model[len(messages) + 1 :], model_copy, ModelType.MEMORY_MODEL, run_metrics
+        )
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
             self.memories_updated = True
@@ -1204,6 +1212,7 @@ class MemoryManager:
         update_memories: bool = True,
         add_memories: bool = True,
         clear_memories: bool = True,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> str:
         if self.model is None:
             log_error("No model provided for memory manager")
@@ -1244,6 +1253,11 @@ class MemoryManager:
             tools=_tools,
         )
 
+        # Accumulate memory model metrics, for every model call of the tool loop
+        from agno.metrics import ModelType, accumulate_tool_loop_metrics
+
+        accumulate_tool_loop_metrics(messages_for_model[2:], model_copy, ModelType.MEMORY_MODEL, run_metrics)
+
         if response.tool_calls is not None and len(response.tool_calls) > 0:
             self.memories_updated = True
         log_debug("MemoryManager End", center=True)
@@ -1260,6 +1274,7 @@ class MemoryManager:
         clear_memories: bool = True,
         update_memories: bool = True,
         add_memories: bool = True,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> str:
         if self.model is None:
             log_error("No model provided for memory manager")
@@ -1312,6 +1327,11 @@ class MemoryManager:
             messages=messages_for_model,
             tools=_tools,
         )
+
+        # Accumulate memory model metrics, for every model call of the tool loop
+        from agno.metrics import ModelType, accumulate_tool_loop_metrics
+
+        accumulate_tool_loop_metrics(messages_for_model[2:], model_copy, ModelType.MEMORY_MODEL, run_metrics)
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
             self.memories_updated = True

@@ -961,8 +961,7 @@ class RunOutput:
             input_obj = RunInput.from_dict(input_data)
 
         metrics = data.pop("metrics", None)
-        if metrics:
-            metrics = RunMetrics.from_dict(metrics)
+        metrics = RunMetrics.from_dict(metrics) if metrics else None
 
         compaction = data.pop("compaction", None)
         if compaction:
