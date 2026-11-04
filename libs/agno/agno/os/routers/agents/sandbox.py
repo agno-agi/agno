@@ -46,6 +46,10 @@ async def enqueue_sandbox_run(
     elif resolved is not agent:
         raise ValueError("Sandbox submissions must use the registered agent instance")
     options = _harness.submission(agent, input, kwargs)
+    if kwargs.get("output_schema") is None:
+        # The worker derives the agent's own schema at the ticket's version; stored here, a publish
+        # that changes it would make an unpinned retry look like a different submission.
+        options.pop("output_schema", None)
     payload = {"input": input, "kwargs": options, "stream": True, "serialize_session": True}
     if scope is not None:
         payload["scope"] = scope

@@ -387,6 +387,64 @@ async def test_idempotent_retry_after_a_publish_reads_the_result_through_the_tic
     assert read_through == ["v1_sessions"]
 
 
+SCHEMA = {"type": "object", "properties": {"answer": {"type": "string"}}}
+
+
+@pytest.mark.asyncio
+async def test_ticket_carries_only_the_callers_output_schema(accepted, db, registry_sandbox):
+    agent = ClaudeAgent(id="coder", db=db, sandbox=registry_sandbox, output_schema=SCHEMA)
+    worker = FakeWorker(None, None, [agent])
+
+    by_default = await sandbox.enqueue_sandbox_run(
+        agent, worker, input="hello", session_id="s1", user_id=None, kwargs={}
+    )
+    explicit = await sandbox.enqueue_sandbox_run(
+        agent, worker, input="hello", session_id="s2", user_id=None, kwargs={"output_schema": SCHEMA}
+    )
+
+    # The worker derives the agent's own schema when it rebuilds the agent at the ticket's version.
+    assert "output_schema" not in by_default["payload"]["kwargs"]
+    assert explicit["payload"]["kwargs"]["output_schema"] == SCHEMA
+
+
+@pytest.mark.asyncio
+async def test_idempotent_retry_survives_a_publish_that_changes_the_default_output_schema(
+    accepted, db, registry, registry_sandbox, monkeypatch
+):
+    first = ClaudeAgent(id="coder", db=db, sandbox=registry_sandbox).to_dict()
+    component = StoredComponent(db, first)
+    component.publish({**first, "output_schema": SCHEMA})
+    agent = await stored_agent(db, registry)
+    assert agent.output_schema == SCHEMA
+    scope = resolve_queue_scope("coder", [], db, None, None)
+    original = {
+        "id": "run-1",
+        "component_type": "agent",
+        "component_id": "coder",
+        "session_id": "s1",
+        "user_id": None,
+        "payload": {
+            "input": "hello",
+            "kwargs": {},
+            "stream": True,
+            "serialize_session": True,
+            "scope": {**scope, "version": 1},
+        },
+    }
+
+    async def duplicate(worker, job, component=None):
+        return {"reason": "duplicate", "job": original}
+
+    monkeypatch.setattr(sandbox, "aenqueue_ticket", duplicate)
+    submit = dict(input="hello", session_id="s1", user_id=None, kwargs={}, idempotency_key="key")
+    # Version 1 had no schema and version 2 does: the unpinned retry is still the same submission.
+    assert await sandbox.enqueue_sandbox_run(agent, FakeWorker(db, registry, []), scope=scope, **submit) is original
+    with pytest.raises(HTTPException, match="different input or options"):
+        await sandbox.enqueue_sandbox_run(
+            agent, FakeWorker(db, registry, []), scope=scope, **{**submit, "kwargs": {"output_schema": SCHEMA}}
+        )
+
+
 @pytest.mark.asyncio
 async def test_idempotent_retry_of_a_stored_agent_compares_the_pin_not_the_published_version(
     accepted, db, registry, registry_sandbox, monkeypatch

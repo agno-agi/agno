@@ -256,6 +256,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 "type": "async_postgres",
                 "db_url": self.db_url,
                 "db_schema": self.db_schema,
+                "sandbox_table": self.sandbox_table_name,
             }
         )
         return data
@@ -288,6 +289,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             approvals_table=data.get("approvals_table"),
             auth_tokens_table=data.get("auth_tokens_table"),
             service_accounts_table=data.get("service_accounts_table"),
+            sandbox_table=data.get("sandbox_table"),
         )
 
     async def close(self) -> None:
