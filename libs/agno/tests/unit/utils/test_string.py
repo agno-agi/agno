@@ -542,3 +542,32 @@ def test_extract_json_objects_ignores_unmatched_opening_brace():
     assert _extract_json_objects(text) == ['{"a": 1}']
     assert parse_response_dict_str(text) == {"a": 1}
     assert _extract_json_objects('Open { here and { there, then {"a": 1} and {"b": 2}') == ['{"a": 1}', '{"b": 2}']
+
+
+class AnswerWithCode(BaseModel):
+    explanation: str
+    code: str
+
+
+@pytest.mark.parametrize(
+    "wrapper",
+    [
+        "```json\n{payload}\n```",
+        "```\n{payload}\n```",
+        "Here is the result:\n{payload}",
+        "Here is the result:\n```json\n{payload}\n```\nLet me know if you need more help.",
+    ],
+)
+def test_parse_response_preserves_inner_code_fences(wrapper):
+    """JSON string values containing ``` code fences must not be corrupted or dropped
+    when the outer JSON is fenced or follows prose (#11279)."""
+    payload = {"explanation": "Use a loop.", "code": "```python\nprint(1)\n```"}
+    content = wrapper.format(payload=json.dumps(payload))
+
+    model_result = parse_response_model_str(content, AnswerWithCode)
+    assert model_result is not None
+    assert model_result.explanation == "Use a loop."
+    assert model_result.code == "```python\nprint(1)\n```"
+
+    dict_result = parse_response_dict_str(content)
+    assert dict_result == payload

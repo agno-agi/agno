@@ -217,7 +217,23 @@ def parse_response_model_str(content: str, output_schema: Type[BaseModel]) -> Op
     if structured_output is not None:
         return structured_output
 
-    # Second attempt: clean content and try again
+    # Second attempt: extract a single valid JSON object from raw content before markdown cleanup
+    # so code fences inside JSON string values are not stripped by _clean_json_content
+    candidate_jsons = _extract_json_objects(content)
+    if len(candidate_jsons) == 1:
+        try:
+            structured_output = output_schema.model_validate_json(candidate_jsons[0])
+        except (ValidationError, json.JSONDecodeError):
+            try:
+                data = json.loads(candidate_jsons[0])
+                structured_output = output_schema.model_validate(data)
+            except (ValidationError, json.JSONDecodeError):
+                pass
+
+    if structured_output is not None:
+        return structured_output
+
+    # Third attempt: clean content and try again
     cleaned_content = _clean_json_content(content)
 
     try:
@@ -265,7 +281,18 @@ def parse_response_dict_str(content: str) -> Optional[dict]:
     except json.JSONDecodeError:
         pass
 
-    # Second attempt: clean content and try again
+    # Second attempt: extract a single valid JSON object from raw content before markdown cleanup
+    # so code fences inside JSON string values are not stripped by _clean_json_content
+    candidate_jsons = _extract_json_objects(content)
+    if len(candidate_jsons) == 1:
+        try:
+            data = json.loads(candidate_jsons[0])
+            if isinstance(data, dict):
+                return data
+        except json.JSONDecodeError:
+            pass
+
+    # Third attempt: clean content and try again
     cleaned_content = _clean_json_content(content)
 
     try:
