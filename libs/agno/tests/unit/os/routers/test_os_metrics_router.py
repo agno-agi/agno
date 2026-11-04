@@ -12,6 +12,8 @@ from fastapi.testclient import TestClient
 from agno.agent import Agent
 from agno.client import AgentOSClient
 from agno.db.mongo import MongoDb
+from agno.db.mysql import MySQLDb
+from agno.db.postgres import AsyncPostgresDb, PostgresDb
 from agno.db.sqlite import SqliteDb
 from agno.db.utils import merge_metrics_totals
 from agno.os import AgentOS, Authorization
@@ -205,9 +207,9 @@ def _users_client(dbs, user_store=None, require_admin=None):
     return TestClient(app)
 
 
-def _remote_db(db_id, remote_client):
+def _remote_db(db_id, remote_client, base_url="http://remote-os"):
     """A RemoteDb with the given id, on a remote AgentOS that answers every read through the given test client."""
-    agentos_client = AgentOSClient(base_url="http://remote-os")
+    agentos_client = AgentOSClient(base_url=base_url)
 
     async def remote_get(endpoint, params=None, headers=None):
         return remote_client.get(endpoint, params=params, headers=headers).json()
@@ -429,6 +431,71 @@ class TestDatabases:
 
         assert body["total_sessions"] == 3
         assert list(body["db_ids"]) == ["db-1"]
+
+    def test_sync_and_async_postgres_on_one_unix_socket_are_read_once(self, settings):
+        """A sync and an async PostgreSQL database on one unix socket, such as Cloud SQL's, count its rows once."""
+        db_url = "postgresql+psycopg://ai:ai@/ai?host=/cloudsql/project:region:instance"
+        sync_db = PostgresDb(db_url=db_url, id="db-1")
+        sync_db.get_component_metrics = MagicMock(side_effect=_totals(_today_row()))  # type: ignore[method-assign]
+        sync_db.get_metrics_totals = MagicMock(side_effect=_window_totals(_today_row()))  # type: ignore[method-assign]
+        sync_db.get_metrics_versions = MagicMock(return_value=_versions())  # type: ignore[method-assign]
+        async_db = AsyncPostgresDb(db_url=db_url.replace("+psycopg", "+psycopg_async"), id="db-2")
+        async_db.get_component_metrics = AsyncMock(side_effect=_totals(_today_row()))  # type: ignore[method-assign]
+        async_db.get_metrics_totals = AsyncMock(side_effect=_window_totals(_today_row()))  # type: ignore[method-assign]
+        async_db.get_metrics_versions = AsyncMock(return_value=_versions())  # type: ignore[method-assign]
+        client = _client(settings, sync_db, async_db)
+        with _scope(None):
+            body = client.get(f"/os/metrics/sessions?{_last(1)}").json()
+
+        assert body["total_sessions"] == 3
+        assert list(body["db_ids"]) == ["db-1"]
+
+    @pytest.mark.parametrize(
+        "db_class, db_url, other_db_url",
+        [
+            (
+                PostgresDb,
+                "postgresql+psycopg://ai:ai@/ai?host=/cloudsql/project:region:instance",
+                "postgresql+psycopg://ai:ai@/ai?host=/cloudsql/project:region:other",
+            ),
+            (
+                MySQLDb,
+                "mysql+pymysql://ai:ai@/ai?unix_socket=/var/run/mysqld/mysqld.sock",
+                "mysql+pymysql://ai:ai@/ai?unix_socket=/var/run/mysqld/other.sock",
+            ),
+        ],
+    )
+    def test_databases_on_unix_sockets_are_told_apart_by_the_socket(self, settings, db_class, db_url, other_db_url):
+        """Two ids on one socket are read once, and a database on another socket is read as well."""
+        dbs = [
+            db_class(db_url=url, id=db_id)
+            for db_id, url in zip(["db-1", "db-2", "db-3"], [db_url, db_url, other_db_url])
+        ]
+        for db in dbs:
+            db.get_component_metrics = MagicMock(side_effect=_totals(_today_row()))  # type: ignore[method-assign]
+            db.get_metrics_totals = MagicMock(side_effect=_window_totals(_today_row()))  # type: ignore[method-assign]
+            db.get_metrics_versions = MagicMock(return_value=_versions())  # type: ignore[method-assign]
+        client = _client(settings, *dbs)
+        with _scope(None):
+            body = client.get(f"/os/metrics/sessions?{_last(1)}").json()
+
+        assert body["total_sessions"] == 6
+        assert list(body["db_ids"]) == ["db-1", "db-3"]
+
+    def test_remote_databases_with_one_id_on_two_agentoses_are_not_answered_by_one(self, settings):
+        """Two remote AgentOSes that each have a database with the same id are refused, not answered by the first."""
+        remote_dbs = [
+            _remote_db("db-1", _client(settings, _db("db-1", _today_row())), base_url=base_url)
+            for base_url in ["http://remote-os-a", "http://remote-os-b"]
+        ]
+        # _users_client takes the databases by id, so both can be registered under one id
+        gateway = _users_client({"db-1": remote_dbs})
+        with _scope(None):
+            response = gateway.get(f"/os/metrics/sessions?{_last(1)}")
+
+        assert response.status_code == 503
+        for remote_db in remote_dbs:
+            remote_db.client._aget.assert_not_called()  # type: ignore[attr-defined]
 
     def test_only_remote_database_answers_through_its_agentos(self, mock_db, settings):
         """A gateway whose one database is a RemoteDb forwards the read, with the caller's token and filters."""
