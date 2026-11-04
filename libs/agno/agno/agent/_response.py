@@ -73,9 +73,13 @@ from agno.utils.string import parse_response_dict_str, parse_response_model_str
 
 
 def handle_reasoning(
-    agent: Agent, run_response: RunOutput, run_messages: RunMessages, run_context: Optional[RunContext] = None
+    agent: Agent,
+    run_response: RunOutput,
+    run_messages: RunMessages,
+    run_context: Optional[RunContext] = None,
+    reasoning: Optional[bool] = None,
 ) -> None:
-    if agent.reasoning_model is not None:
+    if reasoning is not False and agent.reasoning_model is not None:
         reasoning_generator = reason(
             agent=agent,
             run_response=run_response,
@@ -94,8 +98,9 @@ def handle_reasoning_stream(
     run_messages: RunMessages,
     run_context: Optional[RunContext] = None,
     stream_events: Optional[bool] = None,
+    reasoning: Optional[bool] = None,
 ) -> Iterator[RunOutputEvent]:
-    if agent.reasoning_model is not None:
+    if reasoning is not False and agent.reasoning_model is not None:
         reasoning_generator = reason(
             agent=agent,
             run_response=run_response,
@@ -107,9 +112,13 @@ def handle_reasoning_stream(
 
 
 async def ahandle_reasoning(
-    agent: Agent, run_response: RunOutput, run_messages: RunMessages, run_context: Optional[RunContext] = None
+    agent: Agent,
+    run_response: RunOutput,
+    run_messages: RunMessages,
+    run_context: Optional[RunContext] = None,
+    reasoning: Optional[bool] = None,
 ) -> None:
-    if agent.reasoning_model is not None:
+    if reasoning is not False and agent.reasoning_model is not None:
         reason_generator = areason(
             agent=agent,
             run_response=run_response,
@@ -128,8 +137,9 @@ async def ahandle_reasoning_stream(
     run_messages: RunMessages,
     run_context: Optional[RunContext] = None,
     stream_events: Optional[bool] = None,
+    reasoning: Optional[bool] = None,
 ) -> AsyncIterator[RunOutputEvent]:
-    if agent.reasoning_model is not None:
+    if reasoning is not False and agent.reasoning_model is not None:
         reason_generator = areason(
             agent=agent,
             run_response=run_response,

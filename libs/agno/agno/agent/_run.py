@@ -377,6 +377,7 @@ def _run(
     debug_mode: Optional[bool] = None,
     background_tasks: Optional[Any] = None,
     pre_session: Optional[AgentSession] = None,
+    reasoning: Optional[bool] = None,
     **kwargs: Any,
 ) -> RunOutput:
     """Run the Agent and return the RunOutput.
@@ -543,7 +544,13 @@ def _run(
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 8. Reason about the task
-                handle_reasoning(agent, run_response=run_response, run_messages=run_messages, run_context=run_context)
+                handle_reasoning(
+                    agent,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    run_context=run_context,
+                    reasoning=reasoning,
+                )
 
                 # Check for cancellation before model call
                 raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -789,6 +796,7 @@ def _run_stream(
     debug_mode: Optional[bool] = None,
     background_tasks: Optional[Any] = None,
     pre_session: Optional[AgentSession] = None,
+    reasoning: Optional[bool] = None,
     **kwargs: Any,
 ) -> Iterator[Union[RunOutputEvent, RunOutput]]:
     """Run the Agent and yield the RunOutput.
@@ -976,6 +984,7 @@ def _run_stream(
                     run_messages=run_messages,
                     run_context=run_context,
                     stream_events=stream_events,
+                    reasoning=reasoning,
                 )
 
                 # Check for cancellation before model processing
@@ -1342,6 +1351,7 @@ def run_dispatch(
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
     yield_run_output: Optional[bool] = None,
     debug_mode: Optional[bool] = None,
+    reasoning: Optional[bool] = None,
     **kwargs: Any,
 ) -> Union[RunOutput, Iterator[Union[RunOutputEvent, RunOutput]]]:
     """Run the Agent and return the response."""
@@ -1488,6 +1498,7 @@ def run_dispatch(
             debug_mode=debug_mode,
             background_tasks=background_tasks,
             pre_session=agent_session,
+            reasoning=reasoning,
             **kwargs,
         )
         return response_iterator
@@ -1505,6 +1516,7 @@ def run_dispatch(
             debug_mode=debug_mode,
             background_tasks=background_tasks,
             pre_session=agent_session,
+            reasoning=reasoning,
             **kwargs,
         )
         return response
@@ -1523,6 +1535,7 @@ async def _arun(
     debug_mode: Optional[bool] = None,
     background_tasks: Optional[Any] = None,
     pre_session: Optional[AgentSession] = None,
+    reasoning: Optional[bool] = None,
     **kwargs: Any,
 ) -> RunOutput:
     """Run the Agent and return the RunOutput.
@@ -1695,7 +1708,11 @@ async def _arun(
 
                 # 8. Reason about the task if reasoning is enabled
                 await ahandle_reasoning(
-                    agent, run_response=run_response, run_messages=run_messages, run_context=run_context
+                    agent,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    run_context=run_context,
+                    reasoning=reasoning,
                 )
 
                 # Check for cancellation before model call
@@ -2135,6 +2152,7 @@ async def _arun_stream(
     debug_mode: Optional[bool] = None,
     background_tasks: Optional[Any] = None,
     pre_session: Optional[AgentSession] = None,
+    reasoning: Optional[bool] = None,
     **kwargs: Any,
 ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
     """Run the Agent and yield the RunOutput.
@@ -2326,6 +2344,7 @@ async def _arun_stream(
                     run_messages=run_messages,
                     run_context=run_context,
                     stream_events=stream_events,
+                    reasoning=reasoning,
                 ):
                     if not isinstance(item, _CANCEL_BYPASS_EVENT_TYPES):
                         await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2732,6 +2751,7 @@ def arun_dispatch(  # type: ignore
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
     yield_run_output: Optional[bool] = None,
     debug_mode: Optional[bool] = None,
+    reasoning: Optional[bool] = None,
     background: bool = False,
     **kwargs: Any,
 ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
@@ -2886,6 +2906,7 @@ def arun_dispatch(  # type: ignore
                 add_session_state_to_context=opts.add_session_state_to_context,
                 debug_mode=debug_mode,
                 background_tasks=background_tasks,
+                reasoning=reasoning,
                 **kwargs,
             )
         return _arun_background(  # type: ignore[return-value]
@@ -2900,6 +2921,7 @@ def arun_dispatch(  # type: ignore
             add_session_state_to_context=opts.add_session_state_to_context,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
+            reasoning=reasoning,
             **kwargs,
         )
 
@@ -2920,6 +2942,7 @@ def arun_dispatch(  # type: ignore
             debug_mode=debug_mode,
             background_tasks=background_tasks,
             pre_session=_pre_session,
+            reasoning=reasoning,
             **kwargs,
         )  # type: ignore[assignment]
     else:
@@ -2936,6 +2959,7 @@ def arun_dispatch(  # type: ignore
             debug_mode=debug_mode,
             background_tasks=background_tasks,
             pre_session=_pre_session,
+            reasoning=reasoning,
             **kwargs,
         )
 

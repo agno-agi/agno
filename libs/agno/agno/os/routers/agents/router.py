@@ -722,12 +722,18 @@ def get_agent_router(
         background: bool = Form(
             False, description="Run in background and return immediately with run metadata (requires database)"
         ),
+        reasoning: Optional[bool] = Form(
+            None,
+            description="Enable or disable reasoning for this run. If omitted, use the agent's configured behavior.",
+        ),
         factory_input: Optional[str] = Form(
             None,
             description="JSON object with factory-specific parameters for dynamic agent construction",
         ),
     ):
         kwargs = await get_request_kwargs(request, create_agent_run)
+        if reasoning is not None:
+            kwargs["reasoning"] = reasoning
 
         files_metadata_list = parse_files_metadata(files_metadata)
 

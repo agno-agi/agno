@@ -46,3 +46,10 @@ When an Agent with a `reasoning_model` is given a task, the reasoning model firs
 
 See the [examples](./agents/).
 
+### Per-Run Reasoning Toggle
+
+Configure a `reasoning_model` once, then override reasoning for an individual
+run with `reasoning=True` or `reasoning=False`. Omitting the argument preserves
+the Agent's configured behavior. See
+[`models/groq/dynamic_reasoning_toggle.py`](./models/groq/dynamic_reasoning_toggle.py)
+for a runnable example.
