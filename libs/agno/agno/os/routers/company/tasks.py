@@ -1,8 +1,7 @@
 """Collaborative Company task reads, edits and lifecycle transitions."""
 
 import asyncio
-from itertools import groupby
-from typing import Any, Dict, List, Literal, Optional, Union, get_args
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union, get_args
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
@@ -209,22 +208,36 @@ def get_tasks_router(
             failed=failed,
             group_by=group_by,
         )
-        data = [TaskResponse(**row) for row in await task_responses(request, rows)]
-        meta = PaginationInfo(page=page, limit=limit, total_count=total, total_pages=(total + limit - 1) // limit)
         if group_by is None:
+            data = [TaskResponse(**row) for row in await task_responses(request, rows)]
+            meta = PaginationInfo(page=page, limit=limit, total_count=total, total_pages=(total + limit - 1) // limit)
             return PaginatedResponse(data=data, meta=meta)
-        # The page is sorted group-first, so each group is one run of rows and may continue on the next page.
+
+        def group_key(row: Dict[str, Any]) -> Tuple[Optional[str], ...]:
+            return (row["status"],) if group_by == "status" else (row["executor_type"], row["executor_id"])
+
+        def group_meta(count: int) -> PaginationInfo:
+            return PaginationInfo(page=page, limit=limit, total_count=count, total_pages=(count + limit - 1) // limit)
+
+        # Each group is paged on its own; a row before the page only carries its group's size.
+        sizes = {group_key(row): row["group_total"] for row in rows}
+        members: Dict[Tuple[Optional[str], ...], List[TaskResponse]] = {key: [] for key in sizes}
+        offset = (page - 1) * limit
+        for row in await task_responses(request, [row for row in rows if row["position"] > offset]):
+            members[group_key(row)].append(TaskResponse(**row))
         groups: List[Union[TaskStatusGroup, TaskExecutorGroup]]
         if group_by == "status":
+            # Every status is listed in board order, so an empty column still shows its count.
             groups = [
-                TaskStatusGroup(status=key, data=list(tasks)) for key, tasks in groupby(data, lambda task: task.status)
+                TaskStatusGroup(status=key, data=members.get((key,), []), meta=group_meta(sizes.get((key,), 0)))
+                for key in ([status] if status is not None else get_args(TaskStatus))
             ]
         else:
             groups = [
-                TaskExecutorGroup(executor_type=key[0], executor_id=key[1], data=list(tasks))
-                for key, tasks in groupby(data, lambda task: (task.executor_type, task.executor_id))
+                TaskExecutorGroup(executor_type=key[0], executor_id=key[1], data=members[key], meta=group_meta(size))
+                for key, size in sizes.items()
             ]
-        return TaskGroupsResponse(groups=groups, meta=meta)
+        return TaskGroupsResponse(groups=groups)
 
     async def _require_accept(request: Request, executor_type: Optional[str], executor_id: Optional[str]) -> None:
         assert executor_type is not None  # Validated by TaskCreate and TaskTransition.

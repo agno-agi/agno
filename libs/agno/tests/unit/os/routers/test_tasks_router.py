@@ -179,18 +179,30 @@ def test_cross_product_status_pagination(client):
 def test_list_groups_by_status_and_executor(client):
     records = [create(client) for _ in range(3)]
     assert transition(client, "/company/tasks/" + records[0]["id"], "ready").status_code == 200
-    assert transition(client, "/company/tasks/" + records[1]["id"], "cancelled").status_code == 200
     pages = [
-        client.get("/company/tasks", params={"group_by": "status", "limit": 2, "page": page}).json() for page in [1, 2]
+        client.get("/company/tasks", params={"group_by": "status", "limit": 1, "page": page}).json()["groups"]
+        for page in [1, 2]
     ]
-    assert [[group["status"] for group in p["groups"]] for p in pages] == [["backlog", "ready"], ["cancelled"]]
-    assert [[task["id"] for group in p["groups"] for task in group["data"]] for p in pages] == [
-        [records[2]["id"], records[0]["id"]],
-        [records[1]["id"]],
+    # Every status is listed in board order, and each group pages on its own.
+    assert [group["status"] for group in pages[0]] == [
+        "backlog",
+        "ready",
+        "in_progress",
+        "in_review",
+        "done",
+        "cancelled",
     ]
-    assert (pages[0]["meta"]["total_count"], pages[0]["meta"]["total_pages"]) == (3, 2)
+    assert {task["id"] for group in pages for task in group[0]["data"]} == {records[1]["id"], records[2]["id"]}
+    assert [[task["id"] for task in page[1]["data"]] for page in pages] == [[records[0]["id"]], []]
+    assert [(group["meta"]["total_count"], group["meta"]["total_pages"]) for group in pages[1][:3]] == [
+        (2, 2),
+        (1, 1),
+        (0, 0),
+    ]
+    only = client.get("/company/tasks", params={"group_by": "status", "status": "ready"}).json()["groups"]
+    assert [(group["status"], group["meta"]["total_count"]) for group in only] == [("ready", 1)]
     groups = client.get("/company/tasks", params={"group_by": "executor"}).json()["groups"]
-    assert [(group["executor_type"], group["executor_id"], len(group["data"])) for group in groups] == [
+    assert [(group["executor_type"], group["executor_id"], group["meta"]["total_count"]) for group in groups] == [
         (None, None, 2),
         ("agent", "writer", 1),
     ]

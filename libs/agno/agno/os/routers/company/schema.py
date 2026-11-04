@@ -224,17 +224,18 @@ class TaskResponse(BaseModel):
 class TaskStatusGroup(BaseModel):
     status: TaskStatus
     data: List[TaskResponse]
+    meta: PaginationInfo
 
 
 class TaskExecutorGroup(BaseModel):
     executor_type: Optional[str] = None
     executor_id: Optional[str] = None
     data: List[TaskResponse]
+    meta: PaginationInfo
 
 
 class TaskGroupsResponse(BaseModel):
     groups: List[Union[TaskStatusGroup, TaskExecutorGroup]]
-    meta: PaginationInfo
 
 
 class TaskTransition(BaseModel):
