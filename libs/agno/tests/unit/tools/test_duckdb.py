@@ -5,6 +5,13 @@ import pytest
 from agno.tools.duckdb import DuckDbTools
 
 
+def test_full_text_search_orders_by_descending_score(duckdb_tools_instance, mock_duckdb_connection):
+    """BM25 results must put the most relevant match first."""
+    duckdb_tools_instance.full_text_search("test_table", "id", "python")
+    sql = mock_duckdb_connection.sql.call_args[0][0]
+    assert "ORDER BY score DESC" in sql
+
+
 @pytest.fixture
 def mock_duckdb_connection():
     """Mock DuckDB connection used by DuckDbTools."""
