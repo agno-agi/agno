@@ -420,9 +420,18 @@ class MistralChat(Model):
         metrics.output_tokens = response_usage.completion_tokens or 0
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
 
+        # mistralai 3.x returns the token details as a dict
         if hasattr(response_usage, "prompt_tokens_details") and response_usage.prompt_tokens_details:
-            metrics.cache_read_tokens = getattr(response_usage.prompt_tokens_details, "cached_tokens", 0) or 0
+            prompt_details = response_usage.prompt_tokens_details
+            if isinstance(prompt_details, dict):
+                metrics.cache_read_tokens = prompt_details.get("cached_tokens", 0) or 0
+            else:
+                metrics.cache_read_tokens = getattr(prompt_details, "cached_tokens", 0) or 0
         if hasattr(response_usage, "completion_tokens_details") and response_usage.completion_tokens_details:
-            metrics.reasoning_tokens = getattr(response_usage.completion_tokens_details, "reasoning_tokens", 0) or 0
+            completion_details = response_usage.completion_tokens_details
+            if isinstance(completion_details, dict):
+                metrics.reasoning_tokens = completion_details.get("reasoning_tokens", 0) or 0
+            else:
+                metrics.reasoning_tokens = getattr(completion_details, "reasoning_tokens", 0) or 0
 
         return metrics

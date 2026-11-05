@@ -34,7 +34,9 @@ from agno.utils.log import (
 from agno.utils.timer import Timer
 
 
-def get_update_user_memory_function(agent: Agent, user_id: Optional[str] = None, async_mode: bool = False) -> Function:
+def get_update_user_memory_function(
+    agent: Agent, user_id: Optional[str] = None, run_response: Optional[RunOutput] = None, async_mode: bool = False
+) -> Function:
     def update_user_memory(task: str) -> str:
         """Use this function to submit a task to modify the Agent's memory.
         Describe the task in detail and be specific.
@@ -47,7 +49,9 @@ def get_update_user_memory_function(agent: Agent, user_id: Optional[str] = None,
             str: A string indicating the status of the task.
         """
         agent.memory_manager = cast(MemoryManager, agent.memory_manager)
-        response = agent.memory_manager.update_memory_task(task=task, user_id=user_id)
+        response = agent.memory_manager.update_memory_task(
+            task=task, user_id=user_id, run_metrics=run_response.metrics if run_response else None
+        )
 
         return response
 
@@ -63,7 +67,9 @@ def get_update_user_memory_function(agent: Agent, user_id: Optional[str] = None,
             str: A string indicating the status of the task.
         """
         agent.memory_manager = cast(MemoryManager, agent.memory_manager)
-        response = await agent.memory_manager.aupdate_memory_task(task=task, user_id=user_id)
+        response = await agent.memory_manager.aupdate_memory_task(
+            task=task, user_id=user_id, run_metrics=run_response.metrics if run_response else None
+        )
         return response
 
     if async_mode:

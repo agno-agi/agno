@@ -279,6 +279,8 @@ class RemoteTeam(BaseRemote):
         validated_input = validate_input(input)
         serialized_input = serialize_input(validated_input)
         headers = self._get_auth_headers(auth_token)
+        # Read here, never forwarded: the remote stream route cannot send a TeamRunOutput over SSE
+        yield_run_output = kwargs.pop("yield_run_output", False)
 
         # A2A protocol path
         if self.a2a_client:
@@ -299,7 +301,7 @@ class RemoteTeam(BaseRemote):
         if self.agentos_client:
             if stream:
                 # Handle streaming response
-                return self.agentos_client.run_team_stream(  # type: ignore
+                event_stream = self.agentos_client.run_team_stream(
                     team_id=self.team_id,
                     message=serialized_input,
                     session_id=session_id,
@@ -320,6 +322,7 @@ class RemoteTeam(BaseRemote):
                     headers=headers,
                     **kwargs,
                 )
+                return self._with_run_output(event_stream) if yield_run_output else event_stream  # type: ignore[return-value]
             else:
                 return self.agentos_client.run_team(  # type: ignore
                     team_id=self.team_id,
@@ -509,11 +512,13 @@ class RemoteTeam(BaseRemote):
             TeamRunOutput for non-streaming, AsyncIterator[TeamRunOutputEvent] for streaming.
         """
         headers = self._get_auth_headers(auth_token)
+        # Read here, never forwarded: the remote stream route cannot send a TeamRunOutput over SSE
+        yield_run_output = kwargs.pop("yield_run_output", False)
 
         if self.agentos_client:
             if stream:
                 # Handle streaming response
-                return self.agentos_client.continue_team_run_stream(  # type: ignore
+                event_stream = self.agentos_client.continue_team_run_stream(
                     team_id=self.team_id,
                     run_id=run_id,
                     user_id=user_id,
@@ -522,6 +527,7 @@ class RemoteTeam(BaseRemote):
                     headers=headers,
                     **kwargs,
                 )
+                return self._with_run_output(event_stream) if yield_run_output else event_stream
             else:
                 return self.agentos_client.continue_team_run(  # type: ignore
                     team_id=self.team_id,
