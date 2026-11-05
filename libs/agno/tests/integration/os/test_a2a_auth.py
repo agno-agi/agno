@@ -61,7 +61,7 @@ class TestA2ARequiresAuth:
 
     def test_a2a_message_send_rejects_anonymous_request(self, a2a_client):
         # 401 fires in the middleware, before the route parses the body.
-        resp = a2a_client.post(f"/a2a/agents/{AGENT_ID}/v1/message:send", json={})
+        resp = a2a_client.post(f"/a2a/agents/{AGENT_ID}", json={})
         assert resp.status_code == 401, resp.text
 
 

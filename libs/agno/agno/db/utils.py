@@ -1512,10 +1512,7 @@ def _calculate_run_metrics(run: Dict[str, Any], seen_run_ids: Set[str]) -> Dict[
         _add_metrics_timing(totals, "time_to_first_token", run_metrics.get("time_to_first_token"))
 
     for nested_run in _metrics_runs(run_data, seen_run_ids):
-        # A run that records no model, such as an adapter's, still counts its tool calls
         _add_metrics_tool_calls(totals, nested_run)
-        if not nested_run.get("model"):
-            continue
         nested_run_metrics = nested_run.get("metrics") or {}
         for field in METRICS_TOKEN_FIELDS:
             tokens = int(nested_run_metrics.get(field) or 0)
@@ -1530,6 +1527,9 @@ def _calculate_run_metrics(run: Dict[str, Any], seen_run_ids: Set[str]) -> Dict[
         add_metrics_totals(totals, nested_run_metrics, ["additional_metrics"])
         for seconds in _metrics_request_durations(nested_run):
             _add_metrics_timing(totals, "model_call", seconds)
+        # A run that names no model, such as an external agent's, counts its usage but no model entry
+        if not nested_run.get("model"):
+            continue
 
         details = nested_run_metrics.get("details")
         model_type_metrics_lists = [

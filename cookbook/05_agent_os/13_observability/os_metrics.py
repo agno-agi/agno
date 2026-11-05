@@ -19,9 +19,8 @@ from datetime import datetime, timezone
 
 import httpx
 from agno.agent import Agent
-from agno.models.openai import OpenAIResponses
-
 from agno.db.postgres import PostgresDb
+from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 
 # ---------------------------------------------------------------------------

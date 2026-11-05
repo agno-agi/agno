@@ -15,6 +15,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import OperationalError
 
 from agno.db.postgres import AsyncPostgresDb, PostgresDb
+from agno.exceptions import RunCancelledException
 from agno.run.agent import RunCompletedEvent, RunInput, RunOutput
 from agno.run.base import RunStatus
 from agno.sandbox import SandboxError
@@ -1127,6 +1128,133 @@ async def test_cancellation_does_not_overwrite_a_recorded_stop(system, monkeypat
     assert output.status == RunStatus.error and output.content == "original failure"
 
 
+async def executing(coordinator):
+    """The binding once a turn's computer is bound and its execution has had time to start."""
+    store = coordinator.store
+
+    async def bound():
+        while True:
+            row = await store._transaction(lambda c: c.execute(select(store.bindings)).mappings().one_or_none())
+            if row is not None and row["record"]["phase"] == "executing" and row["record"].get("computer"):
+                return dict(row)
+            await asyncio.sleep(0.05)
+
+    row = await asyncio.wait_for(bound(), 30)
+    await asyncio.sleep(1)
+    return row
+
+
+async def test_a_cancel_from_another_replica_ends_the_turn_cancelled(system):
+
+    coordinator, spec, root = system
+    await run(coordinator, spec)
+    task = asyncio.create_task(run(coordinator, spec, "second", config={"delay": 20, "steps": 20}))
+    row = await executing(coordinator)
+    # Another replica's cancel endpoint: it fences the lease and removes the computer, but its
+    # cancel intent never reaches this process.
+    other = SandboxCoordinator(coordinator.store.db, coordinator.provider, coordinator.transfer, poll_wait=1)
+    await other._aterminate(
+        spec.session_id,
+        agent_id=spec.agent_id,
+        run_id="second",
+        user_id="user",
+        queue_attempt=row["queue_attempt"],
+        status="CANCELLED",
+        reason="Run cancelled",
+        env=spec.env,
+    )
+    with pytest.raises(RunCancelledException):
+        await asyncio.wait_for(task, 30)
+    assert await recovered_effects(coordinator, root) == ["first"]
+
+
+async def test_a_stop_claimed_elsewhere_reads_as_cancelled_before_the_computer_is_removed(system):
+
+    coordinator, spec, _ = system
+    store = coordinator.store
+    task = asyncio.create_task(run(coordinator, spec, config={"delay": 20, "steps": 20}))
+    row = await executing(coordinator)
+    assert await store.acancelled_elsewhere(spec.session_id, "first") is False
+    state = await store._aclaim_stop(
+        agent_id=spec.agent_id,
+        session_id=spec.session_id,
+        user_id="user",
+        run_id="first",
+        queue_attempt=row["queue_attempt"],
+        status="CANCELLED",
+        reason="Run cancelled",
+    )
+    with pytest.raises(RunCancelledException):
+        await asyncio.wait_for(task, 30)
+    # Only the binding says so yet: the row turns CANCELLED once the other replica removes the computer.
+    status = await store._transaction(
+        lambda c: c.execute(select(store.runs.c.status).where(store.runs.c.run_id == "first")).scalar_one()
+    )
+    assert status == "RUNNING"
+    assert (await coordinator._stop(state.lease, status="CANCELLED", reason="Run cancelled"))["status"] == "CANCELLED"
+    assert await store.acancelled_elsewhere(spec.session_id, "first") is True
+
+
+async def test_the_attempt_that_finds_its_computer_lost_restores_and_completes(system):
+    coordinator, spec, root = system
+    await run(coordinator, spec)
+    before = (await binding(coordinator))["record"]
+    # The process running the turn dies, then its host: the binding still names the lost computer.
+    task = asyncio.create_task(run(coordinator, spec, "second", config={"delay": 20, "steps": 20}))
+    await executing(coordinator)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await coordinator.provider.adestroy(handles_of(coordinator)[-1])
+    retried = await run(coordinator, spec, "second", config={"delay": 20, "steps": 20})
+    assert retried.status == RunStatus.completed, retried.content
+    after = (await binding(coordinator))["record"]
+    assert after["generation"] == before["generation"] + 2
+    assert len(handles_of(coordinator)) == 3
+    assert await recovered_effects(coordinator, root) == ["first", "second"]
+
+
+async def test_a_native_approval_turn_whose_computer_is_lost_is_not_replayed(system):
+    coordinator, spec, _ = system
+    await run(coordinator, spec)
+    config = {"delay": 20, "steps": 20, "_native_hitl": True}
+    task = asyncio.create_task(run(coordinator, spec, "second", config=config))
+    await executing(coordinator)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await coordinator.provider.adestroy(handles_of(coordinator)[-1])
+    # Its pending approvals belong to the lost execution, so a fresh one must not stand in for it.
+    failed = await run(coordinator, spec, "second", config=config)
+    assert failed.status == RunStatus.error and failed.metadata["retryable"] is False
+    assert "computer was lost" in failed.content
+    assert len(handles_of(coordinator)) == 2
+
+
+async def test_a_replacement_lost_again_ends_the_attempt_retryable(system, monkeypatch):
+    coordinator, spec, _ = system
+    await run(coordinator, spec)
+    task = asyncio.create_task(run(coordinator, spec, "second", config={"delay": 20, "steps": 20}))
+    await executing(coordinator)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await coordinator.provider.adestroy(handles_of(coordinator)[-1])
+    restore = coordinator.transfer.arestore
+
+    async def restore_then_lose(handle, reference):
+        state = await restore(handle, reference)
+        await coordinator.provider.adestroy(handle)
+        return state
+
+    # The replacement is lost as well: one replacement per attempt, then the queue decides.
+    monkeypatch.setattr(coordinator.transfer, "arestore", restore_then_lose)
+    failed = await run(coordinator, spec, "second", config={"delay": 20, "steps": 20})
+    assert failed.status == RunStatus.error and failed.metadata["retryable"] is True
+    assert "computer was lost" in failed.content
+    assert len(handles_of(coordinator)) == 3
+
+
 async def test_retryable_restore_failure_runs_again_on_the_next_queue_attempt(system, monkeypatch):
     coordinator, spec, root = system
     store = coordinator.store
@@ -1283,6 +1411,79 @@ async def test_sweep_retires_only_expired_warm_computers(system):
     assert await coordinator.asweep_warm() == 1
     assert await coordinator.provider.aget(kept.provider_ref) is None
     assert await coordinator.asweep_warm() == 0
+
+
+async def test_a_cancelled_sweep_still_removes_the_computer_it_released(system, monkeypatch):
+    coordinator, spec, root = system
+    coordinator.warm_computer_seconds = 300
+    await run(coordinator, spec)
+    kept = handles_of(coordinator)[0]
+    await coordinator.store._transaction(
+        lambda c: c.execute(
+            update(coordinator.store.bindings).values(
+                record=coordinator.store.bindings.c.record.op("||")({"warm_until": time.time() - 1})
+            )
+        )
+    )
+    destroy, started = coordinator.provider.adestroy, asyncio.Event()
+
+    async def slow_destroy(handle):
+        started.set()
+        await asyncio.sleep(1)
+        await destroy(handle)
+
+    monkeypatch.setattr(coordinator.provider, "adestroy", slow_destroy)
+    sweep = asyncio.create_task(coordinator.asweep_warm())
+    await started.wait()
+    sweep.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await sweep
+    assert await coordinator.provider.aget(kept.provider_ref) is None
+
+
+async def test_a_sweep_leaves_other_agents_warm_computers_to_their_own_coordinator(system):
+    coordinator, spec, _ = system
+    coordinator.warm_computer_seconds = 300
+    coordinator.agent_ids.add(spec.agent_id)
+    # Another agent on the same session tables, served by a provider in another Docker namespace.
+    provider = DockerSandbox(IMAGE, namespace=coordinator.provider.namespace + "-b", memory_mb=512, workspace_mb=32)
+    created = []
+    original = provider.acreate
+
+    async def create(session_id, **kwargs):
+        handle = await original(session_id, **kwargs)
+        created.append(handle)
+        return handle
+
+    provider.acreate = create
+    other = SandboxCoordinator(
+        coordinator.store.db, provider, DockerCheckpointTransfer(provider, coordinator.transfer.store), poll_wait=1
+    )
+    other.agent_ids.add("other")
+    store = coordinator.store
+    try:
+        await run(coordinator, spec)
+        await run(other, replace(spec, agent_id="other", session_id="other-session"), "other-first")
+        await store._transaction(
+            lambda c: c.execute(
+                update(store.bindings).values(record=store.bindings.c.record.op("||")({"warm_until": time.time() - 1}))
+            )
+        )
+        assert await coordinator.asweep_warm() == 1
+        assert await coordinator.provider.aget(handles_of(coordinator)[0].provider_ref) is None
+        # Still named by its binding and still there, so its own coordinator can remove it.
+        record = await store._transaction(
+            lambda c: c.execute(
+                select(store.bindings.c.record).where(store.bindings.c.session_id == "other-session")
+            ).scalar_one()
+        )
+        assert record["computer"]["provider_ref"] == created[0].provider_ref
+        assert (await provider.aget(created[0].provider_ref)).state == "paused"
+        assert await other.asweep_warm() == 1
+        assert await provider.aget(created[0].provider_ref) is None
+    finally:
+        for handle in created:
+            await provider.adestroy(handle)
 
 
 async def restored_workspace(coordinator, tmp_path):

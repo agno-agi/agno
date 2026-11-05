@@ -34,7 +34,6 @@ from agno.db.postgres.utils import (
     build_metrics_by_owner_queries,
     is_foreign_key_violation,
     is_lock_not_available,
-    metrics_parent_run_id,
 )
 from agno.db.schemas.authz import (
     AUTHZ_AUDIT,
@@ -2914,7 +2913,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     runs_table.c.agent_id,
                     runs_table.c.team_id,
                     runs_table.c.workflow_id,
-                    metrics_parent_run_id(runs_table).label("parent_run_id"),
+                    runs_table.c.parent_run_id,
                 ).where(runs_table.c.run_id.in_(parent_run_ids[start : start + METRICS_IN_LIST_LIMIT]))
                 parents_result = await sess.execute(parents_stmt)
                 parent_runs.extend(dict(record._mapping) for record in parents_result.fetchall())

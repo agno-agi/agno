@@ -1626,7 +1626,7 @@ def test_get_metrics_reads_the_metrics_table_until_the_first_calculation_finishe
     ]
 
 
-def test_upsert_session_without_a_aggregate_metrics_table(postgres_db_real: PostgresDb):
+def test_upsert_session_without_an_aggregate_metrics_table(postgres_db_real: PostgresDb):
     """Ensure a session and its run of a past day are saved before any aggregate metrics table exists"""
     db = PostgresDb(
         db_engine=postgres_db_real.db_engine,
@@ -1728,26 +1728,6 @@ def test_session_save_reopens_the_day_the_session_is_stored_on(postgres_db_real:
     postgres_db_real.upsert_session(moved)
 
     assert _stored_aggregate_metrics_rows(postgres_db_real)[("daily", _utc_date(5))]["completed"] is False
-
-
-def test_calculate_metrics_names_the_run_of_the_tool_call_as_parent(postgres_db_real: PostgresDb):
-    """Ensure a run started from another run's tool call names that run's agent as its parent and root"""
-    _persist(postgres_db_real, _session_on(_utc_date(2), "outer_session", "alice"))
-    nested_session = _session_on(_utc_date(2), "nested_session", "alice")
-    nested_session.agent_id = "agent-2"
-    nested_session.runs[0].agent_id = "agent-2"
-    # A run started from a tool call names the run whose tool started it
-    nested_run = {**nested_session.runs[0].to_dict(), "called_from_run_id": "outer_session_run"}
-    postgres_db_real.upsert_session(nested_session)
-    postgres_db_real.upsert_run(nested_run, session_id="nested_session", user_id="alice", run_index=0)
-
-    postgres_db_real.calculate_metrics()
-
-    rows = {
-        (key[3], row["parent_component_id"], row["root_component_id"])
-        for key, row in _stored_rows(postgres_db_real).items()
-    }
-    assert ("agent-2", "agent-1", "agent-1") in rows
 
 
 def test_calculate_metrics_takes_over_a_lock_that_went_stale(postgres_db_real: PostgresDb):

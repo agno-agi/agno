@@ -365,7 +365,7 @@ def test_remote_member_run_and_session_are_counted_under_the_team_on_a_shared_da
     """A remote member's AgentOS stores its run with no parent, in a session named after the team's session; on a
     shared database the team's run names the parent, so the team's run is the one root run and session."""
     member = {
-        **_model_call(run_id="remote-run", agent_id="remote-agent"),
+        **_model_call(run_id="remote-run", agent_id="external-agent"),
         "session_id": "team-session:remote-agent",
         "parent_run_id": "team-run",
     }
@@ -393,7 +393,7 @@ def test_remote_member_run_after_midnight_is_counted_under_the_team_run_of_the_d
     """A remote member's run no run of its day names asks for its team's session, whose run of the day before names
     the parent, so the member run is no root run and its session no session of its own."""
     member = {
-        **_model_call(run_id="remote-run", agent_id="remote-agent"),
+        **_model_call(run_id="remote-run", agent_id="external-agent"),
         "session_id": "team-session:remote-agent",
         "parent_run_id": "team-run",
     }
@@ -839,6 +839,17 @@ def test_a_run_that_reports_no_usage_still_counts_its_model():
 
     assert row["model_metrics"] == {"Anthropic": {"claude-sonnet-4-5": {"count": 1}}}
     assert row["total_tokens"] == 0
+
+
+def test_a_run_that_names_no_model_still_counts_its_usage():
+    """A run that reports usage but names no model, such as an external agent's, counts its usage but no model."""
+    member = _model_call(model=None, tokens={"total_tokens": 100}, agent_id="external-agent", run_id="member-run")
+    row = _only_row(
+        runs=[_run(run_type="team", component_id="team-1", tokens={"total_tokens": 15}, member_responses=[member])]
+    )
+
+    assert row["total_tokens"] == 115
+    assert row["model_metrics"] == {"OpenAI": {"gpt-5": {"count": 1}}}
 
 
 def test_an_errored_run_whose_model_never_answered_still_counts_its_model():
