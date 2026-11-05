@@ -75,10 +75,10 @@ class SandboxCoordinator:
     left them. A computer that is gone, expired or differently configured is
     replaced by a fresh generation restored from the checkpoint, which is the only
     path with ``warm_computer_seconds=0``. Losing a caller detaches it; explicit
-    cancellation and failures retire the computer. A warm computer whose session
-    never gets another turn is retired by that session's next claim, so a
-    deployment that pauses containers should also sweep provider computers idle
-    past the window.
+    cancellation and failures retire the computer. A warm computer past its window
+    is retired by its session's next claim; one whose session never gets another
+    turn is retired by ``asweep_warm``, which AgentOS's queue worker runs every few
+    minutes. Without AgentOS, run it periodically yourself.
     """
 
     def __init__(
@@ -284,20 +284,30 @@ class SandboxCoordinator:
         return self.store._sync(self.aretire_computer, session_id, agent_id=agent_id, user_id=user_id)
 
     async def asweep_warm(self) -> int:
-        """Retire every warm computer whose window has ended; run this periodically on one replica.
+        """Retire every warm computer whose window has ended.
 
         A session's next claim retires its own stale computer, but a session that never
-        returns would otherwise keep a paused container forever. Returns how many were removed.
+        returns would otherwise keep a paused container forever. Only the sessions of this
+        coordinator's ``agent_ids`` are swept when it is not empty: another agent on the same
+        tables may use another provider, which this one cannot remove. Each release is a
+        per-row compare-and-set, so replicas sweeping at the same time are safe. Returns how
+        many were removed.
         """
         now = time.time()
         removed = 0
-        for session_id, agent_id, user_id in await self.store.aexpired_warm(now):
+
+        async def retire(session_id: str, agent_id: str, user_id: Optional[str]) -> bool:
             computer = await self.store.arelease_warm(session_id, agent_id=agent_id, user_id=user_id, before=now)
             if computer is None:
-                continue
+                return False
             with suppress(SandboxError):
                 await self.provider.adestroy(SandboxHandle(**computer))
-            removed += 1
+            return True
+
+        for session_id, agent_id, user_id in await self.store.aexpired_warm(now, sorted(self.agent_ids)):
+            # Shielded so a cancelled sweep still removes a computer it released from its binding.
+            if await _settled(retire(session_id, agent_id, user_id)):
+                removed += 1
         return removed
 
     def sweep_warm(self) -> int:
@@ -668,8 +678,19 @@ class SandboxCoordinator:
                     record.update(generation=record["generation"] + 1, computer=None, restoring=None)
                     allocation = allocation_for(record)
                 if record.get("computer") is not None and record.get("warm_until") is None:
-                    return record
-                if record.get("computer") is not None:
+                    # A retry reattaches to this turn's computer. If its host is gone, replace it from the
+                    # checkpoint in this attempt: the turn reruns either way, and the queue budgets reruns.
+                    handle = SandboxHandle(**record["computer"])
+                    current = await self.provider.aget(handle.provider_ref)
+                    # A native approval turn is never replayed: its pending requests belong to the lost execution.
+                    if (current is not None and current.state == "running") or config.get("_native_hitl", False):
+                        return record
+                    await self.provider.adestroy(handle)
+                    if await self.provider.aget(handle.provider_ref) is not None:
+                        raise SandboxError("Provider has not confirmed compute removal")
+                    record.update(generation=record["generation"] + 1, computer=None, execution_id=uuid4().hex)
+                    allocation = allocation_for(record)
+                elif record.get("computer") is not None:
                     # The last turn left its computer warm. Resume it if it is still there, inside
                     # its window and the same computer; otherwise retire it and take the cold path
                     # on a fresh generation.
@@ -834,9 +855,15 @@ class SandboxCoordinator:
             # A cancel issued elsewhere, by the cancel endpoint or another replica, fences this
             # lease and retires this computer, so this attempt fails with a lost lease or a dead
             # transport. Report the cancellation the caller asked for rather than the failure it
-            # caused, so the queue settles its ticket as cancelled instead of failed.
-            if not isinstance(error, RunCancelledException) and await ais_cancelled(run_id):
-                raise RunCancelledException("Run cancelled elsewhere") from error
+            # caused, so the queue settles its ticket as cancelled instead of failed. Another
+            # replica's cancel intent may never reach this process, so the binding decides too.
+            if not isinstance(error, RunCancelledException):
+                cancelled = await ais_cancelled(run_id)
+                if not cancelled:
+                    with suppress(Exception):
+                        cancelled = await self.store.acancelled_elsewhere(session_id, run_id)
+                if cancelled:
+                    raise RunCancelledException("Run cancelled elsewhere") from error
             raise
         except asyncio.CancelledError:
             from agno.run.cancel import ais_cancelled
