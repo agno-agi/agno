@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 from typing import List
 
 from agno.db.base import UserMemory
+from agno.models.message import Message
 from agno.run.messages import RunMessages
 from agno.session import TeamSession
 from agno.utils.log import log_debug, log_warning
@@ -23,6 +24,19 @@ from agno.utils.log import log_debug, log_warning
 # ---------------------------------------------------------------------------
 # Memory
 # ---------------------------------------------------------------------------
+
+
+def _get_non_empty_input_messages(run_messages: RunMessages) -> List[Message]:
+    # Only the run's own list input: extra_messages also carries additional_input examples.
+    # Tool-free transcript: the memory model only has memory tools, and a tool result without its call is rejected.
+    transcript: List[Message] = []
+    for message in run_messages.run_input_messages or []:
+        if message.role not in ("user", "assistant"):
+            continue
+        if not message.content or (isinstance(message.content, str) and message.content.strip() == ""):
+            continue
+        transcript.append(message.model_copy(update={"tool_calls": None}) if message.tool_calls else message)
+    return transcript
 
 
 def _make_memories(
@@ -43,6 +57,15 @@ def _make_memories(
         log_debug("Managing user memories")
         team.memory_manager.create_user_memories(
             message=user_message_str,
+            user_id=user_id,
+            team_id=team.id,
+            run_metrics=collector,
+        )
+
+    input_messages = _get_non_empty_input_messages(run_messages)
+    if input_messages and team.memory_manager is not None and team.update_memory_on_run:
+        team.memory_manager.create_user_memories(
+            messages=input_messages,
             user_id=user_id,
             team_id=team.id,
             run_metrics=collector,
@@ -68,6 +91,15 @@ async def _amake_memories(
         log_debug("Managing user memories")
         await team.memory_manager.acreate_user_memories(
             message=user_message_str,
+            user_id=user_id,
+            team_id=team.id,
+            run_metrics=collector,
+        )
+
+    input_messages = _get_non_empty_input_messages(run_messages)
+    if input_messages and team.memory_manager is not None and team.update_memory_on_run:
+        await team.memory_manager.acreate_user_memories(
+            messages=input_messages,
             user_id=user_id,
             team_id=team.id,
             run_metrics=collector,
@@ -100,12 +132,8 @@ async def _astart_memory_task(
             pass
 
     # Create new task if conditions are met
-    if (
-        run_messages.user_message is not None
-        and team.memory_manager is not None
-        and team.update_memory_on_run
-        and not team.enable_agentic_memory
-    ):
+    has_content = run_messages.user_message is not None or bool(run_messages.run_input_messages)
+    if has_content and team.memory_manager is not None and team.update_memory_on_run and not team.enable_agentic_memory:
         log_debug("Starting memory creation in background task.")
         return asyncio.create_task(_amake_memories(team, run_messages=run_messages, user_id=user_id))
 
@@ -133,12 +161,8 @@ def _start_memory_future(
         existing_future.cancel()
 
     # Create new future if conditions are met
-    if (
-        run_messages.user_message is not None
-        and team.memory_manager is not None
-        and team.update_memory_on_run
-        and not team.enable_agentic_memory
-    ):
+    has_content = run_messages.user_message is not None or bool(run_messages.run_input_messages)
+    if has_content and team.memory_manager is not None and team.update_memory_on_run and not team.enable_agentic_memory:
         log_debug("Starting memory creation in background thread.")
         return team.background_executor.submit(_make_memories, team, run_messages=run_messages, user_id=user_id)
 

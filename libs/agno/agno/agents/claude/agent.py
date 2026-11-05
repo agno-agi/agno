@@ -245,6 +245,11 @@ class ClaudeAgent(BaseExternalAgent):
 
     _sdk_name: ClassVar[str] = "claude-agent-sdk"
     _sandbox_runtime: ClassVar[Optional[str]] = "claude"
+    _storable: ClassVar[bool] = True
+    _unstorable_fields: ClassVar[Dict[str, str]] = {
+        "options": "native ClaudeAgentOptions carry callbacks and services; use the named parameters instead",
+        "options_kwargs": "deprecated; use the named parameters instead",
+    }
     # Key under which the SDK session id is stored in the Agno session.
     _SESSION_KEY = "claude_sdk_session_id"
     _store_warning_logged: bool = field(default=False, init=False, repr=False)

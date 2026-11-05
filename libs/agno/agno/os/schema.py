@@ -1234,6 +1234,7 @@ class RegistryResourceType(str, Enum):
     MEMORY_MANAGER = "memory_manager"
     SESSION_SUMMARY_MANAGER = "session_summary_manager"
     LEARNING = "learning"
+    SANDBOX = "sandbox"
 
 
 class CallableMetadata(BaseModel):
