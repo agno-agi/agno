@@ -593,7 +593,7 @@ def parse_tools(
             tool = tool._per_run_copy()
             # The saved toolkit name can be stale (renamed, or an MCP default name
             # holding the old command's arguments): record the live toolkit's name
-            if tool.owning_toolkit and isinstance(tool.bound_toolkit, Toolkit):
+            if isinstance(tool.bound_toolkit, Toolkit):
                 tool.owning_toolkit = tool.bound_toolkit.recorded_name
             # Respect the function's explicit strict setting if set
             effective_strict = strict if tool.strict is None else tool.strict

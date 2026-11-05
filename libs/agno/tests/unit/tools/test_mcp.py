@@ -178,6 +178,23 @@ def test_rehydrated_function_records_current_toolkit_name_after_token_rotation()
     assert [f.owning_toolkit for f in run_functions] == ["mcp_npx_acme_server_a"]
 
 
+def test_rehydrated_function_without_saved_toolkit_records_live_toolkit_name():
+    """A component saved without the toolkit key records the toolkit that runs the function."""
+    from agno.agent import Agent
+    from agno.agent._tools import parse_tools
+    from agno.models.openai import OpenAIResponses
+    from agno.registry import Registry
+
+    live = MCPTools(command="npx -y @acme/server-a --token ghp_new456")
+    live.functions["add"] = Function(name="add", entrypoint=lambda a, b: a + b)
+    func = Registry(tools=[live]).rehydrate_function(live.functions["add"].to_dict())
+    assert func.owning_toolkit is None
+
+    model = OpenAIResponses(id="gpt-5.6-luna")
+    run_functions = parse_tools(Agent(model=model, tools=[func], telemetry=False), tools=[func], model=model)
+    assert [f.owning_toolkit for f in run_functions] == ["mcp_npx_acme_server_a"]
+
+
 def test_session_only_init_falls_back_to_default_name():
     tools = MCPTools(session=AsyncMock())
     assert tools.name == "MCPTools"
