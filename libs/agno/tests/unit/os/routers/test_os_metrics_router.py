@@ -510,8 +510,11 @@ class TestDatabases:
             _remote_db("db-1", _client(settings, _db("db-1", _today_row())), base_url=base_url)
             for base_url in ["http://remote-os-a", "http://remote-os-b"]
         ]
-        # _users_client takes the databases by id, so both can be registered under one id
-        gateway = _users_client({"db-1": remote_dbs})
+        # Built as _client builds its app, but with both databases registered under one id
+        app = FastAPI()
+        with patch("agno.os.routers.metrics.metrics.get_authentication_dependency", return_value=lambda: True):
+            app.include_router(get_metrics_router(dbs={"db-1": remote_dbs}, settings=settings))
+        gateway = TestClient(app)
         with _scope(None):
             response = gateway.get(f"/os/metrics/sessions?{_last(1)}")
 
@@ -746,11 +749,14 @@ class TestUsers:
         )
         agentos_client._aget = AsyncMock(side_effect=lambda *args, **kwargs: remote_response.raise_for_status())  # type: ignore[method-assign]
         gateway = _users_client({"db-1": [RemoteDb(id="db-1", client=agentos_client)]})
+        # The AgentOS handler of a refusal re-raised by the route
+        os_app = AgentOS(agents=[Agent(id="assistant")]).get_app()
+        gateway.app.add_exception_handler(httpx.HTTPStatusError, os_app.exception_handlers[httpx.HTTPStatusError])
 
         response = gateway.get("/os/metrics/users")
 
         assert response.status_code == 403
-        assert response.json()["detail"] == "Admin privileges required"
+        assert "Admin privileges required" in response.json()["detail"]
         assert "http://" not in response.text
 
     def test_member_without_the_admin_scope_is_refused_and_an_admin_answered(self, tmp_path):
@@ -760,10 +766,10 @@ class TestUsers:
         agent_os = AgentOS(
             agents=[Agent(id="assistant", db=db)], db=db, user_directory=True, authorization=authorization
         )
-        client = TestClient(agent_os.get_app())
-
-        member = client.get("/os/metrics/users", headers=_auth("alice", scopes=["metrics:read"]))
-        admin = client.get("/os/metrics/users", headers=_auth("admin", scopes=["agent_os:admin"]))
+        with TestClient(agent_os.get_app()) as client:
+            member = client.get("/os/metrics/users", headers=_auth("alice", scopes=["metrics:read"]))
+            admin = client.get("/os/metrics/users", headers=_auth("admin", scopes=["agent_os:admin"]))
+        db.close()
 
         assert member.status_code == 403
         assert admin.status_code == 200

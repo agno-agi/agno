@@ -1023,7 +1023,7 @@ class _SandboxStore:
             {"sid": value["session_id"]},
         )
         self._insert_session(connection, value)
-        created_at = connection.execute(
+        connection.execute(
             insert(self.runs)
             .values(
                 run_id=value["run_id"],
@@ -1036,9 +1036,7 @@ class _SandboxStore:
                 created_at=value.get("created_at", int(time.time())),
             )
             .on_conflict_do_nothing()
-            .returning(self.runs.c.created_at)
-        ).scalar()
-        self._queue_metrics_reopen(connection, created_at)
+        )
         attempt = value.get("queue_attempt")
         if value["status"] == "PENDING":
             # A worker may already have claimed the accepted run; keep its attempt.
