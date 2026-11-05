@@ -1,7 +1,7 @@
 """Example demonstrating how to set up retries with Cohere."""
 
 from agno.agent import Agent
-from agno.models.cohere import CohereChat
+from agno.models.cohere import Cohere
 
 # ---------------------------------------------------------------------------
 # Create Agent
@@ -11,7 +11,7 @@ from agno.models.cohere import CohereChat
 wrong_model_id = "cohere-wrong-id"
 
 agent = Agent(
-    model=CohereChat(
+    model=Cohere(
         id=wrong_model_id,
         retries=3,  # Number of times to retry the request.
         delay_between_retries=1,  # Delay between retries in seconds.

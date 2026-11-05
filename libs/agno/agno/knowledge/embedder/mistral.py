@@ -1,3 +1,4 @@
+import warnings
 from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, List, Optional, Tuple
@@ -32,6 +33,15 @@ class MistralEmbedder(Embedder):
     # -*- Provide the Mistral Client manually
     mistral_client: Optional[MistralClient] = None
 
+    def __post_init__(self):
+        if self.max_retries is not None:
+            warnings.warn(
+                "MistralEmbedder.max_retries is deprecated and ignored: the mistralai SDK bounds retries by elapsed "
+                "time, not attempt count. Use client_params={'retry_config': mistralai.client.utils.retries.RetryConfig(...)} instead.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+
     @property
     def client(self) -> MistralClient:
         if self.mistral_client:
@@ -39,9 +49,8 @@ class MistralEmbedder(Embedder):
 
         _client_params: Dict[str, Any] = {
             "api_key": self.api_key,
-            "endpoint": self.endpoint,
-            "max_retries": self.max_retries,
-            "timeout_ms": self.timeout * 1000 if self.timeout else None,
+            "server_url": self.endpoint,
+            "timeout_ms": int(self.timeout * 1000) if self.timeout is not None else None,
         }
         _client_params = {k: v for k, v in _client_params.items() if v is not None}
 

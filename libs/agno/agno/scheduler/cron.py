@@ -26,7 +26,7 @@ def _require_pytz() -> None:
 
 
 def validate_cron_expr(cron_expr: str) -> bool:
-    """Validate a cron expression.
+    """Validate a cron expression, accepting an empty string for on-demand schedules.
 
     Args:
         cron_expr: Cron expression string (5-field).
@@ -34,6 +34,8 @@ def validate_cron_expr(cron_expr: str) -> bool:
     Returns:
         True if valid, False otherwise.
     """
+    if is_on_demand(cron_expr):
+        return True
     _require_croniter()
     return croniter.is_valid(cron_expr)
 
@@ -92,3 +94,13 @@ def compute_next_run(
     # Monotonicity guard: never schedule in the past
     minimum = int(time.time()) + 1
     return max(computed, minimum)
+
+
+def is_on_demand(cron: str) -> bool:
+    """Whether a schedule runs only when explicitly triggered."""
+    return cron == ""
+
+
+def next_run_for(cron: str, timezone: str = "UTC") -> Optional[int]:
+    """Return the next scheduled time, or None for an on-demand schedule."""
+    return None if is_on_demand(cron) else compute_next_run(cron, timezone)

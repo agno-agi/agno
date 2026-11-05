@@ -24,11 +24,16 @@ def is_openai_reasoning_model(reasoning_model: Model) -> bool:
             or ("o3" in reasoning_model.id)
             or ("o1" in reasoning_model.id)
             or ("gpt-5" in reasoning_model.id)
+            or ("gpt-6" in reasoning_model.id)
         )
     ) or (
         isinstance(reasoning_model, OpenAILike)
         and (
             "deepseek-r1" in reasoning_model.id.lower()
+            or "deepseek-reasoner" in reasoning_model.id.lower()
+            or "deepseek-v3.1" in reasoning_model.id.lower()
+            or "deepseek-v3.2" in reasoning_model.id.lower()
+            or "deepseek-v4" in reasoning_model.id.lower()
             or "minimax-m2" in reasoning_model.id.lower()
             or "minimax-m3" in reasoning_model.id.lower()
         )

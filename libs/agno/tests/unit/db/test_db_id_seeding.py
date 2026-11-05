@@ -64,3 +64,47 @@ class TestMySQLAndSingleStoreIdSeeding:
         a = SingleStoreDb(db_url="mysql+pymysql://u:p@h:3306/one", session_table="s")
         b = SingleStoreDb(db_url="mysql+pymysql://u:p@h:3306/two", session_table="s")
         assert a.id != b.id
+
+
+class TestAsyncPostgresIdSeeding:
+    @pytest.mark.parametrize("schema", [None, "ai", "company"])
+    def test_same_url_and_schema_match_sync_and_replica(self, schema):
+        from agno.db.postgres import AsyncPostgresDb, PostgresDb
+
+        url = "postgresql+psycopg://user:password@localhost/company"
+        first = AsyncPostgresDb(db_url=url, db_schema=schema)
+        assert AsyncPostgresDb(db_url=url, db_schema=schema).id == first.id
+        assert PostgresDb(db_url=url, db_schema=schema).id == first.id
+        assert AsyncPostgresDb(db_url=url, db_schema="other").id != first.id
+        assert AsyncPostgresDb(db_url=url + "_other", db_schema=schema).id != first.id
+        assert AsyncPostgresDb(db_url=url, id="explicit").id == "explicit"
+
+    def test_engine_seed_and_default_schema(self):
+        from sqlalchemy import create_engine
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        from agno.db.postgres import AsyncPostgresDb, PostgresDb
+
+        url = "postgresql+psycopg://user:password@localhost/company"
+        engine = create_async_engine(url)
+        first = AsyncPostgresDb(db_engine=engine)
+        assert first.id == AsyncPostgresDb(db_engine=engine, db_schema="ai").id
+        assert first.id == PostgresDb(db_engine=create_engine(url)).id
+        assert AsyncPostgresDb(db_engine=engine, id="explicit").id == "explicit"
+
+
+@pytest.mark.parametrize("source", ["file", "url", "engine", "default"])
+def test_async_sqlite_stable_id_and_explicit_override(tmp_path, source):
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from agno.db.sqlite import AsyncSqliteDb
+
+    path = str(tmp_path / "history.db")
+    options = {
+        "file": {"db_file": path},
+        "url": {"db_url": "sqlite+aiosqlite:///" + path},
+        "engine": {"db_engine": create_async_engine("sqlite+aiosqlite:///" + path)},
+        "default": {},
+    }[source]
+    assert AsyncSqliteDb(**options).id == AsyncSqliteDb(**options).id
+    assert AsyncSqliteDb(id="explicit", **options).id == "explicit"

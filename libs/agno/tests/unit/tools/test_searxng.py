@@ -87,6 +87,42 @@ def test_searxng_search_with_fixed_max_results(searxng_with_fixed_results):
         assert len(result_data["results"]) == 3
 
 
+def test_searxng_fixed_max_results_zero_is_honored():
+    """A fixed_max_results of 0 must truncate to an empty result set instead of falling back."""
+    searxng = Searxng(host="http://localhost:53153", fixed_max_results=0)
+    mock_response_payload = {
+        "results": [{"title": f"Result {i}", "url": f"http://example.com/{i}"} for i in range(1, 6)]
+    }
+
+    with patch("httpx.get") as mock_get:
+        mock_response = Mock()
+        mock_response.json.return_value = mock_response_payload
+        mock_get.return_value = mock_response
+
+        result = searxng.search_web("test query", max_results=10)
+        result_data = json.loads(result)
+
+        # Should respect fixed_max_results (0) instead of max_results (10)
+        assert result_data["results"] == []
+
+
+def test_searxng_explicit_max_results_zero_truncates_to_empty(searxng_instance):
+    """A zero max_results argument with no fixed value truncates the backend payload to empty."""
+    mock_response_payload = {
+        "results": [{"title": f"Result {i}", "url": f"http://example.com/{i}"} for i in range(1, 6)]
+    }
+
+    with patch("httpx.get") as mock_get:
+        mock_response = Mock()
+        mock_response.json.return_value = mock_response_payload
+        mock_get.return_value = mock_response
+
+        result = searxng_instance.search_web("test query", max_results=0)
+        result_data = json.loads(result)
+
+        assert result_data["results"] == []
+
+
 def test_searxng_image_search(searxng_instance):
     """Test the image_search method."""
     mock_response_payload = {"results": [{"title": "Image 1", "url": "http://example.com/img1"}]}

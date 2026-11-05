@@ -1,5 +1,23 @@
 # Test Log
 
+### sixtydb_tools.py
+
+**Status:** PASS (local HTTP and cookbook checks); live agent run pending
+
+**Description:** Discover a workspace voice when `SIXTYDB_VOICE_ID` is unset,
+generate a WAV artifact, and save audio under `tmp/` with an explicit result
+message. Set `SIXTYDB_API_KEY` and the credentials for the agent's model.
+
+**Result:** `pytest libs/agno/tests/unit/tools/test_sixtydb.py` covers real
+loopback HTTP requests, top-level and `backendResponse` JSON audio, WAV
+validation, rejection of unsupported response shapes, error diagnostics,
+and the actual cookbook through `runpy`. The cookbook checks substitute only
+the LLM response and verify voice discovery, output bytes and the no-audio
+message. These do not verify an LLM-driven conversation or live synthesis;
+those require service and model credentials.
+
+---
+
 ### atomic_mail_tools.py (AtomicMailTools + workflow)
 
 **Status:** PASS
@@ -114,5 +132,15 @@
 **Description:** Runs two agents with advanced Tavily search parameters against the live API: domain-restricted research (include_domains=["arxiv.org", "github.com"], exclude_domains=["reddit.com"], time_range="month", country="united states") and recent news scoped by day count (topic="news", days=3). Request payloads were additionally verified at the wire level: configured parameters present in every request, unset parameters omitted (the {query, search_depth, include_answer, max_results} baseline is unchanged when nothing is configured).
 
 **Result:** Both examples completed without errors. Domain-restricted search returned arxiv-sourced MoE papers, and the news agent returned items from the last few days. Note: answer text is model-composed; the domain restriction applies to the search results feeding it.
+
+---
+
+### neo4j_tools.py
+
+**Status:** PASS
+
+**Description:** Moved off `o3-mini` to `OpenAIResponses(id="gpt-5.6-sol")`. Ran against Neo4j 5 in Docker on `bolt://localhost:7687`.
+
+**Result:** The agent calls `get_schema` and `run_cypher_query` and describes the schema.
 
 ---

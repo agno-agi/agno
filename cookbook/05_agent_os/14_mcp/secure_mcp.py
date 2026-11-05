@@ -86,6 +86,7 @@ agent_os = AgentOS(
     agents=[secure_agent],
     settings=AgnoAPISettings(os_security_key=OS_SECURITY_KEY),
     mcp=MCPConfig(
+        default_tools=True,
         include_tags={"core", "session"},
         exclude_tags={"session"},
         result_mode="full",

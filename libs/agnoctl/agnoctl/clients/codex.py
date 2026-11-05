@@ -167,7 +167,7 @@ class CodexAdapter(ClientAdapter):
         (shared by the write and remove paths so their refusal behavior cannot drift)."""
         if not self.config_path.exists():
             return "", {}
-        text = self.config_path.read_text()
+        text = self.config_path.read_text(encoding="utf-8")
         try:
             return text, tomllib.loads(text)
         except tomllib.TOMLDecodeError as e:
@@ -188,7 +188,7 @@ class CodexAdapter(ClientAdapter):
         if not self.config_path.exists():
             return None
         try:
-            return tomllib.loads(self.config_path.read_text())
+            return tomllib.loads(self.config_path.read_text(encoding="utf-8"))
         except (OSError, tomllib.TOMLDecodeError):
             return None
 

@@ -119,6 +119,18 @@ callable as asynchronous. Runs `a4aab34a-0b85-4a5c-8ad4-1b319d87b9eb` and
 
 ---
 
+### 08_durable_queue.py
+
+**Status:** PASS
+
+**Test mode:** IN-PROCESS (SQLite session store, in-memory queue store, scripted model in place of OpenAI; not yet run live against PostgreSQL)
+
+**Description:** Served the cookbook's two factories under `QueueConfig(durable=True)` and ran its `--demo` flow: a background run on the input-only factory, then one on the factory that reads `ctx.request.headers`.
+
+**Result:** The writer run was enqueued, rebuilt on the worker from the ticket context and completed; `/queue/jobs` showed `factory_input` `{"style": "limerick"}` with claims `[redacted]`. The header run ended ERROR with the reason "Factory read ctx.request.headers, but queued runs have no HTTP request. Pass what the factory needs through factory_input or the trusted claims."
+
+---
+
 ## Validation
 
 - All 7 standalone servers returned HTTP 200 from `/health`.
