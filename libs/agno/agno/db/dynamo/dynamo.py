@@ -14,6 +14,8 @@ if TYPE_CHECKING:
 from agno.db.base import BaseDb, SessionType
 from agno.db.dynamo.schemas import get_table_schema_definition
 from agno.db.dynamo.utils import (
+    aggregate_metrics_key,
+    aggregate_metrics_period_user_id,
     apply_pagination,
     apply_sorting,
     batch_get_with_retry,
@@ -37,32 +39,32 @@ from agno.db.dynamo.utils import (
     reopen_metrics_days_from,
     reopen_metrics_month,
     reopen_metrics_row,
+    serialize_aggregate_metrics_row,
     serialize_component_metrics_row,
     serialize_eval_record,
     serialize_knowledge_row,
     serialize_to_dynamo_item,
-    serialize_aggregate_metrics_row,
-    aggregate_metrics_key,
-    aggregate_metrics_period_user_id,
 )
 from agno.db.migrations.manager import MigrationManager
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
+    AGGREGATE_METRICS_COUNT_COLUMNS,
     METRICS_BATCH_SIZE,
     METRICS_COMPONENT_TYPES,
     METRICS_LOCK_SECONDS,
     METRICS_REFRESH_ID,
     METRICS_STOPPED_ERROR,
     METRICS_WRITE_RETRIES,
-    AGGREGATE_METRICS_COUNT_COLUMNS,
     add_metrics_month_totals,
+    aggregate_metrics_row_to_store,
+    aggregate_metrics_rows_to_write,
+    build_aggregate_metrics_month_rows,
+    build_aggregate_metrics_rows,
     build_metrics_by_owner_from_rows,
     build_metrics_from_aggregate_metrics,
     build_single_run_row,
-    build_aggregate_metrics_month_rows,
-    build_aggregate_metrics_rows,
     calculate_date_component_metrics,
     component_metrics_rows_to_write,
     database_error_message,
@@ -74,7 +76,6 @@ from agno.db.utils import (
     get_metrics_fingerprint,
     get_metrics_legacy_runs,
     get_metrics_reopen_session_ids,
-    get_metrics_runs,
     get_months_to_calculate_metrics_for,
     list_metrics_totals_models,
     merge_metrics_totals,
@@ -91,8 +92,6 @@ from agno.db.utils import (
     metrics_versions,
     resolve_metrics_fields,
     total_metrics_rows,
-    aggregate_metrics_row_to_store,
-    aggregate_metrics_rows_to_write,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -2065,7 +2064,9 @@ class DynamoDb(BaseDb):
         names = {"#key": "aggregation_period" if user_id is None else "period_user_id", "#date": "date"}
         values: Dict[str, Any] = {
             ":key": {
-                "S": aggregation_period if user_id is None else aggregate_metrics_period_user_id(aggregation_period, user_id)
+                "S": aggregation_period
+                if user_id is None
+                else aggregate_metrics_period_user_id(aggregation_period, user_id)
             }
         }
         key_condition = "#key = :key AND #date BETWEEN :start_date AND :end_date"
@@ -2235,7 +2236,9 @@ class DynamoDb(BaseDb):
             if first_calculation:
                 completed_days = {
                     row["date"]
-                    for row in self._get_aggregate_metrics_items(aggregate_metrics_table_name, "daily", "", completed=True)
+                    for row in self._get_aggregate_metrics_items(
+                        aggregate_metrics_table_name, "daily", "", completed=True
+                    )
                 }
             # Only days with data, so one session dated long ago never builds every empty day since
             starting_date = rebuild_from if not first_calculation else None
@@ -2269,7 +2272,11 @@ class DynamoDb(BaseDb):
         return [
             row["date"]
             for row in self._get_aggregate_metrics_items(
-                aggregate_metrics_table_name, "monthly", "", ending_date=current_month - timedelta(days=1), completed=False
+                aggregate_metrics_table_name,
+                "monthly",
+                "",
+                ending_date=current_month - timedelta(days=1),
+                completed=False,
             )
         ]
 
@@ -2343,12 +2350,10 @@ class DynamoDb(BaseDb):
         while parent_run_ids:
             seen_run_ids.update(parent_run_ids)
             parent_runs.extend(
-                get_metrics_runs(
-                    self._get_metrics_runs(
-                        runs_table_name,
-                        parent_run_ids,
-                        ["run_id", "run_type", "agent_id", "team_id", "workflow_id", "parent_run_id", "run_data"],
-                    )
+                self._get_metrics_runs(
+                    runs_table_name,
+                    parent_run_ids,
+                    ["run_id", "run_type", "agent_id", "team_id", "workflow_id", "parent_run_id"],
                 )
             )
             parent_run_ids = sorted(
@@ -2384,14 +2389,19 @@ class DynamoDb(BaseDb):
         period, period_date = aggregate_metrics_rows[0]["aggregation_period"], aggregate_metrics_rows[0]["date"]
         # Read through the period's index, a moment behind a write: every row it compares was written by an earlier
         # calculation, as one calculation writes a period once
-        stored_rows = self._get_aggregate_metrics_items(aggregate_metrics_table_name, period, None, period_date, period_date)
+        stored_rows = self._get_aggregate_metrics_items(
+            aggregate_metrics_table_name, period, None, period_date, period_date
+        )
         stored_by_user = {row["user_id"]: row for row in stored_rows}
         everyone_row, changed_rows, stale_user_ids = aggregate_metrics_rows_to_write(
             aggregate_metrics_rows, stored_rows, rows_changed
         )
         writes = {table_name: list(requests) for table_name, requests in (row_writes or {}).items()}
         writes.setdefault(aggregate_metrics_table_name, []).extend(
-            [{"DeleteRequest": {"Key": aggregate_metrics_key(period, period_date, user_id)}} for user_id in stale_user_ids]
+            [
+                {"DeleteRequest": {"Key": aggregate_metrics_key(period, period_date, user_id)}}
+                for user_id in stale_user_ids
+            ]
             + [
                 {
                     "PutRequest": {
@@ -2544,12 +2554,12 @@ class DynamoDb(BaseDb):
             # Checked between batches too, so a stop never waits for the whole of a large day
             if should_stop is not None and should_stop():
                 return False
-            runs.extend(get_metrics_runs(run_rows[start : start + METRICS_BATCH_SIZE]))
+            runs.extend(run_rows[start : start + METRICS_BATCH_SIZE])
 
         # A legacy run migrated to the runs table since the legacy runs were read is among the day's runs, and is
         # counted from there
         day_run_ids = {run["run_id"] for run in runs if run.get("run_id")}
-        runs.extend(get_metrics_runs([run for run in legacy_runs if run["run_id"] not in day_run_ids]))
+        runs.extend(run for run in legacy_runs if run["run_id"] not in day_run_ids)
 
         # A nested run also stored as a run of its own is counted from that row, whatever day it is on
         run_ids = sorted(metrics_nested_run_ids(runs))
@@ -2564,22 +2574,18 @@ class DynamoDb(BaseDb):
         # workflow as its parent, read from the legacy runs of the rebuild or the runs table
         day_run_ids = {run["run_id"] for run in runs if run.get("run_id")}
         parent_run_ids = sorted({run["parent_run_id"] for run in runs if run.get("parent_run_id")} - day_run_ids)
-        parent_runs = get_metrics_runs(
-            [legacy_runs_by_id[run_id] for run_id in parent_run_ids if run_id in legacy_runs_by_id]
-        )
+        parent_runs = [legacy_runs_by_id[run_id] for run_id in parent_run_ids if run_id in legacy_runs_by_id]
         parent_run_ids = [run_id for run_id in parent_run_ids if run_id not in legacy_runs_by_id]
 
         # A remote member's run after midnight is named by its team's run of the day before
-        team_runs = get_metrics_runs(
-            self._query_metrics_sources(
-                runs_table_name,
-                "session_id-created_at-index",
-                "session_id",
-                sorted(metrics_remote_member_team_session_ids(runs)),
-                ["run_id", "session_id", "run_type", "agent_id", "team_id", "workflow_id", "parent_run_id", "run_data"],
-                start_timestamp - 86400,
-                start_timestamp,
-            )
+        team_runs = self._query_metrics_sources(
+            runs_table_name,
+            "session_id-created_at-index",
+            "session_id",
+            sorted(metrics_remote_member_team_session_ids(runs)),
+            ["run_id", "session_id", "run_type", "agent_id", "team_id", "workflow_id", "parent_run_id", "run_data"],
+            start_timestamp - 86400,
+            start_timestamp,
         )
         parent_runs.extend(team_runs)
         parent_run_ids.extend(run["parent_run_id"] for run in team_runs if run.get("parent_run_id"))
@@ -2907,8 +2913,8 @@ class DynamoDb(BaseDb):
     def _get_aggregate_metrics_rows(
         self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
     ) -> Tuple[List[dict], Optional[int]]:
-        """Get the day rows of the aggregate metrics table in the shape of the metrics table: the everyone rows for ``""``, one
-        user's rows for a name, and every user's rows for ``None``."""
+        """Get the day rows of the aggregate metrics table in the shape of the metrics table: the everyone rows for
+        ``""``, one user's rows for a name, and every user's rows for ``None``."""
         try:
             rows = self._get_aggregate_metrics_items(
                 self.aggregate_metrics_table_name, "daily", user_id, starting_date, ending_date
@@ -2919,7 +2925,9 @@ class DynamoDb(BaseDb):
             rows = [row for row in rows if row["user_id"] != ""]
         # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row
         rows = [
-            row for row in rows if any(row[column] for column in AGGREGATE_METRICS_COUNT_COLUMNS if column != "users_count")
+            row
+            for row in rows
+            if any(row[column] for column in AGGREGATE_METRICS_COUNT_COLUMNS if column != "users_count")
         ]
         rows.sort(key=lambda row: (row["date"], row["user_id"]))
         latest_updated_at = max((row["updated_at"] for row in rows if row.get("updated_at") is not None), default=None)
@@ -3103,7 +3111,8 @@ class DynamoDb(BaseDb):
             ending_date: The last day to total.
             user_id: Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with no user.
             fields: The columns to total.
-            use_month_rows: Total a calendar month inside the date range from its month aggregate metrics row, as one date.
+            use_month_rows: Total a calendar month inside the date range from its month aggregate metrics row, as one
+                date.
 
         Returns:
             Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each date, and when they were last updated.
@@ -3135,7 +3144,9 @@ class DynamoDb(BaseDb):
             else:
                 if days:
                     rows.extend(
-                        self._get_aggregate_metrics_items(aggregate_metrics_table_name, "daily", user_id or "", days[0], days[-1])
+                        self._get_aggregate_metrics_items(
+                            aggregate_metrics_table_name, "daily", user_id or "", days[0], days[-1]
+                        )
                     )
                 if month_starts:
                     rows.extend(
@@ -3227,7 +3238,8 @@ class DynamoDb(BaseDb):
         Returns:
             Optional[Dict[str, int]]: The version of each everyone row, keyed by its aggregation period and date. The
                 same again only while no calculation wrote a row of the date range. ``None`` until the first
-                calculate_metrics has finished, or without an aggregate metrics table: a read would find no rows to total.
+                calculate_metrics has finished, or without an aggregate metrics table: a read would find no rows to
+                total.
 
         Raises:
             Exception: If an error occurs during retrieval.

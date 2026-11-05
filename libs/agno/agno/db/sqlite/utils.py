@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from agno.db.sqlite.schemas import get_table_schema_definition
 from agno.db.utils import (
+    AGGREGATE_METRICS_KEY_COLUMNS,
     COMPONENT_METRICS_KEY_COLUMNS,
     METRICS_COST_FIELDS,
     METRICS_COUNT_MAP_COLUMNS,
@@ -13,7 +14,6 @@ from agno.db.utils import (
     METRICS_SUM_FIELDS,
     METRICS_TOKEN_DETAILS_FIELDS,
     METRICS_TOKEN_FIELDS,
-    AGGREGATE_METRICS_KEY_COLUMNS,
     build_aggregate_metrics_row,
     metrics_day_ranges,
     metrics_days_to_read,
@@ -338,7 +338,9 @@ def _aggregate_metrics_rows_upsert(table: Table) -> Any:
     return stmt.on_conflict_do_update(index_elements=list(AGGREGATE_METRICS_KEY_COLUMNS), set_=update_columns)
 
 
-def bulk_upsert_aggregate_metrics_rows(session: Session, table: Table, aggregate_metrics_rows: List[Dict[str, Any]]) -> None:
+def bulk_upsert_aggregate_metrics_rows(
+    session: Session, table: Table, aggregate_metrics_rows: List[Dict[str, Any]]
+) -> None:
     """Bulk upsert the user rows of a period into the aggregate metrics table, in the session's transaction.
 
     Args:
@@ -363,7 +365,9 @@ async def abulk_upsert_aggregate_metrics_rows(
     """
     if not aggregate_metrics_rows:
         return
-    await session.execute(_aggregate_metrics_rows_upsert(table), [{**row, "version": 1} for row in aggregate_metrics_rows])
+    await session.execute(
+        _aggregate_metrics_rows_upsert(table), [{**row, "version": 1} for row in aggregate_metrics_rows]
+    )
 
 
 def _reopen_metrics_row(table: Table, row_date: date, aggregation_period: str) -> Any:
@@ -472,6 +476,78 @@ def _metrics_call_durations(run_data: Any) -> Any:
     )
 
 
+def _metrics_json_value(value: Any, path: str) -> Any:
+    """Build the value at the given path of a JSON object, keeping true and false, which json_extract returns as 1 and
+    0."""
+    value_type = func.json_type(value, path)
+    return case(
+        (value_type.in_(["true", "false"]), func.json(value_type)),
+        else_=func.json_extract(value, path),
+    )
+
+
+def _metrics_tool_calls(run_data: Any) -> Any:
+    """Build each tool call of a stored run with only what tool_metrics counts, never its arguments or result."""
+    tool_call = func.json_each(
+        case(
+            (func.json_type(run_data, "$.tools") == "array", func.json_extract(run_data, "$.tools")),
+            else_=func.json_array(),
+        )
+    ).table_valued("value", "type")
+    return (
+        select(
+            func.json_group_array(
+                func.json_object(
+                    "tool_call_id",
+                    func.json_extract(tool_call.c.value, "$.tool_call_id"),
+                    "toolkit",
+                    func.json_extract(tool_call.c.value, "$.toolkit"),
+                    "tool_name",
+                    func.json_extract(tool_call.c.value, "$.tool_name"),
+                    "tool_call_error",
+                    _metrics_json_value(tool_call.c.value, "$.tool_call_error"),
+                    "requires_confirmation",
+                    _metrics_json_value(tool_call.c.value, "$.requires_confirmation"),
+                    "confirmed",
+                    _metrics_json_value(tool_call.c.value, "$.confirmed"),
+                    "requires_user_input",
+                    _metrics_json_value(tool_call.c.value, "$.requires_user_input"),
+                    "external_execution_required",
+                    _metrics_json_value(tool_call.c.value, "$.external_execution_required"),
+                    "metrics",
+                    func.json_object("duration", func.json_extract(tool_call.c.value, "$.metrics.duration")),
+                )
+            )
+        )
+        .where(tool_call.c.type == "object")
+        .scalar_subquery()
+    )
+
+
+def _metrics_copied_tool_call_ids(run_data: Any) -> Any:
+    """Build the id of each tool call answered in the first messages of a forked run, the ones it copied from the run
+    it was forked from."""
+    skip = func.coalesce(func.json_extract(run_data, "$.forked_from_message_index"), 0)
+    message = func.json_each(run_data, "$.messages").table_valued("key", "value")
+    tool_call_id = func.json_extract(message.c.value, "$.tool_call_id")
+    # Read only for a forked run, so a run that is not a fork never reads its messages. Matched to the tool calls once
+    # read: SQLite runs an IN subquery that reads the run again for each tool call
+    return case(
+        (
+            skip > 0,
+            select(func.json_group_array(tool_call_id))
+            .where(message.c.key < skip, func.json_extract(message.c.value, "$.role") == "tool")
+            .scalar_subquery(),
+        )
+    )
+
+
+def _metrics_uncopied_tool_calls(tool_calls: List[Dict[str, Any]], copied_tool_call_ids: Any) -> List[Dict[str, Any]]:
+    """The tool calls of a run, skipping those a forked run copied from the run it was forked from."""
+    copied = {tool_call_id for tool_call_id in copied_tool_call_ids or [] if tool_call_id}
+    return [tool_call for tool_call in tool_calls or [] if tool_call.get("tool_call_id") not in copied]
+
+
 def _metrics_nested_runs(run_data: Any, key: Any) -> Any:
     """Build the runs a stored run holds under the given key: a list of runs, or the one run a key holds on its
     own."""
@@ -484,12 +560,6 @@ def _metrics_nested_runs(run_data: Any, key: Any) -> Any:
     ).table_valued("key", "value", "type")
 
 
-def metrics_parent_run_id(table: Table) -> Any:
-    """Build the id of the run that started a stored run: its team's or workflow's run, or the run whose tool call
-    started it."""
-    return func.coalesce(table.c.parent_run_id, func.json_extract(table.c.run_data, "$.called_from_run_id"))
-
-
 def build_component_metrics_runs_query(table: Table, start_timestamp: int, end_timestamp: int) -> Any:
     """Build the query that reads the runs created in the given time range, with only what component metrics count.
 
@@ -500,7 +570,8 @@ def build_component_metrics_runs_query(table: Table, start_timestamp: int, end_t
 
     Returns:
         Any: The query. Of the messages it reads only each request's duration, of the metrics only what
-            component metrics count, and of the runs nested inside a run, at any depth, only the same.
+            component metrics count, of the tool calls only what tool_metrics counts, and of the runs nested inside
+            a run, at any depth, only the same.
     """
     # Read in the database, so a run is never read whole
     nested_keys = union_all(
@@ -562,6 +633,10 @@ def build_component_metrics_runs_query(table: Table, start_timestamp: int, end_t
                 func.json_extract(nested.c.run_data, "$.model_provider"),
                 "call_durations",
                 func.json(_metrics_call_durations(nested.c.run_data)),
+                "tools",
+                func.json(_metrics_tool_calls(nested.c.run_data)),
+                "copied_tool_call_ids",
+                func.json(_metrics_copied_tool_call_ids(nested.c.run_data)),
             )
         )
     ).scalar_subquery()
@@ -573,12 +648,14 @@ def build_component_metrics_runs_query(table: Table, start_timestamp: int, end_t
         table.c.team_id,
         table.c.workflow_id,
         table.c.user_id,
-        metrics_parent_run_id(table).label("parent_run_id"),
+        table.c.parent_run_id,
         table.c.status,
         func.json_extract(table.c.run_data, "$.metrics").label("metrics"),
         func.json_extract(table.c.run_data, "$.model").label("model"),
         func.json_extract(table.c.run_data, "$.model_provider").label("model_provider"),
         _metrics_call_durations(table.c.run_data).label("call_durations"),
+        _metrics_tool_calls(table.c.run_data).label("tools"),
+        _metrics_copied_tool_call_ids(table.c.run_data).label("copied_tool_call_ids"),
         # Walked only for a run with runs nested inside it
         case(
             (
@@ -679,6 +756,9 @@ def build_component_metrics_run(row: Any) -> Dict[str, Any]:
             {"role": "assistant", "metrics": {"duration": duration}}
             for duration in json.loads(run.pop("call_durations") or "[]")
         ],
+        "tools": _metrics_uncopied_tool_calls(
+            json.loads(run.pop("tools") or "[]"), json.loads(run.pop("copied_tool_call_ids") or "[]")
+        ),
     }
     # A nested run comes after the run it is nested inside, so the last run met at each depth is its parent
     parents = [run["run_data"]]
@@ -689,6 +769,9 @@ def build_component_metrics_run(row: Any) -> Dict[str, Any]:
             {"role": "assistant", "metrics": {"duration": duration}}
             for duration in nested_run.pop("call_durations") or []
         ]
+        nested_run["tools"] = _metrics_uncopied_tool_calls(
+            nested_run.pop("tools") or [], nested_run.pop("copied_tool_call_ids")
+        )
         key = nested_run.pop("key")
         # A workflow agent's run is stored as the run itself, the other nested runs in lists
         if key == "workflow_agent_run":
@@ -747,15 +830,15 @@ def build_component_metrics_totals_queries(
         table (Table): The aggregate metrics table, or the component metrics table to total the runs with no user.
         starting_date (date): The first day to total.
         ending_date (date): The last day to total.
-        user_id (str): The user whose rows are totalled: ``""`` totals the everyone rows of the aggregate metrics table, or
-            the rows with no user of the component metrics table.
+        user_id (str): The user whose rows are totalled: ``""`` totals the everyone rows of the aggregate metrics table,
+            or the rows with no user of the component metrics table.
         fields (Sequence[str]): The columns to total.
         month_starts (Sequence[date]): The first day of every month inside the date range to total from its month
             row instead of its days.
 
     Returns:
-        Dict[str, Any]: The queries, keyed "totals", "count_maps", "additional_metrics" and "model_metrics".
-            Empty when there is no day to total.
+        Dict[str, Any]: The queries, keyed "totals", "count_maps", "additional_metrics", "model_metrics" and
+            "tool_metrics". Empty when there is no day to total.
     """
     # Days that follow one another are looked up as one range, so a long date range binds a few parameters
     # instead of one per day
@@ -820,6 +903,12 @@ def build_component_metrics_totals_queries(
             .select_from(models)
             .where(where)
             .group_by(table.c.date, model_id, model_provider)
+        )
+
+    # Each toolkit's tools hold several numbers and buckets each, so the maps are added up once read
+    if "tool_metrics" in fields:
+        queries["tool_metrics"] = select(table.c.date, table.c.tool_metrics).where(
+            where, table.c.tool_metrics != func.json_object()
         )
 
     return queries

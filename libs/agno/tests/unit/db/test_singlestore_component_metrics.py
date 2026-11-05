@@ -13,7 +13,13 @@ from sqlalchemy.sql.dml import Insert
 
 from agno.db.singlestore.schemas import SESSION_TABLE_SCHEMA, get_table_schema_definition
 from agno.db.singlestore.singlestore import SingleStoreDb
-from agno.db.singlestore.utils import upsert_aggregate_metrics_row
+from agno.db.singlestore.utils import (
+    build_component_metrics_run,
+    build_component_metrics_runs_query,
+    upsert_aggregate_metrics_row,
+)
+from agno.db.utils import calculate_date_component_metrics
+from agno.run.base import RunStatus
 
 TODAY = datetime.now(timezone.utc).date()
 
@@ -192,3 +198,76 @@ def test_release_metrics_refresh_keeps_a_rebuild_mark_over_a_claim_of_no_fingerp
 
     statement = str(session.execute.call_args.args[0].compile(dialect=mysql.dialect()))
     assert "fingerprint" not in statement
+
+
+def test_tool_calls_the_runs_query_reads_are_counted_in_tool_metrics():
+    """Each tool call the runs query reads is put back on its run, a nested run's read as stored, and counted under
+    its tool."""
+    tool_call = {"toolkit": None, "tool_name": "search", "tool_call_error": None, "metrics": {"duration": 0.4}}
+    run = build_component_metrics_run(
+        SimpleNamespace(
+            _mapping={
+                "run_id": "team-run",
+                "run_type": "team",
+                "agent_id": None,
+                "team_id": "team-1",
+                "workflow_id": None,
+                "user_id": "alice",
+                "parent_run_id": None,
+                "status": RunStatus.completed.value,
+                "metrics": None,
+                "model": None,
+                "model_provider": None,
+                "call_durations": None,
+                "tools": [tool_call],
+                "step_executor_runs": None,
+                "member_responses": [{"run_id": "member-run", "agent_id": "agent-1", "tools": [tool_call]}],
+                "workflow_agent_run": None,
+            }
+        )
+    )
+
+    (row,) = calculate_date_component_metrics(TODAY, [], [run], set(), [])
+    assert row["tool_metrics"] == {
+        "": {"search": {"count": 2, "failed_count": 0, "total_ms": 800, "max_ms": 400, "buckets": {"le_400": 2}}}
+    }
+
+
+def test_runs_query_reads_only_what_tool_metrics_counts_and_skips_the_copied_tool_calls():
+    """Of each tool call of a run the runs query reads only what tool_metrics counts, never its arguments or result,
+    and it skips those answered in the first messages a forked run copied."""
+    runs_table = _table("test_runs", get_table_schema_definition("runs"))
+    statement = str(
+        build_component_metrics_runs_query(runs_table, 0, 1).compile(
+            dialect=mysql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    )
+
+    assert "JSON_EXTRACT_JSON(test_runs.run_data, 'tools')" in statement
+    assert "tool_args" not in statement and "'result'" not in statement
+    assert "'role') = 'tool'" in statement
+    assert ".run_id IS NULL GROUP BY test_runs.run_id" in statement
+
+
+def test_component_metrics_read_returns_tool_metrics(singlestore_db):
+    """A read returns the tool_metrics of the rows it totals."""
+    tool_metrics = {
+        "": {"search": {"count": 2, "failed_count": 1, "total_ms": 800, "max_ms": 600, "buckets": {"le_600": 2}}}
+    }
+    session = _FakeSession(
+        {
+            "test_aggregate_metrics": [
+                SimpleNamespace(
+                    aggregation_period="daily", date=TODAY, user_id="", updated_at=1, tool_metrics=tool_metrics
+                )
+            ]
+        }
+    )
+    singlestore_db.Session = Mock(return_value=session)
+
+    metrics, latest_updated_at = singlestore_db.get_component_metrics(
+        starting_date=TODAY, ending_date=TODAY, fields=["tool_metrics"]
+    )
+
+    assert metrics == [{"date": TODAY, "tool_metrics": tool_metrics}]
+    assert latest_updated_at == 1

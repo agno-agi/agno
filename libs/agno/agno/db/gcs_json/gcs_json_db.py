@@ -17,13 +17,13 @@ from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
+    AGGREGATE_METRICS_COUNT_COLUMNS,
+    AGGREGATE_METRICS_KEY_COLUMNS,
     COMPONENT_METRICS_KEY_COLUMNS,
     METRICS_LOCK_SECONDS,
     METRICS_REFRESH_ID,
     METRICS_STOPPED_ERROR,
     METRICS_WRITE_RETRIES,
-    AGGREGATE_METRICS_COUNT_COLUMNS,
-    AGGREGATE_METRICS_KEY_COLUMNS,
     build_metrics_by_owner_from_rows,
     build_metrics_from_aggregate_metrics,
     build_single_run_row,
@@ -41,7 +41,6 @@ from agno.db.utils import (
     get_metrics_records_by_day,
     get_metrics_reopen_session_ids,
     get_metrics_rows_by_key,
-    get_metrics_runs,
     get_months_to_calculate_metrics_for,
     get_open_metrics_months,
     list_metrics_totals_models,
@@ -1227,7 +1226,9 @@ class GcsJsonDb(BaseDb):
             return
         try:
             for attempt in range(METRICS_WRITE_RETRIES + 1):
-                aggregate_metrics_rows, generation = self._read_json_file_with_generation(self.aggregate_metrics_table_name)
+                aggregate_metrics_rows, generation = self._read_json_file_with_generation(
+                    self.aggregate_metrics_table_name
+                )
                 # No aggregate metrics file until a calculation started: the first one builds every day
                 if generation == 0:
                     self._metrics_days_not_reopened.clear()
@@ -1428,8 +1429,8 @@ class GcsJsonDb(BaseDb):
         periods: List[Tuple[List[Dict[str, Any]], bool, Optional[int]]],
         worker_id: str,
     ) -> bool:
-        """Write the component metrics rows of the calculated days, then the aggregate metrics rows of each calculated day
-        and month. False when another process took the refresh over, and nothing was written.
+        """Write the component metrics rows of the calculated days, then the aggregate metrics rows of each calculated
+        day and month. False when another process took the refresh over, and nothing was written.
 
         Args:
             rows_by_key (Optional[Dict[Tuple[Any, ...], Dict[str, Any]]]): Every component metrics row, by key. None
@@ -1562,7 +1563,9 @@ class GcsJsonDb(BaseDb):
                 if refresh_row is not None:
                     started_at, finished_at = refresh_row["started_at"], refresh_row["finished_at"]
                 for attempt in range(METRICS_WRITE_RETRIES + 1):
-                    aggregate_metrics_rows, generation = self._read_json_file_with_generation(self.aggregate_metrics_table_name)
+                    aggregate_metrics_rows, generation = self._read_json_file_with_generation(
+                        self.aggregate_metrics_table_name
+                    )
                     aggregate_metrics_by_key = get_metrics_rows_by_key(
                         deserialize_metrics_rows(aggregate_metrics_rows), AGGREGATE_METRICS_KEY_COLUMNS
                     )
@@ -1605,7 +1608,7 @@ class GcsJsonDb(BaseDb):
                 {**session, "compaction_metrics": (session.get("session_data") or {}).get("compaction_metrics")}
                 for session in self._read_json_file(self.session_table_name, create_table_if_not_found=False)
             ]
-            runs = get_metrics_runs(self._read_runs_file(create_table_if_not_found=False))
+            runs = self._read_runs_file(create_table_if_not_found=False)
             dates_to_process, fingerprint = get_metrics_dates_to_calculate(
                 aggregate_metrics_by_key, sessions, runs, refresh_row, rebuild_from
             )
@@ -1635,7 +1638,7 @@ class GcsJsonDb(BaseDb):
                 ) < packaging_version.parse("3.0.0"):
                     session_legacy_runs = get_metrics_legacy_runs(sessions)
                     self._metrics_legacy_runs = bool(session_legacy_runs)
-                    legacy_runs = get_metrics_runs([run for run in session_legacy_runs if run["run_id"] not in run_ids])
+                    legacy_runs = [run for run in session_legacy_runs if run["run_id"] not in run_ids]
                     runs = runs + legacy_runs
                     if not self._heartbeat_metrics_refresh(worker_id):
                         return None
@@ -1758,8 +1761,8 @@ class GcsJsonDb(BaseDb):
     def _get_aggregate_metrics_rows(
         self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
     ) -> Tuple[List[dict], Optional[int]]:
-        """Get the day rows of the aggregate metrics file in the shape of the metrics table: the everyone rows for ``""``,
-        one user's rows for a name, and every user's rows for ``None``."""
+        """Get the day rows of the aggregate metrics file in the shape of the metrics table: the everyone rows for
+        ``""``, one user's rows for a name, and every user's rows for ``None``."""
         aggregate_metrics_rows = self._read_metrics_file(self.aggregate_metrics_table_name)
         rows = sorted(
             (
@@ -1876,8 +1879,8 @@ class GcsJsonDb(BaseDb):
     ) -> Tuple[List[dict], Optional[int]]:
         """Get the metrics of every user, one row per day, matching the given date range.
 
-        Read from the everyone rows of the aggregate metrics file once the first calculate_metrics has finished, and from
-        the deprecated metrics file until then. A read never calculates them, as in get_metrics.
+        Read from the everyone rows of the aggregate metrics file once the first calculate_metrics has finished, and
+        from the deprecated metrics file until then. A read never calculates them, as in get_metrics.
 
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
@@ -1931,8 +1934,8 @@ class GcsJsonDb(BaseDb):
             user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with
                 no user.
             fields (List[str]): The columns to total.
-            use_month_rows (bool): Total a calendar month inside the date range from its month aggregate metrics row, as one
-                date.
+            use_month_rows (bool): Total a calendar month inside the date range from its month aggregate metrics row, as
+                one date.
 
         Returns:
             Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each date, and when they were last updated.

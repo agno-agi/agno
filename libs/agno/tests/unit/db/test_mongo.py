@@ -167,6 +167,85 @@ def test_metrics_runs_projections_keep_session_id():
     assert build_component_metrics_legacy_runs_projection()["session_id"] == 1
 
 
+def test_metrics_runs_projection_keeps_what_tool_metrics_count():
+    """A run keeps of its tool calls only what tool_metrics counts, never their arguments or result, and of its
+    messages the tool call each answers, which a forked run's copied tool calls are found by."""
+    projection = build_component_metrics_runs_projection()
+    for field in [
+        "tools.toolkit",
+        "tools.tool_name",
+        "tools.tool_call_error",
+        "tools.requires_confirmation",
+        "tools.confirmed",
+        "tools.requires_user_input",
+        "tools.external_execution_required",
+        "tools.metrics.duration",
+        "tools.tool_call_id",
+        "messages.tool_call_id",
+    ]:
+        assert projection[f"run_data.{field}"] == 1
+    assert not any(field.startswith(("run_data.tools.tool_args", "run_data.tools.result")) for field in projection)
+
+
+def test_component_metrics_totals_read_tool_metrics():
+    """The totals of a day read back the tools each of its rows keeps as a list, and add them up."""
+    db = _db()
+    collection = Mock()
+    collection.find.return_value = [
+        {
+            "aggregation_period": "daily",
+            "date": "2026-10-01",
+            "updated_at": 1,
+            "tool_metrics": [
+                {
+                    "tool_name": "search",
+                    "toolkit": "web",
+                    "count": 1,
+                    "failed_count": 0,
+                    "total_ms": 200,
+                    "max_ms": 200,
+                    "buckets": {"le_200": 1},
+                }
+            ],
+        },
+        {
+            "aggregation_period": "daily",
+            "date": "2026-10-01",
+            "updated_at": 2,
+            "tool_metrics": [
+                {
+                    "tool_name": "search",
+                    "toolkit": "web",
+                    "count": 2,
+                    "failed_count": 1,
+                    "total_ms": 300,
+                    "max_ms": 250,
+                    "buckets": {"le_50": 1, "le_250": 1},
+                }
+            ],
+        },
+    ]
+
+    with patch.object(db, "_get_collection", return_value=collection):
+        totals, latest_updated_at = db.get_component_metrics(
+            date(2026, 10, 1), date(2026, 10, 1), user_id="", fields=["tool_metrics"]
+        )
+
+    assert collection.find.call_args.args[1]["tool_metrics"] == 1
+    assert totals[0]["tool_metrics"] == {
+        "web": {
+            "search": {
+                "count": 3,
+                "failed_count": 1,
+                "total_ms": 500,
+                "max_ms": 250,
+                "buckets": {"le_200": 1, "le_50": 1, "le_250": 1},
+            }
+        }
+    }
+    assert latest_updated_at == 2
+
+
 def test_metrics_rebuild_reopen_failure_marks_refresh_failed():
     """A rebuild whose reopen fails shows the error in the refresh status, unless a process holds the refresh or a
     calculation started or finished after the rebuild read it."""

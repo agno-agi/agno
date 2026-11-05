@@ -11,7 +11,9 @@ from sqlalchemy import create_engine, select, text, update
 
 from agno.db.sqlite import AsyncSqliteDb, SqliteDb
 from agno.db.utils import METRICS_LOCK_SECONDS, METRICS_REFRESH_ID, METRICS_STOPPED_ERROR
-from agno.metrics import ModelMetrics, RunMetrics
+from agno.metrics import ModelMetrics, RunMetrics, ToolCallMetrics
+from agno.models.message import Message
+from agno.models.response import ToolExecution
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
 from agno.session.agent import AgentSession
@@ -239,6 +241,54 @@ def test_calculate_metrics_counts_runs_kept_in_the_legacy_runs_column(tmp_path):
     legacy_db.calculate_metrics()
 
     assert _numbers(_stored_rows(legacy_db)[(_utc_date(2), "carol", "agent", "agent-1")]) == (2, 2, 30)
+
+
+def test_calculate_metrics_counts_tool_calls(tmp_path):
+    """Ensure each tool call counts in tool_metrics, and one a forked run copied or the user rejected does not"""
+    db = SqliteDb(db_file=str(tmp_path / "tools.db"))
+    day = _noon_utc(2)
+    tool_run = _run("tool_run", "carol", 10, 0, day)
+    tool_run.tools = [
+        ToolExecution(
+            tool_call_id="call-1",
+            tool_name="search",
+            toolkit="web",
+            tool_args={"query": "agno"},
+            result="found",
+            metrics=ToolCallMetrics(duration=0.2),
+        ),
+        ToolExecution(tool_call_id="call-2", tool_name="search", toolkit="web", tool_call_error=True, confirmed=False),
+    ]
+    forked_run = _run("forked_run", "carol", 10, 0, day + 60)
+    forked_run.tools = [
+        ToolExecution(tool_call_id="call-1", tool_name="search", toolkit="web", metrics=ToolCallMetrics(duration=0.2)),
+        ToolExecution(tool_call_id="call-3", tool_name="search", toolkit="web", metrics=ToolCallMetrics(duration=0.4)),
+    ]
+    forked_run.messages = [Message(role="tool", tool_call_id="call-1"), Message(role="tool", tool_call_id="call-3")]
+    forked_run.forked_from_message_index = 1
+    # A fork of the fork copies both calls, and the call the first fork made still counts on it
+    fork_of_fork = _run("fork_of_fork", "carol", 10, 0, day + 120)
+    fork_of_fork.tools = forked_run.tools
+    fork_of_fork.messages = forked_run.messages
+    fork_of_fork.forked_from_message_index = 2
+    _persist(db, _session("tool_session", "carol", [tool_run, forked_run, fork_of_fork], day))
+    _backdate(db)
+    db.calculate_metrics()
+
+    tool_metrics = {
+        "web": {
+            "search": {
+                "count": 2,
+                "failed_count": 0,
+                "total_ms": 600,
+                "max_ms": 400,
+                "buckets": {"le_200": 1, "le_400": 1},
+            }
+        }
+    }
+    assert _stored_rows(db)[(_utc_date(2), "carol", "agent", "agent-1")]["tool_metrics"] == tool_metrics
+    totals, _ = db.get_metrics_totals(_utc_date(2), _utc_date(2), user_id="carol", fields=["tool_metrics"])
+    assert totals["tool_metrics"] == tool_metrics
 
 
 def test_get_component_metrics(sqlite_db):

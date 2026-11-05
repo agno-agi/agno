@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 from agno.db.base import BaseDb, SessionType
 from agno.db.firestore.utils import (
     METRICS_IN_LIST_LIMIT,
+    aggregate_metrics_record_id,
     apply_pagination,
     apply_sorting,
     component_metrics_record_id,
@@ -24,24 +25,25 @@ from agno.db.firestore.utils import (
     reopen_metrics_days_from,
     reopen_metrics_month,
     serialize_metrics_row,
-    aggregate_metrics_record_id,
 )
 from agno.db.migrations.manager import MigrationManager
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
+    AGGREGATE_METRICS_COUNT_COLUMNS,
     METRICS_BATCH_SIZE,
     METRICS_LOCK_SECONDS,
     METRICS_REFRESH_ID,
     METRICS_STOPPED_ERROR,
-    AGGREGATE_METRICS_COUNT_COLUMNS,
     add_metrics_month_totals,
+    aggregate_metrics_row_to_store,
+    aggregate_metrics_rows_to_write,
+    build_aggregate_metrics_month_rows,
+    build_aggregate_metrics_rows,
     build_metrics_by_owner_from_rows,
     build_metrics_from_aggregate_metrics,
     build_single_run_row,
-    build_aggregate_metrics_month_rows,
-    build_aggregate_metrics_rows,
     calculate_date_component_metrics,
     component_metrics_rows_to_write,
     database_error_message,
@@ -53,7 +55,6 @@ from agno.db.utils import (
     filter_context_runs,
     get_metrics_legacy_runs,
     get_metrics_reopen_session_ids,
-    get_metrics_runs,
     get_months_to_calculate_metrics_for,
     list_metrics_totals_models,
     merge_metrics_totals,
@@ -72,8 +73,6 @@ from agno.db.utils import (
     metrics_versions,
     resolve_metrics_fields,
     total_metrics_rows,
-    aggregate_metrics_row_to_store,
-    aggregate_metrics_rows_to_write,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -2036,10 +2035,9 @@ class FirestoreDb(BaseDb):
                         "team_id",
                         "workflow_id",
                         "parent_run_id",
-                        "run_data.called_from_run_id",
                     ]
                 )
-                parent_runs.extend(get_metrics_runs([doc.to_dict() for doc in parents_query.stream()]))
+                parent_runs.extend(doc.to_dict() for doc in parents_query.stream())
             parent_run_ids = sorted(
                 {run["parent_run_id"] for run in parent_runs if run.get("parent_run_id")} - seen_run_ids
             )
@@ -2056,8 +2054,8 @@ class FirestoreDb(BaseDb):
         row_writes: Sequence[Tuple[Any, Optional[Dict[str, Any]]]] = (),
     ) -> bool:
         """Write a period's rows: the given component metrics writes, then the user rows of the aggregate metrics
-        collection, then the everyone row, from build_aggregate_metrics_rows. False when another process took the refresh
-        over.
+        collection, then the everyone row, from build_aggregate_metrics_rows. False when another process took the
+        refresh over.
 
         Firestore commits 500 writes at most at once, so the refresh is heartbeated in each commit, and the
         everyone row is written last, in a transaction that heartbeats it: it is completed only while it still has the
@@ -2092,7 +2090,9 @@ class FirestoreDb(BaseDb):
         )
         writes.extend(
             (
-                aggregate_metrics_collection_ref.document(aggregate_metrics_record_id(period, period_date, row["user_id"])),
+                aggregate_metrics_collection_ref.document(
+                    aggregate_metrics_record_id(period, period_date, row["user_id"])
+                ),
                 serialize_metrics_row(aggregate_metrics_row_to_store(row, stored_by_user.get(row["user_id"]), None)),
             )
             for row in changed_rows
@@ -2166,7 +2166,9 @@ class FirestoreDb(BaseDb):
             .timestamp()
         )
         # Read before the day's runs, so a run written while they are read moves it
-        everyone_doc = aggregate_metrics_collection_ref.document(aggregate_metrics_record_id("daily", date_to_process, "")).get()
+        everyone_doc = aggregate_metrics_collection_ref.document(
+            aggregate_metrics_record_id("daily", date_to_process, "")
+        ).get()
         read_version = (everyone_doc.to_dict() or {}).get("version") if everyone_doc.exists else None
 
         sessions_query = (
@@ -2192,8 +2194,8 @@ class FirestoreDb(BaseDb):
 
         runs: List[Dict[str, Any]] = []
         if runs_collection_ref is not None:
-            # Only the fields component metrics count. Firestore projects no deeper than a field, so the messages and
-            # the nested runs are read whole
+            # Only the fields component metrics count. Firestore projects no deeper than a field, so the messages, the
+            # tool calls and the nested runs are read whole
             runs_query = (
                 runs_collection_ref.where(filter=FieldFilter("created_at", ">=", start_timestamp))
                 .where(filter=FieldFilter("created_at", "<", end_timestamp))
@@ -2208,11 +2210,11 @@ class FirestoreDb(BaseDb):
                         "user_id",
                         "parent_run_id",
                         "status",
-                        "run_data.called_from_run_id",
                         "run_data.metrics",
                         "run_data.model",
                         "run_data.model_provider",
                         "run_data.messages",
+                        "run_data.tools",
                         "run_data.forked_from_message_index",
                         "run_data.forked_from_session_id",
                         "run_data.step_executor_runs",
@@ -2226,12 +2228,12 @@ class FirestoreDb(BaseDb):
                 # Checked between batches too, so a stop never waits for the whole of a large day
                 if should_stop is not None and should_stop():
                     return False
-                runs.extend(get_metrics_runs([doc.to_dict() for doc in run_docs[start : start + METRICS_BATCH_SIZE]]))
+                runs.extend(doc.to_dict() for doc in run_docs[start : start + METRICS_BATCH_SIZE])
 
         # A legacy run migrated to the runs collection since the legacy runs were read is among the day's runs, and
         # is counted from there
         day_run_ids = {run["run_id"] for run in runs if run.get("run_id")}
-        runs.extend(get_metrics_runs([run for run in legacy_runs if run["run_id"] not in day_run_ids]))
+        runs.extend(run for run in legacy_runs if run["run_id"] not in day_run_ids)
 
         stored_run_ids: Set[str] = set()
         run_ids = sorted(metrics_nested_run_ids(runs))
@@ -2250,9 +2252,7 @@ class FirestoreDb(BaseDb):
         # workflow as its parent, read from the legacy runs of the rebuild or the runs collection
         day_run_ids = {run["run_id"] for run in runs if run.get("run_id")}
         parent_run_ids = sorted({run["parent_run_id"] for run in runs if run.get("parent_run_id")} - day_run_ids)
-        parent_runs = get_metrics_runs(
-            [legacy_runs_by_id[run_id] for run_id in parent_run_ids if run_id in legacy_runs_by_id]
-        )
+        parent_runs = [legacy_runs_by_id[run_id] for run_id in parent_run_ids if run_id in legacy_runs_by_id]
         parent_run_ids = [run_id for run_id in parent_run_ids if run_id not in legacy_runs_by_id]
         if runs_collection_ref is not None:
             # A remote member's run after midnight is named by its team's run of the day before
@@ -2273,14 +2273,13 @@ class FirestoreDb(BaseDb):
                             "team_id",
                             "workflow_id",
                             "parent_run_id",
-                            "run_data.called_from_run_id",
                             "run_data.step_executor_runs",
                             "run_data.member_responses",
                             "run_data.workflow_agent_run",
                         ]
                     )
                 )
-                team_runs = get_metrics_runs([doc.to_dict() for doc in team_runs_query.stream()])
+                team_runs = [doc.to_dict() for doc in team_runs_query.stream()]
                 parent_runs.extend(team_runs)
                 parent_run_ids.extend(run["parent_run_id"] for run in team_runs if run.get("parent_run_id"))
             parent_runs.extend(self._get_metrics_parent_runs(runs_collection_ref, parent_run_ids))
@@ -2331,11 +2330,18 @@ class FirestoreDb(BaseDb):
         return True
 
     def _calculate_month_metrics(
-        self, collection_ref, aggregate_metrics_collection_ref, month_start: date, refreshes_collection_ref, worker_id: str
+        self,
+        collection_ref,
+        aggregate_metrics_collection_ref,
+        month_start: date,
+        refreshes_collection_ref,
+        worker_id: str,
     ) -> bool:
         """Rebuild the month rows of the aggregate metrics collection from the component metrics rows of the month's
         days. False when another process took the refresh over."""
-        everyone_doc = aggregate_metrics_collection_ref.document(aggregate_metrics_record_id("monthly", month_start, "")).get()
+        everyone_doc = aggregate_metrics_collection_ref.document(
+            aggregate_metrics_record_id("monthly", month_start, "")
+        ).get()
         read_version = (everyone_doc.to_dict() or {}).get("version") if everyone_doc.exists else None
         # Streamed, so a month of many rows is added up a batch at a time instead of held whole
         docs = (
@@ -2464,7 +2470,11 @@ class FirestoreDb(BaseDb):
 
         try:
             dates_to_process, fingerprint = self._get_metrics_dates_to_calculate(
-                aggregate_metrics_collection_ref, sessions_collection_ref, runs_collection_ref, refresh_row, rebuild_from
+                aggregate_metrics_collection_ref,
+                sessions_collection_ref,
+                runs_collection_ref,
+                refresh_row,
+                rebuild_from,
             )
             if rebuild_from is not None:
                 # Yesterday and today are picked by their fingerprint, not by being open
@@ -2624,7 +2634,9 @@ class FirestoreDb(BaseDb):
             rows = [row for row in rows if row["user_id"] != ""]
         # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row
         rows = [
-            row for row in rows if any(row[column] for column in AGGREGATE_METRICS_COUNT_COLUMNS if column != "users_count")
+            row
+            for row in rows
+            if any(row[column] for column in AGGREGATE_METRICS_COUNT_COLUMNS if column != "users_count")
         ]
         rows.sort(key=lambda row: (row["date"], row["user_id"]))
         latest_updated_at = max((row["updated_at"] for row in rows if row.get("updated_at") is not None), default=None)
@@ -2808,8 +2820,8 @@ class FirestoreDb(BaseDb):
             user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with
                 no user.
             fields (List[str]): The columns to total.
-            use_month_rows (bool): Total a calendar month inside the date range from its month aggregate metrics row, as one
-                date.
+            use_month_rows (bool): Total a calendar month inside the date range from its month aggregate metrics row, as
+                one date.
 
         Returns:
             Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each date, and when they were last updated.

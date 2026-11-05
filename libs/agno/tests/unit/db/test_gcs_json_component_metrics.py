@@ -12,7 +12,9 @@ from typing import Any, Dict, List, Optional, Tuple
 import pytest
 
 from agno.db.utils import METRICS_LOCK_SECONDS, METRICS_STOPPED_ERROR, calculate_date_metrics
-from agno.metrics import RunMetrics
+from agno.metrics import RunMetrics, ToolCallMetrics
+from agno.models.message import Message
+from agno.models.response import ToolExecution
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
@@ -287,6 +289,62 @@ def test_calculate_metrics_matches_a_direct_count_of_the_runs():
     metrics, _ = db.get_metrics(starting_date=today, ending_date=today, user_id="")
     assert [(metric["user_id"], metric["workflow_runs_count"]) for metric in metrics] == [(None, 1)]
     assert db.get_metrics_refresh_status()["status"] == "completed"
+
+
+def test_calculate_metrics_counts_tool_calls():
+    """Ensure each tool call is counted under its tool, that a tool call a forked run copied is not, and that a totals
+    read adds the tools up"""
+    db = _new_db()
+    day = _utc_date(2)
+    copied_call = ToolExecution(
+        tool_call_id="copied-call",
+        tool_name="search",
+        tool_args={"query": "agno"},
+        metrics=ToolCallMetrics(duration=0.4),
+    )
+    new_call = ToolExecution(tool_call_id="new-call", tool_name="search", metrics=ToolCallMetrics(duration=0.1))
+    original = _agent_run(
+        "original_run",
+        _noon_utc(day),
+        10,
+        messages=[Message(role="tool", tool_call_id="copied-call", content="agno")],
+        tools=[copied_call],
+    )
+    forked = _agent_run(
+        "forked_run",
+        _noon_utc(day) + 1,
+        10,
+        messages=[
+            Message(role="tool", tool_call_id="copied-call", content="agno"),
+            Message(role="tool", tool_call_id="new-call", content="agno"),
+        ],
+        tools=[copied_call, new_call],
+        forked_from_message_index=1,
+    )
+    _persist(
+        db,
+        AgentSession(session_id="fork_session", agent_id="agent-1", user_id="bob", created_at=_noon_utc(day)),
+        [original, forked],
+    )
+
+    db.calculate_metrics()
+
+    # The forked run counts only the tool call it made
+    expected = {
+        "": {
+            "search": {
+                "count": 2,
+                "failed_count": 0,
+                "total_ms": 500,
+                "max_ms": 400,
+                "buckets": {"le_100": 1, "le_400": 1},
+            }
+        }
+    }
+    metrics, _ = db.get_component_metrics(day, day, fields=["tool_metrics"])
+    assert metrics[0]["tool_metrics"] == expected
+    totals, _ = db.get_metrics_totals(day, day, user_id="bob", fields=["tool_metrics"])
+    assert totals == {"tool_metrics": expected}
 
 
 def test_calculate_metrics_rebuilds_a_reopened_day():

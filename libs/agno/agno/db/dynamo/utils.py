@@ -446,7 +446,8 @@ def serialize_component_metrics_row(row: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def aggregate_metrics_period_user_id(aggregation_period: str, user_id: str) -> str:
-    """Return the hash key of the aggregate metrics rows of a period and user: the period alone for the everyone rows."""
+    """Return the hash key of the aggregate metrics rows of a period and user: the period alone for the everyone
+    rows."""
     return f"{aggregation_period}#{user_id}" if user_id else aggregation_period
 
 
@@ -459,8 +460,8 @@ def aggregate_metrics_key(aggregation_period: str, row_date: date, user_id: str)
 
 
 def serialize_aggregate_metrics_row(row: Dict[str, Any]) -> Dict[str, Any]:
-    """Serialize an aggregate metrics row to a DynamoDB item, with its key and its day as an ISO string, and an open everyone
-    row with its period as open_period, the key of the index of the open rows."""
+    """Serialize an aggregate metrics row to a DynamoDB item, with its key and its day as an ISO string, and an open
+    everyone row with its period as open_period, the key of the index of the open rows."""
     item = serialize_to_dynamo_item({**row, "date": row["date"].isoformat()})
     item.update(aggregate_metrics_key(row["aggregation_period"], row["date"], row["user_id"]))
     if row["user_id"] == "" and not row["completed"]:

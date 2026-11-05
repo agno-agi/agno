@@ -900,6 +900,27 @@ def list_metrics_models(model_metrics: Dict[str, Dict[str, Dict[str, Any]]]) -> 
     )
 
 
+def list_metrics_tools(tool_metrics: Dict[str, Dict[str, Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    """List the tools of a tool_metrics map: one entry per tool and toolkit, with its counts, its durations and its
+    buckets, sorted by tool and toolkit."""
+    return sorted(
+        (
+            {
+                "tool_name": tool_name,
+                "toolkit": toolkit,
+                "count": tool["count"],
+                "failed_count": tool["failed_count"],
+                "total_ms": tool["total_ms"],
+                "max_ms": tool["max_ms"],
+                "buckets": tool["buckets"],
+            }
+            for toolkit, tools in tool_metrics.items()
+            for tool_name, tool in tools.items()
+        ),
+        key=lambda tool: (tool["tool_name"], tool["toolkit"]),
+    )
+
+
 def list_metrics_totals_models(totals: Dict[str, Any]) -> Dict[str, Any]:
     """Totals with their model_metrics listed by list_metrics_models, as get_component_metrics returns them."""
     if "model_metrics" not in totals:
@@ -1232,17 +1253,6 @@ def _metrics_parent_component_id(run: Dict[str, Any], components: Dict[str, Tupl
     """
     _, component_id = components.get(run.get("parent_run_id") or "", ("", ""))
     return component_id
-
-
-def metrics_parent_run_id(run: Dict[str, Any]) -> Optional[str]:
-    """The id of the run that started a stored run: its team's or workflow's run, or the run whose tool call started
-    it."""
-    return run.get("parent_run_id") or (run.get("run_data") or {}).get("called_from_run_id")
-
-
-def get_metrics_runs(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """The stored runs as component metrics count them, each with the id of the run that started it."""
-    return [{**row, "parent_run_id": metrics_parent_run_id(row)} for row in rows]
 
 
 def _get_metrics_parent_runs(runs_by_id: Dict[str, Dict[str, Any]], parent_run_ids: List[str]) -> List[Dict[str, Any]]:
@@ -1793,15 +1803,21 @@ def reopened_aggregate_metrics_row(
 def reopen_metrics_month(aggregate_metrics_by_key: Dict[Tuple[Any, ...], Dict[str, Any]], month_start: date) -> None:
     """Reopen a month's everyone row of the given aggregate metrics rows, so the next calculation rebuilds the month."""
     key = ("monthly", month_start, "")
-    aggregate_metrics_by_key[key] = reopened_aggregate_metrics_row(aggregate_metrics_by_key.get(key), month_start, "monthly")
+    aggregate_metrics_by_key[key] = reopened_aggregate_metrics_row(
+        aggregate_metrics_by_key.get(key), month_start, "monthly"
+    )
 
 
-def reopen_metrics_days_from(aggregate_metrics_by_key: Dict[Tuple[Any, ...], Dict[str, Any]], starting_date: date) -> None:
+def reopen_metrics_days_from(
+    aggregate_metrics_by_key: Dict[Tuple[Any, ...], Dict[str, Any]], starting_date: date
+) -> None:
     """Reopen every day's everyone row of the given aggregate metrics rows from the given date on, as a write reopens a
     day, so the next calculation rebuilds them."""
     for (aggregation_period, row_date, user_id), row in list(aggregate_metrics_by_key.items()):
         if aggregation_period == "daily" and user_id == "" and row_date >= starting_date:
-            aggregate_metrics_by_key[(aggregation_period, row_date, user_id)] = reopened_aggregate_metrics_row(row, row_date)
+            aggregate_metrics_by_key[(aggregation_period, row_date, user_id)] = reopened_aggregate_metrics_row(
+                row, row_date
+            )
 
 
 def get_open_metrics_months(aggregate_metrics_by_key: Dict[Tuple[Any, ...], Dict[str, Any]]) -> List[date]:
@@ -1885,7 +1901,7 @@ def build_aggregate_metrics_row(
             rows, [field for field in METRICS_FIELDS if field not in ["sessions_count", "runs_count"]]
         ),
         **counts,
-        # A team member, a nested team and a run started inside a tool call were started by another run
+        # A team member and a nested team were started by another run
         "root_runs_count": sum(row["runs_count"] for row in rows if not row["parent_component_id"]),
         # The agno version that built the row
         "metrics_version": agno_version,
@@ -2040,8 +2056,8 @@ def write_aggregate_metrics_rows(
     rows_changed: bool,
     read_version: Optional[int],
 ) -> None:
-    """Write a period's rows of the aggregate metrics table, from build_aggregate_metrics_rows, into the given rows by key:
-    the user rows, then the everyone row, which is completed only while it still has the version read before the
+    """Write a period's rows of the aggregate metrics table, from build_aggregate_metrics_rows, into the given rows by
+    key: the user rows, then the everyone row, which is completed only while it still has the version read before the
     period's rows."""
     period, period_date = aggregate_metrics_rows[0]["aggregation_period"], aggregate_metrics_rows[0]["date"]
     stored_rows = [row for key, row in aggregate_metrics_by_key.items() if key[:2] == (period, period_date)]
@@ -2052,10 +2068,14 @@ def write_aggregate_metrics_rows(
         aggregate_metrics_by_key.pop((period, period_date, user_id))
     for aggregate_metrics_row in changed_rows:
         key = (period, period_date, aggregate_metrics_row["user_id"])
-        aggregate_metrics_by_key[key] = aggregate_metrics_row_to_store(aggregate_metrics_row, aggregate_metrics_by_key.get(key), None)
+        aggregate_metrics_by_key[key] = aggregate_metrics_row_to_store(
+            aggregate_metrics_row, aggregate_metrics_by_key.get(key), None
+        )
     if everyone_row is not None:
         key = (period, period_date, "")
-        aggregate_metrics_by_key[key] = aggregate_metrics_row_to_store(everyone_row, aggregate_metrics_by_key.get(key), read_version)
+        aggregate_metrics_by_key[key] = aggregate_metrics_row_to_store(
+            everyone_row, aggregate_metrics_by_key.get(key), read_version
+        )
 
 
 def metrics_month_end(month_start: date) -> date:
@@ -2214,8 +2234,8 @@ def calculate_date_metrics(
         runs_by_id (Dict[str, Dict[str, Any]]): Every run, legacy runs included, by id.
 
     Returns:
-        Tuple[List[Dict[str, Any]], bool]: The aggregate metrics rows of the day, from build_aggregate_metrics_rows, and whether
-            any of its component rows changed.
+        Tuple[List[Dict[str, Any]], bool]: The aggregate metrics rows of the day, from build_aggregate_metrics_rows, and
+            whether any of its component rows changed.
     """
     # A nested run also stored as a run of its own, or as a legacy run of its own, is counted from that run,
     # whatever day it is on
@@ -2531,8 +2551,8 @@ def total_metrics_rows(
     they are stored.
 
     Args:
-        rows (Sequence[Dict[str, Any]]): The rows of one user of the aggregate metrics table, or the rows with no user of
-            the component metrics table, their date a date.
+        rows (Sequence[Dict[str, Any]]): The rows of one user of the aggregate metrics table, or the rows with no user
+            of the component metrics table, their date a date.
         starting_date (date): The first day to total.
         ending_date (date): The last day to total.
         fields (Sequence[str]): The columns to total.

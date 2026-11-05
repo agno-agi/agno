@@ -15,6 +15,7 @@ try:
     from google.cloud.firestore import Increment
 
     from agno.db.firestore.firestore import FIRESTORE_BATCH_LIMIT, FirestoreDb
+    from agno.db.firestore.utils import serialize_metrics_row
 except ImportError:
     FirestoreDb = None  # type: ignore[misc,assignment]
 
@@ -52,7 +53,8 @@ def _mock_collections(db: FirestoreDb, aggregate_metrics_exists: bool) -> MagicM
 
 class TestReopenMetricsDays:
     def test_reopens_a_day_once_a_day_was_calculated(self, monkeypatch):
-        """A day is reopened once the aggregate metrics collection holds a row, and left to the first calculation before"""
+        """A day is reopened once the aggregate metrics collection holds a row, and left to the first calculation
+        before"""
         db = _make_db_with_mock_client(monkeypatch)
         aggregate_metrics_collection_ref = _mock_collections(db, aggregate_metrics_exists=False)
 
@@ -254,6 +256,144 @@ class TestCalculateMetrics:
 
         # The one read starts at 0, so it read every session
         assert [call.args[2] for call in db._get_metrics_legacy_runs.call_args_list] == [0]
+
+    def test_counts_each_tool_call_but_those_a_forked_run_copied(self, monkeypatch):
+        """A run's tool calls are read with it and kept as a list, a tool outside any toolkit under the toolkit "",
+        and a forked run's copied tool call is left to the run it was forked from."""
+        db = _make_db_with_mock_client(monkeypatch)
+        day = date(2026, 1, 1)
+        sessions_collection_ref, runs_collection_ref = MagicMock(), MagicMock()
+        sessions_collection_ref.where.return_value.where.return_value.select.return_value.stream.return_value = [
+            MagicMock(
+                to_dict=MagicMock(
+                    return_value={
+                        "session_id": "alice-session",
+                        "session_type": "agent",
+                        "user_id": "alice",
+                        "agent_id": "agent-1",
+                    }
+                )
+            )
+        ]
+        runs_query = runs_collection_ref.where.return_value.where.return_value.select
+        runs_query.return_value.stream.return_value = [
+            MagicMock(
+                to_dict=MagicMock(
+                    return_value={
+                        "run_id": "run-1",
+                        "session_id": "alice-session",
+                        "run_type": "agent",
+                        "agent_id": "agent-1",
+                        "user_id": "alice",
+                        "status": "COMPLETED",
+                        "run_data": {
+                            "tools": [
+                                {"tool_name": "search", "tool_call_id": "copied-call", "metrics": {"duration": 0.9}},
+                                {"tool_name": "search", "tool_call_id": "new-call", "metrics": {"duration": 0.2}},
+                            ],
+                            "messages": [
+                                {"role": "tool", "tool_call_id": "copied-call"},
+                                {"role": "tool", "tool_call_id": "new-call"},
+                            ],
+                            "forked_from_message_index": 1,
+                        },
+                    }
+                )
+            )
+        ]
+        collection_ref = MagicMock()
+        aggregate_metrics_collection_ref = MagicMock()
+        aggregate_metrics_collection_ref.document.return_value.get.return_value.exists = False
+        collections = {
+            "component_metrics": collection_ref,
+            "aggregate_metrics": aggregate_metrics_collection_ref,
+            "metrics_refreshes": MagicMock(),
+            "sessions": sessions_collection_ref,
+            "runs": runs_collection_ref,
+        }
+        db._get_collection = MagicMock(side_effect=lambda table_type, **kwargs: collections[table_type])  # type: ignore[method-assign]
+        db._claim_metrics_refresh = MagicMock(return_value={"finished_at": None, "fingerprint": None})  # type: ignore[method-assign]
+        db._get_metrics_dates_to_calculate = MagicMock(return_value=([day], ["fingerprint"]))  # type: ignore[method-assign]
+        db._heartbeat_metrics_refresh = MagicMock(return_value=True)  # type: ignore[method-assign]
+        db._release_metrics_refresh = MagicMock()  # type: ignore[method-assign]
+        db.session_table_name = "test_sessions"
+        db.get_latest_schema_version = MagicMock(return_value="3.0.0")  # type: ignore[method-assign]
+
+        assert db.calculate_metrics_dates() == [day]
+
+        assert "run_data.tools" in runs_query.call_args.args[0]
+        written = db.db_client.transaction.return_value.set.call_args_list
+        rows = [call.args[1] for call in written if call.args[0] is collection_ref.document.return_value]
+        assert [row["tool_metrics"] for row in rows] == [
+            [
+                {
+                    "tool_name": "search",
+                    "toolkit": "",
+                    "count": 1,
+                    "failed_count": 0,
+                    "total_ms": 200,
+                    "max_ms": 200,
+                    "buckets": {"le_200": 1},
+                }
+            ]
+        ]
+
+
+class TestComponentMetricsTotals:
+    def test_totals_the_tool_metrics_of_each_day(self, monkeypatch):
+        """Ensure the tools stored as a list are read back as a map and added up across a day's rows"""
+        db = _make_db_with_mock_client(monkeypatch)
+        day = date(2026, 1, 1)
+        aggregate_metrics_collection_ref = MagicMock()
+        db._get_collection = MagicMock(return_value=aggregate_metrics_collection_ref)  # type: ignore[method-assign]
+        stored_docs = [
+            MagicMock(
+                to_dict=MagicMock(
+                    return_value=serialize_metrics_row(
+                        {
+                            "aggregation_period": "daily",
+                            "date": day,
+                            "user_id": "alice",
+                            "updated_at": updated_at,
+                            "tool_metrics": {
+                                "": {
+                                    "search": {
+                                        "count": 1,
+                                        "failed_count": 0,
+                                        "total_ms": total_ms,
+                                        "max_ms": total_ms,
+                                        "buckets": {bucket: 1},
+                                    }
+                                }
+                            },
+                        }
+                    )
+                )
+            )
+            for updated_at, total_ms, bucket in [(1, 200, "le_200"), (2, 900, "le_1000")]
+        ]
+        days_query = aggregate_metrics_collection_ref.where.return_value.where.return_value.where.return_value
+        days_query.where.return_value.stream.return_value = stored_docs
+
+        totals, latest_updated_at = db.get_component_metrics(day, day, user_id="alice", fields=["tool_metrics"])
+
+        assert latest_updated_at == 2
+        assert totals == [
+            {
+                "date": day,
+                "tool_metrics": {
+                    "": {
+                        "search": {
+                            "count": 2,
+                            "failed_count": 0,
+                            "total_ms": 1100,
+                            "max_ms": 900,
+                            "buckets": {"le_200": 1, "le_1000": 1},
+                        }
+                    }
+                },
+            }
+        ]
 
 
 class TestSessionsCollectionVersion:

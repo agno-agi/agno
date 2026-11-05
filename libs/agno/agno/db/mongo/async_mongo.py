@@ -20,8 +20,8 @@ from agno.db.base import AsyncBaseDb, SessionType
 from agno.db.migrations.manager import MigrationManager
 from agno.db.mongo.utils import (
     METRICS_IN_LIST_LIMIT,
-    abulk_upsert_component_metrics,
     abulk_upsert_aggregate_metrics_rows,
+    abulk_upsert_component_metrics,
     apply_pagination,
     apply_sorting,
     areopen_metrics_day,
@@ -42,6 +42,7 @@ from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
+    AGGREGATE_METRICS_COUNT_COLUMNS,
     HISTORY_SKIP_STATUSES,
     METRICS_BATCH_SIZE,
     METRICS_LOCK_SECONDS,
@@ -49,13 +50,13 @@ from agno.db.utils import (
     METRICS_STOPPED_ERROR,
     METRICS_TOKEN_DETAILS_FIELDS,
     METRICS_TOKEN_FIELDS,
-    AGGREGATE_METRICS_COUNT_COLUMNS,
     add_metrics_month_totals,
+    aggregate_metrics_rows_to_write,
+    build_aggregate_metrics_month_rows,
+    build_aggregate_metrics_rows,
     build_metrics_by_owner_from_rows,
     build_metrics_from_aggregate_metrics,
     build_single_run_row,
-    build_aggregate_metrics_month_rows,
-    build_aggregate_metrics_rows,
     calculate_date_component_metrics,
     component_metrics_rows_to_write,
     database_error_message,
@@ -67,7 +68,6 @@ from agno.db.utils import (
     filter_context_runs,
     get_metrics_legacy_runs,
     get_metrics_reopen_session_ids,
-    get_metrics_runs,
     get_months_to_calculate_metrics_for,
     list_metrics_totals_models,
     merge_metrics_totals,
@@ -84,7 +84,6 @@ from agno.db.utils import (
     metrics_versions,
     resolve_metrics_fields,
     total_metrics_rows,
-    aggregate_metrics_rows_to_write,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -2339,7 +2338,7 @@ class AsyncMongoDb(AsyncBaseDb):
                 return None
             legacy_runs = [
                 legacy_run
-                for legacy_run in get_metrics_runs(get_metrics_legacy_runs(sessions))
+                for legacy_run in get_metrics_legacy_runs(sessions)
                 if start_timestamp <= (legacy_run["created_at"] or 0) < end_timestamp
             ]
             # The runs collection wins on a run in both, as merge_runs_table_with_legacy_blob does
@@ -2373,21 +2372,18 @@ class AsyncMongoDb(AsyncBaseDb):
             seen_run_ids.update(parent_run_ids)
             for start in range(0, len(parent_run_ids), METRICS_IN_LIST_LIMIT):
                 parent_runs.extend(
-                    get_metrics_runs(
-                        await runs_collection.find(
-                            {"run_id": {"$in": parent_run_ids[start : start + METRICS_IN_LIST_LIMIT]}},
-                            {
-                                "_id": False,
-                                "run_id": 1,
-                                "run_type": 1,
-                                "agent_id": 1,
-                                "team_id": 1,
-                                "workflow_id": 1,
-                                "parent_run_id": 1,
-                                "run_data.called_from_run_id": 1,
-                            },
-                        ).to_list(length=None)
-                    )
+                    await runs_collection.find(
+                        {"run_id": {"$in": parent_run_ids[start : start + METRICS_IN_LIST_LIMIT]}},
+                        {
+                            "_id": False,
+                            "run_id": 1,
+                            "run_type": 1,
+                            "agent_id": 1,
+                            "team_id": 1,
+                            "workflow_id": 1,
+                            "parent_run_id": 1,
+                        },
+                    ).to_list(length=None)
                 )
             parent_run_ids = sorted(
                 {run["parent_run_id"] for run in parent_runs if run.get("parent_run_id")} - seen_run_ids
@@ -2401,9 +2397,12 @@ class AsyncMongoDb(AsyncBaseDb):
         rows_changed: bool,
         read_version: Optional[int],
     ) -> None:
-        """Write a period's rows of the aggregate metrics collection, from build_aggregate_metrics_rows: the user rows, then
-        the everyone row, which is completed only while it still has the version read before the period's rows."""
-        period, period_date = aggregate_metrics_rows[0]["aggregation_period"], aggregate_metrics_rows[0]["date"].isoformat()
+        """Write a period's rows of the aggregate metrics collection, from build_aggregate_metrics_rows: the user rows,
+        then the everyone row, which is completed only while it still has the version read before the period's rows."""
+        period, period_date = (
+            aggregate_metrics_rows[0]["aggregation_period"],
+            aggregate_metrics_rows[0]["date"].isoformat(),
+        )
         # Server-side cursor, so a period of many users is read a batch at a time and never holds the event loop
         cursor = aggregate_metrics_collection.find(
             {"aggregation_period": period, "date": period_date}, {"_id": False}
@@ -2501,7 +2500,7 @@ class AsyncMongoDb(AsyncBaseDb):
                     return False
                 if not await self._heartbeat_metrics_refresh(refreshes_collection, worker_id):
                     return False
-                runs.extend(get_metrics_runs(batch))
+                runs.extend(batch)
                 await asyncio.sleep(0)  # yield control between batches
         # A legacy run migrated to the runs collection since the legacy runs were read is among the day's runs, and
         # is counted from there
@@ -2542,10 +2541,9 @@ class AsyncMongoDb(AsyncBaseDb):
                     build_component_metrics_runs_projection(),
                 ).batch_size(METRICS_BATCH_SIZE)
                 while True:
-                    batch = await team_runs_cursor.to_list(length=METRICS_BATCH_SIZE)
-                    if not batch:
+                    team_runs = await team_runs_cursor.to_list(length=METRICS_BATCH_SIZE)
+                    if not team_runs:
                         break
-                    team_runs = get_metrics_runs(batch)
                     parent_runs.extend(team_runs)
                     parent_run_ids.extend(run["parent_run_id"] for run in team_runs if run.get("parent_run_id"))
 
@@ -3146,8 +3144,8 @@ class AsyncMongoDb(AsyncBaseDb):
             user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with
                 no user.
             fields (List[str]): The columns to total.
-            use_month_rows (bool): Total a calendar month inside the date range from its month aggregate metrics row, as one
-                date.
+            use_month_rows (bool): Total a calendar month inside the date range from its month aggregate metrics row, as
+                one date.
 
         Returns:
             Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each date, and when they were last updated.
@@ -3156,7 +3154,9 @@ class AsyncMongoDb(AsyncBaseDb):
         # Every owner is read from the everyone rows and a user from the user's rows; the runs with no user have no
         # aggregate metrics row of their own, so they are read from their component rows
         collection = (
-            await self._get_collection(table_type="component_metrics") if user_id == "" else aggregate_metrics_collection
+            await self._get_collection(table_type="component_metrics")
+            if user_id == ""
+            else aggregate_metrics_collection
         )
         if aggregate_metrics_collection is None or collection is None:
             return [], None

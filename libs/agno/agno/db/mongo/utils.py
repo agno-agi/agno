@@ -5,14 +5,15 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
 
 from agno.db.mongo.schemas import get_collection_indexes
 from agno.db.utils import (
+    AGGREGATE_METRICS_KEY_COLUMNS,
     COMPONENT_METRICS_KEY_COLUMNS,
     METRICS_COMPONENT_TYPES,
     METRICS_COST_FIELDS,
     METRICS_TOKEN_DETAILS_FIELDS,
     METRICS_TOKEN_FIELDS,
-    AGGREGATE_METRICS_KEY_COLUMNS,
     build_aggregate_metrics_row,
     list_metrics_models,
+    list_metrics_tools,
     metrics_day_ranges,
     metrics_days_to_read,
 )
@@ -39,7 +40,8 @@ METRICS_IN_LIST_LIMIT = 10000
 # The keys of a stored run that hold the runs nested inside it, read whole, and only from the runs that have them
 _METRICS_NESTED_RUN_KEYS = ("step_executor_runs", "member_responses", "workflow_agent_run")
 
-# What component metrics count of a run. Of the messages only each request's duration is read, never the content
+# What component metrics count of a run. Of the messages only each request's duration and the tool call each answers
+# are read, never the content, and of the tool calls only what tool_metrics counts, never their arguments or result
 _METRICS_RUN_DATA_FIELDS = (
     "run_id",
     "metrics",
@@ -48,7 +50,17 @@ _METRICS_RUN_DATA_FIELDS = (
     "messages.role",
     "messages.from_history",
     "messages.metrics.duration",
+    "messages.tool_call_id",
     "forked_from_message_index",
+    "tools.tool_call_id",
+    "tools.toolkit",
+    "tools.tool_name",
+    "tools.tool_call_error",
+    "tools.requires_confirmation",
+    "tools.confirmed",
+    "tools.requires_user_input",
+    "tools.external_execution_required",
+    "tools.metrics.duration",
 )
 
 # What a legacy run keeps of its own beside run_data: the fields the runs collection keeps a column of
@@ -59,7 +71,6 @@ _METRICS_LEGACY_RUN_FIELDS = (
     "parent_run_id",
     "status",
     "created_at",
-    "called_from_run_id",
     "forked_from_session_id",
 )
 
@@ -191,7 +202,6 @@ def build_component_metrics_runs_projection() -> Dict[str, int]:
         "parent_run_id": 1,
         "status": 1,
         "created_at": 1,
-        "run_data.called_from_run_id": 1,
         **{f"run_data.{field}": 1 for field in _METRICS_RUN_DATA_FIELDS},
         **{f"run_data.{key}": 1 for key in _METRICS_NESTED_RUN_KEYS},
     }
@@ -212,11 +222,13 @@ def build_component_metrics_legacy_runs_projection() -> Dict[str, int]:
 
 
 def serialize_metrics_row(row: Dict[str, Any]) -> Dict[str, Any]:
-    """Serialize a metrics row to the document stored for it: its date as text, and its models as the list
-    agno_metrics keeps, so no model id becomes a field name."""
+    """Serialize a metrics row to the document stored for it: its date as text, its models as the list agno_metrics
+    keeps and its tools as a list, so no model id, toolkit or tool name becomes a field name."""
     document = {**row, "date": row["date"].isoformat()}
     if "model_metrics" in document:
         document["model_metrics"] = list_metrics_models(document["model_metrics"])
+    if "tool_metrics" in document:
+        document["tool_metrics"] = list_metrics_tools(document["tool_metrics"])
     return document
 
 
@@ -231,6 +243,17 @@ def deserialize_metrics_row(document: Dict[str, Any]) -> Dict[str, Any]:
                 model_totals["cost"] = model["cost"]
             model_metrics.setdefault(model["model_provider"], {})[model["model_id"]] = model_totals
         row["model_metrics"] = model_metrics
+    if "tool_metrics" in row:
+        tool_metrics: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        for tool in row["tool_metrics"] or []:
+            tool_metrics.setdefault(tool["toolkit"], {})[tool["tool_name"]] = {
+                "count": tool["count"],
+                "failed_count": tool["failed_count"],
+                "total_ms": tool["total_ms"],
+                "max_ms": tool["max_ms"],
+                "buckets": tool["buckets"],
+            }
+        row["tool_metrics"] = tool_metrics
     return row
 
 
@@ -396,8 +419,8 @@ async def abulk_upsert_aggregate_metrics_rows(
 
 
 def _reopen_metrics_row(row_date: date, aggregation_period: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    """Build the filter and the update that reopen a day's or a month's everyone row of the aggregate metrics collection,
-    inserting an empty open row when it has none."""
+    """Build the filter and the update that reopen a day's or a month's everyone row of the aggregate metrics
+    collection, inserting an empty open row when it has none."""
     empty_row = serialize_metrics_row(build_aggregate_metrics_row([], aggregation_period, row_date, completed=False))
     key_filter = {column: empty_row[column] for column in AGGREGATE_METRICS_KEY_COLUMNS}
     update = {
@@ -518,8 +541,8 @@ def build_metrics_rows_filter(
     Args:
         starting_date (date): The first day to read.
         ending_date (date): The last day to read.
-        user_id (str): The user whose rows are read. "" for the everyone rows of the aggregate metrics collection, or the
-            rows with no user of the component metrics collection.
+        user_id (str): The user whose rows are read. "" for the everyone rows of the aggregate metrics collection, or
+            the rows with no user of the component metrics collection.
         month_starts (Sequence[date]): The first day of every month inside the date range to read the month row of
             instead of its days.
 

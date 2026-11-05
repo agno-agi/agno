@@ -6,7 +6,13 @@ from datetime import date
 from typing import Any, Dict, List, Optional
 
 from agno.db.firestore.schemas import get_collection_indexes
-from agno.db.utils import build_aggregate_metrics_row, get_sort_value, list_metrics_models, metric_record_day
+from agno.db.utils import (
+    build_aggregate_metrics_row,
+    get_sort_value,
+    list_metrics_models,
+    list_metrics_tools,
+    metric_record_day,
+)
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
@@ -211,17 +217,21 @@ def component_metrics_record_id(record: Dict[str, Any]) -> str:
 
 
 def aggregate_metrics_record_id(aggregation_period: str, row_date: date, user_id: str) -> str:
-    """The id of the document a row of the aggregate metrics collection is stored under, one per period, day and user."""
+    """The id of the document a row of the aggregate metrics collection is stored under, one per period, day and
+    user."""
     user_segment = hashlib.sha256(user_id.encode("utf-8")).hexdigest()
     return f"{row_date.isoformat()}_{user_segment}_{aggregation_period}"
 
 
 def serialize_metrics_row(record: Dict[str, Any]) -> Dict[str, Any]:
-    """Return a metrics row with its day as an ISO string and its models as the list agno_metrics keeps, the way
-    Firestore stores it, so no model provider becomes a field name."""
+    """Return a metrics row with its day as an ISO string, its models as the list agno_metrics keeps and its tools as
+    a list, the way Firestore stores it, so no model provider, toolkit or tool name becomes a field name."""
     document = {**record, "date": record["date"].isoformat()}
     if "model_metrics" in document:
         document["model_metrics"] = list_metrics_models(document["model_metrics"])
+    if "tool_metrics" in document:
+        # Firestore rejects an empty field name, and a tool outside any toolkit is kept under the toolkit ""
+        document["tool_metrics"] = list_metrics_tools(document["tool_metrics"])
     return document
 
 
@@ -236,6 +246,17 @@ def deserialize_metrics_row(record: Dict[str, Any]) -> Dict[str, Any]:
                 model_totals["cost"] = model["cost"]
             model_metrics.setdefault(model["model_provider"], {})[model["model_id"]] = model_totals
         row["model_metrics"] = model_metrics
+    if "tool_metrics" in row:
+        tool_metrics: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        for tool in row["tool_metrics"] or []:
+            tool_metrics.setdefault(tool["toolkit"], {})[tool["tool_name"]] = {
+                "count": tool["count"],
+                "failed_count": tool["failed_count"],
+                "total_ms": tool["total_ms"],
+                "max_ms": tool["max_ms"],
+                "buckets": tool["buckets"],
+            }
+        row["tool_metrics"] = tool_metrics
     return row
 
 

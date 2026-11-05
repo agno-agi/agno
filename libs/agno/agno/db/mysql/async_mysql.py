@@ -16,8 +16,8 @@ from agno.db.mysql.schemas import get_table_schema_definition
 from agno.db.mysql.utils import (
     METRICS_IN_LIST_LIMIT,
     METRICS_STALE_KEYS_LIMIT,
-    abulk_upsert_component_metrics,
     abulk_upsert_aggregate_metrics_rows,
+    abulk_upsert_component_metrics,
     acreate_schema,
     ais_table_available,
     ais_valid_table,
@@ -31,29 +31,29 @@ from agno.db.mysql.utils import (
     build_component_metrics_runs_query,
     build_component_metrics_totals_queries,
     build_metrics_by_owner_queries,
-    metrics_parent_run_id,
     set_json_column_types,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
+    AGGREGATE_METRICS_COUNT_COLUMNS,
     HISTORY_SKIP_STATUSES,
     METRICS_BATCH_SIZE,
     METRICS_LOCK_SECONDS,
     METRICS_REFRESH_ID,
     METRICS_STOPPED_ERROR,
     METRICS_TOKEN_FIELDS,
-    AGGREGATE_METRICS_COUNT_COLUMNS,
     SessionRunObjectCache,
     add_metrics_month_totals,
+    aggregate_metrics_rows_to_write,
     bound_index_name,
+    build_aggregate_metrics_month_rows,
+    build_aggregate_metrics_rows,
     build_component_metrics_totals,
     build_metrics_by_owner,
     build_metrics_from_aggregate_metrics,
     build_single_run_row,
-    build_aggregate_metrics_month_rows,
-    build_aggregate_metrics_rows,
     calculate_date_component_metrics,
     component_metrics_rows_to_write,
     database_error_message,
@@ -79,7 +79,6 @@ from agno.db.utils import (
     resolve_metrics_fields,
     run_index_lock_name,
     table_schema_mismatch_error,
-    aggregate_metrics_rows_to_write,
     validate_pagination,
 )
 from agno.run.agent import RunOutput
@@ -2271,7 +2270,9 @@ class AsyncMySQLDb(AsyncBaseDb):
 
                     async with self._resolve_lock_async:
                         aggregate_metrics_table = await sess.run_sync(load_table)
-                        self._store_resolved_table("aggregate_metrics", self.aggregate_metrics_table_name, aggregate_metrics_table)
+                        self._store_resolved_table(
+                            "aggregate_metrics", self.aggregate_metrics_table_name, aggregate_metrics_table
+                        )
                 for day in days:
                     await areopen_metrics_day(session=sess, table=aggregate_metrics_table, day=day)
             self._metrics_days_not_reopened.difference_update(days)
@@ -2658,7 +2659,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                     runs_table.c.agent_id,
                     runs_table.c.team_id,
                     runs_table.c.workflow_id,
-                    metrics_parent_run_id(runs_table).label("parent_run_id"),
+                    runs_table.c.parent_run_id,
                 ).where(runs_table.c.run_id.in_(parent_run_ids[start : start + METRICS_IN_LIST_LIMIT]))
                 parents_result = await sess.execute(parents_stmt)
                 parent_runs.extend(dict(record._mapping) for record in parents_result.fetchall())
@@ -2675,8 +2676,8 @@ class AsyncMySQLDb(AsyncBaseDb):
         rows_changed: bool,
         read_version: Optional[int],
     ) -> None:
-        """Write a period's rows of the aggregate metrics table, from build_aggregate_metrics_rows, in its transaction: the
-        user rows, then the everyone row, which is completed only while it still has the version read before the
+        """Write a period's rows of the aggregate metrics table, from build_aggregate_metrics_rows, in its transaction:
+        the user rows, then the everyone row, which is completed only while it still has the version read before the
         period's rows."""
         period, period_date = aggregate_metrics_rows[0]["aggregation_period"], aggregate_metrics_rows[0]["date"]
         # Server-side cursor, so a period of many users is read a batch at a time and never holds the event loop
@@ -2714,7 +2715,10 @@ class AsyncMySQLDb(AsyncBaseDb):
             )
         if everyone_row is not None:
             await aupsert_aggregate_metrics_row(
-                session=sess, table=aggregate_metrics_table, aggregate_metrics_row=everyone_row, read_version=read_version
+                session=sess,
+                table=aggregate_metrics_table,
+                aggregate_metrics_row=everyone_row,
+                read_version=read_version,
             )
 
     async def _calculate_date_metrics(
@@ -2746,6 +2750,10 @@ class AsyncMySQLDb(AsyncBaseDb):
             # MySQL refuses a write read committed when it logs statements
             if self.db_engine.dialect.is_mariadb:  # type: ignore[attr-defined]
                 await sess.connection(execution_options={"isolation_level": "READ COMMITTED"})
+                # MariaDB cuts a JSON_ARRAYAGG at group_concat_max_len, 1 MB by default, so a run's messages and
+                # tool calls are aggregated up to the largest packet the server accepts. Not set back: a higher cap
+                # only stops a later aggregate from being cut
+                await sess.execute(text("SET SESSION group_concat_max_len = @@max_allowed_packet"))
             # Read before the day's runs, so a run written while they are read moves it
             read_version = (
                 await sess.execute(
@@ -2879,7 +2887,11 @@ class AsyncMySQLDb(AsyncBaseDb):
                 sess,
                 aggregate_metrics_table,
                 await asyncio.to_thread(
-                    build_aggregate_metrics_rows, records, "daily", date_to_process, metrics_day_completed(date_to_process)
+                    build_aggregate_metrics_rows,
+                    records,
+                    "daily",
+                    date_to_process,
+                    metrics_day_completed(date_to_process),
                 ),
                 rows_changed=bool(changed_rows or stale_keys),
                 read_version=read_version,
@@ -3018,7 +3030,9 @@ class AsyncMySQLDb(AsyncBaseDb):
                     ).first()
                     if refresh_times is not None:
                         started_at, finished_at = refresh_times
-                    await areopen_metrics_days_from(session=sess, table=aggregate_metrics_table, starting_date=rebuild_from)
+                    await areopen_metrics_days_from(
+                        session=sess, table=aggregate_metrics_table, starting_date=rebuild_from
+                    )
                 # Yesterday and today are picked by the fingerprint, so it is marked for the next one too
                 if not await self._mark_metrics_refresh_rebuild(refreshes_table):
                     return None
@@ -3182,8 +3196,8 @@ class AsyncMySQLDb(AsyncBaseDb):
     async def _get_aggregate_metrics_rows(
         self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
     ) -> Tuple[List[dict], Optional[int]]:
-        """Get the day rows of the aggregate metrics table in the shape of the metrics table: the everyone rows for ``""``, one
-        user's rows for a name, and every user's rows for ``None``."""
+        """Get the day rows of the aggregate metrics table in the shape of the metrics table: the everyone rows for
+        ``""``, one user's rows for a name, and every user's rows for ``None``."""
         aggregate_metrics_table = await self._get_table(table_type="aggregate_metrics")
         if aggregate_metrics_table is None:
             return [], None
@@ -3198,7 +3212,13 @@ class AsyncMySQLDb(AsyncBaseDb):
         )
         # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row
         filters.append(
-            or_(*[aggregate_metrics_table.c[column] > 0 for column in AGGREGATE_METRICS_COUNT_COLUMNS if column != "users_count"])
+            or_(
+                *[
+                    aggregate_metrics_table.c[column] > 0
+                    for column in AGGREGATE_METRICS_COUNT_COLUMNS
+                    if column != "users_count"
+                ]
+            )
         )
         # Only what build_metrics_from_aggregate_metrics reads, so the maps of timings are never decoded
         columns = [
@@ -3216,7 +3236,9 @@ class AsyncMySQLDb(AsyncBaseDb):
         ]
         async with self.async_session_factory() as sess:
             result = await sess.execute(
-                select(*columns).where(*filters).order_by(aggregate_metrics_table.c.date, aggregate_metrics_table.c.user_id)
+                select(*columns)
+                .where(*filters)
+                .order_by(aggregate_metrics_table.c.date, aggregate_metrics_table.c.user_id)
             )
             rows = result.mappings().all()
             if not rows:
@@ -3408,8 +3430,8 @@ class AsyncMySQLDb(AsyncBaseDb):
             user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with
                 no user.
             fields (List[str]): The columns to total.
-            use_month_rows (bool): Total a calendar month inside the date range from its month aggregate metrics row, as one
-                date.
+            use_month_rows (bool): Total a calendar month inside the date range from its month aggregate metrics row, as
+                one date.
 
         Returns:
             Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each date, and when they were last updated.
@@ -3532,7 +3554,8 @@ class AsyncMySQLDb(AsyncBaseDb):
         Returns:
             Optional[Dict[str, int]]: The version of each everyone row, keyed by its aggregation period and date. The
                 same again only while no calculation wrote a row of the date range. ``None`` until the first
-                calculate_metrics has finished, or without an aggregate metrics table: a read would find no rows to total.
+                calculate_metrics has finished, or without an aggregate metrics table: a read would find no rows to
+                total.
 
         Raises:
             Exception: If an error occurs during retrieval.

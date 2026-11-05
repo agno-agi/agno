@@ -16,7 +16,9 @@ surrealdb = pytest.importorskip("surrealdb")
 from agno.db.surrealdb import SurrealDb  # noqa: E402
 from agno.db.surrealdb.metrics import desurrealize_metrics_row  # noqa: E402
 from agno.db.utils import METRICS_LOCK_SECONDS, METRICS_REFRESH_ID, METRICS_STOPPED_ERROR  # noqa: E402
-from agno.metrics import ModelMetrics, RunMetrics  # noqa: E402
+from agno.metrics import ModelMetrics, RunMetrics, ToolCallMetrics  # noqa: E402
+from agno.models.message import Message  # noqa: E402
+from agno.models.response import ToolExecution  # noqa: E402
 from agno.run.agent import RunOutput  # noqa: E402
 from agno.run.base import RunStatus  # noqa: E402
 from agno.run.team import TeamRunOutput  # noqa: E402
@@ -386,6 +388,61 @@ def test_calculate_metrics_counts_runs_kept_in_the_legacy_runs_field(surreal_db:
 
     row = everyone_row(surreal_db, old_day)
     assert (row["agent_sessions_count"], row["agent_runs_count"], row["input_tokens"]) == (1, 2, 40)
+
+
+def test_calculate_metrics_counts_tool_calls(surreal_db: SurrealDb):
+    """Ensure each tool call is counted under its tool, that a tool call a forked run copied is not, and that a totals
+    read adds the tools up"""
+    day = utc_date(2)
+    copied_call = ToolExecution(
+        tool_call_id="copied-call",
+        tool_name="search",
+        tool_args={"query": "agno"},
+        metrics=ToolCallMetrics(duration=0.4),
+    )
+    new_call = ToolExecution(tool_call_id="new-call", tool_name="search", metrics=ToolCallMetrics(duration=0.1))
+    surreal_db.upsert_session(
+        AgentSession(session_id="fork_session", agent_id="agent-1", user_id="bob", created_at=noon_utc(day))
+    )
+    original = agent_run(
+        "original_run",
+        noon_utc(day),
+        10,
+        messages=[Message(role="tool", tool_call_id="copied-call", content="agno")],
+        tools=[copied_call],
+    )
+    forked = agent_run(
+        "forked_run",
+        noon_utc(day) + 1,
+        10,
+        messages=[
+            Message(role="tool", tool_call_id="copied-call", content="agno"),
+            Message(role="tool", tool_call_id="new-call", content="agno"),
+        ],
+        tools=[copied_call, new_call],
+        forked_from_message_index=1,
+    )
+    surreal_db.upsert_run(original, session_id="fork_session", user_id="bob", run_index=0)
+    surreal_db.upsert_run(forked, session_id="fork_session", user_id="bob", run_index=1)
+
+    surreal_db.calculate_metrics()
+
+    # The forked run counts only the tool call it made
+    expected = {
+        "": {
+            "search": {
+                "count": 2,
+                "failed_count": 0,
+                "total_ms": 500,
+                "max_ms": 400,
+                "buckets": {"le_100": 1, "le_400": 1},
+            }
+        }
+    }
+    metrics, _ = surreal_db.get_component_metrics(day, day, fields=["tool_metrics"])
+    assert metrics[0]["tool_metrics"] == expected
+    totals, _ = surreal_db.get_metrics_totals(day, day, user_id="bob", fields=["tool_metrics"])
+    assert totals == {"tool_metrics": expected}
 
 
 def test_calculate_metrics_dates_releases_the_lock_when_stopped(surreal_db: SurrealDb):

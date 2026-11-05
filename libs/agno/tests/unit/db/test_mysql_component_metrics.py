@@ -13,7 +13,13 @@ from sqlalchemy.sql.dml import Insert
 
 from agno.db.mysql.mysql import MySQLDb
 from agno.db.mysql.schemas import SESSION_TABLE_SCHEMA, get_table_schema_definition
-from agno.db.mysql.utils import upsert_aggregate_metrics_row
+from agno.db.mysql.utils import (
+    build_component_metrics_run,
+    build_component_metrics_runs_query,
+    upsert_aggregate_metrics_row,
+)
+from agno.db.utils import calculate_date_component_metrics
+from agno.run.base import RunStatus
 
 TODAY = datetime.now(timezone.utc).date()
 
@@ -200,3 +206,85 @@ def test_claim_metrics_refresh_returns_while_another_process_writes_a_day(mock_e
     assert db._claim_metrics_refresh(TABLES["metrics_refreshes"], "worker") is None
     assert str(session.execute.call_args_list[1].args[0]) == "SET SESSION innodb_lock_wait_timeout = 1"
     assert session.execute.call_args.args[1] == {"seconds": 50}
+
+
+def test_tool_calls_the_runs_query_reads_are_counted_in_tool_metrics():
+    """Each tool call the runs query reads, a nested run's included, is put back on its run and counted under its
+    tool."""
+    tool_call = {"toolkit": None, "tool_name": "search", "tool_call_error": None, "metrics": {"duration": 0.4}}
+    # A tool call a forked run copied is skipped once read
+    copied_tool_call = {**tool_call, "tool_call_id": "call-1"}
+    run = build_component_metrics_run(
+        SimpleNamespace(
+            _mapping={
+                "run_id": "team-run",
+                "run_type": "team",
+                "agent_id": None,
+                "team_id": "team-1",
+                "workflow_id": None,
+                "user_id": "alice",
+                "parent_run_id": None,
+                "status": RunStatus.completed.value,
+                "metrics": None,
+                "model": None,
+                "model_provider": None,
+                "call_durations": None,
+                "tools": [tool_call],
+                "copied_tool_call_ids": None,
+                "nested_runs": [
+                    {
+                        "path": "1000000001",
+                        "depth": 1,
+                        "key": "member_responses",
+                        "run_id": "member-run",
+                        "agent_id": "agent-1",
+                        "metrics": None,
+                        "model": None,
+                        "model_provider": None,
+                        "call_durations": None,
+                        "tools": [tool_call, copied_tool_call],
+                        "copied_tool_call_ids": ["call-1"],
+                    }
+                ],
+            }
+        )
+    )
+
+    (row,) = calculate_date_component_metrics(TODAY, [], [run], set(), [])
+    assert row["tool_metrics"] == {
+        "": {"search": {"count": 2, "failed_count": 0, "total_ms": 800, "max_ms": 400, "buckets": {"le_400": 2}}}
+    }
+
+
+def test_runs_query_reads_only_what_tool_metrics_counts_and_skips_the_copied_tool_calls():
+    """Of each tool call the runs query reads only what tool_metrics counts, never its arguments or result, and it
+    skips those answered in the first messages a forked run copied."""
+    runs_table = _table("test_runs", get_table_schema_definition("runs"))
+    statement = str(
+        build_component_metrics_runs_query(runs_table, 0, 1).compile(
+            dialect=mysql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    )
+
+    assert "json_table(test_runs.run_data, '$.tools[*]'" in statement
+    assert "tool_args" not in statement and "'$.result'" not in statement
+    assert "`role` = 'tool'" in statement
+    assert "AS copied_tool_call_ids" in statement
+
+
+def test_component_metrics_read_returns_tool_metrics(mysql_db):
+    """A read returns the tool_metrics of the rows it totals."""
+    tool_metrics = {
+        "": {"search": {"count": 2, "failed_count": 1, "total_ms": 800, "max_ms": 600, "buckets": {"le_600": 2}}}
+    }
+    session = _FakeSession(
+        {"test_aggregate_metrics": [SimpleNamespace(date=TODAY, updated_at=1, tool_metrics=tool_metrics)]}
+    )
+    mysql_db.Session = Mock(return_value=session)
+
+    metrics, latest_updated_at = mysql_db.get_component_metrics(
+        starting_date=TODAY, ending_date=TODAY, fields=["tool_metrics"]
+    )
+
+    assert metrics == [{"date": TODAY, "tool_metrics": tool_metrics}]
+    assert latest_updated_at == 1

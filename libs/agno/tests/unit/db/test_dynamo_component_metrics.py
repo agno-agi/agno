@@ -11,9 +11,9 @@ moto = pytest.importorskip("moto")
 
 from agno.db.dynamo import DynamoDb  # noqa: E402
 from agno.db.dynamo.utils import (  # noqa: E402
+    aggregate_metrics_key,
     deserialize_metrics_row,
     serialize_to_dynamo_item,
-    aggregate_metrics_key,
 )
 from agno.db.migrations.manager import MigrationManager  # noqa: E402
 from agno.db.utils import (  # noqa: E402
@@ -22,7 +22,9 @@ from agno.db.utils import (  # noqa: E402
     METRICS_STOPPED_ERROR,
     METRICS_TOKEN_FIELDS,
 )
-from agno.metrics import ModelMetrics, RunMetrics  # noqa: E402
+from agno.metrics import ModelMetrics, RunMetrics, ToolCallMetrics  # noqa: E402
+from agno.models.message import Message  # noqa: E402
+from agno.models.response import ToolExecution  # noqa: E402
 from agno.run.agent import RunOutput  # noqa: E402
 from agno.run.base import RunStatus  # noqa: E402
 from agno.run.team import TeamRunOutput  # noqa: E402
@@ -362,6 +364,63 @@ def test_legacy_member_runs_are_counted_once(dynamo_db: DynamoDb):
     dynamo_db.calculate_metrics()
     totals, _ = dynamo_db.get_metrics_totals(old_day, next_day, fields=["total_tokens", "root_runs_count"])
     assert totals == {"total_tokens": 40, "root_runs_count": 1}
+
+
+def test_calculate_metrics_counts_tool_calls(dynamo_db: DynamoDb):
+    """Ensure each tool call is counted under its tool, that a tool call a forked run copied is not, and that a totals
+    read adds the tools up"""
+    day = _utc_date(OLD_DAY)
+    copied_call = ToolExecution(
+        tool_call_id="copied-call",
+        tool_name="search",
+        tool_args={"query": "agno"},
+        metrics=ToolCallMetrics(duration=0.4),
+    )
+    new_call = ToolExecution(tool_call_id="new-call", tool_name="search", metrics=ToolCallMetrics(duration=0.1))
+    original = RunOutput(
+        run_id="original_run",
+        agent_id="agent-1",
+        status=RunStatus.completed,
+        messages=[Message(role="tool", tool_call_id="copied-call", content="agno")],
+        tools=[copied_call],
+        created_at=_timestamp(day),
+    )
+    forked = RunOutput(
+        run_id="forked_run",
+        agent_id="agent-1",
+        status=RunStatus.completed,
+        messages=[
+            Message(role="tool", tool_call_id="copied-call", content="agno"),
+            Message(role="tool", tool_call_id="new-call", content="agno"),
+        ],
+        tools=[copied_call, new_call],
+        forked_from_message_index=1,
+        created_at=_timestamp(day) + 1,
+    )
+    dynamo_db.upsert_session(
+        AgentSession(session_id="s_fork", agent_id="agent-1", user_id="bob", created_at=_timestamp(day))
+    )
+    for run_index, run in enumerate([original, forked]):
+        dynamo_db.upsert_run(run, session_id="s_fork", user_id="bob", run_index=run_index)
+
+    dynamo_db.calculate_metrics()
+
+    # The forked run counts only the tool call it made
+    expected = {
+        "": {
+            "search": {
+                "count": 2,
+                "failed_count": 0,
+                "total_ms": 500,
+                "max_ms": 400,
+                "buckets": {"le_100": 1, "le_400": 1},
+            }
+        }
+    }
+    metrics, _ = dynamo_db.get_component_metrics(day, day, fields=["tool_metrics"])
+    assert metrics[0]["tool_metrics"] == expected
+    totals, _ = dynamo_db.get_metrics_totals(day, day, user_id="bob", fields=["tool_metrics"])
+    assert totals == {"tool_metrics": expected}
 
 
 def test_a_created_sessions_table_reads_no_legacy_runs(dynamo_db: DynamoDb, monkeypatch):

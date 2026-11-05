@@ -7,11 +7,11 @@ from sqlalchemy import Engine
 
 from agno.db.singlestore.schemas import get_table_schema_definition
 from agno.db.utils import (
+    AGGREGATE_METRICS_KEY_COLUMNS,
     COMPONENT_METRICS_KEY_COLUMNS,
     METRICS_COST_FIELDS,
     METRICS_TOKEN_DETAILS_FIELDS,
     METRICS_TOKEN_FIELDS,
-    AGGREGATE_METRICS_KEY_COLUMNS,
     build_aggregate_metrics_row,
     metrics_day_ranges,
     metrics_days_to_read,
@@ -273,7 +273,9 @@ def _aggregate_metrics_rows_upsert(table: Table) -> Any:
     return stmt.on_duplicate_key_update(**update_columns)
 
 
-def bulk_upsert_aggregate_metrics_rows(session: Session, table: Table, aggregate_metrics_rows: List[Dict[str, Any]]) -> None:
+def bulk_upsert_aggregate_metrics_rows(
+    session: Session, table: Table, aggregate_metrics_rows: List[Dict[str, Any]]
+) -> None:
     """Bulk upsert the user rows of a period into the aggregate metrics table, in the session's transaction.
 
     Args:
@@ -338,12 +340,6 @@ def reopen_metrics_month(session: Session, table: Table, month_start: date) -> N
     session.execute(_reopen_metrics_row(table, month_start, "monthly"))
 
 
-def metrics_parent_run_id(table: Table) -> Any:
-    """Build the id of the run that started a stored run: its team's or workflow's run, or the run whose tool call
-    started it."""
-    return func.coalesce(table.c.parent_run_id, func.JSON_EXTRACT_STRING(table.c.run_data, "called_from_run_id"))
-
-
 def build_component_metrics_legacy_runs_query(
     sessions_table: Table, runs_table: Optional[Table], start_timestamp: int, end_timestamp: int
 ) -> Any:
@@ -382,10 +378,7 @@ def build_component_metrics_legacy_runs_query(
         func.JSON_EXTRACT_STRING(legacy_run.c.table_col, "team_id").label("team_id"),
         func.JSON_EXTRACT_STRING(legacy_run.c.table_col, "workflow_id").label("workflow_id"),
         sessions_table.c.user_id,
-        func.coalesce(
-            func.JSON_EXTRACT_STRING(legacy_run.c.table_col, "parent_run_id"),
-            func.JSON_EXTRACT_STRING(legacy_run.c.table_col, "called_from_run_id"),
-        ).label("parent_run_id"),
+        func.JSON_EXTRACT_STRING(legacy_run.c.table_col, "parent_run_id").label("parent_run_id"),
         func.JSON_EXTRACT_STRING(legacy_run.c.table_col, "status").label("status"),
         type_coerce(legacy_run.c.table_col, JSON).label("run_data"),
         created_at.label("created_at"),
@@ -420,9 +413,10 @@ def build_component_metrics_runs_query(table: Table, start_timestamp: int, end_t
         end_timestamp (int): The end of the range, not included.
 
     Returns:
-        Any: The query. Of a run's own messages it reads only each request's duration, and of its metrics
-            only what component metrics count. The runs nested inside a run are read as stored: SingleStore lists
-            the entries of an array in no set order, and the rollup walks them in the order they are stored.
+        Any: The query. Of a run's own messages it reads only each request's duration, of its metrics only what
+            component metrics count, and of its tool calls only what tool_metrics counts. The runs nested inside a
+            run are read as stored: SingleStore lists the entries of an array in no set order, and the rollup walks
+            them in the order they are stored.
     """
     in_range = [table.c.created_at >= start_timestamp, table.c.created_at < end_timestamp]
 
@@ -447,6 +441,75 @@ def build_component_metrics_runs_query(table: Table, start_timestamp: int, end_t
         .subquery()
     )
 
+    # Each tool call with only what tool_metrics counts, never its arguments or result, joined and grouped as the
+    # messages are
+    tools = func.JSON_EXTRACT_JSON(table.c.run_data, "tools")
+    tool_call = func.table(func.JSON_TO_ARRAY(case((func.JSON_GET_TYPE(tools) == "array", tools)))).table_valued(
+        "table_col"
+    )
+    # The tool calls answered in the first messages a forked run copied from the run it was forked from, read only
+    # for a forked run
+    copied_message = func.table(
+        func.JSON_TO_ARRAY(
+            case(
+                (
+                    and_(skip > 0, func.JSON_GET_TYPE(messages) == "array"),
+                    func.JSON_SPLICE_JSON(messages, skip, func.JSON_LENGTH(messages)),
+                )
+            )
+        )
+    ).table_valued("table_col")
+    copied_tool_call_id = func.JSON_EXTRACT_STRING(copied_message.c.table_col, "tool_call_id")
+    copied_tool_calls = (
+        select(table.c.run_id, copied_tool_call_id.label("tool_call_id"))
+        .select_from(table.join(copied_message, true()))
+        .where(
+            *in_range,
+            func.JSON_EXTRACT_STRING(copied_message.c.table_col, "role") == "tool",
+            copied_tool_call_id != "",
+        )
+        .subquery()
+    )
+    tool_calls = (
+        select(
+            table.c.run_id,
+            func.JSON_AGG(
+                func.JSON_BUILD_OBJECT(
+                    "toolkit",
+                    func.JSON_EXTRACT_JSON(tool_call.c.table_col, "toolkit"),
+                    "tool_name",
+                    func.JSON_EXTRACT_JSON(tool_call.c.table_col, "tool_name"),
+                    "tool_call_error",
+                    func.JSON_EXTRACT_JSON(tool_call.c.table_col, "tool_call_error"),
+                    "requires_confirmation",
+                    func.JSON_EXTRACT_JSON(tool_call.c.table_col, "requires_confirmation"),
+                    "confirmed",
+                    func.JSON_EXTRACT_JSON(tool_call.c.table_col, "confirmed"),
+                    "requires_user_input",
+                    func.JSON_EXTRACT_JSON(tool_call.c.table_col, "requires_user_input"),
+                    "external_execution_required",
+                    func.JSON_EXTRACT_JSON(tool_call.c.table_col, "external_execution_required"),
+                    "metrics",
+                    func.JSON_BUILD_OBJECT(
+                        "duration", func.JSON_EXTRACT_JSON(tool_call.c.table_col, "metrics", "duration")
+                    ),
+                )
+            ).label("tools"),
+        )
+        .select_from(
+            table.join(tool_call, true()).outerjoin(
+                copied_tool_calls,
+                and_(
+                    copied_tool_calls.c.run_id == table.c.run_id,
+                    copied_tool_calls.c.tool_call_id == func.JSON_EXTRACT_STRING(tool_call.c.table_col, "tool_call_id"),
+                ),
+            )
+        )
+        .where(*in_range, func.JSON_GET_TYPE(tool_call.c.table_col) == "object", copied_tool_calls.c.run_id.is_(None))
+        .group_by(table.c.run_id)
+        .subquery()
+    )
+
     return (
         select(
             table.c.run_id,
@@ -456,12 +519,13 @@ def build_component_metrics_runs_query(table: Table, start_timestamp: int, end_t
             table.c.team_id,
             table.c.workflow_id,
             table.c.user_id,
-            metrics_parent_run_id(table).label("parent_run_id"),
+            table.c.parent_run_id,
             table.c.status,
             type_coerce(func.JSON_EXTRACT_JSON(table.c.run_data, "metrics"), JSON).label("metrics"),
             type_coerce(func.JSON_EXTRACT_JSON(table.c.run_data, "model"), JSON).label("model"),
             type_coerce(func.JSON_EXTRACT_JSON(table.c.run_data, "model_provider"), JSON).label("model_provider"),
             type_coerce(call_durations.c.call_durations, JSON).label("call_durations"),
+            type_coerce(tool_calls.c.tools, JSON).label("tools"),
             type_coerce(func.JSON_EXTRACT_JSON(table.c.run_data, "step_executor_runs"), JSON).label(
                 "step_executor_runs"
             ),
@@ -471,7 +535,11 @@ def build_component_metrics_runs_query(table: Table, start_timestamp: int, end_t
             ),
             table.c.created_at,
         )
-        .select_from(table.outerjoin(call_durations, call_durations.c.run_id == table.c.run_id))
+        .select_from(
+            table.outerjoin(call_durations, call_durations.c.run_id == table.c.run_id).outerjoin(
+                tool_calls, tool_calls.c.run_id == table.c.run_id
+            )
+        )
         .where(*in_range)
         # A run copied into a forked session repeats a run counted in the session it was made in
         .where(func.JSON_EXTRACT_STRING(table.c.run_data, "forked_from_session_id").is_(None))
@@ -495,6 +563,7 @@ def build_component_metrics_run(row: Any) -> Dict[str, Any]:
         "messages": [
             {"role": "assistant", "metrics": {"duration": duration}} for duration in run.pop("call_durations") or []
         ],
+        "tools": run.pop("tools"),
         "step_executor_runs": run.pop("step_executor_runs"),
         "member_responses": run.pop("member_responses"),
         "workflow_agent_run": run.pop("workflow_agent_run"),
@@ -551,8 +620,8 @@ def build_component_metrics_totals_query(
         table (Table): The aggregate metrics table, or the component metrics table to total the runs with no user.
         starting_date (date): The first day to total.
         ending_date (date): The last day to total.
-        user_id (str): The user whose rows are totalled: ``""`` totals the everyone rows of the aggregate metrics table, or
-            the rows with no user of the component metrics table.
+        user_id (str): The user whose rows are totalled: ``""`` totals the everyone rows of the aggregate metrics table,
+            or the rows with no user of the component metrics table.
         month_starts (Sequence[date]): The first day of every month inside the date range to total from its month
             row instead of its days.
 

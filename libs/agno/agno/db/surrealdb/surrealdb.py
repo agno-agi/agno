@@ -51,6 +51,8 @@ from agno.db.surrealdb.models import (
 from agno.db.surrealdb.queries import COUNT_QUERY, WhereClause, order_limit_start
 from agno.db.surrealdb.utils import build_client
 from agno.db.utils import (
+    AGGREGATE_METRICS_COUNT_COLUMNS,
+    AGGREGATE_METRICS_KEY_COLUMNS,
     COMPONENT_METRICS_KEY_COLUMNS,
     HISTORY_SKIP_STATUSES,
     METRICS_BATCH_SIZE,
@@ -59,14 +61,13 @@ from agno.db.utils import (
     METRICS_STOPPED_ERROR,
     METRICS_SUM_COLUMNS,
     METRICS_TOKEN_FIELDS,
-    AGGREGATE_METRICS_COUNT_COLUMNS,
-    AGGREGATE_METRICS_KEY_COLUMNS,
     add_metrics_month_totals,
+    aggregate_metrics_rows_to_write,
+    build_aggregate_metrics_month_rows,
+    build_aggregate_metrics_rows,
     build_metrics_by_owner_from_rows,
     build_metrics_from_aggregate_metrics,
     build_single_run_row,
-    build_aggregate_metrics_month_rows,
-    build_aggregate_metrics_rows,
     calculate_date_component_metrics,
     component_metrics_rows_to_write,
     database_error_message,
@@ -78,7 +79,6 @@ from agno.db.utils import (
     get_metrics_legacy_runs,
     get_metrics_records_by_day,
     get_metrics_reopen_session_ids,
-    get_metrics_runs,
     get_months_to_calculate_metrics_for,
     list_metrics_totals_models,
     merge_metrics_totals,
@@ -95,7 +95,6 @@ from agno.db.utils import (
     metrics_versions,
     resolve_metrics_fields,
     total_metrics_rows,
-    aggregate_metrics_rows_to_write,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -1729,7 +1728,7 @@ class SurrealDb(BaseDb):
             )
             if not sessions:
                 return legacy_runs
-            page_legacy_runs = get_metrics_runs(get_metrics_legacy_runs(sessions))
+            page_legacy_runs = get_metrics_legacy_runs(sessions)
             # The runs table wins on a run in both, as merge_runs_table_with_legacy_blob does
             stored_run_ids: Set[str] = set()
             if runs_table is not None and page_legacy_runs:
@@ -1750,8 +1749,8 @@ class SurrealDb(BaseDb):
         while parent_run_ids:
             seen_run_ids.update(parent_run_ids)
             parents_query = (
-                "SELECT run_id, run_type, agent_id, team_id, workflow_id, "
-                f"parent_run_id ?? run_data.called_from_run_id AS parent_run_id FROM {runs_table} WHERE run_id IN $ids"
+                "SELECT run_id, run_type, agent_id, team_id, workflow_id, parent_run_id "
+                f"FROM {runs_table} WHERE run_id IN $ids"
             )
             parent_runs.extend(self._query(parents_query, {"ids": parent_run_ids}, dict))
             parent_run_ids = sorted(
@@ -1762,8 +1761,8 @@ class SurrealDb(BaseDb):
     def _get_aggregate_metrics_rows_to_write(
         self, aggregate_metrics_table: str, aggregate_metrics_rows: List[Dict[str, Any]], rows_changed: bool
     ) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]], List[RecordID]]:
-        """Compare a period's rows of the aggregate metrics table, from build_aggregate_metrics_rows, with the rows stored
-        for it.
+        """Compare a period's rows of the aggregate metrics table, from build_aggregate_metrics_rows, with the rows
+        stored for it.
 
         Returns the everyone row to write, or None when the stored one stands, the user rows that are new or changed,
         and the id of every stored user row the period no longer has.
@@ -1878,10 +1877,12 @@ class SurrealDb(BaseDb):
         stored_ids = {
             tuple(row[column] for column in COMPONENT_METRICS_KEY_COLUMNS[2:]): row["id"] for row in stored_rows
         }
-        everyone_row, changed_aggregate_metrics_rows, stale_aggregate_metrics_ids = self._get_aggregate_metrics_rows_to_write(
-            aggregate_metrics_table,
-            build_aggregate_metrics_rows(records, "daily", date_to_process, metrics_day_completed(date_to_process)),
-            rows_changed=bool(changed_rows or stale_keys),
+        everyone_row, changed_aggregate_metrics_rows, stale_aggregate_metrics_ids = (
+            self._get_aggregate_metrics_rows_to_write(
+                aggregate_metrics_table,
+                build_aggregate_metrics_rows(records, "daily", date_to_process, metrics_day_completed(date_to_process)),
+                rows_changed=bool(changed_rows or stale_keys),
+            )
         )
 
         # Each day is its own transaction, so a day that fails never holds back the rows of the days before it. The
@@ -1941,8 +1942,10 @@ class SurrealDb(BaseDb):
                 page += 1
 
         # Added up per owner and component over the month, so a user of several days is one user of the month
-        everyone_row, changed_aggregate_metrics_rows, stale_aggregate_metrics_ids = self._get_aggregate_metrics_rows_to_write(
-            aggregate_metrics_table, build_aggregate_metrics_month_rows(month_start, per_owner), rows_changed=False
+        everyone_row, changed_aggregate_metrics_rows, stale_aggregate_metrics_ids = (
+            self._get_aggregate_metrics_rows_to_write(
+                aggregate_metrics_table, build_aggregate_metrics_month_rows(month_start, per_owner), rows_changed=False
+            )
         )
 
         # The refresh is heartbeated in the transaction of the rows, so a process whose lock went stale never
@@ -2235,8 +2238,8 @@ class SurrealDb(BaseDb):
     def _get_aggregate_metrics_rows(
         self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
     ) -> Tuple[List[dict], Optional[int]]:
-        """Get the day rows of the aggregate metrics table in the shape of the metrics table: the everyone rows for ``""``, one
-        user's rows for a name, and every user's rows for ``None``."""
+        """Get the day rows of the aggregate metrics table in the shape of the metrics table: the everyone rows for
+        ``""``, one user's rows for a name, and every user's rows for ``None``."""
         aggregate_metrics_table = self._get_table_if_exists("aggregate_metrics")
         if aggregate_metrics_table is None:
             return [], None
@@ -2475,8 +2478,8 @@ class SurrealDb(BaseDb):
             user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with
                 no user.
             fields (List[str]): The columns to total.
-            use_month_rows (bool): Total a calendar month inside the date range from its month aggregate metrics row, as one
-                date.
+            use_month_rows (bool): Total a calendar month inside the date range from its month aggregate metrics row, as
+                one date.
 
         Returns:
             Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each date, and when they were last updated.
@@ -2626,7 +2629,8 @@ class SurrealDb(BaseDb):
         Returns:
             Optional[Dict[str, int]]: The version of each everyone row, keyed by its aggregation period and date. The
                 same again only while no calculation wrote a row of the date range. ``None`` until the first
-                calculate_metrics has finished, or without an aggregate metrics table: a read would find no rows to total.
+                calculate_metrics has finished, or without an aggregate metrics table: a read would find no rows to
+                total.
 
         Raises:
             Exception: If an error occurs during retrieval.

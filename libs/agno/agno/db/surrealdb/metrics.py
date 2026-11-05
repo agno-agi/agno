@@ -9,13 +9,13 @@ from agno.db.surrealdb import utils
 from agno.db.surrealdb.models import desurrealize_session, surrealize_dates
 from agno.db.surrealdb.queries import order_limit_start
 from agno.db.utils import (
+    AGGREGATE_METRICS_KEY_COLUMNS,
     COMPONENT_METRICS_KEY_COLUMNS,
     METRICS_BATCH_SIZE,
     METRICS_COMPONENT_TYPES,
     METRICS_COST_FIELDS,
     METRICS_REFRESH_ID,
     METRICS_TOKEN_DETAILS_FIELDS,
-    AGGREGATE_METRICS_KEY_COLUMNS,
     build_aggregate_metrics_row,
 )
 
@@ -29,15 +29,18 @@ _METRICS_NESTED_RUN_KEYS = ("step_executor_runs", "member_responses", "workflow_
 _METRICS_NESTED_RUNS_DEPTH = 6
 
 # What component metrics count of a run and of every run nested inside it. Of the messages only each request's
-# duration is read, never the content
+# duration and the tool call each answers are read, never the content, and of the tool calls only what tool_metrics
+# counts, never their arguments or result
 _METRICS_RUN_DATA_FIELDS = (
-    "metrics, model, model_provider, forked_from_message_index, messages.{role, from_history, metrics.{duration}}"
+    "metrics, model, model_provider, forked_from_message_index, "
+    "messages.{role, from_history, tool_call_id, metrics.{duration}}, "
+    "tools.{tool_call_id, toolkit, tool_name, tool_call_error, requires_confirmation, confirmed, requires_user_input, "
+    "external_execution_required, metrics.{duration}}"
 )
 
 # What a legacy run keeps of its own beside run_data: the fields the runs table keeps a column of
 _METRICS_LEGACY_RUN_FIELDS = (
-    "run_id, agent_id, team_id, workflow_id, parent_run_id, status, created_at, called_from_run_id, "
-    "forked_from_session_id"
+    "run_id, agent_id, team_id, workflow_id, parent_run_id, status, created_at, forked_from_session_id"
 )
 
 
@@ -201,14 +204,13 @@ def get_all_runs_for_component_metrics_calculation(
 
     Returns:
         List[Dict[str, Any]]: The runs, with the run_data calculate_date_component_metrics reads. Of the messages it
-            reads only each request's duration, and of the runs nested inside a run the same.
+            reads only each request's duration, of the tool calls only what tool_metrics counts, and of the runs
+            nested inside a run the same.
     """
-    # A run started inside a tool call names the run that called the tool as its parent. A run copied into a forked
-    # session repeats a run counted in the session it was made in
+    # A run copied into a forked session repeats a run counted in the session it was made in
     query = dedent(f"""
         SELECT
-            run_id, session_id, run_type, agent_id, team_id, workflow_id, user_id,
-            parent_run_id ?? run_data.called_from_run_id AS parent_run_id, status,
+            run_id, session_id, run_type, agent_id, team_id, workflow_id, user_id, parent_run_id, status,
             run_data.{{{_METRICS_RUN_DATA_FIELDS}, {_metrics_nested_runs_fields()}}} AS run_data
         FROM {table}
         WHERE created_at >= $start AND created_at < $end AND !run_data.forked_from_session_id
@@ -241,9 +243,10 @@ def bulk_upsert_metrics_rows(
         table (Optional[str]): The component metrics table. None writes no component metrics row.
         component_metrics_records (Sequence[Dict[str, Any]]): The component metrics rows to upsert.
         stale_ids (Sequence[RecordID]): The ids of the stored component metrics rows to delete.
-        aggregate_metrics_rows (Sequence[Dict[str, Any]]): The user rows of the aggregate metrics table to upsert. A user row is
-            written with its period's everyone row, so its completed and version are never compared.
-        stale_aggregate_metrics_ids (Sequence[RecordID]): The ids of the stored user rows of the aggregate metrics table to delete.
+        aggregate_metrics_rows (Sequence[Dict[str, Any]]): The user rows of the aggregate metrics table to upsert. A
+            user row is written with its period's everyone row, so its completed and version are never compared.
+        stale_aggregate_metrics_ids (Sequence[RecordID]): The ids of the stored user rows of the aggregate metrics table
+            to delete.
         everyone_row (Optional[Dict[str, Any]]): The everyone row to upsert, from build_aggregate_metrics_rows. None
             writes none.
         read_version (Optional[int]): The version of the stored everyone row read before its period's rows were
@@ -314,7 +317,8 @@ def bulk_upsert_metrics_rows(
             update_columns.append("completed = $input.completed")
         update_columns.append("version += 1")
         statements.append(
-            f"INSERT INTO {aggregate_metrics_table} ${name} ON DUPLICATE KEY UPDATE {', '.join(update_columns)} RETURN NONE;"
+            f"INSERT INTO {aggregate_metrics_table} ${name} ON DUPLICATE KEY UPDATE "
+            f"{', '.join(update_columns)} RETURN NONE;"
         )
 
     if reopen_month_start is not None:

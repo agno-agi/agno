@@ -11,13 +11,13 @@ from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
+    AGGREGATE_METRICS_COUNT_COLUMNS,
+    AGGREGATE_METRICS_KEY_COLUMNS,
     COMPONENT_METRICS_KEY_COLUMNS,
     METRICS_LOCK_SECONDS,
     METRICS_REFRESH_ID,
     METRICS_STOPPED_ERROR,
     METRICS_WRITE_RETRIES,
-    AGGREGATE_METRICS_COUNT_COLUMNS,
-    AGGREGATE_METRICS_KEY_COLUMNS,
     build_metrics_by_owner_from_rows,
     build_metrics_from_aggregate_metrics,
     calculate_date_metrics,
@@ -32,7 +32,6 @@ from agno.db.utils import (
     get_metrics_records_by_day,
     get_metrics_reopen_session_ids,
     get_metrics_rows_by_key,
-    get_metrics_runs,
     get_months_to_calculate_metrics_for,
     get_open_metrics_months,
     get_run_type,
@@ -1010,7 +1009,9 @@ class InMemoryDb(BaseDb):
                 if aggregate_metrics_rows is None:
                     self._metrics_days_not_reopened.clear()
                     return
-                aggregate_metrics_by_key = get_metrics_rows_by_key(aggregate_metrics_rows, AGGREGATE_METRICS_KEY_COLUMNS)
+                aggregate_metrics_by_key = get_metrics_rows_by_key(
+                    aggregate_metrics_rows, AGGREGATE_METRICS_KEY_COLUMNS
+                )
                 for day in days:
                     aggregate_metrics_by_key[("daily", day, "")] = reopened_aggregate_metrics_row(
                         aggregate_metrics_by_key.get(("daily", day, "")), day
@@ -1202,7 +1203,7 @@ class InMemoryDb(BaseDb):
                         "updated_at": session.get("updated_at"),
                     }
                 )
-        return get_metrics_runs(runs)
+        return runs
 
     def _write_metrics_rows(
         self,
@@ -1210,8 +1211,8 @@ class InMemoryDb(BaseDb):
         periods: List[Tuple[List[Dict[str, Any]], bool, Optional[int]]],
         worker_id: str,
     ) -> bool:
-        """Write the component metrics rows of the calculated days, then the aggregate metrics rows of each calculated day
-        and month. False when another process took the refresh over, and nothing was written.
+        """Write the component metrics rows of the calculated days, then the aggregate metrics rows of each calculated
+        day and month. False when another process took the refresh over, and nothing was written.
 
         Args:
             rows_by_key (Optional[Dict[Tuple[Any, ...], Dict[str, Any]]]): Every component metrics row, by key. None
@@ -1240,7 +1241,9 @@ class InMemoryDb(BaseDb):
         # rows it tells of
         for attempt in range(METRICS_WRITE_RETRIES + 1):
             aggregate_metrics_rows = self._aggregate_metrics
-            aggregate_metrics_by_key = get_metrics_rows_by_key(aggregate_metrics_rows or [], AGGREGATE_METRICS_KEY_COLUMNS)
+            aggregate_metrics_by_key = get_metrics_rows_by_key(
+                aggregate_metrics_rows or [], AGGREGATE_METRICS_KEY_COLUMNS
+            )
             for period_rows, rows_changed, read_version in periods:
                 write_aggregate_metrics_rows(aggregate_metrics_by_key, period_rows, rows_changed, read_version)
                 month_start = period_rows[0]["date"].replace(day=1)
@@ -1321,7 +1324,9 @@ class InMemoryDb(BaseDb):
                     started_at, finished_at = refresh_row["started_at"], refresh_row["finished_at"]
                 for attempt in range(METRICS_WRITE_RETRIES + 1):
                     aggregate_metrics_rows = self._aggregate_metrics
-                    aggregate_metrics_by_key = get_metrics_rows_by_key(aggregate_metrics_rows, AGGREGATE_METRICS_KEY_COLUMNS)
+                    aggregate_metrics_by_key = get_metrics_rows_by_key(
+                        aggregate_metrics_rows, AGGREGATE_METRICS_KEY_COLUMNS
+                    )
                     reopen_metrics_days_from(aggregate_metrics_by_key, rebuild_from)
                     if self._aggregate_metrics is aggregate_metrics_rows:
                         self._aggregate_metrics = list(aggregate_metrics_by_key.values())
@@ -1345,7 +1350,9 @@ class InMemoryDb(BaseDb):
             return None
 
         try:
-            aggregate_metrics_by_key = get_metrics_rows_by_key(self._aggregate_metrics or [], AGGREGATE_METRICS_KEY_COLUMNS)
+            aggregate_metrics_by_key = get_metrics_rows_by_key(
+                self._aggregate_metrics or [], AGGREGATE_METRICS_KEY_COLUMNS
+            )
 
             # Read after the versions of the days, so a run written while they are calculated moves its day. A
             # manual compaction's usage, which no run carries, is read from the session's data
@@ -1667,8 +1674,8 @@ class InMemoryDb(BaseDb):
             user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with
                 no user.
             fields (List[str]): The columns to total.
-            use_month_rows (bool): Total a calendar month inside the date range from its month aggregate metrics row, as one
-                date.
+            use_month_rows (bool): Total a calendar month inside the date range from its month aggregate metrics row, as
+                one date.
 
         Returns:
             Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each date, and when they were last updated.

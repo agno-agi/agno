@@ -30,8 +30,8 @@ from agno.db.mongo.utils import (
     build_metrics_fingerprint_pipeline,
     build_metrics_rows_filter,
     build_metrics_rows_projection,
-    bulk_upsert_component_metrics,
     bulk_upsert_aggregate_metrics_rows,
+    bulk_upsert_component_metrics,
     create_collection_indexes,
     deserialize_metrics_row,
     reopen_metrics_day,
@@ -43,6 +43,7 @@ from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
+    AGGREGATE_METRICS_COUNT_COLUMNS,
     HISTORY_SKIP_STATUSES,
     METRICS_BATCH_SIZE,
     METRICS_LOCK_SECONDS,
@@ -50,13 +51,13 @@ from agno.db.utils import (
     METRICS_STOPPED_ERROR,
     METRICS_TOKEN_DETAILS_FIELDS,
     METRICS_TOKEN_FIELDS,
-    AGGREGATE_METRICS_COUNT_COLUMNS,
     add_metrics_month_totals,
+    aggregate_metrics_rows_to_write,
+    build_aggregate_metrics_month_rows,
+    build_aggregate_metrics_rows,
     build_metrics_by_owner_from_rows,
     build_metrics_from_aggregate_metrics,
     build_single_run_row,
-    build_aggregate_metrics_month_rows,
-    build_aggregate_metrics_rows,
     calculate_date_component_metrics,
     component_metrics_rows_to_write,
     database_error_message,
@@ -68,7 +69,6 @@ from agno.db.utils import (
     filter_context_runs,
     get_metrics_legacy_runs,
     get_metrics_reopen_session_ids,
-    get_metrics_runs,
     get_months_to_calculate_metrics_for,
     list_metrics_totals_models,
     merge_metrics_totals,
@@ -85,7 +85,6 @@ from agno.db.utils import (
     metrics_versions,
     resolve_metrics_fields,
     total_metrics_rows,
-    aggregate_metrics_rows_to_write,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -2136,7 +2135,7 @@ class MongoDb(BaseDb):
                 return None
             legacy_runs = [
                 legacy_run
-                for legacy_run in get_metrics_runs(get_metrics_legacy_runs(sessions))
+                for legacy_run in get_metrics_legacy_runs(sessions)
                 if start_timestamp <= (legacy_run["created_at"] or 0) < end_timestamp
             ]
             # The runs collection wins on a run in both, as merge_runs_table_with_legacy_blob does
@@ -2167,22 +2166,17 @@ class MongoDb(BaseDb):
             seen_run_ids.update(parent_run_ids)
             for start in range(0, len(parent_run_ids), METRICS_IN_LIST_LIMIT):
                 parent_runs.extend(
-                    get_metrics_runs(
-                        list(
-                            runs_collection.find(
-                                {"run_id": {"$in": parent_run_ids[start : start + METRICS_IN_LIST_LIMIT]}},
-                                {
-                                    "_id": False,
-                                    "run_id": 1,
-                                    "run_type": 1,
-                                    "agent_id": 1,
-                                    "team_id": 1,
-                                    "workflow_id": 1,
-                                    "parent_run_id": 1,
-                                    "run_data.called_from_run_id": 1,
-                                },
-                            )
-                        )
+                    runs_collection.find(
+                        {"run_id": {"$in": parent_run_ids[start : start + METRICS_IN_LIST_LIMIT]}},
+                        {
+                            "_id": False,
+                            "run_id": 1,
+                            "run_type": 1,
+                            "agent_id": 1,
+                            "team_id": 1,
+                            "workflow_id": 1,
+                            "parent_run_id": 1,
+                        },
                     )
                 )
             parent_run_ids = sorted(
@@ -2197,9 +2191,12 @@ class MongoDb(BaseDb):
         rows_changed: bool,
         read_version: Optional[int],
     ) -> None:
-        """Write a period's rows of the aggregate metrics collection, from build_aggregate_metrics_rows: the user rows, then
-        the everyone row, which is completed only while it still has the version read before the period's rows."""
-        period, period_date = aggregate_metrics_rows[0]["aggregation_period"], aggregate_metrics_rows[0]["date"].isoformat()
+        """Write a period's rows of the aggregate metrics collection, from build_aggregate_metrics_rows: the user rows,
+        then the everyone row, which is completed only while it still has the version read before the period's rows."""
+        period, period_date = (
+            aggregate_metrics_rows[0]["aggregation_period"],
+            aggregate_metrics_rows[0]["date"].isoformat(),
+        )
         stored_rows = [
             deserialize_metrics_row(document)
             for document in aggregate_metrics_collection.find(
@@ -2291,7 +2288,7 @@ class MongoDb(BaseDb):
                     return False
                 if not self._heartbeat_metrics_refresh(refreshes_collection, worker_id):
                     return False
-                runs.extend(get_metrics_runs(batch))
+                runs.extend(batch)
         # A legacy run migrated to the runs collection since the legacy runs were read is among the day's runs, and
         # is counted from there
         day_run_ids = {run["run_id"] for run in runs}
@@ -2321,16 +2318,14 @@ class MongoDb(BaseDb):
             # A remote member's run after midnight is named by its team's run of the day before
             team_session_ids = sorted(metrics_remote_member_team_session_ids(runs))
             for start in range(0, len(team_session_ids), METRICS_IN_LIST_LIMIT):
-                team_runs = get_metrics_runs(
-                    list(
-                        runs_collection.find(
-                            {
-                                "created_at": {"$gte": start_timestamp - 86400, "$lt": start_timestamp},
-                                "run_data.forked_from_session_id": None,
-                                "session_id": {"$in": team_session_ids[start : start + METRICS_IN_LIST_LIMIT]},
-                            },
-                            build_component_metrics_runs_projection(),
-                        )
+                team_runs = list(
+                    runs_collection.find(
+                        {
+                            "created_at": {"$gte": start_timestamp - 86400, "$lt": start_timestamp},
+                            "run_data.forked_from_session_id": None,
+                            "session_id": {"$in": team_session_ids[start : start + METRICS_IN_LIST_LIMIT]},
+                        },
+                        build_component_metrics_runs_projection(),
                     )
                 )
                 parent_runs.extend(team_runs)
@@ -2480,7 +2475,9 @@ class MongoDb(BaseDb):
             Exception: If an error occurs during metrics calculation.
         """
         collection = self._get_collection(table_type="component_metrics", create_collection_if_not_found=True)
-        aggregate_metrics_collection = self._get_collection(table_type="aggregate_metrics", create_collection_if_not_found=True)
+        aggregate_metrics_collection = self._get_collection(
+            table_type="aggregate_metrics", create_collection_if_not_found=True
+        )
         refreshes_collection = self._get_collection(table_type="metrics_refreshes", create_collection_if_not_found=True)
         sessions_collection = self._get_collection(table_type="sessions")
         if (
@@ -2908,8 +2905,8 @@ class MongoDb(BaseDb):
             user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with
                 no user.
             fields (List[str]): The columns to total.
-            use_month_rows (bool): Total a calendar month inside the date range from its month aggregate metrics row, as one
-                date.
+            use_month_rows (bool): Total a calendar month inside the date range from its month aggregate metrics row, as
+                one date.
 
         Returns:
             Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each date, and when they were last updated.
@@ -2917,7 +2914,9 @@ class MongoDb(BaseDb):
         aggregate_metrics_collection = self._get_collection(table_type="aggregate_metrics")
         # Every owner is read from the everyone rows and a user from the user's rows; the runs with no user have no
         # aggregate metrics row of their own, so they are read from their component rows
-        collection = self._get_collection(table_type="component_metrics") if user_id == "" else aggregate_metrics_collection
+        collection = (
+            self._get_collection(table_type="component_metrics") if user_id == "" else aggregate_metrics_collection
+        )
         if aggregate_metrics_collection is None or collection is None:
             return [], None
 

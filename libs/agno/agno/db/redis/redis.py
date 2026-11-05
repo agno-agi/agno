@@ -15,20 +15,21 @@ if TYPE_CHECKING:
 from agno.db.base import BaseDb, SessionType
 from agno.db.redis.utils import (
     METRICS_SCAN_COUNT,
+    aggregate_metrics_record_id,
     apply_filters,
     apply_pagination,
     apply_sorting,
     build_component_metrics_legacy_runs,
     build_component_metrics_run,
     build_component_metrics_session,
-    bulk_upsert_component_metrics,
     bulk_upsert_aggregate_metrics_rows,
+    bulk_upsert_component_metrics,
     create_index_entries,
-    delete_component_metrics,
     delete_aggregate_metrics_rows,
+    delete_component_metrics,
+    deserialize_aggregate_metrics_record,
     deserialize_component_metrics_record,
     deserialize_data,
-    deserialize_aggregate_metrics_record,
     generate_created_at_index_key,
     generate_index_key,
     generate_metrics_prefix,
@@ -42,24 +43,24 @@ from agno.db.redis.utils import (
     reopen_metrics_month,
     serialize_data,
     upsert_aggregate_metrics_row,
-    aggregate_metrics_record_id,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
+    AGGREGATE_METRICS_COUNT_COLUMNS,
     COMPONENT_METRICS_KEY_COLUMNS,
     METRICS_BATCH_SIZE,
     METRICS_LOCK_SECONDS,
     METRICS_REFRESH_ID,
     METRICS_STOPPED_ERROR,
-    AGGREGATE_METRICS_COUNT_COLUMNS,
     add_metrics_month_totals,
+    aggregate_metrics_rows_to_write,
+    build_aggregate_metrics_month_rows,
+    build_aggregate_metrics_rows,
     build_metrics_by_owner_from_rows,
     build_metrics_from_aggregate_metrics,
     build_single_run_row,
-    build_aggregate_metrics_month_rows,
-    build_aggregate_metrics_rows,
     calculate_date_component_metrics,
     component_metrics_rows_to_write,
     database_error_message,
@@ -88,7 +89,6 @@ from agno.db.utils import (
     metrics_versions,
     resolve_metrics_fields,
     total_metrics_rows,
-    aggregate_metrics_rows_to_write,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -1907,8 +1907,8 @@ class RedisDb(BaseDb):
         return values
 
     def _get_metrics_everyone_record_ids(self) -> List[str]:
-        """Get the ID of every everyone row of the aggregate metrics table, of days and of months. Every calculated day has
-        one, so their dates are the days metrics were calculated for."""
+        """Get the ID of every everyone row of the aggregate metrics table, of days and of months. Every calculated day
+        has one, so their dates are the days metrics were calculated for."""
         return self._get_metrics_record_ids("aggregate_metrics", "user_id", [""])
 
     def _get_metrics_records_of_days(
@@ -2155,11 +2155,15 @@ class RedisDb(BaseDb):
         return False
 
     def _write_aggregate_metrics_rows(
-        self, aggregate_metrics_rows: List[Dict[str, Any]], rows_changed: bool, read_version: Optional[int], worker_id: str
+        self,
+        aggregate_metrics_rows: List[Dict[str, Any]],
+        rows_changed: bool,
+        read_version: Optional[int],
+        worker_id: str,
     ) -> bool:
-        """Write a period's rows of the aggregate metrics table, from build_aggregate_metrics_rows: the user rows, then the
-        everyone row, which is completed only while it still has the version read before the period's rows. False when
-        another process took the metrics refresh over, and nothing more was written."""
+        """Write a period's rows of the aggregate metrics table, from build_aggregate_metrics_rows: the user rows, then
+        the everyone row, which is completed only while it still has the version read before the period's rows. False
+        when another process took the metrics refresh over, and nothing more was written."""
         period, period_date = aggregate_metrics_rows[0]["aggregation_period"], aggregate_metrics_rows[0]["date"]
         stored_rows = self._get_aggregate_metrics_records(
             [
@@ -2314,8 +2318,8 @@ class RedisDb(BaseDb):
         return True
 
     def _calculate_month_metrics(self, month_start: date, worker_id: str) -> bool:
-        """Rebuild the month rows of the aggregate metrics table from the component metrics rows of the month's days. False
-        when another process took the refresh over, and nothing was written."""
+        """Rebuild the month rows of the aggregate metrics table from the component metrics rows of the month's days.
+        False when another process took the refresh over, and nothing was written."""
         read_version = self._get_aggregate_metrics_version("monthly", month_start)
         month_days = [
             month_start + timedelta(days=offset)
@@ -2542,8 +2546,8 @@ class RedisDb(BaseDb):
     def _get_aggregate_metrics_rows(
         self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
     ) -> Tuple[List[dict], Optional[int]]:
-        """Get the day rows of the aggregate metrics table in the shape of the metrics table: the everyone rows for ``""``, one
-        user's rows for a name, and every user's rows for ``None``."""
+        """Get the day rows of the aggregate metrics table in the shape of the metrics table: the everyone rows for
+        ``""``, one user's rows for a name, and every user's rows for ``None``."""
         if user_id is None:
             record_ids = self._get_metrics_records_of_days("aggregate_metrics", starting_date, ending_date)
         else:
@@ -2701,8 +2705,8 @@ class RedisDb(BaseDb):
     ) -> Tuple[List[dict], Optional[int]]:
         """Get the metrics of every user, one row per day, matching the given date range.
 
-        Read from the everyone rows of the aggregate metrics table once the first calculate_metrics has finished, and from the
-        deprecated metrics table until then. They are refreshed first, as get_metrics does.
+        Read from the everyone rows of the aggregate metrics table once the first calculate_metrics has finished, and
+        from the deprecated metrics table until then. They are refreshed first, as get_metrics does.
 
         Args:
             starting_date (Optional[date]): The starting date to filter by.
@@ -2757,8 +2761,8 @@ class RedisDb(BaseDb):
             user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner, ``""`` the runs
                 with no user.
             fields (List[str]): The columns to total.
-            use_month_rows (bool): Total a calendar month inside the date range from its month aggregate metrics row, as one
-                date.
+            use_month_rows (bool): Total a calendar month inside the date range from its month aggregate metrics row, as
+                one date.
 
         Returns:
             Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each date, and when they were last updated.

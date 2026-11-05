@@ -685,3 +685,54 @@ def test_calculate_date_metrics_writes_nothing_after_losing_the_lock(db, monkeyp
     assert _versions(db, _utc_date(3), _utc_date(3)) == versions
     status, _ = db.get_component_metrics(_utc_date(3), _utc_date(3), fields=["status_metrics"])
     assert status == [{"date": _utc_date(3), "status_metrics": {"COMPLETED": 5, "PAUSED": 1}}]
+
+
+def test_calculate_metrics_counts_tool_calls(db):
+    """Ensure each tool call is counted under its tool from the stored run, that a tool call a forked run copied is
+    not, and that a totals read adds the tools up"""
+    created_at = _noon_utc(2)
+    copied_call = {
+        "tool_call_id": "copied-call",
+        "tool_name": "search",
+        "tool_args": {"query": "agno"},
+        "result": "x" * 10000,
+        "metrics": {"duration": 0.4},
+    }
+    original = {
+        **_run("r-original", created_at, 10, agent_id="agent-1"),
+        "messages": [{"role": "tool", "tool_call_id": "copied-call", "content": "agno"}],
+        "tools": [copied_call],
+    }
+    forked = {
+        **_run("r-forked", created_at + 1, 10, agent_id="agent-1"),
+        "messages": [
+            {"role": "tool", "tool_call_id": "copied-call", "content": "agno"},
+            {"role": "tool", "tool_call_id": "new-call", "content": "agno"},
+        ],
+        "tools": [copied_call, {"tool_call_id": "new-call", "tool_name": "search", "metrics": {"duration": 0.1}}],
+        "forked_from_message_index": 1,
+    }
+    _save(
+        db,
+        AgentSession(session_id="s-fork", agent_id="agent-1", user_id="bob", created_at=created_at),
+        [original, forked],
+    )
+
+    db.calculate_metrics()
+
+    # The forked run counts only the tool call it made
+    expected = {
+        "": {
+            "search": {
+                "count": 2,
+                "failed_count": 0,
+                "total_ms": 500,
+                "max_ms": 400,
+                "buckets": {"le_100": 1, "le_400": 1},
+            }
+        }
+    }
+    metrics, _ = db.get_component_metrics(_utc_date(2), _utc_date(2), fields=["tool_metrics"])
+    assert metrics[0]["tool_metrics"] == expected
+    totals, _ = db.get_metrics_totals(_utc_date(2), _utc_date(2), user_id="bob", fields=["tool_metrics"])
+    assert totals == {"tool_metrics": expected}
