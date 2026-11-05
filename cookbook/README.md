@@ -119,3 +119,5 @@ python3 cookbook/scripts/cookbook_runner.py cookbook/00_quickstart --json-report
 ## Contributing
 
 We're always adding new cookbooks. Want to contribute? See [CONTRIBUTING.md](../CONTRIBUTING.md).
+
+- [ProveCart Precheck](cookbook/91_tools/provecart_precheck.py) — gate a shopping agent on a pre-payment conformity check (MATCH / REVIEW / BLOCK) before money moves.
