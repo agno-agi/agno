@@ -39,6 +39,10 @@ class BaseEventStream(ABC):
     for concurrent use from multiple asyncio tasks.
     """
 
+    # Whether events added on one replica can be replayed and tailed from every other replica;
+    # a distributed stream sets it to True.
+    shared: bool = False
+
     # ------------------------------------------------------------------
     # Run lifecycle
     # ------------------------------------------------------------------
