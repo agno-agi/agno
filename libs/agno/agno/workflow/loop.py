@@ -468,6 +468,8 @@ class Loop:
             loop_step_outputs = {}  # Track outputs within this loop iteration
 
             for i, step in enumerate(self.steps):
+                if workflow_run_response and workflow_run_response.run_id:
+                    raise_if_cancelled(workflow_run_response.run_id)
                 step_output = step.execute(  # type: ignore[union-attr]
                     current_step_input,
                     session_id=session_id,
@@ -654,6 +656,8 @@ class Loop:
             loop_step_outputs = {}
 
             for i, step in enumerate(self.steps):
+                if workflow_run_response and workflow_run_response.run_id:
+                    raise_if_cancelled(workflow_run_response.run_id)
                 step_outputs_for_iteration = []
 
                 # Loop children always get sequential sub-indices: parent_index.1, parent_index.2, etc.
@@ -866,6 +870,8 @@ class Loop:
             loop_step_outputs = {}  # Track outputs within this loop iteration
 
             for i, step in enumerate(self.steps):
+                if workflow_run_response and workflow_run_response.run_id:
+                    await araise_if_cancelled(workflow_run_response.run_id)
                 step_output = await step.aexecute(  # type: ignore[union-attr]
                     current_step_input,
                     session_id=session_id,
@@ -1051,6 +1057,8 @@ class Loop:
             loop_step_outputs = {}  # Track outputs within this loop iteration
 
             for i, step in enumerate(self.steps):
+                if workflow_run_response and workflow_run_response.run_id:
+                    await araise_if_cancelled(workflow_run_response.run_id)
                 step_outputs_for_iteration = []
 
                 # Loop children always get sequential sub-indices: parent_index.1, parent_index.2, etc.

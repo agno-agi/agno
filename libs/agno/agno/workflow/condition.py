@@ -562,6 +562,8 @@ class Condition:
         condition_step_outputs: Dict[str, StepOutput] = {}
 
         for i, step in enumerate(steps_to_execute):
+            if workflow_run_response and workflow_run_response.run_id:
+                raise_if_cancelled(workflow_run_response.run_id)
             try:
                 step_output = step.execute(  # type: ignore[union-attr]
                     current_step_input,
@@ -1017,6 +1019,8 @@ class Condition:
         condition_step_outputs: Dict[str, StepOutput] = {}
 
         for i, step in enumerate(steps_to_execute):
+            if workflow_run_response and workflow_run_response.run_id:
+                await araise_if_cancelled(workflow_run_response.run_id)
             try:
                 step_output = await step.aexecute(  # type: ignore[union-attr]
                     current_step_input,
