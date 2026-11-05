@@ -807,7 +807,9 @@ async def test_calculate_metrics_counts_tool_calls(async_postgres_db_real: Async
         }
     }
     assert (await _stored_rows(async_postgres_db_real))[(past_day, "bob", "team", "team-1")]["tool_metrics"] == expected
-    assert (await _stored_aggregate_metrics_rows(async_postgres_db_real))[("daily", past_day)]["tool_metrics"] == expected
+    assert (await _stored_aggregate_metrics_rows(async_postgres_db_real))[("daily", past_day)][
+        "tool_metrics"
+    ] == expected
     metrics, _ = await async_postgres_db_real.get_component_metrics(
         starting_date=past_day, ending_date=past_day, fields=["tool_metrics"]
     )
