@@ -15,6 +15,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import OperationalError
 
 from agno.db.postgres import AsyncPostgresDb, PostgresDb
+from agno.exceptions import RunCancelledException
 from agno.run.agent import RunCompletedEvent, RunInput, RunOutput
 from agno.run.base import RunStatus
 from agno.sandbox import SandboxError
@@ -1130,17 +1131,20 @@ async def test_cancellation_does_not_overwrite_a_recorded_stop(system, monkeypat
 async def executing(coordinator):
     """The binding once a turn's computer is bound and its execution has had time to start."""
     store = coordinator.store
-    for _ in range(300):
-        row = await store._transaction(lambda c: c.execute(select(store.bindings)).mappings().one_or_none())
-        if row is not None and row["record"]["phase"] == "executing" and row["record"].get("computer"):
-            await asyncio.sleep(1)
-            return dict(row)
-        await asyncio.sleep(0.1)
-    pytest.fail("Turn never started executing")
+
+    async def bound():
+        while True:
+            row = await store._transaction(lambda c: c.execute(select(store.bindings)).mappings().one_or_none())
+            if row is not None and row["record"]["phase"] == "executing" and row["record"].get("computer"):
+                return dict(row)
+            await asyncio.sleep(0.05)
+
+    row = await asyncio.wait_for(bound(), 30)
+    await asyncio.sleep(1)
+    return row
 
 
 async def test_a_cancel_from_another_replica_ends_the_turn_cancelled(system):
-    from agno.exceptions import RunCancelledException
 
     coordinator, spec, root = system
     await run(coordinator, spec)
@@ -1165,7 +1169,6 @@ async def test_a_cancel_from_another_replica_ends_the_turn_cancelled(system):
 
 
 async def test_a_stop_claimed_elsewhere_reads_as_cancelled_before_the_computer_is_removed(system):
-    from agno.exceptions import RunCancelledException
 
     coordinator, spec, _ = system
     store = coordinator.store
@@ -1188,8 +1191,6 @@ async def test_a_stop_claimed_elsewhere_reads_as_cancelled_before_the_computer_i
         lambda c: c.execute(select(store.runs.c.status).where(store.runs.c.run_id == "first")).scalar_one()
     )
     assert status == "RUNNING"
-    if isinstance(store.db, PostgresDb):
-        assert await asyncio.to_thread(store.cancelled_elsewhere, spec.session_id, "first") is True
     assert (await coordinator._stop(state.lease, status="CANCELLED", reason="Run cancelled"))["status"] == "CANCELLED"
     assert await store.acancelled_elsewhere(spec.session_id, "first") is True
 
@@ -1395,7 +1396,6 @@ async def test_retire_computer_removes_the_warm_computer_and_keeps_the_checkpoin
 async def test_sweep_retires_only_expired_warm_computers(system):
     coordinator, spec, root = system
     coordinator.warm_computer_seconds = 300
-    coordinator.agent_ids.add(spec.agent_id)
     await run(coordinator, spec)
     kept = handles_of(coordinator)[0]
     assert await coordinator.asweep_warm() == 0
@@ -1411,6 +1411,34 @@ async def test_sweep_retires_only_expired_warm_computers(system):
     assert await coordinator.asweep_warm() == 1
     assert await coordinator.provider.aget(kept.provider_ref) is None
     assert await coordinator.asweep_warm() == 0
+
+
+async def test_a_cancelled_sweep_still_removes_the_computer_it_released(system, monkeypatch):
+    coordinator, spec, root = system
+    coordinator.warm_computer_seconds = 300
+    await run(coordinator, spec)
+    kept = handles_of(coordinator)[0]
+    await coordinator.store._transaction(
+        lambda c: c.execute(
+            update(coordinator.store.bindings).values(
+                record=coordinator.store.bindings.c.record.op("||")({"warm_until": time.time() - 1})
+            )
+        )
+    )
+    destroy, started = coordinator.provider.adestroy, asyncio.Event()
+
+    async def slow_destroy(handle):
+        started.set()
+        await asyncio.sleep(1)
+        await destroy(handle)
+
+    monkeypatch.setattr(coordinator.provider, "adestroy", slow_destroy)
+    sweep = asyncio.create_task(coordinator.asweep_warm())
+    await started.wait()
+    sweep.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await sweep
+    assert await coordinator.provider.aget(kept.provider_ref) is None
 
 
 async def test_a_sweep_leaves_other_agents_warm_computers_to_their_own_coordinator(system):

@@ -681,7 +681,7 @@ async def test_two_attempts_recover_a_turn_whose_host_was_lost(service):
 )
 async def test_the_queue_worker_retires_warm_computers_past_their_window(service, monkeypatch):
     client, agent, app, handles = service
-    monkeypatch.setattr("agno.os.job_queue._WARM_SWEEP_SECONDS", 0.1, raising=False)
+    monkeypatch.setattr("agno.os.job_queue._WARM_SWEEP_SECONDS", 0.1)
     first = await client.post(
         "/agents/coder/runs", data={"message": "first", "session_id": "session", "stream": "false"}
     )

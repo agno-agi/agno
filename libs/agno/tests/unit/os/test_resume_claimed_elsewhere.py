@@ -9,6 +9,7 @@ tail that is already open must end once another replica claims the job.
 import asyncio
 import importlib
 import json
+import time
 from types import SimpleNamespace
 
 import httpx
@@ -34,15 +35,15 @@ def replica(monkeypatch):
     stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
     monkeypatch.setattr(streams, "_event_stream", stream)
     monkeypatch.setattr("agno.os.event_streams.in_memory._TAIL_IDLE_RECHECK_SECONDS", 0.05)
-    monkeypatch.setattr("agno.os.utils._TAIL_CLAIM_RECHECK_SECONDS", 0.05, raising=False)
+    monkeypatch.setattr("agno.os.utils._TAIL_CLAIM_RECHECK_SECONDS", 0.05)
     store = InMemoryQueueStore()
     set_active_queue_worker(SimpleNamespace(store=store, worker_id="worker-here"))
     yield SimpleNamespace(stream=stream, store=store)
     set_active_queue_worker(None)
 
 
-def seed_ticket(store, run_id, status, locked_by=None):
-    store._jobs[run_id] = QueuedJob(
+def seed_ticket(store, run_id, status="queued", **overrides):
+    fields = dict(
         id=run_id,
         component_type="agent",
         component_id="qa-agent",
@@ -50,8 +51,9 @@ def seed_ticket(store, run_id, status, locked_by=None):
         payload={"input": "hi", "stream": True},
         status=status,
         attempt=0 if status == "queued" else 1,
-        locked_by=locked_by,
-    ).to_dict()
+    )
+    fields.update(overrides)
+    store._jobs[run_id] = QueuedJob(**fields).to_dict()
 
 
 def claim(store, run_id, worker_id):
@@ -187,6 +189,37 @@ async def test_the_submitters_own_stream_ends_as_soon_as_another_replica_claims_
     assert meta["status"] == "RUNNING" and "another replica" in meta["message"]
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["agents", "teams", "workflows"])
+async def test_resume_without_a_session_id_says_the_run_executes_on_another_replica(replica, kind):
+    await replica.stream.register_run("r1", RunStatus.pending)
+    seed_ticket(replica.store, "r1", "running", locked_by="worker-there")
+    module = importlib.import_module(f"agno.os.routers.{kind}.router")
+    (error,) = payloads(await collect(module._resume_stream_generator(StoredRun(None), "r1", None, None)))
+    assert error["event"] == "error" and "another replica" in error["error"]
+
+
+@pytest.mark.asyncio
+async def test_a_queued_tail_checks_for_a_claim_often_only_in_its_first_idle_window(replica, monkeypatch):
+    from agno.os.utils import queued_run_tail_streamer
+
+    monkeypatch.setattr("agno.os.utils._TAIL_IDLE_RECHECK_SECONDS", 0.5)
+    await replica.stream.register_run("r1", RunStatus.pending)
+    seed_ticket(replica.store, "r1")
+    get_job, reads = replica.store.get_job, []
+
+    async def counted(job_id):
+        reads.append(job_id)
+        return await get_job(job_id)
+
+    monkeypatch.setattr(replica.store, "get_job", counted)
+    tail = queued_run_tail_streamer("r1")
+    with pytest.raises(asyncio.TimeoutError):
+        await collect(tail, timeout=2)
+    # About 10 reads in the first 0.5s, then one per 0.5s; a 0.05s recheck throughout reads about 40 times.
+    assert 10 <= len(reads) <= 16
+
+
 def test_only_the_redis_stream_is_shared():
     from agno.os.event_streams import InMemoryEventStream, RedisEventStream
 
@@ -198,8 +231,6 @@ def test_only_the_redis_stream_is_shared():
 @pytest.mark.asyncio
 async def test_resume_over_http_on_the_submitting_replica_returns_the_row(replica, tmp_path):
     """A plain (non-sandbox) agent's queued streaming run, through the real endpoint."""
-    import time
-
     from agno.agent import Agent
     from agno.db.sqlite import SqliteDb
     from agno.os import AgentOS

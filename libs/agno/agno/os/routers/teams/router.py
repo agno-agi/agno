@@ -268,7 +268,7 @@ async def _resume_stream_generator(
     Three reconnection paths:
     1. Run still active (in buffer): replay missed events + subscribe for live events via Queue
     2. Run completed (in buffer): replay all events since last_event_index
-    3. Not in buffer: fall back to database replay
+    3. Not in buffer, or executed elsewhere: fall back to database replay
     """
     event_stream = get_event_stream()
     try:
@@ -306,6 +306,13 @@ async def _resume_stream_generator(
                 meta = no_stored_events_replay_meta(run_output, run_id, elsewhere=elsewhere)
                 yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
                 return
+
+        # Executed on another replica, whose events only the database can replay
+        if elsewhere and not session_id:
+            yield sse_error_frame(
+                f"Run {run_id} executes on another replica; pass session_id to replay it from the database"
+            )
+            return
 
         # Run not found anywhere
         error = {"event": "error", "error": f"Run {run_id} not found in buffer or database"}
@@ -374,7 +381,7 @@ async def _resume_stream_generator(
 
     log_debug(f"SSE client subscribed to team run {run_id} (last_event_index: {last_event_index})")
 
-    # The shared tail ends on a settled ticket or a claim by another replica as well.
+    # queued_run_tail_streamer also ends on a settled ticket or a claim by another replica.
     async for frame in queued_run_tail_streamer(run_id, last_replayed_index, keepalive=": heartbeat\n\n"):
         yield frame
 

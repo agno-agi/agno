@@ -107,6 +107,8 @@ class RedisEventStream(BaseEventStream):
             status. Bounds how long a tail can outlive a dead producer.
     """
 
+    shared: bool = True
+
     def __init__(
         self,
         async_redis_client: Union["AsyncRedis", "AsyncRedisCluster"],
@@ -158,10 +160,6 @@ class RedisEventStream(BaseEventStream):
         self._fenced_xadd_script: Optional[Any] = None
         self._scripting_unavailable = False
         self._fence_refusals_logged: set = set()
-
-    @property
-    def shared(self) -> bool:
-        return True
 
     # ------------------------------------------------------------------
     # Keys

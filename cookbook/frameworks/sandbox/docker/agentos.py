@@ -40,6 +40,8 @@ def create_agent_os() -> AgentOS:
 
         agent = FixtureAgent(id="coder", sandbox=sandbox)
     db = PostgresDb(db_url=os.environ["SANDBOX_DATABASE_URL"])
+    # Optional: adds live streams and resume from any replica.
+    redis_url = os.environ.get("SANDBOX_REDIS_URL")
     return AgentOS(
         id="sandbox-example",
         agents=[agent],
@@ -47,12 +49,8 @@ def create_agent_os() -> AgentOS:
         queue=QueueConfig(
             durable=True,
             db=db,
-            # Optional: adds live streams and resume from any replica.
-            redis=RedisCoordination(
-                url=os.environ["SANDBOX_REDIS_URL"],
-                key_prefix="agentos-sandbox-example",
-            )
-            if os.environ.get("SANDBOX_REDIS_URL")
+            redis=RedisCoordination(url=redis_url, key_prefix="agentos-sandbox-example")
+            if redis_url
             else None,
             max_attempts=2,
             max_concurrency=4,

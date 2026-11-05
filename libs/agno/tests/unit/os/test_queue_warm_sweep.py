@@ -6,6 +6,7 @@ volumes forever: nothing else calls SandboxCoordinator.asweep_warm.
 
 import asyncio
 from types import SimpleNamespace
+from typing import Any, List, Optional
 
 import pytest
 
@@ -15,7 +16,9 @@ from agno.os.job_queue import QueueWorker
 
 
 class FakeCoordinator:
-    def __init__(self, removed=1, error=None, delay=0.0):
+    """Coordinator double: counts sweeps, returns a configurable removal count."""
+
+    def __init__(self, removed: int = 1, error: Optional[Exception] = None, delay: float = 0.0):
         self.removed, self.error, self.delay = removed, error, delay
         self.sweeps = 0
         self.finished = 0
@@ -29,7 +32,7 @@ class FakeCoordinator:
         return self.removed
 
 
-def sandboxed(agent_id, coordinator):
+def sandboxed(agent_id: str, coordinator: FakeCoordinator) -> SimpleNamespace:
     return SimpleNamespace(id=agent_id, coordinator=coordinator, get_id=lambda: agent_id)
 
 
@@ -38,10 +41,10 @@ def coordinators(monkeypatch):
     from agno.sandbox import _harness
 
     monkeypatch.setattr(_harness, "coordinator", lambda agent: agent.coordinator)
-    monkeypatch.setattr("agno.os.job_queue._WARM_SWEEP_SECONDS", 0.05, raising=False)
+    monkeypatch.setattr("agno.os.job_queue._WARM_SWEEP_SECONDS", 0.05)
 
 
-def make_worker(agents):
+def make_worker(agents: List[Any]) -> QueueWorker:
     worker = QueueWorker(
         store=InMemoryQueueStore(),
         resolve_component=lambda ctype, cid: None,
@@ -72,7 +75,7 @@ async def test_the_poll_loop_sweeps_each_coordinator_periodically(coordinators):
 async def test_a_failing_sweep_does_not_stop_the_others(coordinators):
     broken, healthy = FakeCoordinator(error=RuntimeError("docker unavailable")), FakeCoordinator()
     worker = make_worker([sandboxed("a", broken), sandboxed("b", healthy)])
-    await worker._asweep_warm_computers()
+    await worker._sweep_warm_computers()
     assert broken.sweeps == 1 and healthy.finished == 1
 
 
@@ -86,8 +89,22 @@ async def test_stop_waits_for_a_sweep_in_progress(coordinators):
             break
         await asyncio.sleep(0.01)
     await worker.stop()
-    # A cancelled sweep could release a computer from its binding and never remove it.
     assert slow.finished == slow.sweeps == 1
+
+
+@pytest.mark.asyncio
+async def test_stop_cancels_a_sweep_that_outlasts_the_stop_timeout(coordinators):
+    slow = FakeCoordinator(delay=30)
+    worker = make_worker([sandboxed("a", slow)])
+    worker.stop_timeout = 1
+    await worker.start()
+    for _ in range(100):
+        if slow.sweeps:
+            break
+        await asyncio.sleep(0.01)
+    # The sweep shares the drain's stop_timeout instead of adding its own.
+    await asyncio.wait_for(worker.stop(), 10)
+    assert slow.sweeps == 1 and slow.finished == 0
 
 
 @pytest.mark.asyncio
@@ -102,4 +119,4 @@ async def test_no_sandboxed_agents_means_no_sweep(coordinators, monkeypatch):
     await worker.start()
     await asyncio.sleep(0.15)
     await worker.stop()
-    assert worker._warm_sweep is None
+    assert worker._warm_sweep_task is None

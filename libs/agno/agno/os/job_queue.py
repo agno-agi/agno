@@ -8,7 +8,7 @@ the corresponding runtime pieces, including the DB-backed queue worker
 import asyncio
 import contextlib
 import inspect
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Protocol, Sequence, Union
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Protocol, Sequence, Tuple, Union
 
 from agno.job_queue.config import QueueConfig, RedisCoordination
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -648,6 +648,7 @@ class QueueWorker:
         self.authorization_app = authorization_app
         self._company_db: Any = None
         self._company_schedule_db: Any = None
+        self._sandbox_agents: List[Any] = []
         self.store = store
         self.resolve_component = resolve_component
         self.config = config
@@ -690,9 +691,7 @@ class QueueWorker:
         self._heartbeat_thread: Optional[Any] = None
         self._heartbeat_stop: Optional[Any] = None
         self._in_flight: Dict[str, asyncio.Task] = {}
-        # Sandboxed agents whose warm computers this worker sweeps; set by the AgentOS lifespan.
-        self._sandbox_agents: List[Any] = []
-        self._warm_sweep: Optional[asyncio.Task] = None
+        self._warm_sweep_task: Optional[asyncio.Task] = None
 
     async def start(self) -> None:
         if self._running:
@@ -861,13 +860,8 @@ class QueueWorker:
             with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
                 await asyncio.wait_for(self._task, timeout=5)
         self._task = None
-        if self._warm_sweep is not None:
-            # Each retirement is shielded, so even a cancelled sweep removes the computer it released.
-            await asyncio.wait({self._warm_sweep}, timeout=self.stop_timeout)
-            self._warm_sweep.cancel()
-            with contextlib.suppress(BaseException):
-                await self._warm_sweep
-            self._warm_sweep = None
+        # A warm sweep keeps running through the drain and shares its stop_timeout.
+        deadline = asyncio.get_running_loop().time() + self.stop_timeout
 
         # Drain: give in-flight runs a chance to finish. Stamp the drain
         # cause FIRST: on drain timeout the wait_for cancels the gather,
@@ -899,6 +893,15 @@ class QueueWorker:
         if self._in_flight:
             await asyncio.gather(*self._in_flight.values(), return_exceptions=True)
         self._in_flight.clear()
+        # Each retirement is shielded, so a cancelled sweep still removes the computer it released.
+        if self._warm_sweep_task is not None:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining > 0:
+                await asyncio.wait({self._warm_sweep_task}, timeout=remaining)
+            self._warm_sweep_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
+                await asyncio.wait_for(self._warm_sweep_task, timeout=5)
+        self._warm_sweep_task = None
         # The heartbeat exits on its own once nothing is in flight (its loop
         # condition covers the drain and the straggler window); the cancel is
         # a backstop for a loop parked mid-sleep
@@ -933,9 +936,9 @@ class QueueWorker:
                 if (
                     self._sandbox_agents
                     and (last_warm_sweep is None or _time.monotonic() - last_warm_sweep >= _WARM_SWEEP_SECONDS)
-                    and (self._warm_sweep is None or self._warm_sweep.done())
+                    and (self._warm_sweep_task is None or self._warm_sweep_task.done())
                 ):
-                    self._warm_sweep = asyncio.create_task(self._asweep_warm_computers())
+                    self._warm_sweep_task = asyncio.create_task(self._sweep_warm_computers())
                     last_warm_sweep = _time.monotonic()
                 # The sweep keeps its own cadence (at most once per poll
                 # interval): a local wake exists to claim faster, and under a
@@ -956,30 +959,6 @@ class QueueWorker:
             except Exception as e:
                 log_error(f"Job queue poll error: {e}")
                 await asyncio.sleep(self.config.poll_interval)
-
-    async def _asweep_warm_computers(self) -> None:
-        """Retire the sandbox computers kept warm past their window, for every sandboxed agent served here.
-
-        A session that never sends another turn would otherwise keep its paused computer
-        forever. Each release is a per-row compare-and-set, so every replica may sweep.
-        """
-        from agno.sandbox import _harness
-
-        swept: List[Any] = []
-        for agent in self._sandbox_agents:
-            try:
-                coordinator = _harness.coordinator(agent)
-                if any(coordinator is seen for seen in swept):
-                    continue
-                swept.append(coordinator)
-                removed = await coordinator.asweep_warm()
-            except Exception as e:
-                log_warning(f"Sandbox warm computer sweep for agent {agent.get_id()} failed: {e}")
-                continue
-            if removed:
-                log_info(
-                    f"Retired {removed} sandbox computer(s) kept warm past their window for agent {agent.get_id()}"
-                )
 
     def wake(self) -> None:
         """Nudge the poll loop to claim NOW. Called by the accept seams after
@@ -1078,6 +1057,32 @@ class QueueWorker:
     def _prune_in_flight(self) -> None:
         for job_id in [jid for jid, t in self._in_flight.items() if t.done()]:
             self._in_flight.pop(job_id, None)
+
+    async def _sweep_warm_computers(self) -> None:
+        """Retire the sandbox computers kept warm past their window, for every sandboxed agent served here.
+
+        A session that never sends another turn would otherwise keep its paused computer
+        forever. Each release is a per-row compare-and-set, so every replica may sweep.
+        """
+        from agno.sandbox import _harness
+
+        # Resolve every coordinator first, so each one knows all the agents it sweeps for.
+        coordinators: Dict[int, Tuple[Any, Any]] = {}
+        for agent in self._sandbox_agents:
+            try:
+                coordinator = _harness.coordinator(agent)
+            except Exception as e:
+                log_warning(f"Job queue: warm sweep failed for agent {agent.get_id()}: {e}")
+                continue
+            coordinators.setdefault(id(coordinator), (agent, coordinator))
+        for agent, coordinator in coordinators.values():
+            try:
+                removed = await coordinator.asweep_warm()
+            except Exception as e:
+                log_warning(f"Job queue: warm sweep failed for agent {agent.get_id()}: {e}")
+                continue
+            if removed:
+                log_info(f"Job queue warm sweep: retired {removed} warm sandbox computer(s) for agent {agent.get_id()}")
 
     async def _sweep_exhausted(self) -> None:
         """Fail exhausted stale jobs visibly. Ownership FIRST: acquire the
@@ -3395,14 +3400,9 @@ async def queue_lifespan(app: Any, agent_os: Any):
         authorization_app=app,
     )
     worker._company_db = getattr(agent_os, "_company_db", None)
-    from agno.agents.base import BaseExternalAgent
-
-    worker._sandbox_agents = [
-        entry
-        for entry in agent_os.agents or []
-        if isinstance(entry, BaseExternalAgent) and entry.sandbox is not None and entry.db is not None
-    ]
     worker._company_schedule_db = agent_os.db
+    if callable(getattr(agent_os, "_sandboxed_agents", None)):
+        worker._sandbox_agents = agent_os._sandboxed_agents()
     app.state.queue_worker = worker
     set_active_queue_worker(worker)
     try:

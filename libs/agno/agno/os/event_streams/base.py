@@ -39,14 +39,9 @@ class BaseEventStream(ABC):
     for concurrent use from multiple asyncio tasks.
     """
 
-    @property
-    def shared(self) -> bool:
-        """Whether events added on one replica can be replayed and tailed from every other replica.
-
-        False means each replica only carries the runs its own worker executes; override to
-        return True for a distributed stream.
-        """
-        return False
+    # Whether events added on one replica can be replayed and tailed from every other replica;
+    # a distributed stream sets it to True.
+    shared: bool = False
 
     # ------------------------------------------------------------------
     # Run lifecycle

@@ -444,7 +444,7 @@ async def run_stream_served_here(run_id: str) -> bool:
     """
     from agno.os.event_streams import get_event_stream
 
-    if getattr(get_event_stream(), "shared", False):
+    if getattr(get_event_stream(), "shared", False) is True:
         return True
     try:
         job = await _run_ticket(run_id)
@@ -470,7 +470,7 @@ async def _tail_closing_frame(run_id: str, job: Optional[Dict[str, Any]], event_
         if stream_status is not None and stream_status not in (RunStatus.pending, RunStatus.running):
             return None
         message = "The run finished but its stream lost the terminal event; poll the run for the complete output."
-    elif getattr(event_stream, "shared", False) or _ticket_runs_here(job):
+    elif getattr(event_stream, "shared", False) is True or _ticket_runs_here(job):
         return None
     else:
         message = (
@@ -534,13 +534,15 @@ async def queued_run_tail_streamer(
             await tail_queue.put(None)
 
     pump_task = asyncio.create_task(_pump())
-    # A replica-local stream cannot see another replica claim the job, so it checks often until a claim.
-    watch_claim = not getattr(event_stream, "shared", False)
+    # A replica-local stream cannot see another replica claim the job, so it checks often in the
+    # first idle window; a later claim is caught by the idle recheck.
+    watch_claim = getattr(event_stream, "shared", False) is not True
+    watch_until = asyncio.get_running_loop().time() + _TAIL_IDLE_RECHECK_SECONDS
     idle = 0.0
     try:
         while True:
             wait = _TAIL_IDLE_RECHECK_SECONDS
-            if watch_claim:
+            if watch_claim and asyncio.get_running_loop().time() < watch_until:
                 wait = min(_TAIL_CLAIM_RECHECK_SECONDS, wait)
             try:
                 item = await asyncio.wait_for(tail_queue.get(), timeout=wait)
@@ -570,19 +572,8 @@ async def queued_run_tail_streamer(
         with contextlib.suppress(Exception):
             status = await event_stream.get_run_status(run_id)
             if status is None or status in (RunStatus.pending, RunStatus.running):
-                from agno.os.job_queue import get_active_queue_worker
-
-                worker = get_active_queue_worker()
-                job = await worker.store.get_job(run_id) if worker is not None else None
-                if (
-                    job is not None
-                    and job.get("job_type", "run") == "run"
-                    and job.get("status")
-                    in (
-                        "queued",
-                        "running",
-                    )
-                ):
+                job = await _run_ticket(run_id)
+                if job is not None and job.get("status") in ("queued", "running"):
                     payload = {
                         "event": "stream_expired",
                         "run_id": run_id,

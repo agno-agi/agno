@@ -254,13 +254,14 @@ class SandboxCoordinator:
         return self.store._sync(self.aretire_computer, session_id, agent_id=agent_id, user_id=user_id)
 
     async def asweep_warm(self) -> int:
-        """Retire every warm computer whose window has ended. Returns how many were removed.
+        """Retire every warm computer whose window has ended.
 
         A session's next claim retires its own stale computer, but a session that never
-        returns would otherwise keep a paused container forever. Only the sessions of
-        ``agent_ids`` are swept: another agent on the same tables may use another provider,
-        which this one cannot remove. AgentOS's queue worker runs this every few minutes;
-        each release is a per-row compare-and-set, so replicas sweeping at the same time are safe.
+        returns would otherwise keep a paused container forever. Only the sessions of this
+        coordinator's ``agent_ids`` are swept when it is not empty: another agent on the same
+        tables may use another provider, which this one cannot remove. Each release is a
+        per-row compare-and-set, so replicas sweeping at the same time are safe. Returns how
+        many were removed.
         """
         now = time.time()
         removed = 0
@@ -274,7 +275,7 @@ class SandboxCoordinator:
             return True
 
         for session_id, agent_id, user_id in await self.store.aexpired_warm(now, sorted(self.agent_ids)):
-            # Shielded: a computer released from its binding must still be removed if the sweep is cancelled.
+            # Shielded so a cancelled sweep still removes a computer it released from its binding.
             if await _settled(retire(session_id, agent_id, user_id)):
                 removed += 1
         return removed
@@ -584,13 +585,13 @@ class SandboxCoordinator:
                 if record.get("computer") is not None and record.get("warm_until") is None:
                     # A retry reattaches to this turn's computer. If its host is gone, replace it from the
                     # checkpoint in this attempt: the turn reruns either way, and the queue budgets reruns.
-                    lost = SandboxHandle(**record["computer"])
-                    current = await self.provider.aget(lost.provider_ref)
+                    handle = SandboxHandle(**record["computer"])
+                    current = await self.provider.aget(handle.provider_ref)
                     # A native approval turn is never replayed: its pending requests belong to the lost execution.
                     if (current is not None and current.state == "running") or config.get("_native_hitl", False):
                         return record
-                    await self.provider.adestroy(lost)
-                    if await self.provider.aget(lost.provider_ref) is not None:
+                    await self.provider.adestroy(handle)
+                    if await self.provider.aget(handle.provider_ref) is not None:
                         raise SandboxError("Provider has not confirmed compute removal")
                     record.update(generation=record["generation"] + 1, computer=None, execution_id=uuid4().hex)
                     allocation = allocation_for(record)

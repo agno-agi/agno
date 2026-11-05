@@ -63,6 +63,8 @@ agent = ClaudeAgent(
         checkpoints=checkpoints,
     ),
 )
+# Optional: adds live streams and resume from any replica.
+redis_url = os.getenv("AGNO_SANDBOX_REDIS_URL")
 agent_os = AgentOS(
     id="sandbox-claude",
     agents=[agent],
@@ -70,9 +72,7 @@ agent_os = AgentOS(
     queue=QueueConfig(
         durable=True,
         db=db,
-        redis=RedisCoordination(url=os.environ["AGNO_SANDBOX_REDIS_URL"])
-        if os.getenv("AGNO_SANDBOX_REDIS_URL")
-        else None,
+        redis=RedisCoordination(url=redis_url) if redis_url else None,
     ),
     telemetry=False,
 )

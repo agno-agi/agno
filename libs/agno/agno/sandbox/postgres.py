@@ -1276,18 +1276,17 @@ class _SandboxStore:
         """
 
         def read(connection: Connection) -> bool:
-            binding = connection.execute(
-                select(self.bindings.c.run_id, self.bindings.c.record).where(self._key(session_id))
-            ).first()
-            if binding is not None and binding.run_id == run_id and binding.record.get("stop_status") == "CANCELLED":
+            binding = connection.execute(select(self.bindings).where(self._key(session_id))).mappings().one_or_none()
+            if (
+                binding is not None
+                and binding["run_id"] == run_id
+                and binding["record"].get("stop_status") == "CANCELLED"
+            ):
                 return True
             status = connection.execute(select(self.runs.c.status).where(self.runs.c.run_id == run_id)).scalar()
             return str(status).upper() == "CANCELLED"
 
         return await self._transaction(read)
-
-    def cancelled_elsewhere(self, session_id: str, run_id: str) -> bool:
-        return self._sync(self.acancelled_elsewhere, session_id, run_id)
 
     async def aprepare(self, run: Dict[str, Any]) -> None:
         """Insert an accepted queued run without rewriting existing session recovery metadata."""
@@ -1370,20 +1369,20 @@ class _SandboxStore:
         return self._sync(self.arelease_warm, session_id, agent_id=agent_id, user_id=user_id, before=before)
 
     async def aexpired_warm(self, before: float, agent_ids: List[str]) -> list:
-        """These agents' sessions whose idle binding keeps a computer whose warm window ended before ``before``."""
-        if not agent_ids:
-            return []
+        """Sessions whose idle binding keeps a computer whose warm window ended before ``before``.
+
+        Only those of ``agent_ids`` when it is not empty.
+        """
 
         def expired(connection: Connection) -> list:
-            rows = connection.execute(
-                select(self.bindings.c.session_id, self.bindings.c.agent_id, self.bindings.c.user_id).where(
-                    (self.bindings.c.namespace == self.namespace)
-                    & self.bindings.c.agent_id.in_(agent_ids)
-                    & (self.bindings.c.record["phase"].astext == "idle")
-                    & (self.bindings.c.record["warm_until"].astext.cast(Float) < before)
-                )
-            ).all()
-            return [tuple(row) for row in rows]
+            query = select(self.bindings.c.session_id, self.bindings.c.agent_id, self.bindings.c.user_id).where(
+                (self.bindings.c.namespace == self.namespace)
+                & (self.bindings.c.record["phase"].astext == "idle")
+                & (self.bindings.c.record["warm_until"].astext.cast(Float) < before)
+            )
+            if agent_ids:
+                query = query.where(self.bindings.c.agent_id.in_(agent_ids))
+            return [tuple(row) for row in connection.execute(query).all()]
 
         return await self._transaction(expired)
 
