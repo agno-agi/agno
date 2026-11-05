@@ -309,7 +309,7 @@ class BaseDb(ABC):
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         component_metrics_table: Optional[str] = None,
-        user_metrics_table: Optional[str] = None,
+        aggregate_metrics_table: Optional[str] = None,
         metrics_refreshes_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
@@ -365,12 +365,14 @@ class BaseDb(ABC):
             )
         else:
             self.component_metrics_table_name = "agno_component_metrics"
-        if user_metrics_table:
-            self.user_metrics_table_name = user_metrics_table
+        if aggregate_metrics_table:
+            self.aggregate_metrics_table_name = aggregate_metrics_table
         elif session_table and session_table != "agno_sessions":
-            self.user_metrics_table_name = bound_index_name(type(self).__name__, f"{session_table}_user_metrics")
+            self.aggregate_metrics_table_name = bound_index_name(
+                type(self).__name__, f"{session_table}_aggregate_metrics"
+            )
         else:
-            self.user_metrics_table_name = "agno_user_metrics"
+            self.aggregate_metrics_table_name = "agno_aggregate_metrics"
         if metrics_refreshes_table:
             self.metrics_refreshes_table_name = metrics_refreshes_table
         elif session_table and session_table != "agno_sessions":
@@ -478,7 +480,7 @@ class BaseDb(ABC):
             "runs_table": self.runs_table_name,
             "memory_table": self.memory_table_name,
             "component_metrics_table": self.component_metrics_table_name,
-            "user_metrics_table": self.user_metrics_table_name,
+            "aggregate_metrics_table": self.aggregate_metrics_table_name,
             "metrics_refreshes_table": self.metrics_refreshes_table_name,
             "eval_table": self.eval_table_name,
             "knowledge_table": self.knowledge_table_name,
@@ -521,7 +523,7 @@ class BaseDb(ABC):
             memory_table=data.get("memory_table"),
             metrics_table=data.get("metrics_table"),
             component_metrics_table=data.get("component_metrics_table"),
-            user_metrics_table=data.get("user_metrics_table"),
+            aggregate_metrics_table=data.get("aggregate_metrics_table"),
             metrics_refreshes_table=data.get("metrics_refreshes_table"),
             eval_table=data.get("eval_table"),
             knowledge_table=data.get("knowledge_table"),
@@ -945,7 +947,7 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     def get_metrics_versions(self, starting_date: date, ending_date: date) -> Optional[Dict[str, int]]:
-        """The version of each everyone user metrics row in the date range, ``None`` until a first calculation."""
+        """The version of each everyone aggregate metrics row in the date range, ``None`` until a first calculation."""
         raise NotImplementedError
 
     def get_metrics_refresh_status(self) -> Optional[Dict[str, Any]]:
@@ -2821,7 +2823,7 @@ class AsyncBaseDb(ABC):
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         component_metrics_table: Optional[str] = None,
-        user_metrics_table: Optional[str] = None,
+        aggregate_metrics_table: Optional[str] = None,
         metrics_refreshes_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
@@ -2869,12 +2871,14 @@ class AsyncBaseDb(ABC):
             )
         else:
             self.component_metrics_table_name = "agno_component_metrics"
-        if user_metrics_table:
-            self.user_metrics_table_name = user_metrics_table
+        if aggregate_metrics_table:
+            self.aggregate_metrics_table_name = aggregate_metrics_table
         elif session_table and session_table != "agno_sessions":
-            self.user_metrics_table_name = bound_index_name(type(self).__name__, f"{session_table}_user_metrics")
+            self.aggregate_metrics_table_name = bound_index_name(
+                type(self).__name__, f"{session_table}_aggregate_metrics"
+            )
         else:
-            self.user_metrics_table_name = "agno_user_metrics"
+            self.aggregate_metrics_table_name = "agno_aggregate_metrics"
         if metrics_refreshes_table:
             self.metrics_refreshes_table_name = metrics_refreshes_table
         elif session_table and session_table != "agno_sessions":
@@ -2933,7 +2937,7 @@ class AsyncBaseDb(ABC):
             "runs_table": self.runs_table_name,
             "memory_table": self.memory_table_name,
             "component_metrics_table": self.component_metrics_table_name,
-            "user_metrics_table": self.user_metrics_table_name,
+            "aggregate_metrics_table": self.aggregate_metrics_table_name,
             "metrics_refreshes_table": self.metrics_refreshes_table_name,
             "eval_table": self.eval_table_name,
             "knowledge_table": self.knowledge_table_name,
@@ -2969,7 +2973,7 @@ class AsyncBaseDb(ABC):
             memory_table=data.get("memory_table"),
             metrics_table=data.get("metrics_table"),
             component_metrics_table=data.get("component_metrics_table"),
-            user_metrics_table=data.get("user_metrics_table"),
+            aggregate_metrics_table=data.get("aggregate_metrics_table"),
             metrics_refreshes_table=data.get("metrics_refreshes_table"),
             eval_table=data.get("eval_table"),
             knowledge_table=data.get("knowledge_table"),
@@ -3357,7 +3361,7 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     async def get_metrics_versions(self, starting_date: date, ending_date: date) -> Optional[Dict[str, int]]:
-        """The version of each everyone user metrics row in the date range, ``None`` until a first calculation."""
+        """The version of each everyone aggregate metrics row in the date range, ``None`` until a first calculation."""
         raise NotImplementedError
 
     async def get_metrics_refresh_status(self) -> Optional[Dict[str, Any]]:

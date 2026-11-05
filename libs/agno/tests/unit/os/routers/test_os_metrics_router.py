@@ -156,7 +156,7 @@ def _db(db_id, *rows):
     db = MagicMock()
     db.id = db_id
     db.db_engine = None
-    db.user_metrics_table_name = "agno_user_metrics"
+    db.aggregate_metrics_table_name = "agno_aggregate_metrics"
     db.get_component_metrics = MagicMock(side_effect=_totals(*rows))
     db.get_metrics_totals = MagicMock(side_effect=_window_totals(*rows))
     return db

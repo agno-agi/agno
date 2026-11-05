@@ -3382,7 +3382,7 @@ class AgentOS:
                             (
                                 db.metrics_table_name,
                                 db.component_metrics_table_name,
-                                db.user_metrics_table_name,
+                                db.aggregate_metrics_table_name,
                                 db.metrics_refreshes_table_name,
                             )
                             # A remote database lists the tables its own AgentOS listed
