@@ -7,6 +7,17 @@ import pytest
 
 pytest.importorskip("google.genai")
 
+from google.genai.types import (
+    Candidate,
+    Content,
+    GenerateContentResponse,
+    GroundingChunk,
+    GroundingChunkRetrievedContext,
+    GroundingChunkWeb,
+    GroundingMetadata,
+    Part,
+)
+
 from agno.exceptions import ModelProviderError
 from agno.media import File, Image, Video
 from agno.models.google.gemini import Gemini
@@ -877,3 +888,49 @@ class TestFileSearchToolWiring:
             return  # No tools at all, which is the expected case
         file_search_tools = [t for t in config.tools if getattr(t, "file_search", None) is not None]
         assert len(file_search_tools) == 0
+
+
+def _grounding_response(chunks):
+    return GenerateContentResponse(
+        candidates=[
+            Candidate(
+                content=Content(role="model", parts=[Part(text="answer")]),
+                grounding_metadata=GroundingMetadata(grounding_chunks=chunks),
+            )
+        ]
+    )
+
+
+@pytest.mark.parametrize("parse_method", ["_parse_provider_response", "_parse_provider_response_delta"])
+def test_gemini_extracts_retrieved_context_citations(parse_method):
+    model = Gemini(api_key="test-key")
+    response = _grounding_response(
+        [GroundingChunk(retrieved_context=GroundingChunkRetrievedContext(uri="gs://datastore/doc", title="Doc"))]
+    )
+
+    parsed = getattr(model, parse_method)(response)
+
+    assert parsed.citations is not None
+    assert [(citation.url, citation.title) for citation in parsed.citations.urls] == [("gs://datastore/doc", "Doc")]
+
+
+@pytest.mark.parametrize("parse_method", ["_parse_provider_response", "_parse_provider_response_delta"])
+def test_gemini_preserves_web_and_deduplicates_retrieved_context_citations(parse_method):
+    model = Gemini(api_key="test-key")
+    response = _grounding_response(
+        [
+            GroundingChunk(web=GroundingChunkWeb(uri="https://example.com", title="Example")),
+            GroundingChunk(retrieved_context=GroundingChunkRetrievedContext(uri="gs://datastore/doc", title="Doc")),
+            GroundingChunk(
+                retrieved_context=GroundingChunkRetrievedContext(uri="gs://datastore/doc", title="Duplicate")
+            ),
+        ]
+    )
+
+    parsed = getattr(model, parse_method)(response)
+
+    assert parsed.citations is not None
+    assert [(citation.url, citation.title) for citation in parsed.citations.urls] == [
+        ("https://example.com", "Example"),
+        ("gs://datastore/doc", "Doc"),
+    ]
