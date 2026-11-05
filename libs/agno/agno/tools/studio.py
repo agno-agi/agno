@@ -1749,7 +1749,7 @@ class StudioTools(Toolkit):
             # A registry-referenced schema is stored as its class name (a
             # string). An inline one is shown as plain JSON Schema only when
             # rewrapping reproduces the stored format, so passing the view back
-            # to an edit never drops its name or strict setting.
+            # to an edit never drops its name.
             if isinstance(schema, str) and schema:
                 view["output_schema_name"] = schema
             elif isinstance(schema, dict):
@@ -5771,6 +5771,14 @@ def _inline_output_schema(output_schema: Dict[str, Any]) -> tuple:
     """(canonical output_schema dict, error) for an inline JSON Schema; an
     already-wrapped response format is unwrapped and rewrapped canonically."""
     wrapped = unwrap_json_schema_response_format(output_schema)
+    if wrapped is not None:
+        nested = output_schema.get("json_schema")
+        if "strict" in (nested if isinstance(nested, dict) else output_schema):
+            # A loaded schema runs strict or not per the model's strict_output, so a stored flag would do nothing
+            return None, error_result(
+                "invalid_request",
+                "output_schema cannot set strict; strict mode is the model's strict_output setting",
+            )
     schema = wrapped.schema if wrapped is not None else output_schema
     if not is_object_schema(schema):
         return None, error_result(
@@ -5791,7 +5799,7 @@ def _inline_output_schema(output_schema: Dict[str, Any]) -> tuple:
         return None, error_result("invalid_request", f"output_schema is not supported: {e}")
     if wrapped is None:
         return json_schema_response_format(schema), None
-    return json_schema_response_format(schema, name=wrapped.name, strict=wrapped.strict), None
+    return json_schema_response_format(schema, name=wrapped.name), None
 
 
 def _shared_machine_disclosures(learning_name: str, machine: Any, component: Any) -> List[str]:
