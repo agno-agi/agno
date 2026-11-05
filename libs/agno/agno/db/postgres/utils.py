@@ -591,7 +591,7 @@ def _metrics_tool_calls(run_data: Any) -> Any:
         .select_from(
             tool_call.outerjoin(copied_tool_call, copied_tool_call.c.value == tool_call.c.value["tool_call_id"])
         )
-        .where(copied_tool_call.c.value.is_(None))
+        .where(func.jsonb_typeof(tool_call.c.value) == "object", copied_tool_call.c.value.is_(None))
         .scalar_subquery()
     )
 

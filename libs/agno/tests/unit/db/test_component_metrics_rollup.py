@@ -794,6 +794,7 @@ def test_tool_calls_count_per_toolkit_and_tool():
             _tool_call("search", duration=1.2, error=True),
             _tool_call("create_issue", duration=0.05, toolkit="github"),
             _tool_call(None, duration=9.0),
+            "not a tool call",
         ],
     )
     second = _run(run_id="run-2", tools=[_tool_call("search", duration=0.1)])

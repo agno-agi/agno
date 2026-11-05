@@ -1410,7 +1410,7 @@ def _add_metrics_tool_calls(totals: Dict[str, Any], run_data: Dict[str, Any]) ->
         if message.get("role") == "tool" and message.get("tool_call_id")
     }
     for tool_call in run_data.get("tools") or []:
-        if not tool_call.get("tool_name"):
+        if not isinstance(tool_call, dict) or not tool_call.get("tool_name"):
             continue
         # A tool call still paused or rejected by the user never ran, and one a forked run copied counts on the run it
         # was forked from
