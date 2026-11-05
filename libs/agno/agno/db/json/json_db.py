@@ -28,8 +28,11 @@ from agno.db.utils import (
     deserialize_sessions,
     drop_legacy_metrics,
     filter_context_runs,
+    filter_run_rows,
     merge_runs_table_with_legacy_blob,
     metrics_starting_date_from_records,
+    session_rows_have_unindexed_runs,
+    with_stored_run_index,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -225,11 +228,13 @@ class JsonDb(BaseDb):
         """Replace the runs file with the given list of rows."""
         self._write_json_file(self.runs_table_name, rows)
 
-    def _get_session_runs_data(self, session_id: str) -> List[Dict[str, Any]]:
+    def _get_session_runs_data(self, session_id: str, with_run_index: bool = False) -> List[Dict[str, Any]]:
         """Get raw run_data dicts for the given session, in insertion order."""
         all_runs = self._read_runs_file(create_table_if_not_found=False)
         rows = [r for r in all_runs if r.get("session_id") == session_id]
         rows.sort(key=lambda r: (r.get("run_index") or 0, r.get("created_at") or 0))
+        if with_run_index:
+            return with_stored_run_index((r["run_data"], r.get("run_index")) for r in rows if "run_data" in r)
         return [r["run_data"] for r in rows if "run_data" in r]
 
     def _get_sessions_runs(self, session_ids: List[str]) -> Optional[Dict[str, List[Dict[str, Any]]]]:
@@ -368,12 +373,18 @@ class JsonDb(BaseDb):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
-        status: Optional[RunStatus] = None,
+        status: Optional[Union[RunStatus, str, List[Union[RunStatus, str]]]] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        before_run_index: Optional[int] = None,
+        after_run_index: Optional[int] = None,
+        created_after: Optional[int] = None,
+        created_before: Optional[int] = None,
+        top_level_only: bool = False,
+        parent_run_ids: Optional[List[str]] = None,
     ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
         from agno.db.utils import validate_pagination
 
@@ -384,15 +395,22 @@ class JsonDb(BaseDb):
                 rows = [r for r in rows if r.get("session_id") == session_id]
             if user_id is not None:
                 rows = [r for r in rows if r.get("user_id") == user_id]
+            rows = filter_run_rows(
+                rows,
+                status=status,
+                before_run_index=before_run_index,
+                after_run_index=after_run_index,
+                created_after=created_after,
+                created_before=created_before,
+                top_level_only=top_level_only,
+                parent_run_ids=parent_run_ids,
+            )
             if agent_id is not None:
                 rows = [r for r in rows if r.get("agent_id") == agent_id]
             if team_id is not None:
                 rows = [r for r in rows if r.get("team_id") == team_id]
             if workflow_id is not None:
                 rows = [r for r in rows if r.get("workflow_id") == workflow_id]
-            if status is not None:
-                status_value = status.value if isinstance(status, RunStatus) else status
-                rows = [r for r in rows if r.get("status") == status_value]
 
             total_count = len(rows)
 
@@ -412,6 +430,21 @@ class JsonDb(BaseDb):
             return [deserialize_run(r.get("run_type"), r["run_data"]) for r in rows]
         except Exception as e:
             log_error(f"Exception reading runs: {str(e)}")
+            raise e
+
+    def has_unindexed_runs(self, session_id: str) -> bool:
+        """Whether the session still embeds legacy runs or holds a run row without a run_index."""
+        try:
+            sessions = self._read_json_file(self.session_table_name, create_table_if_not_found=False)
+            session = next((s for s in sessions if s.get("session_id") == session_id), None)
+            if session is None:
+                return False
+            run_rows = [
+                r for r in self._read_runs_file(create_table_if_not_found=False) if r.get("session_id") == session_id
+            ]
+            return session_rows_have_unindexed_runs(session, run_rows)
+        except Exception as e:
+            log_error(f"Exception checking for unindexed runs: {str(e)}")
             raise e
 
     def _scrub_run_ids_from_legacy_blob(self, run_ids: set) -> None:
@@ -550,6 +583,7 @@ class JsonDb(BaseDb):
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
         runs_limit: Optional[int] = None,
+        include_runs: bool = True,
     ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession, Dict[str, Any]]]:
         """Read a session from the JSON file.
 
@@ -558,6 +592,7 @@ class JsonDb(BaseDb):
             session_type (Optional[SessionType]): The type of the session to read.
             user_id (Optional[str]): The ID of the user to read the session for.
             deserialize (Optional[bool]): Whether to deserialize the session.
+            include_runs (bool): Set False to skip reading runs; the session's runs are None.
 
         Returns:
             Union[Session, Dict[str, Any], None]:
@@ -575,13 +610,16 @@ class JsonDb(BaseDb):
                     if user_id is not None and session_data.get("user_id") != user_id:
                         continue
 
-                    # Attach runs from the runs file, merged with any legacy `runs` field
-                    runs_data = self._get_session_runs_data(session_id)
-                    session_data["runs"] = merge_runs_table_with_legacy_blob(runs_data, session_data.get("runs"))
-                    if runs_limit is not None:
-                        # No query engine to push "last N" down: filter+slice in memory to
-                        # match the SQL fast path (drop member/skip-status runs, then last N).
-                        session_data["runs"] = filter_context_runs(session_data["runs"] or [])[-runs_limit:]
+                    if not include_runs:
+                        session_data["runs"] = None
+                    else:
+                        # Attach runs from the runs file, merged with any legacy `runs` field
+                        runs_data = self._get_session_runs_data(session_id, with_run_index=True)
+                        session_data["runs"] = merge_runs_table_with_legacy_blob(runs_data, session_data.get("runs"))
+                        if runs_limit is not None:
+                            # No query engine to push "last N" down: filter+slice in memory to
+                            # match the SQL fast path (drop member/skip-status runs, then last N).
+                            session_data["runs"] = filter_context_runs(session_data["runs"] or [])[-runs_limit:]
 
                     if not deserialize:
                         return session_data

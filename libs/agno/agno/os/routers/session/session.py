@@ -48,6 +48,7 @@ from agno.os.services.sessions import (
     get_sessions_page,
     run_status_matches,
     search_sessions_page,
+    stored_run_index,
 )
 from agno.os.services.sessions import get_session_runs as get_session_runs_from_service
 from agno.os.settings import AgnoAPISettings
@@ -1095,10 +1096,10 @@ def attach_routes(
         # TODO: Move this filtering into the DB layer
         target_run = None
         target_run_index = None
-        for run_index, run in enumerate(runs):
+        for position, run in enumerate(runs):
             if run.get("run_id") == run_id:
                 target_run = run
-                target_run_index = run_index
+                target_run_index = stored_run_index(run, position)
                 break
 
         if not target_run:

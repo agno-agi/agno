@@ -9,6 +9,7 @@ Sync ``BaseDb`` calls are offloaded to a threadpool so an async surface (MCP or
 REST) never blocks its event loop on database I/O.
 """
 
+import json
 from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, NamedTuple, Optional, Set, Tuple, Type, Union
 
@@ -170,31 +171,36 @@ async def search_sessions_page(
     return await run_in_threadpool(lambda: db.search_sessions(**kwargs))
 
 
+async def _db_call(db: Union[BaseDb, AsyncBaseDb], method: str, **kwargs: Any) -> Any:
+    """Call a db method, offloading sync dbs to a threadpool."""
+    if isinstance(db, AsyncBaseDb):
+        return await getattr(db, method)(**kwargs)
+    return await run_in_threadpool(lambda: getattr(db, method)(**kwargs))
+
+
 async def _get_session_dict(
     db: Union[BaseDb, AsyncBaseDb],
     *,
     session_id: str,
     session_type: Optional[SessionType],
     user_id: Optional[str],
+    include_runs: bool = True,
 ) -> Tuple[Dict[str, Any], SessionType]:
     """Fetch a session as a raw dict, auto-detecting its type when not given.
 
     Auto-detection matters: local ``get_session`` does not filter by type in SQL,
     so a wrong caller-supplied default silently misparses rather than 404s.
     """
-    if isinstance(db, AsyncBaseDb):
-        session = await db.get_session(
-            session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False
-        )
-    else:
-        session = await run_in_threadpool(
-            lambda: db.get_session(
-                session_id=session_id,
-                session_type=session_type,
-                user_id=user_id,
-                deserialize=False,
-            )
-        )
+    run_options: Dict[str, Any] = {} if include_runs else {"include_runs": False}
+    session = await _db_call(
+        db,
+        "get_session",
+        session_id=session_id,
+        session_type=session_type,
+        user_id=user_id,
+        deserialize=False,
+        **run_options,
+    )
     if not session:
         raise SessionNotFoundError(session_id)
     if session_type is None:
@@ -243,6 +249,12 @@ def classify_session_run(
     """Render one persisted run dict as the schema matching its actual shape (None when not listed)."""
     schema_class = _run_schema_class(run, session_type)
     return _build_run_schema(run, schema_class, session_type, session) if schema_class is not None else None
+
+
+def stored_run_index(run: Dict[str, Any], position: int) -> int:
+    """The run_index the db stored for a run, or its position for a run that has none."""
+    run_index = run.get("run_index")
+    return run_index if isinstance(run_index, int) else position
 
 
 def run_status_matches(status: Optional[str], statuses: Set[str]) -> bool:
@@ -299,18 +311,18 @@ async def _get_indexed_session_runs(
 ) -> _IndexedSessionRuns:
     """The session's listed runs in chronological order, unfiltered.
 
-    ``run_index`` is the run's position in the session's full history, assigned
-    before any filter so it stays stable across filters and across endpoints.
+    ``run_index`` is the one the db stored with the run, so it survives deletes and
+    agrees across filters and endpoints; a legacy run without one gets its position.
     """
     session, resolved_type = await _get_session_dict(
         db, session_id=session_id, session_type=session_type, user_id=user_id
     )
 
     indexed: List[_IndexedRun] = []
-    for run_index, run in enumerate(session.get("runs") or []):
+    for position, run in enumerate(session.get("runs") or []):
         schema_class = _run_schema_class(run, resolved_type)
         if schema_class is not None:
-            indexed.append((run_index, run, schema_class))
+            indexed.append((stored_run_index(run, position), run, schema_class))
     return _IndexedSessionRuns(session, resolved_type, indexed)
 
 
@@ -367,12 +379,107 @@ async def get_session_runs_window(
     run_index are returned, to pass back as before/after_run_index for the
     older or newer page.
 
+    The page is read with ``get_runs`` filters, so its cost follows the page
+    size. Sessions whose runs ``get_runs`` cannot fully see (legacy embedded
+    runs, rows without a run_index, adapters without a runs store) are paged
+    from the whole session instead.
+
     Raises :class:`SessionNotFoundError` when the session does not exist and
     :class:`InvalidRunCursorError` when both cursors are given.
     """
     if before_run_index is not None and after_run_index is not None:
         raise InvalidRunCursorError("Pass at most one of before_run_index and after_run_index")
 
+    if await _db_call(db, "has_unindexed_runs", session_id=session_id):
+        return await _get_session_runs_window_in_memory(
+            db,
+            session_id=session_id,
+            limit=limit,
+            before_run_index=before_run_index,
+            after_run_index=after_run_index,
+            session_type=session_type,
+            user_id=user_id,
+            created_after=created_after,
+            created_before=created_before,
+            statuses=statuses,
+        )
+
+    session, resolved_type = await _get_session_dict(
+        db, session_id=session_id, session_type=session_type, user_id=user_id, include_runs=False
+    )
+    filters: Dict[str, Any] = dict(
+        session_id=session_id,
+        deserialize=False,
+        status=sorted(statuses) if statuses is not None else None,
+        created_after=created_after,
+        created_before=created_before,
+        top_level_only=True,
+    )
+    cursor: Dict[str, Any] = {}
+    if before_run_index is not None:
+        cursor["before_run_index"] = before_run_index
+    if after_run_index is not None:
+        cursor["after_run_index"] = after_run_index
+    window, matching = await _db_call(
+        db,
+        "get_runs",
+        **filters,
+        **cursor,
+        limit=limit,
+        sort_by="run_index",
+        sort_order="asc" if after_run_index is not None else "desc",
+    )
+    total_count = (await _db_call(db, "get_runs", **filters, limit=1))[1] if cursor else matching
+    window = sorted(window, key=_run_row_order)
+
+    selected: Dict[str, Dict[str, Any]] = {row["run_id"]: row for row in window}
+    frontier = list(selected)
+    while frontier:
+        children, _ = await _db_call(db, "get_runs", session_id=session_id, parent_run_ids=frontier, deserialize=False)
+        frontier = []
+        for row in children:
+            if row["run_id"] not in selected:
+                selected[row["run_id"]] = row
+                frontier.append(row["run_id"])
+
+    runs: List[AnyRunSchema] = []
+    for row in sorted(selected.values(), key=_run_row_order):
+        run = row["run_data"]
+        if isinstance(run, str):
+            run = json.loads(run)
+        schema_class = _run_schema_class(run, resolved_type)
+        if schema_class is not None:
+            run_schema = _build_run_schema(run, schema_class, resolved_type, session)
+            run_schema.run_index = row["run_index"]
+            runs.append(run_schema)
+
+    return SessionRunsWindow(
+        runs=runs,
+        total_count=total_count,
+        has_more=matching > limit,
+        oldest_run_index=window[0]["run_index"] if window else None,
+        newest_run_index=window[-1]["run_index"] if window else None,
+    )
+
+
+def _run_row_order(row: Dict[str, Any]) -> Tuple[bool, int, int, str]:
+    return (row.get("run_index") is None, row.get("run_index") or 0, row.get("created_at") or 0, row["run_id"])
+
+
+async def _get_session_runs_window_in_memory(
+    db: Union[BaseDb, AsyncBaseDb],
+    *,
+    session_id: str,
+    limit: int,
+    before_run_index: Optional[int],
+    after_run_index: Optional[int],
+    session_type: Optional[SessionType],
+    user_id: Optional[str],
+    created_after: Optional[int],
+    created_before: Optional[int],
+    statuses: Optional[Set[str]],
+) -> SessionRunsWindow:
+    """``get_session_runs_window`` over the whole session, for runs ``get_runs`` cannot page."""
     indexed = await _get_indexed_session_runs(db, session_id=session_id, session_type=session_type, user_id=user_id)
 
     listed_ids = {run.get("run_id") for _, run, _ in indexed.runs}

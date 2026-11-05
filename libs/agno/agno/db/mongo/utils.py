@@ -3,7 +3,7 @@
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 from agno.db.mongo.schemas import get_collection_indexes
@@ -134,6 +134,125 @@ def apply_pagination(
         if page is not None:
             query_args["skip"] = (page - 1) * limit
     return query_args
+
+
+# -- Run util methods --
+def build_runs_query(
+    *,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    agent_id: Optional[str] = None,
+    team_id: Optional[str] = None,
+    workflow_id: Optional[str] = None,
+    status: Any = None,
+    before_run_index: Optional[int] = None,
+    after_run_index: Optional[int] = None,
+    created_after: Optional[int] = None,
+    created_before: Optional[int] = None,
+    parent_run_ids: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """The runs-collection filter for the ``get_runs`` filters, except ``top_level_only``."""
+    from agno.db.utils import run_status_values
+
+    query: Dict[str, Any] = {}
+    for field, value in (
+        ("session_id", session_id),
+        ("user_id", user_id),
+        ("agent_id", agent_id),
+        ("team_id", team_id),
+        ("workflow_id", workflow_id),
+    ):
+        if value is not None:
+            query[field] = value
+    statuses = run_status_values(status)
+    if statuses is not None:
+        query["status"] = {"$in": statuses}
+    # Range operators never match a null or missing run_index / created_at
+    run_index_range: Dict[str, int] = {}
+    if before_run_index is not None:
+        run_index_range["$lt"] = before_run_index
+    if after_run_index is not None:
+        run_index_range["$gt"] = after_run_index
+    if run_index_range:
+        query["run_index"] = run_index_range
+    created_range: Dict[str, int] = {}
+    if created_after is not None:
+        created_range["$gte"] = created_after
+    if created_before is not None:
+        created_range["$lte"] = created_before
+    if created_range:
+        query["created_at"] = created_range
+    if parent_run_ids is not None:
+        query["parent_run_id"] = {"$in": list(parent_run_ids)}
+    return query
+
+
+def runs_sort_spec(sort_by: Optional[str] = None, sort_order: Optional[str] = None) -> List[Tuple[str, int]]:
+    """Sort keys for ``get_runs``; a single run_index key stays servable by the (session_id, run_index) index."""
+    if sort_by is None:
+        return [("run_index", 1), ("created_at", 1)]
+    return [(sort_by, 1 if sort_order == "asc" else -1)]
+
+
+def top_level_run_stages(runs_collection_name: str) -> List[Dict[str, Any]]:
+    """Aggregation stages keeping runs whose parent_run_id names no other run in the same session."""
+    return [
+        {
+            "$lookup": {
+                "from": runs_collection_name,
+                "let": {"parent_run_id": "$parent_run_id", "run_id": "$run_id", "session_id": "$session_id"},
+                "pipeline": [
+                    {
+                        "$match": {
+                            "$expr": {
+                                "$and": [
+                                    {"$eq": ["$run_id", "$$parent_run_id"]},
+                                    {"$ne": ["$run_id", "$$run_id"]},
+                                    {"$eq": ["$session_id", "$$session_id"]},
+                                ]
+                            }
+                        }
+                    },
+                    {"$limit": 1},
+                    {"$project": {"_id": 1}},
+                ],
+                "as": "_parent_run",
+            }
+        },
+        {"$match": {"_parent_run": {"$size": 0}}},
+        {"$project": {"_parent_run": 0}},
+    ]
+
+
+def runs_page_pipeline(
+    query: Dict[str, Any],
+    sort: List[Tuple[str, int]],
+    runs_collection_name: str,
+    limit: Optional[int] = None,
+    page: Optional[int] = None,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """(page pipeline, count pipeline) for a ``top_level_only`` ``get_runs``.
+
+    The page pipeline sorts before the parent lookup so an indexed sort streams and the limit
+    stops the lookups after one page.
+    """
+    top_level = top_level_run_stages(runs_collection_name)
+    count_pipeline: List[Dict[str, Any]] = [{"$match": query}, *top_level, {"$count": "count"}]
+    page_pipeline: List[Dict[str, Any]] = [{"$match": query}, {"$sort": dict(sort)}, *top_level]
+    query_args = apply_pagination({}, limit, page)
+    if query_args.get("skip"):
+        page_pipeline.append({"$skip": query_args["skip"]})
+    if query_args.get("limit"):
+        page_pipeline.append({"$limit": query_args["limit"]})
+    return page_pipeline, count_pipeline
+
+
+def legacy_runs_query(session_id: str) -> Dict[str, Any]:
+    """Filter matching the session document when it still embeds non-empty legacy runs."""
+    return {
+        "session_id": session_id,
+        "$or": [{"runs.0": {"$exists": True}}, {"runs": {"$type": "string", "$nin": ["", "[]", "null"]}}],
+    }
 
 
 # -- Metrics util methods --

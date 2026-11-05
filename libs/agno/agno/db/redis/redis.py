@@ -33,9 +33,12 @@ from agno.db.utils import (
     deserialize_sessions,
     drop_legacy_metrics,
     filter_context_runs,
+    filter_run_rows,
     merge_runs_table_with_legacy_blob,
     metric_record_day,
     metrics_starting_date_from_records,
+    session_rows_have_unindexed_runs,
+    with_stored_run_index,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -377,8 +380,8 @@ class RedisDb(BaseDb):
             log_error(f"Exception upserting run into Redis: {str(e)}")
             raise e
 
-    def _get_session_runs_data(self, session_id: str) -> List[Dict[str, Any]]:
-        """Get raw run_data dicts for a session, ordered by run_index."""
+    def _get_session_run_rows(self, session_id: str) -> List[Dict[str, Any]]:
+        """Get the run rows for a session, ordered by run_index, in a single pipelined read."""
         index_key = self._runs_by_session_index_key(session_id)
         try:
             run_ids: List[Any] = list(self.redis_client.zrange(index_key, 0, -1))  # type: ignore[arg-type]
@@ -388,16 +391,25 @@ class RedisDb(BaseDb):
         if not run_ids:
             return []
 
-        ordered: List[Dict[str, Any]] = []
-        for rid in run_ids:
-            run_id = rid.decode() if isinstance(rid, bytes) else str(rid)
-            row = self._get_record("runs", run_id)
-            if not row:
-                continue
-            run_data = row.get("run_data")
-            if run_data is not None:
-                ordered.append(run_data)
-        return ordered
+        run_ids = [rid.decode() if isinstance(rid, bytes) else str(rid) for rid in run_ids]
+        found: List[Optional[Dict[str, Any]]]
+        try:
+            pipeline = self.redis_client.pipeline(transaction=False)
+            for run_id in run_ids:
+                pipeline.get(generate_redis_key(prefix=self.db_prefix, table_type="runs", key_id=run_id))
+            found = [deserialize_data(data) for data in pipeline.execute() if data is not None]  # type: ignore[arg-type]
+        except Exception as e:
+            log_error(f"Error batch-reading session runs from Redis, reading per run: {str(e)}")
+            found = [self._get_record("runs", run_id) for run_id in run_ids]
+        rows: List[Dict[str, Any]] = [row for row in found if row]
+        # ZRANGE breaks equal run_index scores lexicographically by run_id; sort so
+        # the order matches get_runs
+        rows.sort(key=lambda r: (r.get("run_index") or 0, r.get("created_at") or 0))
+        return rows
+
+    def _get_session_runs_data(self, session_id: str) -> List[Dict[str, Any]]:
+        """Get raw run_data dicts for a session, ordered by run_index."""
+        return [row["run_data"] for row in self._get_session_run_rows(session_id) if row.get("run_data") is not None]
 
     def _get_sessions_runs(self, session_ids: List[str]) -> Optional[Dict[str, List[Dict[str, Any]]]]:
         """Run dicts for several sessions in one read, used by the search fallback."""
@@ -521,12 +533,18 @@ class RedisDb(BaseDb):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
-        status: Optional[RunStatus] = None,
+        status: Optional[Union[RunStatus, str, List[Union[RunStatus, str]]]] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        before_run_index: Optional[int] = None,
+        after_run_index: Optional[int] = None,
+        created_after: Optional[int] = None,
+        created_before: Optional[int] = None,
+        top_level_only: bool = False,
+        parent_run_ids: Optional[List[str]] = None,
     ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
         """Get all runs matching the given filters.
 
@@ -536,31 +554,29 @@ class RedisDb(BaseDb):
         try:
             # Fast path: filter by session_id uses the index
             if session_id is not None:
-                index_key = self._runs_by_session_index_key(session_id)
-                try:
-                    run_ids: List[Any] = list(self.redis_client.zrange(index_key, 0, -1))  # type: ignore[arg-type]
-                except Exception:
-                    run_ids = []
-                rows: List[Dict[str, Any]] = []
-                for rid in run_ids or []:
-                    run_id = rid.decode() if isinstance(rid, bytes) else str(rid)
-                    row = self._get_record("runs", run_id)
-                    if row is not None:
-                        rows.append(row)
+                rows: List[Dict[str, Any]] = self._get_session_run_rows(session_id)
             else:
                 rows = self._get_all_records("runs")
 
-            conditions: Dict[str, Any] = {}
             if user_id is not None:
-                conditions["user_id"] = user_id
+                rows = apply_filters(records=rows, conditions={"user_id": user_id})
+            rows = filter_run_rows(
+                rows,
+                status=status,
+                before_run_index=before_run_index,
+                after_run_index=after_run_index,
+                created_after=created_after,
+                created_before=created_before,
+                top_level_only=top_level_only,
+                parent_run_ids=parent_run_ids,
+            )
+            conditions: Dict[str, Any] = {}
             if agent_id is not None:
                 conditions["agent_id"] = agent_id
             if team_id is not None:
                 conditions["team_id"] = team_id
             if workflow_id is not None:
                 conditions["workflow_id"] = workflow_id
-            if status is not None:
-                conditions["status"] = status.value if isinstance(status, RunStatus) else status
             rows = apply_filters(records=rows, conditions=conditions)
             total_count = len(rows)
 
@@ -577,6 +593,17 @@ class RedisDb(BaseDb):
             return [deserialize_run(r.get("run_type"), r["run_data"]) for r in rows]
         except Exception as e:
             log_error(f"Exception reading runs: {str(e)}")
+            raise e
+
+    def has_unindexed_runs(self, session_id: str) -> bool:
+        """Whether the session still embeds legacy runs or holds a run row without a run_index."""
+        try:
+            session = self._get_record("sessions", session_id)
+            if session is None:
+                return False
+            return session_rows_have_unindexed_runs(session, self._get_session_run_rows(session_id))
+        except Exception as e:
+            log_error(f"Exception checking for unindexed runs: {str(e)}")
             raise e
 
     def _scrub_run_ids_from_session_legacy_blob(self, session_id: str, run_ids: set) -> None:
@@ -701,6 +728,7 @@ class RedisDb(BaseDb):
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
         runs_limit: Optional[int] = None,
+        include_runs: bool = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Read a session from Redis.
 
@@ -708,6 +736,7 @@ class RedisDb(BaseDb):
             session_id (str): The ID of the session to get.
             session_type (Optional[SessionType]): The type of session to get.
             user_id (Optional[str]): The ID of the user to filter by.
+            include_runs (bool): Set False to skip reading runs; the session's runs are None.
 
         Returns:
             Optional[Union[AgentSession, TeamSession, WorkflowSession]]: The session if found, None otherwise.
@@ -724,12 +753,18 @@ class RedisDb(BaseDb):
             if user_id is not None and session.get("user_id") != user_id:
                 return None
 
-            # Attach runs from the runs keys, merged with any legacy `runs` blob
-            runs_data = self._get_session_runs_data(session_id)
-            session["runs"] = merge_runs_table_with_legacy_blob(runs_data, session.get("runs"))
-
-            if runs_limit is not None:
-                session["runs"] = filter_context_runs(session.get("runs") or [])[-runs_limit:]
+            if not include_runs:
+                session["runs"] = None
+            else:
+                # Attach runs from the runs keys, merged with any legacy `runs` blob
+                runs_data = with_stored_run_index(
+                    (row["run_data"], row.get("run_index"))
+                    for row in self._get_session_run_rows(session_id)
+                    if row.get("run_data") is not None
+                )
+                session["runs"] = merge_runs_table_with_legacy_blob(runs_data, session.get("runs"))
+                if runs_limit is not None:
+                    session["runs"] = filter_context_runs(session.get("runs") or [])[-runs_limit:]
 
             if not deserialize:
                 return session

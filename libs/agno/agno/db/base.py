@@ -578,10 +578,12 @@ class BaseDb(ABC):
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
         runs_limit: Optional[int] = None,
+        include_runs: bool = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         # runs_limit: attach only the most recent N context-relevant runs. Adapters
         # that don't optimize this MUST still accept it and load the full history
         # (a safe, unbounded superset); adapters that can push it to the DB do so.
+        # include_runs=False returns the session with runs set to None, as get_sessions does.
         raise NotImplementedError
 
     @abstractmethod
@@ -729,14 +731,27 @@ class BaseDb(ABC):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
-        status: Optional[RunStatus] = None,
+        status: Optional[Union[RunStatus, str, List[Union[RunStatus, str]]]] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        before_run_index: Optional[int] = None,
+        after_run_index: Optional[int] = None,
+        created_after: Optional[int] = None,
+        created_before: Optional[int] = None,
+        top_level_only: bool = False,
+        parent_run_ids: Optional[List[str]] = None,
     ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
         """Get runs matching the given filters.
+
+        ``status`` matches any of several statuses when given a list. ``before_run_index`` and
+        ``after_run_index`` bound the stored run_index exclusively; ``created_after`` and
+        ``created_before`` bound created_at inclusively. ``top_level_only`` keeps runs with no
+        parent run in the same session, and ``parent_run_ids`` keeps the direct children of the
+        given runs. With ``deserialize=False`` the result is (raw rows, count of every matching
+        row before limit and page); each row carries ``run_data`` and ``run_index``.
 
         Adapters that store runs in a dedicated table/collection override this.
         Adapters that have not been ported return an empty list (or empty tuple).
@@ -744,6 +759,14 @@ class BaseDb(ABC):
         if deserialize:
             return []
         return [], 0
+
+    def has_unindexed_runs(self, session_id: str) -> bool:
+        """Whether some run of the session is invisible to ``get_runs`` run_index filters.
+
+        True when runs are still embedded in the legacy session record or stored without a
+        run_index, and for adapters that cannot tell, so callers fall back to ``get_session``.
+        """
+        return True
 
     def upsert_run(
         self,
@@ -2958,8 +2981,9 @@ class AsyncBaseDb(ABC):
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
         runs_limit: Optional[int] = None,
+        include_runs: bool = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
-        # See BaseDb.get_session for the runs_limit contract.
+        # See BaseDb.get_session for the runs_limit and include_runs contracts.
         raise NotImplementedError
 
     @abstractmethod
@@ -3078,17 +3102,27 @@ class AsyncBaseDb(ABC):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
-        status: Optional[RunStatus] = None,
+        status: Optional[Union[RunStatus, str, List[Union[RunStatus, str]]]] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        before_run_index: Optional[int] = None,
+        after_run_index: Optional[int] = None,
+        created_after: Optional[int] = None,
+        created_before: Optional[int] = None,
+        top_level_only: bool = False,
+        parent_run_ids: Optional[List[str]] = None,
     ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
-        """Async list of runs. Adapters ported to v3 storage override this."""
+        """Async list of runs. See BaseDb.get_runs. Adapters ported to v3 storage override this."""
         if deserialize:
             return []
         return [], 0
+
+    async def has_unindexed_runs(self, session_id: str) -> bool:
+        """See BaseDb.has_unindexed_runs."""
+        return True
 
     async def upsert_run(
         self,

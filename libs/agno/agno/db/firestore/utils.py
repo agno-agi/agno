@@ -130,6 +130,33 @@ def apply_pagination(query, limit: Optional[int] = None, page: Optional[int] = N
     return query
 
 
+def count_query(query) -> int:
+    """Count a query's matches with a Firestore aggregation, without reading the documents."""
+    results = query.count(alias="total").get()
+    return int(results[0][0].value) if results and results[0] else 0
+
+
+def sort_run_rows(
+    rows: List[Dict[str, Any]], sort_by: Optional[str] = None, sort_order: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Sort run rows in memory like the ``get_runs`` query does; nulls sort first ascending."""
+    fields = ["run_index", "created_at"] if sort_by is None else [sort_by]
+    descending = sort_by is not None and sort_order != "asc"
+    return sorted(
+        rows,
+        key=lambda row: tuple((row.get(f) is not None, row.get(f) if row.get(f) is not None else 0) for f in fields),
+        reverse=descending,
+    )
+
+
+def paginate_rows(rows: List[Dict[str, Any]], limit: Optional[int] = None, page: Optional[int] = None) -> List[Any]:
+    """The requested page of in-memory rows."""
+    if limit is None:
+        return rows
+    start = (page - 1) * limit if page is not None and page > 1 else 0
+    return rows[start : start + limit]
+
+
 def apply_sorting_to_records(
     records: List[Dict[str, Any]], sort_by: Optional[str] = None, sort_order: Optional[str] = None
 ) -> List[Dict[str, Any]]:

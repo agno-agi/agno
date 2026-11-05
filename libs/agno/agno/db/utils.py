@@ -411,6 +411,87 @@ def build_single_run_row(
 HISTORY_SKIP_STATUSES: List[str] = [status.value for status in _RUN_HISTORY_SKIP_STATUSES]
 
 
+def run_status_values(status: Any) -> Optional[List[str]]:
+    """Stored status strings for a ``get_runs`` status filter: one status or a list of them."""
+    if status is None:
+        return None
+    statuses = status if isinstance(status, (list, tuple, set, frozenset)) else [status]
+    return [canonical_run_status(s) for s in statuses]
+
+
+def with_stored_run_index(rows: Any) -> List[Any]:
+    """Run data from (run_data, run_index) pairs, each dict carrying its stored run_index."""
+    runs: List[Any] = []
+    for run_data, run_index in rows:
+        if isinstance(run_data, str):
+            run_data = json.loads(run_data)
+        if isinstance(run_data, dict) and run_index is not None:
+            run_data["run_index"] = run_index
+        runs.append(run_data)
+    return runs
+
+
+def filter_run_rows(
+    rows: List[Dict[str, Any]],
+    *,
+    status: Any = None,
+    before_run_index: Optional[int] = None,
+    after_run_index: Optional[int] = None,
+    created_after: Optional[int] = None,
+    created_before: Optional[int] = None,
+    top_level_only: bool = False,
+    parent_run_ids: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
+    """Apply ``get_runs`` status, run_index, created_at and parent filters to run rows in Python.
+
+    ``rows`` must hold every run of the sessions in scope, so a parent filtered out elsewhere
+    still counts as present for ``top_level_only``.
+    """
+    statuses = run_status_values(status)
+    session_run_ids = {(r.get("session_id"), r.get("run_id")) for r in rows} if top_level_only else set()
+    wanted_parents = set(parent_run_ids) if parent_run_ids is not None else None
+
+    def keep(row: Dict[str, Any]) -> bool:
+        run_index = row.get("run_index")
+        created_at = row.get("created_at")
+        parent_run_id = row.get("parent_run_id")
+        if statuses is not None and row.get("status") not in statuses:
+            return False
+        if before_run_index is not None and (run_index is None or run_index >= before_run_index):
+            return False
+        if after_run_index is not None and (run_index is None or run_index <= after_run_index):
+            return False
+        if created_after is not None and created_at is not None and created_at < created_after:
+            return False
+        if created_before is not None and created_at is not None and created_at > created_before:
+            return False
+        if wanted_parents is not None and parent_run_id not in wanted_parents:
+            return False
+        if (
+            top_level_only
+            and parent_run_id is not None
+            and parent_run_id != row.get("run_id")
+            and (row.get("session_id"), parent_run_id) in session_run_ids
+        ):
+            return False
+        return True
+
+    return [row for row in rows if keep(row)]
+
+
+def session_rows_have_unindexed_runs(session: Optional[Dict[str, Any]], run_rows: List[Dict[str, Any]]) -> bool:
+    """Whether a session record still embeds legacy runs or any of its run rows lacks a run_index."""
+    legacy_runs = session.get("runs") if session else None
+    if isinstance(legacy_runs, str):
+        try:
+            legacy_runs = json.loads(legacy_runs)
+        except (json.JSONDecodeError, TypeError):
+            legacy_runs = None
+    if legacy_runs:
+        return True
+    return any(row.get("run_index") is None for row in run_rows)
+
+
 def filter_context_runs(runs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Keep only top-level, context-relevant runs from a list of run dicts.
 
