@@ -2160,6 +2160,26 @@ def test_get_metrics_returns_the_latest_update_of_every_day(postgres_db_real: Po
     assert latest_updated_at == later
 
 
+def test_get_metrics_returns_a_day_with_only_a_regenerated_run(postgres_db_real: PostgresDb):
+    """Ensure a day whose only run is a regenerated one is returned with its tokens, as get_metrics_totals counts
+    them"""
+    session = _session_on(_utc_date(2), "alice_session", "alice")
+    regenerated_run = RunOutput(
+        run_id="regenerated_run",
+        agent_id="agent-1",
+        user_id="alice",
+        status=RunStatus.regenerated,
+        metrics=_run_metrics(10, 5),
+        created_at=_noon_utc(1),
+    )
+    session.runs.append(regenerated_run)
+    _persist(postgres_db_real, session)
+    postgres_db_real.calculate_metrics()
+
+    metrics, _ = postgres_db_real.get_metrics(starting_date=_utc_date(1), ending_date=_utc_date(1), user_id="alice")
+    assert [(row["date"], row["token_metrics"]["total_tokens"]) for row in metrics] == [(_utc_date(1), 15)]
+
+
 def test_component_metrics_tables_for_a_long_session_table(postgres_db_real: PostgresDb):
     """Ensure a session table name long enough to push the component metrics table and index names past 63
     characters still builds the metrics tables"""

@@ -7067,6 +7067,8 @@ def _fork_team_run(run_response: "TeamRunOutput", message_index: int) -> "TeamRu
     forked.run_id = str(uuid4())
     forked.forked_from_run_id = run_response.run_id
     forked.forked_from_message_index = message_index
+    # A new run of this session, counted here: only runs copied from the session it was forked from are counted there
+    forked.forked_from_session_id = None
     forked.metrics = RunMetrics()
     # Start the fork's duration timer now (dispatch-level, same granularity as
     # the run path). The fresh RunMetrics has no timer and the continue path
@@ -7092,13 +7094,21 @@ def _apply_continue_modifiers_team(
 
     Mirrors agent's :func:`_apply_continue_modifiers`. Returns the same
     instance when only truncating, a new instance (with cloned members)
-    when forking.
+    when forking. A run copied into a forked session and continued in place
+    has its copied lineage and metrics reset, so only its new work is counted.
     """
     if fork:
         idx = message_index if message_index is not None else len(run_response.messages or [])
         return _fork_team_run(run_response, idx)
     if message_index is not None:
         _truncate_team_run_to_checkpoint(run_response, message_index)
+    # A run copied into a forked session is counted in the session it was made in, so only the work continued
+    # here is counted: its own metrics, and its messages from this point on
+    if run_response.forked_from_session_id:
+        run_response.forked_from_session_id = None
+        run_response.forked_from_message_index = len(run_response.messages or [])
+        run_response.metrics = RunMetrics()
+        run_response.metrics.start_timer()
     return run_response
 
 
