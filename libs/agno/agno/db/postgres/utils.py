@@ -69,7 +69,8 @@ _METRICS_CALL_DURATIONS_PATH: Any = literal_column(
 # The id of each tool call answered in the first $skip messages, the ones a forked run copied from the run it was
 # forked from
 _METRICS_COPIED_TOOL_CALL_IDS_PATH: Any = literal_column(
-    """'$.messages[0 to $skip - 1] ? (@.role == "tool" && @.tool_call_id != "").tool_call_id'::jsonpath"""
+    """'$.messages[0 to $skip - 1] ? (@.role == "tool" && @.tool_call_id.type() == "string" && @.tool_call_id != "")"""
+    """.tool_call_id'::jsonpath"""
 )
 
 # The keys of a stored run that hold the runs nested inside it, in the order the rollup walks them
@@ -561,7 +562,12 @@ def _metrics_tool_calls(run_data: Any) -> Any:
         .table_valued(column("value", postgresql.JSONB))
         .render_derived()
     )
-    tool_calls = (
+    copied_tool_call = (
+        func.jsonb_path_query(run_data, _METRICS_COPIED_TOOL_CALL_IDS_PATH, func.jsonb_build_object("skip", skip))
+        .table_valued(column("value", postgresql.JSONB))
+        .render_derived(name="copied_tool_call")
+    )
+    return (
         select(
             func.jsonb_agg(
                 func.jsonb_build_object(
@@ -584,26 +590,11 @@ def _metrics_tool_calls(run_data: Any) -> Any:
                 )
             )
         )
-        .select_from(tool_call)
-        .where(func.jsonb_typeof(tool_call.c.value) == "object")
-    )
-    copied_tool_call = (
-        func.jsonb_path_query(run_data, _METRICS_COPIED_TOOL_CALL_IDS_PATH, func.jsonb_build_object("skip", skip))
-        .table_valued(column("value", postgresql.JSONB))
-        .render_derived(name="copied_tool_call")
-    )
-    # Joined only for a forked run, so a run that is not a fork never reads its messages, and a fork reads the ones it
-    # copied once, not again for each tool call
-    return case(
-        (
-            skip > 0,
-            tool_calls.select_from(
-                tool_call.outerjoin(copied_tool_call, copied_tool_call.c.value == tool_call.c.value["tool_call_id"])
-            )
-            .where(copied_tool_call.c.value.is_(None))
-            .scalar_subquery(),
-        ),
-        else_=tool_calls.scalar_subquery(),
+        .select_from(
+            tool_call.outerjoin(copied_tool_call, copied_tool_call.c.value == tool_call.c.value["tool_call_id"])
+        )
+        .where(copied_tool_call.c.value.is_(None))
+        .scalar_subquery()
     )
 
 
@@ -943,9 +934,7 @@ def build_component_metrics_totals_queries(
 
     # Each toolkit's tools hold several numbers and buckets each, so the maps are added up once read
     if "tool_metrics" in fields:
-        queries["tool_metrics"] = select(table.c.date, table.c.tool_metrics).where(
-            where, table.c.tool_metrics != func.jsonb_build_object()
-        )
+        queries["tool_metrics"] = select(table.c.date, table.c.tool_metrics).where(where)
 
     return queries
 

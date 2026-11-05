@@ -893,7 +893,6 @@ def test_tool_calls_count_per_toolkit_and_tool():
             _tool_call("search", duration=1.2, error=True),
             _tool_call("create_issue", duration=0.05, toolkit="github"),
             _tool_call(None, duration=9.0),
-            "not a tool call",
         ],
     )
     second = _run(run_id="run-2", tools=[_tool_call("search", duration=0.1)])
@@ -1471,6 +1470,7 @@ def test_add_metrics_totals():
         },
     }
     fields = ["total_duration_ms", "max_duration_ms", "duration_buckets", "model_metrics", "tool_metrics"]
+    tool_metrics = total["tool_metrics"]
 
     add_metrics_totals(
         total,
@@ -1513,6 +1513,8 @@ def test_add_metrics_totals():
     partial = {"runs_count": 1, "max_duration_ms": None}
     add_metrics_totals(partial, {"max_duration_ms": None}, ["runs_count", "max_duration_ms"])
     assert partial == {"runs_count": 1, "max_duration_ms": None}
+    # Adding up never changes the maps added into
+    assert tool_metrics[""]["search"]["count"] == 2
 
 
 def test_resolve_fields_defaults_to_everything_and_rejects_unknown():

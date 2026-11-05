@@ -1323,15 +1323,15 @@ def _metrics_runs(run_data: Dict[str, Any], seen_run_ids: Set[str]) -> List[Dict
     return runs
 
 
-def _metrics_request_durations(call: Dict[str, Any]) -> List[float]:
-    """How long each request of a model call took, in seconds.
+def _metrics_request_durations(run_data: Dict[str, Any]) -> List[float]:
+    """How long each model request of a run took, in seconds.
 
     Messages carried over from an earlier run are skipped: those from history, and those a forked run copied from
     the run it was forked from.
     """
     return [
         message["metrics"]["duration"]
-        for message in (call.get("messages") or [])[call.get("forked_from_message_index") or 0 :]
+        for message in (run_data.get("messages") or [])[run_data.get("forked_from_message_index") or 0 :]
         if message.get("role") == "assistant"
         and not message.get("from_history")
         and (message.get("metrics") or {}).get("duration") is not None
@@ -1411,7 +1411,7 @@ def _add_metrics_tool_calls(totals: Dict[str, Any], run_data: Dict[str, Any]) ->
         if message.get("role") == "tool" and message.get("tool_call_id")
     }
     for tool_call in run_data.get("tools") or []:
-        if not isinstance(tool_call, dict) or not tool_call.get("tool_name"):
+        if not tool_call.get("tool_name"):
             continue
         # A tool call still paused or rejected by the user never ran, and one a forked run copied counts on the run it
         # was forked from
