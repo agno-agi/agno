@@ -965,15 +965,18 @@ class AsyncSqliteDb(AsyncBaseDb):
             log_error(f"Exception reading from runs table: {str(e)}")
             raise e
 
-    async def _ascrub_run_ids_from_legacy_blob(self, run_ids: List[str], sess: Any, sessions_table: Any) -> None:
+    async def _ascrub_run_ids_from_legacy_blob(self, run_ids: List[str], sess: Any, sessions_table: Any) -> bool:
         """Async variant of the legacy-blob scrub. See sqlite.py for rationale.
 
         Read-modify-write in Python because SQLite lacks JSON1 operators for
         set-difference on a JSON array. Runs inside the caller's transaction.
+
+        Returns True if any legacy blob held one of ``run_ids``.
         """
         if not run_ids or sessions_table is None or "runs" not in sessions_table.c:
-            return
+            return False
         wanted = set(run_ids)
+        scrubbed = False
         result = await sess.execute(
             select(sessions_table.c.session_id, sessions_table.c.runs).where(sessions_table.c.runs.isnot(None))
         )
@@ -994,6 +997,8 @@ class AsyncSqliteDb(AsyncBaseDb):
             await sess.execute(
                 sessions_table.update().where(sessions_table.c.session_id == sid).values(runs=json.dumps(kept))
             )
+            scrubbed = True
+        return scrubbed
 
     async def delete_run(self, run_id: str) -> bool:
         """Delete a single run from the runs table.
@@ -1002,7 +1007,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             run_id (str): The ID of the run to delete.
 
         Returns:
-            bool: True if the run was deleted, False otherwise.
+            bool: True if the run was removed from the runs table or a legacy blob, False otherwise.
         """
         try:
             table = await self._get_table(table_type="runs")
@@ -1012,8 +1017,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                 if table is not None:
                     result = await sess.execute(table.delete().where(table.c.run_id == run_id))
                     deleted = result.rowcount > 0  # type: ignore
-                await self._ascrub_run_ids_from_legacy_blob([run_id], sess, sessions_table)
-            return deleted
+                scrubbed = await self._ascrub_run_ids_from_legacy_blob([run_id], sess, sessions_table)
+            return deleted or scrubbed
 
         except Exception as e:
             log_error(f"Error deleting run: {str(e)}")

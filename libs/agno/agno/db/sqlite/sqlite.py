@@ -1177,7 +1177,7 @@ class SqliteDb(BaseDb):
             log_error(f"Exception reading from runs table: {str(e)}")
             raise e
 
-    def _scrub_run_ids_from_legacy_blob(self, run_ids: List[str], sess: Any, sessions_table: Any) -> None:
+    def _scrub_run_ids_from_legacy_blob(self, run_ids: List[str], sess: Any, sessions_table: Any) -> bool:
         """Remove ``run_ids`` from every session row's legacy ``runs`` JSON column.
 
         Partial-migration state: the v3 migration copied runs into the runs table
@@ -1186,10 +1186,13 @@ class SqliteDb(BaseDb):
         the scrub commit together or not at all; a fully migrated DB (no ``runs``
         column) is a no-op. ``sessions_table`` is resolved by the caller before
         the transaction opens, because ``_get_table`` uses the same scoped session.
+
+        Returns True if any legacy blob held one of ``run_ids``.
         """
         if not run_ids or sessions_table is None or "runs" not in sessions_table.c:
-            return
+            return False
         wanted = set(run_ids)
+        scrubbed = False
         rows = sess.execute(
             select(sessions_table.c.session_id, sessions_table.c.runs).where(sessions_table.c.runs.isnot(None))
         ).fetchall()
@@ -1209,6 +1212,8 @@ class SqliteDb(BaseDb):
             sess.execute(
                 sessions_table.update().where(sessions_table.c.session_id == sid).values(runs=json.dumps(kept))
             )
+            scrubbed = True
+        return scrubbed
 
     def delete_run(self, run_id: str) -> bool:
         """Delete a single run from the runs table.
@@ -1220,7 +1225,7 @@ class SqliteDb(BaseDb):
             run_id (str): The ID of the run to delete.
 
         Returns:
-            bool: True if a run row was deleted, False otherwise.
+            bool: True if the run was removed from the runs table or a legacy blob, False otherwise.
         """
         try:
             table = self._get_table(table_type="runs")
@@ -1230,8 +1235,8 @@ class SqliteDb(BaseDb):
                 if table is not None:
                     result = sess.execute(table.delete().where(table.c.run_id == run_id))
                     deleted = result.rowcount > 0
-                self._scrub_run_ids_from_legacy_blob([run_id], sess, sessions_table)
-            return deleted
+                scrubbed = self._scrub_run_ids_from_legacy_blob([run_id], sess, sessions_table)
+            return deleted or scrubbed
         except Exception as e:
             log_error(f"Error deleting run: {str(e)}")
             raise e

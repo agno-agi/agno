@@ -75,9 +75,10 @@ def test_delete_runs_scrubs_the_blob_before_any_run_row_exists(tmp_path):
 def test_delete_run_scrubs_the_blob_before_any_run_row_exists(tmp_path):
     db, db_file = _legacy_db(tmp_path, ["r0", "r1"])
 
-    assert db.delete_run("r0") is False  # no row existed, but the blob entry is gone
+    assert db.delete_run("r0") is True  # no row existed; the blob entry was the run
     assert _blob_ids(db_file) == ["r1"]
     assert _loaded_ids(db) == ["r1"]
+    assert db.delete_run("r0") is False
 
 
 def test_a_failed_scrub_rolls_back_the_row_delete(tmp_path):
@@ -108,6 +109,18 @@ async def test_async_delete_runs_scrubs_the_blob_before_any_run_row_exists(tmp_p
     try:
         await db.delete_runs(["r1"])
         assert _blob_ids(db_file) == ["r0", "r2"]
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_async_delete_run_reports_a_blob_only_run_as_deleted(tmp_path):
+    _, db_file = _legacy_db(tmp_path, ["r0", "r1"])
+    db = AsyncSqliteDb(db_file=db_file)
+    try:
+        assert await db.delete_run("r0") is True
+        assert _blob_ids(db_file) == ["r1"]
+        assert await db.delete_run("r0") is False
     finally:
         await db.close()
 

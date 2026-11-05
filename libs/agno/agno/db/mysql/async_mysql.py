@@ -791,11 +791,15 @@ class AsyncMySQLDb(AsyncBaseDb):
             log_error(f"Exception reading from runs table: {str(e)}")
             return [] if deserialize else ([], 0)
 
-    async def _ascrub_run_ids_from_legacy_blob(self, run_ids: List[str], sess: Any, sessions_table: Any) -> None:
-        """Async variant of the legacy-blob scrub. Runs inside the caller's transaction."""
+    async def _ascrub_run_ids_from_legacy_blob(self, run_ids: List[str], sess: Any, sessions_table: Any) -> bool:
+        """Async variant of the legacy-blob scrub. Runs inside the caller's transaction.
+
+        Returns True if any legacy blob held one of ``run_ids``.
+        """
         if not run_ids or sessions_table is None or "runs" not in sessions_table.c:
-            return
+            return False
         wanted = set(run_ids)
+        scrubbed = False
         result = await sess.execute(
             select(sessions_table.c.session_id, sessions_table.c.runs).where(sessions_table.c.runs.isnot(None))
         )
@@ -816,6 +820,8 @@ class AsyncMySQLDb(AsyncBaseDb):
             await sess.execute(
                 sessions_table.update().where(sessions_table.c.session_id == sid).values(runs=json.dumps(kept))
             )
+            scrubbed = True
+        return scrubbed
 
     async def delete_run(self, run_id: str) -> bool:
         """Delete a single run from the runs table."""
@@ -827,11 +833,11 @@ class AsyncMySQLDb(AsyncBaseDb):
                 if table is not None:
                     result = await sess.execute(table.delete().where(table.c.run_id == run_id))
                     deleted = result.rowcount > 0  # type: ignore
-                await self._ascrub_run_ids_from_legacy_blob([run_id], sess, sessions_table)
-            return deleted
+                scrubbed = await self._ascrub_run_ids_from_legacy_blob([run_id], sess, sessions_table)
+            return deleted or scrubbed
         except Exception as e:
             log_error(f"Error deleting run: {str(e)}")
-            return False
+            raise e
 
     async def delete_runs(self, run_ids: List[str]) -> None:
         """Delete all given runs from the runs table."""
@@ -845,6 +851,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 await self._ascrub_run_ids_from_legacy_blob(list(run_ids), sess, sessions_table)
         except Exception as e:
             log_error(f"Error deleting runs: {str(e)}")
+            raise e
 
     # -- Session methods --
     async def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:

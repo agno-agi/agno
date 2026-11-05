@@ -5,7 +5,8 @@ import uuid
 import pytest
 from sqlalchemy import create_engine, select, text
 
-from agno.db.postgres import PostgresDb
+from agno.db.postgres import AsyncPostgresDb, PostgresDb
+from agno.run.agent import RunOutput
 
 pytest.importorskip("psycopg")
 
@@ -45,20 +46,73 @@ def db():
     database.db_engine.dispose()
 
 
-def test_delete_runs_scrubs_legacy_blob_in_configured_schema(db):
+def _insert_legacy_session(db, run_ids):
     sessions = db._get_table(table_type="sessions")
     with db.Session() as sess, sess.begin():
         sess.execute(
             sessions.insert().values(
                 session_id="s1",
                 session_type="agent",
-                runs=[{"run_id": "drop"}, {"run_id": "keep"}],
+                runs=[{"run_id": run_id} for run_id in run_ids],
                 created_at=1,
                 updated_at=1,
             )
         )
 
+
+def _blob_ids(db):
+    sessions = db._get_table(table_type="sessions")
+    with db.Session() as sess:
+        return [run["run_id"] for run in sess.execute(select(sessions.c.runs)).scalar_one()]
+
+
+def _refuse_blob_rewrites(db):
+    schema = db.db_schema
+    with db.Session() as sess, sess.begin():
+        sess.execute(
+            text(
+                f'CREATE FUNCTION "{schema}".refuse_blob_rewrite() RETURNS trigger AS $$ '
+                "BEGIN RAISE EXCEPTION 'blob rewrite refused'; END $$ LANGUAGE plpgsql"
+            )
+        )
+        sess.execute(
+            text(
+                f'CREATE TRIGGER refuse_blob_rewrite BEFORE UPDATE OF runs ON "{schema}".agno_sessions '
+                f'FOR EACH ROW EXECUTE FUNCTION "{schema}".refuse_blob_rewrite()'
+            )
+        )
+
+
+def test_delete_runs_scrubs_legacy_blob_in_configured_schema(db):
+    _insert_legacy_session(db, ["drop", "keep"])
+
     db.delete_runs(["drop"])
 
-    with db.Session() as sess:
-        assert sess.execute(select(sessions.c.runs)).scalar_one() == [{"run_id": "keep"}]
+    assert _blob_ids(db) == ["keep"]
+
+
+def test_delete_run_reports_a_blob_only_run_as_deleted(db):
+    _insert_legacy_session(db, ["r0", "r1"])
+
+    assert db.delete_run("r0") is True
+    assert _blob_ids(db) == ["r1"]
+    assert db.delete_run("r0") is False
+
+
+@pytest.mark.asyncio
+async def test_async_failed_scrub_raises_and_rolls_back_the_row_delete(db):
+    _insert_legacy_session(db, ["r0", "r1"])
+    db.upsert_run(RunOutput(run_id="r2", agent_id="a1", session_id="s1"), session_id="s1")
+    _refuse_blob_rewrites(db)
+
+    async_db = AsyncPostgresDb(db_url=DB_URL, db_schema=db.db_schema)
+    try:
+        with pytest.raises(Exception, match="blob rewrite refused"):
+            await async_db.delete_runs(["r0", "r2"])
+        with pytest.raises(Exception, match="blob rewrite refused"):
+            await async_db.delete_run("r0")
+    finally:
+        await async_db.db_engine.dispose()
+
+    assert _blob_ids(db) == ["r0", "r1"]
+    assert db.get_run("r2") is not None
