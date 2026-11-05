@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from typing import (
     TYPE_CHECKING,
+    Annotated,
     Any,
     Callable,
     Dict,
@@ -28,6 +29,7 @@ from fastmcp.server.http import (
 )
 from fastmcp.tools import ToolResult
 from mcp.types import ToolAnnotations
+from pydantic import Field
 
 from agno.db.base import SessionType
 from agno.os.mcp_results import build_custom_tool_result, build_run_tool_result, trim_session_run
@@ -44,6 +46,7 @@ from agno.os.services import sessions as session_service
 from agno.os.utils import (
     find_factory_by_id,
     get_db,
+    public_scheme,
     resolve_agent,
     resolve_team,
     resolve_workflow,
@@ -74,6 +77,7 @@ logger = logging.getLogger(__name__)
 # tag set lives in agno/os/config.py next to the MCPConfig fields that consume it --
 # single source of truth so adding a new tag is a one-place change.
 from agno.os.config import MCP_BUILTIN_TAGS as _BUILTIN_TOOL_TAGS  # noqa: E402
+from agno.os.config import MCP_SERVER_CARD_PATH, MCP_TOOL_RUN_PATH  # noqa: E402
 
 # Names of the default (built-in) tools by tag set, used to detect name collisions with
 # exposed components before registration. Keep in sync with the ``name=`` / ``tags=``
@@ -121,9 +125,9 @@ def _enabled_builtin_tags(config: "Optional[MCPConfig]", has_exposures: bool = F
     them, exactly as it did before the tag existed -- tools register on tag
     INTERSECTION, so an implicitly enabled ``lifecycle`` would resurrect the dual-tagged
     pair on a surface that excluded ``core``). The tag is added only when named
-    explicitly in ``include_tags``, or by the exposure ride-along below: an exposed
-    component can pause on a HITL tool, and without continue_run the pause would be a
-    dead end over MCP. Both ride-along off-switches are honoured --
+    explicitly in ``include_tags`` with ``default_tools=True``, or by opting in with ``lifecycle_tools=True``
+    alongside exposed components. This supports resuming HITL runs and requesting
+    cancellation without enabling the full default surface. Both off-switches are honoured --
     ``lifecycle_tools=False`` and an explicit ``exclude_tags={"lifecycle"}`` -- and
     both gate ONLY the ride-along; neither strips the pair from an enabled ``core``
     surface.
@@ -232,7 +236,7 @@ def _collision_free_advice(colliding_name: str, enabled_tags: "Optional[set]") -
     """The action clause of a name-collision error: how to free ``colliding_name``.
 
     The run-lifecycle pair (continue_run/cancel_run) is tagged BOTH "core" and
-    "lifecycle", and rides along with any exposure. So "is this a lifecycle tool" is
+    "lifecycle", and can be explicitly added alongside exposures. So "is this a lifecycle tool" is
     always true for it and cannot decide the advice -- what matters is HOW the name got
     onto the server. When it was claimed solely via the ride-along ("core" not enabled),
     only the lifecycle switches free it; when "core" is enabled the pair registers as a
@@ -870,8 +874,12 @@ _MISSING_BRIDGE_DETAIL = (
 )
 
 
-def _require_tool_scopes(method: str, path: str) -> None:
+async def _require_tool_scopes(method: str, path: str) -> None:
     """Enforce the caller's scopes against the REST route this tool call is equivalent to.
+
+    Awaits the provider's async decision and audit write (mirroring the REST/WS gates) so a
+    managed-role/ReBAC gate does its DB or network I/O off the event loop and works against
+    an async database.
 
     The MCP tools are an alternate transport for the REST surface, so authorization
     reuses the REST mechanism verbatim: map the tool call onto its REST route and run
@@ -887,8 +895,12 @@ def _require_tool_scopes(method: str, path: str) -> None:
     """
     from fastmcp.server.dependencies import get_http_request
 
-    from agno.os.auth import build_insufficient_permissions_detail
-    from agno.os.scopes import check_route_scopes
+    from agno.os.auth import (
+        _provider_for,
+        build_insufficient_permissions_detail,
+    )
+    from agno.os.authz.provider import AuthorizationContext
+    from agno.os.scopes import get_required_scopes_for_route, get_resource_context_from_path
 
     try:
         request = get_http_request()
@@ -909,16 +921,73 @@ def _require_tool_scopes(method: str, path: str) -> None:
             raise Exception(_MISSING_BRIDGE_DETAIL)
         return
 
+    required_scopes = get_required_scopes_for_route(_tool_scope_mappings(), method, path)
+    if not required_scopes:
+        return
+
     admin_scope_raw = getattr(state, "admin_scope", None)
     admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
-    scope_check = check_route_scopes(
-        list(getattr(state, "scopes", None) or []),
-        _tool_scope_mappings(),
-        method,
-        path,
+
+    # Derive the resource context from the SYNTHETIC REST path the tool maps onto
+    # (e.g. "/agents/<id>/runs" -> agents/<id>), preserving v2.7's per-resource
+    # subtlety: the provider decides on the specific resource, not just the family.
+    resource_type, resource_id = get_resource_context_from_path(path)
+    actions = {s.rsplit(":", 1)[1] for s in required_scopes if ":" in s}
+    action = next(iter(actions)) if len(actions) == 1 else None
+
+    # Resolve the provider from the in-flight request's app.state — with none configured
+    # this is the default ScopeAuthorizationProvider, whose authorize_route delegates to
+    # has_required_scopes, so the tool gate stays byte-identical to v2.7's
+    # check_route_scopes. (The MCP tools have no GET-listing escape hatch: an
+    # unauthorised call is a hard denial, matching the prior behaviour.)
+    # A service-account PAT carries its own scopes as its ACL and has no subject/role in
+    # a managed store, so it is evaluated by the scope provider here too -- mirroring the
+    # REST per-resource gate. Routing PATs through a configured provider would deny every
+    # MCP tool call for a caller the transport already authenticated on scope math.
+    provider = _provider_for(request)
+    ctx = AuthorizationContext(
+        principal_id=getattr(state, "user_id", None),
+        scopes=list(getattr(state, "scopes", None) or []),
+        claims=getattr(state, "claims", None) or {},
+        resource_type=resource_type,
+        resource_id=resource_id,
+        action=action,
         admin_scope=admin_scope,
     )
-    if not scope_check.allowed:
+    # The provider decides — default ScopeAuthorizationProvider is byte-identical to
+    # v2.7's check_route_scopes; a managed-role/custom provider enforces its own model
+    # on the OAuth-authenticated caller here too.
+    from agno.os.authz.audit import arecord_decision
+
+    allowed = await provider.aauthorize_route(ctx, required_scopes)
+    # Record the decision on the SAME trail the REST gate writes to, so an access audit
+    # covers the MCP transport too (the tools are an alternate front door to the same
+    # surface). The sink is mirrored onto this sub-app's state; no sink -> no-op.
+    # Same non-secret token reference the REST gate captures (jti, else a short hash),
+    # so an MCP row correlates to the issuer's logs exactly like a REST row does.
+    # Best-effort ONLY: this is audit metadata, so it must never break enforcement --
+    # not every caller hands us a full Request (the fastmcp in-memory transport passes a
+    # minimal stand-in with no headers). Falling back to None just means the row is
+    # keyed by the token's jti, or carries no token reference at all.
+    bearer: Optional[str] = None
+    try:
+        raw = request.headers.get("Authorization") or ""
+        if raw[:7].lower() == "bearer ":
+            bearer = raw[7:]
+    except Exception:  # pragma: no cover - defensive: audit must not break the gate
+        bearer = None
+    await arecord_decision(
+        request,
+        allowed=allowed,
+        target=f"{method} {path}",
+        principal=ctx.principal_id,
+        required_scopes=required_scopes,
+        scopes=ctx.scopes,
+        claims=ctx.claims,
+        token=bearer,
+        reason=None if allowed else "mcp_tool_scope_denied",
+    )
+    if not allowed:
         # Under mcp_auth, a scope denial is most often an external-AS misconfiguration
         # (the token carries non-agno scopes), which the client-facing 403 can't point at.
         # Log the presented-vs-required scopes and the AS-config hint so the deployer can
@@ -928,11 +997,11 @@ def _require_tool_scopes(method: str, path: str) -> None:
 
             log_warning(
                 f"MCP tool scope check failed for {method} {path}: caller presented "
-                f"{list(getattr(state, 'scopes', None) or [])}, required {scope_check.required_scopes}. "
+                f"{list(getattr(state, 'scopes', None) or [])}, required {required_scopes}. "
                 "If this is a Tier-2 (external authorization server) deployment, configure your AS to emit "
                 "agno-format scopes in the token 'scope' claim."
             )
-        raise Exception(build_insufficient_permissions_detail(scope_check.required_scopes))
+        raise Exception(build_insufficient_permissions_detail(required_scopes))
 
 
 async def _enforce_run_continuation_allowed(db: Any, run_id: str) -> None:
@@ -970,6 +1039,7 @@ async def _enforce_run_continuation_allowed(db: Any, run_id: str) -> None:
         run_id,
         authorization_enabled=bool(getattr(state, "authorization_enabled", False)),
         user_scopes=list(getattr(state, "scopes", None) or []),
+        request=request,
     )
     if reason:
         raise Exception(reason)
@@ -1741,6 +1811,37 @@ def _split_tool_entries(mcp_config: "Optional[MCPConfig]", os: "AgentOS") -> "tu
     return customs, exposures
 
 
+# Argument descriptions for the built-in and exposed tools. They are published in each tool's
+# inputSchema, which every MCP client sends to its model verbatim on tools/list, so each one is
+# prompt text: a short phrase the calling model can act on, nothing about how the server
+# resolves the value. Operator-facing semantics stay in comments here.
+_RunMessage = Annotated[str, Field(description="The request or message to send to the agent, team, or workflow.")]
+# Advisory only: an authenticated caller's identity always replaces it (``_resolve_user_id``).
+_RunUserId = Annotated[
+    Optional[str],
+    Field(
+        description="Optional user ID to associate with the run. Authenticated deployments use the caller's identity."
+    ),
+]
+_RunSessionId = Annotated[
+    Optional[str],
+    Field(description="Existing session ID to continue the same conversation. Omit to start a new session."),
+]
+# Ignored for a caller scoped by user isolation, who always reads their own sessions.
+_ReadUserId = Annotated[Optional[str], Field(description="Only return sessions belonging to this user.")]
+_DbId = Annotated[
+    Optional[str],
+    Field(description="Database ID returned by get_agentos_config. Required only when multiple databases are listed."),
+]
+_ReadSessionType = Annotated[
+    Optional[Literal["agent", "team", "workflow"]],
+    Field(description="Type of session to read. Omit to detect it automatically."),
+]
+_AgentOwnerId = Annotated[Optional[str], Field(description="ID of the agent that owns the run.")]
+_TeamOwnerId = Annotated[Optional[str], Field(description="ID of the team that owns the run.")]
+_WorkflowOwnerId = Annotated[Optional[str], Field(description="ID of the workflow that owns the run.")]
+
+
 def _make_exposed_run_tool(
     os: "AgentOS",
     kind: "Literal['agents', 'teams']",
@@ -1755,12 +1856,12 @@ def _make_exposed_run_tool(
     label_prefix = "Agent" if kind == "agents" else "Team"
 
     async def run_exposed(
-        message: str,
+        message: _RunMessage,
         ctx: Context,
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
+        user_id: _RunUserId = None,
+        session_id: _RunSessionId = None,
     ) -> ToolResult:
-        _require_tool_scopes("POST", f"/{kind}/{component_id}/runs")
+        await _require_tool_scopes("POST", f"/{kind}/{component_id}/runs")
         resolved_user_id = _resolve_user_id(user_id)
         component = await _resolve_run_component(
             os, kind, component_id, user_id=resolved_user_id, session_id=session_id
@@ -1794,14 +1895,14 @@ def _make_exposed_workflow_tool(
     """A run tool bound to one workflow: the ``run_workflow`` body with the id fixed."""
 
     async def run_exposed_workflow(
-        message: str,
+        message: _RunMessage,
         ctx: Context,
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
+        user_id: _RunUserId = None,
+        session_id: _RunSessionId = None,
     ) -> ToolResult:
         from agno.workflow.remote import RemoteWorkflow
 
-        _require_tool_scopes("POST", f"/workflows/{component_id}/runs")
+        await _require_tool_scopes("POST", f"/workflows/{component_id}/runs")
         resolved_user_id = _resolve_user_id(user_id)
         workflow = await _resolve_run_component(
             os, "workflows", component_id, user_id=resolved_user_id, session_id=session_id
@@ -1869,9 +1970,8 @@ def _register_exposed_components(
     }
     taken.update(custom_tool_names or {})
 
-    # continue_run rides along with exposure by default (the lifecycle tag), so this is
-    # False only when the deployer opted out -- the paused-result text then points the
-    # caller at REST instead of at a tool that does not exist.
+    # When neither the default tools nor the lifecycle opt-in registers continue_run,
+    # the paused-result text points the caller at REST instead of a missing tool.
     continue_run_available = bool({"core", "lifecycle"} & enabled_tags)
     singulars = {"agents": "agent", "teams": "team", "workflows": "workflow"}
 
@@ -1974,6 +2074,443 @@ def _register_exposed_components(
         mcp.tool(name=tool_name, title=title, description=description, annotations=annotations)(fn)
 
 
+# Mandated by the schema's $schema pattern; not hosted until the extension graduates.
+SERVER_CARD_SCHEMA = "https://static.modelcontextprotocol.io/schemas/v1/server-card.schema.json"
+SERVER_CARD_MEDIA_TYPE = "application/mcp-server-card+json"
+_MCP_PATH = "/mcp"
+
+
+def _server_card_enabled(mcp_config: "Optional[MCPConfig]") -> bool:
+    return mcp_config is None or mcp_config.server_card
+
+
+def _tool_run_endpoint_enabled(mcp_config: "Optional[MCPConfig]") -> bool:
+    return mcp_config is None or mcp_config.tool_run_endpoint
+
+
+# Mirrors ``MCPConfig.tool_run_timeout_seconds`` for ``mcp=True``, which has no config object.
+_DEFAULT_TOOL_RUN_TIMEOUT_SECONDS = 120.0
+
+
+def _card_name(hostname: str, server_name: str) -> str:
+    """The card's reverse-DNS name: the request host reversed, a slash, the server name as a slug.
+
+    The schema caps the whole name at 200 characters and requires exactly one slash, so the two
+    halves are clipped separately -- truncating the joined string could drop the slash entirely.
+    """
+    is_ip_literal = hostname.startswith("[") or re.fullmatch(r"[\d.]+", hostname) is not None
+    namespace = "" if is_ip_literal else ".".join(reversed(hostname.lower().split(".")))
+    namespace = re.sub(r"[^a-z0-9.-]+", "", namespace).strip(".-")
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", server_name).strip("-.").lower()
+    namespace = namespace or "localhost"
+    slug = slug or "agentos"
+    # Keep the slug whole where possible; give the namespace whatever the slug leaves.
+    slug = slug[:_CARD_SLUG_MAX].rstrip("-._") or "agentos"
+    namespace = namespace[: _CARD_NAME_MAX - len(slug) - 1].rstrip("-.") or "localhost"
+    return f"{namespace}/{slug}"
+
+
+# Length limits from the Server Card schema. An AgentOS name or description is free text and
+# routinely longer, so values are truncated rather than published as an invalid card.
+_CARD_NAME_MAX = 200
+# Half the name budget, so a very long server name cannot squeeze the namespace out entirely.
+_CARD_SLUG_MAX = 100
+_CARD_TITLE_MAX = 100
+_CARD_TEXT_MAX = 100
+_CARD_VERSION_MAX = 255
+
+
+def _truncate(value: str, limit: int) -> str:
+    """Clip to the schema's limit, marking the clip with an ellipsis so it does not read as complete."""
+    return value if len(value) <= limit else value[: limit - 1].rstrip() + "…"
+
+
+def _tool_entry(tool: Any) -> Dict[str, Any]:
+    """One tool in the same shape ``tools/list`` and the Server Card publish."""
+    entry = tool.to_mcp_tool().model_dump(exclude_none=True, by_alias=True)
+    entry.pop("_meta", None)
+    return entry
+
+
+async def _published_tools(mcp: FastMCP) -> Dict[str, Any]:
+    """The published tools by name, highest version per name.
+
+    ``list_tools`` returns every version of a tool. Deduplication goes through fastmcp's own
+    ``dedupe_with_versions`` so this picks the same version a connected client resolves to --
+    keeping the first one instead would publish an older schema than ``tools/call`` executes,
+    and a caller would fill in the form for one schema and run another. The runner pins its
+    call to the version selected here, so the two cannot drift apart.
+    """
+    from fastmcp.utilities.versions import dedupe_with_versions
+
+    return {tool.name: tool for tool in dedupe_with_versions(await mcp.list_tools(), lambda t: t.name)}
+
+
+async def _card_tools(mcp: FastMCP) -> List[Dict[str, Any]]:
+    """The published tools in the same shape ``tools/list`` returns.
+
+    Built from each tool's own MCP representation, so the card cannot drift from the live
+    surface and a reader gets what a connected client would get: name, title, description and
+    ``inputSchema``. Descriptions are published whole -- they are written for the calling model,
+    and a clipped one is worse than none. Internal transport metadata (``_meta``) is dropped.
+    """
+    return [_tool_entry(tool) for tool in (await _published_tools(mcp)).values()]
+
+
+async def _server_card(
+    mcp: FastMCP,
+    os: "AgentOS",
+    request: Any,
+    version: Optional[str] = None,
+    card_url: Optional[str] = None,
+    allowed_hosts: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """The Server Card for one request.
+
+    A configured ``server_card_url`` is authoritative. Otherwise the endpoint URL is derived from
+    the request. ``X-Forwarded-Host`` is honoured only when its value is itself listed in
+    ``allowed_hosts``: the header is attacker-controlled even on a request whose ``Host`` is
+    allowed, and this response is publicly cacheable, so an unvalidated value would let a caller
+    plant a card naming their own host.
+
+    ``X-Forwarded-Proto`` is read without that check. A proxy that terminates TLS often sends it
+    with no ``X-Forwarded-Host`` at all, and gating the two together published ``http://`` for an
+    endpoint its clients only ever reach over TLS. It is safe unvalidated because it can only
+    upgrade the scheme to ``https`` (any ``https`` in a proxy chain wins), never name a host or
+    another scheme.
+    """
+    from urllib.parse import urlparse
+
+    if card_url:
+        host = urlparse(card_url).netloc or request.headers.get("host") or request.url.netloc
+        url = card_url
+    else:
+        scheme = public_scheme(request)
+        host = request.headers.get("host") or request.url.netloc
+        forwarded_host = request.headers.get("x-forwarded-host", "").split(",")[0].strip()
+        if forwarded_host and allowed_hosts:
+            host_set = {_mcp_request_hostname(h) for h in list(allowed_hosts) + list(_MCP_LOCALHOST_HOSTS)}
+            if _mcp_host_allowed(_mcp_request_hostname(forwarded_host), host_set):
+                host = forwarded_host
+        endpoint = request.scope.get("_agno_mcp_public_endpoint", _MCP_PATH)
+        url = f"{scheme}://{host}{endpoint}"
+    remote: Dict[str, Any] = {"type": "streamable-http", "url": url}
+    if not _mcp_server_is_open(os):
+        remote["headers"] = [
+            {"name": "Authorization", "description": "Bearer token", "isRequired": True, "isSecret": True}
+        ]
+    card = {
+        "$schema": SERVER_CARD_SCHEMA,
+        "name": _card_name(_mcp_request_hostname(host), mcp.name),
+        "title": _truncate(mcp.name, _CARD_TITLE_MAX),
+        "description": _truncate(getattr(os, "description", None) or f"{mcp.name} MCP server", _CARD_TEXT_MAX),
+        "remotes": [remote],
+    }
+    # ``version`` is required by the schema and must match what the runtime reports in
+    # ``serverInfo.version``, so the card mirrors ``mcp.version`` when nothing was configured --
+    # even though fastmcp defaults that to its own library version. Set ``MCPConfig.version``
+    # or ``AgentOS(version=...)`` to publish the deployment's real version instead.
+    card["version"] = _truncate(version or str(mcp.version), _CARD_VERSION_MAX)
+    # Not part of the Server Card schema, which leaves the tool surface to ``tools/list``. It is
+    # carried anyway (the schema allows extra keys) because the card is what a person or a crawler
+    # opening the endpoint in a browser sees, and they never speak the protocol.
+    card["tools"] = await _card_tools(mcp)
+    return card
+
+
+def _register_server_card(
+    mcp: FastMCP,
+    os: "AgentOS",
+    version: Optional[str] = None,
+    card_url: Optional[str] = None,
+    allowed_hosts: Optional[List[str]] = None,
+) -> None:
+    import json
+
+    from starlette.requests import Request
+    from starlette.responses import Response
+
+    # The body varies with the request host unless a URL was configured, so a shared cache must
+    # key on the headers that shape it -- otherwise one caller's card is served to everyone.
+    vary = "Origin" if card_url else "Origin, Host, X-Forwarded-Host, X-Forwarded-Proto"
+
+    @mcp.custom_route(MCP_SERVER_CARD_PATH, methods=["GET"], include_in_schema=False)
+    async def server_card(request: Request) -> Response:
+        # Discovery should be readable directly in a browser without a JSON formatter.
+        return Response(
+            json.dumps(
+                await _server_card(mcp, os, request, version, card_url, allowed_hosts),
+                ensure_ascii=False,
+                allow_nan=False,
+                indent=2,
+            )
+            + "\n",
+            media_type=SERVER_CARD_MEDIA_TYPE,
+            headers={
+                "Cache-Control": "public, max-age=300",
+                "Vary": vary,
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET",
+                "Access-Control-Allow-Headers": "Content-Type",
+            },
+        )
+
+
+def _tool_result_payload(result: Any) -> Dict[str, Any]:
+    """A ``ToolResult`` as JSON, in the shape ``tools/call`` returns it over the protocol."""
+    payload: Dict[str, Any] = {
+        "isError": bool(getattr(result, "is_error", False)),
+        "content": [block.model_dump(exclude_none=True, by_alias=True) for block in (result.content or [])],
+    }
+    structured = result.structured_content
+    if structured is not None:
+        payload["structuredContent"] = structured
+    return payload
+
+
+async def _call_within_the_budget(coro: Any, timeout_seconds: float) -> Any:
+    """Run ``coro``, cancelling it if it outlives the timeout.
+
+    ``asyncio.wait_for`` only stops WAITING -- the tool keeps running, so a timed-out
+    ``run_agent`` went on driving the model and spending tokens for an answer nobody
+    would read. Racing the work against a timer and cancelling the loser stops it for
+    real: the cancellation propagates through ``agent.arun`` into the model's own HTTP
+    request, so generation ends rather than finishing unobserved.
+
+    A tool that blocks rather than awaits (``time.sleep``, a synchronous driver) is run
+    in fastmcp's threadpool, so the event loop keeps serving other requests and the 504
+    still lands on time. Only that worker thread runs on: Python cannot interrupt a
+    thread mid-call, so a sync tool that routinely outlives the budget ties up a thread
+    each time. Prefer ``async def`` for anything long-running.
+    """
+    import asyncio
+
+    work = asyncio.ensure_future(coro)
+    timer = asyncio.ensure_future(asyncio.sleep(timeout_seconds))
+    try:
+        done, _ = await asyncio.wait({work, timer}, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        timer.cancel()
+        # Whether the budget ran out or this handler was cancelled (a server shutting
+        # down), nobody will read the result any more; stop producing it.
+        if not work.done():
+            work.cancel()
+    if work in done:
+        return work.result()
+    # wait() surfaces only this handler's own cancellation; the tool's never re-raises
+    # here, so a shutdown mid-unwind is reported as a cancellation, not a timeout.
+    await asyncio.wait({work})
+    raise asyncio.TimeoutError()
+
+
+def _register_tool_run_endpoint(
+    mcp: FastMCP, os: "AgentOS", timeout_seconds: float, mcp_config: "Optional[MCPConfig]" = None
+) -> None:
+    """Register the plain-HTTP tool runner.
+
+    This exists for an operator UI that tests a tool the way MCP Inspector does, without
+    implementing an MCP client. The tools it runs are the ones the Server Card already
+    publishes, so there is no listing here. The split between an HTTP status and ``isError``
+    follows the protocol: a tool that ran and failed is a successful call carrying a failed
+    result, and only a call that never happened is a 4xx.
+    """
+    import asyncio
+    import time
+
+    # fastmcp raises its own ValidationError for a call whose arguments do not match the
+    # tool's input schema; it is not pydantic's, and it is not a ToolError subclass.
+    from fastmcp.exceptions import NotFoundError
+    from fastmcp.exceptions import ValidationError as ToolValidationError
+    from fastmcp.utilities.versions import VersionSpec
+    from mcp.shared.exceptions import MCPError
+    from starlette.requests import Request
+    from starlette.responses import JSONResponse, Response
+
+    def _json(payload: Dict[str, Any], status_code: int = 200) -> Response:
+        # Never cached and never readable cross-origin: unlike the card, this surface both
+        # requires a credential and changes state.
+        return JSONResponse(
+            payload,
+            status_code=status_code,
+            headers={"Cache-Control": "no-store", "Vary": "Origin, Authorization"},
+        )
+
+    def _failed(
+        error: str,
+        message: str,
+        status_code: int,
+        *,
+        details: Optional[str] = None,
+        started: Optional[float] = None,
+    ) -> Response:
+        """A failure in the same shape a failed tool call has.
+
+        Every response this endpoint returns carries ``isError`` and ``content``, so a caller
+        renders one thing whatever went wrong -- the protocol itself groups "the tool failed"
+        and "no such tool" into a single failure class. ``error`` names the class for a caller
+        that wants to branch, and the HTTP status still separates a call that never happened
+        (4xx) from a tool that ran and failed (200).
+        """
+        payload: Dict[str, Any] = {
+            "isError": True,
+            "content": [{"type": "text", "text": message}],
+            "error": error,
+        }
+        if details is not None:
+            payload["details"] = details
+        if started is not None:
+            payload["durationMs"] = round((time.perf_counter() - started) * 1000)
+        return _json(payload, status_code=status_code)
+
+    def _denied(request: Request) -> Optional[Response]:
+        """401 unless this request carries a VERIFIED identity that ``authorize`` accepts.
+
+        Under ``mcp_auth`` the ``authorize`` gate is registered with ``only_path="/mcp"``,
+        an exact match that never covers this route, so the predicate is applied here. In
+        every other mode that middleware is installed unscoped and already gates this route
+        -- calling it again would double-count an ``authorize`` that audits or rate-limits.
+
+        Only a token the server itself verified counts. ``request.state.user_id`` is NOT
+        evidence: with ``user_isolation`` and no REST auth, ``NoAuthIdentityMiddleware``
+        copies a caller-supplied ``?user_id=`` straight onto it, and treating that as a
+        principal let an anonymous request run any published tool. The verified signals are
+        fastmcp's ``scope["user"].access_token`` and the ``authenticated`` flag that the
+        auth middleware sets only after it checks a credential.
+
+        Fail closed: on a gated server, no verified principal means no tool run.
+        """
+        if _mcp_server_is_open(os):
+            return None
+
+        # Verified-only. A self-asserted id never reaches either of these.
+        access_token = getattr(request.scope.get("user"), "access_token", None)
+        state = request.scope.get("state") or {}
+        authenticated = bool(getattr(request.state, "authenticated", False) or state.get("authenticated"))
+        if access_token is None and not authenticated:
+            return _failed("unauthorized", "This MCP server requires an authenticated caller.", 401)
+
+        # The operator's per-call predicate, which the transport applies at /mcp and which
+        # must not be weaker here. user_id is only trusted once the checks above pass.
+        # Only under mcp_auth: otherwise _MCPAuthorizeMiddleware is unscoped and has run.
+        authorize = mcp_config.authorize if mcp_config is not None else None
+        if authorize is not None and _mcp_auth_enabled(request):
+            user_id = getattr(request.state, "user_id", None) or state.get("user_id")
+            if not authorize(user_id):
+                return _failed("unauthorized", "Not authorized for the MCP server.", 401)
+        return None
+
+    @mcp.custom_route(MCP_TOOL_RUN_PATH, methods=["POST"], include_in_schema=False)
+    async def run_published_tool(request: Request) -> Response:
+        denied = _denied(request)
+        if denied is not None:
+            return denied
+
+        tool_name = request.path_params["tool_name"]
+        try:
+            body = await request.json()
+        except Exception:
+            return _failed("invalid_json", "Request body must be a JSON object.", 400)
+        if body is None:
+            body = {}
+        if not isinstance(body, dict):
+            return _failed("invalid_json", "Request body must be a JSON object.", 400)
+
+        arguments = body.get("arguments", {})
+        if arguments is None:
+            arguments = {}
+        if not isinstance(arguments, dict):
+            return _failed("invalid_arguments", "'arguments' must be a JSON object.", 400)
+
+        # Resolved against the published surface, so a tool this server does not publish is
+        # not runnable here even when it exists on the registry.
+        published = (await _published_tools(mcp)).get(tool_name)
+        if published is None:
+            return _failed("tool_not_found", f"Unknown tool: {tool_name!r}", 404)
+
+        # Pin the call to the version whose schema was published. Left unset, fastmcp resolves
+        # the name to its own highest version, which is the same tool today only because both
+        # sides happen to agree -- stating it here means the form and the run cannot diverge.
+        version = VersionSpec(eq=published.version) if published.version is not None else None
+
+        started = time.perf_counter()
+        try:
+            result = await _call_within_the_budget(
+                mcp.call_tool(tool_name, arguments, version=version), timeout_seconds
+            )
+        except asyncio.TimeoutError:
+            return _failed(
+                "timeout",
+                f"Tool {tool_name!r} did not finish within {timeout_seconds:g}s.",
+                # 504, not 408: 408 means the CLIENT was too slow sending its request, and
+                # some clients and proxies retry it automatically -- which would re-run a
+                # tool that already had side effects. Nothing implicitly retries a 504.
+                504,
+                started=started,
+            )
+        except NotFoundError as exc:
+            # Racing a surface change between the check above and the call.
+            return _failed("tool_not_found", str(exc), 404, started=started)
+        except ToolValidationError as exc:
+            return _failed(
+                "invalid_arguments",
+                f"Arguments do not match the input schema of {tool_name!r}.",
+                400,
+                details=str(exc),
+                started=started,
+            )
+        except (ToolError, MCPError) as exc:
+            # The tool ran and failed. That is a result, not a transport failure, so the
+            # status stays 200 while the body matches every other failure.
+            return _failed("tool_error", str(exc), 200, started=started)
+
+        payload = _tool_result_payload(result)
+        payload["durationMs"] = round((time.perf_counter() - started) * 1000)
+        return _json(payload)
+
+
+def _accepts_event_stream(accept_header: str) -> bool:
+    """True when the Accept header explicitly names ``text/event-stream``.
+
+    Media types are case-insensitive and may carry parameters (``;q=0.9``), so each entry is
+    normalised the way the MCP SDK's own Accept parsing does before comparing. A bare ``*/*``
+    is deliberately NOT treated as a match: every browser sends it, and the redirect exists
+    for browsers. An MCP client always names the type explicitly.
+    """
+    return any(
+        media_type.split(";")[0].strip().lower() == "text/event-stream" for media_type in accept_header.split(",")
+    )
+
+
+def _add_browser_redirect_middleware(mcp_app: StarletteWithLifespan) -> None:
+    """Send a browser that opens the MCP endpoint to the Server Card.
+
+    MCP clients send ``Accept: text/event-stream`` on a GET; a GET without it is a person
+    in a browser, who would otherwise get a JSON-RPC 406 or a 405.
+    """
+
+    from starlette._utils import get_route_path
+
+    class _BrowserRedirectMiddleware:
+        def __init__(self, app: Any) -> None:
+            self.app = app
+
+        async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+            if (
+                scope["type"] == "http"
+                and scope.get("method") == "GET"
+                and get_route_path(scope).rstrip("/") == _MCP_PATH
+            ):
+                accept = next((v.decode("latin-1") for k, v in scope.get("headers", []) if k == b"accept"), "")
+                if not _accepts_event_stream(accept):
+                    headers = [(b"location", MCP_SERVER_CARD_PATH.encode()), (b"content-length", b"0")]
+                    await send({"type": "http.response.start", "status": 302, "headers": headers})
+                    await send({"type": "http.response.body", "body": b""})
+                    return
+            await self.app(scope, receive, send)
+
+    mcp_app.add_middleware(_BrowserRedirectMiddleware)
+
+
 def build_mcp_server(
     os: "AgentOS",
 ) -> FastMCP:
@@ -1989,10 +2526,65 @@ def build_mcp_server(
     # owns authentication for the HTTP transport: http_app() serves its discovery/OAuth
     # routes inside this app and wraps the MCP path in the SDK's challenge middleware.
     # The in-memory client path used in tests ignores it.
-    mcp = FastMCP(os.name or "AgentOS", auth=os._get_mcp_auth_provider())
+    server_name = (mcp_config.name if mcp_config is not None else None) or os.name or "AgentOS"
+    server_version = (mcp_config.version if mcp_config is not None else None) or getattr(os, "version", None)
+    server_instructions = mcp_config.instructions if mcp_config is not None else None
+    mcp = FastMCP(
+        server_name,
+        instructions=server_instructions,
+        version=server_version,
+        auth=os._get_mcp_auth_provider(),
+    )
+    from fastmcp.server.middleware import Middleware
+
+    from agno.os.authz.run_context import request_authorization
+    from agno.run.authorization import authorization_scope
+
+    class CallerAuthorizationMiddleware(Middleware):
+        async def on_call_tool(self, context: Any, call_next: Any) -> Any:
+            from fastmcp.server.dependencies import get_http_request
+
+            try:
+                request = get_http_request()
+            except RuntimeError:
+                request = None
+            # FastMCP can execute a tool on a task created outside the ASGI
+            # request. Bind from its own verified request context for each call.
+            if (
+                request is not None
+                and _mcp_auth_enabled(request)
+                and not getattr(request.state, "authenticated", False)
+            ):
+                raise PermissionError(_MISSING_BRIDGE_DETAIL)
+            authority = request_authorization(request) if request is not None else None
+            with authorization_scope(lambda: authority):
+                return await call_next(context)
+
+    mcp.add_middleware(CallerAuthorizationMiddleware())
+
+    if _server_card_enabled(mcp_config):
+        # allowed_hosts is the operator declaring the hostnames this deployment answers to; a
+        # forwarded host is advertised only if it appears in that list.
+        _register_server_card(
+            mcp,
+            os,
+            server_version,
+            card_url=(mcp_config.server_card_url if mcp_config is not None else None),
+            allowed_hosts=(mcp_config.allowed_hosts if mcp_config is not None else None),
+        )
+
+    if _tool_run_endpoint_enabled(mcp_config):
+        _register_tool_run_endpoint(
+            mcp,
+            os,
+            timeout_seconds=(
+                mcp_config.tool_run_timeout_seconds if mcp_config is not None else _DEFAULT_TOOL_RUN_TIMEOUT_SECONDS
+            ),
+            mcp_config=mcp_config,
+        )
 
     # Classify the tool surface up front: the enabled default-tool tags depend on
-    # whether components are exposed (the lifecycle pair rides along with exposure).
+    # whether components are exposed (lifecycle_tools=True adds their lifecycle pair).
     custom_entries, exposure_entries = _split_tool_entries(mcp_config, os)
     enabled_tags = _enabled_builtin_tags(mcp_config, has_exposures=bool(exposure_entries))
 
@@ -2054,7 +2646,7 @@ def build_mcp_server(
         annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
     )  # type: ignore
     async def config() -> Dict[str, Any]:
-        _require_tool_scopes("GET", "/config")
+        await _require_tool_scopes("GET", "/config")
         from agno.db.base import BaseDb
 
         request = _http_request_or_none()
@@ -2138,22 +2730,20 @@ def build_mcp_server(
         name="run_agent",
         title="Run Agent",
         description=(
-            "Run an agent with a message and get its response. Pass a session_id from get_sessions to "
-            "continue that conversation; omit it to start a new one (the session_id comes back in "
-            "structuredContent). If the result status is PAUSED, resolve the returned requirements and "
-            "call continue_run. Agent ids come from get_agentos_config."
+            "Run an agent with a message and get its response. If the result status is PAUSED, resolve "
+            "the returned requirements and call continue_run."
         ),
         tags={"core"},
         annotations={"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True},
     )  # type: ignore
     async def run_agent(
-        agent_id: str,
-        message: str,
+        agent_id: Annotated[str, Field(description="ID of the agent to run, returned by get_agentos_config.")],
+        message: _RunMessage,
         ctx: Context,
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
+        user_id: _RunUserId = None,
+        session_id: _RunSessionId = None,
     ) -> ToolResult:
-        _require_tool_scopes("POST", f"/agents/{agent_id}/runs")
+        await _require_tool_scopes("POST", f"/agents/{agent_id}/runs")
         user_id = _resolve_user_id(user_id)
         agent = await _resolve_run_component(os, "agents", agent_id, user_id=user_id, session_id=session_id)
         # Mint a fresh session per call when omitted (matches REST), never the sticky default.
@@ -2168,20 +2758,20 @@ def build_mcp_server(
         name="run_team",
         title="Run Team",
         description=(
-            "Run a team of agents with a message and get its response. Same session and PAUSED semantics "
-            "as run_agent. Team ids come from get_agentos_config."
+            "Run a team of agents with a message and get its response. If the result status is PAUSED, "
+            "resolve the returned requirements and call continue_run."
         ),
         tags={"core"},
         annotations={"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True},
     )  # type: ignore
     async def run_team(
-        team_id: str,
-        message: str,
+        team_id: Annotated[str, Field(description="ID of the team to run, returned by get_agentos_config.")],
+        message: _RunMessage,
         ctx: Context,
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
+        user_id: _RunUserId = None,
+        session_id: _RunSessionId = None,
     ) -> ToolResult:
-        _require_tool_scopes("POST", f"/teams/{team_id}/runs")
+        await _require_tool_scopes("POST", f"/teams/{team_id}/runs")
         user_id = _resolve_user_id(user_id)
         team = await _resolve_run_component(os, "teams", team_id, user_id=user_id, session_id=session_id)
         # Mint a fresh session per call when omitted (matches REST), never the sticky default.
@@ -2197,22 +2787,22 @@ def build_mcp_server(
         title="Run Workflow",
         description=(
             "Run a workflow with an input message and get its result. Can be long-running: progress is "
-            "reported per step when the client supports it. Same session and PAUSED semantics as "
-            "run_agent. Workflow ids come from get_agentos_config."
+            "reported per step when the client supports it. If the result status is PAUSED, resolve the "
+            "returned requirements and call continue_run."
         ),
         tags={"core"},
         annotations={"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True},
     )  # type: ignore
     async def run_workflow(
-        workflow_id: str,
-        message: str,
+        workflow_id: Annotated[str, Field(description="ID of the workflow to run, returned by get_agentos_config.")],
+        message: _RunMessage,
         ctx: Context,
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
+        user_id: _RunUserId = None,
+        session_id: _RunSessionId = None,
     ) -> ToolResult:
         from agno.workflow.remote import RemoteWorkflow
 
-        _require_tool_scopes("POST", f"/workflows/{workflow_id}/runs")
+        await _require_tool_scopes("POST", f"/workflows/{workflow_id}/runs")
         user_id = _resolve_user_id(user_id)
         workflow = await _resolve_run_component(os, "workflows", workflow_id, user_id=user_id, session_id=session_id)
         # Mint a fresh session per call when omitted (matches REST), never the sticky default.
@@ -2243,28 +2833,36 @@ def build_mcp_server(
         name="continue_run",
         title="Continue Paused Run",
         description=(
-            "Resume a PAUSED run after resolving its requirements (human-in-the-loop). "
-            "When a run tool returns status=PAUSED, its structuredContent carries the unresolved "
-            "requirements; set the resolution fields on them (e.g. confirmation=true) and pass them "
-            "back here unchanged otherwise. Provide exactly one of agent_id / team_id / workflow_id "
-            "(the component that owns the run) plus the run_id and session_id from the paused result."
+            "Resume a PAUSED run after resolving its requirements (human-in-the-loop). The paused "
+            "result's structuredContent carries the run_id, session_id, owning component id, and the "
+            "unresolved requirements."
         ),
         tags={"core", "lifecycle"},
         annotations={"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True},
     )  # type: ignore
     async def continue_run(
-        run_id: str,
+        run_id: Annotated[str, Field(description="ID of the paused run, returned in the PAUSED result.")],
+        session_id: Annotated[
+            str, Field(description="ID of the session containing the paused run, returned in the PAUSED result.")
+        ],
         ctx: Context,
-        session_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
-        requirements: Optional[List[Dict[str, Any]]] = None,
-        user_id: Optional[str] = None,
+        agent_id: _AgentOwnerId = None,
+        team_id: _TeamOwnerId = None,
+        workflow_id: _WorkflowOwnerId = None,
+        requirements: Annotated[
+            Optional[List[Dict[str, Any]]],
+            Field(
+                description=(
+                    "Copy the requirements from the PAUSED result and fill in each requested resolution, "
+                    "such as confirmation=true."
+                )
+            ),
+        ] = None,
+        user_id: _RunUserId = None,
     ) -> ToolResult:
         component_type, component_id = _classify_lifecycle_target(agent_id, team_id, workflow_id)
         _require_published_component("continue_run", component_type, component_id)
-        _require_tool_scopes("POST", f"/{component_type}/{component_id}/runs/{run_id}/continue")
+        await _require_tool_scopes("POST", f"/{component_type}/{component_id}/runs/{run_id}/continue")
         user_id = _resolve_user_id(user_id)
         # published_only=False, like the REST /continue routes: the run may live
         # on a draft-only preview component that has no published version.
@@ -2318,22 +2916,33 @@ def build_mcp_server(
         title="Cancel Run",
         description=(
             "Request cancellation of a running run. Irreversible: the run stops and is marked CANCELLED "
-            "(if it has not started yet, the intent is recorded and applied when it does). Provide the "
-            "run_id, its session_id, and exactly one of agent_id / team_id / workflow_id."
+            "(if it has not started yet, the intent is recorded and applied when it does)."
         ),
         tags={"core", "lifecycle"},
         annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": True},
     )  # type: ignore
     async def cancel_run(
-        run_id: str,
-        session_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
+        run_id: Annotated[
+            str, Field(description="ID of the run to cancel, returned by a run tool or get_session_runs.")
+        ],
+        # Mandatory for a caller scoped by user isolation (ownership is proven through the
+        # session); an admin's cancel is keyed on run_id alone.
+        session_id: Annotated[
+            Optional[str],
+            Field(
+                description=(
+                    "ID of the session containing the run. Required for user-scoped callers; otherwise "
+                    "include it when available."
+                )
+            ),
+        ] = None,
+        agent_id: _AgentOwnerId = None,
+        team_id: _TeamOwnerId = None,
+        workflow_id: _WorkflowOwnerId = None,
     ) -> str:
         component_type, component_id = _classify_lifecycle_target(agent_id, team_id, workflow_id)
         _require_published_component("cancel_run", component_type, component_id)
-        _require_tool_scopes("POST", f"/{component_type}/{component_id}/runs/{run_id}/cancel")
+        await _require_tool_scopes("POST", f"/{component_type}/{component_id}/runs/{run_id}/cancel")
         # Factory components cancel STATICALLY (mirrors the REST factory-cancel routes):
         # cancellation is a run_id-keyed global intent, so building the factory is both
         # unnecessary and harmful -- generic resolution invokes it, which 400s a
@@ -2366,26 +2975,40 @@ def build_mcp_server(
         name="get_sessions",
         title="List Sessions",
         description=(
-            "List past sessions (conversations), newest first. Filter by session_type, component_id "
-            "(an agent/team/workflow id from get_agentos_config), user, or session_name. Use a returned "
-            "session_id with the run tools to continue that conversation, or with get_session_runs to "
-            "read its history. db_id is only needed when get_agentos_config lists multiple databases."
+            "List past sessions (conversations), newest first. Use a returned session_id with the run "
+            "tools to continue that conversation, or with get_session_runs to read its history."
         ),
         tags={"session"},
         annotations={"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
     )  # type: ignore
     async def get_sessions(
-        session_type: Literal["agent", "team", "workflow"] = "agent",
-        component_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        session_name: Optional[str] = None,
-        limit: int = 20,
-        page: int = 1,
-        sort_by: str = "created_at",
-        sort_order: Literal["asc", "desc"] = "desc",
-        db_id: Optional[str] = None,
+        session_type: Annotated[
+            Literal["agent", "team", "workflow"],
+            Field(description="Type of component that created the sessions. Defaults to agent."),
+        ] = "agent",
+        component_id: Annotated[
+            Optional[str],
+            Field(
+                description="Only return sessions created by this agent, team, or workflow. The ID must match session_type."
+            ),
+        ] = None,
+        user_id: _ReadUserId = None,
+        session_name: Annotated[
+            Optional[str], Field(description="Only return sessions whose name matches this value.")
+        ] = None,
+        db_id: _DbId = None,
+        limit: Annotated[int, Field(ge=1, description="Maximum number of sessions to return per page.")] = 20,
+        page: Annotated[int, Field(ge=1, description="One-based page number to return.")] = 1,
+        # An unknown column is ignored by the DB layer (results come back unsorted), so the
+        # description names the two useful ones rather than explaining the fallback.
+        sort_by: Annotated[
+            str, Field(description="Timestamp used to sort sessions: created_at or updated_at.")
+        ] = "created_at",
+        sort_order: Annotated[
+            Literal["asc", "desc"], Field(description="Sort in ascending (asc) or descending (desc) order.")
+        ] = "desc",
     ) -> Dict[str, Any]:
-        _require_tool_scopes("GET", "/sessions")
+        await _require_tool_scopes("GET", "/sessions")
         user_id = _scoped_read_user_id(user_id)
         db = await get_db(os.dbs, db_id)
         session_type_enum = SessionType(session_type)
@@ -2428,35 +3051,43 @@ def build_mcp_server(
         description=(
             "Read a session's conversation history: each run's input and response content with its "
             "run_id, status, and timestamp, oldest first. Returns the answer content only, not the full "
-            "message transcript. Pass run_id to get that one run in FULL, untrimmed detail -- the complete "
-            "message transcript INCLUDING the system prompt/instructions, plus every event and metric. "
-            "This is the debugging escape hatch and can be large (a long run returns a lot of tokens), so "
-            "request a specific run_id deliberately, not by default. session_type is auto-detected when "
-            "omitted; db_id is only needed when get_agentos_config lists multiple databases."
+            "message transcript."
         ),
         tags={"session"},
         annotations={"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
     )  # type: ignore
     async def get_session_runs(
-        session_id: str,
-        run_id: Optional[str] = None,
-        session_type: Optional[Literal["agent", "team", "workflow"]] = None,
-        user_id: Optional[str] = None,
-        db_id: Optional[str] = None,
+        session_id: Annotated[
+            str, Field(description="ID of the session to read, returned by get_sessions or a run result.")
+        ],
+        run_id: Annotated[
+            Optional[str],
+            Field(
+                description=(
+                    "Return this run with its full stored details. Omit to return a compact history of "
+                    "every run in the session."
+                )
+            ),
+        ] = None,
+        session_type: _ReadSessionType = None,
+        user_id: _ReadUserId = None,
+        db_id: _DbId = None,
     ) -> List[Dict[str, Any]]:
-        _require_tool_scopes("GET", f"/sessions/{session_id}/runs")
+        await _require_tool_scopes("GET", f"/sessions/{session_id}/runs")
         user_id = _scoped_read_user_id(user_id)
         db = await get_db(os.dbs, db_id)
         session_type_enum = SessionType(session_type) if session_type else None
 
         if isinstance(db, RemoteDb):
-            runs = await db.get_session_runs(
+            # No limit is passed (run_id may reference any run), so the endpoint returns every run as a list.
+            result = await db.get_session_runs(
                 session_id=session_id,
                 session_type=session_type_enum,
                 user_id=user_id,
                 db_id=db_id,
                 headers=_forwarded_auth_headers(),
             )
+            runs = result if isinstance(result, list) else result.data
         else:
             # SessionNotFoundError propagates as the tool error verbatim ("Session {id} not found").
             runs = await session_service.get_session_runs(
@@ -2546,7 +3177,24 @@ def _identity_bridge_kwargs(os: "AgentOS") -> Dict[str, Any]:
     config = getattr(os, "authorization_config", None)
     admin_scope = getattr(config, "admin_scope", None) if config is not None else None
     user_isolation = bool(getattr(config, "user_isolation", False)) if config is not None else False
-    return {"admin_scope": admin_scope or AgentOSScope.ADMIN.value, "user_isolation": user_isolation}
+    # User directory: mcp_auth exempts /mcp from the parent AuthMiddleware, so the bridge
+    # must re-apply the disabled-user kill-switch itself. The directory is a peer of authz
+    # (AgentOS(user_directory=...)), so read it from there, not authorization_config.
+    directory = getattr(os, "user_directory", None)
+    return {
+        "admin_scope": admin_scope or AgentOSScope.ADMIN.value,
+        "user_isolation": user_isolation,
+        "user_store": directory,  # the directory is the roster store
+        "user_auto_provision": bool(directory.auto_provision) if directory is not None else False,
+        "user_email_claim": directory.email_claim if directory is not None else "email",
+        "user_name_claim": directory.name_claim if directory is not None else "name",
+        "user_directory_fail_closed": bool(directory.fail_closed) if directory is not None else False,
+        # Role store so a first-time auto-provision on the MCP path grants the same default role
+        # it would on the HTTP/WebSocket paths. The store lives on the Authorization object, same
+        # as the HTTP path reads it via app.state.role_store; without this the MCP path provisions
+        # a user but never grants their default role.
+        "role_store": getattr(os, "_authz_role_store", None),
+    }
 
 
 # Localhost defaults so a desktop / local MCP server is protected with zero extra config.
@@ -2555,7 +3203,7 @@ _MCP_LOCALHOST_HOSTS = ("127.0.0.1", "localhost", "[::1]")
 
 def _mcp_request_hostname(host_header: str) -> str:
     """Bare hostname from a Host header value, port stripped (keeps the ipv6 brackets)."""
-    value = host_header.strip()
+    value = host_header.strip().lower()
     if value.startswith("["):  # ipv6 literal, e.g. [::1]:7777
         end = value.find("]")
         return value[: end + 1] if end != -1 else value
@@ -2580,6 +3228,7 @@ def _add_transport_security_middleware(
     mcp_app: StarletteWithLifespan,
     allowed_hosts: List[str],
     allowed_origins: Optional[List[str]],
+    origin_allowed: Optional[Callable[[str], bool]] = None,
 ) -> None:
     """Add built-in DNS-rebinding protection: validate the Host (and Origin when present).
 
@@ -2602,6 +3251,7 @@ def _add_transport_security_middleware(
             if (
                 origin is not None
                 and origin not in origin_set
+                and not (origin_allowed and origin_allowed(origin))
                 and not _mcp_host_allowed(_mcp_origin_hostname(origin), host_set)
             ):
                 return JSONResponse({"error": "invalid_origin", "detail": "Origin not allowed."}, status_code=400)
@@ -2619,15 +3269,22 @@ def _mcp_server_is_open(os: "AgentOS") -> bool:
     which now reports the REST/WS plane only. Otherwise this defers to that shared
     detection: ``AgentOS(authorization=True)``, JWT env vars, a manually installed
     ``JWTMiddleware`` on a ``base_app``, and the security key all count as authenticated.
-    Only the fully-anonymous case (no mcp_auth and REST mode "none") answers requests
-    carrying no bearer token -- the case a rebound web page could drive, so the one that
-    needs default transport security. A service-account verifier alone does NOT close that
-    path (PATs are checked only when presented).
+    A mixed public/JWT deployment also accepts anonymous MCP requests when
+    PublicSurface selects MCP: its route policy bypasses REST authentication for
+    those requests. Both that case and REST mode "none" need default transport
+    security. A service-account verifier alone does NOT close the anonymous path
+    (PATs are checked only when presented).
     """
     from agno.os.auth import get_effective_auth_mode
 
     if getattr(os, "mcp_auth", None) is not None:
         return False
+    # Mirror PublicRoutePolicy's mixed-mode anonymous admission. Merely selecting
+    # public MCP does not bypass a security key or JWT configured without
+    # authorization=True; the parent auth middleware still challenges those.
+    public = getattr(os, "public", None)
+    if bool(getattr(os, "authorization", False)) and public is not None and public.mcp:
+        return True
     return (
         get_effective_auth_mode(
             getattr(os, "settings", None),
@@ -2667,8 +3324,13 @@ def get_mcp_server(
     # below), which protects open servers by default and lets deployed hosts opt in via
     # MCPConfig.allowed_hosts.
     http_app_kwargs: Dict[str, Any] = {"path": "/mcp"}
-    if "host_origin_protection" in inspect.signature(mcp.http_app).parameters:
+    http_app_params = inspect.signature(mcp.http_app).parameters
+    if "host_origin_protection" in http_app_params:
         http_app_kwargs["host_origin_protection"] = False
+    # Modern requests are already sessionless. This opts legacy clients out of transport
+    # sessions too. Only passed when requested, so the FastMCP settings remain in control.
+    if mcp_config is not None and mcp_config.stateless and "stateless_http" in http_app_params:
+        http_app_kwargs["stateless_http"] = True
     if mcp_auth is not None:
         # Constructor middleware runs INSIDE fastmcp's authentication middleware (the
         # app's middleware list is auth first, then these) -- the only placement where
@@ -2723,21 +3385,34 @@ def get_mcp_server(
             cls, args, kwargs = mw
             mcp_app.add_middleware(cls, *args, **kwargs)
 
+    if _server_card_enabled(mcp_config):
+        _add_browser_redirect_middleware(mcp_app)
+
     # Outermost: built-in DNS-rebinding protection (runs first, before auth and tools).
     #
     # A configured ``allowed_hosts`` always applies. On top of that, when the server is OPEN
-    # (no JWT and no security key, so /mcp answers anonymous callers) we default to
-    # localhost-only protection even without ``allowed_hosts`` -- this is the one config a
+    # (including public MCP alongside JWT-protected REST) we default to localhost-only
+    # protection even without ``allowed_hosts`` -- these are the configurations a
     # rebound web page could drive, and it restores the safe default fastmcp's own guard gave
     # before we disabled it. Authenticated deployments rely on the bearer token, which a
     # rebinding attacker cannot supply, so protection there stays opt-in: their real hostname
     # is not gated (the 421/400 regression the built-in guard caused) unless they set
     # ``allowed_hosts`` themselves.
     allowed_hosts = mcp_config.allowed_hosts if mcp_config is not None else None
+    if mcp_config is not None and mcp_config.root_host:
+        allowed_hosts = [*(allowed_hosts or []), mcp_config.root_host]
     allowed_origins = mcp_config.allowed_origins if mcp_config is not None else None
     if allowed_hosts is None and _mcp_server_is_open(os):
         allowed_hosts = []
     if allowed_hosts is not None:
-        _add_transport_security_middleware(mcp_app, allowed_hosts, allowed_origins)
+
+        def browser_origin_allowed(origin: str) -> bool:
+            # An origin the AgentOS CORS policy admits is one the operator already trusts
+            # for credentialed REST calls, so it is trusted here on the same terms. A
+            # rebound page cannot forge it: the browser sets Origin from the real page.
+            policy = getattr(os, "_cors_origin_policy", None)
+            return policy is not None and policy.allows(origin)
+
+        _add_transport_security_middleware(mcp_app, allowed_hosts, allowed_origins, browser_origin_allowed)
 
     return mcp_app

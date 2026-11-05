@@ -20,7 +20,13 @@ from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.vectordb.base import VectorDb, aembed_before_replace, embed_before_replace, is_rate_limit_error, raise_embedding_failures
+from agno.vectordb.base import (
+    VectorDb,
+    aembed_before_replace,
+    embed_before_replace,
+    is_rate_limit_error,
+    raise_embedding_failures,
+)
 from agno.vectordb.distance import Distance
 
 

@@ -28,6 +28,7 @@ from agno.run.approval import (
 @dataclass
 class FakeToolExecution:
     tool_name: Optional[str] = None
+    tool_call_id: Optional[str] = None
     tool_args: Optional[Dict[str, Any]] = None
     approval_type: Optional[str] = None
     approval_id: Optional[str] = None
@@ -54,6 +55,7 @@ class FakeRunResponse:
     tools: Optional[list] = None
     requirements: Optional[list] = None
     metadata: Optional[Dict[str, Any]] = None
+    messages: Optional[list] = None
 
 
 @dataclass
@@ -598,3 +600,472 @@ class TestAsyncCheckAndApplyApprovalResolution:
         await acheck_and_apply_approval_resolution(db=db, run_id="r1", run_response=rr)
         assert rr.metadata is not None
         assert rr.metadata["approval"] == approval
+
+
+# =============================================================================
+# Multiple pauses in one run: each approval-required call gets its own record
+# =============================================================================
+
+
+@dataclass
+class FakeCallRequirement:
+    tool_execution: Optional[FakeToolExecution] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        te = self.tool_execution
+        return {"tool_execution": {"tool_call_id": te.tool_call_id, "tool_args": te.tool_args} if te else None}
+
+
+@dataclass
+class FakeMemberRequirement:
+    tool_execution: Optional[FakeToolExecution] = None
+    member_run_id: Optional[str] = None
+    confirmation: Optional[bool] = None
+
+
+def _second_pause_run_response():
+    """A run at its second pause: call_1 was approved and executed under appr-1,
+    call_2 was just raised. tools and requirements accumulate across pauses."""
+    first = FakeToolExecution(
+        tool_name="pay_invoice",
+        tool_call_id="call_1",
+        tool_args={"invoice": "INV-1"},
+        approval_type="required",
+        approval_id="appr-1",
+        requires_confirmation=True,
+        confirmed=True,
+        result="PAID",
+    )
+    second = FakeToolExecution(
+        tool_name="pay_invoice",
+        tool_call_id="call_2",
+        tool_args={"invoice": "INV-2"},
+        approval_type="required",
+        requires_confirmation=True,
+    )
+    rr = FakeRunResponse(
+        tools=[first, second],
+        requirements=[FakeCallRequirement(tool_execution=first), FakeCallRequirement(tool_execution=second)],
+    )
+    return rr, first, second
+
+
+def _record_for(*tool_call_ids: str, status: str = "approved", record_id: str = "appr-1") -> Dict[str, Any]:
+    return {
+        "id": record_id,
+        "status": status,
+        "resolution_data": None,
+        "requirements": [{"tool_execution": {"tool_call_id": tcid}} for tcid in tool_call_ids],
+    }
+
+
+class TestCreateApprovalOnLaterPause:
+    def test_later_pause_creates_record_for_new_call_only(self):
+        db = MagicMock()
+        rr, first, second = _second_pause_run_response()
+        result = create_approval_from_pause(db=db, run_response=rr, agent_id="a1")
+
+        db.create_approval.assert_called_once()
+        data = db.create_approval.call_args[0][0]
+        assert result == data["id"] != "appr-1"
+        assert second.approval_id == result
+        assert first.approval_id == "appr-1"
+        assert data["tool_args"] == {"invoice": "INV-2"}
+        assert [r["tool_execution"]["tool_call_id"] for r in data["requirements"]] == ["call_2"]
+        assert data["context"]["tool_names"] == ["pay_invoice"]
+
+    def test_repeated_hook_on_same_pause_creates_no_duplicate(self):
+        db = MagicMock()
+        rr, _, second = _second_pause_run_response()
+        first_id = create_approval_from_pause(db=db, run_response=rr)
+        again = create_approval_from_pause(db=db, run_response=rr)
+        assert again == first_id == second.approval_id
+        db.create_approval.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_later_pause_creates_record_for_new_call_only_async(self):
+        db = MagicMock()
+        db.create_approval = AsyncMock()
+        rr, first, second = _second_pause_run_response()
+        result = await acreate_approval_from_pause(db=db, run_response=rr, agent_id="a1")
+
+        db.create_approval.assert_awaited_once()
+        data = db.create_approval.call_args[0][0]
+        assert result == data["id"] != "appr-1"
+        assert second.approval_id == result
+        assert first.approval_id == "appr-1"
+        assert data["tool_args"] == {"invoice": "INV-2"}
+        assert [r["tool_execution"]["tool_call_id"] for r in data["requirements"]] == ["call_2"]
+
+    @pytest.mark.asyncio
+    async def test_repeated_hook_on_same_pause_creates_no_duplicate_async(self):
+        db = MagicMock()
+        db.create_approval = AsyncMock()
+        rr, _, second = _second_pause_run_response()
+        first_id = await acreate_approval_from_pause(db=db, run_response=rr)
+        again = await acreate_approval_from_pause(db=db, run_response=rr)
+        assert again == first_id == second.approval_id
+        db.create_approval.assert_awaited_once()
+
+
+class TestRunLevelFallbackNeverCrossesToolCalls:
+    def _unstamped_second_call(self):
+        rr, first, second = _second_pause_run_response()
+        db = MagicMock()
+        db.get_approval.side_effect = lambda aid: _record_for("call_1") if aid == "appr-1" else None
+        db.get_approvals.return_value = ([_record_for("call_1")], 1)
+        return db, rr, second
+
+    def test_record_for_another_call_does_not_resolve_unstamped_call(self):
+        db, rr, second = self._unstamped_second_call()
+        with pytest.raises(RuntimeError, match="No approval record found"):
+            check_and_apply_approval_resolution(db=db, run_id="run-123", run_response=rr)
+        assert second.confirmed is None
+
+    @pytest.mark.asyncio
+    async def test_record_for_another_call_does_not_resolve_unstamped_call_async(self):
+        db, rr, second = self._unstamped_second_call()
+        db.get_approvals = AsyncMock(return_value=([_record_for("call_1")], 1))
+        with pytest.raises(RuntimeError, match="No approval record found"):
+            await acheck_and_apply_approval_resolution(db=db, run_id="run-123", run_response=rr)
+        assert second.confirmed is None
+
+    def test_record_naming_the_call_still_resolves_it(self):
+        db = MagicMock()
+        db.get_approvals.return_value = ([_record_for("call_2")], 1)
+        t = FakeToolExecution(tool_call_id="call_2", approval_type="required", requires_confirmation=True)
+        check_and_apply_approval_resolution(db=db, run_id="r1", run_response=FakeRunResponse(tools=[t]))
+        assert t.confirmed is True
+
+    def test_stamped_record_gone_does_not_borrow_another_calls_record(self):
+        db = MagicMock()
+        db.get_approval.return_value = None
+        db.get_approvals.return_value = ([_record_for("call_1")], 1)
+        t = FakeToolExecution(
+            tool_call_id="call_2", approval_type="required", approval_id="appr-gone", requires_confirmation=True
+        )
+        with pytest.raises(RuntimeError, match="No approval record found"):
+            check_and_apply_approval_resolution(db=db, run_id="r1", run_response=FakeRunResponse(tools=[t]))
+        assert t.confirmed is None
+
+    @pytest.mark.asyncio
+    async def test_stamped_record_gone_does_not_borrow_another_calls_record_async(self):
+        db = MagicMock()
+        db.get_approval = AsyncMock(return_value=None)
+        db.get_approvals = AsyncMock(return_value=([_record_for("call_1")], 1))
+        t = FakeToolExecution(
+            tool_call_id="call_2", approval_type="required", approval_id="appr-gone", requires_confirmation=True
+        )
+        with pytest.raises(RuntimeError, match="No approval record found"):
+            await acheck_and_apply_approval_resolution(db=db, run_id="r1", run_response=FakeRunResponse(tools=[t]))
+        assert t.confirmed is None
+
+
+class TestGateReviewRegressions:
+    def _required_and_audit(self):
+        required = FakeToolExecution(
+            tool_name="pay_invoice",
+            tool_call_id="call_1",
+            approval_type="required",
+            approval_id="appr-1",
+            requires_confirmation=True,
+        )
+        audit = FakeToolExecution(
+            tool_name="log_action", tool_call_id="call_2", approval_type="audit", requires_confirmation=True
+        )
+        return required, audit
+
+    def test_audit_tool_does_not_need_a_required_record(self):
+        db = MagicMock()
+        db.get_approval.return_value = _record_for("call_1")
+        db.get_approvals.return_value = ([_record_for("call_1")], 1)
+        required, audit = self._required_and_audit()
+        audit.confirmed = True
+        check_and_apply_approval_resolution(db=db, run_id="r1", run_response=FakeRunResponse(tools=[required, audit]))
+        assert required.confirmed is True
+        assert audit.confirmed is True
+
+    @pytest.mark.asyncio
+    async def test_audit_tool_does_not_need_a_required_record_async(self):
+        db = MagicMock()
+        db.get_approval = AsyncMock(return_value=_record_for("call_1"))
+        db.get_approvals = AsyncMock(return_value=([_record_for("call_1")], 1))
+        required, audit = self._required_and_audit()
+        audit.confirmed = True
+        await acheck_and_apply_approval_resolution(
+            db=db, run_id="r1", run_response=FakeRunResponse(tools=[required, audit])
+        )
+        assert required.confirmed is True
+        assert audit.confirmed is True
+
+    def _member_call_with_deleted_record(self):
+        te = FakeToolExecution(
+            tool_name="pay_invoice",
+            tool_call_id="call_2",
+            approval_type="required",
+            approval_id="appr-deleted",
+            requires_confirmation=True,
+        )
+        rr = FakeRunResponse(
+            tools=[], requirements=[FakeMemberRequirement(tool_execution=te, member_run_id="member-run")]
+        )
+        return te, rr
+
+    def test_member_record_for_another_call_does_not_resolve_deleted_record(self):
+        te, rr = self._member_call_with_deleted_record()
+        db = MagicMock()
+        db.get_approval.return_value = None
+        db.get_approvals.return_value = ([_record_for("call_1")], 1)
+        with pytest.raises(RuntimeError, match="No approval record found"):
+            check_and_apply_approval_resolution(db=db, run_id="team-run", run_response=rr)
+        assert te.confirmed is None
+
+    @pytest.mark.asyncio
+    async def test_member_record_for_another_call_does_not_resolve_deleted_record_async(self):
+        te, rr = self._member_call_with_deleted_record()
+        db = MagicMock()
+        db.get_approval = AsyncMock(return_value=None)
+        db.get_approvals = AsyncMock(return_value=([_record_for("call_1")], 1))
+        with pytest.raises(RuntimeError, match="No approval record found"):
+            await acheck_and_apply_approval_resolution(db=db, run_id="team-run", run_response=rr)
+        assert te.confirmed is None
+
+    def test_member_record_naming_the_call_still_resolves_it(self):
+        te, rr = self._member_call_with_deleted_record()
+        db = MagicMock()
+        db.get_approval.return_value = None
+        db.get_approvals.return_value = ([_record_for("call_2", record_id="appr-reissued")], 1)
+        check_and_apply_approval_resolution(db=db, run_id="team-run", run_response=rr)
+        assert te.confirmed is True
+
+
+@dataclass
+class FakeResolvableRequirement(FakeCallRequirement):
+    resolved: bool = False
+
+    def is_resolved(self) -> bool:
+        return self.resolved
+
+
+class TestRecordCoversCurrentPause:
+    def test_plain_hitl_tool_paused_alongside_is_listed(self):
+        earlier_plain = FakeToolExecution(tool_name="notify", tool_call_id="call_0", requires_confirmation=True)
+        gated = FakeToolExecution(
+            tool_name="pay_invoice", tool_call_id="call_1", approval_type="required", requires_confirmation=True
+        )
+        plain = FakeToolExecution(tool_name="notify", tool_call_id="call_2", requires_confirmation=True)
+        rr = FakeRunResponse(
+            tools=[earlier_plain, gated, plain],
+            requirements=[
+                FakeResolvableRequirement(tool_execution=earlier_plain, resolved=True),
+                FakeResolvableRequirement(tool_execution=gated),
+                FakeResolvableRequirement(tool_execution=plain),
+            ],
+        )
+        db = MagicMock()
+        approval_id = create_approval_from_pause(db=db, run_response=rr)
+
+        data = db.create_approval.call_args[0][0]
+        assert [r["tool_execution"]["tool_call_id"] for r in data["requirements"]] == ["call_1", "call_2"]
+        assert data["tool_name"] == "pay_invoice"
+        assert data["context"]["tool_names"] == ["pay_invoice"]
+        assert gated.approval_id == approval_id
+        assert plain.approval_id is None
+
+
+class TestAuditToolBeforeRequiredTool:
+    def _run_response(self):
+        audit = FakeToolExecution(
+            tool_name="log_action",
+            tool_call_id="call_1",
+            approval_type="audit",
+            requires_confirmation=True,
+            confirmed=True,
+            result="logged",
+        )
+        gated = FakeToolExecution(
+            tool_name="pay_invoice",
+            tool_call_id="call_2",
+            tool_args={"invoice": "INV-1"},
+            approval_type="required",
+            requires_confirmation=True,
+        )
+        rr = FakeRunResponse(
+            tools=[audit, gated],
+            requirements=[FakeCallRequirement(tool_execution=audit), FakeCallRequirement(tool_execution=gated)],
+        )
+        return rr, audit, gated
+
+    def test_has_approval_requirement_sees_required_tool_after_audit_tool(self):
+        rr, _, _ = self._run_response()
+        assert _has_approval_requirement(rr.tools, rr.requirements) is True
+
+    def test_required_tool_after_audit_tool_gets_a_record(self):
+        db = MagicMock()
+        rr, audit, gated = self._run_response()
+        approval_id = create_approval_from_pause(db=db, run_response=rr)
+
+        db.create_approval.assert_called_once()
+        data = db.create_approval.call_args[0][0]
+        assert data["tool_name"] == "pay_invoice"
+        assert data["tool_args"] == {"invoice": "INV-1"}
+        assert gated.approval_id == approval_id
+        assert audit.approval_id is None
+
+    @pytest.mark.asyncio
+    async def test_required_tool_after_audit_tool_gets_a_record_async(self):
+        db = MagicMock()
+        db.create_approval = AsyncMock()
+        rr, audit, gated = self._run_response()
+        approval_id = await acreate_approval_from_pause(db=db, run_response=rr)
+
+        db.create_approval.assert_awaited_once()
+        assert db.create_approval.call_args[0][0]["tool_name"] == "pay_invoice"
+        assert gated.approval_id == approval_id
+        assert audit.approval_id is None
+
+    def test_audit_tool_paused_in_same_turn_is_not_stamped(self):
+        db = MagicMock()
+        audit = FakeToolExecution(tool_name="log_action", approval_type="audit", requires_confirmation=True)
+        gated = FakeToolExecution(tool_name="pay_invoice", approval_type="required", requires_confirmation=True)
+        approval_id = create_approval_from_pause(db=db, run_response=FakeRunResponse(tools=[gated, audit]))
+        assert approval_id is not None
+        assert gated.approval_id == approval_id
+        assert audit.approval_id is None
+
+
+@dataclass
+class FakeMessage:
+    role: str = "tool"
+    tool_call_id: Optional[str] = None
+
+
+class TestCallsThatAlreadyRanAreNotGated:
+    def _run_response(self, second_result: Optional[str] = None):
+        ran = FakeToolExecution(
+            tool_name="pay_invoice",
+            tool_call_id="call_1",
+            approval_type="required",
+            approval_id="appr-deleted",
+            requires_confirmation=True,
+            confirmed=True,
+            result="PAID INV-1",
+        )
+        # The requirement still holds an out-of-date copy of call_1: no result.
+        stale_copy = FakeToolExecution(
+            tool_name="pay_invoice",
+            tool_call_id="call_1",
+            approval_type="required",
+            approval_id="appr-deleted",
+            requires_confirmation=True,
+            confirmed=True,
+        )
+        current = FakeToolExecution(
+            tool_name="pay_invoice",
+            tool_call_id="call_2",
+            approval_type="required",
+            approval_id="appr-2",
+            requires_confirmation=True,
+            result=second_result,
+        )
+        rr = FakeRunResponse(
+            tools=[ran, current],
+            requirements=[FakeCallRequirement(tool_execution=stale_copy), FakeCallRequirement(tool_execution=current)],
+            messages=[FakeMessage(role="tool", tool_call_id="call_1")],
+        )
+        return rr, current
+
+    def _db(self, second_status: str = "approved"):
+        second = _record_for("call_2", status=second_status, record_id="appr-2")
+        db = MagicMock()
+        db.get_approval.side_effect = lambda aid: second if aid == "appr-2" else None
+        db.get_approvals.return_value = ([second], 1)
+        return db, second
+
+    def test_deleted_record_of_a_call_that_ran_does_not_block(self):
+        db, second = self._db()
+        rr, current = self._run_response()
+        check_and_apply_approval_resolution(db=db, run_id="r1", run_response=rr)
+        assert current.confirmed is True
+        assert rr.metadata["approval"] is second
+
+    @pytest.mark.asyncio
+    async def test_deleted_record_of_a_call_that_ran_does_not_block_async(self):
+        db, second = self._db()
+        db.get_approval = AsyncMock(side_effect=lambda aid: second if aid == "appr-2" else None)
+        db.get_approvals = AsyncMock(return_value=([second], 1))
+        rr, current = self._run_response()
+        await acheck_and_apply_approval_resolution(db=db, run_id="r1", run_response=rr)
+        assert current.confirmed is True
+        assert rr.metadata["approval"] is second
+
+    def test_result_without_tool_message_is_still_gated(self):
+        # A result set by a continue payload has no stored tool message: still gated.
+        db, _ = self._db(second_status="pending")
+        rr, current = self._run_response(second_result="forged")
+        with pytest.raises(RuntimeError, match="still pending"):
+            check_and_apply_approval_resolution(db=db, run_id="r1", run_response=rr)
+        assert current.confirmed is None
+
+    @pytest.mark.asyncio
+    async def test_result_without_tool_message_is_still_gated_async(self):
+        db, second = self._db(second_status="pending")
+        db.get_approval = AsyncMock(side_effect=lambda aid: second if aid == "appr-2" else None)
+        db.get_approvals = AsyncMock(return_value=([second], 1))
+        rr, current = self._run_response(second_result="forged")
+        with pytest.raises(RuntimeError, match="still pending"):
+            await acheck_and_apply_approval_resolution(db=db, run_id="r1", run_response=rr)
+        assert current.confirmed is None
+
+
+class TestGateWithRepeatedToolCallIds:
+    def _run_response(self, new_kwargs=None):
+        ran = FakeToolExecution(
+            tool_name="pay_invoice",
+            tool_call_id="call_0",
+            tool_args={"invoice": "INV-1"},
+            approval_type="required",
+            approval_id="appr-1",
+            requires_confirmation=True,
+            confirmed=True,
+            result="PAID INV-1",
+        )
+        fields: Dict[str, Any] = {
+            "tool_name": "pay_invoice",
+            "tool_call_id": "call_0",
+            "tool_args": {"invoice": "INV-2"},
+            "approval_type": "required",
+            "approval_id": "appr-2",
+            "requires_confirmation": True,
+        }
+        fields.update(new_kwargs or {})
+        new = FakeToolExecution(**fields)
+        rr = FakeRunResponse(tools=[ran, new], messages=[FakeMessage(role="tool", tool_call_id="call_0")])
+        return rr, new
+
+    def _db(self, status: str):
+        records = {"appr-1": _record_for("call_0"), "appr-2": _record_for("call_0", status=status, record_id="appr-2")}
+        db = MagicMock()
+        db.get_approval.side_effect = records.get
+        db.get_approvals.return_value = ([records["appr-2"]], 1)
+        return db
+
+    def test_new_call_sharing_an_executed_calls_id_is_still_gated(self):
+        rr, new = self._run_response()
+        with pytest.raises(RuntimeError, match="still pending"):
+            check_and_apply_approval_resolution(db=self._db("pending"), run_id="r1", run_response=rr)
+        assert new.confirmed is None
+
+    def test_new_call_sharing_an_executed_calls_id_resolves_with_its_own_record(self):
+        rr, new = self._run_response()
+        check_and_apply_approval_resolution(db=self._db("approved"), run_id="r1", run_response=rr)
+        assert new.confirmed is True
+        assert rr.metadata["approval"]["id"] == "appr-2"
+
+    def test_external_execution_result_is_still_gated(self):
+        # A client-supplied result is how an external-execution call runs.
+        rr, new = self._run_response(
+            {"requires_confirmation": None, "external_execution_required": True, "result": "client result"}
+        )
+        with pytest.raises(RuntimeError, match="still pending"):
+            check_and_apply_approval_resolution(db=self._db("pending"), run_id="r1", run_response=rr)

@@ -91,5 +91,5 @@ npm run build
 
 The example uses `@openuidev/react-ui` 0.13.6 and Agno 2.9.0. See the
 [OpenUI documentation](https://www.openui.com/docs) and the
-[Agno AG-UI documentation](https://docs.agno.com/agent-os/interfaces/agui/overview)
+[Agno AG-UI documentation](https://docs.agno.com/agent-os/interfaces/ag-ui/introduction)
 for the underlying APIs.

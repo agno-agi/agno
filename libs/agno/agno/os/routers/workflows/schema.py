@@ -94,6 +94,7 @@ class WorkflowResponse(BaseModel):
     is_component: bool = Field(False, description="Whether this workflow was created via Builder")
     current_version: Optional[int] = Field(None, description="Current published version number")
     stage: Optional[str] = Field(None, description="Stage of the loaded config (draft/published)")
+    sandboxed: bool = False
 
     @classmethod
     def from_factory(cls, factory: WorkflowFactory) -> WorkflowResponse:
@@ -133,8 +134,13 @@ class WorkflowResponse(BaseModel):
 
         for idx, step in enumerate(steps):
             if step.get("agent"):
+                from agno.agents.base import BaseExternalAgent
+
                 # Convert to dict and exclude fields that are None
-                agent_response = await AgentResponse.from_agent(step.get("agent"))  # type: ignore
+                if isinstance(step.get("agent"), BaseExternalAgent):
+                    agent_response = AgentResponse.from_harness_agent(step.get("agent"))
+                else:
+                    agent_response = await AgentResponse.from_agent(step.get("agent"))  # type: ignore
                 step["agent"] = agent_response.model_dump(exclude_none=True)
 
             if step.get("team"):

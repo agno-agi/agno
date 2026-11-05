@@ -6,6 +6,7 @@ import pytest
 from agno.learn.config import (
     EntityMemoryConfig,
     LearnedKnowledgeConfig,
+    LearningMode,
     SessionContextConfig,
     UserMemoryConfig,
     UserProfileConfig,
@@ -14,8 +15,9 @@ from agno.learn.stores.learned_knowledge import LearnedKnowledgeStore
 from agno.learn.stores.session_context import SessionContextStore
 from agno.learn.stores.user_memory import UserMemoryStore
 from agno.learn.stores.user_profile import UserProfileStore
+from agno.metrics import RunMetrics
 from agno.models.base import Model
-from agno.models.message import Message
+from agno.models.message import Message, MessageMetrics
 from agno.models.response import ModelResponse
 
 DEFAULT_MAX_UPDATES = 10
@@ -106,9 +108,14 @@ class _LoopingAddMemoryModel(Model):
                         },
                     }
                 ],
+                response_usage=MessageMetrics(input_tokens=6, output_tokens=4, total_tokens=10),
             )
 
-        return ModelResponse(role="assistant", content="Memory extraction complete.")
+        return ModelResponse(
+            role="assistant",
+            content="Memory extraction complete.",
+            response_usage=MessageMetrics(input_tokens=6, output_tokens=4, total_tokens=10),
+        )
 
     def invoke(self, *args: Any, **kwargs: Any) -> ModelResponse:
         return self._response_for_call()
@@ -301,6 +308,30 @@ def test_extract_and_save_caps_tool_writes_at_limit(conversation_messages: list[
     assert provider_calls == [1, 2, 3, 4, 5]
     assert store.memories_updated is True
     assert result == "Memory extraction complete."
+
+
+def test_extract_and_save_counts_every_model_call(conversation_messages: list[Message]) -> None:
+    """Every call of the learning model's tool loop is counted, not only the last one."""
+    store, _, provider_calls = _build_looping_memory_store(max_updates_per_run=10, tool_call_requests=2)
+    run_metrics = RunMetrics()
+
+    store.extract_and_save(messages=conversation_messages, user_id="user-1", run_metrics=run_metrics)
+
+    assert provider_calls == [1, 2, 3]
+    assert run_metrics.total_tokens == 30
+
+
+def test_update_user_memory_tool_counts_its_model_calls() -> None:
+    """The agentic update_user_memory tool counts its learning model's calls in the run's metrics."""
+    store, _, provider_calls = _build_looping_memory_store(max_updates_per_run=10, tool_call_requests=2)
+    store.config.mode = LearningMode.AGENTIC
+    run_metrics = RunMetrics()
+
+    [update_user_memory] = store.get_tools(user_id="user-1", run_metrics=run_metrics)
+    update_user_memory(task="User prefers concise answers")
+
+    assert provider_calls == [1, 2, 3]
+    assert run_metrics.total_tokens == 30
 
 
 async def test_aextract_and_save_caps_tool_writes_at_limit(conversation_messages: list[Message]) -> None:

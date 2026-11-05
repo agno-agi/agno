@@ -243,7 +243,6 @@ def test_create_arrow_selector_transitions_to_name_prompt_in_narrow_pty(tmp_path
     import fcntl
     import pty
     import select
-    import signal
     import struct
     import sys
     import termios
@@ -289,7 +288,8 @@ def test_create_arrow_selector_transitions_to_name_prompt_in_narrow_pty(tmp_path
                     os.write(master_fd, b"\x1b[B\r")
                     sent_selection = True
                 if b"Project name" in output and not sent_abort:
-                    process.send_signal(signal.SIGINT)
+                    # Ctrl-D: the pty queues it until the prompt reads, unlike a SIGINT sent before the read blocks.
+                    os.write(master_fd, b"\x04")
                     sent_abort = True
             elif process.poll() is not None:
                 break
@@ -298,7 +298,10 @@ def test_create_arrow_selector_transitions_to_name_prompt_in_narrow_pty(tmp_path
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout=2)
-            pytest.fail("create did not exit after selecting a template and aborting the name prompt")
+            pytest.fail(
+                "create did not exit after selecting a template and aborting the name prompt:\n"
+                + output.decode(errors="replace")
+            )
     finally:
         os.close(master_fd)
 
