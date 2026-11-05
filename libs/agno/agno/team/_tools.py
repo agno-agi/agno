@@ -411,7 +411,7 @@ def _determine_tools_for_model(
                 _function_names.append(name)
                 _func = _func._per_run_copy()
                 if isinstance(tool.name, str) and tool.name:
-                    _func.owning_toolkit = tool.name
+                    _func.owning_toolkit = tool.recorded_name
 
                 _func._team = team
                 # Respect the function's explicit strict setting if set
@@ -445,6 +445,10 @@ def _determine_tools_for_model(
                 continue
             _function_names.append(tool.name)
             tool = tool._per_run_copy()
+            # The saved toolkit name can be stale (renamed, or an MCP default name
+            # holding the old command's arguments): record the live toolkit's name
+            if tool.owning_toolkit and isinstance(tool.bound_toolkit, Toolkit):
+                tool.owning_toolkit = tool.bound_toolkit.recorded_name
             tool._team = team
             # Respect the function's explicit strict setting if set
             effective_strict = strict if tool.strict is None else tool.strict

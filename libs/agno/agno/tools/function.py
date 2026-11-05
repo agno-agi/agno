@@ -1298,6 +1298,10 @@ class Function(BaseModel):
     # rehydration. It restores toolkit-level behavior without persisting the
     # Toolkit or its instructions in component configs.
     source_toolkit: Optional[Any] = Field(default=None, exclude=True, repr=False)
+    # Live Toolkit that owns the entrypoint registry rehydration bound, set
+    # even when source_toolkit is not (the recorded toolkit is gone, so the
+    # function was bound by its flat name). The per-run copy records its name.
+    bound_toolkit: Optional[Any] = Field(default=None, exclude=True, repr=False)
 
     # Caching configuration
     cache_results: bool = False
@@ -1348,14 +1352,16 @@ class Function(BaseModel):
         )
 
     def __deepcopy__(self, memo: Optional[Dict[int, Any]] = None) -> "Function":
-        """Deep-copy runtime state while retaining the live source Toolkit.
+        """Deep-copy runtime state while retaining the live source and bound Toolkits.
 
         ``memo`` is optional because ``BaseModel.model_copy(deep=True)`` calls
         ``__deepcopy__()`` with no argument.
         """
         if memo is None:
             memo = {}
-        if self.source_toolkit is not None:
+        for toolkit in (self.source_toolkit, self.bound_toolkit):
+            if toolkit is None:
+                continue
             # AgentOS deep-copies each Function independently for request
             # isolation. Sharing the registry Toolkit keeps its connections and
             # current instructions, and keeps the entrypoint bound to the live
@@ -1364,7 +1370,7 @@ class Function(BaseModel):
             # setdefault, not assignment: the memo belongs to the in-progress
             # copy. Overwriting an entry it already made would leave one
             # original with two stand-ins in the same object graph.
-            memo.setdefault(id(self.source_toolkit), self.source_toolkit)
+            memo.setdefault(id(toolkit), toolkit)
         return super().__deepcopy__(memo)
 
     def model_copy(self, *, deep: bool = False) -> "Function":
