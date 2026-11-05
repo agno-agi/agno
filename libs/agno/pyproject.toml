@@ -221,7 +221,7 @@ pinecone = ["pinecone==5.4.2"]
 pylance = ["pylance"]
 qdrant = ["qdrant-client"]
 singlestore = ["sqlalchemy"]
-surrealdb = ["surrealdb>=1.0.4"]
+surrealdb = ["surrealdb>=1.0.4,<4"]
 upstash = ["upstash-vector"]
 weaviate = ["weaviate-client"]
 
@@ -429,6 +429,7 @@ embedders = [
 # All libraries for testing
 tests = [
     "claude-agent-sdk>=0.2.148",
+    "surrealdb[embedded]>=3,<4; python_version >= '3.10'",
     "openai-codex==0.163.0; python_version >= '3.10'",
   "agno[pages]",
     "agno[a2a]",

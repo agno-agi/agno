@@ -16,6 +16,8 @@ from types import ModuleType
 import pytest
 from sqlalchemy import create_engine, inspect, text
 
+from agno.utils.surrealdb import run_query
+
 _MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "migrations" / "v2_to_v3"
 
 
@@ -87,16 +89,15 @@ class TestSurrealDbSchemaMigration:
         return conn
 
     def _fields(self, conn, coll):
-        info = conn.query(f"INFO FOR TABLE {coll};")
-        info = info[0] if isinstance(info, list) else info
+        info = run_query(conn, f"INFO FOR TABLE {coll};")
         return list((info or {}).get("fields", {}).keys())
 
     def test_declares_user_id_field(self):
         conn = self._conn()
         coll = "docs"
-        conn.query(f"DEFINE TABLE IF NOT EXISTS {coll} SCHEMAFUL;")
-        conn.query(f"DEFINE FIELD IF NOT EXISTS content ON {coll} TYPE string;")
-        conn.query(f"CREATE {coll}:r1 SET content='hi';")
+        run_query(conn, f"DEFINE TABLE IF NOT EXISTS {coll} SCHEMAFUL;")
+        run_query(conn, f"DEFINE FIELD IF NOT EXISTS content ON {coll} TYPE string;")
+        run_query(conn, f"CREATE {coll}:r1 SET content='hi';")
         assert "user_id" not in self._fields(conn, coll)
 
         mod = _load("migrate_field_vectordbs.py")
@@ -105,14 +106,13 @@ class TestSurrealDbSchemaMigration:
 
         assert "user_id" in self._fields(conn, coll)
         # The existing record reads as NONE (shared), so a scoped read still finds it.
-        rows = conn.query(f"SELECT content, user_id FROM {coll} WHERE (user_id = 'alice' OR user_id = NONE);")
-        rows = rows[0] if isinstance(rows, list) and rows and isinstance(rows[0], list) else rows
+        rows = run_query(conn, f"SELECT content, user_id FROM {coll} WHERE (user_id = 'alice' OR user_id = NONE);")
         assert rows
 
     def test_idempotent(self):
         conn = self._conn()
         coll = "docs2"
-        conn.query(f"DEFINE TABLE IF NOT EXISTS {coll} SCHEMAFUL;")
+        run_query(conn, f"DEFINE TABLE IF NOT EXISTS {coll} SCHEMAFUL;")
         mod = _load("migrate_field_vectordbs.py")
         mod.surrealdb_config["client"] = conn
         mod.migrate_surrealdb_collection(coll)

@@ -4,6 +4,7 @@ from typing import Any, Optional, Sequence, TypeVar, Union, cast
 from surrealdb import BlockingHttpSurrealConnection, BlockingWsSurrealConnection, Surreal
 
 from agno.utils.log import logger
+from agno.utils.surrealdb import run_query
 
 RecordType = TypeVar("RecordType")
 
@@ -23,7 +24,7 @@ def _query_aux(
     vars: dict[str, Any],
 ) -> Any:
     try:
-        response = client.query(query, vars)
+        response = run_query(client, query, vars)
     except Exception:
         msg = f"!! Query execution error: {query} with {vars}"
         logger.exception(msg)

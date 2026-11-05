@@ -21,6 +21,7 @@ All operations are idempotent — a field that already exists is left as-is.
 from typing import Any, Dict, List
 
 from agno.utils.log import log_error, log_info, log_warning
+from agno.utils.surrealdb import run_query
 
 # ------------ Milvus ------------
 milvus_config: Dict[str, Any] = {
@@ -280,7 +281,7 @@ def migrate_surrealdb_collection(collection: str) -> None:
             return
 
         log_info(f"Declaring user_id field on SurrealDB collection '{collection}'")
-        client.query(f"DEFINE FIELD IF NOT EXISTS user_id ON {collection} TYPE option<string>;")
+        run_query(client, f"DEFINE FIELD IF NOT EXISTS user_id ON {collection} TYPE option<string>;")
         log_info(f"Successfully migrated SurrealDB collection '{collection}'")
 
     except Exception as e:

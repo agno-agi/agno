@@ -35,6 +35,7 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.migrations.utils import quote_db_identifier
 from agno.db.utils import CustomJSONEncoder
 from agno.utils.log import log_error, log_info, log_warning
+from agno.utils.surrealdb import run_delete, run_query
 
 try:
     from sqlalchemy import text
@@ -2495,7 +2496,8 @@ def _revert_surrealdb(db: BaseDb, table_type: str, table_name: str) -> bool:
         items.sort(key=lambda t: (t[0], t[1]))
         legacy_runs = [t[2] for t in items if t[2] is not None]
         try:
-            db.client.query(  # type: ignore
+            run_query(
+                db.client,  # type: ignore
                 "UPDATE $record SET runs = $runs",
                 {"record": RecordID(sessions_table, sid), "runs": legacy_runs},
             )
@@ -2506,7 +2508,7 @@ def _revert_surrealdb(db: BaseDb, table_type: str, table_name: str) -> bool:
     if not failed_sids:
         # No failures: truncate the whole runs table.
         try:
-            db.client.delete(runs_table)  # type: ignore
+            run_delete(db.client, runs_table)  # type: ignore
         except Exception:
             pass
     else:
@@ -2524,7 +2526,7 @@ def _revert_surrealdb(db: BaseDb, table_type: str, table_name: str) -> bool:
             if rid is None:
                 continue
             try:
-                db.client.delete(rid)  # type: ignore
+                run_delete(db.client, rid)  # type: ignore
             except Exception:
                 pass
         log_warning(
