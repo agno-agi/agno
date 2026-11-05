@@ -1,8 +1,32 @@
 from unittest.mock import MagicMock, patch
 
+import duckdb
 import pytest
 
 from agno.tools.duckdb import DuckDbTools
+
+
+@pytest.mark.parametrize("schema", ["main", "archive"])
+def test_full_text_search_returns_highest_scoring_matches_first(schema):
+    with duckdb.connect() as connection:
+        connection.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+        connection.execute(f"CREATE TABLE {schema}.docs (id INTEGER, body VARCHAR)")
+        connection.executemany(
+            f"INSERT INTO {schema}.docs VALUES (?, ?)",
+            [(1, "partial match"), (2, "best match"), (3, "no match")],
+        )
+        # Deterministic scores exercise the generated SQL without downloading the FTS extension.
+        connection.execute(f"CREATE SCHEMA fts_{schema}_docs")
+        connection.execute(
+            f"CREATE MACRO fts_{schema}_docs.match_bm25(doc_id, query) AS "
+            "CASE doc_id WHEN 1 THEN 0.2 WHEN 2 THEN 1.5 ELSE NULL END"
+        )
+        tools = DuckDbTools(connection=connection)
+        table = "docs" if schema == "main" else f"{schema}.docs"
+
+        result = tools.full_text_search(table, "id", "duck")
+
+        assert result.splitlines() == ["score,id,body", "1.5,2,best match", "0.2,1,partial match"]
 
 
 @pytest.fixture
