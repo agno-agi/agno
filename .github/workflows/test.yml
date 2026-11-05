@@ -207,6 +207,8 @@ jobs:
         working-directory: .
         env:
           AGNO_TELEMETRY: false
+          PYTHONPATH: scripts
+          SHARD_MANIFEST: shard-${{ matrix.group }}.json
         run: |
           source .venv/bin/activate
           # psycopg, so the catalog's Postgres suites resolve their driver and
@@ -214,7 +216,34 @@ jobs:
           uv pip install pytest-split "psycopg[binary]" --quiet
           # least_duration with no durations file deals the tests out round-robin, so the slow
           # AgentOS router tests under tests/unit/os spread across every group instead of filling one.
-          python -m pytest --splits 15 --group ${{ matrix.group }} --splitting-algorithm least_duration ./libs/agno/tests/unit --ignore=libs/agno/tests/unit/models/litellm --ignore=libs/agno/tests/unit/tools/test_crawl4ai.py --ignore=libs/agno/tests/unit/tools/test_scrapegraph.py
+          python -m pytest -p shard_manifest --splits 15 --group ${{ matrix.group }} --splitting-algorithm least_duration ./libs/agno/tests/unit --ignore=libs/agno/tests/unit/models/litellm --ignore=libs/agno/tests/unit/tools/test_crawl4ai.py --ignore=libs/agno/tests/unit/tools/test_scrapegraph.py
+      - name: Upload shard manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: shard-manifest-${{ matrix.group }}
+          path: shard-${{ matrix.group }}.json
+          retention-days: 1
+          overwrite: true
+
+  # Each shard collects on its own, so a shard that collects differently silently drops or repeats tests.
+  shard-coverage:
+    runs-on: ubuntu-latest
+    needs: tests
+    name: shard coverage
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+      - name: Download shard manifests
+        uses: actions/download-artifact@v4
+        with:
+          pattern: shard-manifest-*
+          path: shard-manifests
+          merge-multiple: true
+      - name: Check every test ran exactly once
+        run: python scripts/shard_manifest.py shard-manifests --splits 15
 
   queue-store-parity:
     runs-on: ubuntu-latest
