@@ -763,27 +763,26 @@ class MySQLDb(BaseDb):
                         # a write read committed when it logs statements
                         if self.db_engine.dialect.is_mariadb:  # type: ignore[attr-defined]
                             sess.connection(execution_options={"isolation_level": "READ COMMITTED"})
-                        # Backfill a monotonic run_index when the run arrives without one
-                        # (e.g. a background/continue save that couldn't resolve its position).
-                        # A NULL index has no position and breaks ORDER BY run_index. ON DUPLICATE KEY
-                        # preserves the existing index, so this only sets it on a genuine insert.
-                        if row.get("run_index") is None:
-                            # Serialize same-session backfills: two concurrent
-                            # max-reads can both see the same MAX and land
-                            # duplicate indexes. GET_LOCK is connection-scoped
-                            # and survives COMMIT, so it is released in the
-                            # finally below - AFTER the row is durable.
-                            backfill_lock = run_index_lock_name(session_id)
-                            acquired = sess.execute(text("SELECT GET_LOCK(:name, 5)"), {"name": backfill_lock}).scalar()
-                            if not acquired:
-                                log_warning(
-                                    f"run_index backfill lock timed out for session {session_id}; "
-                                    "proceeding unserialized"
-                                )
-                            current_max = sess.execute(
-                                select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
-                            ).scalar()
-                            row["run_index"] = (current_max + 1) if current_max is not None else 0
+                        # A new run always lands after the session's existing rows. Callers
+                        # pass the run's position in the in-memory ``session.runs`` list, and
+                        # after runs were deleted from the front of that list the position
+                        # collides with, or sorts before, rows that still exist. ON DUPLICATE
+                        # KEY preserves the existing index, so this only affects a genuine
+                        # insert. GET_LOCK serializes same-session inserts so two concurrent
+                        # max-reads cannot land duplicate indexes; it is connection-scoped and
+                        # survives COMMIT, so it is released in the finally below.
+                        backfill_lock = run_index_lock_name(session_id)
+                        acquired = sess.execute(text("SELECT GET_LOCK(:name, 5)"), {"name": backfill_lock}).scalar()
+                        if not acquired:
+                            log_warning(
+                                f"run_index backfill lock timed out for session {session_id}; proceeding unserialized"
+                            )
+                        current_max = sess.execute(
+                            select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
+                        ).scalar()
+                        next_index = (current_max + 1) if current_max is not None else 0
+                        provided_index = row.get("run_index")
+                        row["run_index"] = next_index if provided_index is None else max(provided_index, next_index)
 
                         stmt = mysql.insert(runs_table).values(**row)  # type: ignore
                         stmt = stmt.on_duplicate_key_update(
@@ -897,72 +896,87 @@ class MySQLDb(BaseDb):
             log_error(f"Exception reading from runs table: {str(e)}")
             raise e
 
-    def _scrub_run_ids_from_legacy_blob(self, run_ids: List[str]) -> None:
+    def _scrub_run_ids_from_legacy_blob(self, run_ids: List[str], sess: Any, sessions_table: Any) -> bool:
         """Remove ``run_ids`` from every session row's legacy ``runs`` JSON column.
 
-        Partial-migration state: v3 migration copied runs into the ``agno_runs``
-        table but preserved the legacy embedded blob as a backup. Deleting a run
-        row alone leaves the blob intact and ``merge_runs_table_with_legacy_blob``
-        resurrects it on the next read. Skip cleanly on a fully-migrated DB
-        (no ``runs`` column). Best-effort.
-        """
-        if not run_ids:
-            return
-        try:
-            import json as _json
+        Partial-migration state: the v3 migration copied runs into the runs table
+        but kept the legacy blob as a backup, and ``merge_runs_table_with_legacy_blob``
+        still reads it. Runs inside the caller's transaction so the row delete and
+        the scrub commit together or not at all; a fully migrated DB (no ``runs``
+        column) is a no-op. ``sessions_table`` is resolved by the caller before
+        the transaction opens, because ``_get_table`` uses the same scoped session.
 
-            sessions_table = self._get_table(table_type="sessions")
-            if sessions_table is None or "runs" not in sessions_table.c:
-                return
-            wanted = set(run_ids)
-            with self.Session() as sess, sess.begin():
-                rows = sess.execute(
-                    select(sessions_table.c.session_id, sessions_table.c.runs).where(sessions_table.c.runs.isnot(None))
-                ).fetchall()
-                for sid, runs_raw in rows:
-                    if isinstance(runs_raw, str):
-                        try:
-                            runs_list = _json.loads(runs_raw)
-                        except (_json.JSONDecodeError, TypeError):
-                            continue
-                    else:
-                        runs_list = runs_raw
-                    if not isinstance(runs_list, list):
-                        continue
-                    kept = [r for r in runs_list if not (isinstance(r, dict) and r.get("run_id") in wanted)]
-                    if len(kept) == len(runs_list):
-                        continue
-                    sess.execute(
-                        sessions_table.update().where(sessions_table.c.session_id == sid).values(runs=_json.dumps(kept))
-                    )
-        except Exception:
-            log_debug("legacy-runs scrub failed; the primary delete still succeeded", exc_info=True)
+        Returns True if any legacy blob held one of ``run_ids``.
+        """
+        if not run_ids or sessions_table is None or "runs" not in sessions_table.c:
+            return False
+        wanted = set(run_ids)
+        scrubbed = False
+        rows = sess.execute(
+            select(sessions_table.c.session_id, sessions_table.c.runs).where(sessions_table.c.runs.isnot(None))
+        ).fetchall()
+        for sid, runs_raw in rows:
+            if isinstance(runs_raw, str):
+                try:
+                    runs_list = json.loads(runs_raw)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+            else:
+                runs_list = runs_raw
+            if not isinstance(runs_list, list):
+                continue
+            kept = [r for r in runs_list if not (isinstance(r, dict) and r.get("run_id") in wanted)]
+            if len(kept) == len(runs_list):
+                continue
+            sess.execute(
+                sessions_table.update().where(sessions_table.c.session_id == sid).values(runs=json.dumps(kept))
+            )
+            scrubbed = True
+        return scrubbed
 
     def delete_run(self, run_id: str) -> bool:
-        """Delete a single run from the runs table."""
+        """Delete a single run from the runs table.
+
+        Also scrubs it from the legacy ``runs`` blob in the same transaction, so a
+        partially migrated session cannot resurrect it on the next read.
+
+        Args:
+            run_id (str): The ID of the run to delete.
+
+        Returns:
+            bool: True if the run was removed from the runs table or a legacy blob, False otherwise.
+        """
         try:
             table = self._get_table(table_type="runs")
-            if table is None:
-                return False
+            sessions_table = self._get_table(table_type="sessions")
             with self.Session() as sess, sess.begin():
-                result = sess.execute(table.delete().where(table.c.run_id == run_id))
-                deleted = result.rowcount > 0
-            self._scrub_run_ids_from_legacy_blob([run_id])
-            return deleted
+                deleted = False
+                if table is not None:
+                    result = sess.execute(table.delete().where(table.c.run_id == run_id))
+                    deleted = result.rowcount > 0
+                scrubbed = self._scrub_run_ids_from_legacy_blob([run_id], sess, sessions_table)
+            return deleted or scrubbed
         except Exception as e:
             log_error(f"Error deleting run: {str(e)}")
             raise e
 
     def delete_runs(self, run_ids: List[str]) -> None:
-        """Delete all given runs from the runs table."""
+        """Delete all given runs from the runs table.
+
+        Also scrubs them from the legacy ``runs`` blob in the same transaction, so a
+        partially migrated session cannot resurrect them on the next read.
+
+        Args:
+            run_ids (List[str]): The IDs of the runs to delete.
+        """
         try:
             table = self._get_table(table_type="runs")
-            if table is None:
-                return
+            sessions_table = self._get_table(table_type="sessions")
             with self.Session() as sess, sess.begin():
-                result = sess.execute(table.delete().where(table.c.run_id.in_(run_ids)))
-            self._scrub_run_ids_from_legacy_blob(list(run_ids))
-            log_debug(f"Successfully deleted {result.rowcount} runs")
+                if table is not None:
+                    result = sess.execute(table.delete().where(table.c.run_id.in_(run_ids)))
+                    log_debug(f"Successfully deleted {result.rowcount} runs")
+                self._scrub_run_ids_from_legacy_blob(list(run_ids), sess, sessions_table)
         except Exception as e:
             log_error(f"Error deleting runs: {str(e)}")
             raise e

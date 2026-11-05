@@ -397,16 +397,21 @@ class TestShapes:
 class TestETag:
     @pytest.mark.parametrize("route", KEPT_ROUTES)
     def test_answer_is_kept_and_a_caller_that_holds_its_etag_gets_a_304(self, client, mock_db, route):
-        """The rows are read once while the versions stay the same; the 304 has no body and names the same ETag."""
+        """The rows are read once while the versions stay the same; the 304 has no body and names the same ETag, also
+        for the weak ETag a compressing proxy sends back."""
         mock_db.get_metrics_versions = MagicMock(return_value=_versions())
         with _scope(None):
             first = client.get(f"/os/metrics/{route}?{_last(2)}")
             second = client.get(f"/os/metrics/{route}?{_last(2)}", headers={"If-None-Match": first.headers["etag"]})
+            weak = client.get(
+                f"/os/metrics/{route}?{_last(2)}", headers={"If-None-Match": f"W/{first.headers['etag']}"}
+            )
 
         assert first.status_code == 200
         assert second.status_code == 304
         assert second.content == b""
         assert second.headers["etag"] == first.headers["etag"]
+        assert weak.status_code == 304
         assert _reads(mock_db) == 1
 
 

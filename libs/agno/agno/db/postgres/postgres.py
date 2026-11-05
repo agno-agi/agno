@@ -1312,24 +1312,24 @@ class PostgresDb(BaseDb):
             row["run_data"] = sanitize_postgres_strings(row["run_data"])
 
             with self.Session() as sess, sess.begin():
-                # Backfill a monotonic run_index when the run arrives without one
-                # (e.g. a background/continue save that couldn't resolve its position).
-                # A NULL index has no position and breaks ORDER BY run_index. ON CONFLICT
-                # preserves the existing index, so this only sets it on a genuine insert.
-                if row.get("run_index") is None:
-                    # Serialize same-session backfills: under READ COMMITTED two
-                    # concurrent max-reads can both see the same MAX and land
-                    # duplicate indexes. The advisory lock is transaction-scoped
-                    # (released at COMMIT/ROLLBACK) and keyed on session_id, so
-                    # only same-session backfilling inserts queue behind it.
-                    sess.execute(
-                        text("SELECT pg_advisory_xact_lock(hashtext('agno_run_index'), hashtext(:sid))"),
-                        {"sid": session_id},
-                    )
-                    current_max = sess.execute(
-                        select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
-                    ).scalar()
-                    row["run_index"] = (current_max + 1) if current_max is not None else 0
+                # A new run always lands after the session's existing rows. Callers
+                # pass the run's position in the in-memory ``session.runs`` list, and
+                # after runs were deleted from the front of that list the position
+                # collides with, or sorts before, rows that still exist. ON CONFLICT
+                # preserves the existing index, so this only affects a genuine insert.
+                # Serialize same-session inserts: under READ COMMITTED two concurrent
+                # max-reads can both see the same MAX and land duplicate indexes. The
+                # advisory lock is transaction-scoped and keyed on session_id.
+                sess.execute(
+                    text("SELECT pg_advisory_xact_lock(hashtext('agno_run_index'), hashtext(:sid))"),
+                    {"sid": session_id},
+                )
+                current_max = sess.execute(
+                    select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
+                ).scalar()
+                next_index = (current_max + 1) if current_max is not None else 0
+                provided_index = row.get("run_index")
+                row["run_index"] = next_index if provided_index is None else max(provided_index, next_index)
 
                 stmt = postgresql.insert(runs_table).values(**row)
                 stmt = stmt.on_conflict_do_update(  # type: ignore
@@ -1433,69 +1433,64 @@ class PostgresDb(BaseDb):
             log_error(f"Exception reading from runs table: {str(e)}")
             raise e
 
-    def _scrub_run_ids_from_legacy_blob(self, run_ids: List[str]) -> None:
-        """Remove ``run_ids`` from every session row's legacy ``runs`` JSON column.
+    def _scrub_run_ids_from_legacy_blob(self, run_ids: List[str], sess: Any, sessions_table: Any) -> bool:
+        """Remove ``run_ids`` from every session row's legacy ``runs`` JSONB column.
 
-        Partial-migration state: v3 migration copied runs into the ``agno_runs``
-        table but preserved the legacy embedded blob as a backup. Deleting a run
-        row alone leaves the blob intact and ``merge_runs_table_with_legacy_blob``
-        resurrects it on the next read. Skip cleanly on a fully-migrated DB
-        (no ``runs`` column). Best-effort: a failure here must not roll back
-        the primary runs-table delete.
+        Partial-migration state: the v3 migration copied runs into the runs table
+        but kept the legacy blob as a backup, and ``merge_runs_table_with_legacy_blob``
+        still reads it. Runs inside the caller's transaction so the row delete and
+        the scrub commit together or not at all; a fully migrated DB (no ``runs``
+        column) is a no-op. ``sessions_table`` is resolved by the caller before
+        the transaction opens, because ``_get_table`` uses the same scoped session.
+
+        Returns True if any legacy blob held one of ``run_ids``.
         """
-        if not run_ids:
-            return
-        try:
-            sessions_table = self._get_table(table_type="sessions")
-            if sessions_table is None or "runs" not in sessions_table.c:
-                return
-            # Table name is trusted (came from adapter config, not user input);
-            # run_ids are parameterized via bindparam to avoid SQL injection.
-            stmt = text(
-                f"""
-                UPDATE {sessions_table.name}
-                SET runs = COALESCE(
-                    (SELECT jsonb_agg(elem)
-                     FROM jsonb_array_elements(runs) elem
-                     WHERE elem->>'run_id' <> ALL(:ids)),
-                    '[]'::jsonb
-                )
-                WHERE runs IS NOT NULL
-                  AND jsonb_typeof(runs) = 'array'
-                  AND EXISTS (
-                      SELECT 1 FROM jsonb_array_elements(runs) elem
-                      WHERE elem->>'run_id' = ANY(:ids)
-                  )
-                """
+        if not run_ids or sessions_table is None or "runs" not in sessions_table.c:
+            return False
+        # Quote through the dialect so mixed-case schema or table names resolve; run_ids are bound params.
+        table_ref = sess.get_bind().dialect.identifier_preparer.format_table(sessions_table)
+        stmt = text(
+            f"""
+            UPDATE {table_ref}
+            SET runs = COALESCE(
+                (SELECT jsonb_agg(elem)
+                 FROM jsonb_array_elements(runs) elem
+                 WHERE elem->>'run_id' <> ALL(:ids)),
+                '[]'::jsonb
             )
-            with self.Session() as sess, sess.begin():
-                sess.execute(stmt, {"ids": list(run_ids)})
-        except Exception:
-            log_debug("legacy-runs scrub failed; the primary delete still succeeded", exc_info=True)
+            WHERE runs IS NOT NULL
+              AND jsonb_typeof(runs) = 'array'
+              AND EXISTS (
+                  SELECT 1 FROM jsonb_array_elements(runs) elem
+                  WHERE elem->>'run_id' = ANY(:ids)
+              )
+            """
+        )
+        result = sess.execute(stmt, {"ids": list(run_ids)})
+        return (result.rowcount or 0) > 0
 
     def delete_run(self, run_id: str) -> bool:
         """Delete a single run from the runs table.
+
+        Also scrubs it from the legacy ``runs`` blob in the same transaction, so a
+        partially migrated session cannot resurrect it on the next read.
 
         Args:
             run_id (str): The ID of the run to delete.
 
         Returns:
-            bool: True if the run was deleted, False otherwise.
+            bool: True if the run was removed from the runs table or a legacy blob, False otherwise.
         """
         try:
             table = self._get_table(table_type="runs")
-            if table is None:
-                return False
-
+            sessions_table = self._get_table(table_type="sessions")
             with self.Session() as sess, sess.begin():
-                result = sess.execute(table.delete().where(table.c.run_id == run_id))
-                deleted = result.rowcount > 0
-
-            # Also scrub the legacy blob so the merge helper doesn't resurrect
-            # the deleted run on the next read (partial-migration state).
-            self._scrub_run_ids_from_legacy_blob([run_id])
-            return deleted
-
+                deleted = False
+                if table is not None:
+                    result = sess.execute(table.delete().where(table.c.run_id == run_id))
+                    deleted = result.rowcount > 0
+                scrubbed = self._scrub_run_ids_from_legacy_blob([run_id], sess, sessions_table)
+            return deleted or scrubbed
         except Exception as e:
             if is_foreign_key_violation(e):
                 # The sandbox bindings table references the run a turn holds; the run stays
@@ -1508,20 +1503,20 @@ class PostgresDb(BaseDb):
     def delete_runs(self, run_ids: List[str]) -> None:
         """Delete all given runs from the runs table.
 
+        Also scrubs them from the legacy ``runs`` blob in the same transaction, so a
+        partially migrated session cannot resurrect them on the next read.
+
         Args:
             run_ids (List[str]): The IDs of the runs to delete.
         """
         try:
             table = self._get_table(table_type="runs")
-            if table is None:
-                return
-
+            sessions_table = self._get_table(table_type="sessions")
             with self.Session() as sess, sess.begin():
-                result = sess.execute(table.delete().where(table.c.run_id.in_(run_ids)))
-
-            self._scrub_run_ids_from_legacy_blob(list(run_ids))
-            log_debug(f"Successfully deleted {result.rowcount} runs")
-
+                if table is not None:
+                    result = sess.execute(table.delete().where(table.c.run_id.in_(run_ids)))
+                    log_debug(f"Successfully deleted {result.rowcount} runs")
+                self._scrub_run_ids_from_legacy_blob(list(run_ids), sess, sessions_table)
         except Exception as e:
             if is_foreign_key_violation(e):
                 # One statement, so none of the runs were deleted.
@@ -3943,14 +3938,16 @@ class PostgresDb(BaseDb):
         filters.append(
             aggregate_metrics_table.c.user_id != "" if user_id is None else aggregate_metrics_table.c.user_id == user_id
         )
-        # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row
+        # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row. A day whose
+        # only run is a regenerated one has its tokens but no count
         filters.append(
             or_(
                 *[
                     aggregate_metrics_table.c[column] > 0
                     for column in AGGREGATE_METRICS_COUNT_COLUMNS
                     if column != "users_count"
-                ]
+                ],
+                aggregate_metrics_table.c.total_tokens > 0,
             )
         )
         # Only what build_metrics_from_aggregate_metrics reads, so the maps of timings are never decoded

@@ -229,7 +229,8 @@ def _seconds_left(deadline: float) -> float:
 def _os_metrics_answer(request: Request, response: Response, os_metrics_response: Any) -> Any:
     """The answer of a read route with its ETag, or 304 with no body for a caller that already holds it."""
     etag = f'"{hashlib.sha256(os_metrics_response.model_dump_json().encode()).hexdigest()[:32]}"'
-    if request.headers.get("if-none-match") == etag:
+    # A proxy that compresses the answer, such as nginx with gzip, sends the ETag back weak
+    if (request.headers.get("if-none-match") or "").removeprefix("W/") == etag:
         return Response(status_code=304, headers={"ETag": etag})
     response.headers["ETag"] = etag
     return os_metrics_response

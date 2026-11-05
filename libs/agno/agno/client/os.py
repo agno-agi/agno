@@ -3133,8 +3133,8 @@ class AgentOSClient:
         ending_date: Optional[date] = None,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
-        user_id: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
+        user_id: Optional[str] = None,
     ) -> MetricsResponse:
         """Retrieve AgentOS metrics and analytics data for a specified date range.
 
@@ -3145,8 +3145,8 @@ class AgentOSClient:
             ending_date: Ending date for metrics range (YYYY-MM-DD format)
             db_id: Optional database ID to use
             table: Optional database table to use
-            user_id: Optional user ID
             headers: HTTP headers to include in the request (optional)
+            user_id: Optional user ID
 
         Returns:
             MetricsResponse: Metrics data including daily aggregated metrics and the refresh status
@@ -3171,9 +3171,9 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         background: bool = False,
+        headers: Optional[Dict[str, str]] = None,
         user_id: Optional[str] = None,
         rebuild_from: Optional[date] = None,
-        headers: Optional[Dict[str, str]] = None,
     ) -> Union[List[DayAggregatedMetrics], MetricsRefreshResponse]:
         """Manually trigger recalculation of system metrics from raw data.
 
@@ -3188,9 +3188,9 @@ class AgentOSClient:
             db_id: Optional database ID to use
             table: Optional database table to use
             background: Run the refresh in the background and return immediately
+            headers: HTTP headers to include in the request (optional)
             user_id: Optional user ID
             rebuild_from: Also rebuild every day from this date to today (YYYY-MM-DD format)
-            headers: HTTP headers to include in the request (optional)
 
         Returns:
             List[DayAggregatedMetrics]: The refreshed daily aggregated metrics (synchronous refresh)
