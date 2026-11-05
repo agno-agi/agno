@@ -872,7 +872,9 @@ async def test_calculate_metrics_counts_tool_calls(async_postgres_db_real: Async
         "max_ms": 1200,
         "buckets": {"le_100": 1, "le_200": 1, "le_400": 1, "le_1200": 1},
     }
-    assert (await _stored_aggregate_metrics_rows(async_postgres_db_real))[("daily", past_day)]["tool_metrics"] == expected
+    assert (await _stored_aggregate_metrics_rows(async_postgres_db_real))[("daily", past_day)][
+        "tool_metrics"
+    ] == expected
 
     for user_id in [None, "bob"]:
         metrics, _ = await async_postgres_db_real.get_component_metrics(
