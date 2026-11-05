@@ -2335,7 +2335,7 @@ def test_calculate_metrics_counts_tool_calls(postgres_db_real: PostgresDb):
         "max_ms": 1200,
         "buckets": {"le_100": 1, "le_200": 1, "le_400": 1, "le_1200": 1},
     }
-    assert _stored_user_metrics_rows(postgres_db_real)[("daily", past_day)]["tool_metrics"] == expected
+    assert _stored_aggregate_metrics_rows(postgres_db_real)[("daily", past_day)]["tool_metrics"] == expected
 
     for user_id in [None, "bob"]:
         metrics, _ = postgres_db_real.get_component_metrics(
