@@ -1178,11 +1178,11 @@ class PostgresDb(BaseDb):
         """
         if not run_ids or sessions_table is None or "runs" not in sessions_table.c:
             return False
-        # Table name is trusted (came from adapter config, not user input);
-        # run_ids are parameterized via bindparam to avoid SQL injection.
+        # Quote through the dialect so mixed-case schema or table names resolve; run_ids are bound params.
+        table_ref = sess.get_bind().dialect.identifier_preparer.format_table(sessions_table)
         stmt = text(
             f"""
-            UPDATE {sessions_table.fullname}
+            UPDATE {table_ref}
             SET runs = COALESCE(
                 (SELECT jsonb_agg(elem)
                  FROM jsonb_array_elements(runs) elem

@@ -25,25 +25,39 @@ def _server_reachable() -> bool:
         engine.dispose()
 
 
-@pytest.fixture
-def db():
+@pytest.fixture(params=["lowercase", "mixed_case"])
+def db(request):
     if not _server_reachable():
         pytest.skip(f"Postgres server not reachable at {DB_URL}")
 
-    schema = f"delete_runs_legacy_{uuid.uuid4().hex[:8]}"
-    database = PostgresDb(db_url=DB_URL, db_schema=schema)
+    suffix = uuid.uuid4().hex[:8]
+    if request.param == "mixed_case":
+        # Identifiers that only resolve when quoted, as in a 2.x schema created outside agno.
+        schema, session_table = f"DeleteRunsLegacy_{suffix}", f"AgentSessions_{suffix}"
+    else:
+        schema, session_table = f"delete_runs_legacy_{suffix}", None
+    engine = create_engine(DB_URL)
+    with engine.begin() as conn:
+        conn.execute(text(f'CREATE SCHEMA "{schema}"'))
+
+    database = PostgresDb(db_url=DB_URL, db_schema=schema, session_table=session_table)
     database._get_table(table_type="sessions", create_table_if_not_found=True)
     with database.Session() as sess, sess.begin():
-        sess.execute(text(f'ALTER TABLE "{schema}".agno_sessions ADD COLUMN runs JSONB'))
+        sess.execute(text(f"ALTER TABLE {_sessions_ref(database)} ADD COLUMN runs JSONB"))
     database._invalidate_table_cache(database.session_table_name)
 
     yield database
 
     database.Session.remove()
-    with database.db_engine.connect() as conn:
-        conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
-        conn.commit()
     database.db_engine.dispose()
+    with engine.begin() as conn:
+        conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema.lower()}" CASCADE'))
+    engine.dispose()
+
+
+def _sessions_ref(db):
+    return f'"{db.db_schema}"."{db.session_table_name}"'
 
 
 def _insert_legacy_session(db, run_ids):
@@ -77,7 +91,7 @@ def _refuse_blob_rewrites(db):
         )
         sess.execute(
             text(
-                f'CREATE TRIGGER refuse_blob_rewrite BEFORE UPDATE OF runs ON "{schema}".agno_sessions '
+                f"CREATE TRIGGER refuse_blob_rewrite BEFORE UPDATE OF runs ON {_sessions_ref(db)} "
                 f'FOR EACH ROW EXECUTE FUNCTION "{schema}".refuse_blob_rewrite()'
             )
         )
@@ -105,7 +119,7 @@ async def test_async_failed_scrub_raises_and_rolls_back_the_row_delete(db):
     db.upsert_run(RunOutput(run_id="r2", agent_id="a1", session_id="s1"), session_id="s1")
     _refuse_blob_rewrites(db)
 
-    async_db = AsyncPostgresDb(db_url=DB_URL, db_schema=db.db_schema)
+    async_db = AsyncPostgresDb(db_url=DB_URL, db_schema=db.db_schema, session_table=db.session_table_name)
     try:
         with pytest.raises(Exception, match="blob rewrite refused"):
             await async_db.delete_runs(["r0", "r2"])
