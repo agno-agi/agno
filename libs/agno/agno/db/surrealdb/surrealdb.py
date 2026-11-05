@@ -272,9 +272,8 @@ class SurrealDb(BaseDb):
         and the ``status IS NONE OR`` guard keeps runs with no status from being dropped
         by ``NOT IN $skip``.
         """
-        try:
-            runs_table = self._get_table("runs", create_table_if_not_found=False)
-        except Exception:
+        runs_table = self._get_table("runs", create_table_if_not_found=False)
+        if not self.table_exists(runs_table):
             return []
         if limit is not None:
             rows_raw = self._query(
@@ -368,9 +367,8 @@ class SurrealDb(BaseDb):
             raise e
 
     def _delete_session_runs(self, session_id: str) -> int:
-        try:
-            runs_table = self._get_table("runs", create_table_if_not_found=False)
-        except Exception:
+        runs_table = self._get_table("runs", create_table_if_not_found=False)
+        if not self.table_exists(runs_table):
             return 0
         result = run_query(
             self.client,
@@ -495,28 +493,25 @@ class SurrealDb(BaseDb):
             pass
 
     def delete_run(self, run_id: str) -> bool:
-        try:
-            runs_table = self._get_table("runs", create_table_if_not_found=False)
-        except Exception:
-            return False
-        res = run_delete(self.client, RecordID(runs_table, run_id))
+        runs_table = self._get_table("runs", create_table_if_not_found=False)
+        res = None
+        if self.table_exists(runs_table):
+            res = run_delete(self.client, RecordID(runs_table, run_id))
         self._scrub_run_ids_from_legacy_blob([run_id])
         return bool(res)
 
     def delete_runs(self, run_ids: List[str]) -> None:
         if not run_ids:
             return
-        try:
-            runs_table = self._get_table("runs", create_table_if_not_found=False)
-        except Exception:
-            return
-        records = [RecordID(runs_table, rid) for rid in run_ids]
-        params: Dict[str, Any] = {"records": records}
-        run_query(
-            self.client,
-            f"DELETE FROM {runs_table} WHERE id IN $records",
-            params,
-        )
+        runs_table = self._get_table("runs", create_table_if_not_found=False)
+        if self.table_exists(runs_table):
+            records = [RecordID(runs_table, rid) for rid in run_ids]
+            params: Dict[str, Any] = {"records": records}
+            run_query(
+                self.client,
+                f"DELETE FROM {runs_table} WHERE id IN $records",
+                params,
+            )
         self._scrub_run_ids_from_legacy_blob(run_ids)
 
     # --- Sessions ---

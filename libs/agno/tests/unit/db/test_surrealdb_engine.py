@@ -11,6 +11,7 @@ from agno.db.surrealdb import SurrealDb
 from agno.run.agent import RunOutput
 from agno.session import AgentSession
 from agno.tracing.schemas import Span, Trace
+from agno.utils.surrealdb import run_query
 
 surrealdb = pytest.importorskip("surrealdb")
 
@@ -52,6 +53,58 @@ def test_run_reads_return_stored_runs(db: SurrealDb):
     assert run is not None
     assert run.run_id == "r1"
     assert [r.run_id for r in db.get_runs(session_id="s1")] == ["r1"]
+
+
+def test_run_deletes_tolerate_a_missing_runs_table(db: SurrealDb):
+    assert db.delete_run("r1") is False
+    db.delete_runs(["r1"])
+    assert db._delete_session_runs("s1") == 0
+    assert db._get_session_runs_data("s1") == []
+
+
+def _seed_legacy_blob(db: SurrealDb) -> str:
+    # Engines before 3.0 ignore the array::filter closure the scrub relies on
+    if int(db.client.version().split("-")[1].split(".")[0]) < 3:
+        pytest.skip("the legacy blob scrub needs a SurrealDB 3+ engine")
+    db.upsert_session(_session())
+    table = db._get_table("sessions")
+    run_query(db.client, f"UPDATE {table} SET runs = $runs", {"runs": [{"run_id": "r1"}, {"run_id": "r2"}]})
+    return table
+
+
+def _legacy_run_ids(db: SurrealDb, table: str) -> list:
+    rows = run_query(db.client, f"SELECT runs FROM {table}")
+    return [run["run_id"] for run in rows[0]["runs"]]
+
+
+def test_delete_run_scrubs_the_legacy_blob_when_the_runs_table_is_missing(db: SurrealDb):
+    table = _seed_legacy_blob(db)
+
+    db.delete_run("r1")
+
+    assert _legacy_run_ids(db, table) == ["r2"]
+
+
+def test_delete_runs_scrubs_the_legacy_blob_when_the_runs_table_is_missing(db: SurrealDb):
+    table = _seed_legacy_blob(db)
+
+    db.delete_runs(["r1"])
+
+    assert _legacy_run_ids(db, table) == ["r2"]
+
+
+def test_run_deletes_remove_stored_runs(db: SurrealDb):
+    run = RunOutput(run_id="r1", session_id="s1", agent_id="a1", content="hi")
+    db.upsert_run(run, session_id="s1", run_index=0)
+    db.upsert_run(RunOutput(run_id="r2", session_id="s1", agent_id="a1", content="hi"), session_id="s1", run_index=1)
+    db.upsert_run(RunOutput(run_id="r3", session_id="s2", agent_id="a1", content="hi"), session_id="s2", run_index=0)
+
+    assert db.delete_run("r1") is True
+    assert db.get_run("r1") is None
+    db.delete_runs(["r2"])
+    assert db.get_run("r2") is None
+    assert db._delete_session_runs("s2") == 1
+    assert db.get_run("r3") is None
 
 
 def test_memory_round_trip_and_delete(db: SurrealDb):
