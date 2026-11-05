@@ -113,6 +113,88 @@ def test_default_name_derived_from_server_params():
     assert http_tools.name != stdio_tools.name
 
 
+def test_recorded_name_drops_command_arguments():
+    """Credentials passed as command arguments must never leak into the name tool calls record."""
+    command_tools = MCPTools(command="npx -y @acme/server-a --token ghp_secret123")
+    params_tools = MCPTools(
+        server_params=StdioServerParameters(command="npx", args=["-y", "@acme/server-a", "--token", "ghp_secret123"]),
+        transport="stdio",
+    )
+    for tools in (command_tools, params_tools):
+        assert tools.name == "mcp_npx_y_acme_server_a_token_ghp_secret123"
+        assert tools.recorded_name == "mcp_npx_acme_server_a"
+
+
+def test_recorded_name_skips_runner_subcommand():
+    """A runner's subcommand is skipped, so the name records the image or package it runs."""
+    tools = MCPTools(command="docker run -i --rm -e GITHUB_TOKEN=ghp_secret123 ghcr.io/github/github-mcp-server")
+    assert tools.recorded_name == "mcp_docker_ghcr_io_github_github_mcp_server"
+
+
+@pytest.mark.parametrize(
+    "command,recorded_name",
+    [
+        (
+            "docker run -i --rm -e GITHUB_TOKEN ghcr.io/github/github-mcp-server",
+            "mcp_docker_ghcr_io_github_github_mcp_server",
+        ),
+        ("docker run -i --rm -v /data:/data mcp/filesystem", "mcp_docker_mcp_filesystem"),
+        ("docker run -i --rm --env-file .env mcp/github", "mcp_docker_mcp_github"),
+        ("docker run -i -e API_KEY --name srv mcp/github", "mcp_docker_mcp_github"),
+        ("uv run --with mcp server.py --api-key sk-123", "mcp_uv_server_py"),
+        ("uvx --from git+https://user:pat123@github.com/org/repo mcp-x", "mcp_uvx_mcp_x"),
+        ("npx -y -p @acme/helper @acme/server-a", "mcp_npx_acme_server_a"),
+        ("python -X utf8 -m my_server --password hunter2", "mcp_python_my_server"),
+    ],
+)
+def test_recorded_name_skips_flag_values(command, recorded_name):
+    """The value of a flag the runner reads a value for is not taken for the package."""
+    assert MCPTools(command=command).recorded_name == recorded_name
+
+
+def test_recorded_name_keeps_explicit_name():
+    """A name given to the toolkit is recorded as it is."""
+    tools = MCPTools(command="npx -y @acme/server-a --token ghp_secret123", name="github")
+    assert tools.recorded_name == "github"
+
+
+def test_rehydrated_function_records_current_toolkit_name_after_token_rotation():
+    """A component saved before the token rotated must not record the old token."""
+    from agno.agent import Agent
+    from agno.agent._tools import parse_tools
+    from agno.models.openai import OpenAIResponses
+    from agno.registry import Registry
+
+    saved = MCPTools(command="npx -y @acme/server-a --token ghp_old123")
+    live = MCPTools(command="npx -y @acme/server-a --token ghp_new456")
+    for tools in (saved, live):
+        tools.functions["add"] = Function(name="add", entrypoint=lambda a, b: a + b)
+    func = Registry(tools=[live]).rehydrate_function({**saved.functions["add"].to_dict(), "toolkit": saved.name})
+    # The saved name stays the registry identity; only the run records the clean one
+    assert func.owning_toolkit == saved.name
+
+    model = OpenAIResponses(id="gpt-5.6-luna")
+    run_functions = parse_tools(Agent(model=model, tools=[func], telemetry=False), tools=[func], model=model)
+    assert [f.owning_toolkit for f in run_functions] == ["mcp_npx_acme_server_a"]
+
+
+def test_rehydrated_function_without_saved_toolkit_records_live_toolkit_name():
+    """A component saved without the toolkit key records the toolkit that runs the function."""
+    from agno.agent import Agent
+    from agno.agent._tools import parse_tools
+    from agno.models.openai import OpenAIResponses
+    from agno.registry import Registry
+
+    live = MCPTools(command="npx -y @acme/server-a --token ghp_new456")
+    live.functions["add"] = Function(name="add", entrypoint=lambda a, b: a + b)
+    func = Registry(tools=[live]).rehydrate_function(live.functions["add"].to_dict())
+    assert func.owning_toolkit is None
+
+    model = OpenAIResponses(id="gpt-5.6-luna")
+    run_functions = parse_tools(Agent(model=model, tools=[func], telemetry=False), tools=[func], model=model)
+    assert [f.owning_toolkit for f in run_functions] == ["mcp_npx_acme_server_a"]
+
+
 def test_session_only_init_falls_back_to_default_name():
     tools = MCPTools(session=AsyncMock())
     assert tools.name == "MCPTools"

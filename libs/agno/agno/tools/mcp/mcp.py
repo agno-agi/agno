@@ -314,9 +314,13 @@ class MCPTools(Toolkit):
         stop_after_tool_call_tools = kwargs.pop("stop_after_tool_call_tools", None)
         show_result_tools = kwargs.pop("show_result_tools", None)
 
-        super().__init__(
-            name=name or get_default_toolkit_name(url=url, command=command, server_params=server_params),
-            **kwargs,
+        default_name = get_default_toolkit_name(url=url, command=command, server_params=server_params)
+        super().__init__(name=name or default_name, **kwargs)
+        # A default name keeps the command's arguments, which can hold credentials, so
+        # tool calls record the same name without them (see recorded_name)
+        self._default_name = default_name
+        self._default_recorded_name = get_default_toolkit_name(
+            url=url, command=command, server_params=server_params, keep_command_args=False
         )
 
         if url is not None:
@@ -449,6 +453,15 @@ class MCPTools(Toolkit):
     @property
     def initialized(self) -> bool:
         return self._initialized
+
+    @property
+    def recorded_name(self) -> str:
+        """The toolkit name each tool call records, sent in run events and kept in metrics.
+
+        The toolkit's own name, except a default one derived from a command: that is
+        recorded with the executable and the package or script it runs only.
+        """
+        return self._default_recorded_name if self.name == self._default_name else self.name
 
     @property
     def _session_creation_lock(self) -> asyncio.Lock:
