@@ -29,28 +29,6 @@ def active_parents(stmt: Any, table: Any, products: Any, projects: Any = None) -
     return stmt
 
 
-def _task_group_keys(table: Any, group_by: str) -> List[Any]:
-    """Columns that place a Task in its group."""
-    if group_by == "status":
-        return [table.c.status]
-    if group_by == "executor":
-        return [func.coalesce(table.c.executor_type, ""), func.coalesce(table.c.executor_id, "")]
-    raise ValueError("group_by must be status or executor")
-
-
-def task_group_page(stmt: Any, table: Any, group_by: str, order: List[Any], limit: int, page: int) -> Any:
-    """Page each group on its own, with every group's size on its rows."""
-    keys = _task_group_keys(table, group_by)
-    ranked = stmt.add_columns(
-        func.row_number().over(partition_by=keys, order_by=order).label("position"),
-        func.count().over(partition_by=keys).label("group_total"),
-    ).subquery()
-    offset = (page - 1) * limit
-    # Each group's first row also returns, so a group past its last page still reports its size.
-    in_page = or_(ranked.c.position.between(offset + 1, offset + limit), ranked.c.position == 1)
-    return select(ranked).where(in_page).order_by(*_task_group_keys(ranked, group_by), ranked.c.position)
-
-
 def lock_product(sess: Any, products: Any, product_id: str) -> None:
     """Serialize hierarchy writes on the Product, including on SQLite.
 

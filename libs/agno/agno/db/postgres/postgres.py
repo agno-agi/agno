@@ -9727,10 +9727,9 @@ class PostgresDb(BaseDb):
         session_id: Optional[str] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-        group_by: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         from agno.db.schemas.products import company_sort
-        from agno.db.sql.company import active_parents, task_group_page
+        from agno.db.sql.company import active_parents
 
         sort_by, sort_order = company_sort(sort_by, sort_order)
         if limit < 1 or page < 1:
@@ -9765,17 +9764,12 @@ class PostgresDb(BaseDb):
         if not include_deleted:
             stmt = stmt.where(table.c.deleted_at.is_(None))
         with self.Session() as sess:
+            total = sess.execute(select(func.count()).select_from(stmt.subquery())).scalar() or 0
             column = (
                 func.coalesce(table.c.updated_at, table.c.created_at) if sort_by == "updated_at" else table.c.created_at
             )
             order = column.asc() if sort_order == "asc" else column.desc()
             tie = table.c.id.asc() if sort_order == "asc" else table.c.id.desc()
-            if group_by is not None:
-                stmt = task_group_page(stmt, table, group_by, [order, tie], limit, page)
-                grouped = [dict(row._mapping) for row in sess.execute(stmt).fetchall()]
-                # Each group's first row carries its size, so the group sizes add up to the total.
-                return grouped, sum(row["group_total"] for row in grouped if row["position"] == 1)
-            total = sess.execute(select(func.count()).select_from(stmt.subquery())).scalar() or 0
             stmt = stmt.order_by(order, tie).limit(limit).offset((page - 1) * limit)
             rows = sess.execute(stmt).fetchall()
             return [dict(row._mapping) for row in rows], total

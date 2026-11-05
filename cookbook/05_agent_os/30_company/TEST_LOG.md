@@ -418,11 +418,11 @@ model calls or scheduler execution.
 **Status:** PASS
 
 **Description:** Start a Backlog Task by naming its workflow executor, repeat the
-start while it runs and after it reaches In review, then read the board with
-`group_by=status`.
+start while it runs and after it reaches In review, then read each board column
+with the `status` filter.
 
 **Result:** The repeat during the run joins it and the repeat after review returns
-409. The board lists all six statuses with their counts. Passed on temporary
+409. Each of the six status columns reports its count. Passed on temporary
 SQLite and with `COMPANY_DB=postgres`, with no model calls.
 
 ---

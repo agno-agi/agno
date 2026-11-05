@@ -2043,14 +2043,8 @@ class BaseDb(ABC):
         session_id: Optional[str] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-        group_by: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
-        """List Tasks and their total, filtering by owner before pagination.
-
-        With group_by ("status" or "executor") each group is paged on its own, and
-        rows carry their group position and group_total. Each group's first row is
-        also returned, so a group past its last page keeps its size.
-        """
+        """List Tasks and their total, filtering by owner before pagination."""
         raise NotImplementedError("Company tasks not supported by the configured database")
 
     def update_task(
@@ -4091,14 +4085,8 @@ class AsyncBaseDb(ABC):
         session_id: Optional[str] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-        group_by: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
-        """List Tasks and their total, filtering by owner before pagination.
-
-        With group_by ("status" or "executor") each group is paged on its own, and
-        rows carry their group position and group_total. Each group's first row is
-        also returned, so a group past its last page keeps its size.
-        """
+        """List Tasks and their total, filtering by owner before pagination."""
         raise NotImplementedError("Company tasks not supported by the configured database")
 
     async def update_task(

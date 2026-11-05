@@ -1,7 +1,7 @@
 """Collaborative Company task reads, edits and lifecycle transitions."""
 
 import asyncio
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union, get_args
+from typing import Any, Dict, List, Literal, Optional, Union, get_args
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
@@ -9,16 +9,7 @@ from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id
-from agno.os.routers.company.schema import (
-    TaskCreate,
-    TaskExecutorGroup,
-    TaskGroupsResponse,
-    TaskResponse,
-    TaskStatus,
-    TaskStatusGroup,
-    TaskTransition,
-    TaskUpdate,
-)
+from agno.os.routers.company.schema import TaskCreate, TaskResponse, TaskStatus, TaskTransition, TaskUpdate
 from agno.os.routers.run_permissions import _require_endpoint_permission
 from agno.os.schema import PaginatedResponse, PaginationInfo
 from agno.os.settings import AgnoAPISettings
@@ -192,7 +183,7 @@ def get_tasks_router(
     async def task_response(request: Request, task: Dict[str, Any]) -> Dict[str, Any]:
         return (await task_responses(request, [task]))[0]
 
-    @router.get("/tasks", response_model=Union[PaginatedResponse[TaskResponse], TaskGroupsResponse])
+    @router.get("/tasks", response_model=PaginatedResponse[TaskResponse])
     async def list_tasks(
         request: Request,
         limit: int = Query(20, ge=1, le=1000),
@@ -204,9 +195,8 @@ def get_tasks_router(
         status: Optional[TaskStatus] = Query(None),
         project_id: Optional[str] = Query(None),
         failed: Optional[bool] = Query(None),
-        group_by: Optional[Literal["status", "executor"]] = Query(None),
         _: bool = Depends(auth_dependency),
-    ) -> Union[PaginatedResponse[TaskResponse], TaskGroupsResponse]:
+    ) -> PaginatedResponse[TaskResponse]:
         rows, total = await _call(
             "list_tasks",
             user_id=None,
@@ -219,38 +209,11 @@ def get_tasks_router(
             status=status,
             project_id=project_id,
             failed=failed,
-            group_by=group_by,
         )
-        if group_by is None:
-            data = [TaskResponse(**row) for row in await task_responses(request, rows)]
-            meta = PaginationInfo(page=page, limit=limit, total_count=total, total_pages=(total + limit - 1) // limit)
-            return PaginatedResponse(data=data, meta=meta)
-
-        def group_key(row: Dict[str, Any]) -> Tuple[Optional[str], ...]:
-            return (row["status"],) if group_by == "status" else (row["executor_type"], row["executor_id"])
-
-        def group_meta(count: int) -> PaginationInfo:
-            return PaginationInfo(page=page, limit=limit, total_count=count, total_pages=(count + limit - 1) // limit)
-
-        # Each group is paged on its own; a row before the page only carries its group's size.
-        sizes = {group_key(row): row["group_total"] for row in rows}
-        members: Dict[Tuple[Optional[str], ...], List[TaskResponse]] = {key: [] for key in sizes}
-        offset = (page - 1) * limit
-        for row in await task_responses(request, [row for row in rows if row["position"] > offset]):
-            members[group_key(row)].append(TaskResponse(**row))
-        groups: List[Union[TaskStatusGroup, TaskExecutorGroup]]
-        if group_by == "status":
-            # Every status is listed in board order, so an empty column still shows its count.
-            groups = [
-                TaskStatusGroup(status=key, data=members.get((key,), []), meta=group_meta(sizes.get((key,), 0)))
-                for key in ([status] if status is not None else get_args(TaskStatus))
-            ]
-        else:
-            groups = [
-                TaskExecutorGroup(executor_type=key[0], executor_id=key[1], data=members[key], meta=group_meta(size))
-                for key, size in sizes.items()
-            ]
-        return TaskGroupsResponse(groups=groups)
+        return PaginatedResponse(
+            data=[TaskResponse(**row) for row in await task_responses(request, rows)],
+            meta=PaginationInfo(page=page, limit=limit, total_count=total, total_pages=(total + limit - 1) // limit),
+        )
 
     async def _require_accept(request: Request, executor_type: Optional[str], executor_id: Optional[str]) -> None:
         assert executor_type is not None  # Validated by TaskCreate and TaskTransition.

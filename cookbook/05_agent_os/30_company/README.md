@@ -206,7 +206,7 @@ retaining a known old ID explicitly is necessary for those references.
 | File | Demonstrates |
 | --- | --- |
 | `06_execute_tasks.py` | Durable execution, duplicate starts, ordinary run history and attention with no model call. |
-| `12_task_board.py` | Direct start from Backlog, `last_run`, `allowed_transitions` and `group_by=status` with no model call. |
+| `12_task_board.py` | Direct start from Backlog, `last_run`, `allowed_transitions` and a board read by status with no model call. |
 
 `06_execute_tasks.py` starts an accepted workflow Task through its ordinary run
 route and the durable queue, waits for In review, reads paged history and checks
@@ -225,8 +225,8 @@ the local PostgreSQL URL. SQLite follows the queue's existing development
 fallback; use PostgreSQL session storage for production attempt fencing.
 
 `12_task_board.py` starts a Backlog Task by naming its workflow executor in the
-run request, repeats the start, waits for In review, and reads the board with
-`group_by=status`. It makes no provider calls. With PostgreSQL running, run:
+run request, repeats the start, waits for In review, and reads each board column
+with the `status` filter. It makes no provider calls. With PostgreSQL running, run:
 
 ```bash
 .venv/bin/python cookbook/05_agent_os/30_company/12_task_board.py
@@ -260,9 +260,7 @@ POST `/company/runs/{id}/cancel` uses the executor's existing cancellation route
 
 Each Task response carries `last_run` (status, attempt, run id and times of its latest
 run) and `allowed_transitions` (each target, whether the move is allowed now, and why
-not). GET `/company/tasks` with `group_by=status` or `group_by=executor` returns
-`groups`, each paged on its own with its own `meta`; `group_by=status` lists
-every status, including empty ones.
+not).
 
 Start rechecks the registry, `tasks:write`, `wiki:read` and the executor's run
 permission. Registry-only executors receive their ordinary routes when Company

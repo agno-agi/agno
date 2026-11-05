@@ -1,10 +1,8 @@
 """Product request and response schemas."""
 
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-
-from agno.os.schema import PaginationInfo
 
 
 class ProductCreate(BaseModel):
@@ -219,23 +217,6 @@ class TaskResponse(BaseModel):
     result: Optional[Dict[str, Any]] = None
     last_run: Optional[TaskLastRun] = None
     allowed_transitions: List[TaskTransitionOption] = Field(default_factory=list)
-
-
-class TaskStatusGroup(BaseModel):
-    status: TaskStatus
-    data: List[TaskResponse]
-    meta: PaginationInfo
-
-
-class TaskExecutorGroup(BaseModel):
-    executor_type: Optional[str] = None
-    executor_id: Optional[str] = None
-    data: List[TaskResponse]
-    meta: PaginationInfo
-
-
-class TaskGroupsResponse(BaseModel):
-    groups: List[Union[TaskStatusGroup, TaskExecutorGroup]]
 
 
 class TaskTransition(BaseModel):

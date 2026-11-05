@@ -103,15 +103,20 @@ if __name__ == "__main__":
                     "/company/tasks/" + tasks[2]["id"] + "/transitions",
                     json={"target": "cancelled", "reason": "Superseded"},
                 ).raise_for_status()
-                board = client.get(
-                    "/company/tasks",
-                    params={"project_id": project["id"], "group_by": "status"},
-                ).json()
-                # Every status is listed, each with its own page and count.
-                assert len(board["groups"]) == 6
+                # Each board column is its own filtered, paged list.
                 counts = {
-                    group["status"]: group["meta"]["total_count"]
-                    for group in board["groups"]
+                    status: client.get(
+                        "/company/tasks",
+                        params={"project_id": project["id"], "status": status},
+                    ).json()["meta"]["total_count"]
+                    for status in (
+                        "backlog",
+                        "ready",
+                        "in_progress",
+                        "in_review",
+                        "done",
+                        "cancelled",
+                    )
                 }
                 print("Backlog Task started directly and awaits review")
                 print(json.dumps(counts, indent=2))

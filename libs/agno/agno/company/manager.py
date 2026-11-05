@@ -430,7 +430,6 @@ class CompanyManager:
         session_id: Optional[str] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-        group_by: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List across Products, filtering status and owner before pagination."""
         if limit < 1 or page < 1:
@@ -447,7 +446,6 @@ class CompanyManager:
             session_id=session_id,
             sort_by=sort_by,
             sort_order=sort_order,
-            group_by=group_by,
         )
 
     def update_task(
@@ -1337,7 +1335,6 @@ class AsyncCompanyManager:
         session_id: Optional[str] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-        group_by: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List across Products, filtering status and owner before pagination."""
         if limit < 1 or page < 1:
@@ -1354,7 +1351,6 @@ class AsyncCompanyManager:
             session_id=session_id,
             sort_by=sort_by,
             sort_order=sort_order,
-            group_by=group_by,
         )
 
     async def update_task(

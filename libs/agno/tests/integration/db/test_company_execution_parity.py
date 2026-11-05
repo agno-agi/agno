@@ -869,28 +869,6 @@ async def test_nonfailed_filter_includes_sql_and_json_null_results(system):
 
 
 @pytest.mark.asyncio
-async def test_grouped_task_list_pages_each_group(system):
-    from agno.company.execution import _call
-
-    client, db, worker, os, _ = system
-    tasks = [await accepted(client) for _ in range(3)]
-    response = await client.post(
-        f"/company/tasks/{tasks[0]['id']}/transitions", json={"target": "cancelled", "reason": "Superseded"}
-    )
-    assert response.status_code == 200, response.text
-    board = (await client.get("/company/tasks", params={"group_by": "status", "limit": 1, "page": 2})).json()
-    groups = {group["status"]: group for group in board["groups"]}
-    assert list(groups) == ["backlog", "ready", "in_progress", "in_review", "done", "cancelled"]
-    assert len(groups["ready"]["data"]) == 1
-    assert groups["ready"]["meta"]["total_count"] == 2
-    assert groups["cancelled"]["data"] == [] and groups["cancelled"]["meta"]["total_count"] == 1
-    assert groups["backlog"]["meta"]["total_count"] == 0
-    executors = (await client.get("/company/tasks", params={"group_by": "executor"})).json()["groups"]
-    assert [(group["executor_id"], group["meta"]["total_count"]) for group in executors] == [("writer", 3)]
-    assert (await _call(db, "get_tasks", limit=1, page=2, group_by="status"))[1] == 3
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize("target", ["cancelled", "backlog", "ready", "in_review", "done"])
 @pytest.mark.parametrize("result_status", ["ERROR", "CANCELLED"])
 async def test_attention_clears_acted_on_failures_and_preserves_results(system, target, result_status):
