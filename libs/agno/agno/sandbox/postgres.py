@@ -562,6 +562,7 @@ class _SandboxStore:
                     generation=record["generation"] if warm else record["generation"] + 1,
                     computer=record["computer"] if warm else None,
                     computer_stopped=False,
+                    restoring=None,
                     stopped_ref=None,
                     stop_status=None,
                     stop_reason=None,
@@ -720,7 +721,11 @@ class _SandboxStore:
     def stage_result(self, lease: SandboxLease, result: Dict[str, Any]) -> SandboxState:
         return self._sync(self.astage_result, lease, result)
 
-    async def astage_checkpoint(self, lease: SandboxLease, checkpoint: CheckpointRef) -> SandboxState:
+    async def astage_checkpoint(
+        self, lease: SandboxLease, checkpoint: CheckpointRef, *, identity: Optional[Dict[str, Any]] = None
+    ) -> SandboxState:
+        """Record a captured checkpoint for the commit; ``identity`` is the binding its manifest holds."""
+
         def stage(connection: Connection) -> SandboxState:
             row = self._locked(connection, lease)
             record = dict(row["record"])
@@ -730,12 +735,16 @@ class _SandboxStore:
             if record.get("staged_checkpoint") is not None and record["staged_checkpoint"] != value:
                 raise SandboxError("A staged checkpoint is immutable; reconcile its acknowledgement")
             record["staged_checkpoint"] = value
+            if identity is not None:
+                record["staged_identity"] = identity
             return self._write_record(connection, lease, record)
 
         return await self._transaction(stage)
 
-    def stage_checkpoint(self, lease: SandboxLease, checkpoint: CheckpointRef) -> SandboxState:
-        return self._sync(self.astage_checkpoint, lease, checkpoint)
+    def stage_checkpoint(
+        self, lease: SandboxLease, checkpoint: CheckpointRef, *, identity: Optional[Dict[str, Any]] = None
+    ) -> SandboxState:
+        return self._sync(self.astage_checkpoint, lease, checkpoint, identity=identity)
 
     async def aconfirm_stopped(self, lease: SandboxLease, provider_ref: str) -> SandboxState:
         """Record provider-confirmed shutdown, never a caller's assumption after a timeout."""
@@ -1259,6 +1268,26 @@ class _SandboxStore:
 
         return await self._transaction(stop)
 
+    async def acancelled_elsewhere(self, session_id: str, run_id: str) -> bool:
+        """Whether another writer cancelled this run: a cancel stop claimed on its binding, or a cancelled row.
+
+        The binding is read first because a stop claim commits before the computer is removed,
+        and the row only becomes CANCELLED after that.
+        """
+
+        def read(connection: Connection) -> bool:
+            binding = connection.execute(select(self.bindings).where(self._key(session_id))).mappings().one_or_none()
+            if (
+                binding is not None
+                and binding["run_id"] == run_id
+                and binding["record"].get("stop_status") == "CANCELLED"
+            ):
+                return True
+            status = connection.execute(select(self.runs.c.status).where(self.runs.c.run_id == run_id)).scalar()
+            return str(status).upper() == "CANCELLED"
+
+        return await self._transaction(read)
+
     async def aprepare(self, run: Dict[str, Any]) -> None:
         """Insert an accepted queued run without rewriting existing session recovery metadata."""
         value = self._json(run)
@@ -1339,18 +1368,21 @@ class _SandboxStore:
     ) -> Optional[Dict[str, Any]]:
         return self._sync(self.arelease_warm, session_id, agent_id=agent_id, user_id=user_id, before=before)
 
-    async def aexpired_warm(self, before: float) -> list:
-        """Sessions whose idle binding keeps a computer whose warm window ended before ``before``."""
+    async def aexpired_warm(self, before: float, agent_ids: List[str]) -> list:
+        """Sessions whose idle binding keeps a computer whose warm window ended before ``before``.
+
+        Only those of ``agent_ids`` when it is not empty.
+        """
 
         def expired(connection: Connection) -> list:
-            rows = connection.execute(
-                select(self.bindings.c.session_id, self.bindings.c.agent_id, self.bindings.c.user_id).where(
-                    (self.bindings.c.namespace == self.namespace)
-                    & (self.bindings.c.record["phase"].astext == "idle")
-                    & (self.bindings.c.record["warm_until"].astext.cast(Float) < before)
-                )
-            ).all()
-            return [tuple(row) for row in rows]
+            query = select(self.bindings.c.session_id, self.bindings.c.agent_id, self.bindings.c.user_id).where(
+                (self.bindings.c.namespace == self.namespace)
+                & (self.bindings.c.record["phase"].astext == "idle")
+                & (self.bindings.c.record["warm_until"].astext.cast(Float) < before)
+            )
+            if agent_ids:
+                query = query.where(self.bindings.c.agent_id.in_(agent_ids))
+            return [tuple(row) for row in connection.execute(query).all()]
 
         return await self._transaction(expired)
 
