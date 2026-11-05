@@ -82,7 +82,7 @@ class RemoteDb:
     learnings_table_name: Optional[str] = None
     metrics_table_name: Optional[str] = None
     component_metrics_table_name: Optional[str] = None
-    user_metrics_table_name: Optional[str] = None
+    aggregate_metrics_table_name: Optional[str] = None
     metrics_refreshes_table_name: Optional[str] = None
     eval_table_name: Optional[str] = None
     traces_table_name: Optional[str] = None
@@ -112,7 +112,7 @@ class RemoteDb:
         learnings_table_name = None
         metrics_table_name = None
         component_metrics_table_name = None
-        user_metrics_table_name = None
+        aggregate_metrics_table_name = None
         metrics_refreshes_table_name = None
         eval_table_name = None
         traces_table_name = None
@@ -139,7 +139,7 @@ class RemoteDb:
             metrics_table_name = metrics_tables[0] if metrics_tables else None
             # Listed after the deprecated metrics table, in the order AgentOS lists them
             component_metrics_table_name = metrics_tables[1] if len(metrics_tables) > 1 else None
-            user_metrics_table_name = metrics_tables[2] if len(metrics_tables) > 2 else None
+            aggregate_metrics_table_name = metrics_tables[2] if len(metrics_tables) > 2 else None
             metrics_refreshes_table_name = metrics_tables[3] if len(metrics_tables) > 3 else None
 
         if config and config.evals and config.evals.dbs is not None:
@@ -159,7 +159,7 @@ class RemoteDb:
             learnings_table_name=learnings_table_name,
             metrics_table_name=metrics_table_name,
             component_metrics_table_name=component_metrics_table_name,
-            user_metrics_table_name=user_metrics_table_name,
+            aggregate_metrics_table_name=aggregate_metrics_table_name,
             metrics_refreshes_table_name=metrics_refreshes_table_name,
             eval_table_name=eval_table_name,
             traces_table_name=traces_table_name,

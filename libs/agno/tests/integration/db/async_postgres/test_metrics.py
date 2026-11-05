@@ -39,14 +39,16 @@ async def cleanup_metrics_and_sessions(async_postgres_db_real: AsyncPostgresDb):
         except Exception:
             pass  # Ignore cleanup errors for component metrics table
 
-        # Clean up user metrics
+        # Clean up aggregate metrics
         try:
-            user_metrics_table = await async_postgres_db_real._get_table("user_metrics", create_table_if_not_found=True)
+            aggregate_metrics_table = await async_postgres_db_real._get_table(
+                "aggregate_metrics", create_table_if_not_found=True
+            )
             async with async_postgres_db_real.async_session_factory() as session:
-                await session.execute(user_metrics_table.delete())
+                await session.execute(aggregate_metrics_table.delete())
                 await session.commit()
         except Exception:
-            pass  # Ignore cleanup errors for user metrics table
+            pass  # Ignore cleanup errors for aggregate metrics table
 
         # Clean up metrics refreshes
         try:

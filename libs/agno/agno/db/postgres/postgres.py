@@ -38,8 +38,8 @@ from agno.db.postgres.utils import (
     build_component_metrics_runs_query,
     build_component_metrics_totals_queries,
     build_metrics_by_owner_queries,
+    bulk_upsert_aggregate_metrics_rows,
     bulk_upsert_component_metrics,
-    bulk_upsert_user_metrics_rows,
     create_schema,
     is_foreign_key_violation,
     is_lock_not_available,
@@ -49,7 +49,7 @@ from agno.db.postgres.utils import (
     reopen_metrics_day,
     reopen_metrics_days_from,
     reopen_metrics_month,
-    upsert_user_metrics_row,
+    upsert_aggregate_metrics_row,
 )
 from agno.db.schemas.authz import (
     AUTHZ_AUDIT,
@@ -78,22 +78,23 @@ from agno.db.schemas.service_accounts import (
 from agno.db.sql import authz as authz_sql
 from agno.db.sql import mcp_oauth as mcp_oauth_sql
 from agno.db.utils import (
+    AGGREGATE_METRICS_COUNT_COLUMNS,
     HISTORY_SKIP_STATUSES,
     METRICS_BATCH_SIZE,
     METRICS_LOCK_SECONDS,
     METRICS_REFRESH_ID,
     METRICS_STOPPED_ERROR,
     METRICS_TOKEN_FIELDS,
-    USER_METRICS_COUNT_COLUMNS,
     SessionRunObjectCache,
     add_metrics_month_totals,
+    aggregate_metrics_rows_to_write,
     bound_index_name,
+    build_aggregate_metrics_month_rows,
+    build_aggregate_metrics_rows,
     build_component_metrics_totals,
     build_metrics_by_owner,
-    build_metrics_from_user_metrics,
+    build_metrics_from_aggregate_metrics,
     build_single_run_row,
-    build_user_metrics_month_rows,
-    build_user_metrics_rows,
     calculate_date_component_metrics,
     component_metrics_rows_to_write,
     database_error_message,
@@ -118,7 +119,6 @@ from agno.db.utils import (
     metrics_versions,
     resolve_metrics_fields,
     table_schema_mismatch_error,
-    user_metrics_rows_to_write,
     validate_pagination,
 )
 from agno.run.agent import RunOutput
@@ -201,7 +201,7 @@ class PostgresDb(BaseDb):
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         component_metrics_table: Optional[str] = None,
-        user_metrics_table: Optional[str] = None,
+        aggregate_metrics_table: Optional[str] = None,
         metrics_refreshes_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
@@ -249,7 +249,7 @@ class PostgresDb(BaseDb):
             metrics_table (Optional[str]): Name of the table to store metrics.
             component_metrics_table (Optional[str]): Name of the table to store the metrics of each agent, team and
                 workflow.
-            user_metrics_table (Optional[str]): Name of the table to store the metrics of each user.
+            aggregate_metrics_table (Optional[str]): Name of the table to store the metrics of each user.
             metrics_refreshes_table (Optional[str]): Name of the table to store the metrics refreshes.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge content.
@@ -306,7 +306,7 @@ class PostgresDb(BaseDb):
             memory_table=memory_table,
             metrics_table=metrics_table,
             component_metrics_table=component_metrics_table,
-            user_metrics_table=user_metrics_table,
+            aggregate_metrics_table=aggregate_metrics_table,
             metrics_refreshes_table=metrics_refreshes_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
@@ -334,7 +334,7 @@ class PostgresDb(BaseDb):
             mcp_oauth_keys_table=mcp_oauth_keys_table,
         )
         if metrics_table is not None:
-            log_warning("metrics_table is deprecated; use component_metrics_table and user_metrics_table.")
+            log_warning("metrics_table is deprecated; use component_metrics_table and aggregate_metrics_table.")
 
         self.db_schema: str = db_schema if db_schema is not None else "ai"
         self.metadata: MetaData = MetaData(schema=self.db_schema)
@@ -379,7 +379,7 @@ class PostgresDb(BaseDb):
             memory_table=data.get("memory_table"),
             metrics_table=data.get("metrics_table"),
             component_metrics_table=data.get("component_metrics_table"),
-            user_metrics_table=data.get("user_metrics_table"),
+            aggregate_metrics_table=data.get("aggregate_metrics_table"),
             metrics_refreshes_table=data.get("metrics_refreshes_table"),
             eval_table=data.get("eval_table"),
             knowledge_table=data.get("knowledge_table"),
@@ -432,7 +432,7 @@ class PostgresDb(BaseDb):
             (self.memory_table_name, "memories"),
             (self.metrics_table_name, "metrics"),
             (self.component_metrics_table_name, "component_metrics"),
-            (self.user_metrics_table_name, "user_metrics"),
+            (self.aggregate_metrics_table_name, "aggregate_metrics"),
             (self.metrics_refreshes_table_name, "metrics_refreshes"),
             (self.eval_table_name, "evals"),
             (self.knowledge_table_name, "knowledge"),
@@ -700,7 +700,7 @@ class PostgresDb(BaseDb):
             "memories": self.memory_table_name,
             "metrics": self.metrics_table_name,
             "component_metrics": self.component_metrics_table_name,
-            "user_metrics": self.user_metrics_table_name,
+            "aggregate_metrics": self.aggregate_metrics_table_name,
             "metrics_refreshes": self.metrics_refreshes_table_name,
             "evals": self.eval_table_name,
             "knowledge": self.knowledge_table_name,
@@ -759,13 +759,13 @@ class PostgresDb(BaseDb):
             )
             return self.component_metrics_table
 
-        if table_type == "user_metrics":
-            self.user_metrics_table = self._get_or_create_table(
-                table_name=self.user_metrics_table_name,
-                table_type="user_metrics",
+        if table_type == "aggregate_metrics":
+            self.aggregate_metrics_table = self._get_or_create_table(
+                table_name=self.aggregate_metrics_table_name,
+                table_type="aggregate_metrics",
                 create_table_if_not_found=create_table_if_not_found,
             )
-            return self.user_metrics_table
+            return self.aggregate_metrics_table
 
         if table_type == "metrics_refreshes":
             self.metrics_refreshes_table = self._get_or_create_table(
@@ -3101,32 +3101,34 @@ class PostgresDb(BaseDb):
             with sess.begin_nested():
                 # Looked up only when a day reopens, the table loaded on the write's own connection: a lookup
                 # through another session would not run in the write's transaction. None when no day was calculated yet
-                user_metrics_table = self._get_cached_table("user_metrics", self.user_metrics_table_name)
-                if user_metrics_table is None:
+                aggregate_metrics_table = self._get_cached_table("aggregate_metrics", self.aggregate_metrics_table_name)
+                if aggregate_metrics_table is None:
                     if not is_table_available(
-                        session=sess, table_name=self.user_metrics_table_name, db_schema=self.db_schema
+                        session=sess, table_name=self.aggregate_metrics_table_name, db_schema=self.db_schema
                     ):
                         self._metrics_days_not_reopened.clear()
                         return
                     if not is_valid_table(
                         db_engine=self.db_engine,
-                        table_name=self.user_metrics_table_name,
-                        table_type="user_metrics",
+                        table_name=self.aggregate_metrics_table_name,
+                        table_type="aggregate_metrics",
                         db_schema=self.db_schema,
                     ):
                         raise table_schema_mismatch_error(
-                            f"{self.db_schema}.{self.user_metrics_table_name}", table_type="user_metrics"
+                            f"{self.db_schema}.{self.aggregate_metrics_table_name}", table_type="aggregate_metrics"
                         )
                     with self._resolve_lock:
-                        user_metrics_table = Table(
-                            self.user_metrics_table_name,
+                        aggregate_metrics_table = Table(
+                            self.aggregate_metrics_table_name,
                             self.metadata,
                             schema=self.db_schema,
                             autoload_with=sess.connection(),
                         )
-                        self._store_resolved_table("user_metrics", self.user_metrics_table_name, user_metrics_table)
+                        self._store_resolved_table(
+                            "aggregate_metrics", self.aggregate_metrics_table_name, aggregate_metrics_table
+                        )
                 for day in days:
-                    reopen_metrics_day(session=sess, table=user_metrics_table, day=day)
+                    reopen_metrics_day(session=sess, table=aggregate_metrics_table, day=day)
             self._metrics_days_not_reopened.difference_update(days)
         except Exception as e:
             self._metrics_days_not_reopened.update(days)
@@ -3370,7 +3372,7 @@ class PostgresDb(BaseDb):
 
     def _get_metrics_dates_to_calculate(
         self,
-        user_metrics_table: Table,
+        aggregate_metrics_table: Table,
         sessions_table: Table,
         runs_table: Optional[Table],
         refresh_row: Dict[str, Any],
@@ -3379,7 +3381,7 @@ class PostgresDb(BaseDb):
         """Get the days whose metrics a calculation rebuilds, and the fingerprint of yesterday and today.
 
         Args:
-            user_metrics_table (Table): The user metrics table.
+            aggregate_metrics_table (Table): The aggregate metrics table.
             sessions_table (Table): The sessions table.
             runs_table (Optional[Table]): The runs table.
             refresh_row (Dict[str, Any]): The row of the metrics refreshes table, from _claim_metrics_refresh.
@@ -3402,11 +3404,11 @@ class PostgresDb(BaseDb):
             # Every earlier day still open: not yet completed, or reopened by a write since
             dates_to_process.update(
                 sess.execute(
-                    select(user_metrics_table.c.date).where(
-                        user_metrics_table.c.aggregation_period == "daily",
-                        user_metrics_table.c.user_id == "",
-                        user_metrics_table.c.completed.is_(False),
-                        user_metrics_table.c.date < yesterday,
+                    select(aggregate_metrics_table.c.date).where(
+                        aggregate_metrics_table.c.aggregation_period == "daily",
+                        aggregate_metrics_table.c.user_id == "",
+                        aggregate_metrics_table.c.completed.is_(False),
+                        aggregate_metrics_table.c.date < yesterday,
                     )
                 )
                 .scalars()
@@ -3430,10 +3432,10 @@ class PostgresDb(BaseDb):
                 if first_calculation:
                     completed_days = set(
                         sess.execute(
-                            select(user_metrics_table.c.date).where(
-                                user_metrics_table.c.aggregation_period == "daily",
-                                user_metrics_table.c.user_id == "",
-                                user_metrics_table.c.completed.is_(True),
+                            select(aggregate_metrics_table.c.date).where(
+                                aggregate_metrics_table.c.aggregation_period == "daily",
+                                aggregate_metrics_table.c.user_id == "",
+                                aggregate_metrics_table.c.completed.is_(True),
                             )
                         )
                         .scalars()
@@ -3448,18 +3450,18 @@ class PostgresDb(BaseDb):
 
         return sorted(dates_to_process), fingerprint
 
-    def _get_open_metrics_months(self, user_metrics_table: Table) -> List[date]:
+    def _get_open_metrics_months(self, aggregate_metrics_table: Table) -> List[date]:
         """Get the first day of every month before the current one whose month row is still open: not completed yet,
         or reopened by a day a calculation rebuilt before it stopped."""
         current_month = datetime.now(timezone.utc).date().replace(day=1)
         with self.Session() as sess:
             return list(
                 sess.execute(
-                    select(user_metrics_table.c.date).where(
-                        user_metrics_table.c.aggregation_period == "monthly",
-                        user_metrics_table.c.user_id == "",
-                        user_metrics_table.c.completed.is_(False),
-                        user_metrics_table.c.date < current_month,
+                    select(aggregate_metrics_table.c.date).where(
+                        aggregate_metrics_table.c.aggregation_period == "monthly",
+                        aggregate_metrics_table.c.user_id == "",
+                        aggregate_metrics_table.c.completed.is_(False),
+                        aggregate_metrics_table.c.date < current_month,
                     )
                 )
                 .scalars()
@@ -3487,48 +3489,54 @@ class PostgresDb(BaseDb):
             )
         return parent_runs
 
-    def _write_user_metrics_rows(
+    def _write_aggregate_metrics_rows(
         self,
         sess: Any,
-        user_metrics_table: Table,
-        user_metrics_rows: List[Dict[str, Any]],
+        aggregate_metrics_table: Table,
+        aggregate_metrics_rows: List[Dict[str, Any]],
         rows_changed: bool,
         read_version: Optional[int],
     ) -> None:
-        """Write a period's rows of the user metrics table, from build_user_metrics_rows, in its transaction: the
-        user rows, then the everyone row, which is completed only while it still has the version read before the
+        """Write a period's rows of the aggregate metrics table, from build_aggregate_metrics_rows, in its transaction:
+        the user rows, then the everyone row, which is completed only while it still has the version read before the
         period's rows."""
-        period, period_date = user_metrics_rows[0]["aggregation_period"], user_metrics_rows[0]["date"]
+        period, period_date = aggregate_metrics_rows[0]["aggregation_period"], aggregate_metrics_rows[0]["date"]
         stored_rows = (
             sess.execute(
-                select(user_metrics_table).where(
-                    user_metrics_table.c.aggregation_period == period, user_metrics_table.c.date == period_date
+                select(aggregate_metrics_table).where(
+                    aggregate_metrics_table.c.aggregation_period == period,
+                    aggregate_metrics_table.c.date == period_date,
                 )
             )
             .mappings()
             .all()
         )
-        everyone_row, changed_rows, stale_user_ids = user_metrics_rows_to_write(
-            user_metrics_rows, [dict(row) for row in stored_rows], rows_changed
+        everyone_row, changed_rows, stale_user_ids = aggregate_metrics_rows_to_write(
+            aggregate_metrics_rows, [dict(row) for row in stored_rows], rows_changed
         )
         for start in range(0, len(stale_user_ids), METRICS_IN_LIST_LIMIT):
             sess.execute(
-                user_metrics_table.delete().where(
-                    user_metrics_table.c.aggregation_period == period,
-                    user_metrics_table.c.date == period_date,
-                    user_metrics_table.c.user_id.in_(stale_user_ids[start : start + METRICS_IN_LIST_LIMIT]),
+                aggregate_metrics_table.delete().where(
+                    aggregate_metrics_table.c.aggregation_period == period,
+                    aggregate_metrics_table.c.date == period_date,
+                    aggregate_metrics_table.c.user_id.in_(stale_user_ids[start : start + METRICS_IN_LIST_LIMIT]),
                 )
             )
-        bulk_upsert_user_metrics_rows(session=sess, table=user_metrics_table, user_metrics_rows=changed_rows)
+        bulk_upsert_aggregate_metrics_rows(
+            session=sess, table=aggregate_metrics_table, aggregate_metrics_rows=changed_rows
+        )
         if everyone_row is not None:
-            upsert_user_metrics_row(
-                session=sess, table=user_metrics_table, user_metrics_row=everyone_row, read_version=read_version
+            upsert_aggregate_metrics_row(
+                session=sess,
+                table=aggregate_metrics_table,
+                aggregate_metrics_row=everyone_row,
+                read_version=read_version,
             )
 
     def _calculate_date_metrics(
         self,
         table: Table,
-        user_metrics_table: Table,
+        aggregate_metrics_table: Table,
         sessions_table: Table,
         runs_table: Optional[Table],
         date_to_process: date,
@@ -3538,7 +3546,7 @@ class PostgresDb(BaseDb):
         worker_id: str,
         should_stop: Optional[Callable[[], bool]] = None,
     ) -> bool:
-        """Rebuild one day's component and user metrics rows in one transaction. False when nothing was written."""
+        """Rebuild one day's component and aggregate metrics rows in one transaction. False when nothing was written."""
         start_timestamp = int(
             datetime.combine(date_to_process, datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
         )
@@ -3551,10 +3559,10 @@ class PostgresDb(BaseDb):
         with self.Session() as sess, sess.begin():
             # Read before the day's runs, so a run written while they are read moves it
             read_version = sess.execute(
-                select(user_metrics_table.c.version).where(
-                    user_metrics_table.c.aggregation_period == "daily",
-                    user_metrics_table.c.date == date_to_process,
-                    user_metrics_table.c.user_id == "",
+                select(aggregate_metrics_table.c.version).where(
+                    aggregate_metrics_table.c.aggregation_period == "daily",
+                    aggregate_metrics_table.c.date == date_to_process,
+                    aggregate_metrics_table.c.user_id == "",
                 )
             ).scalar()
 
@@ -3658,29 +3666,31 @@ class PostgresDb(BaseDb):
             bulk_upsert_component_metrics(session=sess, table=table, component_metrics_records=changed_rows)
 
             # Written last, in the day's transaction, so its version never moves without the rows it tells of
-            self._write_user_metrics_rows(
+            self._write_aggregate_metrics_rows(
                 sess,
-                user_metrics_table,
-                build_user_metrics_rows(records, "daily", date_to_process, metrics_day_completed(date_to_process)),
+                aggregate_metrics_table,
+                build_aggregate_metrics_rows(records, "daily", date_to_process, metrics_day_completed(date_to_process)),
                 rows_changed=bool(changed_rows or stale_keys),
                 read_version=read_version,
             )
             if changed_rows or stale_keys:
                 # Reopened with the day, so a calculation that stops before its months leaves the month for the next
-                reopen_metrics_month(session=sess, table=user_metrics_table, month_start=date_to_process.replace(day=1))
+                reopen_metrics_month(
+                    session=sess, table=aggregate_metrics_table, month_start=date_to_process.replace(day=1)
+                )
             return True
 
     def _calculate_month_metrics(
-        self, table: Table, user_metrics_table: Table, month_start: date, refreshes_table: Table, worker_id: str
+        self, table: Table, aggregate_metrics_table: Table, month_start: date, refreshes_table: Table, worker_id: str
     ) -> bool:
-        """Rebuild the month rows of the user metrics table from the component metrics rows of the month's days, in
+        """Rebuild the month rows of the aggregate metrics table from the component metrics rows of the month's days, in
         one transaction. False when another process took the refresh over, and nothing was written."""
         with self.Session() as sess, sess.begin():
             read_version = sess.execute(
-                select(user_metrics_table.c.version).where(
-                    user_metrics_table.c.aggregation_period == "monthly",
-                    user_metrics_table.c.date == month_start,
-                    user_metrics_table.c.user_id == "",
+                select(aggregate_metrics_table.c.version).where(
+                    aggregate_metrics_table.c.aggregation_period == "monthly",
+                    aggregate_metrics_table.c.date == month_start,
+                    aggregate_metrics_table.c.user_id == "",
                 )
             ).scalar()
             # Server-side cursor, so a month of many rows is added up a batch at a time instead of held whole
@@ -3704,10 +3714,10 @@ class PostgresDb(BaseDb):
             if not self._heartbeat_metrics_refresh(sess, refreshes_table, worker_id):
                 return False
             # Added up per owner and component over the month, so a user of several days is one user of the month
-            self._write_user_metrics_rows(
+            self._write_aggregate_metrics_rows(
                 sess,
-                user_metrics_table,
-                build_user_metrics_month_rows(month_start, per_owner),
+                aggregate_metrics_table,
+                build_aggregate_metrics_month_rows(month_start, per_owner),
                 rows_changed=False,
                 read_version=read_version,
             )
@@ -3763,10 +3773,10 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during metrics calculation.
         """
         table = self._get_metrics_table("component_metrics", self.component_metrics_table_name)
-        user_metrics_table = self._get_metrics_table("user_metrics", self.user_metrics_table_name)
+        aggregate_metrics_table = self._get_metrics_table("aggregate_metrics", self.aggregate_metrics_table_name)
         refreshes_table = self._get_metrics_table("metrics_refreshes", self.metrics_refreshes_table_name)
         sessions_table = self._get_table(table_type="sessions")
-        if table is None or user_metrics_table is None or refreshes_table is None or sessions_table is None:
+        if table is None or aggregate_metrics_table is None or refreshes_table is None or sessions_table is None:
             log_info("No session data found. Won't calculate metrics.")
             return []
         runs_table = self._get_table(table_type="runs")
@@ -3786,7 +3796,7 @@ class PostgresDb(BaseDb):
                     ).first()
                     if refresh_times is not None:
                         started_at, finished_at = refresh_times
-                    reopen_metrics_days_from(session=sess, table=user_metrics_table, starting_date=rebuild_from)
+                    reopen_metrics_days_from(session=sess, table=aggregate_metrics_table, starting_date=rebuild_from)
                 # Yesterday and today are picked by the fingerprint, so it is marked for the next one too
                 if not self._mark_metrics_refresh_rebuild(refreshes_table):
                     return None
@@ -3809,7 +3819,7 @@ class PostgresDb(BaseDb):
 
         try:
             dates_to_process, fingerprint = self._get_metrics_dates_to_calculate(
-                user_metrics_table, sessions_table, runs_table, refresh_row, rebuild_from
+                aggregate_metrics_table, sessions_table, runs_table, refresh_row, rebuild_from
             )
             if rebuild_from is not None:
                 # Yesterday and today are picked by their fingerprint, not by being open
@@ -3876,7 +3886,7 @@ class PostgresDb(BaseDb):
                     return None
                 if not self._calculate_date_metrics(
                     table,
-                    user_metrics_table,
+                    aggregate_metrics_table,
                     sessions_table,
                     runs_table,
                     date_to_process,
@@ -3895,7 +3905,7 @@ class PostgresDb(BaseDb):
             month_starts = sorted(
                 month_start
                 for month_start in set(get_months_to_calculate_metrics_for(calculated_dates))
-                | set(self._get_open_metrics_months(user_metrics_table))
+                | set(self._get_open_metrics_months(aggregate_metrics_table))
                 if metrics_day_completed(metrics_month_end(month_start))
             )
             for month_start in month_starts:
@@ -3903,7 +3913,7 @@ class PostgresDb(BaseDb):
                     self._release_metrics_refresh(refreshes_table, worker_id, stopped=True)
                     return None
                 if not self._calculate_month_metrics(
-                    table, user_metrics_table, month_start, refreshes_table, worker_id
+                    table, aggregate_metrics_table, month_start, refreshes_table, worker_id
                 ):
                     return None
 
@@ -3948,35 +3958,41 @@ class PostgresDb(BaseDb):
 
         return build_metrics_by_owner(rows_by_query["totals"], rows_by_query["model_metrics"]), latest_updated_at
 
-    def _get_user_metrics_rows(
+    def _get_aggregate_metrics_rows(
         self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
     ) -> Tuple[List[dict], Optional[int]]:
-        """Get the day rows of the user metrics table in the shape of the metrics table: the everyone rows for ``""``,
-        one user's rows for a name, and every user's rows for ``None``."""
-        user_metrics_table = self._get_table(table_type="user_metrics")
-        if user_metrics_table is None:
+        """Get the day rows of the aggregate metrics table in the shape of the metrics table: the everyone rows for
+        ``""``, one user's rows for a name, and every user's rows for ``None``."""
+        aggregate_metrics_table = self._get_table(table_type="aggregate_metrics")
+        if aggregate_metrics_table is None:
             return [], None
 
-        filters = [user_metrics_table.c.aggregation_period == "daily"]
+        filters = [aggregate_metrics_table.c.aggregation_period == "daily"]
         if starting_date:
-            filters.append(user_metrics_table.c.date >= starting_date)
+            filters.append(aggregate_metrics_table.c.date >= starting_date)
         if ending_date:
-            filters.append(user_metrics_table.c.date <= ending_date)
+            filters.append(aggregate_metrics_table.c.date <= ending_date)
         filters.append(
-            user_metrics_table.c.user_id != "" if user_id is None else user_metrics_table.c.user_id == user_id
+            aggregate_metrics_table.c.user_id != "" if user_id is None else aggregate_metrics_table.c.user_id == user_id
         )
         # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row
         filters.append(
-            or_(*[user_metrics_table.c[column] > 0 for column in USER_METRICS_COUNT_COLUMNS if column != "users_count"])
+            or_(
+                *[
+                    aggregate_metrics_table.c[column] > 0
+                    for column in AGGREGATE_METRICS_COUNT_COLUMNS
+                    if column != "users_count"
+                ]
+            )
         )
-        # Only what build_metrics_from_user_metrics reads, so the maps of timings are never decoded
+        # Only what build_metrics_from_aggregate_metrics reads, so the maps of timings are never decoded
         columns = [
-            user_metrics_table.c[column]
+            aggregate_metrics_table.c[column]
             for column in [
                 "date",
                 "user_id",
-                *USER_METRICS_COUNT_COLUMNS,
-                *[field for field in METRICS_TOKEN_FIELDS if field in user_metrics_table.c],
+                *AGGREGATE_METRICS_COUNT_COLUMNS,
+                *[field for field in METRICS_TOKEN_FIELDS if field in aggregate_metrics_table.c],
                 "token_details",
                 "model_metrics",
                 "created_at",
@@ -3986,7 +4002,9 @@ class PostgresDb(BaseDb):
         with self.Session() as sess:
             rows = (
                 sess.execute(
-                    select(*columns).where(*filters).order_by(user_metrics_table.c.date, user_metrics_table.c.user_id)
+                    select(*columns)
+                    .where(*filters)
+                    .order_by(aggregate_metrics_table.c.date, aggregate_metrics_table.c.user_id)
                 )
                 .mappings()
                 .all()
@@ -3996,12 +4014,14 @@ class PostgresDb(BaseDb):
 
             # Get the latest updated_at, scoped to the same user filter
             latest_updated_at = sess.execute(
-                select(func.max(user_metrics_table.c.updated_at)).where(
-                    user_metrics_table.c.aggregation_period == "daily",
-                    user_metrics_table.c.user_id != "" if user_id is None else user_metrics_table.c.user_id == user_id,
+                select(func.max(aggregate_metrics_table.c.updated_at)).where(
+                    aggregate_metrics_table.c.aggregation_period == "daily",
+                    aggregate_metrics_table.c.user_id != ""
+                    if user_id is None
+                    else aggregate_metrics_table.c.user_id == user_id,
                 )
             ).scalar()
-        return build_metrics_from_user_metrics(rows), latest_updated_at
+        return build_metrics_from_aggregate_metrics(rows), latest_updated_at
 
     def _get_metrics_rows(
         self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
@@ -4010,7 +4030,7 @@ class PostgresDb(BaseDb):
         finished: a user's from that user's rows, the runs with no user from their component metrics rows."""
         if user_id == "":
             return self._get_metrics_by_owner(starting_date, ending_date, user_id)
-        metrics, latest_updated_at = self._get_user_metrics_rows(starting_date, ending_date, user_id)
+        metrics, latest_updated_at = self._get_aggregate_metrics_rows(starting_date, ending_date, user_id)
         if user_id is not None:
             return metrics, latest_updated_at
 
@@ -4064,7 +4084,7 @@ class PostgresDb(BaseDb):
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
-        Metrics are read from the user metrics and component metrics once the first calculate_metrics has finished,
+        Metrics are read from the aggregate metrics and component metrics once the first calculate_metrics has finished,
         and from the deprecated metrics table until then. They are refreshed first, at most once per minute per
         process, unless stop_metrics_refresh_on_read was called.
 
@@ -4127,7 +4147,7 @@ class PostgresDb(BaseDb):
     ) -> Tuple[List[dict], Optional[int]]:
         """Get the metrics of every user, one row per day, matching the given date range.
 
-        Read from the everyone rows of the user metrics once the first calculate_metrics has finished, and from the
+        Read from the everyone rows of the aggregate metrics once the first calculate_metrics has finished, and from the
         deprecated metrics table until then. They are refreshed first, as get_metrics does.
 
         Args:
@@ -4143,7 +4163,7 @@ class PostgresDb(BaseDb):
         try:
             self._refresh_metrics_before_read()
             if self._metrics_calculated(self._get_table(table_type="metrics_refreshes")):
-                return self._get_user_metrics_rows(starting_date, ending_date, "")
+                return self._get_aggregate_metrics_rows(starting_date, ending_date, "")
             return super().get_metrics_by_date(starting_date, ending_date)
 
         except Exception as e:
@@ -4186,17 +4206,17 @@ class PostgresDb(BaseDb):
             user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with
                 no user.
             fields (List[str]): The columns to total.
-            use_month_rows (bool): Total a calendar month inside the date range from its month user metrics row, as one
-                date.
+            use_month_rows (bool): Total a calendar month inside the date range from its month aggregate metrics row, as
+                one date.
 
         Returns:
             Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each date, and when they were last updated.
         """
-        user_metrics_table = self._get_table(table_type="user_metrics")
+        aggregate_metrics_table = self._get_table(table_type="aggregate_metrics")
         # Every owner is read from the everyone rows and a user from the user's rows; the runs with no user have no
-        # user metrics row of their own, so they are read from their component rows
-        table = self._get_table(table_type="component_metrics") if user_id == "" else user_metrics_table
-        if user_metrics_table is None or table is None:
+        # aggregate metrics row of their own, so they are read from their component rows
+        table = self._get_table(table_type="component_metrics") if user_id == "" else aggregate_metrics_table
+        if aggregate_metrics_table is None or table is None:
             return [], None
 
         # The component metrics table keeps day rows only, so the runs with no user are read day by day
@@ -4211,12 +4231,12 @@ class PostgresDb(BaseDb):
                 # or not yet built, is read from its days
                 month_starts = (
                     sess.execute(
-                        select(user_metrics_table.c.date).where(
-                            user_metrics_table.c.aggregation_period == "monthly",
-                            user_metrics_table.c.user_id == "",
-                            user_metrics_table.c.completed.is_(True),
+                        select(aggregate_metrics_table.c.date).where(
+                            aggregate_metrics_table.c.aggregation_period == "monthly",
+                            aggregate_metrics_table.c.user_id == "",
+                            aggregate_metrics_table.c.completed.is_(True),
                             # The full months follow each other, so a range finds them however long the window is
-                            user_metrics_table.c.date.between(full_months[0], full_months[-1]),
+                            aggregate_metrics_table.c.date.between(full_months[0], full_months[-1]),
                         )
                     )
                     .scalars()
@@ -4302,7 +4322,7 @@ class PostgresDb(BaseDb):
             raise e
 
     def get_metrics_versions(self, starting_date: date, ending_date: date) -> Optional[Dict[str, int]]:
-        """Get the version of every everyone row of a day or a month of the user metrics in the given date range.
+        """Get the version of every everyone row of a day or a month of the aggregate metrics in the given date range.
 
         Metrics are refreshed first, as get_metrics refreshes them.
 
@@ -4313,14 +4333,15 @@ class PostgresDb(BaseDb):
         Returns:
             Optional[Dict[str, int]]: The version of each everyone row, keyed by its aggregation period and date. The
                 same again only while no calculation wrote a row of the date range. ``None`` until the first
-                calculate_metrics has finished, or without a user metrics table: a read would find no rows to total.
+                calculate_metrics has finished, or without an aggregate metrics table: a read would find no rows to
+                total.
 
         Raises:
             Exception: If an error occurs during retrieval.
         """
         try:
             self._refresh_metrics_before_read()
-            table = self._get_table(table_type="user_metrics")
+            table = self._get_table(table_type="aggregate_metrics")
             if table is None or not self._metrics_calculated(self._get_table(table_type="metrics_refreshes")):
                 return None
 

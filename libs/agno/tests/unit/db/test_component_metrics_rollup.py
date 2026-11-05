@@ -2,7 +2,7 @@
 
 ``calculate_date_component_metrics`` turns one day's stored sessions and runs into one row of
 agno_component_metrics per owner and agent, team or workflow. The helpers around it build the rows of a day or month
-for agno_user_metrics, and decide which rebuilt rows to write.
+for agno_aggregate_metrics, and decide which rebuilt rows to write.
 """
 
 from datetime import date, datetime, timedelta, timezone
@@ -23,12 +23,14 @@ from agno.db.utils import (
     METRICS_TOKEN_FIELDS,
     add_metrics_month_totals,
     add_metrics_totals,
+    aggregate_metrics_row_to_write,
+    aggregate_metrics_rows_to_write,
+    build_aggregate_metrics_month_rows,
+    build_aggregate_metrics_row,
+    build_aggregate_metrics_rows,
     build_component_metrics_totals,
     build_metrics_by_owner,
-    build_metrics_from_user_metrics,
-    build_user_metrics_month_rows,
-    build_user_metrics_row,
-    build_user_metrics_rows,
+    build_metrics_from_aggregate_metrics,
     calculate_date_component_metrics,
     component_metrics_rows_to_write,
     empty_metrics_totals,
@@ -46,8 +48,6 @@ from agno.db.utils import (
     metrics_refresh_status,
     metrics_remote_member_team_session_ids,
     resolve_metrics_fields,
-    user_metrics_row_to_write,
-    user_metrics_rows_to_write,
 )
 from agno.metrics import BaseMetrics
 from agno.run.base import RunStatus
@@ -367,7 +367,7 @@ def test_remote_member_run_and_session_are_counted_under_the_team_on_a_shared_da
         (row["component_id"], row["parent_component_id"], row["root_component_id"], row["sessions_count"])
         for row in rows
     ] == [("remote-agent", "team-1", "team-1", 0), ("team-1", "", "team-1", 1)]
-    total = build_user_metrics_row(rows, "daily", TARGET_DATE, True)
+    total = build_aggregate_metrics_row(rows, "daily", TARGET_DATE, True)
     assert (total["root_runs_count"], total["agent_sessions_count"], total["team_sessions_count"]) == (1, 0, 1)
 
 
@@ -421,7 +421,7 @@ def test_member_run_and_the_same_agent_alone_are_two_rows():
     rows = {(row["component_id"], row["parent_component_id"]): row["total_tokens"] for row in _day_rows(runs)}
 
     assert rows == {("team-1", ""): 300, ("member-1", "team-1"): 500, ("member-1", ""): 120}
-    total = build_user_metrics_row(_day_rows(runs), "daily", TARGET_DATE, True)
+    total = build_aggregate_metrics_row(_day_rows(runs), "daily", TARGET_DATE, True)
     assert (total["total_tokens"], total["agent_runs_count"], total["team_runs_count"]) == (920, 2, 1)
     # The member run was started by the team run
     assert total["root_runs_count"] == 2
@@ -434,7 +434,7 @@ def test_a_team_run_with_one_member_is_one_root_run():
         _run("member-run", component_id="member-1", parent_run_id="team-run"),
     ]
 
-    total = build_user_metrics_row(_day_rows(runs), "daily", TARGET_DATE, True)
+    total = build_aggregate_metrics_row(_day_rows(runs), "daily", TARGET_DATE, True)
 
     assert (total["agent_runs_count"], total["team_runs_count"], total["root_runs_count"]) == (1, 1, 1)
 
@@ -892,11 +892,11 @@ def test_rows_to_write_come_in_key_order():
 
 
 # ---------------------------------------------------------------------------
-# User metrics rows
+# Aggregate metrics rows
 # ---------------------------------------------------------------------------
 
 
-def test_user_metrics_rows_are_the_everyone_row_then_one_row_per_user():
+def test_aggregate_metrics_rows_are_the_everyone_row_then_one_row_per_user():
     """Alice's two rows and Bob's one are totalled into the everyone row of the day, with no component, the runs
     with no user included; each user gets a row of their own runs."""
     rows = _day_rows(
@@ -908,7 +908,7 @@ def test_user_metrics_rows_are_the_everyone_row_then_one_row_per_user():
         ],
     )
 
-    day = build_user_metrics_row(rows, "daily", TARGET_DATE, completed=True)
+    day = build_aggregate_metrics_row(rows, "daily", TARGET_DATE, completed=True)
 
     assert (day["aggregation_period"], day["date"], day["completed"]) == ("daily", TARGET_DATE, True)
     assert day["user_id"] == ""
@@ -937,40 +937,42 @@ def test_user_metrics_rows_are_the_everyone_row_then_one_row_per_user():
         ],
     )
 
-    everyone, alice, bob = build_user_metrics_rows(rows, "daily", TARGET_DATE, completed=True)
+    everyone, alice, bob = build_aggregate_metrics_rows(rows, "daily", TARGET_DATE, completed=True)
 
     assert (everyone["user_id"], everyone["total_tokens"], everyone["users_count"]) == ("", 35, 2)
     assert (alice["user_id"], alice["total_tokens"], alice["users_count"]) == ("alice", 10, 1)
     assert (bob["user_id"], bob["total_tokens"], bob["users_count"]) == ("bob", 20, 1)
 
 
-def test_user_metrics_rows_to_write_keep_the_everyone_row_apart():
+def test_aggregate_metrics_rows_to_write_keep_the_everyone_row_apart():
     """The everyone row goes through the version check; a user row is written when new or changed, and a stored
     user row the day no longer has is stale."""
-    user_metrics_rows = build_user_metrics_rows(
+    aggregate_metrics_rows = build_aggregate_metrics_rows(
         _day_rows([_run("run-1", user_id="alice")]), "daily", TARGET_DATE, False
     )
-    stored = [{**row, "version": 3} for row in user_metrics_rows] + [{**user_metrics_rows[1], "user_id": "carol"}]
+    stored = [{**row, "version": 3} for row in aggregate_metrics_rows] + [
+        {**aggregate_metrics_rows[1], "user_id": "carol"}
+    ]
 
-    everyone_row, changed_rows, stale_user_ids = user_metrics_rows_to_write(
-        user_metrics_rows, stored, rows_changed=True
+    everyone_row, changed_rows, stale_user_ids = aggregate_metrics_rows_to_write(
+        aggregate_metrics_rows, stored, rows_changed=True
     )
 
-    assert everyone_row is user_metrics_rows[0]
+    assert everyone_row is aggregate_metrics_rows[0]
     assert changed_rows == []
     assert stale_user_ids == ["carol"]
 
 
 def test_get_metrics_rows_add_up_the_audio_total():
-    """The audio total a user metrics row reads with is the sum of the audio counts it keeps."""
-    [everyone] = build_user_metrics_rows(
+    """The audio total an aggregate metrics row reads with is the sum of the audio counts it keeps."""
+    [everyone] = build_aggregate_metrics_rows(
         _day_rows([_run("run-1", user_id="", tokens={"audio_input_tokens": 200, "audio_output_tokens": 50})]),
         "daily",
         TARGET_DATE,
         False,
     )
 
-    [metric] = build_metrics_from_user_metrics([everyone])
+    [metric] = build_metrics_from_aggregate_metrics([everyone])
 
     token_metrics = metric["token_metrics"]
     assert (token_metrics["audio_input_tokens"], token_metrics["audio_output_tokens"]) == (200, 50)
@@ -991,7 +993,7 @@ def test_days_since_the_last_calculation_are_rebuilt():
     assert metrics_days_since_last_calculation(finished_at, date(2026, 1, 1)) == [date(2025, 12, 31)]
 
 
-def test_month_user_metrics_row_counts_its_users_once():
+def test_month_aggregate_metrics_row_counts_its_users_once():
     """A user active on several days and components is one user of the month, as agno_metrics never counted it."""
     month_start = date(2026, 1, 1)
     per_owner: dict = {}
@@ -1011,7 +1013,7 @@ def test_month_user_metrics_row_counts_its_users_once():
             ),
         )
 
-    month = build_user_metrics_month_rows(month_start, per_owner)[0]
+    month = build_aggregate_metrics_month_rows(month_start, per_owner)[0]
 
     assert (month["root_runs_count"], month["agent_runs_count"], month["team_runs_count"]) == (6, 4, 2)
     assert month["users_count"] == 1
@@ -1022,7 +1024,7 @@ def test_day_without_rows_gets_a_total_row_of_zeros():
     never rebuilt again once completed."""
     assert calculate_date_component_metrics(TARGET_DATE, [], [], set(), []) == []
 
-    day = build_user_metrics_row([], "daily", TARGET_DATE, completed=True)
+    day = build_aggregate_metrics_row([], "daily", TARGET_DATE, completed=True)
 
     totals_fields = [field for field in METRICS_FIELDS if field not in ["sessions_count", "runs_count"]]
     assert {field: day[field] for field in totals_fields} == empty_metrics_totals(totals_fields)
@@ -1033,7 +1035,7 @@ def test_day_without_rows_gets_a_total_row_of_zeros():
 
 def test_total_row_of_an_unknown_aggregation_period_is_refused():
     with pytest.raises(ValueError, match="week"):
-        build_user_metrics_row([], "week", TARGET_DATE, completed=True)
+        build_aggregate_metrics_row([], "week", TARGET_DATE, completed=True)
 
 
 def test_today_and_yesterday_are_still_open():
@@ -1104,7 +1106,7 @@ def test_refresh_whose_lock_went_stale_reads_failed():
 
 def test_get_metrics_rows_keep_the_shape_of_agno_metrics():
     """Each user's day is one row with the old counts by type and token_metrics, and the unowned row counts no user;
-    a user metrics row reads in the same shape, the everyone row with no user."""
+    an aggregate metrics row reads in the same shape, the everyone row with no user."""
 
     def _totals(user_id, component_type, sessions_count, runs_count, total_tokens, created_at, updated_at):
         tokens = {**{field: 0 for field in METRICS_TOKEN_FIELDS}, "total_tokens": total_tokens, "cost": None}
@@ -1144,11 +1146,11 @@ def test_get_metrics_rows_keep_the_shape_of_agno_metrics():
         "workflow_runs_count",
     }
 
-    everyone, alice_row = build_user_metrics_rows(
+    everyone, alice_row = build_aggregate_metrics_rows(
         _day_rows([_run("run-1", user_id="alice", tokens={"total_tokens": 10})]), "daily", TARGET_DATE, False
     )
 
-    everyone_metric, alice_metric = build_metrics_from_user_metrics([everyone, alice_row])
+    everyone_metric, alice_metric = build_metrics_from_aggregate_metrics([everyone, alice_row])
 
     assert (everyone_metric["id"], everyone_metric["user_id"], everyone_metric["users_count"]) == (
         f"{TARGET_DATE.isoformat()}_daily",
@@ -1159,21 +1161,21 @@ def test_get_metrics_rows_keep_the_shape_of_agno_metrics():
     assert alice_metric["token_metrics"]["total_tokens"] == 10
 
 
-def test_user_metrics_row_is_written_when_new_changed_or_its_day_completes():
-    """A new user metrics row, one whose day had a row written or deleted, or the same numbers marked completed are
+def test_aggregate_metrics_row_is_written_when_new_changed_or_its_day_completes():
+    """A new aggregate metrics row, one whose day had a row written or deleted, or the same numbers marked completed are
     written so its version moves and a later refresh starts after the day."""
     rows = _day_rows([_run("run-1")])
-    total = build_user_metrics_row(rows, "daily", TARGET_DATE, completed=False)
+    total = build_aggregate_metrics_row(rows, "daily", TARGET_DATE, completed=False)
     stored = {**total, "version": 4, "created_at": 1, "updated_at": 1}
 
-    assert user_metrics_row_to_write(total, None, rows_changed=False) is total
-    assert user_metrics_row_to_write(total, stored, rows_changed=True) is total
+    assert aggregate_metrics_row_to_write(total, None, rows_changed=False) is total
+    assert aggregate_metrics_row_to_write(total, stored, rows_changed=True) is total
     # The stamps and the version are not compared.
-    assert user_metrics_row_to_write(total, stored, rows_changed=False) is None
+    assert aggregate_metrics_row_to_write(total, stored, rows_changed=False) is None
 
-    completed = build_user_metrics_row(rows, "daily", TARGET_DATE, completed=True)
+    completed = build_aggregate_metrics_row(rows, "daily", TARGET_DATE, completed=True)
     stored = {**completed, "completed": False, "version": 1}
-    assert user_metrics_row_to_write(completed, stored, rows_changed=False) is completed
+    assert aggregate_metrics_row_to_write(completed, stored, rows_changed=False) is completed
 
 
 # ---------------------------------------------------------------------------
@@ -1182,7 +1184,7 @@ def test_user_metrics_row_is_written_when_new_changed_or_its_day_completes():
 
 
 def test_month_rows_total_the_days_of_the_month():
-    """A month of completed days gets a user metrics row per user and an everyone row, dated its first day."""
+    """A month of completed days gets an aggregate metrics row per user and an everyone row, dated its first day."""
     stored_rows = [
         *_day_rows([_run("run-1", user_id="alice", duration=1.0)], day=date(2026, 1, 1)),
         *_day_rows(
@@ -1198,7 +1200,7 @@ def test_month_rows_total_the_days_of_the_month():
     per_owner: dict = {}
     add_metrics_month_totals(per_owner, stored_rows[:1])
     add_metrics_month_totals(per_owner, stored_rows[1:])
-    month_rows = build_user_metrics_month_rows(date(2026, 1, 1), per_owner)
+    month_rows = build_aggregate_metrics_month_rows(date(2026, 1, 1), per_owner)
 
     assert [(row["aggregation_period"], row["date"], row["user_id"]) for row in month_rows] == [
         ("monthly", date(2026, 1, 1), ""),
@@ -1481,7 +1483,7 @@ def test_build_component_metrics_totals_assembles_each_query():
         "duration_buckets",
         "model_metrics",
     ]
-    user_metrics_row = {
+    aggregate_metrics_row = {
         "date": date(2026, 1, 1),
         "updated_at": 10,
         "runs_count": 3,
@@ -1490,7 +1492,10 @@ def test_build_component_metrics_totals_assembles_each_query():
         "max_time_to_first_token_ms": None,
     }
     rows_by_query = {
-        "totals": [_Row(**user_metrics_row), _Row(**{**user_metrics_row, "date": date(2025, 12, 31), "updated_at": 4})],
+        "totals": [
+            _Row(**aggregate_metrics_row),
+            _Row(**{**aggregate_metrics_row, "date": date(2025, 12, 31), "updated_at": 4}),
+        ],
         "count_maps": [_Row(date=date(2026, 1, 1), field="duration_buckets", key="le_1000", count=3)],
         "model_metrics": [
             _Row(date=date(2026, 1, 1), model_id="gpt-5-mini", model_provider="", count=1, cost=None),
@@ -1518,11 +1523,17 @@ def test_build_component_metrics_totals_assembles_each_query():
 def test_build_component_metrics_totals_keeps_each_cost():
     """The totals query fills the cost and the runs that reported one; the model query fills each model's cost."""
     fields = ["runs_count", "cost", "cost_runs_count", "model_metrics"]
-    user_metrics_row = {"date": date(2026, 1, 1), "updated_at": 10, "runs_count": 3, "cost": 0.02, "cost_runs_count": 2}
+    aggregate_metrics_row = {
+        "date": date(2026, 1, 1),
+        "updated_at": 10,
+        "runs_count": 3,
+        "cost": 0.02,
+        "cost_runs_count": 2,
+    }
     rows_by_query = {
         "totals": [
-            _Row(**user_metrics_row),
-            _Row(**{**user_metrics_row, "date": date(2025, 12, 31), "cost": None, "cost_runs_count": 0}),
+            _Row(**aggregate_metrics_row),
+            _Row(**{**aggregate_metrics_row, "date": date(2025, 12, 31), "cost": None, "cost_runs_count": 0}),
         ],
         "model_metrics": [
             _Row(date=date(2026, 1, 1), model_id="gpt-5-mini", model_provider="", count=1, cost=None),

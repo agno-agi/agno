@@ -821,8 +821,8 @@ async def get_db(
             and db.metrics_table_name == table_name
             or hasattr(db, "component_metrics_table_name")
             and db.component_metrics_table_name == table_name
-            or hasattr(db, "user_metrics_table_name")
-            and db.user_metrics_table_name == table_name
+            or hasattr(db, "aggregate_metrics_table_name")
+            and db.aggregate_metrics_table_name == table_name
             or hasattr(db, "metrics_refreshes_table_name")
             and db.metrics_refreshes_table_name == table_name
             or hasattr(db, "eval_table_name")
