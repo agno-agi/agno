@@ -28,11 +28,15 @@ from agno.utils.log import log_debug, log_warning
 
 def _get_non_empty_input_messages(run_messages: RunMessages) -> List[Message]:
     # Only the run's own list input: extra_messages also carries additional_input examples.
-    return [
-        message
-        for message in run_messages.run_input_messages or []
-        if message.content and (not isinstance(message.content, str) or message.content.strip() != "")
-    ]
+    # Tool-free transcript: the memory model only has memory tools, and a tool result without its call is rejected.
+    transcript: List[Message] = []
+    for message in run_messages.run_input_messages or []:
+        if message.role not in ("user", "assistant"):
+            continue
+        if not message.content or (isinstance(message.content, str) and message.content.strip() == ""):
+            continue
+        transcript.append(message.model_copy(update={"tool_calls": None}) if message.tool_calls else message)
+    return transcript
 
 
 def _make_memories(

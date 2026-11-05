@@ -250,3 +250,35 @@ def test_roleful_input_media_respects_send_media_to_model():
     )
 
     assert _user_images(model) == [("look", [])]
+
+
+TOOL_EXCHANGE_INPUT = [
+    Message(role="user", content="what is the weather in Paris?"),
+    Message(
+        role="assistant",
+        content=None,
+        tool_calls=[{"id": "call_1", "type": "function", "function": {"name": "get_weather", "arguments": "{}"}}],
+    ),
+    Message(role="tool", tool_call_id="call_1", content="sunny"),
+    Message(role="assistant", content="It is sunny in Paris."),
+]
+
+
+def test_roleful_input_memory_gets_tool_free_transcript():
+    model = _RecordingModel(id="gpt-test", api_key="sk-test")
+    memory_manager = _RecordingMemoryManager()
+
+    _team(model, memory_manager).run(TOOL_EXCHANGE_INPUT)
+
+    assert memory_manager.calls == [[("user", "what is the weather in Paris?"), ("assistant", "It is sunny in Paris.")]]
+    assert all(not m.tool_calls for m in memory_manager.seen)
+
+
+@pytest.mark.asyncio
+async def test_roleful_input_memory_gets_tool_free_transcript_async():
+    model = _RecordingModel(id="gpt-test", api_key="sk-test")
+    memory_manager = _RecordingMemoryManager()
+
+    await _team(model, memory_manager).arun(TOOL_EXCHANGE_INPUT)
+
+    assert memory_manager.calls == [[("user", "what is the weather in Paris?"), ("assistant", "It is sunny in Paris.")]]
