@@ -556,6 +556,8 @@ def parse_tools(
                     continue
                 _function_names.append(name)
                 _func = _func._per_run_copy()
+                if isinstance(tool.name, str) and tool.name:
+                    _func.owning_toolkit = tool.recorded_name
                 _func._agent = agent
                 if agent._team is not None:
                     _func._team = agent._team
@@ -589,6 +591,10 @@ def parse_tools(
             _function_names.append(tool.name)
 
             tool = tool._per_run_copy()
+            # The saved toolkit name can be stale (renamed, or an MCP default name
+            # holding the old command's arguments): record the live toolkit's name
+            if tool.owning_toolkit and isinstance(tool.bound_toolkit, Toolkit):
+                tool.owning_toolkit = tool.bound_toolkit.recorded_name
             # Respect the function's explicit strict setting if set
             effective_strict = strict if tool.strict is None else tool.strict
             tool.process_entrypoint(strict=effective_strict)
@@ -918,6 +924,7 @@ def run_tool(
                 tool_execution = call_result.tool_executions[0]
                 tool.result = tool_execution.result
                 tool.tool_call_error = tool_execution.tool_call_error
+                tool.metrics = tool_execution.metrics
                 if stream_events:
                     if team_mode:
                         yield handle_event(  # type: ignore
@@ -1033,6 +1040,7 @@ async def arun_tool(
                 tool_execution = call_result.tool_executions[0]
                 tool.result = tool_execution.result
                 tool.tool_call_error = tool_execution.tool_call_error
+                tool.metrics = tool_execution.metrics
                 if stream_events:
                     if team_mode:
                         yield handle_event(  # type: ignore

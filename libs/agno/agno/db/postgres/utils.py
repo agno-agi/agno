@@ -66,6 +66,13 @@ _METRICS_CALL_DURATIONS_PATH: Any = literal_column(
     """.metrics.duration'::jsonpath"""
 )
 
+# The id of each tool call answered in the first $skip messages, the ones a forked run copied from the run it was
+# forked from
+_METRICS_COPIED_TOOL_CALL_IDS_PATH: Any = literal_column(
+    """'$.messages[0 to $skip - 1] ? (@.role == "tool" && @.tool_call_id.type() == "string" && @.tool_call_id != "")"""
+    """.tool_call_id'::jsonpath"""
+)
+
 # Every run of a list under one of METRICS_NESTED_RUN_KEYS, or the one run a key holds on its own. A key stored as
 # null holds none
 _METRICS_NESTED_RUNS_PATH: Any = literal_column("""'$[*] ? (@.type() == "object")'::jsonpath""")
@@ -541,12 +548,22 @@ def _metrics_call_durations(run_data: Any) -> Any:
 
 
 def _metrics_tool_calls(run_data: Any) -> Any:
-    """Build each tool call of a stored run with only what tool_metrics counts, never its arguments or result."""
+    """Build each tool call of a stored run with only what tool_metrics counts, skipping those a forked run copied,
+    never its arguments or result."""
+    skip = func.coalesce(cast(run_data["forked_from_message_index"].astext, Integer), 0)
     tools = run_data["tools"]
     tool_call = (
-        func.jsonb_array_elements(case((func.jsonb_typeof(tools) == "array", tools), else_=func.jsonb_build_array()))
+        func.jsonb_array_elements(
+            case((func.jsonb_typeof(tools) == "array", tools), else_=func.jsonb_build_array()),
+            type_=postgresql.JSONB,
+        )
         .table_valued(column("value", postgresql.JSONB))
         .render_derived()
+    )
+    copied_tool_call = (
+        func.jsonb_path_query(run_data, _METRICS_COPIED_TOOL_CALL_IDS_PATH, func.jsonb_build_object("skip", skip))
+        .table_valued(column("value", postgresql.JSONB))
+        .render_derived(name="copied_tool_call")
     )
     return (
         select(
@@ -558,13 +575,23 @@ def _metrics_tool_calls(run_data: Any) -> Any:
                     tool_call.c.value["tool_name"],
                     "tool_call_error",
                     tool_call.c.value["tool_call_error"],
+                    "requires_confirmation",
+                    tool_call.c.value["requires_confirmation"],
+                    "confirmed",
+                    tool_call.c.value["confirmed"],
+                    "requires_user_input",
+                    tool_call.c.value["requires_user_input"],
+                    "external_execution_required",
+                    tool_call.c.value["external_execution_required"],
                     "metrics",
                     func.jsonb_build_object("duration", tool_call.c.value["metrics"]["duration"]),
                 )
             )
         )
-        .select_from(tool_call)
-        .where(func.jsonb_typeof(tool_call.c.value) == "object")
+        .select_from(
+            tool_call.outerjoin(copied_tool_call, copied_tool_call.c.value == tool_call.c.value["tool_call_id"])
+        )
+        .where(func.jsonb_typeof(tool_call.c.value) == "object", copied_tool_call.c.value.is_(None))
         .scalar_subquery()
     )
 
@@ -579,7 +606,8 @@ def build_component_metrics_runs_query(table: Table, start_timestamp: int, end_t
 
     Returns:
         Any: The query. Of the messages it reads only each request's duration, of the metrics only what
-            component metrics count, and of the runs nested inside a run, at any depth, only the same.
+            component metrics count, of the tool calls only what tool_metrics counts, and of the runs nested inside
+            a run, at any depth, only the same.
     """
     # Read in the database, so a run is never read whole
     nested_keys = values(column("position"), column("key"), name="nested_keys").data(
@@ -834,8 +862,8 @@ def build_component_metrics_totals_queries(
             row instead of its days.
 
     Returns:
-        Dict[str, Any]: The queries, keyed "totals", "count_maps", "additional_metrics" and "model_metrics".
-            Empty when there is no day to total.
+        Dict[str, Any]: The queries, keyed "totals", "count_maps", "additional_metrics", "model_metrics" and
+            "tool_metrics". Empty when there is no day to total.
     """
     # Days that follow one another are looked up as one range, which is planned by the rows it holds,
     # where a list of days is planned as if each day held rows
