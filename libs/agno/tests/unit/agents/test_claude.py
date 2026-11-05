@@ -1941,11 +1941,15 @@ def test_metrics_page_counts_runs_per_model(fake_sdk, tmp_db):
                 time.sleep(0.01)
             else:
                 raise AssertionError("Automatic background run did not complete")
+        # A read never calculates under AgentOS: the refresh builds the runs' day
+        assert client.post("/metrics/refresh").status_code == 200
         body = client.get("/metrics").json()
         days = body["metrics"] if isinstance(body, dict) else body
         today = days[-1]
         assert today["agent_runs_count"] == 2
-        assert today["model_metrics"] == [{"model_id": "claude-sonnet-4-6", "model_provider": "Anthropic", "count": 2}]
+        assert today["model_metrics"] == [
+            {"model_id": "claude-sonnet-4-6", "model_provider": "Anthropic", "count": 2, "cost": None}
+        ]
 
 
 @pytest.mark.parametrize("stream", [False, True])
