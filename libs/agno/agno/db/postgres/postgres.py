@@ -45,7 +45,6 @@ from agno.db.postgres.utils import (
     is_lock_not_available,
     is_table_available,
     is_valid_table,
-    metrics_parent_run_id,
     reopen_metrics_day,
     reopen_metrics_days_from,
     reopen_metrics_month,
@@ -3481,7 +3480,7 @@ class PostgresDb(BaseDb):
                     runs_table.c.agent_id,
                     runs_table.c.team_id,
                     runs_table.c.workflow_id,
-                    metrics_parent_run_id(runs_table).label("parent_run_id"),
+                    runs_table.c.parent_run_id,
                 ).where(runs_table.c.run_id.in_(parent_run_ids[start : start + METRICS_IN_LIST_LIMIT]))
                 parent_runs.extend(dict(record._mapping) for record in sess.execute(parents_stmt).fetchall())
             parent_run_ids = sorted(

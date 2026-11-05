@@ -284,7 +284,9 @@ class DayLatencyMetrics(BaseModel):
 
     date: datetime = Field(..., description="Date the runs started")
     runs_count: int = Field(..., description="Completed runs started on this date that recorded a duration", ge=0)
-    avg_duration_ms: Optional[int] = Field(None, description="Average duration of a completed run")
+    avg_duration_ms: Optional[int] = Field(
+        None, description="Average duration of a completed run, from start to end, time paused included"
+    )
     median_duration_ms: Optional[int] = Field(None, description="Duration half the completed runs finished within")
     p95_duration_ms: Optional[int] = Field(None, description="Duration 95% of the completed runs finished within")
     max_duration_ms: Optional[int] = Field(None, description="Duration of the slowest completed run")
@@ -307,7 +309,9 @@ class DayLatencyMetrics(BaseModel):
 class OSLatencyMetricsResponse(BaseModel):
     metrics: List[DayLatencyMetrics] = Field(..., description="Daily latency across the window, oldest first")
     runs_count: int = Field(..., description="Completed runs in the window that recorded a duration", ge=0)
-    avg_duration_ms: Optional[int] = Field(None, description="Average duration of a completed run in the window")
+    avg_duration_ms: Optional[int] = Field(
+        None, description="Average duration of a completed run in the window, from start to end, time paused included"
+    )
     median_duration_ms: Optional[int] = Field(
         None, description="Duration half the window's completed runs finished within"
     )

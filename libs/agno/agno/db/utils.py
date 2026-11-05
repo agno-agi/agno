@@ -1313,8 +1313,9 @@ def metrics_remote_member_team_session_ids(runs: Sequence[Dict[str, Any]]) -> Se
 
 
 def _metrics_model_calls(run_data: Dict[str, Any], seen_run_ids: Set[str]) -> List[Dict[str, Any]]:
-    """Every model call a stored run holds, skipping nested runs already counted."""
-    calls = [run_data] if run_data.get("model") else []
+    """Every model call a stored run holds, named by its model or only by its metrics, skipping nested runs already
+    counted."""
+    calls = [run_data] if run_data.get("model") or run_data.get("metrics") else []
     for nested_run in _metrics_nested_runs(run_data):
         run_id = nested_run.get("run_id")
         if run_id in seen_run_ids:
@@ -1459,6 +1460,9 @@ def _calculate_run_metrics(run: Dict[str, Any], seen_run_ids: Set[str]) -> Dict[
         for seconds in _metrics_request_durations(call):
             _add_metrics_timing(totals, "model_call", seconds)
         _add_metrics_tool_calls(totals, call)
+        # A run that names no model, such as an external agent's, counts its usage but no model entry
+        if not call.get("model"):
+            continue
 
         details = call_metrics.get("details")
         model_type_metrics_lists = [
@@ -1735,7 +1739,7 @@ def build_aggregate_metrics_row(
             rows, [field for field in METRICS_FIELDS if field not in ["sessions_count", "runs_count"]]
         ),
         **counts,
-        # A team member, a nested team and a run started inside a tool call were started by another run
+        # A team member and a nested team were started by another run
         "root_runs_count": sum(row["runs_count"] for row in rows if not row["parent_component_id"]),
         # The agno version that built the row
         "metrics_version": agno_version,

@@ -389,7 +389,7 @@ async def test_component_metrics_table_creation(async_postgres_db_real: AsyncPos
     assert "sessions_count" not in AGGREGATE_METRICS_TABLE_SCHEMA
 
     async with async_postgres_db_real.db_engine.connect() as conn:
-        component_metrics_pk, totals_pk, refreshes_pk, index_list = await conn.run_sync(
+        component_metrics_pk, aggregate_metrics_pk, refreshes_pk, index_list = await conn.run_sync(
             lambda sync_conn: (
                 inspect(sync_conn).get_pk_constraint(
                     component_metrics_table.name, schema=component_metrics_table.schema
@@ -410,7 +410,7 @@ async def test_component_metrics_table_creation(async_postgres_db_real: AsyncPos
         "parent_component_id",
         "root_component_id",
     ]
-    assert totals_pk["constrained_columns"] == [
+    assert aggregate_metrics_pk["constrained_columns"] == [
         "aggregation_period",
         "date",
         "user_id",
