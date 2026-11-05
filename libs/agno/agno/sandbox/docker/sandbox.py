@@ -78,6 +78,7 @@ class DockerSandbox(Sandbox):
         self,
         image: str,
         *,
+        id: Optional[str] = None,
         namespace: str = "default",
         cpus: float = 2.0,
         memory_mb: int = 2048,
@@ -115,6 +116,9 @@ class DockerSandbox(Sandbox):
             or any(char.isspace() or char in ":/\x00" for char in runtime_host)
         ):
             raise ValueError("Sandbox runtime host must be a bare IP address or host name")
+        if id is not None and (not isinstance(id, str) or not id):
+            raise ValueError("Sandbox id must be None or a nonempty string")
+        self.id = id
         self.image = image
         self.namespace = namespace
         self.cpus = float(cpus)
