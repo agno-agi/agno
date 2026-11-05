@@ -10,8 +10,10 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
+from agno.agent import Agent
 from agno.db.base import BaseDb
 from agno.db.postgres import PostgresDb
+from agno.os import AgentOS
 from agno.os.routers.metrics.metrics import get_metrics_router
 from agno.os.settings import AgnoAPISettings
 from agno.remote.base import RemoteDb
@@ -211,19 +213,28 @@ class TestGetMetrics:
 
         assert resp.status_code == 500
 
-    def test_remote_refusal_is_passed_through_without_the_remote_url(self, settings):
-        """A remote AgentOS that refuses the read is answered with its status, not a 500 naming its URL."""
+    @pytest.mark.parametrize("remote_status, status", [(403, 403), (503, 503)])
+    def test_remote_refusal_is_passed_through_without_the_remote_url(self, settings, remote_status, status):
+        """A remote AgentOS that refuses the read is answered with its status, one that fails with a 500, neither
+        naming its URL."""
         remote_response = httpx.Response(
-            403, json={"detail": "Admin privileges required"}, request=httpx.Request("GET", "http://remote-os/metrics")
+            remote_status,
+            json={"detail": "Admin privileges required"},
+            request=httpx.Request("GET", "http://remote-os/metrics"),
         )
         remote_db = MagicMock(spec=RemoteDb)
         remote_db.id = "remote-1"
         remote_db.get_metrics.side_effect = lambda **kwargs: remote_response.raise_for_status()
+        client = _client(settings, remote_db)
+        # The AgentOS handler of a refusal re-raised by the route
+        os_app = AgentOS(agents=[Agent(id="assistant")]).get_app()
+        client.app.add_exception_handler(httpx.HTTPStatusError, os_app.exception_handlers[httpx.HTTPStatusError])
         with _scope("alice"):
-            resp = _client(settings, remote_db).get("/metrics")
+            resp = client.get("/metrics")
 
-        assert resp.status_code == 403
-        assert resp.json()["detail"] == "Admin privileges required"
+        assert resp.status_code == status
+        if remote_status < 500:
+            assert "Admin privileges required" in resp.json()["detail"]
         assert "http://" not in resp.text
 
 

@@ -891,10 +891,6 @@ def list_metrics_totals_models(totals: Dict[str, Any]) -> Dict[str, Any]:
     return {**totals, "model_metrics": list_metrics_models(totals["model_metrics"])}
 
 
-# The periods a row of agno_aggregate_metrics covers. A month row is dated the first day of
-# its month.
-_METRICS_PERIODS = ("daily", "monthly")
-
 # What a row of agno_component_metrics is counted under, by the type of the session or run.
 METRICS_COMPONENT_TYPES = ("agent", "team", "workflow")
 
@@ -1112,9 +1108,6 @@ def add_metrics_totals(target: Dict[str, Any], extra: Dict[str, Any], fields: Se
     """
     for field in fields:
         value = extra.get(field)
-        # Nothing to add: a zero count, no maximum or an empty map leaves the total as it is, but a cost of 0 is added
-        if field in target and (value is None or (not value and field not in METRICS_MAX_COLUMNS and field != "cost")):
-            continue
         if field == "cost":
             if value is not None:
                 target[field] = (target.get(field) or 0) + value
@@ -1204,15 +1197,21 @@ def _metrics_root_component_id(
     return component_id
 
 
+# The keys of a stored run that hold the runs nested inside it, in the order the rollup walks them: its workflow
+# steps' runs, its team members' runs and its workflow agent's run, the one run a key holds on its own
+METRICS_NESTED_RUN_KEYS = ("step_executor_runs", "member_responses", "workflow_agent_run")
+
+
 def _metrics_nested_runs(run_data: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """The runs nested inside a stored run: its workflow steps' runs, its team members' runs and its workflow
-    agent's run."""
-    workflow_agent_run = run_data.get("workflow_agent_run")
-    return (
-        (run_data.get("step_executor_runs") or [])
-        + (run_data.get("member_responses") or [])
-        + ([workflow_agent_run] if workflow_agent_run else [])
-    )
+    """The runs nested inside a stored run, under each of METRICS_NESTED_RUN_KEYS."""
+    nested_runs: List[Dict[str, Any]] = []
+    for key in METRICS_NESTED_RUN_KEYS:
+        value = run_data.get(key)
+        if isinstance(value, dict):
+            nested_runs.append(value)
+        elif value:
+            nested_runs.extend(value)
+    return nested_runs
 
 
 def _add_metrics_nested_run_ids(run_data: Dict[str, Any], nested_run_ids: Set[str]) -> None:
@@ -1668,8 +1667,6 @@ def build_aggregate_metrics_row(
     Returns:
         Dict[str, Any]: The row. Its version is set when it is written.
     """
-    if aggregation_period not in _METRICS_PERIODS:
-        raise ValueError(f"Unknown metrics aggregation period: {aggregation_period}")
     counts = {column: 0 for column in AGGREGATE_METRICS_COUNT_COLUMNS}
     for row in rows:
         counts[f"{row['component_type']}_runs_count"] += row["runs_count"]
@@ -1859,21 +1856,17 @@ def build_aggregate_metrics_month_rows(
     )
 
 
-def metrics_days_to_read(starting_date: date, ending_date: date, month_starts: Sequence[date]) -> List[date]:
-    """The days of the date range that are not read from the rows of one of the given months."""
-    days_diff = (ending_date - starting_date).days + 1
-    days = [starting_date + timedelta(days=x) for x in range(days_diff)]
-    return [day for day in days if day.replace(day=1) not in month_starts]
-
-
-def metrics_day_ranges(days: Sequence[date]) -> List[Tuple[date, date]]:
-    """Group days, oldest first, into the first and last day of every run of consecutive days."""
+def metrics_day_ranges(starting_date: date, ending_date: date, month_starts: Sequence[date]) -> List[Tuple[date, date]]:
+    """The first and last day of every run of days of the date range that are not read from the rows of one of the
+    given months, which are inside the range."""
     ranges: List[Tuple[date, date]] = []
-    for day in days:
-        if ranges and day - ranges[-1][1] == timedelta(days=1):
-            ranges[-1] = (ranges[-1][0], day)
-        else:
-            ranges.append((day, day))
+    first_day = starting_date
+    for month_start in sorted(month_starts):
+        if first_day < month_start:
+            ranges.append((first_day, month_start - timedelta(days=1)))
+        first_day = metrics_month_end(month_start) + timedelta(days=1)
+    if first_day <= ending_date:
+        ranges.append((first_day, ending_date))
     return ranges
 
 

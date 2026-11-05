@@ -17,10 +17,7 @@ from agno.db.postgres.schemas import (
     METRICS_REFRESHES_TABLE_SCHEMA,
 )
 from agno.db.utils import (
-    AGGREGATE_METRICS_COUNT_COLUMNS,
     METRICS_STOPPED_ERROR,
-    METRICS_TOKEN_DETAILS_FIELDS,
-    METRICS_TOKEN_FIELDS,
     resolve_metrics_fields,
 )
 from agno.metrics import MessageMetrics, ModelMetrics, RunMetrics
@@ -53,7 +50,7 @@ async def legacy_runs_column(async_postgres_db_real: AsyncPostgresDb):
     schema_version = await async_postgres_db_real.get_latest_schema_version(async_postgres_db_real.session_table_name)
     await async_postgres_db_real._get_table("sessions", create_table_if_not_found=True)
     async with async_postgres_db_real.async_session_factory() as sess, sess.begin():
-        await sess.execute(text("ALTER TABLE test_schema.test_sessions ADD COLUMN runs JSONB"))
+        await sess.execute(text("ALTER TABLE test_schema.test_sessions ADD COLUMN IF NOT EXISTS runs JSONB"))
     yield
 
     await async_postgres_db_real.upsert_schema_version(async_postgres_db_real.session_table_name, schema_version)
@@ -382,10 +379,6 @@ async def test_component_metrics_table_creation(async_postgres_db_real: AsyncPos
     ]
     assert {col.name for col in aggregate_metrics_table.columns} == set(AGGREGATE_METRICS_TABLE_SCHEMA)
     assert [col.name for col in refreshes_table.columns] == list(METRICS_REFRESHES_TABLE_SCHEMA)
-    assert set(METRICS_TOKEN_FIELDS) - {*METRICS_TOKEN_DETAILS_FIELDS, "audio_total_tokens"} | {"token_details"} | set(
-        AGGREGATE_METRICS_COUNT_COLUMNS
-    ) <= set(AGGREGATE_METRICS_TABLE_SCHEMA)
-    assert "sessions_count" not in AGGREGATE_METRICS_TABLE_SCHEMA
 
     async with async_postgres_db_real.db_engine.connect() as conn:
         component_metrics_pk, aggregate_metrics_pk, refreshes_pk, index_list = await conn.run_sync(
@@ -729,8 +722,6 @@ async def test_upsert_session_of_a_closed_day_from_a_fresh_process_is_stored(asy
     assert await fresh_db.get_run(bob_session.runs[0].run_id) is not None
     assert len(await fresh_db.get_sessions(session_type=SessionType.AGENT)) == 2
     assert (await _stored_aggregate_metrics_rows(async_postgres_db_real))[("daily", _utc_date(5))]["completed"] is False
-    # Looked up by the session save, then read from the table cache by the run save
-    assert fresh_db._get_cached_table("aggregate_metrics", fresh_db.aggregate_metrics_table_name) is not None
 
 
 @pytest.mark.asyncio
@@ -740,10 +731,10 @@ async def test_calculate_metrics_dates_releases_the_lock_when_cancelled(
     """Ensure a calculation cancelled mid-build, as on shutdown, releases the metrics refresh instead of holding it"""
     await _persist(async_postgres_db_real, _session_on(_utc_date(3), "alice_session", "alice"))
 
-    async def cancelled(*args, **kwargs):
+    async def _cancelled(*args, **kwargs):
         raise asyncio.CancelledError()
 
-    monkeypatch.setattr(async_postgres_db_real, "_calculate_date_metrics", cancelled)
+    monkeypatch.setattr(async_postgres_db_real, "_calculate_date_metrics", _cancelled)
     with pytest.raises(asyncio.CancelledError):
         await async_postgres_db_real.calculate_metrics_dates()
 

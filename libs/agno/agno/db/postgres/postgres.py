@@ -3202,7 +3202,8 @@ class PostgresDb(BaseDb):
                 .first()
             )
             if row is None:
-                return None, sess.execute(select(stale_lock_threshold)).scalar_one()
+                # Before the first refresh there is no lock to judge stale
+                return None, 0
         refresh_row = dict(row)
         return refresh_row, refresh_row.pop("stale_lock_threshold")
 
@@ -3279,8 +3280,6 @@ class PostgresDb(BaseDb):
         fingerprint: Optional[List[Any]] = None,
         stopped: bool = False,
         claimed_fingerprint: Optional[List[Any]] = None,
-        started_at: Optional[int] = None,
-        finished_at: Optional[int] = None,
     ) -> None:
         """Release the row of the metrics refreshes table: completed, with the fingerprint, without an error, failed
         with one, and as the last completed refresh left it when the calculation stopped.
@@ -3288,15 +3287,12 @@ class PostgresDb(BaseDb):
         Args:
             refreshes_table (Table): The metrics refreshes table.
             worker_id (Optional[str]): The id of the calculation that claimed the row. None writes the row only while
-                no process holds it and no calculation started or finished after the read of started_at and
-                finished_at, and creates it when that read found none.
+                no process holds it, and creates it before any refresh.
             error (Optional[str]): The error the calculation failed with. None when it completed.
             fingerprint (Optional[List[Any]]): The fingerprint of yesterday and today, stored once it completed.
             stopped (bool): Whether the calculation stopped before it finished.
             claimed_fingerprint (Optional[List[Any]]): The fingerprint of the claimed row. A rebuild that marked
                 another one since keeps its mark.
-            started_at (Optional[int]): The started_at read before a failure with a worker_id of None.
-            finished_at (Optional[int]): The finished_at read before a failure with a worker_id of None.
         """
         values: Dict[str, Any] = {"locked_by": None, "locked_at": None}
         if stopped:
@@ -3320,24 +3316,14 @@ class PostgresDb(BaseDb):
             values.update(status="failed", error=error)
         try:
             with self.Session() as sess, sess.begin():
-                if worker_id is None and error is not None and started_at is None:
-                    # Before any refresh there is no row to update; one created since keeps its own status
+                if worker_id is None:
+                    # Before any refresh there is no row to update
                     sess.execute(
                         postgresql.insert(refreshes_table)
                         .values(id=METRICS_REFRESH_ID, started_at=_db_epoch(), status="failed", error=error)
-                        .on_conflict_do_nothing(index_elements=["id"])
-                    )
-                elif worker_id is None and error is not None:
-                    # A plain update skips the row a calculation holds, instead of waiting for its lock
-                    sess.execute(
-                        update(refreshes_table)
-                        .where(
-                            refreshes_table.c.id == METRICS_REFRESH_ID,
-                            refreshes_table.c.locked_by.is_(None),
-                            refreshes_table.c.started_at == started_at,
-                            refreshes_table.c.finished_at.is_not_distinct_from(finished_at),
+                        .on_conflict_do_update(
+                            index_elements=["id"], set_=values, where=refreshes_table.c.locked_by.is_(None)
                         )
-                        .values(**values)
                     )
                 else:
                     sess.execute(
@@ -3783,18 +3769,9 @@ class PostgresDb(BaseDb):
         if rebuild_from is not None:
             # Reopened as a write reopens a day, before the claim, so a calculation another process is running
             # leaves them to the next one
-            started_at = finished_at = None
             try:
                 # A transaction of its own, without locking the refresh row, so it never waits on a day's calculation
                 with self.Session() as sess, sess.begin():
-                    # A calculation that starts or finishes after this read keeps its own status
-                    refresh_times = sess.execute(
-                        select(refreshes_table.c.started_at, refreshes_table.c.finished_at).where(
-                            refreshes_table.c.id == METRICS_REFRESH_ID
-                        )
-                    ).first()
-                    if refresh_times is not None:
-                        started_at, finished_at = refresh_times
                     reopen_metrics_days_from(session=sess, table=aggregate_metrics_table, starting_date=rebuild_from)
                 # Yesterday and today are picked by the fingerprint, so it is marked for the next one too
                 if not self._mark_metrics_refresh_rebuild(refreshes_table):
@@ -3805,8 +3782,6 @@ class PostgresDb(BaseDb):
                     refreshes_table,
                     None,
                     error=database_error_message(e),
-                    started_at=started_at,
-                    finished_at=finished_at,
                 )
                 raise
 
@@ -3820,12 +3795,6 @@ class PostgresDb(BaseDb):
             dates_to_process, fingerprint = self._get_metrics_dates_to_calculate(
                 aggregate_metrics_table, sessions_table, runs_table, refresh_row, rebuild_from
             )
-            if rebuild_from is not None:
-                # Yesterday and today are picked by their fingerprint, not by being open
-                today = datetime.now(timezone.utc).date()
-                dates_to_process = sorted(
-                    set(dates_to_process) | {day for day in [today - timedelta(days=1), today] if day >= rebuild_from}
-                )
 
             legacy_run_rows_by_day: Dict[date, List[Any]] = {}
             legacy_run_rows_by_id: Dict[str, Any] = {}

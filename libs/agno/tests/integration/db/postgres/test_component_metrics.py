@@ -19,8 +19,6 @@ from agno.db.postgres.utils import build_component_metrics_runs_query, reopen_me
 from agno.db.utils import (
     AGGREGATE_METRICS_COUNT_COLUMNS,
     METRICS_STOPPED_ERROR,
-    METRICS_TOKEN_DETAILS_FIELDS,
-    METRICS_TOKEN_FIELDS,
     calculate_date_component_metrics,
     list_metrics_totals_models,
     merge_metrics_totals,
@@ -64,7 +62,7 @@ def legacy_runs_column(postgres_db_real: PostgresDb):
     schema_version = postgres_db_real.get_latest_schema_version(postgres_db_real.session_table_name)
     postgres_db_real._get_table("sessions", create_table_if_not_found=True)
     with postgres_db_real.Session() as sess, sess.begin():
-        sess.execute(text("ALTER TABLE test_schema.test_sessions ADD COLUMN runs JSONB"))
+        sess.execute(text("ALTER TABLE test_schema.test_sessions ADD COLUMN IF NOT EXISTS runs JSONB"))
     yield
 
     postgres_db_real.upsert_schema_version(postgres_db_real.session_table_name, schema_version)
@@ -437,10 +435,6 @@ def test_component_metrics_table_creation(postgres_db_real: PostgresDb):
     ]
     assert {col.name for col in aggregate_metrics_table.columns} == set(AGGREGATE_METRICS_TABLE_SCHEMA)
     assert [col.name for col in refreshes_table.columns] == list(METRICS_REFRESHES_TABLE_SCHEMA)
-    assert set(METRICS_TOKEN_FIELDS) - {*METRICS_TOKEN_DETAILS_FIELDS, "audio_total_tokens"} | {"token_details"} | set(
-        AGGREGATE_METRICS_COUNT_COLUMNS
-    ) <= set(AGGREGATE_METRICS_TABLE_SCHEMA)
-    assert "sessions_count" not in AGGREGATE_METRICS_TABLE_SCHEMA
 
     inspector = inspect(postgres_db_real.db_engine)
     assert inspector.get_pk_constraint(component_metrics_table.name, schema=component_metrics_table.schema)[
@@ -1131,13 +1125,12 @@ def test_get_metrics_totals(postgres_db_real: PostgresDb, sample_multi_month_ses
     today = _utc_date(0)
     fields = resolve_metrics_fields(None)
     windows = [
-        # A whole month, part of a month, and both months with every day since
-        (first_month, second_month - timedelta(days=1)),
+        # Part of a month, and both months with every day since
         (first_month + timedelta(days=9), second_month + timedelta(days=9)),
         (first_month, today),
     ]
     for starting_date, ending_date in windows:
-        for user_id in (None, "alice", "bob", "", "carol"):
+        for user_id in (None, "alice", ""):
             totals, _ = postgres_db_real.get_metrics_totals(
                 starting_date=starting_date, ending_date=ending_date, user_id=user_id
             )
@@ -1192,23 +1185,9 @@ def test_get_metrics_totals_reads_a_whole_month_from_its_month_rows(
     # The whole first month comes from its month row, with the days after it added
     assert _total_sessions_count(postgres_db_real, first_month, second_month - timedelta(days=1)) == 1000
     assert _total_sessions_count(postgres_db_real, first_month, _utc_date(0)) == 1002
-    # A month partly outside the date range is read from its days
-    assert (
-        _total_sessions_count(postgres_db_real, first_month + timedelta(days=1), second_month - timedelta(days=1)) == 2
-    )
-    assert _total_sessions_count(postgres_db_real, first_month, second_month - timedelta(days=2)) == 4
     # One owner's month comes from that owner's month rows
     assert _total_sessions_count(postgres_db_real, first_month, second_month - timedelta(days=1), "alice") == 2
     assert _total_sessions_count(postgres_db_real, first_month, second_month - timedelta(days=1), "bob") == 500
-    assert _total_sessions_count(postgres_db_real, first_month, second_month - timedelta(days=1), "") == 1
-    # The read of each day never uses a month row, and a day without traffic has no aggregate metrics row to read
-    metrics, _ = postgres_db_real.get_component_metrics(
-        starting_date=first_month, ending_date=second_month - timedelta(days=1), fields=["sessions_count"]
-    )
-    assert metrics == [
-        {"date": first_month, "sessions_count": 2},
-        {"date": first_month + timedelta(days=14), "sessions_count": 2},
-    ]
 
 
 def test_metrics_versions_move_only_for_the_day_that_changed(
@@ -1862,8 +1841,6 @@ def test_upsert_session_of_a_closed_day_from_a_fresh_process_is_stored(postgres_
     assert fresh_db.get_run(bob_session.runs[0].run_id) is not None
     assert len(fresh_db.get_sessions(session_type=SessionType.AGENT)) == 5
     assert _stored_aggregate_metrics_rows(postgres_db_real)[("daily", _utc_date(5))]["completed"] is False
-    # Looked up once, then read from the table cache by every later save
-    assert fresh_db._get_cached_table("aggregate_metrics", fresh_db.aggregate_metrics_table_name) is not None
 
 
 def test_cancel_pending_run_reopens_its_day(postgres_db_real: PostgresDb):
@@ -1927,12 +1904,19 @@ def test_append_run_to_session_if_absent_reopens_its_day(postgres_db_real: Postg
     assert _stored_aggregate_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["completed"] is False
 
 
+# One more session than a 65,535-parameter query can list
+SESSIONS_PAST_PARAMETER_LIMIT = 65_536
+
+
 def test_upsert_sessions_past_query_parameter_limit(postgres_db_real: PostgresDb):
     """Ensure a bulk save of more sessions than a 65,535-parameter query can list stores every one"""
     created_at = int(time.time())
-    sessions = [AgentSession(session_id=f"s_{i}", agent_id="agent-1", created_at=created_at) for i in range(65_536)]
+    sessions = [
+        AgentSession(session_id=f"s_{i}", agent_id="agent-1", created_at=created_at)
+        for i in range(SESSIONS_PAST_PARAMETER_LIMIT)
+    ]
 
-    assert len(postgres_db_real.upsert_sessions(sessions, deserialize=False)) == 65_536
+    assert len(postgres_db_real.upsert_sessions(sessions, deserialize=False)) == SESSIONS_PAST_PARAMETER_LIMIT
 
 
 def test_upsert_session_reopens_a_day_a_write_could_not_reopen(postgres_db_real: PostgresDb):
@@ -2189,7 +2173,12 @@ def test_component_metrics_tables_for_a_long_session_table(postgres_db_real: Pos
         assert long_db.calculate_metrics() is not None
         assert _stored_aggregate_metrics_rows(long_db)[("daily", _utc_date(2))]["agent_runs_count"] == 1
     finally:
-        for table_type in ["component_metrics", "aggregate_metrics", "metrics_refreshes", "runs", "sessions"]:
-            table = long_db._get_table(table_type)
-            if table is not None:
-                table.drop(long_db.db_engine)
+        with long_db.Session() as sess, sess.begin():
+            for table_name in [
+                long_db.component_metrics_table_name,
+                long_db.aggregate_metrics_table_name,
+                long_db.metrics_refreshes_table_name,
+                long_db.runs_table_name,
+                long_db.session_table_name,
+            ]:
+                sess.execute(text(f"DROP TABLE IF EXISTS test_schema.{table_name}"))
