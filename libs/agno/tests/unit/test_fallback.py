@@ -1280,3 +1280,148 @@ class TestStickyFallback:
         assert result[1].event == ModelResponseEvent.fallback_model_activated.value
         assert result[2].content == "primary"
         assert config.get_sticky_fallback(primary) is None
+
+
+# =============================================================================
+# Tool-batch checkpoints during fallback calls
+# =============================================================================
+
+
+def _tool_batch(messages, after_tool_results):
+    messages.append(Message(role="assistant", content="calling tool"))
+    messages.append(Message(role="tool", content="tool result"))
+    return after_tool_results(ModelResponse())
+
+
+class TestFallbackCheckpointSync:
+    """The tool-batch checkpoint reads the caller's messages, so each batch must be there when it fires."""
+
+    def _setup(self, sticky: bool):
+        primary = _make_model("primary")
+        fallback = _make_model("fallback")
+        config = FallbackConfig(on_error=[fallback], sticky=sticky)
+        if sticky:
+            config.set_sticky_fallback(primary, fallback)
+        messages = [Message(role="user", content="hi")]
+        seen_at_checkpoint = []
+        return primary, fallback, config, messages, seen_at_checkpoint
+
+    def test_sticky_checkpoint_sees_tool_batch(self):
+        primary, fallback, config, messages, seen = self._setup(sticky=True)
+
+        def _response(messages, after_tool_results, **kwargs):
+            _tool_batch(messages, after_tool_results)
+            messages.append(Message(role="assistant", content="done"))
+            return ModelResponse(content="done")
+
+        with patch.object(fallback, "response", side_effect=_response):
+            call_model_with_fallback(
+                primary,
+                config,
+                messages=messages,
+                after_tool_results=lambda _: seen.append([m.content for m in messages]),
+            )
+
+        assert seen == [["hi", "calling tool", "tool result"]]
+        assert [m.content for m in messages] == ["hi", "calling tool", "tool result", "done"]
+
+    def test_activated_fallback_checkpoint_sees_tool_batch(self):
+        primary, fallback, config, messages, seen = self._setup(sticky=False)
+
+        def _response(messages, after_tool_results, **kwargs):
+            _tool_batch(messages, after_tool_results)
+            return ModelResponse(content="done")
+
+        with patch.object(primary, "response", side_effect=_server_error()):
+            with patch.object(fallback, "response", side_effect=_response):
+                call_model_with_fallback(
+                    primary,
+                    config,
+                    messages=messages,
+                    after_tool_results=lambda _: seen.append(len(messages)),
+                )
+
+        assert seen == [3]
+
+    def test_failed_attempt_rolls_back_checkpointed_messages(self):
+        """A sticky model that fails after a tool batch must not leave that batch for the primary."""
+        primary, fallback, config, messages, seen = self._setup(sticky=True)
+        seen_by_primary = {}
+
+        def _sticky_response(messages, after_tool_results, **kwargs):
+            _tool_batch(messages, after_tool_results)
+            raise _server_error()
+
+        def _primary_response(messages, **kwargs):
+            seen_by_primary["contents"] = [m.content for m in messages]
+            return ModelResponse(content="primary")
+
+        with patch.object(primary, "response", side_effect=_primary_response):
+            with patch.object(fallback, "response", side_effect=_sticky_response):
+                call_model_with_fallback(
+                    primary,
+                    config,
+                    messages=messages,
+                    after_tool_results=lambda _: seen.append(len(messages)),
+                )
+
+        assert seen == [3]
+        assert seen_by_primary["contents"] == ["hi"]
+
+    @pytest.mark.asyncio
+    async def test_async_sticky_checkpoint_sees_tool_batch(self):
+        primary, fallback, config, messages, seen = self._setup(sticky=True)
+
+        async def _checkpoint(_):
+            seen.append(len(messages))
+
+        async def _aresponse(messages, after_tool_results, **kwargs):
+            await _tool_batch(messages, after_tool_results)
+            return ModelResponse(content="done")
+
+        with patch.object(fallback, "aresponse", side_effect=_aresponse):
+            await acall_model_with_fallback(primary, config, messages=messages, after_tool_results=_checkpoint)
+
+        assert seen == [3]
+
+    def test_stream_sticky_checkpoint_sees_tool_batch(self):
+        primary, fallback, config, messages, seen = self._setup(sticky=True)
+
+        def _stream(messages, after_tool_results, **kwargs):
+            _tool_batch(messages, after_tool_results)
+            yield ModelResponse(content="done")
+
+        with patch.object(fallback, "response_stream", side_effect=_stream):
+            list(
+                call_model_stream_with_fallback(
+                    primary,
+                    config,
+                    messages=messages,
+                    after_tool_results=lambda _: seen.append(len(messages)),
+                )
+            )
+
+        assert seen == [3]
+        assert len(messages) == 3
+
+    @pytest.mark.asyncio
+    async def test_async_stream_sticky_checkpoint_sees_tool_batch(self):
+        primary, fallback, config, messages, seen = self._setup(sticky=True)
+
+        async def _checkpoint(_):
+            seen.append(len(messages))
+
+        async def _astream(messages, after_tool_results, **kwargs):
+            await _tool_batch(messages, after_tool_results)
+            yield ModelResponse(content="done")
+
+        with patch.object(fallback, "aresponse_stream", side_effect=_astream):
+            [
+                e
+                async for e in acall_model_stream_with_fallback(
+                    primary, config, messages=messages, after_tool_results=_checkpoint
+                )
+            ]
+
+        assert seen == [3]
+        assert len(messages) == 3

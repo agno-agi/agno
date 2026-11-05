@@ -242,30 +242,41 @@ def _clean_kwargs_for_fallback(kwargs: dict) -> dict:
     return cleaned
 
 
-def _copy_kwargs_with_fresh_messages(kwargs: dict) -> dict:
-    """Copy kwargs, duplicating the messages list so each attempt gets its own.
+class _FallbackAttempt:
+    """One fallback call on its own copy of the messages, mirrored into the caller's list.
 
-    Each fallback attempt runs on its own copy so a failed attempt cannot pollute
-    the messages the next attempt (or the caller's list) sees.
+    The copy keeps a failed attempt from polluting what the next attempt sees. The caller's
+    list is still brought up to date before every tool-batch callback, because the
+    checkpoint it writes reads that list, and is rolled back if the attempt fails.
     """
-    attempt = dict(kwargs)
-    if "messages" in attempt:
-        attempt["messages"] = list(attempt["messages"])
-    return attempt
 
+    def __init__(self, kwargs: dict, original_messages: Optional[List[Message]]) -> None:
+        self.kwargs = dict(kwargs)
+        self.messages: Optional[List[Message]] = None
+        if "messages" in self.kwargs:
+            self.messages = list(self.kwargs["messages"])
+            self.kwargs["messages"] = self.messages
+        self.original_messages = original_messages
+        self.original_len = len(original_messages) if original_messages is not None else 0
+        self.synced = len(self.messages) if self.messages is not None else 0
+        after_tool_results = self.kwargs.get("after_tool_results")
+        if after_tool_results is not None:
+            # Returns whatever the callback returns, so an async callback's coroutine is still awaited
+            def _synced_after_tool_results(model_response: ModelResponse) -> Any:
+                self.sync()
+                return after_tool_results(model_response)
 
-def _sync_appended_messages(
-    original_messages: Optional[List[Message]], attempt_messages: Optional[List[Message]], seed_len: int
-) -> None:
-    """Append the messages the fallback model added back onto the caller's list.
+            self.kwargs["after_tool_results"] = _synced_after_tool_results
 
-    The fallback runs on a copy of the (temporary-stripped) seed, so anything past
-    seed_len is what it appended this turn — the assistant message and any tool
-    messages. Extending keeps them in the caller's run_messages.messages so they
-    are persisted in session history.
-    """
-    if original_messages is not None and attempt_messages is not None:
-        original_messages.extend(attempt_messages[seed_len:])
+    def sync(self) -> None:
+        """Append what the fallback added since the last sync onto the caller's list."""
+        if self.original_messages is not None and self.messages is not None:
+            self.original_messages.extend(self.messages[self.synced :])
+            self.synced = len(self.messages)
+
+    def rollback(self) -> None:
+        if self.original_messages is not None:
+            del self.original_messages[self.original_len :]
 
 
 def call_model_with_fallback(
@@ -492,11 +503,14 @@ def _on_fallback_succeeded(
 def _call_fallback(
     fallback: Model, method_name: str, kwargs: dict, original_messages: Optional[List[Message]]
 ) -> ModelResponse:
-    """Call one fallback on its own copy of the messages, syncing what it appended back on success."""
-    seed_len = len(kwargs["messages"]) if "messages" in kwargs else 0
-    attempt_kwargs = _copy_kwargs_with_fresh_messages(kwargs)
-    result = getattr(fallback, method_name)(**attempt_kwargs)
-    _sync_appended_messages(original_messages, attempt_kwargs.get("messages"), seed_len)
+    """Call one fallback in a :class:`_FallbackAttempt`, keeping its messages only on success."""
+    attempt = _FallbackAttempt(kwargs, original_messages)
+    try:
+        result = getattr(fallback, method_name)(**attempt.kwargs)
+    except BaseException:
+        attempt.rollback()
+        raise
+    attempt.sync()
     return result
 
 
@@ -504,10 +518,13 @@ async def _acall_fallback(
     fallback: Model, method_name: str, kwargs: dict, original_messages: Optional[List[Message]]
 ) -> ModelResponse:
     """Async variant of :func:`_call_fallback`."""
-    seed_len = len(kwargs["messages"]) if "messages" in kwargs else 0
-    attempt_kwargs = _copy_kwargs_with_fresh_messages(kwargs)
-    result = await getattr(fallback, method_name)(**attempt_kwargs)
-    _sync_appended_messages(original_messages, attempt_kwargs.get("messages"), seed_len)
+    attempt = _FallbackAttempt(kwargs, original_messages)
+    try:
+        result = await getattr(fallback, method_name)(**attempt.kwargs)
+    except BaseException:
+        attempt.rollback()
+        raise
+    attempt.sync()
     return result
 
 
@@ -515,21 +532,27 @@ def _stream_fallback(
     fallback: Model, kwargs: dict, original_messages: Optional[List[Message]]
 ) -> Iterator[StreamEvent]:
     """Stream variant of :func:`_call_fallback`."""
-    seed_len = len(kwargs["messages"]) if "messages" in kwargs else 0
-    attempt_kwargs = _copy_kwargs_with_fresh_messages(kwargs)
-    yield from fallback.response_stream(**attempt_kwargs)
-    _sync_appended_messages(original_messages, attempt_kwargs.get("messages"), seed_len)
+    attempt = _FallbackAttempt(kwargs, original_messages)
+    try:
+        yield from fallback.response_stream(**attempt.kwargs)
+    except BaseException:
+        attempt.rollback()
+        raise
+    attempt.sync()
 
 
 async def _astream_fallback(
     fallback: Model, kwargs: dict, original_messages: Optional[List[Message]]
 ) -> AsyncIterator[StreamEvent]:
     """Async stream variant of :func:`_call_fallback`."""
-    seed_len = len(kwargs["messages"]) if "messages" in kwargs else 0
-    attempt_kwargs = _copy_kwargs_with_fresh_messages(kwargs)
-    async for event in fallback.aresponse_stream(**attempt_kwargs):
-        yield event
-    _sync_appended_messages(original_messages, attempt_kwargs.get("messages"), seed_len)
+    attempt = _FallbackAttempt(kwargs, original_messages)
+    try:
+        async for event in fallback.aresponse_stream(**attempt.kwargs):
+            yield event
+    except BaseException:
+        attempt.rollback()
+        raise
+    attempt.sync()
 
 
 def _try_fallback_models(
