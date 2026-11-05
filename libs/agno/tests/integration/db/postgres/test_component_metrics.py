@@ -2285,7 +2285,7 @@ def test_calculate_metrics_counts_tool_calls(postgres_db_real: PostgresDb):
     }
     # The member run is kept only inside its team run, so its tool calls count on the team's row
     assert _stored_rows(postgres_db_real)[(past_day, "bob", "team", "team-1")]["tool_metrics"] == expected
-    assert _stored_user_metrics_rows(postgres_db_real)[("daily", past_day)]["tool_metrics"] == expected
+    assert _stored_aggregate_metrics_rows(postgres_db_real)[("daily", past_day)]["tool_metrics"] == expected
 
     for user_id in [None, "bob"]:
         metrics, _ = postgres_db_real.get_component_metrics(
