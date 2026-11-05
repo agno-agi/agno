@@ -60,6 +60,77 @@ def manager(db):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("initial_status", ["backlog", "ready"])
+async def test_cancelled_project_freezes_task_status(db, initial_status):
+    m = manager(db)
+    product = await call(m.create, name="Rejected plan")
+    project = await call(m.create_project, product_id=product["id"], name="Draft")
+    task = await call(m.create_task, product_id=product["id"], project_id=project["id"], title="Work")
+    if initial_status == "ready":
+        await call(m.transition_project, project_id=project["id"], target="active", reason="Approve")
+        task = await call(
+            m.transition_task,
+            task_id=task["id"],
+            target="ready",
+            reason="Accept",
+            executor_type="agent",
+            executor_id="writer",
+        )
+    await call(m.transition_project, project_id=project["id"], target="cancelled", reason="Reject")
+
+    with pytest.raises(ValueError, match="cancelled Project"):
+        await call(m.transition_task, task_id=task["id"], target="cancelled", reason="Stop")
+    stored = await call(m.get_task, task["id"])
+    assert stored["status"] == initial_status
+    assert stored["transitions"] == task["transitions"]
+
+
+@pytest.mark.asyncio
+async def test_cancelled_project_rejects_new_task_run_reservation(db):
+    m = manager(db)
+    product = await call(m.create, name="Rejected run")
+    project = await call(m.create_project, product_id=product["id"], name="Draft")
+    await call(m.transition_project, project_id=project["id"], target="active", reason="Approve")
+    task = await call(m.create_task, product_id=product["id"], project_id=project["id"], title="Work")
+    ready = await call(
+        m.transition_task,
+        task_id=task["id"],
+        target="ready",
+        reason="Accept",
+        executor_type="agent",
+        executor_id="writer",
+    )
+    await call(m.transition_project, project_id=project["id"], target="cancelled", reason="Reject")
+
+    assert await call(db.start_task_run, task["id"], 1, ready["transitions"]) is None
+    assert await call(m.get_task, task["id"]) == ready
+
+
+@pytest.mark.asyncio
+async def test_cancelled_project_allows_started_task_run_to_finish(db):
+    m = manager(db)
+    product = await call(m.create, name="Run in progress")
+    project = await call(m.create_project, product_id=product["id"], name="Work")
+    await call(m.transition_project, project_id=project["id"], target="active", reason="Approve")
+    task = await call(m.create_task, product_id=product["id"], project_id=project["id"], title="Work")
+    ready = await call(
+        m.transition_task,
+        task_id=task["id"],
+        target="ready",
+        reason="Accept",
+        executor_type="agent",
+        executor_id="writer",
+    )
+    running = await call(db.start_task_run, task["id"], 1, ready["transitions"])
+    assert running is not None
+    await call(m.transition_project, project_id=project["id"], target="cancelled", reason="Stop")
+
+    completed = await call(db.complete_task_run, task["id"], running["job_id"], {"status": "COMPLETED"})
+    assert completed is not None
+    assert completed["status"] == "in_review"
+
+
+@pytest.mark.asyncio
 async def test_lifecycle_and_owner_guards(db):
     m = manager(db)
     assert await call(m.list_tasks) == ([], 0)

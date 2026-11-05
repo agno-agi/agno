@@ -7125,11 +7125,18 @@ class AsyncPostgresDb(AsyncBaseDb):
         session_user_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         from agno.db.schemas.tasks import task_run_fields
+        from agno.db.sql.company import lock_child
 
         table = await self._get_table(table_type="tasks")
         if table is None:
             return None
+        products = await self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = await self._get_table(table_type="projects", create_table_if_not_found=True)
         async with self.async_session_factory() as sess, sess.begin():
+            try:
+                await sess.run_sync(lock_child, products, projects, table, task_id, reject_cancelled=True)
+            except ValueError:
+                return None
             row = (
                 await sess.execute(select(table).where(table.c.id == task_id, table.c.deleted_at.is_(None)))
             ).fetchone()
@@ -7286,16 +7293,15 @@ class AsyncPostgresDb(AsyncBaseDb):
                 fields["transitions"][-1]["auto_accept"] = auto_accept
             else:
                 await sess.run_sync(lock_child, products, projects, table, task_id)
-            if target == "ready" or existing["status"] in {"done", "cancelled"}:
-                # Accepted or reopened work must not enter an ineligible Project.
-                await sess.run_sync(
-                    require_project,
-                    projects,
-                    existing["project_id"],
-                    existing["product_id"],
-                    target,
-                    allow_proposed=target != "ready",
-                )
+            await sess.run_sync(
+                require_project,
+                projects,
+                existing["project_id"],
+                existing["product_id"],
+                target if target == "ready" or existing["status"] in {"done", "cancelled"} else None,
+                allow_proposed=target != "ready",
+                reject_cancelled=True,
+            )
             update = table.update().where(
                 table.c.id == task_id,
                 table.c.deleted_at.is_(None),

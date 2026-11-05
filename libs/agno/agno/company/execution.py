@@ -82,12 +82,17 @@ async def _call(target: Any, method: str, *args: Any, **kwargs: Any) -> Any:
     return await asyncio.to_thread(fn, *args, **kwargs)
 
 
-async def _project_unapproved(db: Any, task: Dict[str, Any]) -> bool:
+async def _project_run_block(db: Any, task: Dict[str, Any]) -> Optional[str]:
     project_id = task.get("project_id")
     if project_id is None:
-        return False
+        return None
     project = await _call(db, "get_project", project_id)
-    return project is not None and project["status"] == "proposed"
+    if project is None:
+        return None
+    return {
+        "proposed": "Approve the Project before starting Task work",
+        "cancelled": "Cannot start Task work in a cancelled Project",
+    }.get(project["status"])
 
 
 def _queued_run_id() -> str:
@@ -429,8 +434,8 @@ async def _check_task(worker: Any, job: Dict[str, Any]) -> None:
     if db is None:
         raise ValueError("Company is unavailable for this queued Task")
     current = await _call(db, "get_task", task_id)
-    if current is not None and await _project_unapproved(db, current):
-        raise _TaskRunRefused("Approve the Project before starting Task work")
+    if current is not None and (reason := await _project_run_block(db, current)):
+        raise _TaskRunRefused(reason)
     task = await _reserve_task(db, job)
     if (
         task is None

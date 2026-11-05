@@ -49,6 +49,7 @@ def require_project(
     task_status: Optional[str] = None,
     *,
     allow_proposed: bool = True,
+    reject_cancelled: bool = False,
 ) -> None:
     if project_id is None:
         return
@@ -57,6 +58,8 @@ def require_project(
         raise ValueError("Project is missing or archived")
     if row._mapping["product_id"] != product_id:
         raise ValueError("Task and Project must belong to the same Product")
+    if reject_cancelled and row._mapping["status"] == "cancelled":
+        raise ValueError("Cannot change Task status in a cancelled Project")
     if not allow_proposed and row._mapping["status"] == "proposed":
         raise ValueError("Project approval is required before Tasks enter non-Backlog stages")
     if (
@@ -77,7 +80,15 @@ def existing_task_proposal(sess: Any, tasks: Any, data: Dict[str, Any]) -> Optio
     return dict(row._mapping) if row is not None else None
 
 
-def lock_child(sess: Any, products: Any, projects: Any, table: Any, record_id: str, restoring: bool = False) -> None:
+def lock_child(
+    sess: Any,
+    products: Any,
+    projects: Any,
+    table: Any,
+    record_id: str,
+    restoring: bool = False,
+    reject_cancelled: bool = False,
+) -> None:
     """Restoring checks the record's own status, so hidden open work cannot re-enter a terminal Project."""
     row = sess.execute(select(table).where(table.c.id == record_id)).first()
     if row is None:
@@ -88,7 +99,9 @@ def lock_child(sess: Any, products: Any, projects: Any, table: Any, record_id: s
     if "project_id" in table.c:
         row = sess.execute(select(table).where(table.c.id == record_id)).one()
         status = row._mapping["status"] if restoring else None
-        require_project(sess, projects, row._mapping["project_id"], record["product_id"], status)
+        require_project(
+            sess, projects, row._mapping["project_id"], record["product_id"], status, reject_cancelled=reject_cancelled
+        )
 
 
 def open_project_tasks(tasks: Any, project_id: str) -> Any:

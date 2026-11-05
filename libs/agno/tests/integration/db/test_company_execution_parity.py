@@ -187,6 +187,34 @@ async def test_legacy_ready_task_waits_for_project_approval_before_run(system, q
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("queued", [False, True])
+async def test_cancelled_project_refuses_new_task_execution(system, queued):
+    from agno.company.execution import _call
+    from agno.db.schemas.tasks import task_run_id
+
+    client, db, worker, _, _ = system
+    task = await accepted(client)
+    path = f"/company/tasks/{task['id']}/runs"
+    if queued:
+        started = await client.post(path)
+        assert started.status_code == 202, started.text
+    response = await client.post(
+        f"/company/projects/{task['project_id']}/transitions",
+        json={"target": "cancelled", "reason": "Reject"},
+    )
+    assert response.status_code == 200, response.text
+
+    before = await _call(db, "get_task", task["id"])
+    if queued:
+        assert (await execute(worker))["status"] == "failed"
+    else:
+        response = await client.post(path)
+        assert response.status_code == 409, response.text
+        assert await worker.store.get_job(task_run_id(task["id"], 1)) is None
+    assert (await _call(db, "get_task", task["id"]))["status"] == before["status"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("kind,id", [("agent", "writer"), ("team", "editors"), ("workflow", "draft")])
 async def test_execution_duplicate_context_history_and_attention(system, kind, id):
     client, db, worker, os, _ = system

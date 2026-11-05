@@ -55,6 +55,25 @@ def transition(client, path, target):
     return client.post(path + "/transitions", json=body)
 
 
+def test_cancelled_project_rejects_task_status_move_over_http(client):
+    product_id = client.post("/company/products", json={"name": "Rejected plan"}).json()["id"]
+    project = client.post("/company/projects", json={"product_id": product_id, "name": "Draft"}).json()
+    task = client.post(
+        "/company/tasks", json={"product_id": product_id, "project_id": project["id"], "title": "Work"}
+    ).json()
+    response = client.post(
+        f"/company/projects/{project['id']}/transitions", json={"target": "cancelled", "reason": "Reject"}
+    )
+    assert response.status_code == 200, response.text
+
+    response = transition(client, "/company/tasks/" + task["id"], "cancelled")
+    assert response.status_code == 409
+    assert "cancelled Project" in response.json()["detail"]
+    stored = client.get("/company/tasks/" + task["id"]).json()
+    assert stored["status"] == "backlog"
+    assert stored["transitions"] == task["transitions"]
+
+
 def reserve_run(client, path, user_id=None):
     """Seed a committed run reservation for route tests without a queue worker."""
     from agno.company.execution import _call
