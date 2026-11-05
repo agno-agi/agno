@@ -38,10 +38,22 @@ from agno.sandbox.base import Sandbox, SandboxError, SandboxHandle, _retention, 
 from agno.sandbox.checkpoint import CheckpointContentError, CheckpointObjectNotFound, CheckpointRef
 from agno.sandbox.client import RuntimeExecution, SandboxRuntimeClient
 from agno.sandbox.media import decode_media, encode_media
-from agno.sandbox.postgres import SandboxLease, SandboxLeaseLost, SandboxRunFinished, _drain, _SandboxStore, _settled
+from agno.sandbox.postgres import (
+    SandboxLease,
+    SandboxLeaseLost,
+    SandboxRunFinished,
+    SandboxState,
+    _drain,
+    _SandboxStore,
+    _settled,
+)
 from agno.sandbox.protocol import NATIVE_SESSION_KEYS
 from agno.sandbox.transfer import CheckpointTransfer
 from agno.utils.log import log_warning
+
+# How long finalization waits for another owner's capture to release a paused computer; Docker
+# pauses it for two copies of at most 120 seconds each.
+_CAPTURE_PAUSE_SECONDS = 300.0
 
 _CHECKPOINT_MISSING = (
     "This session's sandbox checkpoint is missing from checkpoint storage, so its workspace and conversation "
@@ -649,6 +661,12 @@ class SandboxCoordinator:
                         computer_stopped=record.get("computer") is None,
                     )
                     return record
+                if record.get("computer") is not None and record.get("restoring") is not None:
+                    # An earlier owner bound this computer but never confirmed its restore, and may still be
+                    # writing into it: replace it on a fresh generation, never execute on uncertain files.
+                    await self.provider.adestroy(SandboxHandle(**record["computer"]))
+                    record.update(generation=record["generation"] + 1, computer=None, restoring=None)
+                    allocation = allocation_for(record)
                 if record.get("computer") is not None and record.get("warm_until") is None:
                     return record
                 if record.get("computer") is not None:
@@ -668,25 +686,14 @@ class SandboxCoordinator:
                 if orphan is not None:
                     await self.provider.adestroy(orphan)
                 handle = await self.provider.acreate(session_id, **allocation)
-                try:
-                    if record.get("checkpoint"):
-                        restored = await self.transfer.arestore(handle, CheckpointRef(**record["checkpoint"]))
-                        if restored.get("binding") != record.get("checkpoint_identity"):
-                            raise SandboxError("Checkpoint manifest does not match committed session identity")
-                except CheckpointObjectNotFound:
-                    # No retry can bring the object back; stop the turn instead of failing every attempt.
-                    record.update(
-                        phase="stopping",
-                        stop_status="ERROR",
-                        stop_reason=_CHECKPOINT_MISSING,
-                        computer=asdict(handle),
-                        computer_stopped=False,
-                    )
-                    return record
-                except BaseException:
-                    await self.provider.adestroy(handle)
-                    raise
-                record.update(computer=asdict(handle), computer_since=time.time(), resumed=False)
+                # The restore runs once this binding commits, outside the row locks, since moving a
+                # checkpoint can take minutes; nothing executes on the computer until it is confirmed.
+                record.update(
+                    computer=asdict(handle),
+                    computer_since=time.time(),
+                    resumed=False,
+                    restoring=record.get("checkpoint"),
+                )
                 return record
 
             try:
@@ -696,6 +703,8 @@ class SandboxCoordinator:
                 yield self._terminal(committed)
                 yield RunOutput.from_dict(committed)
                 return
+            if state.record["phase"] == "executing" and state.record.get("restoring") is not None:
+                state = await self._arestore(lease, state)
             if state.record["phase"] == "stopping":
                 committed = await self._stop(
                     lease, status=state.record["stop_status"], reason=state.record["stop_reason"]
@@ -874,6 +883,46 @@ class SandboxCoordinator:
         except Exception as error:
             log_warning(f"Sandbox checkpoint retention for session {session_id} failed: {error}")
 
+    async def _arestore(self, lease: SandboxLease, state: SandboxState) -> SandboxState:
+        """Restore the committed checkpoint into the computer just bound, then confirm it under the lease."""
+        computer, reference = state.record["computer"], state.record["restoring"]
+        handle = SandboxHandle(**computer)
+        try:
+            # No row lock is held while the files move. A newer owner that finds the restore unconfirmed
+            # replaces the computer, so this owner's late writes land on compute nothing will run.
+            restored = await self.transfer.arestore(handle, CheckpointRef(**reference))
+            if restored.get("binding") != state.record.get("checkpoint_identity"):
+                raise SandboxError("Checkpoint manifest does not match committed session identity")
+        except CheckpointObjectNotFound:
+
+            async def missing(record: Dict[str, Any]) -> Dict[str, Any]:
+                # No retry can bring the object back; stop the turn instead of failing every attempt.
+                record.update(phase="stopping", stop_status="ERROR", stop_reason=_CHECKPOINT_MISSING, restoring=None)
+                return record
+
+            return await self.store._aoperation(lease, missing)
+        except BaseException:
+
+            async def unbind(record: Dict[str, Any]) -> Dict[str, Any]:
+                # A partially restored computer must never run a turn; the next attempt creates a fresh one
+                # on a fresh generation, since a provider may refuse to recreate a generation it destroyed.
+                if record.get("computer") == computer:
+                    await self.provider.adestroy(handle)
+                    record.update(generation=record["generation"] + 1, computer=None, restoring=None)
+                return record
+
+            with suppress(Exception):
+                await self.store._aoperation(lease, unbind)
+            raise
+
+        async def confirm(record: Dict[str, Any]) -> Dict[str, Any]:
+            if record.get("computer") != computer or record.get("restoring") != reference:
+                raise SandboxLeaseLost("Another owner replaced this computer during its restore")
+            record["restoring"] = None
+            return record
+
+        return await self.store._aoperation(lease, confirm)
+
     async def _retire_invalid(self, lease: SandboxLease, error: ValueError) -> Dict[str, Any]:
         # A request the runtime can never accept was only caught after the claim, before anything
         # executed. Retire the turn so the session is released: propagating would leave the run
@@ -920,56 +969,68 @@ class SandboxCoordinator:
             return False
         return True
 
-    async def _finalize(self, lease: SandboxLease) -> Dict[str, Any]:
-        async def capture(record: Dict[str, Any]) -> Dict[str, Any]:
-            if record["phase"] != "finalizing":
-                raise SandboxError("Only retained execution output can be finalized")
-            if record.get("staged_checkpoint") is None:
-                handle = SandboxHandle(**record["computer"])
-                current = await self.provider.aget(handle.provider_ref)
-                if current is None or current.state != "running":
-                    record.update(
-                        phase="stopping",
-                        stop_status="ERROR",
-                        stop_reason="Completed execution lost compute before checkpointing; model execution will not be repeated",
-                    )
-                    return record
-                identity = dict(
-                    agent_id=lease.agent_id,
-                    session_id=lease.session_id,
-                    user_id=lease.user_id,
-                    incarnation=record["incarnation"],
-                    run_id=lease.run_id,
-                    execution_id=record["execution_id"],
-                    generation=record["generation"],
-                )
-                # A digest, not the result: the manifest is capped at the runtime's own result limit.
-                digest = hashlib.sha256(
-                    json.dumps(record["result"], sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
-                ).hexdigest()
+    async def _arunning(self, lease: SandboxLease, handle: SandboxHandle) -> Optional[SandboxHandle]:
+        """The finished turn's computer once it is running again; None when it is gone."""
+        deadline = asyncio.get_running_loop().time() + _CAPTURE_PAUSE_SECONDS
+        while True:
+            current = await self.provider.aget(handle.provider_ref)
+            # One lease check per look: an owner that lost the turn must not resume a computer the new owner parked.
+            await self.store.aget(lease)
+            if current is None or current.state not in ("running", "paused"):
+                return None
+            if current.state == "running":
+                return current
+            # Another owner's capture pauses the computer while it copies files: wait for it to release
+            # the computer, and resume it once the pause outlives any capture, since its owner died holding it.
+            if asyncio.get_running_loop().time() >= deadline:
                 try:
-                    reference = await self.transfer.acapture(
-                        handle, state={"binding": identity, "result_sha256": digest}
-                    )
-                except CheckpointContentError as error:
-                    # Capturing the same files again fails the same way; a retry would only keep the session busy.
-                    record.update(
-                        phase="stopping",
-                        stop_status="ERROR",
-                        stop_reason=(
-                            "Completed turn's files cannot be checkpointed, so they were discarded and the session "
-                            f"continues from the previous checkpoint: {error}"
-                        )[:8192],
-                    )
-                    return record
-                await self.transfer.store.averify(reference)
-                record.update(staged_checkpoint=asdict(reference), staged_identity=identity)
-            await self.transfer.store.averify(CheckpointRef(**record["staged_checkpoint"]))
-            return record
+                    return await self.provider.aresume(current)
+                except (NotImplementedError, SandboxError):
+                    return None
+            await asyncio.sleep(1)
 
-        state = await self.store._aoperation(lease, capture)
-        if state.record["phase"] == "stopping":
-            return await self._stop(lease, status="ERROR", reason=state.record["stop_reason"])
+    async def _finalize(self, lease: SandboxLease) -> Dict[str, Any]:
+        state = await self.store.aget(lease)
+        record = state.record
+        if record["phase"] != "finalizing":
+            raise SandboxError("Only retained execution output can be finalized")
+        if record.get("staged_checkpoint") is None:
+            handle = await self._arunning(lease, SandboxHandle(**record["computer"]))
+            if handle is None:
+                return await self._stop(
+                    lease,
+                    status="ERROR",
+                    reason="Completed execution lost compute before checkpointing; model execution will not be repeated",
+                )
+            identity = dict(
+                agent_id=lease.agent_id,
+                session_id=lease.session_id,
+                user_id=lease.user_id,
+                incarnation=record["incarnation"],
+                run_id=lease.run_id,
+                execution_id=record["execution_id"],
+                generation=record["generation"],
+            )
+            # A digest, not the result: the manifest is capped at the runtime's own result limit.
+            digest = hashlib.sha256(
+                json.dumps(record["result"], sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+            ).hexdigest()
+            # Outside the row locks: archiving and uploading a large workspace can take minutes.
+            try:
+                reference = await self.transfer.acapture(handle, state={"binding": identity, "result_sha256": digest})
+            except CheckpointContentError as error:
+                # Capturing the same files again fails the same way; a retry would only keep the session busy.
+                return await self._stop(
+                    lease,
+                    status="ERROR",
+                    reason=(
+                        "Completed turn's files cannot be checkpointed, so they were discarded and the session "
+                        f"continues from the previous checkpoint: {error}"
+                    )[:8192],
+                )
+            await self.transfer.store.averify(reference)
+            state = await self.store.astage_checkpoint(lease, reference, identity=identity)
+        await self.transfer.store.averify(CheckpointRef(**state.record["staged_checkpoint"]))
         handle = SandboxHandle(**state.record["computer"]) if state.record.get("computer") is not None else None
         keep_until: Optional[float] = None
         if handle is not None and self.warm_computer_seconds > 0 and await self._akeep_warm(handle):

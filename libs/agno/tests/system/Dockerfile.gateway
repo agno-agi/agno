@@ -36,7 +36,7 @@ RUN pip install --no-cache-dir \
     PyJWT \
     "mcp>=2.1.0,<3.0.0" \
     "fastmcp>=4.0.0,<5" \
-    "a2a-sdk>=0.3.0,<1.0" \
+    "a2a-sdk[http-server]>=1.2.2,<2" \
     agui \
     ag-ui-protocol \
     slack-sdk \
