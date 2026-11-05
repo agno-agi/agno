@@ -1,6 +1,9 @@
 """Tests for CodeChunking wrapper around chonkie's CodeChunker."""
 
+import re
+import time
 from typing import Sequence
+from unittest.mock import patch
 
 import pytest
 
@@ -12,6 +15,29 @@ try:
     import tree_sitter_language_pack  # noqa: F401
 except ImportError:
     pytestmark = pytest.mark.skip(reason="tree-sitter-language-pack not installed")
+
+PARSERS = ["python", "javascript"]
+DOWNLOAD_ATTEMPTS = 4
+TRANSIENT_DOWNLOAD_ERROR = re.compile(r"http status: (429|5\d\d)|timed? ?out|connection", re.IGNORECASE)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def preloaded_parsers():
+    """Fetch the parsers these tests use, retrying transient download failures."""
+    import tree_sitter_language_pack as language_pack
+
+    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+        try:
+            language_pack.download(PARSERS)
+            break
+        except RuntimeError as error:
+            if attempt == DOWNLOAD_ATTEMPTS or not TRANSIENT_DOWNLOAD_ERROR.search(str(error)):
+                raise
+            time.sleep(2**attempt)
+
+    # chonkie calls download_all() until 20 languages are cached; these tests need only PARSERS.
+    with patch("tree_sitter_language_pack.download_all"):
+        yield
 
 
 @pytest.fixture
