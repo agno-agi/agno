@@ -607,12 +607,6 @@ def _metrics_tool_calls(run_data: Any) -> Any:
     )
 
 
-def metrics_parent_run_id(table: Table) -> Any:
-    """Build the id of the run that started a stored run: its team's or workflow's run, or the run whose tool call
-    started it."""
-    return func.coalesce(table.c.parent_run_id, table.c.run_data["called_from_run_id"].astext)
-
-
 def build_component_metrics_runs_query(table: Table, start_timestamp: int, end_timestamp: int) -> Any:
     """Build the query that reads the runs created in the given time range, with only what component metrics count.
 
@@ -701,7 +695,7 @@ def build_component_metrics_runs_query(table: Table, start_timestamp: int, end_t
         table.c.team_id,
         table.c.workflow_id,
         table.c.user_id,
-        metrics_parent_run_id(table).label("parent_run_id"),
+        table.c.parent_run_id,
         table.c.status,
         table.c.run_data["metrics"].label("metrics"),
         table.c.run_data["model"].astext.label("model"),
