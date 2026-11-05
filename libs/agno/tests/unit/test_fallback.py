@@ -965,3 +965,318 @@ class TestFailedOverflowRetry:
             with pytest.raises(ContextWindowExceededError) as raised:
                 asyncio.run(consume())
         assert raised.value is self.second
+
+
+# =============================================================================
+# Sticky fallback
+# =============================================================================
+
+
+def _server_error():
+    return ModelProviderError("down", status_code=500)
+
+
+class TestStickyFallback:
+    def test_not_sticky_by_default(self):
+        """Without sticky=True, every call tries the primary first."""
+        primary = _make_model("primary")
+        fallback = _make_model("fallback")
+        config = FallbackConfig(on_error=[fallback])
+
+        with patch.object(primary, "response", side_effect=_server_error()) as primary_response:
+            with patch.object(fallback, "response", return_value=ModelResponse(content="fb")):
+                call_model_with_fallback(primary, config, messages=[])
+                call_model_with_fallback(primary, config, messages=[])
+
+        assert primary_response.call_count == 2
+        assert config.get_sticky_fallback(primary) is None
+
+    def test_sticky_skips_primary_after_fallback(self):
+        primary = _make_model("primary")
+        fallback = _make_model("fallback")
+        config = FallbackConfig(on_error=[fallback], sticky=True)
+
+        with patch.object(primary, "response", side_effect=_server_error()) as primary_response:
+            with patch.object(fallback, "response", return_value=ModelResponse(content="fb")) as fb_response:
+                call_model_with_fallback(primary, config, messages=[])
+                result = call_model_with_fallback(primary, config, messages=[])
+
+        assert result.content == "fb"
+        assert primary_response.call_count == 1
+        assert fb_response.call_count == 2
+        assert config.get_sticky_fallback(primary) is fallback
+
+    def test_sticky_uses_the_fallback_that_succeeded(self):
+        primary = _make_model("primary")
+        first = _make_model("first")
+        second = _make_model("second")
+        config = FallbackConfig(on_error=[first, second], sticky=True)
+
+        with patch.object(primary, "response", side_effect=_server_error()):
+            with patch.object(first, "response", side_effect=_server_error()):
+                with patch.object(second, "response", return_value=ModelResponse(content="second")):
+                    call_model_with_fallback(primary, config, messages=[])
+
+        assert config.get_sticky_fallback(primary) is second
+
+    def test_sticky_rate_limit_fallback(self):
+        primary = _make_model("primary")
+        rl_fallback = _make_model("rl")
+        config = FallbackConfig(on_rate_limit=[rl_fallback], sticky=True)
+
+        with patch.object(primary, "response", side_effect=ModelRateLimitError("slow down")):
+            with patch.object(rl_fallback, "response", return_value=ModelResponse(content="rl")):
+                call_model_with_fallback(primary, config, messages=[])
+
+        assert config.get_sticky_fallback(primary) is rl_fallback
+
+    def test_context_overflow_fallback_does_not_stick(self):
+        """A context-window fallback depends on the request, so the next call tries the primary again."""
+        primary = _make_model("primary")
+        big = _make_model("big")
+        config = FallbackConfig(on_context_overflow=[big], sticky=True)
+
+        with patch.object(primary, "response", side_effect=ContextWindowExceededError("too long")):
+            with patch.object(big, "response", return_value=ModelResponse(content="big")):
+                call_model_with_fallback(primary, config, messages=[])
+
+        assert config.get_sticky_fallback(primary) is None
+
+    def test_failed_sticky_returns_to_primary(self):
+        primary = _make_model("primary")
+        fallback = _make_model("fallback")
+        config = FallbackConfig(on_error=[fallback], sticky=True)
+        config.set_sticky_fallback(primary, fallback)
+
+        with patch.object(primary, "response", return_value=ModelResponse(content="primary")) as primary_response:
+            with patch.object(fallback, "response", side_effect=_server_error()):
+                result = call_model_with_fallback(primary, config, messages=[])
+
+        assert result.content == "primary"
+        primary_response.assert_called_once()
+        assert config.get_sticky_fallback(primary) is None
+
+    def test_failed_sticky_leaves_messages_untouched(self):
+        """A sticky model that fails mid-run must not leave partial messages for the primary."""
+        primary = _make_model("primary")
+        fallback = _make_model("fallback")
+        config = FallbackConfig(on_error=[fallback], sticky=True)
+        config.set_sticky_fallback(primary, fallback)
+        messages = [Message(role="user", content="hi")]
+        seen_by_primary = {}
+
+        def _sticky_response(messages, **kwargs):
+            messages.append(Message(role="assistant", content="partial"))
+            raise _server_error()
+
+        def _primary_response(messages, **kwargs):
+            seen_by_primary["contents"] = [m.content for m in messages]
+            messages.append(Message(role="assistant", content="primary-reply"))
+            return ModelResponse(content="primary-reply")
+
+        with patch.object(primary, "response", side_effect=_primary_response):
+            with patch.object(fallback, "response", side_effect=_sticky_response):
+                call_model_with_fallback(primary, config, messages=messages)
+
+        assert seen_by_primary["contents"] == ["hi"]
+        assert [m.content for m in messages] == ["hi", "primary-reply"]
+
+    def test_sticky_response_synced_to_messages(self):
+        primary = _make_model("primary")
+        fallback = _make_model("fallback")
+        config = FallbackConfig(on_error=[fallback], sticky=True)
+        config.set_sticky_fallback(primary, fallback)
+        messages = [Message(role="user", content="hi")]
+
+        def _fallback_response(messages, **kwargs):
+            messages.append(Message(role="assistant", content="sticky-reply"))
+            return ModelResponse(content="sticky-reply")
+
+        with patch.object(fallback, "response", side_effect=_fallback_response):
+            call_model_with_fallback(primary, config, messages=messages)
+
+        assert [m.content for m in messages] == ["hi", "sticky-reply"]
+
+    def test_retry_primary_after_expires(self):
+        primary = _make_model("primary")
+        fallback = _make_model("fallback")
+        config = FallbackConfig(on_error=[fallback], sticky=True, retry_primary_after=60)
+
+        with patch("agno.models.fallback.monotonic", return_value=1000.0):
+            config.set_sticky_fallback(primary, fallback)
+        with patch("agno.models.fallback.monotonic", return_value=1059.0):
+            assert config.get_sticky_fallback(primary) is fallback
+        with patch("agno.models.fallback.monotonic", return_value=1060.0):
+            assert config.get_sticky_fallback(primary) is None
+
+    def test_retry_primary_after_rejects_negative(self):
+        with pytest.raises(ValueError):
+            FallbackConfig(sticky=True, retry_primary_after=-1)
+
+    def test_clear_sticky_fallback(self):
+        primary = _make_model("primary")
+        other = _make_model("other")
+        fallback = _make_model("fallback")
+        config = FallbackConfig(on_error=[fallback], sticky=True)
+        config.set_sticky_fallback(primary, fallback)
+        config.set_sticky_fallback(other, fallback)
+
+        config.clear_sticky_fallback(primary)
+        assert config.get_sticky_fallback(primary) is None
+        assert config.get_sticky_fallback(other) is fallback
+
+        config.clear_sticky_fallback()
+        assert config.get_sticky_fallback(other) is None
+
+    def test_sticky_state_is_per_primary_model(self):
+        """A config shared by two agents only redirects the primary that failed."""
+        failing = _make_model("failing")
+        healthy = _make_model("healthy")
+        fallback = _make_model("fallback")
+        config = FallbackConfig(on_error=[fallback], sticky=True)
+        config.set_sticky_fallback(failing, fallback)
+
+        assert config.get_sticky_fallback(healthy) is None
+
+    def test_callback_fires_on_activation_only(self):
+        calls = []
+        primary = _make_model("primary")
+        fallback = _make_model("fallback")
+        config = FallbackConfig(on_error=[fallback], sticky=True, callback=lambda *args: calls.append(args))
+
+        with patch.object(primary, "response", side_effect=_server_error()):
+            with patch.object(fallback, "response", return_value=ModelResponse(content="fb")):
+                call_model_with_fallback(primary, config, messages=[])
+                call_model_with_fallback(primary, config, messages=[])
+
+        assert len(calls) == 1
+
+    def test_agent_deep_copy_shares_sticky_state(self):
+        """AgentOS runs each request on a deep copy; the copies must see the same sticky fallback."""
+        primary = _make_model("primary")
+        config = FallbackConfig(on_error=[_make_model("fallback")], sticky=True)
+        agent = Agent(model=primary, fallback_config=config, telemetry=False)
+        request_copy = agent.deep_copy()
+        assert request_copy.fallback_config is not config
+
+        # Agent init resolves the copy's fallback list into fresh model instances
+        request_copy.fallback_config.resolve_models()
+        request_fallback = request_copy.fallback_config.on_error[0]
+        request_copy.fallback_config.set_sticky_fallback(request_copy.model, request_fallback)
+
+        assert config.get_sticky_fallback(primary) is config.on_error[0]
+
+    @pytest.mark.asyncio
+    async def test_async_sticky(self):
+        primary = _make_model("primary")
+        fallback = _make_model("fallback")
+        config = FallbackConfig(on_error=[fallback], sticky=True)
+
+        with patch.object(primary, "aresponse", AsyncMock(side_effect=_server_error())) as primary_response:
+            with patch.object(fallback, "aresponse", AsyncMock(return_value=ModelResponse(content="fb"))):
+                await acall_model_with_fallback(primary, config, messages=[])
+                result = await acall_model_with_fallback(primary, config, messages=[])
+
+        assert result.content == "fb"
+        assert primary_response.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_async_failed_sticky_returns_to_primary(self):
+        primary = _make_model("primary")
+        fallback = _make_model("fallback")
+        config = FallbackConfig(on_error=[fallback], sticky=True)
+        config.set_sticky_fallback(primary, fallback)
+
+        with patch.object(primary, "aresponse", AsyncMock(return_value=ModelResponse(content="primary"))):
+            with patch.object(fallback, "aresponse", AsyncMock(side_effect=_server_error())):
+                result = await acall_model_with_fallback(primary, config, messages=[])
+
+        assert result.content == "primary"
+        assert config.get_sticky_fallback(primary) is None
+
+    def test_stream_sticky(self):
+        primary = _make_model("primary")
+        fallback = _make_model("fallback")
+        config = FallbackConfig(on_error=[fallback], sticky=True)
+        config.set_sticky_fallback(primary, fallback)
+
+        with patch.object(primary, "response_stream") as primary_stream:
+            with patch.object(fallback, "response_stream", return_value=iter([ModelResponse(content="fb")])):
+                result = list(call_model_stream_with_fallback(primary, config, messages=[]))
+
+        primary_stream.assert_not_called()
+        assert [e.content for e in result] == ["fb"]
+
+    def test_stream_failed_sticky_resets_then_streams_primary(self):
+        """Content the sticky model streamed before failing is discarded via the reset event."""
+        primary = _make_model("primary")
+        fallback = _make_model("fallback")
+        config = FallbackConfig(on_error=[fallback], sticky=True)
+        config.set_sticky_fallback(primary, fallback)
+
+        def _sticky_stream(**kwargs):
+            yield ModelResponse(content="partial")
+            raise _server_error()
+
+        with patch.object(primary, "response_stream", return_value=iter([ModelResponse(content="primary")])):
+            with patch.object(fallback, "response_stream", side_effect=_sticky_stream):
+                result = list(call_model_stream_with_fallback(primary, config, messages=[]))
+
+        assert result[0].content == "partial"
+        assert result[1].event == ModelResponseEvent.fallback_model_activated.value
+        assert result[2].content == "primary"
+        assert config.get_sticky_fallback(primary) is None
+
+    def test_stream_fallback_becomes_sticky(self):
+        primary = _make_model("primary")
+        fallback = _make_model("fallback")
+        config = FallbackConfig(on_error=[fallback], sticky=True)
+
+        with patch.object(primary, "response_stream", side_effect=_server_error()):
+            with patch.object(fallback, "response_stream", return_value=iter([ModelResponse(content="fb")])):
+                list(call_model_stream_with_fallback(primary, config, messages=[]))
+
+        assert config.get_sticky_fallback(primary) is fallback
+
+    @pytest.mark.asyncio
+    async def test_async_stream_sticky(self):
+        primary = _make_model("primary")
+        fallback = _make_model("fallback")
+        config = FallbackConfig(on_error=[fallback], sticky=True)
+
+        async def _failing_stream(**kwargs):
+            raise _server_error()
+            yield  # pragma: no cover
+
+        async def _fallback_stream(**kwargs):
+            yield ModelResponse(content="fb")
+
+        with patch.object(primary, "aresponse_stream", side_effect=_failing_stream) as primary_stream:
+            with patch.object(fallback, "aresponse_stream", side_effect=_fallback_stream):
+                [e async for e in acall_model_stream_with_fallback(primary, config, messages=[])]
+                second = [e async for e in acall_model_stream_with_fallback(primary, config, messages=[])]
+
+        assert primary_stream.call_count == 1
+        assert [e.content for e in second] == ["fb"]
+
+    @pytest.mark.asyncio
+    async def test_async_stream_failed_sticky_resets_then_streams_primary(self):
+        primary = _make_model("primary")
+        fallback = _make_model("fallback")
+        config = FallbackConfig(on_error=[fallback], sticky=True)
+        config.set_sticky_fallback(primary, fallback)
+
+        async def _sticky_stream(**kwargs):
+            yield ModelResponse(content="partial")
+            raise _server_error()
+
+        async def _primary_stream(**kwargs):
+            yield ModelResponse(content="primary")
+
+        with patch.object(primary, "aresponse_stream", side_effect=_primary_stream):
+            with patch.object(fallback, "aresponse_stream", side_effect=_sticky_stream):
+                result = [e async for e in acall_model_stream_with_fallback(primary, config, messages=[])]
+
+        assert result[1].event == ModelResponseEvent.fallback_model_activated.value
+        assert result[2].content == "primary"
+        assert config.get_sticky_fallback(primary) is None
