@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 from agno.db.base import (
     _UNSET_UPDATED_AT,
     DELETED_CONFIG_STAGE,
+    FOLLOW_LATEST_LINK_KINDS,
     PIN_LINK_KINDS,
     BaseDb,
     ComponentArchivedError,
@@ -4565,7 +4566,7 @@ class PostgresDb(BaseDb):
 
         Args:
             component_id: The component ID.
-            component_type: Optional type filter (agent|team|workflow).
+            component_type: Optional type filter (agent|team|workflow|skill).
             user_id: If set, return the component only if this user may see it:
                 owned by them, unowned (shared), or published.
             include_deleted: Also return an archived (soft-deleted) row.
@@ -4628,7 +4629,7 @@ class PostgresDb(BaseDb):
 
         Args:
             component_id: Unique identifier.
-            component_type: Type (agent|team|workflow). Required for create, optional for update.
+            component_type: Type (agent|team|workflow|skill). Required for create, optional for update.
             name: Display name.
             description: Optional description.
             current_version: Optional current version.
@@ -5100,7 +5101,7 @@ class PostgresDb(BaseDb):
         """List components with pagination.
 
         Args:
-            component_type: Filter by type (agent|team|workflow).
+            component_type: Filter by type (agent|team|workflow|skill).
             include_deleted: Include soft-deleted components.
             limit: Maximum number of items to return.
             offset: Number of items to skip.
@@ -5187,7 +5188,7 @@ class PostgresDb(BaseDb):
 
         Args:
             component_id: Unique identifier.
-            component_type: Type (agent|team|workflow).
+            component_type: Type (agent|team|workflow|skill).
             name: Display name.
             config: The config data.
             description: Optional description.
@@ -5195,7 +5196,7 @@ class PostgresDb(BaseDb):
             label: Optional config label.
             stage: "draft" or "published".
             notes: Optional notes.
-            links: Optional list of links. Each must have child_version set.
+            links: Optional list of links. Each must have child_version set, except a FOLLOW_LATEST_LINK_KINDS link.
             user_id: Owner to attribute the component to.
 
         Returns:
@@ -5210,7 +5211,7 @@ class PostgresDb(BaseDb):
         # Validate links have child_version
         if links:
             for link in links:
-                if link.get("child_version") is None:
+                if link.get("child_version") is None and link.get("link_kind") not in FOLLOW_LATEST_LINK_KINDS:
                     raise ValueError(f"child_version is required for link to {link['child_component_id']}")
 
         try:
@@ -5556,7 +5557,7 @@ class PostgresDb(BaseDb):
             label: Optional human-readable label.
             stage: "draft" or "published". Defaults to "draft" for new configs.
             notes: Optional notes.
-            links: Optional list of links. Each link must have child_version set.
+            links: Optional list of links. Each link must have child_version set, except a FOLLOW_LATEST_LINK_KINDS link.
             expected_latest_version: Optional CAS guard against the latest
                 visible version; None skips the check.
             user_id: When set, the write applies only if this user owns the
@@ -5650,7 +5651,7 @@ class PostgresDb(BaseDb):
                 # Validate links have child_version
                 if links:
                     for link in links:
-                        if link.get("child_version") is None:
+                        if link.get("child_version") is None and link.get("link_kind") not in FOLLOW_LATEST_LINK_KINDS:
                             raise ValueError(f"child_version is required for link to {link['child_component_id']}")
 
                 if version is None:

@@ -43,6 +43,7 @@ from agno.os.schema import (
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import AgnoHTTPException, adraft_preview_identity, draft_preview_identity, may_read_draft_configs
 from agno.registry import Registry
+from agno.skills.component import pin_skill_refs, skill_links_for_save
 from agno.utils.log import log_error, log_warning
 from agno.utils.string import generate_component_id_from_name, hash_string_sha256, validate_component_id
 
@@ -610,8 +611,9 @@ def _derived_links_for_config(
     links: Optional[List[Dict[str, Any]]],
     db: BaseDb,
     registry: Optional[Registry] = None,
+    user_id: Optional[str] = None,
 ) -> Optional[List[Dict[str, Any]]]:
-    """Link rows for a team or workflow config saved through the config routes.
+    """Link rows for an agent, team or workflow config saved through the config routes.
 
     ``create_component`` derives these from the config; the config routes only
     persisted caller-supplied ``links``, so a member or step added by editing a
@@ -634,14 +636,30 @@ def _derived_links_for_config(
     if existing is None:
         return None
     component_type = str(existing.get("component_type"))
+    if component_type == ComponentType.AGENT.value:
+        return _skill_links_for_config(component_id, config, db, user_id)
     if component_type == ComponentType.TEAM.value:
         derived, _unresolved = _resolve_member_links(config, db, registry)
         # Unresolved members are not raised here: unlike create, an edit may
         # legitimately reference a code-defined member this process cannot see.
-        return derived
+        return derived + _skill_links_for_config(component_id, config, db, user_id)
     if component_type == ComponentType.WORKFLOW.value:
         return _resolve_step_links(config, db, registry)
     return None
+
+
+def _skill_links_for_config(
+    component_id: Optional[str], config: Dict[str, Any], db: BaseDb, user_id: Optional[str]
+) -> List[Dict[str, Any]]:
+    """Link rows for the skills an agent or team config references, pinning unversioned references in place.
+
+    Raises:
+        ValueError: If a reference names no stored skill or an unpublished version.
+    """
+    skills_config = config.get("skills")
+    links = skill_links_for_save(skills_config, db=db, label=f"Component '{component_id}'", user_id=user_id)
+    pin_skill_refs(skills_config, links)
+    return links
 
 
 def _project_live_version(
@@ -717,7 +735,9 @@ def attach_routes(
     )
     async def list_components(
         request: Request,
-        component_type: Optional[ComponentType] = Query(None, description="Filter by type: agent, team, workflow"),
+        component_type: Optional[ComponentType] = Query(
+            None, description="Filter by type: agent, team, workflow, skill"
+        ),
         page: int = Query(1, ge=1, description="Page number"),
         limit: int = Query(20, ge=1, le=100, description="Items per page"),
         include_deleted: bool = Query(
@@ -741,6 +761,9 @@ def attach_routes(
                 exclude_ids = registry.get_team_ids()
             elif component_type == ComponentType.WORKFLOW:
                 exclude_ids = registry.get_workflow_ids()
+            elif component_type == ComponentType.SKILL:
+                # The registry holds no skills, so nothing can shadow a stored one.
+                exclude_ids = None
             else:
                 # No type filter, so the exclusion is one flat set of ids and
                 # cannot tell same-type shadowing (intended: the code object
@@ -845,6 +868,11 @@ def attach_routes(
                             ),
                         )
                     links = member_links or None
+                skill_links = _skill_links_for_config(component_id, config, db, scoped_user_id)
+                if skill_links:
+                    links = (links or []) + skill_links
+            elif body.component_type == ComponentType.AGENT:
+                links = _skill_links_for_config(component_id, config, db, scoped_user_id) or None
             elif body.component_type == ComponentType.WORKFLOW:
                 # A workflow's steps pin their children the same way a team's
                 # members do. Unresolved step references are not rejected the
@@ -1218,7 +1246,9 @@ def attach_routes(
             _validate_pinned_versions_readable(db, body.links, request)
 
             _reject_unsupported_guard(body.guard, "latest_version")
-            links = _derived_links_for_config(component_id, config_data, body.links, db, registry)
+            links = _derived_links_for_config(
+                component_id, config_data, body.links, db, registry, user_id=scoped_user_id
+            )
             config = db.upsert_config(
                 component_id=component_id,
                 version=None,  # Always create new
@@ -1285,7 +1315,9 @@ def attach_routes(
             _validate_pinned_versions_readable(db, body.links, request)
 
             _reject_unsupported_guard(body.guard, "latest_version")
-            links = _derived_links_for_config(component_id, config_data, body.links, db, registry)
+            links = _derived_links_for_config(
+                component_id, config_data, body.links, db, registry, user_id=scoped_user_id
+            )
             config = db.upsert_config(
                 component_id=component_id,
                 version=version,  # Always update existing

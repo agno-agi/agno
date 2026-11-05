@@ -1,5 +1,10 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+from agno.skills.errors import SkillValidationError
+
+if TYPE_CHECKING:
+    from agno.db.base import BaseDb
 
 
 @dataclass
@@ -9,29 +14,68 @@ class Skill:
     A skill provides structured instructions, reference documentation,
     and optional scripts that an agent can access to perform specific tasks.
 
+    A skill is exactly one of two shapes. Path-backed: `source_path` points at a skill folder
+    on disk, and the content dicts are unset. Content-carrying: `source_path` is unset, and
+    every filename in `scripts` and `references` has an entry in the matching content dict.
+    Any other combination raises SkillValidationError.
+
     Attributes:
         name: Unique skill name (from folder name or SKILL.md frontmatter)
         description: Short description of what the skill does
         instructions: Full SKILL.md body (the instructions/guidance for the agent)
+        source_path: Filesystem path to the skill folder (path-backed skills only)
         scripts: List of script filenames in scripts/ subdirectory
         references: List of reference filenames in references/ subdirectory
-        source_path: Filesystem path to the skill folder
         metadata: Optional metadata from frontmatter (version, author, tags, etc.)
         license: Optional license information
         compatibility: Optional compatibility requirements
         allowed_tools: Optional list of tools this skill is allowed to use
+        source_type: Where the skill came from: "local", "url" or "db"
+        reference_contents: Reference filename to UTF-8 text (content-carrying skills only)
+        script_contents: Script filename to UTF-8 text (content-carrying skills only)
+        id: Component id of a skill stored in the database; defaults to `name` on save
     """
 
     name: str
     description: str
     instructions: str
-    source_path: str
+    source_path: Optional[str] = None
     scripts: List[str] = field(default_factory=list)
     references: List[str] = field(default_factory=list)
     metadata: Optional[Dict[str, Any]] = None
     license: Optional[str] = None
     compatibility: Optional[str] = None
     allowed_tools: Optional[List[str]] = None
+    # Appended so every pre-existing field keeps its positional slot.
+    source_type: str = "local"
+    reference_contents: Optional[Dict[str, str]] = None
+    script_contents: Optional[Dict[str, str]] = None
+    id: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        # None versus {} is the discriminator: a skill with no files is content-carrying with empty dicts.
+        has_contents = self.reference_contents is not None or self.script_contents is not None
+        if self.source_path is not None and has_contents:
+            raise SkillValidationError(
+                f"Skill '{self.name}' sets both source_path and inline contents: it must be one or the other"
+            )
+        if self.source_path is None and not has_contents:
+            raise SkillValidationError(f"Skill '{self.name}' sets neither source_path nor inline contents")
+        if self.source_path is not None:
+            return
+
+        errors = [
+            f"Script '{script}' has no entry in script_contents"
+            for script in self.scripts
+            if script not in (self.script_contents or {})
+        ]
+        errors += [
+            f"Reference '{reference}' has no entry in reference_contents"
+            for reference in self.references
+            if reference not in (self.reference_contents or {})
+        ]
+        if errors:
+            raise SkillValidationError(f"Skill '{self.name}' is missing content for declared files", errors=errors)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert the Skill to a dictionary representation."""
@@ -46,6 +90,10 @@ class Skill:
             "license": self.license,
             "compatibility": self.compatibility,
             "allowed_tools": self.allowed_tools,
+            "source_type": self.source_type,
+            "reference_contents": self.reference_contents,
+            "script_contents": self.script_contents,
+            "id": self.id,
         }
 
     @classmethod
@@ -55,11 +103,71 @@ class Skill:
             name=data["name"],
             description=data["description"],
             instructions=data["instructions"],
-            source_path=data["source_path"],
+            source_path=data.get("source_path"),
             scripts=data.get("scripts", []),
             references=data.get("references", []),
             metadata=data.get("metadata"),
             license=data.get("license"),
             compatibility=data.get("compatibility"),
             allowed_tools=data.get("allowed_tools"),
+            source_type=data.get("source_type", "local"),
+            reference_contents=data.get("reference_contents"),
+            script_contents=data.get("script_contents"),
+            id=data.get("id"),
         )
+
+    def save(self, *, db: "BaseDb", user_id: Optional[str] = None) -> int:
+        """Store this skill as a new published version and make it the current one.
+
+        Every call appends a version; published versions never change. The component id is
+        `id`, or `name` when no id is set. A path-backed skill has its files read from disk.
+
+        Args:
+            db: The database to save the skill to.
+            user_id: The owner of a newly created skill. None leaves it unowned (shared).
+
+        Returns:
+            The version number of the saved config.
+        """
+        from agno.skills.component import save_skill
+
+        return save_skill(self, db=db, user_id=user_id)
+
+    @classmethod
+    def load(
+        cls,
+        id: str,
+        *,
+        db: "BaseDb",
+        version: Optional[int] = None,
+        label: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> Optional["Skill"]:
+        """Load a stored skill: the current published version, or an exact version or label.
+
+        Args:
+            id: The component id of the skill.
+            db: The database to load the skill from.
+            version: The exact version to load.
+            label: The label of the version to load.
+            user_id: When set, only a skill this user may see is returned.
+
+        Returns:
+            The skill, or None if there is no such skill or version.
+        """
+        from agno.skills.component import load_skill
+
+        return load_skill(id, db=db, version=version, label=label, user_id=user_id)
+
+    def delete(self, *, db: "BaseDb", hard_delete: bool = False) -> bool:
+        """Delete this stored skill. Refuses while a saved agent or team references it.
+
+        Returns:
+            True if the skill was deleted, False if there was nothing to delete.
+
+        Raises:
+            ComponentDependencyError: If a saved agent or team references this skill.
+        """
+        from agno.skills.component import delete_skill
+
+        return delete_skill(self.id or self.name, db=db, hard_delete=hard_delete)

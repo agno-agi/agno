@@ -2,6 +2,7 @@
 
 import pytest
 
+from agno.skills.errors import SkillValidationError
 from agno.skills.skill import Skill
 
 # --- Skill Creation Tests ---
@@ -44,6 +45,112 @@ def test_skill_creation_with_empty_lists() -> None:
     )
     assert skill.scripts == []
     assert skill.references == []
+
+
+def test_skill_source_type_defaults_to_local(minimal_skill: Skill) -> None:
+    """Test that a path-backed Skill defaults to source_type 'local'."""
+    assert minimal_skill.source_type == "local"
+
+
+def test_skill_positional_construction_is_unchanged() -> None:
+    """Test that the fields added for content-carrying skills shifted no existing argument slot."""
+    skill = Skill(
+        "positional",
+        "Positional description",
+        "Positional instructions",
+        "/path",
+        ["helper.py"],
+        ["guide.md"],
+        {"version": "1.0.0"},
+        "MIT",
+        "requires python>=3.9",
+        ["get_skill_script"],
+    )
+
+    assert skill.source_path == "/path"
+    assert skill.scripts == ["helper.py"]
+    assert skill.references == ["guide.md"]
+    assert skill.metadata == {"version": "1.0.0"}
+    assert skill.license == "MIT"
+    assert skill.compatibility == "requires python>=3.9"
+    assert skill.allowed_tools == ["get_skill_script"]
+    assert skill.source_type == "local"
+
+
+# --- Content-Carrying Skill Tests ---
+
+
+def test_content_carrying_skill_creation(content_skill: Skill) -> None:
+    """Test creating a Skill that carries its content instead of a source_path."""
+    assert content_skill.source_path is None
+    assert content_skill.source_type == "db"
+    assert content_skill.scripts == ["hello.py", "sibling.py"]
+    assert content_skill.references == ["guide.md"]
+    assert content_skill.script_contents is not None
+    assert "hello from content" in content_skill.script_contents["hello.py"]
+    assert content_skill.reference_contents == {"guide.md": "# Guide\n\nThis is a reference guide."}
+
+
+def test_content_carrying_skill_with_no_files() -> None:
+    """Test that empty content dicts are a valid content-carrying skill."""
+    skill = Skill(
+        name="instructions-only",
+        description="No scripts or references",
+        instructions="Instructions",
+        script_contents={},
+        reference_contents={},
+    )
+    assert skill.source_path is None
+    assert skill.scripts == []
+    assert skill.references == []
+
+
+def test_skill_rejects_both_path_and_contents() -> None:
+    """Test that a Skill cannot be both path-backed and content-carrying."""
+    with pytest.raises(SkillValidationError):
+        Skill(
+            name="both",
+            description="Both shapes",
+            instructions="Instructions",
+            source_path="/path",
+            reference_contents={"guide.md": "# Guide"},
+        )
+
+
+def test_skill_rejects_neither_path_nor_contents() -> None:
+    """Test that a Skill must be either path-backed or content-carrying."""
+    with pytest.raises(SkillValidationError):
+        Skill(
+            name="neither",
+            description="Neither shape",
+            instructions="Instructions",
+        )
+
+
+def test_skill_rejects_script_missing_content() -> None:
+    """Test that a declared script with no matching content entry is rejected."""
+    with pytest.raises(SkillValidationError) as exc_info:
+        Skill(
+            name="missing-script",
+            description="Declares a script it has no content for",
+            instructions="Instructions",
+            scripts=["hello.py", "absent.py"],
+            script_contents={"hello.py": "print('hi')"},
+        )
+    assert "absent.py" in str(exc_info.value)
+
+
+def test_skill_rejects_reference_missing_content() -> None:
+    """Test that a declared reference with no matching content entry is rejected."""
+    with pytest.raises(SkillValidationError) as exc_info:
+        Skill(
+            name="missing-reference",
+            description="Declares a reference it has no content for",
+            instructions="Instructions",
+            references=["guide.md"],
+            script_contents={},
+        )
+    assert "guide.md" in str(exc_info.value)
 
 
 # --- Skill Serialization Tests ---
@@ -120,6 +227,13 @@ def test_skill_roundtrip(sample_skill: Skill) -> None:
     assert recreated_skill.license == sample_skill.license
 
 
+def test_content_skill_roundtrip(content_skill: Skill) -> None:
+    """Test that to_dict followed by from_dict preserves a content-carrying skill."""
+    recreated_skill = Skill.from_dict(content_skill.to_dict())
+
+    assert recreated_skill == content_skill
+
+
 # --- Skill Equality Tests ---
 
 
@@ -184,7 +298,7 @@ def test_from_dict_missing_required_field() -> None:
     incomplete_data = {
         "name": "incomplete",
         "description": "Missing fields",
-        # Missing: instructions, source_path
+        # Missing: instructions
     }
     with pytest.raises(KeyError):
         Skill.from_dict(incomplete_data)

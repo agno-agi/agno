@@ -35,6 +35,7 @@ The Agent-as-Config feature allows you to:
 | `auto_populate_registry.py` | Inspect how AgentOS auto-discovers components from teams and workflows |
 | `auto_populate_registry_os.py` | Serve an AgentOS and see the auto-discovered components over the API |
 | `user_isolation_os.py` | Serve an AgentOS with per-user component isolation |
+| `save_skill.py` | Store a skill as a versioned component and pin it on an agent |
 
 ---
 
@@ -229,6 +230,61 @@ from agno.workflow import get_workflows
 workflows = get_workflows(db=db)
 for workflow in workflows:
     print(f"Workflow: {workflow.name} (ID: {workflow.id})")
+```
+
+---
+
+## Skills
+
+A skill is stored as a component too. Every `Skill.save()` publishes a new version that
+holds the instructions and the full text of every script and reference, so the skill
+no longer depends on a folder on the host that runs it.
+
+### Saving a Skill
+
+```python
+from agno.skills import LocalSkills
+
+skill = LocalSkills("path/to/code-review").load()[0]
+version = skill.save(db=db)  # optional: user_id="alice" to set an owner
+```
+
+### Attaching Skills to an Agent or Team
+
+```python
+from agno.skills import DbSkills, SkillRef, Skills
+
+agent = Agent(
+    id="code-reviewer",
+    model=OpenAIResponses(id="gpt-5.6-luna"),
+    db=db,
+    skills=Skills(
+        loaders=[
+            DbSkills(
+                db,
+                [
+                    SkillRef("code-review"),  # current version, pinned when the agent is saved
+                    SkillRef("style-guide", version=3),  # exactly version 3
+                    SkillRef("sql-review", version="latest"),  # follows the current version on every load
+                ],
+            )
+        ]
+    ),
+)
+agent.save()
+```
+
+The saved agent stores references, never skill content, and a link row per skill.
+A skill cannot be deleted while a saved agent or team references it.
+
+### Loading and Deleting a Skill
+
+```python
+from agno.skills import Skill
+
+skill = Skill.load("code-review", db=db)  # current published version
+old = Skill.load("code-review", db=db, version=1)
+skill.delete(db=db)  # refused while referenced
 ```
 
 ---
