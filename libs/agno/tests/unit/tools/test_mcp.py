@@ -131,6 +131,27 @@ def test_recorded_name_skips_runner_subcommand():
     assert tools.recorded_name == "mcp_docker_ghcr_io_github_github_mcp_server"
 
 
+@pytest.mark.parametrize(
+    "command,recorded_name",
+    [
+        (
+            "docker run -i --rm -e GITHUB_TOKEN ghcr.io/github/github-mcp-server",
+            "mcp_docker_ghcr_io_github_github_mcp_server",
+        ),
+        ("docker run -i --rm -v /data:/data mcp/filesystem", "mcp_docker_mcp_filesystem"),
+        ("docker run -i --rm --env-file .env mcp/github", "mcp_docker_mcp_github"),
+        ("docker run -i -e API_KEY --name srv mcp/github", "mcp_docker_mcp_github"),
+        ("uv run --with mcp server.py --api-key sk-123", "mcp_uv_server_py"),
+        ("uvx --from git+https://user:pat123@github.com/org/repo mcp-x", "mcp_uvx_mcp_x"),
+        ("npx -y -p @acme/helper @acme/server-a", "mcp_npx_acme_server_a"),
+        ("python -X utf8 -m my_server --password hunter2", "mcp_python_my_server"),
+    ],
+)
+def test_recorded_name_skips_flag_values(command, recorded_name):
+    """The value of a flag the runner reads a value for is not taken for the package."""
+    assert MCPTools(command=command).recorded_name == recorded_name
+
+
 def test_recorded_name_keeps_explicit_name():
     """A name given to the toolkit is recorded as it is."""
     tools = MCPTools(command="npx -y @acme/server-a --token ghp_secret123", name="github")

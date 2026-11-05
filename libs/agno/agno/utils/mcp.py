@@ -116,21 +116,60 @@ def _strip_url_for_name(url: str) -> str:
 # (`docker run`, `uv run`, `npm exec`, `pnpm dlx`, `pipx run`, `bun x`, `deno run`)
 _RUNNER_SUBCOMMANDS = ("run", "exec", "dlx", "x")
 
+# Flags each runner reads the next argument for, so that argument is not the package
+_DOCKER_VALUE_FLAGS = frozenset(
+    "-e --env --env-file -v --volume --mount -p --publish --name --network --net -w --workdir -u --user"
+    " --entrypoint -l --label --platform --pull -h --hostname --add-host --device --gpus --cap-add"
+    " --cap-drop --security-opt --tmpfs -m --memory --cpus --restart --runtime".split()
+)
+_UV_VALUE_FLAGS = frozenset(
+    "--with --with-requirements --with-editable --from --python -p --index --index-url --default-index"
+    " --extra-index-url --directory --project --env-file".split()
+)
+_NPM_VALUE_FLAGS = frozenset("-p --package --registry --cache --userconfig".split())
+_VALUE_FLAGS_BY_EXECUTABLE = {
+    "docker": _DOCKER_VALUE_FLAGS,
+    "uv": _UV_VALUE_FLAGS,
+    "uvx": _UV_VALUE_FLAGS,
+    "npx": _NPM_VALUE_FLAGS,
+    "npm": _NPM_VALUE_FLAGS,
+    "pnpm": _NPM_VALUE_FLAGS,
+    "yarn": _NPM_VALUE_FLAGS,
+    "bun": _NPM_VALUE_FLAGS,
+    "pipx": frozenset("--spec --python --pip-args --index-url".split()),
+    "python": frozenset("-W -X".split()),
+    "python3": frozenset("-W -X".split()),
+    "node": frozenset("-r --require --import --loader -C --conditions".split()),
+    "deno": frozenset("-c --config --import-map --lock --cert --location".split()),
+}
+
 
 def _strip_command_for_name(parts: List[str]) -> str:
     """Reduce a command to its executable name + the first argument that is not a flag.
 
-    That argument is the package, script or image the executable runs. Flags,
-    ``KEY=value`` pairs and every argument after the package are dropped, so tokens
-    and connection strings passed on the command line never end up in the name.
-    A secret passed as the first plain argument, or as the value of a flag placed
-    before the package (``--token ghp_x pkg``), is taken for the package and kept.
+    That argument is the package, script or image the executable runs. Flags, the
+    values of flags the runner is known to read a value for (``docker run -e NAME``,
+    ``uv run --with dep``), ``KEY=value`` pairs and every argument after the package
+    are dropped, so tokens and connection strings passed on the command line never
+    end up in the name. A secret passed as the first plain argument, or as the value
+    of an unknown flag placed before the package (``--token ghp_x pkg``), is taken
+    for the package and kept.
     """
     if not parts:
         return ""
     executable = parts[0].replace("\\", "/").rsplit("/", 1)[-1]
+    value_flags = _VALUE_FLAGS_BY_EXECUTABLE.get(executable.lower().split(".", 1)[0], frozenset())
     args = parts[2:] if len(parts) > 1 and parts[1] in _RUNNER_SUBCOMMANDS else parts[1:]
-    package = next((part for part in args if not part.startswith("-") and "=" not in part), "")
+    package = ""
+    skip_next = False
+    for part in args:
+        if skip_next:
+            skip_next = False
+        elif part.startswith("-"):
+            skip_next = part in value_flags
+        elif "=" not in part:
+            package = part
+            break
     if "://" in package:
         package = _strip_url_for_name(package)
     return f"{executable} {package}"
