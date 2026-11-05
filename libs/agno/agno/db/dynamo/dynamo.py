@@ -277,13 +277,20 @@ class DynamoDb(BaseDb):
         rows.sort(key=lambda r: (r.get("run_index") or 0, r.get("created_at") or 0))
         return [r["run_data"] for r in rows if "run_data" in r]
 
+    def _get_sessions_runs(self, session_ids: List[str]) -> Optional[Dict[str, List[Dict[str, Any]]]]:
+        """Run dicts for several sessions in one read, used by the search fallback."""
+        return self._get_sessions_runs_data(session_ids)
+
     def _get_sessions_runs_data(self, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
         if not session_ids:
             return {}
-        grouped: Dict[str, List[Dict[str, Any]]] = {}
-        for sid in session_ids:
-            grouped[sid] = self._get_session_runs_data(sid)
-        return grouped
+        if len(session_ids) == 1:
+            return {session_ids[0]: self._get_session_runs_data(session_ids[0])}
+        from concurrent.futures import ThreadPoolExecutor
+
+        # Runs are partitioned by session_id in the GSI, so each session needs its own Query; run them concurrently.
+        with ThreadPoolExecutor(max_workers=min(len(session_ids), 16)) as pool:
+            return dict(zip(session_ids, pool.map(self._get_session_runs_data, session_ids)))
 
     def upsert_run(
         self,
@@ -756,6 +763,7 @@ class DynamoDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         try:
             table_name = self._get_table("sessions")
@@ -890,8 +898,9 @@ class DynamoDb(BaseDb):
                 if session_data:
                     sessions_data.append(session_data)
 
+            # Search scans skip the runs table; the record's legacy runs field is kept for merging later.
             # Attach runs from the runs table, merged with legacy blob
-            if sessions_data:
+            if include_runs and sessions_data:
                 try:
                     runs_by_session = self._get_sessions_runs_data([s["session_id"] for s in sessions_data])
                     for s in sessions_data:

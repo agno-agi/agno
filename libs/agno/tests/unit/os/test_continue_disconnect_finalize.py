@@ -154,3 +154,34 @@ async def test_clean_completion_still_finalizes(stream_harness):
 
     assert await stream_harness.get_run_status(RUN_ID) == RunStatus.completed
     assert (await store.get_job(RUN_ID))["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_disconnect_from_automatic_fork_only_closes_branch_stream(stream_harness):
+    from agno.os.routers.agents.router import agent_continue_response_streamer
+    from agno.run.agent import RunStartedEvent
+
+    class ForkAgent(ContinueFakeAgent):
+        def acontinue_run(self, **kwargs):
+            async def gen():
+                yield RunStartedEvent(run_id="branch")
+                await self._never.wait()
+
+            return gen()
+
+    await stream_harness.register_run(RUN_ID)
+    await stream_harness.complete_run(RUN_ID, RunStatus.completed)
+    first_frame = asyncio.Event()
+
+    async def consume():
+        async for _ in agent_continue_response_streamer(ForkAgent(), RUN_ID, session_id=SESSION_ID):
+            first_frame.set()
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(first_frame.wait(), timeout=1)
+    assert await stream_harness.get_run_status("branch") == RunStatus.running
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    assert await stream_harness.get_run_status("branch") == RunStatus.cancelled
+    assert await stream_harness.get_run_status(RUN_ID) == RunStatus.completed
+    assert await stream_harness.replay(RUN_ID) == []

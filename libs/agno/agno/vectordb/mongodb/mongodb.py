@@ -1,4 +1,5 @@
 import asyncio
+import re
 import time
 from hashlib import md5
 from importlib import metadata
@@ -798,7 +799,7 @@ class MongoDb(VectorDb):
             collection = self._get_collection()
             # Public entry point, so it carries the owner scope itself — a caller reaching it
             # directly rather than through search() would otherwise read every owner's chunks.
-            query_filter: Dict[str, Any] = {"content": {"$regex": query, "$options": "i"}}
+            query_filter: Dict[str, Any] = {"content": {"$regex": re.escape(query), "$options": "i"}}
             scope_filter = self._user_scope_filter(user_id)
             if scope_filter is not None:
                 query_filter = {"$and": [query_filter, scope_filter]}

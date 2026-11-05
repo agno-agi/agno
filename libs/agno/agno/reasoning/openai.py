@@ -24,6 +24,7 @@ def is_openai_reasoning_model(reasoning_model: Model) -> bool:
             or ("o3" in reasoning_model.id)
             or ("o1" in reasoning_model.id)
             or ("gpt-5" in reasoning_model.id)
+            or ("gpt-6" in reasoning_model.id)
         )
     ) or (
         isinstance(reasoning_model, OpenAILike)

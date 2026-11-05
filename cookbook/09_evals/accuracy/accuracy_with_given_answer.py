@@ -8,14 +8,14 @@ Demonstrates accuracy evaluation for a provided answer string.
 from typing import Optional
 
 from agno.eval.accuracy import AccuracyEval, AccuracyResult
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 
 # ---------------------------------------------------------------------------
 # Create Evaluation
 # ---------------------------------------------------------------------------
 evaluation = AccuracyEval(
     name="Given Answer Evaluation",
-    model=OpenAIChat(id="o4-mini"),
+    model=OpenAIResponses(id="gpt-5.6-terra"),
     input="What is 10*5 then to the power of 2? do it step by step",
     expected_output="2500",
 )

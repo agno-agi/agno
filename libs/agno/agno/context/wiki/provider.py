@@ -28,7 +28,7 @@ from agno.context._utils import answer_from_run
 from agno.context.backend import ContextBackend
 from agno.context.mode import ContextMode
 from agno.context.provider import Answer, ContextProvider, Status
-from agno.context.wiki.backend import CommitSummary, WikiBackend
+from agno.context.wiki.backend import CommitSummary, DurableWikiBackend, WikiBackend
 from agno.run import RunContext
 from agno.tools import tool
 from agno.tools.workspace import Workspace
@@ -93,6 +93,14 @@ class WikiContextProvider(ContextProvider):
         self.write_instructions_text = (
             write_instructions if write_instructions is not None else DEFAULT_WIKI_WRITE_INSTRUCTIONS
         )
+        if isinstance(backend, DurableWikiBackend):
+            if read_instructions is None:
+                self.read_instructions_text = (
+                    "Read wiki pages using list_files, search_content and read_file. "
+                    "Look up and read sources before answering; cite their relative paths."
+                )
+            if write_instructions is None:
+                self.write_instructions_text = backend.filesystem.instructions()
         self._read_agent: Agent | None = None
         self._write_agent: Agent | None = None
         # Serialises sync + write so a scheduled `provider.sync()` can't
@@ -317,13 +325,17 @@ class WikiContextProvider(ContextProvider):
             return text
         return text + "\n\n" + WIKI_WEB_INGEST_INSTRUCTIONS
 
-    def _build_read_tools(self) -> Workspace:
+    def _build_read_tools(self):
+        if isinstance(self.backend, DurableWikiBackend):
+            return self.backend.filesystem.tools(read_only=True)
         return Workspace(
             root=self.backend.path,
             allowed=Workspace.READ_TOOLS,
         )
 
-    def _build_write_tools(self) -> Workspace:
+    def _build_write_tools(self):
+        if isinstance(self.backend, DurableWikiBackend):
+            return self.backend.filesystem.tools()
         return Workspace(
             root=self.backend.path,
             # Allow reads + writes auto-pass — the sub-agent is acting
