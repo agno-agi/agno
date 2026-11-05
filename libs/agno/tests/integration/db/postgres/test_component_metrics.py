@@ -1625,7 +1625,7 @@ def test_get_metrics_reads_the_metrics_table_until_the_first_calculation_finishe
     ]
 
 
-def test_upsert_session_without_a_aggregate_metrics_table(postgres_db_real: PostgresDb):
+def test_upsert_session_without_an_aggregate_metrics_table(postgres_db_real: PostgresDb):
     """Ensure a session and its run of a past day are saved before any aggregate metrics table exists"""
     db = PostgresDb(
         db_engine=postgres_db_real.db_engine,
