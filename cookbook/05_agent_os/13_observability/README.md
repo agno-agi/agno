@@ -14,7 +14,7 @@ through the same routes used by monitoring clients.
 | `filtering.py` | Build a `FilterExpr`, inspect the filter schema, and execute an advanced trace search. |
 | `traces_to_clickhouse.py` | Split transactional sessions from a batched ClickHouse trace store and select it with `db_id`. |
 | `metrics.py` | Refresh daily metrics from persisted sessions and read the aggregate back. |
-| `os_metrics.py` | Run two agents, read today's OS metrics through the `GET /os/metrics/*` routes, and serve them. |
+| `os_metrics.py` | Serve the `GET /os/metrics/*` routes; with `--demo`, run two agents and read today's OS metrics through them. |
 
 ## Prerequisites
 
@@ -57,10 +57,11 @@ After calling its served agent, inspect `GET /traces`,
 `GET /traces/filter-schema`. The same `tracing=True` switch instruments local
 agents, teams, and workflows registered with that OS.
 
-Run two agents, read today's OS metrics through the routes, then serve them:
+Serve the OS metrics routes, or add `--demo` to run two agents and read today's OS metrics through the routes:
 
 ```bash
 .venvs/demo/bin/python cookbook/05_agent_os/13_observability/os_metrics.py
+.venvs/demo/bin/python cookbook/05_agent_os/13_observability/os_metrics.py --demo
 ```
 
 Then open `GET /os/metrics/sessions`, `/runs`, `/tokens`,

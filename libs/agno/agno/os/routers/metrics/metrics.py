@@ -229,26 +229,10 @@ def _seconds_left(deadline: float) -> float:
 def _os_metrics_answer(request: Request, response: Response, os_metrics_response: Any) -> Any:
     """The answer of a read route with its ETag, or 304 with no body for a caller that already holds it."""
     etag = f'"{hashlib.sha256(os_metrics_response.model_dump_json().encode()).hexdigest()[:32]}"'
-    # If-None-Match lists the ETags a caller holds, each maybe marked weak, or * for any of them
-    held_etags = [held_etag.strip() for held_etag in request.headers.get("if-none-match", "").split(",")]
-    if "*" in held_etags or etag in [held_etag.removeprefix("W/") for held_etag in held_etags]:
+    if request.headers.get("if-none-match") == etag:
         return Response(status_code=304, headers={"ETag": etag})
     response.headers["ETag"] = etag
     return os_metrics_response
-
-
-def _remote_error(e: HTTPStatusError, message: str) -> HTTPException:
-    """The answer to a request a remote AgentOS refused or failed, without the remote's URL."""
-    status_code = e.response.status_code
-    if status_code >= 500:
-        logger.exception(message)
-        return HTTPException(status_code=500, detail=f"{message}: the remote AgentOS answered {status_code}")
-    try:
-        body = e.response.json()
-    except ValueError:
-        body = None
-    detail = body.get("detail") if isinstance(body, dict) else None
-    return HTTPException(status_code=status_code, detail=detail if isinstance(detail, str) else message)
 
 
 def _refresh_status_rank(refresh_status: MetricsRefreshStatusResponse) -> int:
@@ -509,8 +493,8 @@ def attach_routes(
 
         except HTTPException:
             raise
-        except HTTPStatusError as e:
-            raise _remote_error(e, "Error getting metrics") from e
+        except HTTPStatusError:
+            raise
         except AgnoError as e:
             raise AgnoHTTPException(e)
         except Exception as e:
@@ -753,8 +737,8 @@ def attach_routes(
 
         except HTTPException:
             raise
-        except HTTPStatusError as e:
-            raise _remote_error(e, "Error refreshing metrics") from e
+        except HTTPStatusError:
+            raise
         except AgnoError as e:
             raise AgnoHTTPException(e)
         except Exception as e:
@@ -812,8 +796,8 @@ def attach_routes(
 
         except HTTPException:
             raise
-        except HTTPStatusError as e:
-            raise _remote_error(e, "Error getting metrics refresh status") from e
+        except HTTPStatusError:
+            raise
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error getting metrics refresh status: {str(e)}")
 
@@ -861,27 +845,20 @@ def attach_routes(
         fields: list[str],
     ) -> tuple[dict[str, Any], Optional[int]]:
         """One database's OS metrics for the window, totalled by the database into one set of totals."""
-        try:
-            if isinstance(db, AsyncBaseDb):
-                return await db.get_metrics_totals(
-                    starting_date=starting_date,
-                    ending_date=ending_date,
-                    user_id=effective_user_id,
-                    fields=fields,
-                )
-            return await run_in_threadpool(
-                db.get_metrics_totals,
+        if isinstance(db, AsyncBaseDb):
+            return await db.get_metrics_totals(
                 starting_date=starting_date,
                 ending_date=ending_date,
                 user_id=effective_user_id,
                 fields=fields,
             )
-        except NotImplementedError:
-            # A database that totals per day only has its days totalled here
-            totals, latest_updated_at = await _read_os_metrics(
-                db, effective_user_id, starting_date, ending_date, fields
-            )
-            return _merge_totals(totals, fields), latest_updated_at
+        return await run_in_threadpool(
+            db.get_metrics_totals,
+            starting_date=starting_date,
+            ending_date=ending_date,
+            user_id=effective_user_id,
+            fields=fields,
+        )
 
     async def _wait_for_db(awaitable: Awaitable[Any], timeout_seconds: float) -> Any:
         """Wait for a database at most timeout_seconds, leaving the call to finish in the background."""
@@ -945,32 +922,6 @@ def attach_routes(
             "skipped_db_ids": skipped_db_ids,
         }
 
-    async def _os_metrics(
-        os_dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
-        effective_user_id: Optional[str],
-        starting_date: date,
-        ending_date: date,
-        fields: list[str],
-        timeout_seconds: float,
-        skipped_db_ids: dict[str, str],
-    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        """The window's OS metrics, totalled per day and added up across the databases, oldest first."""
-        results, databases = await _read_os_dbs(
-            os_dbs,
-            lambda db: _read_os_metrics(db, effective_user_id, starting_date, ending_date, fields),
-            timeout_seconds,
-            skipped_db_ids,
-        )
-        if len(results) == 1:
-            return results[0], databases
-        totals_by_date: dict[date, list[dict[str, Any]]] = {}
-        for totals in results:
-            for day_totals in totals:
-                totals_by_date.setdefault(day_totals["date"], []).append(day_totals)
-        return [
-            {"date": day, **_merge_totals(totals_by_date[day], fields)} for day in sorted(totals_by_date)
-        ], databases
-
     async def _os_metrics_by_day(
         os_dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
         effective_user_id: Optional[str],
@@ -981,10 +932,19 @@ def attach_routes(
         skipped_db_ids: dict[str, str],
     ) -> tuple[dict[date, dict[str, Any]], dict[str, Any]]:
         """The window's OS metrics, totalled per day and added up across the databases, keyed by day."""
-        totals, databases = await _os_metrics(
-            os_dbs, effective_user_id, starting_date, ending_date, fields, timeout_seconds, skipped_db_ids
+        results, databases = await _read_os_dbs(
+            os_dbs,
+            lambda db: _read_os_metrics(db, effective_user_id, starting_date, ending_date, fields),
+            timeout_seconds,
+            skipped_db_ids,
         )
-        return {day_totals["date"]: day_totals for day_totals in totals}, databases
+        totals_by_date: dict[date, list[dict[str, Any]]] = {}
+        for totals in results:
+            for day_totals in totals:
+                totals_by_date.setdefault(day_totals["date"], []).append(day_totals)
+        return {
+            day: {"date": day, **_merge_totals(totals_by_date[day], fields)} for day in sorted(totals_by_date)
+        }, databases
 
     async def _os_metrics_totals(
         os_dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
@@ -1002,8 +962,6 @@ def attach_routes(
             timeout_seconds,
             skipped_db_ids,
         )
-        if len(results) == 1:
-            return results[0], databases
         return _merge_totals(results, fields), databases
 
     # Answers of the read routes. Only read and written on the event loop, so no lock is needed.
@@ -1228,8 +1186,8 @@ def attach_routes(
 
         except HTTPException:
             raise
-        except HTTPStatusError as e:
-            raise _remote_error(e, "Error getting OS session metrics") from e
+        except HTTPStatusError:
+            raise
         except AgnoError as e:
             raise AgnoHTTPException(e)
         except Exception as e:
@@ -1354,8 +1312,8 @@ def attach_routes(
 
         except HTTPException:
             raise
-        except HTTPStatusError as e:
-            raise _remote_error(e, "Error getting OS token metrics") from e
+        except HTTPStatusError:
+            raise
         except AgnoError as e:
             raise AgnoHTTPException(e)
         except Exception as e:
@@ -1462,8 +1420,8 @@ def attach_routes(
 
         except HTTPException:
             raise
-        except HTTPStatusError as e:
-            raise _remote_error(e, "Error getting OS user metrics") from e
+        except HTTPStatusError:
+            raise
         except AgnoError as e:
             raise AgnoHTTPException(e)
         except Exception as e:
@@ -1598,8 +1556,8 @@ def attach_routes(
 
         except HTTPException:
             raise
-        except HTTPStatusError as e:
-            raise _remote_error(e, "Error getting OS model metrics") from e
+        except HTTPStatusError:
+            raise
         except AgnoError as e:
             raise AgnoHTTPException(e)
         except Exception as e:
@@ -1755,8 +1713,8 @@ def attach_routes(
 
         except HTTPException:
             raise
-        except HTTPStatusError as e:
-            raise _remote_error(e, "Error getting OS run metrics") from e
+        except HTTPStatusError:
+            raise
         except AgnoError as e:
             raise AgnoHTTPException(e)
         except Exception as e:
@@ -1903,8 +1861,8 @@ def attach_routes(
 
         except HTTPException:
             raise
-        except HTTPStatusError as e:
-            raise _remote_error(e, "Error getting OS latency metrics") from e
+        except HTTPStatusError:
+            raise
         except AgnoError as e:
             raise AgnoHTTPException(e)
         except Exception as e:
@@ -2043,8 +2001,8 @@ def attach_routes(
 
         except HTTPException:
             raise
-        except HTTPStatusError as e:
-            raise _remote_error(e, "Error refreshing OS metrics") from e
+        except HTTPStatusError:
+            raise
         except AgnoError as e:
             raise AgnoHTTPException(e)
         except Exception as e:
@@ -2162,8 +2120,8 @@ def attach_routes(
 
         except HTTPException:
             raise
-        except HTTPStatusError as e:
-            raise _remote_error(e, "Error getting OS metrics refresh status") from e
+        except HTTPStatusError:
+            raise
         except AgnoError as e:
             raise AgnoHTTPException(e)
         except Exception as e:

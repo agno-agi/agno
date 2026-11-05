@@ -2640,7 +2640,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             )
             row = result.mappings().first()
             if row is None:
-                return None, (await sess.execute(select(stale_lock_threshold))).scalar_one()
+                # Before the first refresh there is no lock to judge stale
+                return None, 0
         refresh_row = dict(row)
         return refresh_row, refresh_row.pop("stale_lock_threshold")
 
@@ -2717,8 +2718,6 @@ class AsyncPostgresDb(AsyncBaseDb):
         fingerprint: Optional[List[Any]] = None,
         stopped: bool = False,
         claimed_fingerprint: Optional[List[Any]] = None,
-        started_at: Optional[int] = None,
-        finished_at: Optional[int] = None,
     ) -> None:
         """Release the row of the metrics refreshes table: completed, with the fingerprint, without an error, failed
         with one, and as the last completed refresh left it when the calculation stopped.
@@ -2726,15 +2725,12 @@ class AsyncPostgresDb(AsyncBaseDb):
         Args:
             refreshes_table (Table): The metrics refreshes table.
             worker_id (Optional[str]): The id of the calculation that claimed the row. None writes the row only while
-                no process holds it and no calculation started or finished after the read of started_at and
-                finished_at, and creates it when that read found none.
+                no process holds it, and creates it before any refresh.
             error (Optional[str]): The error the calculation failed with. None when it completed.
             fingerprint (Optional[List[Any]]): The fingerprint of yesterday and today, stored once it completed.
             stopped (bool): Whether the calculation stopped before it finished.
             claimed_fingerprint (Optional[List[Any]]): The fingerprint of the claimed row. A rebuild that marked
                 another one since keeps its mark.
-            started_at (Optional[int]): The started_at read before a failure with a worker_id of None.
-            finished_at (Optional[int]): The finished_at read before a failure with a worker_id of None.
         """
         values: Dict[str, Any] = {"locked_by": None, "locked_at": None}
         if stopped:
@@ -2758,24 +2754,14 @@ class AsyncPostgresDb(AsyncBaseDb):
             values.update(status="failed", error=error)
         try:
             async with self.async_session_factory() as sess, sess.begin():
-                if worker_id is None and error is not None and started_at is None:
-                    # Before any refresh there is no row to update; one created since keeps its own status
+                if worker_id is None:
+                    # Before any refresh there is no row to update
                     await sess.execute(
                         postgresql.insert(refreshes_table)
                         .values(id=METRICS_REFRESH_ID, started_at=_db_epoch(), status="failed", error=error)
-                        .on_conflict_do_nothing(index_elements=["id"])
-                    )
-                elif worker_id is None and error is not None:
-                    # A plain update skips the row a calculation holds, instead of waiting for its lock
-                    await sess.execute(
-                        update(refreshes_table)
-                        .where(
-                            refreshes_table.c.id == METRICS_REFRESH_ID,
-                            refreshes_table.c.locked_by.is_(None),
-                            refreshes_table.c.started_at == started_at,
-                            refreshes_table.c.finished_at.is_not_distinct_from(finished_at),
+                        .on_conflict_do_update(
+                            index_elements=["id"], set_=values, where=refreshes_table.c.locked_by.is_(None)
                         )
-                        .values(**values)
                     )
                 else:
                     await sess.execute(
@@ -2946,11 +2932,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             if not batch:
                 break
             stored_rows.extend(dict(record._mapping) for record in batch)
-        everyone_row, changed_rows, stale_user_ids = await asyncio.to_thread(
-            aggregate_metrics_rows_to_write,
-            aggregate_metrics_rows,
-            stored_rows,
-            rows_changed,
+        everyone_row, changed_rows, stale_user_ids = aggregate_metrics_rows_to_write(
+            aggregate_metrics_rows, stored_rows, rows_changed
         )
         for start in range(0, len(stale_user_ids), METRICS_IN_LIST_LIMIT):
             await sess.execute(
@@ -3089,10 +3072,6 @@ class AsyncPostgresDb(AsyncBaseDb):
 
                 parent_runs.extend(await self._get_metrics_parent_runs(sess, runs_table, parent_run_ids))
 
-            # Added up in a thread, so a day of many runs never holds the event loop
-            records = await asyncio.to_thread(
-                calculate_date_component_metrics, date_to_process, sessions, runs, stored_run_ids, parent_runs
-            )
             # Server-side cursor, so a day of many rows is read a batch at a time and never holds the event loop
             stored_rows_result = await sess.stream(
                 select(table).where(table.c.aggregation_period == "daily", table.c.date == date_to_process)
@@ -3104,11 +3083,23 @@ class AsyncPostgresDb(AsyncBaseDb):
                     break
                 stored_rows.extend(dict(record._mapping) for record in batch)
 
+            def build_day_rows() -> Tuple[
+                List[Dict[str, Any]], List[Tuple[str, str, str, str, str]], List[Dict[str, Any]]
+            ]:
+                records = calculate_date_component_metrics(date_to_process, sessions, runs, stored_run_ids, parent_runs)
+                changed_rows, stale_keys = component_metrics_rows_to_write(records, stored_rows)
+                aggregate_metrics_rows = build_aggregate_metrics_rows(
+                    records, "daily", date_to_process, metrics_day_completed(date_to_process)
+                )
+                return changed_rows, stale_keys, aggregate_metrics_rows
+
+            # Added up in a thread, so a day of many runs never holds the event loop
+            changed_rows, stale_keys, aggregate_metrics_rows = await asyncio.to_thread(build_day_rows)
+
             # Checked in the transaction of the rows, so a process whose lock went stale never overwrites the rows of
             # the process that took the refresh over
             if not await self._heartbeat_metrics_refresh(sess, refreshes_table, worker_id):
                 return False
-            changed_rows, stale_keys = await asyncio.to_thread(component_metrics_rows_to_write, records, stored_rows)
             for start in range(0, len(stale_keys), METRICS_STALE_KEYS_LIMIT):
                 await sess.execute(
                     table.delete().where(
@@ -3135,13 +3126,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             await self._write_aggregate_metrics_rows(
                 sess,
                 aggregate_metrics_table,
-                await asyncio.to_thread(
-                    build_aggregate_metrics_rows,
-                    records,
-                    "daily",
-                    date_to_process,
-                    metrics_day_completed(date_to_process),
-                ),
+                aggregate_metrics_rows,
                 rows_changed=bool(changed_rows or stale_keys),
                 read_version=read_version,
             )
@@ -3259,20 +3244,9 @@ class AsyncPostgresDb(AsyncBaseDb):
         if rebuild_from is not None:
             # Reopened as a write reopens a day, before the claim, so a calculation another process is running
             # leaves them to the next one
-            started_at = finished_at = None
             try:
                 # A transaction of its own, without locking the refresh row, so it never waits on a day's calculation
                 async with self.async_session_factory() as sess, sess.begin():
-                    # A calculation that starts or finishes after this read keeps its own status
-                    refresh_times = (
-                        await sess.execute(
-                            select(refreshes_table.c.started_at, refreshes_table.c.finished_at).where(
-                                refreshes_table.c.id == METRICS_REFRESH_ID
-                            )
-                        )
-                    ).first()
-                    if refresh_times is not None:
-                        started_at, finished_at = refresh_times
                     await areopen_metrics_days_from(
                         session=sess, table=aggregate_metrics_table, starting_date=rebuild_from
                     )
@@ -3285,8 +3259,6 @@ class AsyncPostgresDb(AsyncBaseDb):
                     refreshes_table,
                     None,
                     error=database_error_message(e),
-                    started_at=started_at,
-                    finished_at=finished_at,
                 )
                 raise
 
@@ -3300,12 +3272,6 @@ class AsyncPostgresDb(AsyncBaseDb):
             dates_to_process, fingerprint = await self._get_metrics_dates_to_calculate(
                 aggregate_metrics_table, sessions_table, runs_table, refresh_row, rebuild_from
             )
-            if rebuild_from is not None:
-                # Yesterday and today are picked by their fingerprint, not by being open
-                today = datetime.now(timezone.utc).date()
-                dates_to_process = sorted(
-                    set(dates_to_process) | {day for day in [today - timedelta(days=1), today] if day >= rebuild_from}
-                )
 
             legacy_run_rows_by_day: Dict[date, List[Any]] = {}
             legacy_run_rows_by_id: Dict[str, Any] = {}
