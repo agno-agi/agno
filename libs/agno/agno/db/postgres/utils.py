@@ -564,6 +564,7 @@ def _metrics_tool_calls(run_data: Any) -> Any:
             )
         )
         .select_from(tool_call)
+        .where(func.jsonb_typeof(tool_call.c.value) == "object")
         .scalar_subquery()
     )
 
