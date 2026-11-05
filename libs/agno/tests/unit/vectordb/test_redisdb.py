@@ -276,6 +276,17 @@ def test_search_vector_keyword_hybrid(redis_db):
     assert len(docs) == 1 and docs[0].name == "doc_a"
 
 
+def test_keyword_search_passes_the_limit_to_redisvl(redis_db):
+    """TextQuery defaults to num_results=10, so an unpassed limit is silently ignored."""
+    db, idx = redis_db
+    idx.query.return_value = []
+
+    db.search_type = SearchType.keyword
+    db.search("curry", limit=3)
+
+    assert idx.query.call_args[0][0]._num_results == 3
+
+
 def test_delete_by_name_and_metadata_and_content_id(redis_db):
     db, idx = redis_db
 

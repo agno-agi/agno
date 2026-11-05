@@ -1,3 +1,5 @@
+import time
+from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
@@ -179,6 +181,42 @@ class BotNameResolver:
         except Exception as e:
             log_warning(f"Failed to resolve bot name for {bot_user_id}: {str(e)}")
             return None
+
+
+class EventDeduplicator:
+    """Remembers recently seen Slack event_ids so a retried delivery runs at most once.
+
+    Slack retries any event not acked within 3s (immediately, then +1 min, then +5 min),
+    marking each with X-Slack-Retry-Num. A retry is only a duplicate if the original
+    delivery reached us, so the route dedupes on event_id instead of dropping every retry.
+    Instantiated once per mounted Slack interface inside ``attach_routes``.
+
+    The seen-set is per-process. With several uvicorn workers or replicas, a retry that
+    lands on a different process is not recognised and the event runs a second time,
+    tool side effects included. Run one process per Slack app or add a shared store.
+    """
+
+    # Must outlive Slack's final retry at +5 minutes
+    DEDUP_TTL_SECONDS: float = 600.0
+    DEDUP_MAX_ENTRIES: int = 4096
+
+    def __init__(self) -> None:
+        self._seen: "OrderedDict[str, float]" = OrderedDict()
+
+    def is_duplicate(self, event_id: str) -> bool:
+        now = time.monotonic()
+        expired = [eid for eid, ts in self._seen.items() if now - ts > self.DEDUP_TTL_SECONDS]
+        for eid in expired:
+            del self._seen[eid]
+        if event_id in self._seen:
+            return True
+        self._seen[event_id] = now
+        # Bounded: under heavy traffic the oldest id is evicted before its TTL, so a late
+        # retry of it is reprocessed as a duplicate run. Every signed event that reaches the
+        # route takes a slot, including ones that never start a run. Accepted over unbounded growth.
+        while len(self._seen) > self.DEDUP_MAX_ENTRIES:
+            self._seen.popitem(last=False)
+        return False
 
 
 async def resolve_channel_name(async_client: Any, channel_id: str) -> Optional[str]:

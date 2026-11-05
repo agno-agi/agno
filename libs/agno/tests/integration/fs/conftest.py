@@ -1,8 +1,8 @@
 """Fixtures for the DbFileSystem integration suite: same matrix on both dialects.
 
 The Postgres lane targets the pgvector container from cookbook/scripts/run_pgvector.sh
-(host port 5532, db/user/pass all `ai`) with an eager-connect fixture — no skip
-markers.
+(host port 5532, db/user/pass all `ai`) with an eager-connect fixture that skips
+the Postgres lane when that container is not reachable.
 
 Isolation: this suite gets its OWN Postgres schema, unique per process
 (`agentfs_test_<pid>`). A dozen other integration suites share and repeatedly

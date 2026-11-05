@@ -17,7 +17,7 @@ def run_example() -> None:
     # Setup the reasoning Agent
     agent = Agent(
         model=OpenAIResponses(
-            id="o4-mini",
+            id="gpt-5.6-terra",
             reasoning_summary="auto",  # Requesting a reasoning summary
         ),
         tools=[WebSearchTools(enable_news=False)],

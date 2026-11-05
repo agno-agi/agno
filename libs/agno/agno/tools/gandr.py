@@ -128,7 +128,6 @@ class GandrTools(Toolkit):
             )
 
         try:
-
             log_info(f"Using voice: {effective_voice} for text_to_speech.")
             log_info(f"Using model: {self.model_id} and response_format: {effective_format} for text_to_speech.")
 

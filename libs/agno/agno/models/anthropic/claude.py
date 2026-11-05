@@ -23,6 +23,7 @@ from agno.utils.models.claude import (
     format_tools_for_model,
     resolve_http_client,
     route_sampling_params_to_extra_body,
+    route_thinking_budget_to_adaptive,
     serialize_content_blocks,
     supports_prefill,
 )
@@ -126,7 +127,7 @@ class Claude(Model):
         "claude-opus-4-0",
     }
 
-    id: str = "claude-sonnet-4-5-20250929"
+    id: str = "claude-sonnet-5-5"
     name: str = "Claude"
     provider: str = "Anthropic"
 
@@ -590,7 +591,8 @@ class Claude(Model):
         if self.request_params:
             _request_params.update(self.request_params)
 
-        return route_sampling_params_to_extra_body(_request_params)
+        route_thinking_budget_to_adaptive(_request_params, model_id=self.id)
+        return route_sampling_params_to_extra_body(_request_params, model_id=self.id)
 
     @staticmethod
     def _extract_container_id_from_messages(messages: List["Message"]) -> Optional[str]:
@@ -1059,9 +1061,7 @@ class Claude(Model):
                     tool_name = block.name
                     tool_input = block.input
 
-                    function_def = {"name": tool_name}
-                    if tool_input:
-                        function_def["arguments"] = json.dumps(tool_input)
+                    function_def = {"name": tool_name, "arguments": json.dumps(tool_input)}
 
                     model_response.extra = model_response.extra or {}
 
@@ -1126,14 +1126,14 @@ class Claude(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> ModelResponse:
         """
-        Parse the Claude streaming response into ModelProviderResponse objects.
+        Parse the Claude streaming response into ModelResponse objects.
 
         Args:
             response: Raw response chunk from Anthropic
             response_format: Optional response format for structured output parsing
 
         Returns:
-            ModelResponse: Iterator of parsed response data
+            ModelResponse: Parsed response data
         """
         model_response = ModelResponse()
 
@@ -1162,9 +1162,7 @@ class Claude(Model):
                 tool_name = tool_use.name  # type: ignore
                 tool_input = tool_use.input  # type: ignore
 
-                function_def = {"name": tool_name}
-                if tool_input:
-                    function_def["arguments"] = json.dumps(tool_input)
+                function_def = {"name": tool_name, "arguments": json.dumps(tool_input)}
 
                 model_response.extra = model_response.extra or {}
 

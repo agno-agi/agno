@@ -130,6 +130,9 @@ class ModelAuthenticationError(AgnoError):
 class ModelProviderError(AgnoError):
     """Exception raised when a model provider returns an error."""
 
+    # HTTP statuses for requests that fail the same way on every attempt
+    NON_RETRYABLE_STATUS_CODES = frozenset({400, 401, 403, 404, 413, 422})
+
     # Patterns that indicate a context window / token limit exceeded error
     CONTEXT_WINDOW_PATTERNS = [
         "context_length_exceeded",
@@ -145,6 +148,13 @@ class ModelProviderError(AgnoError):
         "prompt is too long",
         "prompt too long",
         "exceeds the model",
+        # Gemini reports the count rather than the limit and never says "context window", in
+        # more than one wording. "token count exceeds" matches the short forms ("input token count
+        # exceeds the maximum"); the long form puts the count between those words ("The input token
+        # count (1050000) exceeds the maximum number of tokens allowed"), so it needs the second
+        # pattern. "token count" alone is not enough - it also appears in billing messages.
+        "token count exceeds",
+        "exceeds the maximum number of tokens",
     ]
 
     def __init__(
@@ -365,6 +375,31 @@ class InputCheckError(Exception):
         self.additional_data = additional_data
 
 
+class MediaStagingError(InputCheckError, ValueError):
+    """Raised when an attachment cannot be staged safely in the harness workspace: a run id that
+    is not a single path component, or a symlink where the uploads directory or file should be.
+
+    An input check error, so it is never retried and AgentOS reports it as an input problem;
+    also a ValueError for callers that validated paths that way before.
+    """
+
+    def __init__(self, message: str):
+        super().__init__(message, check_trigger=CheckTrigger.INPUT_NOT_ALLOWED)
+
+
+class UnsupportedMediaError(InputCheckError, ValueError):
+    """Raised when media (images, audio, videos, files) is passed to an agent that cannot take it.
+
+    An input check error, so AgentOS answers with a 400 or a RunError event instead of a
+    server error; also a ValueError for callers that validated inputs that way before.
+    """
+
+    def __init__(self, message: str, media: Optional[List[str]] = None):
+        super().__init__(
+            message, check_trigger=CheckTrigger.INPUT_NOT_ALLOWED, additional_data={"unsupported_media": media or []}
+        )
+
+
 class OutputCheckError(Exception):
     """Exception raised when an output check fails."""
 
@@ -511,3 +546,20 @@ class RunNotContinuableError(ValueError):
     Subclasses ``ValueError`` so existing SDK callers that catch ``ValueError``
     keep working; the OS layer maps it to HTTP 409.
     """
+
+
+class SessionBusyError(AgnoError):
+    """Raised when a turn is started on a session that already has a turn in flight.
+
+    External agents (Claude Code, Codex) keep one conversation per session on their own side,
+    and two turns writing to it at once corrupt it, so a session accepts one turn at a time.
+    The OS layer maps this to HTTP 409; the durable queue and agent retries re-drive the turn
+    after their delay, which serializes it behind the one in flight.
+    """
+
+    def __init__(self, message: str, run_id: Optional[str] = None, session_id: Optional[str] = None):
+        super().__init__(message, 409)
+        self.run_id = run_id
+        self.session_id = session_id
+        self.type = "session_busy"
+        self.error_id = "session_busy"

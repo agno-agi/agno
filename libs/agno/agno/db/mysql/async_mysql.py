@@ -2,6 +2,7 @@ import json
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import cast as typing_cast
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -660,33 +661,24 @@ class AsyncMySQLDb(AsyncBaseDb):
             async with self.async_session_factory() as sess:
                 try:
                     async with sess.begin():
-                        # Backfill a monotonic run_index when the run arrives without one
-                        # (e.g. a background/continue save that couldn't resolve its position).
-                        # A NULL index has no position and breaks ORDER BY run_index. ON DUPLICATE KEY
-                        # preserves the existing index, so this only sets it on a genuine insert.
-                        if row.get("run_index") is None:
-                            # Serialize same-session backfills: two concurrent
-                            # max-reads can both see the same MAX and land
-                            # duplicate indexes. GET_LOCK is connection-scoped
-                            # and survives COMMIT, so it is released in the
-                            # finally below - AFTER the row is durable.
-                            backfill_lock = run_index_lock_name(session_id)
-                            acquired = (
-                                await sess.execute(text("SELECT GET_LOCK(:name, 5)"), {"name": backfill_lock})
-                            ).scalar()
-                            if not acquired:
-                                log_warning(
-                                    f"run_index backfill lock timed out for session {session_id}; "
-                                    "proceeding unserialized"
-                                )
-                            current_max = (
-                                await sess.execute(
-                                    select(func.max(runs_table.c.run_index)).where(
-                                        runs_table.c.session_id == session_id
-                                    )
-                                )
-                            ).scalar()
-                            row["run_index"] = (current_max + 1) if current_max is not None else 0
+                        # A new run always lands after the session's existing rows.
+                        # The lock serializes same-session inserts around MAX+1.
+                        backfill_lock = run_index_lock_name(session_id)
+                        acquired = (
+                            await sess.execute(text("SELECT GET_LOCK(:name, 5)"), {"name": backfill_lock})
+                        ).scalar()
+                        if not acquired:
+                            log_warning(
+                                f"run_index backfill lock timed out for session {session_id}; proceeding unserialized"
+                            )
+                        current_max = (
+                            await sess.execute(
+                                select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
+                            )
+                        ).scalar()
+                        next_index = (current_max + 1) if current_max is not None else 0
+                        provided_index = row.get("run_index")
+                        row["run_index"] = next_index if provided_index is None else max(provided_index, next_index)
 
                         stmt = mysql.insert(runs_table).values(**row)  # type: ignore
                         stmt = stmt.on_duplicate_key_update(
@@ -839,7 +831,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             return deleted
         except Exception as e:
             log_error(f"Error deleting run: {str(e)}")
-            return False
+            raise e
 
     async def delete_runs(self, run_ids: List[str]) -> None:
         """Delete all given runs from the runs table."""
@@ -853,6 +845,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             log_debug(f"Successfully deleted {result.rowcount} runs")  # type: ignore
         except Exception as e:
             log_error(f"Error deleting runs: {str(e)}")
+            raise e
 
     # -- Session methods --
     async def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
@@ -949,7 +942,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             session_id (str): ID of the session to read.
             session_type (Optional[SessionType]): Type of session to get. Defaults to None.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
 
         Returns:
             Union[Session, Dict[str, Any], None]:
@@ -1041,6 +1034,7 @@ class AsyncMySQLDb(AsyncBaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """
         Get all sessions in the given table. Can filter by user_id and entity_id.
@@ -1055,7 +1049,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             page (Optional[int]): The page number to return. Defaults to None.
             sort_by (Optional[str]): The field to sort by. Defaults to None.
             sort_order (Optional[str]): The sort order. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the sessions. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
 
         Returns:
             Union[List[Session], Tuple[List[Dict], int]]:
@@ -1065,6 +1059,9 @@ class AsyncMySQLDb(AsyncBaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        from agno.db.session_filters import normalize_session_filter, session_filter_to_sqlalchemy
+
+        filter_expr = normalize_session_filter(filter_expr)
         validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="sessions")
@@ -1074,6 +1071,10 @@ class AsyncMySQLDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
+
+                if filter_expr is not None:
+                    # Binary collation keeps string comparisons case-sensitive, matching other SQL backends.
+                    stmt = stmt.where(session_filter_to_sqlalchemy(filter_expr, table, collation="utf8mb4_bin"))
 
                 # Filtering
                 if user_id is not None:
@@ -1158,7 +1159,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             session_type (SessionType): The type of session to rename.
             session_name (str): The new name for the session.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
 
         Returns:
             Optional[Union[Session, Dict[str, Any]]]:
@@ -1651,7 +1652,7 @@ class AsyncMySQLDb(AsyncBaseDb):
 
         Args:
             memory_id (str): The ID of the memory to get.
-            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
 
         Returns:
             Union[UserMemory, Dict[str, Any], None]:
@@ -1711,7 +1712,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
-            deserialize (Optional[bool]): Whether to serialize the memories. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
 
         Returns:
             Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
@@ -1869,7 +1870,7 @@ class AsyncMySQLDb(AsyncBaseDb):
 
         Args:
             memory (UserMemory): The user memory to upsert.
-            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
 
         Returns:
             Optional[Union[UserMemory, Dict[str, Any]]]:
@@ -2093,7 +2094,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                     runs_result = await sess.execute(runs_stmt)
                     runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
                     for session_id, model, model_provider in runs_result.fetchall():
-                        runs_by_session.setdefault(session_id, []).append(
+                        runs_by_session.setdefault(typing_cast(str, session_id), []).append(
                             {"model": model, "model_provider": model_provider}
                         )
 
@@ -2567,7 +2568,7 @@ class AsyncMySQLDb(AsyncBaseDb):
 
         Args:
             eval_run_id (str): The ID of the eval run to get.
-            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval run. Defaults to True.
             user_id (Optional[str]): If set, only return the run if owned by this user.
 
         Returns:
@@ -2631,7 +2632,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             user_id (Optional[str]): If set, only return runs owned by this user.
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
-            deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
 
         Returns:
             Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:

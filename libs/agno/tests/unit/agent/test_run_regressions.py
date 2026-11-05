@@ -795,7 +795,7 @@ def test_handle_agent_run_paused_persists_session_state(monkeypatch: pytest.Monk
     monkeypatch.setattr(_run, "create_approval_from_pause", lambda **kwargs: None)
     monkeypatch.setattr(_run, "scrub_run_output_for_storage", lambda agent, run_response: None)
     monkeypatch.setattr(_run, "save_run_response_to_file", lambda agent, **kwargs: None)
-    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session, run_response: None)
+    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session: None)
 
     agent = Agent(name="test-hitl")
     session = AgentSession(session_id="s1", session_data={})
@@ -820,7 +820,7 @@ def test_handle_agent_run_paused_without_run_context_does_not_set_state(monkeypa
     monkeypatch.setattr(_run, "create_approval_from_pause", lambda **kwargs: None)
     monkeypatch.setattr(_run, "scrub_run_output_for_storage", lambda agent, run_response: None)
     monkeypatch.setattr(_run, "save_run_response_to_file", lambda agent, **kwargs: None)
-    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session, run_response: None)
+    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session: None)
 
     agent = Agent(name="test-hitl")
     session = AgentSession(session_id="s1", session_data={})
@@ -841,7 +841,7 @@ def test_handle_agent_run_paused_persists_state_when_session_data_is_none(monkey
     monkeypatch.setattr(_run, "create_approval_from_pause", lambda **kwargs: None)
     monkeypatch.setattr(_run, "scrub_run_output_for_storage", lambda agent, run_response: None)
     monkeypatch.setattr(_run, "save_run_response_to_file", lambda agent, **kwargs: None)
-    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session, run_response: None)
+    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session: None)
 
     agent = Agent(name="test-hitl")
     session = AgentSession(session_id="s1", session_data=None)
@@ -866,7 +866,7 @@ async def test_ahandle_agent_run_paused_persists_state_when_session_data_is_none
     monkeypatch.setattr(_session, "save_session", lambda agent, session: None)
     monkeypatch.setattr(_run, "scrub_run_output_for_storage", lambda agent, run_response: None)
     monkeypatch.setattr(_run, "save_run_response_to_file", lambda agent, **kwargs: None)
-    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session, run_response: None)
+    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session: None)
 
     async def noop_acreate_approval(**kwargs):
         return None
@@ -896,7 +896,7 @@ async def test_ahandle_agent_run_paused_persists_session_state(monkeypatch: pyte
     monkeypatch.setattr(_session, "save_session", lambda agent, session: None)
     monkeypatch.setattr(_run, "scrub_run_output_for_storage", lambda agent, run_response: None)
     monkeypatch.setattr(_run, "save_run_response_to_file", lambda agent, **kwargs: None)
-    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session, run_response: None)
+    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session: None)
 
     async def noop_acreate_approval(**kwargs):
         return None
@@ -982,7 +982,7 @@ def test_handle_agent_run_paused_stream_persists_session_state(monkeypatch: pyte
     monkeypatch.setattr(_run, "create_approval_from_pause", lambda **kwargs: None)
     monkeypatch.setattr(_run, "scrub_run_output_for_storage", lambda agent, run_response: None)
     monkeypatch.setattr(_run, "save_run_response_to_file", lambda agent, **kwargs: None)
-    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session, run_response: None)
+    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session: None)
 
     agent = Agent(name="test-hitl-stream")
     session = AgentSession(session_id="s1", session_data={})
@@ -1009,7 +1009,7 @@ async def test_ahandle_agent_run_paused_stream_persists_session_state(monkeypatc
     monkeypatch.setattr(_session, "save_session", lambda agent, session: None)
     monkeypatch.setattr(_run, "scrub_run_output_for_storage", lambda agent, run_response: None)
     monkeypatch.setattr(_run, "save_run_response_to_file", lambda agent, **kwargs: None)
-    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session, run_response: None)
+    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session: None)
 
     async def noop_acreate_approval(**kwargs):
         return None
@@ -1115,3 +1115,45 @@ async def test_acontinue_run_dispatch_skips_response_format_when_parser_model_se
     )
 
     assert captured["response_format"] is None
+
+
+@pytest.mark.asyncio
+async def test_cancel_of_hitl_continue_while_waiting_for_a_slot_is_paused():
+    """A background continuation cancelled before it acquires its concurrency
+    slot resumes a run that already paused for HITL: the persisted stage is
+    PAUSED, never "never started". Twin of the team test."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from agno.agent._run import _acontinue_run_background_stream
+    from agno.exceptions import RunCancelledException
+    from agno.run import RunStatus
+    from agno.run.base import CancellationStage
+
+    agent = MagicMock()
+    agent.db = None  # helper falls back to the session-save path
+    run_context = MagicMock()
+    session_run = MagicMock()
+    session_run.status = RunStatus.paused
+    session_run.cancellation_stage = None
+    agent_session = MagicMock()
+    agent_session.get_run.return_value = session_run
+    stream = MagicMock()
+    for name in ("register_run", "set_run_status", "complete_run", "add_event", "reopen_run", "begin_attempt"):
+        setattr(stream, name, AsyncMock())
+
+    with (
+        patch("agno.agent._run.background_run_slot") as mock_slot,
+        patch("agno.agent._storage.aread_or_create_session", new_callable=AsyncMock, return_value=agent_session),
+        patch("agno.agent._storage.update_metadata"),
+        patch("agno.agent._session.asave_session", new_callable=AsyncMock),
+        patch("agno.agent._session.asave_run", new_callable=AsyncMock),
+        patch("agno.os.event_streams.get_event_stream", return_value=stream),
+        patch("agno.agent._run.acleanup_run", new_callable=AsyncMock),
+    ):
+        mock_slot.return_value.__aenter__ = AsyncMock(side_effect=RunCancelledException("r-1"))
+        mock_slot.return_value.__aexit__ = AsyncMock()
+        async for _ in _acontinue_run_background_stream(agent, run_context=run_context, session_id="s-1", run_id="r-1"):
+            pass
+
+    assert session_run.status == RunStatus.cancelled
+    assert session_run.cancellation_stage is CancellationStage.paused

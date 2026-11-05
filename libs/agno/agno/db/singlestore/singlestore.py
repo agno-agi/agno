@@ -728,21 +728,20 @@ class SingleStoreDb(BaseDb):
             )
 
             with self.Session() as sess, sess.begin():
-                # Backfill a monotonic run_index when the run arrives without one
-                # (e.g. a background/continue save that couldn't resolve its position).
-                # A NULL index has no position and breaks ORDER BY run_index. ON DUPLICATE KEY
-                # preserves the existing index, so this only sets it on a genuine insert.
-                if row.get("run_index") is None:
-                    # Single-statement backfill: SingleStore has no user-level
-                    # locks (no GET_LOCK), so the MAX is computed inside the
-                    # INSERT via a materialized derived table (the MySQL
-                    # dialect rejects a direct same-table subquery). This
-                    # closes the two-statement read-then-insert window; truly
-                    # simultaneous same-session first-saves can still read the
-                    # same MAX under snapshot isolation - best effort without
-                    # engine support.
-                    prior_runs = select(runs_table.c.run_index).where(runs_table.c.session_id == session_id).subquery()
-                    row["run_index"] = select(func.coalesce(func.max(prior_runs.c.run_index) + 1, 0)).scalar_subquery()
+                # A new run always lands after the session's existing rows. Callers
+                # pass the run's position in the in-memory ``session.runs`` list, and
+                # after runs were deleted from the front of that list the position
+                # collides with, or sorts before, rows that still exist. ON DUPLICATE KEY
+                # preserves the existing index, so this only affects a genuine insert.
+                # Single-statement: SingleStore has no user-level locks (no GET_LOCK),
+                # so the MAX is computed inside the INSERT via a materialized derived
+                # table (the MySQL dialect rejects a direct same-table subquery). Truly
+                # simultaneous same-session inserts can still read the same MAX under
+                # snapshot isolation; best effort without engine support, as before.
+                prior_runs = select(runs_table.c.run_index).where(runs_table.c.session_id == session_id).subquery()
+                next_index = select(func.coalesce(func.max(prior_runs.c.run_index) + 1, 0)).scalar_subquery()
+                provided_index = row.get("run_index")
+                row["run_index"] = next_index if provided_index is None else func.greatest(provided_index, next_index)
 
                 stmt = mysql.insert(runs_table).values(**row)  # type: ignore
                 stmt = stmt.on_duplicate_key_update(
@@ -1001,7 +1000,7 @@ class SingleStoreDb(BaseDb):
             session_id (str): ID of the session to read.
             session_type (Optional[SessionType]): Type of session to get. If None, the type is inferred.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
 
         Returns:
             Union[Session, Dict[str, Any], None]:
@@ -1090,6 +1089,7 @@ class SingleStoreDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """
         Get all sessions in the given table. Can filter by user_id and entity_id.
@@ -1105,7 +1105,7 @@ class SingleStoreDb(BaseDb):
             page (Optional[int]): The page number to return. Defaults to None.
             sort_by (Optional[str]): The field to sort by. Defaults to None.
             sort_order (Optional[str]): The sort order. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the sessions. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
             create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:
@@ -1116,6 +1116,9 @@ class SingleStoreDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        from agno.db.session_filters import normalize_session_filter, session_filter_to_sqlalchemy
+
+        filter_expr = normalize_session_filter(filter_expr)
         validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="sessions")
@@ -1125,6 +1128,15 @@ class SingleStoreDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
+
+                if filter_expr is not None:
+                    # SingleStore lacks JSON_UNQUOTE, COLLATE on columns, and LIKE ... ESCAPE; utf8mb4_bin is case-sensitive.
+                    name_column = func.JSON_EXTRACT_STRING(table.c.session_data, "session_name")
+                    stmt = stmt.where(
+                        session_filter_to_sqlalchemy(
+                            filter_expr, table, session_name_column=name_column, backslash_like=True
+                        )
+                    )
 
                 # Filtering
                 if user_id is not None:
@@ -1208,7 +1220,7 @@ class SingleStoreDb(BaseDb):
             session_type (SessionType): The type of session to rename.
             session_name (str): The new name for the session.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
 
         Returns:
             Optional[Union[Session, Dict[str, Any]]]:
@@ -1672,7 +1684,7 @@ class SingleStoreDb(BaseDb):
 
         Args:
             memory_id (str): The ID of the memory to get.
-            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
             user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
 
         Returns:
@@ -1731,7 +1743,7 @@ class SingleStoreDb(BaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
-            deserialize (Optional[bool]): Whether to serialize the memories. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
 
 
         Returns:
@@ -1868,7 +1880,7 @@ class SingleStoreDb(BaseDb):
 
         Args:
             memory (UserMemory): The user memory to upsert.
-            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
 
         Returns:
             Optional[Union[UserMemory, Dict[str, Any]]]:
@@ -2533,7 +2545,7 @@ class SingleStoreDb(BaseDb):
 
         Args:
             eval_run_id (str): The ID of the eval run to get.
-            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval run. Defaults to True.
             user_id (Optional[str]): If set, only return the run if owned by this user.
 
         Returns:
@@ -2596,7 +2608,7 @@ class SingleStoreDb(BaseDb):
             user_id (Optional[str]): If set, only return runs owned by this user.
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
-            deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
             create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:

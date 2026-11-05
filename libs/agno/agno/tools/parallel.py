@@ -114,6 +114,17 @@ class ParallelTools(Toolkit):
 
         super().__init__(name="parallel_tools", tools=tools, **kwargs)
 
+    def __deepcopy__(self, memo: Dict[int, Any]) -> "ParallelTools":
+        """Copy toolkit state without copying the live HTTP connection pool."""
+        from copy import deepcopy
+
+        copied = type(self).__new__(type(self))
+        memo[id(self)] = copied
+        memo.setdefault(id(self.parallel_client), self.parallel_client)
+        for name, value in self.__dict__.items():
+            setattr(copied, name, deepcopy(value, memo))
+        return copied
+
     def parallel_search(
         self,
         objective: Optional[str] = None,

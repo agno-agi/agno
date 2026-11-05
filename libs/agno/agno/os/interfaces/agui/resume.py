@@ -9,6 +9,7 @@ from agno.run.team import TeamRunOutput
 from agno.session.agent import AgentSession
 from agno.session.team import TeamSession
 from agno.team.team import Team
+from agno.utils.log import log_warning
 from agno.utils.string import parse_response_dict_str
 
 
@@ -39,6 +40,17 @@ def _resolve_external_execution(requirement: RunRequirement, content: str, error
     requirement.set_external_execution_result(error or content)
 
 
+def _tool_message_text(tool_message: AGUIToolMessage) -> str:
+    # ag-ui-protocol 1.0 lets a tool result be a list of content parts; only its text can answer a pause.
+    content = tool_message.content
+    if isinstance(content, str):
+        return content
+    dropped = sorted({part.type for part in content if part.type != "text"})
+    if dropped:
+        log_warning(f"Tool result {tool_message.tool_call_id}: ignoring {', '.join(dropped)} parts, using its text")
+    return "\n".join(part.text for part in content if part.type == "text")
+
+
 def resolve_requirements_from_tool_messages(
     requirements: List[RunRequirement],
     tool_messages: List[AGUIToolMessage],
@@ -56,14 +68,15 @@ def resolve_requirements_from_tool_messages(
         tool_message = tool_message_by_call_id.get(tool_exec.tool_call_id)
         if tool_message is None:
             continue
+        content = _tool_message_text(tool_message)
 
         # External execution: raw content, no JSON parsing
         if requirement.pause_type == "external_execution":
-            _resolve_external_execution(requirement, tool_message.content, tool_message.error)
+            _resolve_external_execution(requirement, content, tool_message.error)
             continue
 
         # Structured pause types: parse JSON payload
-        parsed = parse_response_dict_str(tool_message.content)
+        parsed = parse_response_dict_str(content)
         payload: Dict[str, Any] = parsed if isinstance(parsed, dict) else {}
 
         if requirement.pause_type == "confirmation":
@@ -111,6 +124,27 @@ def _find_paused_run(
                 return deepcopy(run)
 
     return None
+
+
+async def find_resume_target_run_id(
+    entity: Any,
+    session_id: str,
+    tool_messages: List[AGUIToolMessage],
+) -> Optional[str]:
+    """The id of the paused run these tool results would resume, or None when there is none.
+
+    Read-only lookup for the route's admission gates, which must decide BEFORE the response
+    stream opens (a refusal inside the stream is an event, not a 403). Deliberately tolerant:
+    a remote entity, a missing db, an unknown session or no matching paused run all answer
+    None, and :func:`resume_paused_run` then raises its own precise error inside the stream
+    exactly as before."""
+    if not isinstance(entity, (Agent, Team)) or not entity.db:
+        return None
+    session = await entity.aget_session(session_id=session_id)
+    if not isinstance(session, (AgentSession, TeamSession)):
+        return None
+    paused_run = _find_paused_run(session, tool_messages, is_team=isinstance(entity, Team))
+    return paused_run.run_id if paused_run else None
 
 
 async def resume_paused_run(

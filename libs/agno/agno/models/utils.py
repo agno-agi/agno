@@ -20,6 +20,12 @@ _PROVIDERS: Dict[str, Tuple[str, str, str, str]] = {
     "azure-ai-foundry": ("agno.models.azure", "AzureAIFoundry", "AzureAIFoundry", "azure"),
     "azure-foundry-claude": ("agno.models.azure", "AzureFoundryClaude", "AzureFoundryClaude", "azurefoundry"),
     "azure-openai": ("agno.models.azure", "AzureOpenAI", "AzureOpenAI", "azure"),
+    "azure-openai-responses": (
+        "agno.models.azure",
+        "AzureOpenAIResponses",
+        "AzureOpenAIResponses",
+        "azure",
+    ),
     "cerebras": ("agno.models.cerebras", "Cerebras", "Cerebras", "cerebras"),
     "cerebras-openai": ("agno.models.cerebras", "CerebrasOpenAI", "CerebrasOpenAI", "cerebrasopenai"),
     "cohere": ("agno.models.cohere", "Cohere", "cohere", "cohere"),
@@ -29,9 +35,11 @@ _PROVIDERS: Dict[str, Tuple[str, str, str, str]] = {
     "deepinfra": ("agno.models.deepinfra", "DeepInfra", "DeepInfra", "deepinfra"),
     "deepseek": ("agno.models.deepseek", "DeepSeek", "DeepSeek", "deepseek"),
     "fireworks": ("agno.models.fireworks", "Fireworks", "Fireworks", "fireworks"),
+    "flexai": ("agno.models.flexai", "FlexAI", "FlexAI", "flexai"),
     "google": ("agno.models.google", "Gemini", "Gemini", "google"),
     "google-interactions": ("agno.models.google", "GeminiInteractions", "GeminiInteractions", "google"),
     "groq": ("agno.models.groq", "Groq", "Groq", "groq"),
+    "heabsy": ("agno.models.heabsy", "Heabsy", "Heabsy", "heabsy"),
     "huggingface": ("agno.models.huggingface", "HuggingFace", "HuggingFace", "huggingface"),
     "ibm": ("agno.models.ibm", "WatsonX", "WatsonX", "ibm"),
     "inception": ("agno.models.inception", "Inception", "Inception", "inceptionlabs"),
@@ -77,6 +85,7 @@ _PROVIDERS: Dict[str, Tuple[str, str, str, str]] = {
     "xai": ("agno.models.xai", "xAI", "xAI", "xai"),
     "xai-responses": ("agno.models.xai", "xAIResponses", "xAIResponses", "xai"),
     "xiaomi": ("agno.models.xiaomi", "MiMo", "MiMo", "xiaomi mimo"),
+    "yapi": ("agno.models.yapi", "YAPI", "YAPI", "yapi"),
 }
 
 # key -> (module, class_name): the construction registry consumed by `_get_model_class`, the

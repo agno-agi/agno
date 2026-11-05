@@ -15,9 +15,9 @@ from agno.models.openai import OpenAIChat
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
-# `gpt-4o-search-preview` performs a web search and attaches url_citation
+# `gpt-5-search-api` performs a web search and attaches url_citation
 # annotations to the response.
-agent = Agent(model=OpenAIChat(id="gpt-4o-search-preview"), markdown=True)
+agent = Agent(model=OpenAIChat(id="gpt-5-search-api"), markdown=True)
 
 # ---------------------------------------------------------------------------
 # Run Agent

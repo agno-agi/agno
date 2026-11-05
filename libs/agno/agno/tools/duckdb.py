@@ -322,7 +322,7 @@ class DuckDbTools(Toolkit):
             f"SELECT * FROM read_csv('{self._escape_sql_string(path)}', ignore_errors=false, auto_detect=true"
         )
         if delimiter is not None:
-            select_statement += f", delim='{delimiter}')"
+            select_statement += f", delim='{self._escape_sql_string(delimiter)}')"
         else:
             select_statement += ")"
 
@@ -375,7 +375,7 @@ class DuckDbTools(Toolkit):
             f"SELECT * FROM read_csv('{self._escape_sql_string(path)}', ignore_errors=false, auto_detect=true"
         )
         if delimiter is not None:
-            select_statement += f", delim='{delimiter}')"
+            select_statement += f", delim='{self._escape_sql_string(delimiter)}')"
         else:
             select_statement += ")"
 
@@ -441,7 +441,7 @@ class DuckDbTools(Toolkit):
         search_text_statement = f"""SELECT {fts_schema}.match_bm25({unique_key}, '{self._escape_sql_string(search_text)}') AS score,*
                                         FROM {table}
                                         WHERE score IS NOT NULL
-                                        ORDER BY score;"""
+                                        ORDER BY score DESC;"""
 
         log_debug(f"Running {search_text_statement}")
         result = self.run_query(search_text_statement)

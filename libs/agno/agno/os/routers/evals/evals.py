@@ -42,6 +42,35 @@ from agno.utils.log import log_warning
 logger = logging.getLogger(__name__)
 
 
+async def _require_eval_target_run_access(request: Request, *, resource_type: str, resource_id: str) -> None:
+    """Refuse an eval whose caller may not RUN its target agent or team.
+
+    Mirrors the ``require_resource_access(<family>, "run", ...)`` dependency on the run routes:
+    dormant when authorization is off, decided by the configured provider (scope, managed roles,
+    ReBAC) otherwise, and a denial is written to the decision trail so the audit shows what
+    actually blocked the request. The target comes from the request body, not the path, which is
+    why the run routes' path-based dependency cannot cover this endpoint."""
+    if not getattr(request.state, "authorization_enabled", False):
+        return
+    from agno.os.auth import acheck_resource_access
+    from agno.os.authz.audit import arecord_decision
+
+    if await acheck_resource_access(request, resource_id, resource_type, "run"):
+        return
+    await arecord_decision(
+        request,
+        allowed=False,
+        target=f"{request.method} /eval-runs {resource_type}/{resource_id}",
+        principal=getattr(request.state, "user_id", None),
+        required_scopes=[f"{resource_type}:{resource_id}:run"],
+        scopes=list(getattr(request.state, "scopes", None) or []),
+        claims=getattr(request.state, "claims", None),
+        reason="resource_access_denied",
+    )
+    singular = "agent" if resource_type == "agents" else "team"
+    raise HTTPException(status_code=403, detail=f"Access denied to run this {singular}")
+
+
 def get_eval_router(
     dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
     agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
@@ -433,6 +462,18 @@ def attach_routes(
 
         if eval_run_input.agent_id and eval_run_input.team_id:
             raise HTTPException(status_code=400, detail="Only one of agent_id or team_id must be provided")
+
+        # An eval RUNS the target with real model calls, so it is gated exactly like the run
+        # endpoints: the caller must hold "run" on that specific agent or team under the
+        # configured provider. The route scope (evals:write) alone says nothing about which
+        # targets the caller may execute, and the body names the target, so this is the only
+        # place the per-resource decision can be made.
+        if eval_run_input.agent_id or eval_run_input.team_id:
+            await _require_eval_target_run_access(
+                request,
+                resource_type="agents" if eval_run_input.agent_id else "teams",
+                resource_id=eval_run_input.agent_id or eval_run_input.team_id,  # type: ignore[arg-type]
+            )
 
         if eval_run_input.agent_id:
             # create_fresh: the eval mutates the resolved agent (e.g. agent.model below), so
