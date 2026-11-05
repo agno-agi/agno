@@ -407,9 +407,8 @@ class SurrealDb(BaseDb):
     def get_run(
         self, run_id: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]]]:
-        try:
-            runs_table = self._get_table("runs", create_table_if_not_found=False)
-        except Exception:
+        runs_table = self._get_table("runs", create_table_if_not_found=False)
+        if not self.table_exists(runs_table):
             return None
         raw = self._query_one(
             "SELECT * FROM ONLY $record",
@@ -437,9 +436,8 @@ class SurrealDb(BaseDb):
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
-        try:
-            runs_table = self._get_table("runs", create_table_if_not_found=False)
-        except Exception:
+        runs_table = self._get_table("runs", create_table_if_not_found=False)
+        if not self.table_exists(runs_table):
             return [] if deserialize else ([], 0)
 
         where = WhereClause()
@@ -1892,6 +1890,19 @@ class SurrealDb(BaseDb):
         except Exception as e:
             log_error(f"Error creating trace: {str(e)}")
 
+    def _count_spans(self, spans_table: str, trace_id: str) -> Tuple[int, int]:
+        """Return a trace's total and error span counts."""
+        count_query = f"SELECT count() as total FROM {spans_table} WHERE trace_id = $trace_id GROUP ALL"
+        count_result = self._query_one(count_query, {"trace_id": trace_id}, dict)
+        error_query = (
+            f"SELECT count() as total FROM {spans_table} WHERE trace_id = $trace_id AND status_code = 'ERROR' GROUP ALL"
+        )
+        error_result = self._query_one(error_query, {"trace_id": trace_id}, dict)
+        return (
+            count_result.get("total", 0) if count_result else 0,
+            error_result.get("total", 0) if error_result else 0,
+        )
+
     def get_trace(
         self,
         trace_id: Optional[str] = None,
@@ -1936,13 +1947,10 @@ class SurrealDb(BaseDb):
             id_obj = trace_data.get("id")
             trace_id_val = trace_data.get("trace_id") or (id_obj.id if id_obj is not None else None)
             if trace_id_val:
-                count_query = f"SELECT count() as total FROM {spans_table} WHERE trace_id = $trace_id GROUP ALL"
-                count_result = self._query_one(count_query, {"trace_id": trace_id_val}, dict)
-                trace_data["total_spans"] = count_result.get("total", 0) if count_result else 0
-
-                error_query = f"SELECT count() as total FROM {spans_table} WHERE trace_id = $trace_id AND status_code = 'ERROR' GROUP ALL"
-                error_result = self._query_one(error_query, {"trace_id": trace_id_val}, dict)
-                trace_data["error_count"] = error_result.get("total", 0) if error_result else 0
+                has_spans = self.table_exists(spans_table)
+                trace_data["total_spans"], trace_data["error_count"] = (
+                    self._count_spans(spans_table, trace_id_val) if has_spans else (0, 0)
+                )
 
             # Deserialize
             return self._deserialize_trace(trace_data)
@@ -2023,18 +2031,15 @@ class SurrealDb(BaseDb):
             traces_raw = self._query(query, where_vars, dict)
 
             # Add total_spans and error_count to each trace
+            has_spans = self.table_exists(spans_table)
             result_traces = []
             for trace_data in traces_raw:
                 id_obj = trace_data.get("id")
                 trace_id_val = trace_data.get("trace_id") or (id_obj.id if id_obj is not None else None)
                 if trace_id_val:
-                    count_query = f"SELECT count() as total FROM {spans_table} WHERE trace_id = $trace_id GROUP ALL"
-                    count_result = self._query_one(count_query, {"trace_id": trace_id_val}, dict)
-                    trace_data["total_spans"] = count_result.get("total", 0) if count_result else 0
-
-                    error_query = f"SELECT count() as total FROM {spans_table} WHERE trace_id = $trace_id AND status_code = 'ERROR' GROUP ALL"
-                    error_result = self._query_one(error_query, {"trace_id": trace_id_val}, dict)
-                    trace_data["error_count"] = error_result.get("total", 0) if error_result else 0
+                    trace_data["total_spans"], trace_data["error_count"] = (
+                        self._count_spans(spans_table, trace_id_val) if has_spans else (0, 0)
+                    )
 
                 result_traces.append(self._deserialize_trace(trace_data))
 
