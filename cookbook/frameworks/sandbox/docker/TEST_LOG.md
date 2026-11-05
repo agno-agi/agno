@@ -419,3 +419,23 @@ Re-run on 20 October 2026 with the store chosen by `AGNO_SANDBOX_CHECKPOINT_BUCK
 **Result:** 27 store cases passed; the per-chunk read and the sync-store cancellation cases failed before their fix. `test_transfer.py` 4 passed; `test_coordinator.py` 84 passed, 10 skipped; `test_agentos.py` 39 passed, 1 skipped; `test_checkpoint_access.py` 8 passed, 2 skipped (that suite builds its own `FileCheckpointStore`, so it does not exercise this store). The skips are `AGNO_TEST_LIVE_REPOSITORY` cases and the sync `stream()` cases that do not apply to `AsyncPostgresDb`.
 
 ---
+
+### agentos.py without Redis, and two replicas without Redis (2026-10-21)
+
+**Status:** PASS
+
+**Description:** `agentos.py` with `SANDBOX_HARNESS=fixture` and `SANDBOX_REDIS_URL` unset, on a fresh database: a background turn polled to completion, then a streamed second turn on the same session. Then two AgentOS replicas sharing Postgres, a moto S3 checkpoint bucket and one Docker daemon, with no Redis, driven over HTTP: a cancel sent to the replica not running the turn (max_attempts 1 and 2), the running replica SIGKILLed and its container removed (max_attempts 2), a streamed run submitted to one replica and executed on the other with `/resume` on both, and a restart after warm windows expired. `sandbox_claude_agentos.py` was not run (it needs model credentials); its Redis setting now follows `AGNO_SANDBOX_REDIS_URL` the same way.
+
+**Result:** Passed. The cookbook logged `Queued-run streams are replica-local`, the background turn COMPLETED and the streamed turn returned RunContent and RunCompleted. On two replicas: each cancel settled the ticket `cancelled` at attempt 1 in about 0.4s, with no retry. Host loss recovered on attempt 2 on a new generation restored from S3, and the run went from RUNNING straight to COMPLETED. The submitter's own stream ended with `stream_expired` (RUNNING) a second after the other replica claimed the run, `/resume` there answered `replay` (RUNNING, then COMPLETED after the run) and closed, and `/resume` on the executing replica streamed every event live. The restarted worker retired the 3 paused containers whose windows had ended and kept the one still inside its window.
+
+---
+
+### Warm sweep scope, native approvals on a lost host, and /resume load without Redis (2026-11-03)
+
+**Status:** PASS
+
+**Description:** AgentOS replicas on one Postgres and one Docker daemon, with no Redis. Two sandboxed agents on different namespaces kept warm past their window, then a restart; a sandboxed agent as a team member and as a workflow step, kept warm past its window, then a restart. A native-approval turn whose container was removed while it waited. 200 queued streamed runs held open on one replica, measuring Postgres transactions per second after the first 30 seconds. `/resume` without `session_id` on the replica not executing the run, for an agent, a team and a workflow, with `gpt-5.6-luna`.
+
+**Result:** Each worker retired only its own agents' expired computers; the other namespace's container and binding were left to its own coordinator. Team-member and workflow-step computers were retired. The native-approval turn ended ERROR, not retried, on two computers instead of completing on a third. The 200 streams cost 9.5 transactions per second, against 9.1 before the change. `/resume` answered with an error naming `session_id`, and with `session_id` replayed the run from the database.
+
+---

@@ -107,6 +107,8 @@ class RedisEventStream(BaseEventStream):
             status. Bounds how long a tail can outlive a dead producer.
     """
 
+    shared: bool = True
+
     def __init__(
         self,
         async_redis_client: Union["AsyncRedis", "AsyncRedisCluster"],
