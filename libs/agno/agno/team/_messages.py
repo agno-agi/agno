@@ -23,6 +23,7 @@ from typing import (
 )
 
 from pydantic import BaseModel
+from typing_extensions import TypeGuard
 
 from agno.media import Audio, File, Image, Video
 from agno.models.base import Model
@@ -941,7 +942,7 @@ def _get_formatted_session_state_for_system_message(team: "Team", session_state:
     return f"\n<session_state>\n{session_state}\n</session_state>\n\n"
 
 
-def _is_roleful_message_list(input_message: Any) -> bool:
+def _is_roleful_message_list(input_message: Any) -> TypeGuard[List[Union[Message, Dict[str, Any]]]]:
     """A non-empty list of ``Message`` objects or role dicts, i.e. ready-made provider messages."""
     return (
         isinstance(input_message, list)
@@ -952,23 +953,60 @@ def _is_roleful_message_list(input_message: Any) -> bool:
     )
 
 
-def _append_input_messages(run_messages: RunMessages, input_messages: List[Any]) -> None:
+def _append_input_messages(
+    team: "Team",
+    run_messages: RunMessages,
+    input_messages: List[Union[Message, Dict[str, Any]]],
+    images: Optional[Sequence[Image]] = None,
+    audio: Optional[Sequence[Audio]] = None,
+    videos: Optional[Sequence[Video]] = None,
+    files: Optional[Sequence[File]] = None,
+) -> None:
     """Append roleful input to the run as-is, mirroring ``agent._messages.get_run_messages``."""
-    if run_messages.extra_messages is None:
-        run_messages.extra_messages = []
+    parsed: List[Message] = []
     for _m in input_messages:
         if isinstance(_m, Message):
-            message = _m
+            parsed.append(_m)
         elif isinstance(_m, dict):
             try:
-                message = Message.model_validate(_m)
+                parsed.append(Message.model_validate(_m))
             except Exception as e:
                 log_warning(f"Failed to validate message: {str(e)}")
-                continue
         else:
+            log_warning(f"Skipping unsupported input message type: {type(_m).__name__}")
+
+    if team.send_media_to_model and (images or audio or videos or files):
+        _attach_media_to_last_user_message(parsed, images=images, audio=audio, videos=videos, files=files)
+
+    if run_messages.extra_messages is None:
+        run_messages.extra_messages = []
+    run_messages.messages.extend(parsed)
+    run_messages.extra_messages.extend(parsed)
+    run_messages.run_input_messages = parsed
+
+
+def _attach_media_to_last_user_message(
+    messages: List[Message],
+    images: Optional[Sequence[Image]] = None,
+    audio: Optional[Sequence[Audio]] = None,
+    videos: Optional[Sequence[Video]] = None,
+    files: Optional[Sequence[File]] = None,
+) -> None:
+    # Copy the message so media never accumulates on a Message the caller reuses across runs.
+    for i in range(len(messages) - 1, -1, -1):
+        message = messages[i]
+        if message.role != "user":
             continue
-        run_messages.messages.append(message)
-        run_messages.extra_messages.append(message)
+        messages[i] = message.model_copy(
+            update={
+                "images": [*(message.images or []), *(images or [])] or None,
+                "audio": [*(message.audio or []), *(audio or [])] or None,
+                "videos": [*(message.videos or []), *(videos or [])] or None,
+                "files": [*(message.files or []), *(files or [])] or None,
+            }
+        )
+        return
+    log_warning("Input messages contain no user message; media passed to the run was not sent to the model")
 
 
 def _get_run_messages(
@@ -1085,7 +1123,9 @@ def _get_run_messages(
         # 5.1 A list of Message/role dicts is provider input in its own right: keep
         # every message and its role, as the Agent builder does, instead of
         # flattening the list into one user string.
-        _append_input_messages(run_messages, input_message)  # type: ignore[arg-type]
+        _append_input_messages(
+            team, run_messages, input_message, images=images, audio=audio, videos=videos, files=files
+        )
     else:
         # 5.2 Build user message if message is None, str or list
         user_message = _get_user_message(
@@ -1225,7 +1265,9 @@ async def _aget_run_messages(
         # 5.1 A list of Message/role dicts is provider input in its own right: keep
         # every message and its role, as the Agent builder does, instead of
         # flattening the list into one user string.
-        _append_input_messages(run_messages, input_message)  # type: ignore[arg-type]
+        _append_input_messages(
+            team, run_messages, input_message, images=images, audio=audio, videos=videos, files=files
+        )
     else:
         # 5.2 Build user message if message is None, str or list
         user_message = await _aget_user_message(

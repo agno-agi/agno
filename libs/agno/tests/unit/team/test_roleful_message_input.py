@@ -9,10 +9,11 @@ handed in as input reached the model as user text.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, List
+from typing import Any, List, Optional
 
 import pytest
 
+from agno.media import Image
 from agno.models.message import Message
 from agno.models.openai.chat import OpenAIChat
 from agno.models.response import ModelResponse
@@ -42,17 +43,29 @@ class _RecordingMemoryManager:
     model: Any = None
     db: Any = None
     seen: List[Message] = field(default_factory=list)
+    calls: List[Any] = field(default_factory=list)
 
-    def create_user_memories(self, *, messages: List[Message], **_kwargs: Any) -> str:
-        self.seen = list(messages)
+    def create_user_memories(
+        self, *, message: Optional[str] = None, messages: Optional[List[Message]] = None, **_kwargs: Any
+    ) -> str:
+        self._record(message, messages)
         return "ok"
 
-    async def acreate_user_memories(self, *, messages: List[Message], **_kwargs: Any) -> str:
-        self.seen = list(messages)
+    async def acreate_user_memories(
+        self, *, message: Optional[str] = None, messages: Optional[List[Message]] = None, **_kwargs: Any
+    ) -> str:
+        self._record(message, messages)
         return "ok"
 
+    def _record(self, message: Optional[str], messages: Optional[List[Message]]) -> None:
+        if messages is not None:
+            self.seen = list(messages)
+            self.calls.append([(m.role, m.content) for m in messages])
+        else:
+            self.calls.append(message)
 
-def _team(model: _RecordingModel, memory_manager: Any = None) -> Team:
+
+def _team(model: _RecordingModel, memory_manager: Any = None, **team_kwargs: Any) -> Team:
     return Team(
         name="roleful",
         model=model,
@@ -62,6 +75,7 @@ def _team(model: _RecordingModel, memory_manager: Any = None) -> Team:
         memory_manager=memory_manager,
         update_memory_on_run=memory_manager is not None,
         add_memories_to_context=False,
+        **team_kwargs,
     )
 
 
@@ -157,4 +171,82 @@ def test_roleful_list_still_flattens_for_verbatim_member_input():
         input_message=ROLEFUL_INPUT,
     )
 
+    # Members only get text here, so assistant turns are dropped; a known limitation of verbatim delegation.
     assert message.content == "stored question\ncurrent question"
+
+
+FEW_SHOT = [
+    Message(role="user", content="example: I live in Paris"),
+    Message(role="assistant", content="example: noted"),
+]
+
+
+def test_additional_input_is_not_mined_for_memory():
+    model = _RecordingModel(id="gpt-test", api_key="sk-test")
+    memory_manager = _RecordingMemoryManager()
+
+    _team(model, memory_manager, additional_input=FEW_SHOT).run("hello")
+
+    assert memory_manager.calls == ["hello"]
+
+
+@pytest.mark.asyncio
+async def test_additional_input_is_not_mined_for_memory_async():
+    model = _RecordingModel(id="gpt-test", api_key="sk-test")
+    memory_manager = _RecordingMemoryManager()
+
+    await _team(model, memory_manager, additional_input=FEW_SHOT).arun("hello")
+
+    assert memory_manager.calls == ["hello"]
+
+
+def test_roleful_input_memory_excludes_additional_input():
+    model = _RecordingModel(id="gpt-test", api_key="sk-test")
+    memory_manager = _RecordingMemoryManager()
+
+    _team(model, memory_manager, additional_input=FEW_SHOT).run(ROLEFUL_INPUT)
+
+    assert memory_manager.calls == [
+        [("user", "stored question"), ("assistant", "stored answer"), ("user", "current question")]
+    ]
+
+
+def _user_images(model: _RecordingModel) -> List[tuple]:
+    return [(m.content, [i.url for i in m.images or []]) for m in model.seen if m.role == "user"]
+
+
+def test_roleful_input_keeps_media_on_last_user_message():
+    model = _RecordingModel(id="gpt-test", api_key="sk-test")
+    roleful_input = [Message(role=m.role, content=m.content) for m in ROLEFUL_INPUT]
+
+    _team(model).run(roleful_input, images=[Image(url="https://example.com/cat.png")])
+
+    assert _user_images(model) == [
+        ("stored question", []),
+        ("current question", ["https://example.com/cat.png"]),
+    ]
+    assert roleful_input[-1].images is None
+
+
+@pytest.mark.asyncio
+async def test_roleful_input_keeps_media_on_last_user_message_async():
+    model = _RecordingModel(id="gpt-test", api_key="sk-test")
+    roleful_input = [Message(role=m.role, content=m.content) for m in ROLEFUL_INPUT]
+
+    await _team(model).arun(roleful_input, images=[Image(url="https://example.com/cat.png")])
+
+    assert _user_images(model) == [
+        ("stored question", []),
+        ("current question", ["https://example.com/cat.png"]),
+    ]
+    assert roleful_input[-1].images is None
+
+
+def test_roleful_input_media_respects_send_media_to_model():
+    model = _RecordingModel(id="gpt-test", api_key="sk-test")
+
+    _team(model, send_media_to_model=False).run(
+        [Message(role="user", content="look")], images=[Image(url="https://example.com/cat.png")]
+    )
+
+    assert _user_images(model) == [("look", [])]
