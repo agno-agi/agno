@@ -126,7 +126,7 @@ Through the components API, a stored external agent is an `agent` component
 whose config carries `"sdk": "claude-agent-sdk"` or `"sdk": "codex"`. A stored
 config names the working directory, MCP servers, plugins and permission mode
 the harness runs with, so AgentOS serves a stored agent without a sandbox only
-when the deployer opts in with `Registry(allow_host_external_agents=True)`;
+when the deployer opts in with `Registry(allow_host_execution=True)`;
 until then it is listed but answers 422. A stored sandboxed agent needs no
 opt-in: `POST /agents/{id}/runs` submits it to the durable sandbox queue like a
 registered one, as long as the sandbox is in the registry the AgentOS was given

@@ -137,7 +137,7 @@ class Registry:
     # registered sandbox. A stored config names a working directory, MCP server commands,
     # plugins and permission modes, so whoever can write components could start programs
     # here; off by default, the deployer opts in.
-    allow_host_external_agents: bool = False
+    allow_host_execution: bool = False
     # Code-defined agents, teams, and workflows (for rehydration)
     agents: List[Union[Agent, BaseExternalAgent]] = field(default_factory=list)
     teams: List[Team] = field(default_factory=list)

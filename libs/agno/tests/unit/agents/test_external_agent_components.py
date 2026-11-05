@@ -107,7 +107,7 @@ def sandbox() -> FakeSandbox:
 
 @pytest.fixture
 def registry(db, sandbox) -> Registry:
-    return Registry(dbs=[db], schemas=[Answer], sandboxes=[sandbox], allow_host_external_agents=True)
+    return Registry(dbs=[db], schemas=[Answer], sandboxes=[sandbox], allow_host_execution=True)
 
 
 @pytest.fixture
@@ -552,7 +552,7 @@ class TestPersistence:
         url = "postgresql+asyncpg://ai:ai@localhost:5532/ai"
         engine = create_async_engine("sqlite+aiosqlite:///:memory:")
         registered = AsyncPostgresDb(id="apg", db_url=url, db_engine=engine, create_schema=False)
-        registry = Registry(dbs=[registered], allow_host_external_agents=True)  # type: ignore[list-item]
+        registry = Registry(dbs=[registered], allow_host_execution=True)  # type: ignore[list-item]
         session_db = AsyncPostgresDb(
             id="apg", db_url=url, db_engine=engine, session_table="coder_sessions", create_schema=False
         )
@@ -848,7 +848,7 @@ class TestStudioRunner:
         ClaudeAgent(id="coder").save(db=db)
         runner = StudioRunnerTools(db=db, registry=Registry(dbs=[db]))
 
-        with pytest.raises(ComponentNotDispatchableError, match="allow_host_external_agents"):
+        with pytest.raises(ComponentNotDispatchableError, match="allow_host_execution"):
             runner._find_agent("coder", for_dispatch=True)
 
     def test_dispatch_refuses_an_unresolvable_reference(self, db):
@@ -955,7 +955,7 @@ class TestAgentOS:
 
         detail = client.get("/agents/echo-stored")
         assert detail.status_code == 422, detail.text
-        assert "allow_host_external_agents" in detail.json()["detail"]
+        assert "allow_host_execution" in detail.json()["detail"]
         run = client.post("/agents/echo-stored/runs", data={"message": "hi", "stream": "false"})
         assert run.status_code == 422, run.text
 

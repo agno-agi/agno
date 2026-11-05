@@ -92,12 +92,12 @@ def require_host_execution_allowed(agent: "BaseExternalAgent", registry: Optiona
     """
     if agent.sandbox is not None:
         return
-    if registry is not None and registry.allow_host_external_agents:
+    if registry is not None and registry.allow_host_execution:
         return
     raise ComponentRehydrationError(
         f"Agent '{agent.get_id()}' is a stored {agent.sdk!r} external agent without a sandbox, which this "
         "AgentOS does not run on its host. Give it a registered sandbox, or opt in with "
-        "Registry(allow_host_external_agents=True)."
+        "Registry(allow_host_execution=True)."
     )
 
 
