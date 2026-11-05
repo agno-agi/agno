@@ -1243,12 +1243,10 @@ class AgentOS:
         Tables are created here only when the OS provisions databases; otherwise an existing
         table is validated and a missing one is left to the deployment, as the first run was.
         """
-        nested = [*self._sandboxed_team_members(), *self._sandboxed_workflow_agents()]
-        for entry in [*(self.agents or []), *(agent for agent, _ in nested)]:
-            if isinstance(entry, BaseExternalAgent) and entry.sandbox is not None and entry.db is not None:
-                from agno.sandbox import _harness
+        for entry in self._sandboxed_agents():
+            from agno.sandbox import _harness
 
-                await _harness.acheck_tables(entry, create=self.auto_provision_dbs)
+            await _harness.acheck_tables(entry, create=self.auto_provision_dbs)
 
     @staticmethod
     def _nearest_postgres(db: Any, inherited_db: Any) -> Any:
@@ -1336,6 +1334,15 @@ class AgentOS:
         for workflow in self._workflows or []:
             visit_workflow(workflow, None)
         return found
+
+    def _sandboxed_agents(self) -> List[Any]:
+        """Every sandboxed harness agent with a database: served, a team member or inside a workflow."""
+        nested = [*self._sandboxed_team_members(), *self._sandboxed_workflow_agents()]
+        return [
+            entry
+            for entry in [*(self.agents or []), *(agent for agent, _ in nested)]
+            if isinstance(entry, BaseExternalAgent) and entry.sandbox is not None and entry.db is not None
+        ]
 
     def _prepare_sandboxed_agent(self, agent: BaseExternalAgent, fallback_db: Any) -> None:
         """Give a sandboxed agent a database and fail at startup on what would fail its first turn.
