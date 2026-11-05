@@ -250,6 +250,9 @@ def get_company_runs_router(os: Any) -> APIRouter:
         run_db = getattr(component, "db", None)
         if run_db is None:
             raise HTTPException(409, "Task executor requires a database for durable runs")
+        # Runs are read back through os.dbs by id, so they must be stored in an instance AgentOS serves.
+        if not any(store is run_db for store in os.dbs.get(run_db.id, [])):
+            raise HTTPException(409, "Task executor database must be a database AgentOS serves")
         if value.get("job_id") and run_database(value) is not run_db:
             raise HTTPException(409, "A Task session must stay in its original executor database")
         if value.get("job_id") and value["job_id"] != run_id:
