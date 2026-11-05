@@ -2,19 +2,21 @@
 Serve AgentOS Metrics
 =====================
 
-Run two agents, refresh the metrics through POST /os/metrics/refresh, read
-today's OS metrics back through the /os/metrics routes, then serve them. The
-routes return the sessions, runs, tokens, latency and models of a date range,
-read from the agno_component_metrics and agno_aggregate_metrics tables the AgentOS
-calculates from its sessions and runs.
+Serve the /os/metrics routes. They return the sessions, runs, tokens, latency
+and models of a date range, read from the agno_component_metrics and
+agno_aggregate_metrics tables the AgentOS calculates from its sessions and
+runs. With --demo, run two agents, refresh the metrics through
+POST /os/metrics/refresh and read today's OS metrics back through the routes.
 
 Prerequisites: OPENAI_API_KEY and ./cookbook/scripts/run_pgvector.sh
 Run: .venvs/demo/bin/python cookbook/05_agent_os/13_observability/os_metrics.py
 Try: Open http://localhost:7777/os/metrics/sessions (also /runs, /tokens,
-     /latency and /models), optionally with ?user_id=observability-user
+     /latency and /models), optionally with ?user_id=observability-user, or
+     rerun this file with --demo to run two agents and read today's metrics
 """
 
 import asyncio
+import sys
 from datetime import datetime, timezone
 
 import httpx
@@ -109,5 +111,7 @@ async def run_os_metrics_demo() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(run_os_metrics_demo())
-    agent_os.serve(app=app)
+    if "--demo" in sys.argv:
+        asyncio.run(run_os_metrics_demo())
+    else:
+        agent_os.serve(app=app)
