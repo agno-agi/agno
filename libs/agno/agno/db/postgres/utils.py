@@ -566,7 +566,6 @@ def _metrics_tool_calls(run_data: Any) -> Any:
             )
         )
         .select_from(tool_call)
-        .where(func.jsonb_typeof(tool_call.c.value) == "object")
         .scalar_subquery()
     )
 
@@ -906,9 +905,7 @@ def build_component_metrics_totals_queries(
 
     # Each toolkit's tools hold several numbers and buckets each, so the maps are added up once read
     if "tool_metrics" in fields:
-        queries["tool_metrics"] = select(table.c.date, table.c.tool_metrics).where(
-            where, table.c.tool_metrics != func.jsonb_build_object()
-        )
+        queries["tool_metrics"] = select(table.c.date, table.c.tool_metrics).where(where)
 
     return queries
 

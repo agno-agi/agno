@@ -1409,7 +1409,7 @@ def _add_metrics_tool_calls(totals: Dict[str, Any], call: Dict[str, Any]) -> Non
     """Add each tool call of a model call to tool_metrics, under its toolkit and tool name; a tool call that names no
     toolkit is kept under ``""``."""
     for tool_call in call.get("tools") or []:
-        if not isinstance(tool_call, dict) or not tool_call.get("tool_name"):
+        if not tool_call.get("tool_name"):
             continue
         tool = (
             totals["tool_metrics"]
