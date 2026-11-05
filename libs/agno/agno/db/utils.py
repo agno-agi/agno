@@ -32,7 +32,7 @@ DB_TABLE_NAME_KEYS: frozenset = frozenset(
         "memory_table",
         "metrics_table",
         "component_metrics_table",
-        "user_metrics_table",
+        "aggregate_metrics_table",
         "metrics_refreshes_table",
         "eval_table",
         "knowledge_table",
@@ -891,15 +891,15 @@ def list_metrics_totals_models(totals: Dict[str, Any]) -> Dict[str, Any]:
     return {**totals, "model_metrics": list_metrics_models(totals["model_metrics"])}
 
 
-# The periods a row of agno_user_metrics covers. A month row is dated the first day of
+# The periods a row of agno_aggregate_metrics covers. A month row is dated the first day of
 # its month.
 _METRICS_PERIODS = ("daily", "monthly")
 
 # What a row of agno_component_metrics is counted under, by the type of the session or run.
 METRICS_COMPONENT_TYPES = ("agent", "team", "workflow")
 
-# The columns a row of agno_component_metrics is unique by, and a row of agno_user_metrics. A user metrics row with
-# user_id "" is the everyone row, which adds up every run, runs with no user included.
+# The columns a row of agno_component_metrics is unique by, and a row of agno_aggregate_metrics. An aggregate metrics
+# row with user_id "" is the everyone row, which adds up every run, runs with no user included.
 COMPONENT_METRICS_KEY_COLUMNS = (
     "aggregation_period",
     "date",
@@ -909,7 +909,7 @@ COMPONENT_METRICS_KEY_COLUMNS = (
     "parent_component_id",
     "root_component_id",
 )
-USER_METRICS_KEY_COLUMNS = ("aggregation_period", "date", "user_id")
+AGGREGATE_METRICS_KEY_COLUMNS = ("aggregation_period", "date", "user_id")
 
 # The id of the one row of agno_metrics_refreshes, which one refresh at a time holds.
 METRICS_REFRESH_ID = "metrics"
@@ -1076,9 +1076,9 @@ METRICS_READ_FIELDS = (
     *METRICS_COST_FIELDS,
 )
 
-# The counts a row of agno_user_metrics keeps beside the columns of agno_component_metrics, as agno_metrics
+# The counts a row of agno_aggregate_metrics keeps beside the columns of agno_component_metrics, as agno_metrics
 # keeps them.
-USER_METRICS_COUNT_COLUMNS = _METRIC_COUNT_FIELDS
+AGGREGATE_METRICS_COUNT_COLUMNS = _METRIC_COUNT_FIELDS
 
 
 def resolve_metrics_fields(fields: Optional[Sequence[str]]) -> List[str]:
@@ -1355,7 +1355,7 @@ def metrics_percentile(buckets: Dict[str, int], fraction: float, max_ms: Optiona
 
 
 def metrics_versions(rows: Sequence[Any]) -> Dict[str, int]:
-    """The version of each user metrics row, keyed by its aggregation period and date.
+    """The version of each aggregate metrics row, keyed by its aggregation period and date.
 
     Each row holds its aggregation_period, date and version.
     """
@@ -1648,10 +1648,10 @@ def metrics_day_to_reopen(created_at: Optional[int]) -> Optional[date]:
     return day if day < datetime.now(timezone.utc).date() - timedelta(days=1) else None
 
 
-def build_user_metrics_row(
+def build_aggregate_metrics_row(
     rows: Sequence[Dict[str, Any]], aggregation_period: str, row_date: date, completed: bool, user_id: str = ""
 ) -> Dict[str, Any]:
-    """Build the row of agno_user_metrics that totals the given rows of agno_component_metrics.
+    """Build the row of agno_aggregate_metrics that totals the given rows of agno_component_metrics.
 
     Args:
         rows (Sequence[Dict[str, Any]]): The rows of the period: of every user for the everyone row, of
@@ -1666,7 +1666,7 @@ def build_user_metrics_row(
     """
     if aggregation_period not in _METRICS_PERIODS:
         raise ValueError(f"Unknown metrics aggregation period: {aggregation_period}")
-    counts = {column: 0 for column in USER_METRICS_COUNT_COLUMNS}
+    counts = {column: 0 for column in AGGREGATE_METRICS_COUNT_COLUMNS}
     for row in rows:
         counts[f"{row['component_type']}_runs_count"] += row["runs_count"]
         counts[f"{row['component_type']}_sessions_count"] += row["sessions_count"]
@@ -1692,17 +1692,17 @@ def build_user_metrics_row(
     }
 
 
-def build_user_metrics_rows(
+def build_aggregate_metrics_rows(
     rows: Sequence[Dict[str, Any]], aggregation_period: str, row_date: date, completed: bool
 ) -> List[Dict[str, Any]]:
-    """Build the rows of agno_user_metrics that total the given rows of agno_component_metrics: the everyone row
+    """Build the rows of agno_aggregate_metrics that total the given rows of agno_component_metrics: the everyone row
     first, then one row per user. The runs with no user are only in the everyone row."""
     rows_by_user: Dict[str, List[Dict[str, Any]]] = {}
     for row in rows:
         if row["user_id"]:
             rows_by_user.setdefault(row["user_id"], []).append(row)
-    return [build_user_metrics_row(rows, aggregation_period, row_date, completed)] + [
-        build_user_metrics_row(user_rows, aggregation_period, row_date, completed, user_id=user_id)
+    return [build_aggregate_metrics_row(rows, aggregation_period, row_date, completed)] + [
+        build_aggregate_metrics_row(user_rows, aggregation_period, row_date, completed, user_id=user_id)
         for user_id, user_rows in sorted(rows_by_user.items())
     ]
 
@@ -1747,38 +1747,38 @@ def component_metrics_rows_to_write(
     return changed_rows, sorted(stored_by_key)
 
 
-def user_metrics_row_to_write(
-    user_metrics_row: Dict[str, Any], stored_user_metrics_row: Optional[Dict[str, Any]], rows_changed: bool
+def aggregate_metrics_row_to_write(
+    aggregate_metrics_row: Dict[str, Any], stored_aggregate_metrics_row: Optional[Dict[str, Any]], rows_changed: bool
 ) -> Optional[Dict[str, Any]]:
-    """The user metrics row to write for a period, or ``None`` when the stored one stands.
+    """The aggregate metrics row to write for a period, or ``None`` when the stored one stands.
 
     It is written whenever a row of the period was written or deleted, so its version moves with
     every change a read of the period could see, and when it is new, changed or completed.
     """
     if (
         rows_changed
-        or stored_user_metrics_row is None
-        or _metrics_row_changed(user_metrics_row, stored_user_metrics_row)
+        or stored_aggregate_metrics_row is None
+        or _metrics_row_changed(aggregate_metrics_row, stored_aggregate_metrics_row)
     ):
-        return user_metrics_row
+        return aggregate_metrics_row
     return None
 
 
-def user_metrics_rows_to_write(
-    user_metrics_rows: Sequence[Dict[str, Any]], stored_rows: Sequence[Dict[str, Any]], rows_changed: bool
+def aggregate_metrics_rows_to_write(
+    aggregate_metrics_rows: Sequence[Dict[str, Any]], stored_rows: Sequence[Dict[str, Any]], rows_changed: bool
 ) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]], List[str]]:
-    """Compare a period's rebuilt rows of agno_user_metrics, from build_user_metrics_rows, with the rows stored
-    for it.
+    """Compare a period's rebuilt rows of agno_aggregate_metrics, from build_aggregate_metrics_rows, with the rows
+    stored for it.
 
     Returns the everyone row to write, or ``None`` when the stored one stands, the user rows that are new or
     changed, and the user of every stored user row the period no longer has.
     """
     stored_by_user = {row["user_id"]: row for row in stored_rows}
-    everyone_row = user_metrics_row_to_write(user_metrics_rows[0], stored_by_user.pop("", None), rows_changed)
+    everyone_row = aggregate_metrics_row_to_write(aggregate_metrics_rows[0], stored_by_user.pop("", None), rows_changed)
     changed_rows = [
         row
-        for row in user_metrics_rows[1:]
-        if user_metrics_row_to_write(row, stored_by_user.pop(row["user_id"], None), rows_changed=False) is not None
+        for row in aggregate_metrics_rows[1:]
+        if aggregate_metrics_row_to_write(row, stored_by_user.pop(row["user_id"], None), rows_changed=False) is not None
     ]
     return everyone_row, changed_rows, sorted(stored_by_user)
 
@@ -1811,7 +1811,7 @@ def add_metrics_month_totals(
     per_owner: Dict[Tuple[str, str, str, str, str], Dict[str, Any]], stored_rows: Sequence[Dict[str, Any]]
 ) -> None:
     """Add rows stored for the days of a month to the totals of each user, component, parent and root, which
-    build_user_metrics_month_rows builds the month rows of agno_user_metrics from."""
+    build_aggregate_metrics_month_rows builds the month rows of agno_aggregate_metrics from."""
     for row in stored_rows:
         bucket_key = (
             row["user_id"],
@@ -1824,10 +1824,10 @@ def add_metrics_month_totals(
         add_metrics_totals(bucket, row)
 
 
-def build_user_metrics_month_rows(
+def build_aggregate_metrics_month_rows(
     month_start: date, per_owner: Dict[Tuple[str, str, str, str, str], Dict[str, Any]]
 ) -> List[Dict[str, Any]]:
-    """Build the month rows of agno_user_metrics from the totals of its days.
+    """Build the month rows of agno_aggregate_metrics from the totals of its days.
 
     Args:
         month_start (date): The first day of the month.
@@ -1835,7 +1835,7 @@ def build_user_metrics_month_rows(
             component, parent and root, added up by add_metrics_month_totals.
 
     Returns:
-        List[Dict[str, Any]]: The rows, from build_user_metrics_rows.
+        List[Dict[str, Any]]: The rows, from build_aggregate_metrics_rows.
     """
     rows = [
         {
@@ -1850,7 +1850,9 @@ def build_user_metrics_month_rows(
             per_owner.items()
         )
     ]
-    return build_user_metrics_rows(rows, "monthly", month_start, metrics_day_completed(metrics_month_end(month_start)))
+    return build_aggregate_metrics_rows(
+        rows, "monthly", month_start, metrics_day_completed(metrics_month_end(month_start))
+    )
 
 
 def metrics_days_to_read(starting_date: date, ending_date: date, month_starts: Sequence[date]) -> List[date]:
@@ -2024,9 +2026,9 @@ def _metrics_token_count(row: Dict[str, Any], field: str) -> Any:
     return row[field]
 
 
-def build_metrics_from_user_metrics(rows: Sequence[Any]) -> List[Dict[str, Any]]:
+def build_metrics_from_aggregate_metrics(rows: Sequence[Any]) -> List[Dict[str, Any]]:
     """Build the rows get_metrics returns, one per day as agno_metrics holds them, from day rows of
-    agno_user_metrics.
+    agno_aggregate_metrics.
 
     Args:
         rows (Sequence[Any]): The everyone rows or user rows, as stored.
@@ -2044,7 +2046,7 @@ def build_metrics_from_user_metrics(rows: Sequence[Any]) -> List[Dict[str, Any]]
                 "date": row["date"],
                 "aggregation_period": "daily",
                 "user_id": user_id,
-                **{column: row[column] for column in USER_METRICS_COUNT_COLUMNS},
+                **{column: row[column] for column in AGGREGATE_METRICS_COUNT_COLUMNS},
                 "token_metrics": {field: _metrics_token_count(row, field) for field in [*METRICS_TOKEN_FIELDS, "cost"]},
                 "model_metrics": list_metrics_models(row["model_metrics"]),
                 "completed": metrics_day_completed(row["date"]),

@@ -11,16 +11,16 @@ from sqlalchemy import inspect, null, select, text
 from agno.db.base import SessionType
 from agno.db.postgres.postgres import PostgresDb
 from agno.db.postgres.schemas import (
+    AGGREGATE_METRICS_TABLE_SCHEMA,
     COMPONENT_METRICS_TABLE_SCHEMA,
     METRICS_REFRESHES_TABLE_SCHEMA,
-    USER_METRICS_TABLE_SCHEMA,
 )
-from agno.db.postgres.utils import build_component_metrics_runs_query, reopen_metrics_day, upsert_user_metrics_row
+from agno.db.postgres.utils import build_component_metrics_runs_query, reopen_metrics_day, upsert_aggregate_metrics_row
 from agno.db.utils import (
+    AGGREGATE_METRICS_COUNT_COLUMNS,
     METRICS_STOPPED_ERROR,
     METRICS_TOKEN_DETAILS_FIELDS,
     METRICS_TOKEN_FIELDS,
-    USER_METRICS_COUNT_COLUMNS,
     calculate_date_component_metrics,
     list_metrics_totals_models,
     merge_metrics_totals,
@@ -45,7 +45,7 @@ def cleanup_component_metrics_sessions_and_runs(postgres_db_real: PostgresDb):
         try:
             for table_type in [
                 "component_metrics",
-                "user_metrics",
+                "aggregate_metrics",
                 "metrics_refreshes",
                 "metrics",
                 "runs",
@@ -151,12 +151,12 @@ def _stored_rows(db: PostgresDb) -> Dict[tuple, Dict]:
         }
 
 
-def _stored_user_metrics_rows(db: PostgresDb) -> Dict[tuple, Dict]:
-    """Every day and month everyone row of agno_user_metrics, keyed by (aggregation_period, date).
+def _stored_aggregate_metrics_rows(db: PostgresDb) -> Dict[tuple, Dict]:
+    """Every day and month everyone row of agno_aggregate_metrics, keyed by (aggregation_period, date).
 
     The user rows are left out.
     """
-    table = db._get_table("user_metrics", create_table_if_not_found=True)
+    table = db._get_table("aggregate_metrics", create_table_if_not_found=True)
     with db.Session() as sess:
         return {
             (row.aggregation_period, row.date): dict(row._mapping)
@@ -164,8 +164,8 @@ def _stored_user_metrics_rows(db: PostgresDb) -> Dict[tuple, Dict]:
         }
 
 
-def _user_metrics_sessions_count(row: Dict) -> int:
-    """The sessions of every type a row of agno_user_metrics keeps."""
+def _aggregate_metrics_sessions_count(row: Dict) -> int:
+    """The sessions of every type a row of agno_aggregate_metrics keeps."""
     return row["agent_sessions_count"] + row["team_sessions_count"] + row["workflow_sessions_count"]
 
 
@@ -241,8 +241,8 @@ def _total_sessions_count(db: PostgresDb, starting_date: date, ending_date: date
 
 
 def _day_versions(db: PostgresDb, starting_date: date, ending_date: date) -> Dict[str, int]:
-    """The version of each day's everyone row of agno_user_metrics in the date range."""
-    table = db._get_table("user_metrics", create_table_if_not_found=True)
+    """The version of each day's everyone row of agno_aggregate_metrics in the date range."""
+    table = db._get_table("aggregate_metrics", create_table_if_not_found=True)
     with db.Session() as sess:
         rows = sess.execute(
             select(table.c.date, table.c.version).where(
@@ -424,23 +424,23 @@ PAST_DAY_ROW_KEYS = [
 def test_component_metrics_table_creation(postgres_db_real: PostgresDb):
     """Ensure the metrics tables are created with their columns, primary keys and indexes"""
     component_metrics_table = postgres_db_real._get_table("component_metrics", create_table_if_not_found=True)
-    user_metrics_table = postgres_db_real._get_table("user_metrics", create_table_if_not_found=True)
+    aggregate_metrics_table = postgres_db_real._get_table("aggregate_metrics", create_table_if_not_found=True)
     refreshes_table = postgres_db_real._get_table("metrics_refreshes", create_table_if_not_found=True)
 
     assert component_metrics_table.name == postgres_db_real.component_metrics_table_name
-    assert user_metrics_table.name == postgres_db_real.user_metrics_table_name
+    assert aggregate_metrics_table.name == postgres_db_real.aggregate_metrics_table_name
     assert refreshes_table.name == postgres_db_real.metrics_refreshes_table_name
-    assert component_metrics_table.schema == user_metrics_table.schema == postgres_db_real.db_schema
+    assert component_metrics_table.schema == aggregate_metrics_table.schema == postgres_db_real.db_schema
 
     assert [col.name for col in component_metrics_table.columns] == [
         column for column in COMPONENT_METRICS_TABLE_SCHEMA if not column.startswith("_")
     ]
-    assert {col.name for col in user_metrics_table.columns} == set(USER_METRICS_TABLE_SCHEMA)
+    assert {col.name for col in aggregate_metrics_table.columns} == set(AGGREGATE_METRICS_TABLE_SCHEMA)
     assert [col.name for col in refreshes_table.columns] == list(METRICS_REFRESHES_TABLE_SCHEMA)
     assert set(METRICS_TOKEN_FIELDS) - {*METRICS_TOKEN_DETAILS_FIELDS, "audio_total_tokens"} | {"token_details"} | set(
-        USER_METRICS_COUNT_COLUMNS
-    ) <= set(USER_METRICS_TABLE_SCHEMA)
-    assert "sessions_count" not in USER_METRICS_TABLE_SCHEMA
+        AGGREGATE_METRICS_COUNT_COLUMNS
+    ) <= set(AGGREGATE_METRICS_TABLE_SCHEMA)
+    assert "sessions_count" not in AGGREGATE_METRICS_TABLE_SCHEMA
 
     inspector = inspect(postgres_db_real.db_engine)
     assert inspector.get_pk_constraint(component_metrics_table.name, schema=component_metrics_table.schema)[
@@ -454,7 +454,7 @@ def test_component_metrics_table_creation(postgres_db_real: PostgresDb):
         "parent_component_id",
         "root_component_id",
     ]
-    assert inspector.get_pk_constraint(user_metrics_table.name, schema=user_metrics_table.schema)[
+    assert inspector.get_pk_constraint(aggregate_metrics_table.name, schema=aggregate_metrics_table.schema)[
         "constrained_columns"
     ] == [
         "aggregation_period",
@@ -485,7 +485,7 @@ def test_calculate_metrics_skips_a_rebuild_already_running(
     assert postgres_db_real._claim_metrics_refresh(refreshes_table, "second_process") is None
     assert postgres_db_real.calculate_metrics() is None
     assert _stored_rows(postgres_db_real) == {}
-    assert _stored_user_metrics_rows(postgres_db_real) == {}
+    assert _stored_aggregate_metrics_rows(postgres_db_real) == {}
 
     # The other process stopped and released it, so the same call calculates
     postgres_db_real._release_metrics_refresh(refreshes_table, "other_process", stopped=True)
@@ -617,7 +617,7 @@ def test_calculate_metrics_counts_runs_kept_in_the_legacy_runs_column(postgres_d
     assert (row["sessions_count"], row["runs_count"], row["total_tokens"]) == (1, 2, 50)
     assert (row["model_calls_count"], row["total_model_call_ms"]) == (2, 2000)
     # The later run is counted on its own day, a day with no session
-    assert _stored_user_metrics_rows(legacy_db)[("daily", _utc_date(4))]["agent_runs_count"] == 1
+    assert _stored_aggregate_metrics_rows(legacy_db)[("daily", _utc_date(4))]["agent_runs_count"] == 1
 
 
 def test_calculate_metrics_counts_a_legacy_member_run_kept_as_its_own_run_once(
@@ -651,9 +651,9 @@ def test_calculate_metrics_counts_a_legacy_member_run_kept_as_its_own_run_once(
     legacy_db = _store_legacy_runs(postgres_db_real, legacy_runs)
     legacy_db.calculate_metrics()
 
-    user_metrics_rows = _stored_user_metrics_rows(legacy_db)
-    assert user_metrics_rows[("daily", _utc_date(6))]["total_tokens"] == 100
-    assert user_metrics_rows[("daily", _utc_date(4))]["total_tokens"] == 10
+    aggregate_metrics_rows = _stored_aggregate_metrics_rows(legacy_db)
+    assert aggregate_metrics_rows[("daily", _utc_date(6))]["total_tokens"] == 100
+    assert aggregate_metrics_rows[("daily", _utc_date(4))]["total_tokens"] == 10
 
 
 def test_calculate_metrics(postgres_db_real: PostgresDb, sample_sessions_for_component_metrics):
@@ -879,10 +879,10 @@ def test_get_component_metrics_by_date(postgres_db_real: PostgresDb, sample_sess
     assert metrics == [{"date": past_day, "sessions_count": 4, "root_runs_count": 5}]
 
     # The latest updated_at of the window is the one returned
-    user_metrics_rows = _stored_user_metrics_rows(postgres_db_real)
+    aggregate_metrics_rows = _stored_aggregate_metrics_rows(postgres_db_real)
     assert latest_updated_at == max(
         row["updated_at"]
-        for (period, row_date), row in user_metrics_rows.items()
+        for (period, row_date), row in aggregate_metrics_rows.items()
         if period == "daily" and past_day <= row_date <= today
     )
 
@@ -989,11 +989,11 @@ def sample_multi_month_sessions_for_component_metrics() -> List[AgentSession]:
     ]
 
 
-def test_get_component_metrics_reads_one_owner_from_their_own_user_metrics_row(
+def test_get_component_metrics_reads_one_owner_from_their_own_aggregate_metrics_row(
     postgres_db_real: PostgresDb, sample_sessions_for_component_metrics
 ):
     """Ensure a read equals the sum of the rows, with every owner read from the everyone rows, one owner from their own
-    user metrics row, and the runs with no user from their component rows"""
+    aggregate metrics row, and the runs with no user from their component rows"""
     for session in sample_sessions_for_component_metrics:
         _persist(postgres_db_real, session)
     postgres_db_real.calculate_metrics()
@@ -1015,11 +1015,11 @@ def test_get_component_metrics_reads_one_owner_from_their_own_user_metrics_row(
     ]
 
     # Change the everyone row: only the read of every owner moves
-    user_metrics_table = postgres_db_real._get_table("user_metrics", create_table_if_not_found=True)
+    aggregate_metrics_table = postgres_db_real._get_table("aggregate_metrics", create_table_if_not_found=True)
     with postgres_db_real.Session() as sess, sess.begin():
         sess.execute(
-            user_metrics_table.update()
-            .where(user_metrics_table.c.date == past_day, user_metrics_table.c.user_id == "")
+            aggregate_metrics_table.update()
+            .where(aggregate_metrics_table.c.date == past_day, aggregate_metrics_table.c.user_id == "")
             .values(agent_sessions_count=1000, team_sessions_count=0, workflow_sessions_count=0)
         )
     assert _sessions_counts(postgres_db_real, past_day, None) == [1000]
@@ -1028,7 +1028,7 @@ def test_get_component_metrics_reads_one_owner_from_their_own_user_metrics_row(
     assert _sessions_counts(postgres_db_real, past_day, "") == [1]
     assert _sessions_counts(postgres_db_real, past_day, "carol") == []
 
-    # Change every component row: every owner and one owner are still read from the user metrics rows
+    # Change every component row: every owner and one owner are still read from the aggregate metrics rows
     table = postgres_db_real._get_table("component_metrics", create_table_if_not_found=True)
     with postgres_db_real.Session() as sess, sess.begin():
         sess.execute(table.update().values(sessions_count=50))
@@ -1047,10 +1047,10 @@ def test_get_component_metrics_reads_one_owner_from_their_own_user_metrics_row(
     ]
 
 
-def test_calculate_metrics_writes_a_month_user_metrics_row_for_a_completed_month(
+def test_calculate_metrics_writes_a_month_aggregate_metrics_row_for_a_completed_month(
     postgres_db_real: PostgresDb, sample_multi_month_sessions_for_component_metrics
 ):
-    """Ensure every month of a calculated day gets a user metrics row, completed once its last day is"""
+    """Ensure every month of a calculated day gets an aggregate metrics row, completed once its last day is"""
     for session in sample_multi_month_sessions_for_component_metrics:
         _persist(postgres_db_real, session)
     postgres_db_real.calculate_metrics()
@@ -1058,18 +1058,18 @@ def test_calculate_metrics_writes_a_month_user_metrics_row_for_a_completed_month
     first_month = _month_start(3)
     second_month = _month_start(2)
     this_month = _month_start(0)
-    # The month of yesterday gets its user metrics row even without traffic
-    month_user_metrics_rows = {
-        key[1]: row for key, row in _stored_user_metrics_rows(postgres_db_real).items() if key[0] == "monthly"
+    # The month of yesterday gets its aggregate metrics row even without traffic
+    month_aggregate_metrics_rows = {
+        key[1]: row for key, row in _stored_aggregate_metrics_rows(postgres_db_real).items() if key[0] == "monthly"
     }
-    assert set(month_user_metrics_rows) == {first_month, second_month, _utc_date(1).replace(day=1), this_month}
-    assert {month_start for month_start, row in month_user_metrics_rows.items() if row["completed"]} == {
+    assert set(month_aggregate_metrics_rows) == {first_month, second_month, _utc_date(1).replace(day=1), this_month}
+    assert {month_start for month_start, row in month_aggregate_metrics_rows.items() if row["completed"]} == {
         first_month,
         second_month,
     }
 
-    month_row = month_user_metrics_rows[first_month]
-    assert _user_metrics_sessions_count(month_row) == 4
+    month_row = month_aggregate_metrics_rows[first_month]
+    assert _aggregate_metrics_sessions_count(month_row) == 4
     assert month_row["root_runs_count"] == 4
     assert (month_row["input_tokens"], month_row["output_tokens"], month_row["total_tokens"]) == (165, 20, 185)
     assert month_row["duration_buckets"] == {"le_2000": 4}
@@ -1087,25 +1087,25 @@ def test_calculate_metrics_writes_a_month_user_metrics_row_for_a_completed_month
         starting_date=first_month, ending_date=second_month - timedelta(days=1), user_id=""
     )
     assert unowned_totals["sessions_count"] == 1
-    assert _user_metrics_sessions_count(month_user_metrics_rows[second_month]) == 1
+    assert _aggregate_metrics_sessions_count(month_aggregate_metrics_rows[second_month]) == 1
 
 
 def test_calculate_metrics_rebuilds_the_month_of_a_reopened_day(
     postgres_db_real: PostgresDb, sample_multi_month_sessions_for_component_metrics
 ):
-    """Ensure a month without a month user metrics row gets it back once a write reopens one of its days"""
+    """Ensure a month without a month aggregate metrics row gets it back once a write reopens one of its days"""
     for session in sample_multi_month_sessions_for_component_metrics:
         _persist(postgres_db_real, session)
     postgres_db_real.calculate_metrics()
 
     first_month = _month_start(3)
-    user_metrics_table = postgres_db_real._get_table("user_metrics", create_table_if_not_found=True)
+    aggregate_metrics_table = postgres_db_real._get_table("aggregate_metrics", create_table_if_not_found=True)
 
-    # The first month loses its month user metrics rows
+    # The first month loses its month aggregate metrics rows
     with postgres_db_real.Session() as sess, sess.begin():
         sess.execute(
-            user_metrics_table.delete().where(
-                user_metrics_table.c.aggregation_period == "monthly", user_metrics_table.c.date == first_month
+            aggregate_metrics_table.delete().where(
+                aggregate_metrics_table.c.aggregation_period == "monthly", aggregate_metrics_table.c.date == first_month
             )
         )
 
@@ -1114,7 +1114,10 @@ def test_calculate_metrics_rebuilds_the_month_of_a_reopened_day(
     result = postgres_db_real.calculate_metrics()
     assert result is not None
     assert (first_month + timedelta(days=14), "carol") in {(row["date"], row["user_id"]) for row in result}
-    assert _user_metrics_sessions_count(_stored_user_metrics_rows(postgres_db_real)[("monthly", first_month)]) == 5
+    assert (
+        _aggregate_metrics_sessions_count(_stored_aggregate_metrics_rows(postgres_db_real)[("monthly", first_month)])
+        == 5
+    )
 
 
 def test_get_metrics_totals(postgres_db_real: PostgresDb, sample_multi_month_sessions_for_component_metrics):
@@ -1158,30 +1161,30 @@ def test_get_metrics_totals(postgres_db_real: PostgresDb, sample_multi_month_ses
 def test_get_metrics_totals_reads_a_whole_month_from_its_month_rows(
     postgres_db_real: PostgresDb, sample_multi_month_sessions_for_component_metrics
 ):
-    """Ensure a month inside the date range is read from its month rows, each owner from their own user metrics row"""
+    """Ensure a month inside the date range is read from its month rows, each owner from their aggregate metrics row"""
     for session in sample_multi_month_sessions_for_component_metrics:
         _persist(postgres_db_real, session)
     postgres_db_real.calculate_metrics()
 
     first_month = _month_start(3)
     second_month = _month_start(2)
-    user_metrics_table = postgres_db_real._get_table("user_metrics", create_table_if_not_found=True)
+    aggregate_metrics_table = postgres_db_real._get_table("aggregate_metrics", create_table_if_not_found=True)
     with postgres_db_real.Session() as sess, sess.begin():
         sess.execute(
-            user_metrics_table.update()
+            aggregate_metrics_table.update()
             .where(
-                user_metrics_table.c.aggregation_period == "monthly",
-                user_metrics_table.c.date == first_month,
-                user_metrics_table.c.user_id == "",
+                aggregate_metrics_table.c.aggregation_period == "monthly",
+                aggregate_metrics_table.c.date == first_month,
+                aggregate_metrics_table.c.user_id == "",
             )
             .values(agent_sessions_count=1000, team_sessions_count=0, workflow_sessions_count=0)
         )
         sess.execute(
-            user_metrics_table.update()
+            aggregate_metrics_table.update()
             .where(
-                user_metrics_table.c.aggregation_period == "monthly",
-                user_metrics_table.c.date == first_month,
-                user_metrics_table.c.user_id == "bob",
+                aggregate_metrics_table.c.aggregation_period == "monthly",
+                aggregate_metrics_table.c.date == first_month,
+                aggregate_metrics_table.c.user_id == "bob",
             )
             .values(agent_sessions_count=500, team_sessions_count=0, workflow_sessions_count=0)
         )
@@ -1198,7 +1201,7 @@ def test_get_metrics_totals_reads_a_whole_month_from_its_month_rows(
     assert _total_sessions_count(postgres_db_real, first_month, second_month - timedelta(days=1), "alice") == 2
     assert _total_sessions_count(postgres_db_real, first_month, second_month - timedelta(days=1), "bob") == 500
     assert _total_sessions_count(postgres_db_real, first_month, second_month - timedelta(days=1), "") == 1
-    # The read of each day never uses a month row, and a day without traffic has no user metrics row to read
+    # The read of each day never uses a month row, and a day without traffic has no aggregate metrics row to read
     metrics, _ = postgres_db_real.get_component_metrics(
         starting_date=first_month, ending_date=second_month - timedelta(days=1), fields=["sessions_count"]
     )
@@ -1239,7 +1242,7 @@ def test_metrics_versions_move_only_for_the_day_that_changed(
 
     # Mark every stored row, so a rewrite shows as a fresh updated_at
     with postgres_db_real.Session() as sess, sess.begin():
-        for table_type in ("component_metrics", "user_metrics"):
+        for table_type in ("component_metrics", "aggregate_metrics"):
             table = postgres_db_real._get_table(table_type, create_table_if_not_found=True)
             sess.execute(table.update().values(updated_at=1))
 
@@ -1250,20 +1253,20 @@ def test_metrics_versions_move_only_for_the_day_that_changed(
         **versions,
         today_key: versions[today_key] + 1,
     }
-    # Only the user metrics rows inside the date range are returned
+    # Only the aggregate metrics rows inside the date range are returned
     assert _day_versions(postgres_db_real, _utc_date(1), _utc_date(1)) == {f"daily {_utc_date(1).isoformat()}": 1}
 
-    # Today's user metrics row is rewritten, so a read of the day reports the new time
+    # Today's aggregate metrics row is rewritten, so a read of the day reports the new time
     today = _utc_date(0)
     metrics, read_updated_at = postgres_db_real.get_component_metrics(
         starting_date=today, ending_date=today, fields=["sessions_count", "root_runs_count"]
     )
     assert metrics == [{"date": today, "sessions_count": 1, "root_runs_count": 1}]
     assert read_updated_at != 1
-    user_metrics_rows = _stored_user_metrics_rows(postgres_db_real)
-    assert read_updated_at == user_metrics_rows[("daily", today)]["updated_at"]
+    aggregate_metrics_rows = _stored_aggregate_metrics_rows(postgres_db_real)
+    assert read_updated_at == aggregate_metrics_rows[("daily", today)]["updated_at"]
     assert all(
-        row["updated_at"] == 1 for key, row in user_metrics_rows.items() if key[0] == "daily" and key[1] != today
+        row["updated_at"] == 1 for key, row in aggregate_metrics_rows.items() if key[0] == "daily" and key[1] != today
     )
 
 
@@ -1274,7 +1277,7 @@ def test_calculate_metrics_counts_a_late_run_of_yesterday(postgres_db_real: Post
     versions = _day_versions(postgres_db_real, _utc_date(1), _utc_date(0))
     yesterday_key = f"daily {_utc_date(1).isoformat()}"
     assert versions[yesterday_key] == 1
-    assert _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(1))]["root_runs_count"] == 0
+    assert _stored_aggregate_metrics_rows(postgres_db_real)[("daily", _utc_date(1))]["root_runs_count"] == 0
 
     # Started at 23:59 yesterday, stored now
     yesterday = _utc_date(1)
@@ -1284,7 +1287,7 @@ def test_calculate_metrics_counts_a_late_run_of_yesterday(postgres_db_real: Post
     _persist(postgres_db_real, _session_at(late_created_at, "bob_late", "bob"))
     assert postgres_db_real.calculate_metrics() is not None
 
-    assert _stored_user_metrics_rows(postgres_db_real)[("daily", yesterday)]["root_runs_count"] == 1
+    assert _stored_aggregate_metrics_rows(postgres_db_real)[("daily", yesterday)]["root_runs_count"] == 1
     assert (yesterday, "bob", "agent", "agent-1") in _stored_rows(postgres_db_real)
     assert _day_versions(postgres_db_real, _utc_date(1), _utc_date(0)) == {
         **versions,
@@ -1299,9 +1302,9 @@ def test_calculate_metrics_never_rebuilds_an_empty_or_completed_day(postgres_db_
     _persist(postgres_db_real, _session_on(_utc_date(0), "alice_today", "alice"))
     postgres_db_real.calculate_metrics()
 
-    user_metrics_rows = _stored_user_metrics_rows(postgres_db_real)
-    assert ("daily", _utc_date(2)) not in user_metrics_rows
-    assert user_metrics_rows[("daily", _utc_date(3))]["completed"] is True
+    aggregate_metrics_rows = _stored_aggregate_metrics_rows(postgres_db_real)
+    assert ("daily", _utc_date(2)) not in aggregate_metrics_rows
+    assert aggregate_metrics_rows[("daily", _utc_date(3))]["completed"] is True
 
     calculated_days = []
 
@@ -1366,7 +1369,7 @@ def test_calculate_metrics_counts_a_remote_member_run_once(postgres_db_real: Pos
     stored_rows = _stored_rows(postgres_db_real)
     assert stored_rows[(past_day, "bob", "team", "team-1")]["input_tokens"] == 0
     assert stored_rows[(past_day, "bob", "agent", "remote-agent")]["input_tokens"] == 10
-    assert _stored_user_metrics_rows(postgres_db_real)[("daily", past_day)]["input_tokens"] == 10
+    assert _stored_aggregate_metrics_rows(postgres_db_real)[("daily", past_day)]["input_tokens"] == 10
 
 
 def test_calculate_metrics_names_a_parent_run_of_the_day_before(postgres_db_real: PostgresDb):
@@ -1423,7 +1426,7 @@ def test_calculate_metrics_stores_each_day_as_it_is_calculated(postgres_db_real:
             postgres_db_real.calculate_metrics()
     assert {row_id[0] for row_id in _stored_rows(postgres_db_real)} == {_utc_date(3)}
     # The stored day reopened its month for the next calculation
-    assert set(_stored_user_metrics_rows(postgres_db_real)) == {
+    assert set(_stored_aggregate_metrics_rows(postgres_db_real)) == {
         ("daily", _utc_date(3)),
         ("monthly", _utc_date(3).replace(day=1)),
     }
@@ -1535,7 +1538,7 @@ def test_calculate_metrics_rebuilds_a_reopened_day(postgres_db_real: PostgresDb)
     _persist(postgres_db_real, session)
     postgres_db_real.calculate_metrics()
     day_key = ("daily", _utc_date(5))
-    day_row = _stored_user_metrics_rows(postgres_db_real)[day_key]
+    day_row = _stored_aggregate_metrics_rows(postgres_db_real)[day_key]
     assert day_row["completed"] is True
 
     postgres_db_real.upsert_run(
@@ -1551,11 +1554,11 @@ def test_calculate_metrics_rebuilds_a_reopened_day(postgres_db_real: PostgresDb)
         user_id=session.user_id,
         run_index=1,
     )
-    reopened_row = _stored_user_metrics_rows(postgres_db_real)[day_key]
+    reopened_row = _stored_aggregate_metrics_rows(postgres_db_real)[day_key]
     assert (reopened_row["completed"], reopened_row["version"]) == (False, day_row["version"] + 1)
 
     postgres_db_real.calculate_metrics()
-    rebuilt_row = _stored_user_metrics_rows(postgres_db_real)[day_key]
+    rebuilt_row = _stored_aggregate_metrics_rows(postgres_db_real)[day_key]
     assert (rebuilt_row["completed"], rebuilt_row["root_runs_count"]) == (True, 2)
 
 
@@ -1563,22 +1566,22 @@ def test_calculate_metrics_keeps_a_day_reopened_during_its_rebuild_open(postgres
     """Ensure a day reopened between the read of its version and its everyone row stays open for the next calculation"""
     _persist(postgres_db_real, _session_on(_utc_date(5), "alice_5_days_ago", "alice"))
 
-    def _reopen_before_the_upsert(session, table, user_metrics_row, read_version):
-        if (user_metrics_row["aggregation_period"], user_metrics_row["date"]) == ("daily", _utc_date(5)):
+    def _reopen_before_the_upsert(session, table, aggregate_metrics_row, read_version):
+        if (aggregate_metrics_row["aggregation_period"], aggregate_metrics_row["date"]) == ("daily", _utc_date(5)):
             # Another connection, as a write committed while the day is rebuilt
             with postgres_db_real.db_engine.connect() as other, other.begin():
-                reopen_metrics_day(session=other, table=table, day=user_metrics_row["date"])
-        upsert_user_metrics_row(
-            session=session, table=table, user_metrics_row=user_metrics_row, read_version=read_version
+                reopen_metrics_day(session=other, table=table, day=aggregate_metrics_row["date"])
+        upsert_aggregate_metrics_row(
+            session=session, table=table, aggregate_metrics_row=aggregate_metrics_row, read_version=read_version
         )
 
     with monkeypatch.context() as patch:
-        patch.setattr("agno.db.postgres.postgres.upsert_user_metrics_row", _reopen_before_the_upsert)
+        patch.setattr("agno.db.postgres.postgres.upsert_aggregate_metrics_row", _reopen_before_the_upsert)
         postgres_db_real.calculate_metrics()
-    assert _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(5))]["completed"] is False
+    assert _stored_aggregate_metrics_rows(postgres_db_real)[("daily", _utc_date(5))]["completed"] is False
 
     postgres_db_real.calculate_metrics()
-    assert _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(5))]["completed"] is True
+    assert _stored_aggregate_metrics_rows(postgres_db_real)[("daily", _utc_date(5))]["completed"] is True
 
 
 def test_get_metrics_reads_the_metrics_table_until_the_first_calculation_finished(
@@ -1597,7 +1600,7 @@ def test_get_metrics_reads_the_metrics_table_until_the_first_calculation_finishe
                     "date": _utc_date(2),
                     "aggregation_period": "daily",
                     "user_id": "alice",
-                    **{column: 0 for column in USER_METRICS_COUNT_COLUMNS},
+                    **{column: 0 for column in AGGREGATE_METRICS_COUNT_COLUMNS},
                     "agent_sessions_count": 7,
                     "token_metrics": {},
                     "model_metrics": [],
@@ -1622,19 +1625,19 @@ def test_get_metrics_reads_the_metrics_table_until_the_first_calculation_finishe
     ]
 
 
-def test_upsert_session_without_a_user_metrics_table(postgres_db_real: PostgresDb):
-    """Ensure a session and its run of a past day are saved before any user metrics table exists"""
+def test_upsert_session_without_a_aggregate_metrics_table(postgres_db_real: PostgresDb):
+    """Ensure a session and its run of a past day are saved before any aggregate metrics table exists"""
     db = PostgresDb(
         db_engine=postgres_db_real.db_engine,
         db_schema="test_schema",
         session_table="test_sessions",
-        user_metrics_table="test_unbuilt_user_metrics",
+        aggregate_metrics_table="test_unbuilt_aggregate_metrics",
     )
     _persist(db, _session_on(_utc_date(5), "alice_5_days_ago", "alice"))
 
     assert db.get_session("alice_5_days_ago") is not None
     assert db.get_run("alice_5_days_ago_run") is not None
-    assert db.table_exists("test_unbuilt_user_metrics") is False
+    assert db.table_exists("test_unbuilt_aggregate_metrics") is False
 
 
 def test_calculate_metrics_keeps_an_everyone_row_and_a_row_per_user(
@@ -1649,15 +1652,15 @@ def test_calculate_metrics_keeps_an_everyone_row_and_a_row_per_user(
     past_day = _utc_date(2)
     yesterday = _utc_date(1)
     today = _utc_date(0)
-    user_metrics_rows = _stored_user_metrics_rows(postgres_db_real)
-    assert {key for key in user_metrics_rows if key[0] == "daily"} == {
+    aggregate_metrics_rows = _stored_aggregate_metrics_rows(postgres_db_real)
+    assert {key for key in aggregate_metrics_rows if key[0] == "daily"} == {
         ("daily", past_day),
         ("daily", yesterday),
         ("daily", today),
     }
 
-    day_row = user_metrics_rows[("daily", past_day)]
-    assert _user_metrics_sessions_count(day_row) == 4
+    day_row = aggregate_metrics_rows[("daily", past_day)]
+    assert _aggregate_metrics_sessions_count(day_row) == 4
     assert day_row["root_runs_count"] == 5
     assert day_row["status_metrics"] == {COMPLETED: 5, ERROR: 1}
     assert (day_row["input_tokens"], day_row["output_tokens"], day_row["total_tokens"]) == (385, 185, 570)
@@ -1669,9 +1672,9 @@ def test_calculate_metrics_keeps_an_everyone_row_and_a_row_per_user(
     assert day_row["version"] == 1
 
     # Yesterday has no traffic and is still open; today is open too
-    yesterday_row = user_metrics_rows[("daily", yesterday)]
+    yesterday_row = aggregate_metrics_rows[("daily", yesterday)]
     assert (
-        _user_metrics_sessions_count(yesterday_row),
+        _aggregate_metrics_sessions_count(yesterday_row),
         yesterday_row["root_runs_count"],
         yesterday_row["max_duration_ms"],
     ) == (
@@ -1680,16 +1683,16 @@ def test_calculate_metrics_keeps_an_everyone_row_and_a_row_per_user(
         None,
     )
     assert yesterday_row["completed"] is False
-    assert _user_metrics_sessions_count(user_metrics_rows[("daily", today)]) == 1
-    assert user_metrics_rows[("daily", today)]["completed"] is False
+    assert _aggregate_metrics_sessions_count(aggregate_metrics_rows[("daily", today)]) == 1
+    assert aggregate_metrics_rows[("daily", today)]["completed"] is False
 
-    user_metrics_table = postgres_db_real._get_table("user_metrics")
+    aggregate_metrics_table = postgres_db_real._get_table("aggregate_metrics")
     with postgres_db_real.Session() as sess:
         rows = {
             row.user_id: row
             for row in sess.execute(
-                select(user_metrics_table).where(
-                    user_metrics_table.c.aggregation_period == "daily", user_metrics_table.c.date == past_day
+                select(aggregate_metrics_table).where(
+                    aggregate_metrics_table.c.aggregation_period == "daily", aggregate_metrics_table.c.date == past_day
                 )
             ).fetchall()
         }
@@ -1718,12 +1721,12 @@ def test_session_save_reopens_the_day_the_session_is_stored_on(postgres_db_real:
     session = _session_on(_utc_date(5), "moved_session", "alice")
     _persist(postgres_db_real, session)
     postgres_db_real.calculate_metrics()
-    assert _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(5))]["completed"] is True
+    assert _stored_aggregate_metrics_rows(postgres_db_real)[("daily", _utc_date(5))]["completed"] is True
 
     moved = AgentSession(session_id="moved_session", agent_id="agent-2", user_id="alice", created_at=int(time.time()))
     postgres_db_real.upsert_session(moved)
 
-    assert _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(5))]["completed"] is False
+    assert _stored_aggregate_metrics_rows(postgres_db_real)[("daily", _utc_date(5))]["completed"] is False
 
 
 def test_calculate_metrics_names_the_run_of_the_tool_call_as_parent(postgres_db_real: PostgresDb):
@@ -1798,18 +1801,18 @@ def test_delete_session_keeps_its_closed_day_closed(postgres_db_real: PostgresDb
     """Ensure a deleted session's usage stays on its closed day: the delete reopens nothing"""
     _persist(postgres_db_real, _session_on(_utc_date(3), "alice_session", "alice"))
     postgres_db_real.calculate_metrics()
-    day_row = _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]
+    day_row = _stored_aggregate_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]
 
     assert postgres_db_real.delete_session("alice_session") is True
 
-    assert _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(3))] == day_row
+    assert _stored_aggregate_metrics_rows(postgres_db_real)[("daily", _utc_date(3))] == day_row
 
 
 def test_calculate_date_metrics_writes_nothing_after_losing_the_lock(postgres_db_real: PostgresDb):
     """Ensure a calculation whose lock went stale writes nothing once another process took the refresh over"""
     _persist(postgres_db_real, _session_on(_utc_date(3), "alice_session", "alice"))
     table = postgres_db_real._get_table("component_metrics", create_table_if_not_found=True)
-    user_metrics_table = postgres_db_real._get_table("user_metrics", create_table_if_not_found=True)
+    aggregate_metrics_table = postgres_db_real._get_table("aggregate_metrics", create_table_if_not_found=True)
     refreshes_table = postgres_db_real._get_table("metrics_refreshes", create_table_if_not_found=True)
     assert postgres_db_real._claim_metrics_refresh(refreshes_table, "paused") is not None
 
@@ -1820,7 +1823,7 @@ def test_calculate_date_metrics_writes_nothing_after_losing_the_lock(postgres_db
 
     calculated = postgres_db_real._calculate_date_metrics(
         table,
-        user_metrics_table,
+        aggregate_metrics_table,
         postgres_db_real._get_table("sessions"),
         postgres_db_real._get_table("runs"),
         _utc_date(3),
@@ -1831,7 +1834,7 @@ def test_calculate_date_metrics_writes_nothing_after_losing_the_lock(postgres_db
     )
     assert calculated is False
     assert _stored_rows(postgres_db_real) == {}
-    assert _stored_user_metrics_rows(postgres_db_real) == {}
+    assert _stored_aggregate_metrics_rows(postgres_db_real) == {}
 
 
 def test_calculate_month_metrics_writes_nothing_after_losing_the_lock(
@@ -1844,12 +1847,12 @@ def test_calculate_month_metrics_writes_nothing_after_losing_the_lock(
 
     first_month = _month_start(3)
     table = postgres_db_real._get_table("component_metrics", create_table_if_not_found=True)
-    user_metrics_table = postgres_db_real._get_table("user_metrics", create_table_if_not_found=True)
+    aggregate_metrics_table = postgres_db_real._get_table("aggregate_metrics", create_table_if_not_found=True)
     refreshes_table = postgres_db_real._get_table("metrics_refreshes", create_table_if_not_found=True)
     with postgres_db_real.Session() as sess, sess.begin():
         sess.execute(
-            user_metrics_table.delete().where(
-                user_metrics_table.c.aggregation_period == "monthly", user_metrics_table.c.date == first_month
+            aggregate_metrics_table.delete().where(
+                aggregate_metrics_table.c.aggregation_period == "monthly", aggregate_metrics_table.c.date == first_month
             )
         )
     assert postgres_db_real._claim_metrics_refresh(refreshes_table, "paused") is not None
@@ -1860,14 +1863,14 @@ def test_calculate_month_metrics_writes_nothing_after_losing_the_lock(
     assert postgres_db_real._claim_metrics_refresh(refreshes_table, "taker") is not None
 
     calculated = postgres_db_real._calculate_month_metrics(
-        table, user_metrics_table, first_month, refreshes_table, "paused"
+        table, aggregate_metrics_table, first_month, refreshes_table, "paused"
     )
     assert calculated is False
-    assert ("monthly", first_month) not in _stored_user_metrics_rows(postgres_db_real)
+    assert ("monthly", first_month) not in _stored_aggregate_metrics_rows(postgres_db_real)
 
 
 def test_upsert_session_of_a_closed_day_from_a_fresh_process_is_stored(postgres_db_real: PostgresDb):
-    """Ensure saves that reopen a closed day are stored by a process that never looked the user metrics table up"""
+    """Ensure saves that reopen a closed day are stored by a process that never looked the aggregate metrics table up"""
     _persist(postgres_db_real, _session_on(_utc_date(5), "alice_session", "alice"))
     postgres_db_real.calculate_metrics()
     fresh_db = PostgresDb(db_engine=postgres_db_real.db_engine, db_schema="test_schema", session_table="test_sessions")
@@ -1878,9 +1881,9 @@ def test_upsert_session_of_a_closed_day_from_a_fresh_process_is_stored(postgres_
 
     assert fresh_db.get_run(bob_session.runs[0].run_id) is not None
     assert len(fresh_db.get_sessions(session_type=SessionType.AGENT)) == 5
-    assert _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(5))]["completed"] is False
+    assert _stored_aggregate_metrics_rows(postgres_db_real)[("daily", _utc_date(5))]["completed"] is False
     # Looked up once, then read from the table cache by every later save
-    assert fresh_db._get_cached_table("user_metrics", fresh_db.user_metrics_table_name) is not None
+    assert fresh_db._get_cached_table("aggregate_metrics", fresh_db.aggregate_metrics_table_name) is not None
 
 
 def test_cancel_pending_run_reopens_its_day(postgres_db_real: PostgresDb):
@@ -1893,7 +1896,7 @@ def test_cancel_pending_run_reopens_its_day(postgres_db_real: PostgresDb):
     assert postgres_db_real.cancel_pending_run(
         "alice_session_run", session_id="alice_session", reason="stopped", user_id="alice"
     )
-    assert _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["completed"] is False
+    assert _stored_aggregate_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["completed"] is False
 
 
 def test_reassign_session_owner_reopens_its_day(postgres_db_real: PostgresDb):
@@ -1903,7 +1906,7 @@ def test_reassign_session_owner_reopens_its_day(postgres_db_real: PostgresDb):
     reassigned_at = int(time.time())
 
     assert postgres_db_real.reassign_session_owner("alice_session", previous_user_id="alice", user_id="bob")
-    assert _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["completed"] is False
+    assert _stored_aggregate_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["completed"] is False
     assert postgres_db_real.get_session("alice_session", SessionType.AGENT).updated_at >= reassigned_at
 
 
@@ -1916,11 +1919,11 @@ def test_session_compaction_change_reopens_its_day(postgres_db_real: PostgresDb)
     postgres_db_real.calculate_metrics()
 
     postgres_db_real.upsert_session(session)
-    assert _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["completed"] is True
+    assert _stored_aggregate_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["completed"] is True
 
     session.session_data = {"compaction_metrics": {"total_tokens": 1000}}
     postgres_db_real.upsert_session(session)
-    assert _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["completed"] is False
+    assert _stored_aggregate_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["completed"] is False
 
 
 def test_insert_session_if_absent_reopens_its_day(postgres_db_real: PostgresDb):
@@ -1929,7 +1932,7 @@ def test_insert_session_if_absent_reopens_its_day(postgres_db_real: PostgresDb):
     postgres_db_real.calculate_metrics()
 
     assert postgres_db_real.insert_session_if_absent(_session_on(_utc_date(3), "bob_session", "bob"))
-    assert _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["completed"] is False
+    assert _stored_aggregate_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["completed"] is False
 
 
 def test_append_run_to_session_if_absent_reopens_its_day(postgres_db_real: PostgresDb):
@@ -1941,7 +1944,7 @@ def test_append_run_to_session_if_absent_reopens_its_day(postgres_db_real: Postg
     run = session.runs[0].to_dict()
     run["run_id"] = "alice_session_second_run"
     assert postgres_db_real.append_run_to_session_if_absent("alice_session", run, user_id="alice")
-    assert _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["completed"] is False
+    assert _stored_aggregate_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["completed"] is False
 
 
 def test_upsert_sessions_past_query_parameter_limit(postgres_db_real: PostgresDb):
@@ -1954,37 +1957,37 @@ def test_upsert_sessions_past_query_parameter_limit(postgres_db_real: PostgresDb
 
 def test_upsert_session_reopens_a_day_a_write_could_not_reopen(postgres_db_real: PostgresDb):
     """Ensure a save of a closed day never fails when the day cannot be reopened, and the next write reopens the day
-    once its user metrics row can be written again"""
+    once its aggregate metrics row can be written again"""
     _persist(postgres_db_real, _session_on(_utc_date(3), "alice_session", "alice"))
     postgres_db_real.calculate_metrics()
-    table_name = postgres_db_real.user_metrics_table_name
+    table_name = postgres_db_real.aggregate_metrics_table_name
     with postgres_db_real.Session() as sess, sess.begin():
         sess.execute(
             text(
-                "CREATE FUNCTION test_schema.refuse_user_metrics_writes() RETURNS trigger AS $$ "
+                "CREATE FUNCTION test_schema.refuse_aggregate_metrics_writes() RETURNS trigger AS $$ "
                 "BEGIN RAISE EXCEPTION 'refused'; END $$ LANGUAGE plpgsql"
             )
         )
         sess.execute(
             text(
-                f"CREATE TRIGGER refuse_user_metrics_writes BEFORE INSERT OR UPDATE ON test_schema.{table_name} "
-                "FOR EACH ROW EXECUTE FUNCTION test_schema.refuse_user_metrics_writes()"
+                f"CREATE TRIGGER refuse_aggregate_metrics_writes BEFORE INSERT OR UPDATE ON test_schema.{table_name} "
+                "FOR EACH ROW EXECUTE FUNCTION test_schema.refuse_aggregate_metrics_writes()"
             )
         )
     try:
         bob_session = _session_on(_utc_date(3), "bob_session", "bob")
         _persist(postgres_db_real, bob_session)
         assert postgres_db_real.get_run(bob_session.runs[0].run_id) is not None
-        assert _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["completed"] is True
+        assert _stored_aggregate_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["completed"] is True
     finally:
         with postgres_db_real.Session() as sess, sess.begin():
-            sess.execute(text(f"DROP TRIGGER IF EXISTS refuse_user_metrics_writes ON test_schema.{table_name}"))
-            sess.execute(text("DROP FUNCTION IF EXISTS test_schema.refuse_user_metrics_writes()"))
+            sess.execute(text(f"DROP TRIGGER IF EXISTS refuse_aggregate_metrics_writes ON test_schema.{table_name}"))
+            sess.execute(text("DROP FUNCTION IF EXISTS test_schema.refuse_aggregate_metrics_writes()"))
 
     # A write of today, which reopens no day of its own
     _persist(postgres_db_real, _session_on(_utc_date(0), "carol_session", "carol"))
 
-    assert _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["completed"] is False
+    assert _stored_aggregate_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["completed"] is False
 
 
 def test_calculate_metrics_dates_releases_the_lock_when_stopped(postgres_db_real: PostgresDb):
@@ -2006,7 +2009,7 @@ def test_calculate_metrics_dates_stops_between_the_batches_of_a_day(postgres_db_
 
     assert postgres_db_real.calculate_metrics_dates(should_stop=lambda: next(checks, True)) is None
 
-    assert ("daily", _utc_date(3)) not in _stored_user_metrics_rows(postgres_db_real)
+    assert ("daily", _utc_date(3)) not in _stored_aggregate_metrics_rows(postgres_db_real)
     refresh_status = postgres_db_real.get_metrics_refresh_status()
     assert (refresh_status["status"], refresh_status["error"]) == ("failed", METRICS_STOPPED_ERROR)
 
@@ -2031,14 +2034,17 @@ def test_calculate_metrics_rebuilds_every_day_from_rebuild_from(postgres_db_real
             )
         )
     postgres_db_real.calculate_metrics()
-    assert _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["root_runs_count"] == 1
-    assert ("daily", _utc_date(15)) not in _stored_user_metrics_rows(postgres_db_real)
+    assert _stored_aggregate_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["root_runs_count"] == 1
+    assert ("daily", _utc_date(15)) not in _stored_aggregate_metrics_rows(postgres_db_real)
 
     postgres_db_real.calculate_metrics(rebuild_from=_utc_date(20))
 
-    day_row = _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]
+    day_row = _stored_aggregate_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]
     assert (day_row["root_runs_count"], day_row["completed"]) == (0, True)
-    assert _user_metrics_sessions_count(_stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(15))]) == 1
+    assert (
+        _aggregate_metrics_sessions_count(_stored_aggregate_metrics_rows(postgres_db_real)[("daily", _utc_date(15))])
+        == 1
+    )
 
 
 def test_calculate_metrics_dates_stopped_after_a_completed_one_reads_completed(postgres_db_real: PostgresDb):
@@ -2058,7 +2064,7 @@ def test_calculate_metrics_dates_stopped_after_a_completed_one_reads_completed(p
         finished_at,
         None,
     )
-    assert _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(4))]["completed"] is False
+    assert _stored_aggregate_metrics_rows(postgres_db_real)[("daily", _utc_date(4))]["completed"] is False
 
 
 def test_calculate_metrics_rebuilds_a_month_a_stopped_calculation_left(postgres_db_real: PostgresDb):
@@ -2077,10 +2083,10 @@ def test_calculate_metrics_rebuilds_a_month_a_stopped_calculation_left(postgres_
     assert totals["total_tokens"] == 15
     postgres_db_real.calculate_metrics()
 
-    user_metrics_rows = _stored_user_metrics_rows(postgres_db_real)
-    month_row = user_metrics_rows[("monthly", last_month_day.replace(day=1))]
-    day_row = user_metrics_rows[("daily", last_month_day)]
-    assert (_user_metrics_sessions_count(month_row), month_row["total_tokens"]) == (1, day_row["total_tokens"])
+    aggregate_metrics_rows = _stored_aggregate_metrics_rows(postgres_db_real)
+    month_row = aggregate_metrics_rows[("monthly", last_month_day.replace(day=1))]
+    day_row = aggregate_metrics_rows[("daily", last_month_day)]
+    assert (_aggregate_metrics_sessions_count(month_row), month_row["total_tokens"]) == (1, day_row["total_tokens"])
     assert day_row["total_tokens"] == 15
 
 
@@ -2095,11 +2101,11 @@ def test_calculate_metrics_rebuild_from_reopens_the_days_while_another_process_c
     assert postgres_db_real._claim_metrics_refresh(refreshes_table, "other_process") is not None
 
     assert postgres_db_real.calculate_metrics(rebuild_from=_utc_date(3)) is None
-    assert _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["completed"] is False
+    assert _stored_aggregate_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["completed"] is False
 
     postgres_db_real._release_metrics_refresh(refreshes_table, "other_process", stopped=True)
     postgres_db_real.calculate_metrics()
-    assert _stored_user_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["completed"] is True
+    assert _stored_aggregate_metrics_rows(postgres_db_real)[("daily", _utc_date(3))]["completed"] is True
 
 
 def test_calculate_metrics_rebuild_from_rebuilds_yesterday_and_today_after_another_process_completes(
@@ -2169,15 +2175,15 @@ def test_get_metrics_returns_the_latest_update_of_every_day(postgres_db_real: Po
     _persist(postgres_db_real, _session_on(_utc_date(3), "alice_old_session", "alice"))
     _persist(postgres_db_real, _session_on(_utc_date(0), "alice_session", "alice"))
     postgres_db_real.calculate_metrics()
-    user_metrics_table = postgres_db_real._get_table("user_metrics")
+    aggregate_metrics_table = postgres_db_real._get_table("aggregate_metrics")
     later = int(time.time()) + 100
     with postgres_db_real.Session() as sess, sess.begin():
         sess.execute(
-            user_metrics_table.update()
+            aggregate_metrics_table.update()
             .where(
-                user_metrics_table.c.aggregation_period == "daily",
-                user_metrics_table.c.date == _utc_date(0),
-                user_metrics_table.c.user_id == "alice",
+                aggregate_metrics_table.c.aggregation_period == "daily",
+                aggregate_metrics_table.c.date == _utc_date(0),
+                aggregate_metrics_table.c.user_id == "alice",
             )
             .values(updated_at=later)
         )
@@ -2201,9 +2207,9 @@ def test_component_metrics_tables_for_a_long_session_table(postgres_db_real: Pos
     try:
         _persist(long_db, _session_on(_utc_date(2), "alice_session", "alice"))
         assert long_db.calculate_metrics() is not None
-        assert _stored_user_metrics_rows(long_db)[("daily", _utc_date(2))]["agent_runs_count"] == 1
+        assert _stored_aggregate_metrics_rows(long_db)[("daily", _utc_date(2))]["agent_runs_count"] == 1
     finally:
-        for table_type in ["component_metrics", "user_metrics", "metrics_refreshes", "runs", "sessions"]:
+        for table_type in ["component_metrics", "aggregate_metrics", "metrics_refreshes", "runs", "sessions"]:
             table = long_db._get_table(table_type)
             if table is not None:
                 table.drop(long_db.db_engine)
