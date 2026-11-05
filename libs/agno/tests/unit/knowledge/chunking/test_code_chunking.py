@@ -35,8 +35,12 @@ def preloaded_parsers():
                 raise
             time.sleep(2**attempt)
 
-    # chonkie calls download_all() until 20 languages are cached; these tests need only PARSERS.
-    with patch("tree_sitter_language_pack.download_all"):
+    # chonkie calls download_all() until 20 languages are listed, and auto-detection tries only
+    # listed languages, but download() does not add to that list.
+    with (
+        patch("tree_sitter_language_pack.download_all"),
+        patch("tree_sitter_language_pack.downloaded_languages", return_value=PARSERS),
+    ):
         yield
 
 
