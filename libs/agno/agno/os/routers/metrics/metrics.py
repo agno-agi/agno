@@ -128,7 +128,7 @@ def _os_metrics_location(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> tuple[Opti
     if isinstance(db, RemoteDb):
         # Two remote AgentOSes can each have a database with the same id
         return (db.client.base_url, str(db.id))
-    table_names = (getattr(db, "component_metrics_table_name", None), getattr(db, "user_metrics_table_name", None))
+    table_names = (getattr(db, "component_metrics_table_name", None), getattr(db, "aggregate_metrics_table_name", None))
     address: Optional[str] = None
     db_engine = getattr(db, "db_engine", None)
     connection_kwargs = getattr(

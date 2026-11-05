@@ -1704,17 +1704,17 @@ async def test_repository_marker_pin_published_at_commit(store, tmp_path, monkey
 
 
 async def test_a_prepared_run_of_a_closed_day_reopens_the_day(store):
-    from agno.db.utils import build_user_metrics_row
+    from agno.db.utils import build_aggregate_metrics_row
     from agno.run.agent import RunInput, RunOutput
     from agno.run.base import RunStatus
 
-    totals = await store._table("user_metrics", store.db.user_metrics_table_name)
+    totals = await store._table("aggregate_metrics", store.db.aggregate_metrics_table_name)
     created_at = int(time.time()) - 5 * 86400
     # The day as a finished calculation leaves it: completed, at version 1
     day = datetime.fromtimestamp(created_at, tz=timezone.utc).date()
     await store._transaction(
         lambda c: c.execute(
-            insert(totals).values({**build_user_metrics_row([], "daily", day, completed=True), "version": 1})
+            insert(totals).values({**build_aggregate_metrics_row([], "daily", day, completed=True), "version": 1})
         )
     )
     pending = RunOutput(
@@ -1739,17 +1739,17 @@ async def test_a_prepared_run_of_a_closed_day_reopens_the_day(store):
 
 
 async def test_a_native_permission_request_of_a_closed_day_reopens_the_day(store):
-    from agno.db.utils import build_user_metrics_row
+    from agno.db.utils import build_aggregate_metrics_row
 
     await seed(store)
     state = await claim(store)
     await store.aset_computer(state.lease, computer(state))
-    totals = await store._table("user_metrics", store.db.user_metrics_table_name)
+    totals = await store._table("aggregate_metrics", store.db.aggregate_metrics_table_name)
     # The seeded run's day as a finished calculation leaves it: completed, at version 1
     day = datetime.fromtimestamp(1, tz=timezone.utc).date()
     await store._transaction(
         lambda c: c.execute(
-            insert(totals).values({**build_user_metrics_row([], "daily", day, completed=True), "version": 1})
+            insert(totals).values({**build_aggregate_metrics_row([], "daily", day, completed=True), "version": 1})
         )
     )
     tool = {"tool_call_id": "tool", "tool_name": "Bash", "requires_confirmation": True}

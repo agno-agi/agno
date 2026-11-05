@@ -589,6 +589,7 @@ class _SandboxStore:
                     generation=record["generation"] if warm else record["generation"] + 1,
                     computer=record["computer"] if warm else None,
                     computer_stopped=False,
+                    restoring=None,
                     stopped_ref=None,
                     stop_status=None,
                     stop_reason=None,
@@ -747,7 +748,11 @@ class _SandboxStore:
     def stage_result(self, lease: SandboxLease, result: Dict[str, Any]) -> SandboxState:
         return self._sync(self.astage_result, lease, result)
 
-    async def astage_checkpoint(self, lease: SandboxLease, checkpoint: CheckpointRef) -> SandboxState:
+    async def astage_checkpoint(
+        self, lease: SandboxLease, checkpoint: CheckpointRef, *, identity: Optional[Dict[str, Any]] = None
+    ) -> SandboxState:
+        """Record a captured checkpoint for the commit; ``identity`` is the binding its manifest holds."""
+
         def stage(connection: Connection) -> SandboxState:
             row = self._locked(connection, lease)
             record = dict(row["record"])
@@ -757,12 +762,16 @@ class _SandboxStore:
             if record.get("staged_checkpoint") is not None and record["staged_checkpoint"] != value:
                 raise SandboxError("A staged checkpoint is immutable; reconcile its acknowledgement")
             record["staged_checkpoint"] = value
+            if identity is not None:
+                record["staged_identity"] = identity
             return self._write_record(connection, lease, record)
 
         return await self._transaction(stage)
 
-    def stage_checkpoint(self, lease: SandboxLease, checkpoint: CheckpointRef) -> SandboxState:
-        return self._sync(self.astage_checkpoint, lease, checkpoint)
+    def stage_checkpoint(
+        self, lease: SandboxLease, checkpoint: CheckpointRef, *, identity: Optional[Dict[str, Any]] = None
+    ) -> SandboxState:
+        return self._sync(self.astage_checkpoint, lease, checkpoint, identity=identity)
 
     async def aconfirm_stopped(self, lease: SandboxLease, provider_ref: str) -> SandboxState:
         """Record provider-confirmed shutdown, never a caller's assumption after a timeout."""

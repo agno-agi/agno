@@ -12,15 +12,15 @@ from sqlalchemy import inspect, select, text
 from agno.db.base import SessionType
 from agno.db.postgres import AsyncPostgresDb
 from agno.db.postgres.schemas import (
+    AGGREGATE_METRICS_TABLE_SCHEMA,
     COMPONENT_METRICS_TABLE_SCHEMA,
     METRICS_REFRESHES_TABLE_SCHEMA,
-    USER_METRICS_TABLE_SCHEMA,
 )
 from agno.db.utils import (
+    AGGREGATE_METRICS_COUNT_COLUMNS,
     METRICS_STOPPED_ERROR,
     METRICS_TOKEN_DETAILS_FIELDS,
     METRICS_TOKEN_FIELDS,
-    USER_METRICS_COUNT_COLUMNS,
     resolve_metrics_fields,
 )
 from agno.metrics import MessageMetrics, ModelMetrics, RunMetrics, ToolCallMetrics
@@ -38,7 +38,7 @@ async def cleanup_component_metrics_sessions_and_runs(async_postgres_db_real: As
     """Fixture to clean-up component metrics, session and run rows after each test"""
     yield
 
-    for table_type in ["component_metrics", "user_metrics", "metrics_refreshes", "metrics", "runs", "sessions"]:
+    for table_type in ["component_metrics", "aggregate_metrics", "metrics_refreshes", "metrics", "runs", "sessions"]:
         try:
             table = await async_postgres_db_real._get_table(table_type, create_table_if_not_found=True)
             async with async_postgres_db_real.async_session_factory() as session:
@@ -142,19 +142,19 @@ async def _stored_rows(db: AsyncPostgresDb) -> Dict[tuple, Dict]:
         }
 
 
-async def _stored_user_metrics_rows(db: AsyncPostgresDb) -> Dict[tuple, Dict]:
-    """Every day and month everyone row of agno_user_metrics, keyed by (aggregation_period, date).
+async def _stored_aggregate_metrics_rows(db: AsyncPostgresDb) -> Dict[tuple, Dict]:
+    """Every day and month everyone row of agno_aggregate_metrics, keyed by (aggregation_period, date).
 
     The user rows are left out.
     """
-    table = await db._get_table("user_metrics", create_table_if_not_found=True)
+    table = await db._get_table("aggregate_metrics", create_table_if_not_found=True)
     async with db.async_session_factory() as sess:
         result = await sess.execute(select(table).where(table.c.user_id == ""))
         return {(row.aggregation_period, row.date): dict(row._mapping) for row in result.fetchall()}
 
 
-def _user_metrics_sessions_count(row: Dict) -> int:
-    """The sessions of every type a row of agno_user_metrics keeps."""
+def _aggregate_metrics_sessions_count(row: Dict) -> int:
+    """The sessions of every type a row of agno_aggregate_metrics keeps."""
     return row["agent_sessions_count"] + row["team_sessions_count"] + row["workflow_sessions_count"]
 
 
@@ -368,23 +368,25 @@ async def test_component_metrics_table_creation(async_postgres_db_real: AsyncPos
     component_metrics_table = await async_postgres_db_real._get_table(
         "component_metrics", create_table_if_not_found=True
     )
-    user_metrics_table = await async_postgres_db_real._get_table("user_metrics", create_table_if_not_found=True)
+    aggregate_metrics_table = await async_postgres_db_real._get_table(
+        "aggregate_metrics", create_table_if_not_found=True
+    )
     refreshes_table = await async_postgres_db_real._get_table("metrics_refreshes", create_table_if_not_found=True)
 
     assert component_metrics_table.name == async_postgres_db_real.component_metrics_table_name
-    assert user_metrics_table.name == async_postgres_db_real.user_metrics_table_name
+    assert aggregate_metrics_table.name == async_postgres_db_real.aggregate_metrics_table_name
     assert refreshes_table.name == async_postgres_db_real.metrics_refreshes_table_name
-    assert component_metrics_table.schema == user_metrics_table.schema == async_postgres_db_real.db_schema
+    assert component_metrics_table.schema == aggregate_metrics_table.schema == async_postgres_db_real.db_schema
 
     assert [col.name for col in component_metrics_table.columns] == [
         column for column in COMPONENT_METRICS_TABLE_SCHEMA if not column.startswith("_")
     ]
-    assert {col.name for col in user_metrics_table.columns} == set(USER_METRICS_TABLE_SCHEMA)
+    assert {col.name for col in aggregate_metrics_table.columns} == set(AGGREGATE_METRICS_TABLE_SCHEMA)
     assert [col.name for col in refreshes_table.columns] == list(METRICS_REFRESHES_TABLE_SCHEMA)
     assert set(METRICS_TOKEN_FIELDS) - {*METRICS_TOKEN_DETAILS_FIELDS, "audio_total_tokens"} | {"token_details"} | set(
-        USER_METRICS_COUNT_COLUMNS
-    ) <= set(USER_METRICS_TABLE_SCHEMA)
-    assert "sessions_count" not in USER_METRICS_TABLE_SCHEMA
+        AGGREGATE_METRICS_COUNT_COLUMNS
+    ) <= set(AGGREGATE_METRICS_TABLE_SCHEMA)
+    assert "sessions_count" not in AGGREGATE_METRICS_TABLE_SCHEMA
 
     async with async_postgres_db_real.db_engine.connect() as conn:
         component_metrics_pk, totals_pk, refreshes_pk, index_list = await conn.run_sync(
@@ -392,7 +394,9 @@ async def test_component_metrics_table_creation(async_postgres_db_real: AsyncPos
                 inspect(sync_conn).get_pk_constraint(
                     component_metrics_table.name, schema=component_metrics_table.schema
                 ),
-                inspect(sync_conn).get_pk_constraint(user_metrics_table.name, schema=user_metrics_table.schema),
+                inspect(sync_conn).get_pk_constraint(
+                    aggregate_metrics_table.name, schema=aggregate_metrics_table.schema
+                ),
                 inspect(sync_conn).get_pk_constraint(refreshes_table.name, schema=refreshes_table.schema),
                 inspect(sync_conn).get_indexes(component_metrics_table.name, schema=component_metrics_table.schema),
             )
@@ -431,7 +435,7 @@ async def test_calculate_metrics_skips_a_rebuild_already_running(
     assert await async_postgres_db_real._claim_metrics_refresh(refreshes_table, "second_process") is None
     assert await async_postgres_db_real.calculate_metrics() is None
     assert await _stored_rows(async_postgres_db_real) == {}
-    assert await _stored_user_metrics_rows(async_postgres_db_real) == {}
+    assert await _stored_aggregate_metrics_rows(async_postgres_db_real) == {}
 
     # The other process stopped and released it, so the same call calculates
     await async_postgres_db_real._release_metrics_refresh(refreshes_table, "other_process", stopped=True)
@@ -484,7 +488,7 @@ async def test_calculate_metrics_counts_runs_kept_in_the_legacy_runs_column(
     assert (row["sessions_count"], row["runs_count"], row["total_tokens"]) == (1, 2, 50)
     assert (row["model_calls_count"], row["total_model_call_ms"]) == (2, 2000)
     # The later run is counted on its own day, a day with no session
-    assert (await _stored_user_metrics_rows(legacy_db))[("daily", _utc_date(4))]["agent_runs_count"] == 1
+    assert (await _stored_aggregate_metrics_rows(legacy_db))[("daily", _utc_date(4))]["agent_runs_count"] == 1
 
 
 @pytest.mark.asyncio
@@ -617,10 +621,10 @@ async def test_get_component_metrics_by_date(
     assert metrics[2]["root_runs_count"] == 1
 
     # The latest updated_at of the window is the one returned
-    user_metrics_rows = await _stored_user_metrics_rows(async_postgres_db_real)
+    aggregate_metrics_rows = await _stored_aggregate_metrics_rows(async_postgres_db_real)
     assert latest_updated_at == max(
         row["updated_at"]
-        for (period, row_date), row in user_metrics_rows.items()
+        for (period, row_date), row in aggregate_metrics_rows.items()
         if period == "daily" and past_day <= row_date <= today
     )
 
@@ -666,10 +670,10 @@ def sample_multi_month_sessions_for_component_metrics() -> List[AgentSession]:
 
 
 @pytest.mark.asyncio
-async def test_calculate_metrics_writes_a_month_user_metrics_row_for_a_completed_month(
+async def test_calculate_metrics_writes_a_month_aggregate_metrics_row_for_a_completed_month(
     async_postgres_db_real: AsyncPostgresDb, sample_multi_month_sessions_for_component_metrics
 ):
-    """Ensure every month of a calculated day gets a user metrics row, completed once its last day is"""
+    """Ensure every month of a calculated day gets an aggregate metrics row, completed once its last day is"""
     for session in sample_multi_month_sessions_for_component_metrics:
         await _persist(async_postgres_db_real, session)
     await async_postgres_db_real.calculate_metrics()
@@ -677,20 +681,20 @@ async def test_calculate_metrics_writes_a_month_user_metrics_row_for_a_completed
     first_month = _month_start(3)
     second_month = _month_start(2)
     this_month = _month_start(0)
-    # The month of yesterday gets its user metrics row even without traffic
-    month_user_metrics_rows = {
+    # The month of yesterday gets its aggregate metrics row even without traffic
+    month_aggregate_metrics_rows = {
         key[1]: row
-        for key, row in (await _stored_user_metrics_rows(async_postgres_db_real)).items()
+        for key, row in (await _stored_aggregate_metrics_rows(async_postgres_db_real)).items()
         if key[0] == "monthly"
     }
-    assert set(month_user_metrics_rows) == {first_month, second_month, _utc_date(1).replace(day=1), this_month}
-    assert {month_start for month_start, row in month_user_metrics_rows.items() if row["completed"]} == {
+    assert set(month_aggregate_metrics_rows) == {first_month, second_month, _utc_date(1).replace(day=1), this_month}
+    assert {month_start for month_start, row in month_aggregate_metrics_rows.items() if row["completed"]} == {
         first_month,
         second_month,
     }
 
-    month_row = month_user_metrics_rows[first_month]
-    assert _user_metrics_sessions_count(month_row) == 4
+    month_row = month_aggregate_metrics_rows[first_month]
+    assert _aggregate_metrics_sessions_count(month_row) == 4
     assert month_row["root_runs_count"] == 4
     assert (month_row["input_tokens"], month_row["output_tokens"], month_row["total_tokens"]) == (165, 20, 185)
     assert month_row["duration_buckets"] == {"le_2000": 4}
@@ -708,12 +712,12 @@ async def test_calculate_metrics_writes_a_month_user_metrics_row_for_a_completed
         starting_date=first_month, ending_date=second_month - timedelta(days=1), user_id=""
     )
     assert unowned_totals["sessions_count"] == 1
-    assert _user_metrics_sessions_count(month_user_metrics_rows[second_month]) == 1
+    assert _aggregate_metrics_sessions_count(month_aggregate_metrics_rows[second_month]) == 1
 
 
 @pytest.mark.asyncio
 async def test_upsert_session_of_a_closed_day_from_a_fresh_process_is_stored(async_postgres_db_real: AsyncPostgresDb):
-    """Ensure a save that reopens a closed day is stored by a process that never looked the user metrics table up"""
+    """Ensure a save that reopens a closed day is stored by a process that never loaded the aggregate metrics table"""
     await _persist(async_postgres_db_real, _session_on(_utc_date(5), "alice_session", "alice"))
     await async_postgres_db_real.calculate_metrics()
     fresh_db = AsyncPostgresDb(
@@ -725,9 +729,9 @@ async def test_upsert_session_of_a_closed_day_from_a_fresh_process_is_stored(asy
 
     assert await fresh_db.get_run(bob_session.runs[0].run_id) is not None
     assert len(await fresh_db.get_sessions(session_type=SessionType.AGENT)) == 2
-    assert (await _stored_user_metrics_rows(async_postgres_db_real))[("daily", _utc_date(5))]["completed"] is False
+    assert (await _stored_aggregate_metrics_rows(async_postgres_db_real))[("daily", _utc_date(5))]["completed"] is False
     # Looked up by the session save, then read from the table cache by the run save
-    assert fresh_db._get_cached_table("user_metrics", fresh_db.user_metrics_table_name) is not None
+    assert fresh_db._get_cached_table("aggregate_metrics", fresh_db.aggregate_metrics_table_name) is not None
 
 
 @pytest.mark.asyncio
@@ -868,7 +872,7 @@ async def test_calculate_metrics_counts_tool_calls(async_postgres_db_real: Async
         "max_ms": 1200,
         "buckets": {"le_100": 1, "le_200": 1, "le_400": 1, "le_1200": 1},
     }
-    assert (await _stored_user_metrics_rows(async_postgres_db_real))[("daily", past_day)]["tool_metrics"] == expected
+    assert (await _stored_aggregate_metrics_rows(async_postgres_db_real))[("daily", past_day)]["tool_metrics"] == expected
 
     for user_id in [None, "bob"]:
         metrics, _ = await async_postgres_db_real.get_component_metrics(

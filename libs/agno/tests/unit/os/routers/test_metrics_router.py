@@ -314,7 +314,7 @@ class TestRefreshMetrics:
         lock_row_db.calculate_metrics_dates.assert_not_called()
 
     def test_a_rebuild_on_a_database_without_a_lock_row_is_refused(self, client, mock_db):
-        """A database without the user metrics table has no days to reopen, so a rebuild is refused."""
+        """A database without the aggregate metrics table has no days to reopen, so a rebuild is refused."""
         with _scope(None):
             resp = client.post("/metrics/refresh", params={"rebuild_from": "2026-01-01"})
 

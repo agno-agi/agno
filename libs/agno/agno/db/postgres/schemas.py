@@ -188,7 +188,7 @@ COMPONENT_METRICS_TABLE_SCHEMA = {
     ],
 }
 
-USER_METRICS_TABLE_SCHEMA = {
+AGGREGATE_METRICS_TABLE_SCHEMA = {
     "aggregation_period": {"type": String, "primary_key": True, "nullable": False},
     "date": {"type": Date, "primary_key": True, "nullable": False},
     # Owner of this row. Empty string for the everyone row, which counts every run, runs with no user included.
@@ -767,7 +767,7 @@ def get_table_schema_definition(
         "evals": EVAL_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
         "component_metrics": COMPONENT_METRICS_TABLE_SCHEMA,
-        "user_metrics": USER_METRICS_TABLE_SCHEMA,
+        "aggregate_metrics": AGGREGATE_METRICS_TABLE_SCHEMA,
         "metrics_refreshes": METRICS_REFRESHES_TABLE_SCHEMA,
         "memories": MEMORY_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,

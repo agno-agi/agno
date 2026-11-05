@@ -5,7 +5,7 @@ Serve AgentOS Metrics
 Run two agents, refresh the metrics through POST /os/metrics/refresh, read
 today's OS metrics back through the /os/metrics routes, then serve them. The
 routes return the sessions, runs, tokens, latency and models of a date range,
-read from the agno_component_metrics and agno_user_metrics tables the AgentOS
+read from the agno_component_metrics and agno_aggregate_metrics tables the AgentOS
 calculates from its sessions and runs.
 
 Prerequisites: OPENAI_API_KEY and ./cookbook/scripts/run_pgvector.sh
@@ -19,8 +19,9 @@ from datetime import datetime, timezone
 
 import httpx
 from agno.agent import Agent
-from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIResponses
+
+from agno.db.postgres import PostgresDb
 from agno.os import AgentOS
 
 # ---------------------------------------------------------------------------
