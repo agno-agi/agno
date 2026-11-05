@@ -45,3 +45,14 @@ def test_tool_execution_created_at_round_trip():
     assert restored.created_at == original_created_at, (
         f"Bug: Timestamp not preserved! original={original_created_at}, restored={restored.created_at}"
     )
+
+
+def test_tool_execution_toolkit_round_trip():
+    """Test that the toolkit of a tool execution is preserved across serialization/deserialization."""
+    original = ToolExecution(tool_name="add", tool_call_id="test_id", toolkit="calculator")
+
+    serialized = original.to_dict()
+    assert serialized["toolkit"] == "calculator"
+
+    assert ToolExecution.from_dict(serialized).toolkit == "calculator"
+    assert ToolExecution.from_dict({"tool_name": "add"}).toolkit is None

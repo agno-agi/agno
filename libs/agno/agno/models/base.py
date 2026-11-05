@@ -2249,6 +2249,7 @@ class Model(ABC):
                     tool_call_id=function_call.call_id,
                     tool_name=function_call.function.name,
                     tool_args=function_call.arguments,
+                    toolkit=function_call.function.owning_toolkit,
                 )
             ],
             event=ModelResponseEvent.tool_call_started.value,
@@ -2328,6 +2329,10 @@ class Model(ABC):
                 function_call.error = str(e)
                 function_call_success = False
 
+            # For generators, re-stop the timer after consumption
+            # since the tool's work runs during iteration
+            function_call_timer.stop()
+
             # For generators, re-capture updated_session_state after consumption
             # since session_state modifications were made during iteration
             if function_execution_result.updated_session_state is None:
@@ -2397,6 +2402,7 @@ class Model(ABC):
                     tool_call_id=function_call_result.tool_call_id,
                     tool_name=function_call_result.tool_name,
                     tool_args=function_call_result.tool_args,
+                    toolkit=function_call.function.owning_toolkit,
                     tool_call_error=function_call_result.tool_call_error,
                     result=str(function_call_result.content),
                     stop_after_tool_call=function_call_result.stop_after_tool_call,
@@ -2455,6 +2461,7 @@ class Model(ABC):
                         tool_call_id=fc.call_id,
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
+                        toolkit=fc.function.owning_toolkit,
                         requires_confirmation=True,
                         approval_type=fc.function.approval_type,
                         external_execution_silent=fc.function.external_execution_silent,
@@ -2475,6 +2482,7 @@ class Model(ABC):
                         tool_call_id=fc.call_id,
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
+                        toolkit=fc.function.owning_toolkit,
                         requires_user_input=True,
                         approval_type=fc.function.approval_type,
                         user_input_schema=user_input_schema,
@@ -2514,6 +2522,7 @@ class Model(ABC):
                         tool_call_id=fc.call_id,
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
+                        toolkit=fc.function.owning_toolkit,
                         requires_user_input=True,
                         user_input_schema=user_input_schema,
                     )
@@ -2543,6 +2552,7 @@ class Model(ABC):
                         tool_call_id=fc.call_id,
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
+                        toolkit=fc.function.owning_toolkit,
                         requires_user_input=True,
                         user_feedback_schema=user_feedback_schema,
                     )
@@ -2555,6 +2565,7 @@ class Model(ABC):
                         tool_call_id=fc.call_id,
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
+                        toolkit=fc.function.owning_toolkit,
                         external_execution_required=True,
                         approval_type=fc.function.approval_type,
                         external_execution_silent=fc.function.external_execution_silent,
@@ -2667,6 +2678,7 @@ class Model(ABC):
                         tool_call_id=fc.call_id,
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
+                        toolkit=fc.function.owning_toolkit,
                         requires_confirmation=True,
                         approval_type=fc.function.approval_type,
                         external_execution_silent=fc.function.external_execution_silent,
@@ -2686,6 +2698,7 @@ class Model(ABC):
                         tool_call_id=fc.call_id,
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
+                        toolkit=fc.function.owning_toolkit,
                         requires_user_input=True,
                         approval_type=fc.function.approval_type,
                         user_input_schema=user_input_schema,
@@ -2730,6 +2743,7 @@ class Model(ABC):
                         tool_call_id=fc.call_id,
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
+                        toolkit=fc.function.owning_toolkit,
                         requires_user_input=True,
                         user_input_schema=user_input_schema,
                     )
@@ -2764,6 +2778,7 @@ class Model(ABC):
                         tool_call_id=fc.call_id,
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
+                        toolkit=fc.function.owning_toolkit,
                         requires_user_input=True,
                         user_feedback_schema=user_feedback_schema,
                     )
@@ -2775,6 +2790,7 @@ class Model(ABC):
                         tool_call_id=fc.call_id,
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
+                        toolkit=fc.function.owning_toolkit,
                         external_execution_required=True,
                         approval_type=fc.function.approval_type,
                         external_execution_silent=fc.function.external_execution_silent,
@@ -2796,6 +2812,7 @@ class Model(ABC):
                         tool_call_id=fc.call_id,
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
+                        toolkit=fc.function.owning_toolkit,
                     )
                 ],
                 event=ModelResponseEvent.tool_call_started.value,
@@ -2850,6 +2867,10 @@ class Model(ABC):
         async def process_async_generator(result, generator_id):
             function_call_success, function_call_timer, function_call, function_execution_result = result
             function_call_output = ""
+            # For generators, resume the timer before consumption
+            # since the generator is consumed only once every call of the batch returned
+            elapsed_before_consumption = function_call_timer.elapsed
+            function_call_timer.start_time = function_call_timer.start() - elapsed_before_consumption
 
             try:
                 async for item in function_call.result:
@@ -2896,6 +2917,10 @@ class Model(ABC):
             except Exception as e:
                 # Store the exception
                 async_generator_outputs[generator_id] = (result, "", e)
+
+            # For generators, re-stop the timer after consumption
+            # since the tool's work runs during iteration
+            function_call_timer.stop()
 
             # Signal that this generator is done
             await event_queue.put(("GENERATOR_DONE", generator_id))
@@ -2984,6 +3009,10 @@ class Model(ABC):
                 function_call_output = async_function_call_output
                 # Events from async generators were already yielded in real-time above
             elif isinstance(function_call.result, (GeneratorType, collections.abc.Iterator)):
+                # For generators, resume the timer before consumption
+                # since the generator is consumed only once every call of the batch returned
+                elapsed_before_consumption = function_call_timer.elapsed
+                function_call_timer.start_time = function_call_timer.start() - elapsed_before_consumption
                 try:
                     for item in function_call.result:
                         # This function yields agent/team/workflow run events
@@ -3018,6 +3047,10 @@ class Model(ABC):
                     )
                     function_call.error = str(e)
                     function_call_success = False
+
+                # For generators, re-stop the timer after consumption
+                # since the tool's work runs during iteration
+                function_call_timer.stop()
 
             # For generators (sync or async), re-capture updated_session_state after consumption
             # since session_state modifications were made during iteration
@@ -3097,6 +3130,7 @@ class Model(ABC):
                         tool_call_id=function_call_result.tool_call_id,
                         tool_name=function_call_result.tool_name,
                         tool_args=function_call_result.tool_args,
+                        toolkit=function_call.function.owning_toolkit,
                         tool_call_error=function_call_result.tool_call_error,
                         result=str(function_call_result.content),
                         stop_after_tool_call=function_call_result.stop_after_tool_call,

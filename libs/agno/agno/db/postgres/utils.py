@@ -66,6 +66,13 @@ _METRICS_CALL_DURATIONS_PATH: Any = literal_column(
     """.metrics.duration'::jsonpath"""
 )
 
+# The id of each tool call answered in the first $skip messages, the ones a forked run copied from the run it was
+# forked from
+_METRICS_COPIED_TOOL_CALL_IDS_PATH: Any = literal_column(
+    """'$.messages[0 to $skip - 1] ? (@.role == "tool" && @.tool_call_id.type() == "string" && @.tool_call_id != "")"""
+    """.tool_call_id'::jsonpath"""
+)
+
 # Every run of a list under one of METRICS_NESTED_RUN_KEYS, or the one run a key holds on its own. A key stored as
 # null holds none
 _METRICS_NESTED_RUNS_PATH: Any = literal_column("""'$[*] ? (@.type() == "object")'::jsonpath""")
@@ -540,6 +547,55 @@ def _metrics_call_durations(run_data: Any) -> Any:
     return func.jsonb_path_query_array(run_data, _METRICS_CALL_DURATIONS_PATH, func.jsonb_build_object("skip", skip))
 
 
+def _metrics_tool_calls(run_data: Any) -> Any:
+    """Build each tool call of a stored run with only what tool_metrics counts, skipping those a forked run copied,
+    never its arguments or result."""
+    skip = func.coalesce(cast(run_data["forked_from_message_index"].astext, Integer), 0)
+    tools = run_data["tools"]
+    tool_call = (
+        func.jsonb_array_elements(
+            case((func.jsonb_typeof(tools) == "array", tools), else_=func.jsonb_build_array()),
+            type_=postgresql.JSONB,
+        )
+        .table_valued(column("value", postgresql.JSONB))
+        .render_derived()
+    )
+    copied_tool_call = (
+        func.jsonb_path_query(run_data, _METRICS_COPIED_TOOL_CALL_IDS_PATH, func.jsonb_build_object("skip", skip))
+        .table_valued(column("value", postgresql.JSONB))
+        .render_derived(name="copied_tool_call")
+    )
+    return (
+        select(
+            func.jsonb_agg(
+                func.jsonb_build_object(
+                    "toolkit",
+                    tool_call.c.value["toolkit"],
+                    "tool_name",
+                    tool_call.c.value["tool_name"],
+                    "tool_call_error",
+                    tool_call.c.value["tool_call_error"],
+                    "requires_confirmation",
+                    tool_call.c.value["requires_confirmation"],
+                    "confirmed",
+                    tool_call.c.value["confirmed"],
+                    "requires_user_input",
+                    tool_call.c.value["requires_user_input"],
+                    "external_execution_required",
+                    tool_call.c.value["external_execution_required"],
+                    "metrics",
+                    func.jsonb_build_object("duration", tool_call.c.value["metrics"]["duration"]),
+                )
+            )
+        )
+        .select_from(
+            tool_call.outerjoin(copied_tool_call, copied_tool_call.c.value == tool_call.c.value["tool_call_id"])
+        )
+        .where(func.jsonb_typeof(tool_call.c.value) == "object", copied_tool_call.c.value.is_(None))
+        .scalar_subquery()
+    )
+
+
 def build_component_metrics_runs_query(table: Table, start_timestamp: int, end_timestamp: int) -> Any:
     """Build the query that reads the runs created in the given time range, with only what component metrics count.
 
@@ -550,7 +606,8 @@ def build_component_metrics_runs_query(table: Table, start_timestamp: int, end_t
 
     Returns:
         Any: The query. Of the messages it reads only each request's duration, of the metrics only what
-            component metrics count, and of the runs nested inside a run, at any depth, only the same.
+            component metrics count, of the tool calls only what tool_metrics counts, and of the runs nested inside
+            a run, at any depth, only the same.
     """
     # Read in the database, so a run is never read whole
     nested_keys = values(column("position"), column("key"), name="nested_keys").data(
@@ -612,6 +669,8 @@ def build_component_metrics_runs_query(table: Table, start_timestamp: int, end_t
                     nested.c.run_data["model_provider"],
                     "call_durations",
                     _metrics_call_durations(nested.c.run_data),
+                    "tools",
+                    _metrics_tool_calls(nested.c.run_data),
                 ),
                 nested.c.path,
             )
@@ -631,6 +690,7 @@ def build_component_metrics_runs_query(table: Table, start_timestamp: int, end_t
         table.c.run_data["model"].astext.label("model"),
         table.c.run_data["model_provider"].astext.label("model_provider"),
         _metrics_call_durations(table.c.run_data).label("call_durations"),
+        _metrics_tool_calls(table.c.run_data).label("tools"),
         # Walked only for a run with runs nested inside it
         case((table.c.run_data.has_any(postgresql.array(list(METRICS_NESTED_RUN_KEYS))), nested_runs)).label(
             "nested_runs"
@@ -725,6 +785,7 @@ def build_component_metrics_run(row: Any) -> Dict[str, Any]:
         "messages": [
             {"role": "assistant", "metrics": {"duration": duration}} for duration in run.pop("call_durations") or []
         ],
+        "tools": run.pop("tools"),
     }
     # A nested run comes after the run it is nested inside, so the last run met at each depth is its parent
     parents = [run["run_data"]]
@@ -801,8 +862,8 @@ def build_component_metrics_totals_queries(
             row instead of its days.
 
     Returns:
-        Dict[str, Any]: The queries, keyed "totals", "count_maps", "additional_metrics" and "model_metrics".
-            Empty when there is no day to total.
+        Dict[str, Any]: The queries, keyed "totals", "count_maps", "additional_metrics", "model_metrics" and
+            "tool_metrics". Empty when there is no day to total.
     """
     # Days that follow one another are looked up as one range, which is planned by the rows it holds,
     # where a list of days is planned as if each day held rows
@@ -868,6 +929,10 @@ def build_component_metrics_totals_queries(
             .where(where)
             .group_by(table.c.date, model_id, model_provider)
         )
+
+    # Each toolkit's tools hold several numbers and buckets each, so the maps are added up once read
+    if "tool_metrics" in fields:
+        queries["tool_metrics"] = select(table.c.date, table.c.tool_metrics).where(where)
 
     return queries
 

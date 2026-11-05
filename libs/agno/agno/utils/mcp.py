@@ -1,7 +1,7 @@
 import asyncio
 import base64
 import json
-from typing import TYPE_CHECKING, Any, Dict, Optional, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol, runtime_checkable
 from uuid import uuid4
 
 from agno.utils.log import log_debug, log_error, log_exception
@@ -53,6 +53,7 @@ def get_default_toolkit_name(
     command: Optional[str] = None,
     server_params: Optional[Any] = None,
     fallback: str = "MCPTools",
+    keep_command_args: bool = True,
 ) -> str:
     """Derive a stable toolkit name from MCP connection parameters.
 
@@ -63,6 +64,8 @@ def get_default_toolkit_name(
     transports, from the command for stdio, or from the equivalent fields of
     ``server_params``. Query strings and fragments are dropped from URLs so
     credentials passed as query parameters never end up in the toolkit name.
+    With ``keep_command_args=False`` a command is reduced the same way, to its
+    executable and the package or script it runs.
 
     Returns ``fallback`` when no connection parameters are available (e.g. the
     toolkit wraps an existing session).
@@ -71,7 +74,7 @@ def get_default_toolkit_name(
     if url:
         target = _strip_url_for_name(url)
     elif command:
-        target = command
+        target = command if keep_command_args else _strip_command_for_name(command.split())
     elif server_params is not None:
         params_url = getattr(server_params, "url", None)
         params_command = getattr(server_params, "command", None)
@@ -79,7 +82,8 @@ def get_default_toolkit_name(
             target = _strip_url_for_name(params_url)
         elif params_command:
             args = getattr(server_params, "args", None) or []
-            target = " ".join([str(params_command), *(str(arg) for arg in args)])
+            parts = [str(params_command), *(str(arg) for arg in args)]
+            target = " ".join(parts) if keep_command_args else _strip_command_for_name(parts)
 
     if not target:
         return fallback
@@ -106,6 +110,69 @@ def _strip_url_for_name(url: str) -> str:
     if "@" in authority:
         authority = authority.rsplit("@", 1)[-1]
     return authority + slash + path
+
+
+# Subcommand words a runner takes before the package or image it runs
+# (`docker run`, `uv run`, `npm exec`, `pnpm dlx`, `pipx run`, `bun x`, `deno run`)
+_RUNNER_SUBCOMMANDS = ("run", "exec", "dlx", "x")
+
+# Flags each runner reads the next argument for, so that argument is not the package
+_DOCKER_VALUE_FLAGS = frozenset(
+    "-e --env --env-file -v --volume --mount -p --publish --name --network --net -w --workdir -u --user"
+    " --entrypoint -l --label --platform --pull -h --hostname --add-host --device --gpus --cap-add"
+    " --cap-drop --security-opt --tmpfs -m --memory --cpus --restart --runtime".split()
+)
+_UV_VALUE_FLAGS = frozenset(
+    "--with --with-requirements --with-editable --from --python -p --index --index-url --default-index"
+    " --extra-index-url --directory --project --env-file".split()
+)
+_NPM_VALUE_FLAGS = frozenset("-p --package --registry --cache --userconfig".split())
+_VALUE_FLAGS_BY_EXECUTABLE = {
+    "docker": _DOCKER_VALUE_FLAGS,
+    "uv": _UV_VALUE_FLAGS,
+    "uvx": _UV_VALUE_FLAGS,
+    "npx": _NPM_VALUE_FLAGS,
+    "npm": _NPM_VALUE_FLAGS,
+    "pnpm": _NPM_VALUE_FLAGS,
+    "yarn": _NPM_VALUE_FLAGS,
+    "bun": _NPM_VALUE_FLAGS,
+    "pipx": frozenset("--spec --python --pip-args --index-url".split()),
+    "python": frozenset("-W -X".split()),
+    "python3": frozenset("-W -X".split()),
+    "node": frozenset("-r --require --import --loader -C --conditions".split()),
+    "deno": frozenset("-c --config --import-map --lock --cert --location".split()),
+}
+
+
+def _strip_command_for_name(parts: List[str]) -> str:
+    """Reduce a command to its executable name + the first argument that is not a flag.
+
+    That argument is the package, script or image the executable runs. Flags, the
+    values of flags the runner is known to read a value for (``docker run -e NAME``,
+    ``uv run --with dep``), ``KEY=value`` pairs and every argument after the package
+    are dropped, so tokens and connection strings passed on the command line never
+    end up in the name. A secret passed as the first plain argument, or as the value
+    of an unknown flag placed before the package (``--token ghp_x pkg``), is taken
+    for the package and kept.
+    """
+    if not parts:
+        return ""
+    executable = parts[0].replace("\\", "/").rsplit("/", 1)[-1]
+    value_flags = _VALUE_FLAGS_BY_EXECUTABLE.get(executable.lower().split(".", 1)[0], frozenset())
+    args = parts[2:] if len(parts) > 1 and parts[1] in _RUNNER_SUBCOMMANDS else parts[1:]
+    package = ""
+    skip_next = False
+    for part in args:
+        if skip_next:
+            skip_next = False
+        elif part.startswith("-"):
+            skip_next = part in value_flags
+        elif "=" not in part:
+            package = part
+            break
+    if "://" in package:
+        package = _strip_url_for_name(package)
+    return f"{executable} {package}"
 
 
 def _is_fastmcp_client(session: Any) -> bool:

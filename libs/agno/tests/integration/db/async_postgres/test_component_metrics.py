@@ -20,8 +20,9 @@ from agno.db.utils import (
     METRICS_STOPPED_ERROR,
     resolve_metrics_fields,
 )
-from agno.metrics import MessageMetrics, ModelMetrics, RunMetrics
+from agno.metrics import MessageMetrics, ModelMetrics, RunMetrics, ToolCallMetrics
 from agno.models.message import Message
+from agno.models.response import ToolExecution
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
@@ -740,3 +741,134 @@ async def test_calculate_metrics_dates_releases_the_lock_when_cancelled(
 
     refresh_status = await async_postgres_db_real.get_metrics_refresh_status()
     assert (refresh_status["status"], refresh_status["error"]) == ("failed", METRICS_STOPPED_ERROR)
+
+
+@pytest.mark.asyncio
+async def test_calculate_metrics_counts_tool_calls(async_postgres_db_real: AsyncPostgresDb):
+    """Ensure each tool call is counted under its tool from the stored run, including a nested member run's, without
+    reading its arguments or result, that a tool call a forked run copied, the user rejected or still waits on is not,
+    and that a read adds the tools up"""
+    base_time = _noon_utc(2)
+    member_run = RunOutput(
+        run_id="member_run",
+        agent_id="agent-1",
+        user_id="bob",
+        status=RunStatus.completed,
+        model="gpt-5",
+        model_provider="OpenAI",
+        metrics=_run_metrics(10, 0),
+        messages=[],
+        tools=[
+            ToolExecution(
+                tool_name="search",
+                tool_args={"query": "agno"},
+                result="x" * 10000,
+                metrics=ToolCallMetrics(duration=0.2),
+            ),
+            ToolExecution(tool_name="search", tool_call_error=True, metrics=ToolCallMetrics(duration=1.2)),
+        ],
+        created_at=base_time,
+    )
+    team_session = TeamSession(
+        session_id="team_session",
+        team_id="team-1",
+        user_id="bob",
+        runs=[
+            TeamRunOutput(
+                run_id="team_run",
+                team_id="team-1",
+                user_id="bob",
+                status=RunStatus.completed,
+                model="gpt-5",
+                model_provider="OpenAI",
+                metrics=_run_metrics(5, 0),
+                tools=[ToolExecution(tool_name="delegate_task_to_member", metrics=ToolCallMetrics(duration=1.5))],
+                member_responses=[member_run],
+                created_at=base_time,
+            )
+        ],
+        created_at=base_time,
+        updated_at=base_time,
+    )
+    await _persist(async_postgres_db_real, team_session)
+    fork_session = _session_on(_utc_date(2), "fork_session", "bob")
+    original = fork_session.runs[0]
+    original.messages = [Message(role="tool", tool_call_id="copied_call", content="agno")]
+    original.tools = [
+        ToolExecution(tool_call_id="copied_call", tool_name="search", metrics=ToolCallMetrics(duration=0.4)),
+        ToolExecution(tool_name="delete_file", tool_call_error=True, requires_confirmation=False, confirmed=False),
+        ToolExecution(tool_name="send_email", requires_confirmation=True),
+    ]
+    forked = RunOutput(
+        run_id="forked_run",
+        agent_id="agent-1",
+        user_id="bob",
+        status=RunStatus.completed,
+        model="gpt-5",
+        model_provider="OpenAI",
+        metrics=_run_metrics(10, 0),
+        messages=[
+            Message(role="tool", tool_call_id="copied_call", content="agno"),
+            Message(role="tool", tool_call_id="new_call", content="agno"),
+        ],
+        tools=[
+            ToolExecution(tool_call_id="copied_call", tool_name="search", metrics=ToolCallMetrics(duration=0.4)),
+            ToolExecution(tool_call_id="new_call", tool_name="search", metrics=ToolCallMetrics(duration=0.1)),
+        ],
+        forked_from_run_id=original.run_id,
+        forked_from_message_index=1,
+        created_at=original.created_at,
+    )
+    fork_session.runs.append(forked)
+    await _persist(async_postgres_db_real, fork_session)
+    await async_postgres_db_real.calculate_metrics()
+
+    past_day = _utc_date(2)
+    expected = {
+        "": {
+            "delegate_task_to_member": {
+                "count": 1,
+                "failed_count": 0,
+                "total_ms": 1500,
+                "max_ms": 1500,
+                "buckets": {"le_1500": 1},
+            },
+            "search": {
+                "count": 2,
+                "failed_count": 1,
+                "total_ms": 1400,
+                "max_ms": 1200,
+                "buckets": {"le_200": 1, "le_1200": 1},
+            },
+        }
+    }
+    # The member run is kept only inside its team run, so its tool calls count on the team's row
+    assert (await _stored_rows(async_postgres_db_real))[(past_day, "bob", "team", "team-1")]["tool_metrics"] == expected
+    # The forked run counts only the tool call it made, and neither the rejected nor the paused call counts
+    assert (await _stored_rows(async_postgres_db_real))[(past_day, "bob", "agent", "agent-1")]["tool_metrics"] == {
+        "": {
+            "search": {
+                "count": 2,
+                "failed_count": 0,
+                "total_ms": 500,
+                "max_ms": 400,
+                "buckets": {"le_100": 1, "le_400": 1},
+            }
+        }
+    }
+    expected[""]["search"] = {
+        "count": 4,
+        "failed_count": 1,
+        "total_ms": 1900,
+        "max_ms": 1200,
+        "buckets": {"le_100": 1, "le_200": 1, "le_400": 1, "le_1200": 1},
+    }
+    assert (await _stored_aggregate_metrics_rows(async_postgres_db_real))[("daily", past_day)][
+        "tool_metrics"
+    ] == expected
+
+    for user_id in [None, "bob"]:
+        metrics, _ = await async_postgres_db_real.get_component_metrics(
+            starting_date=past_day, ending_date=past_day, user_id=user_id, fields=["tool_metrics"]
+        )
+        assert metrics[0]["tool_metrics"] == expected

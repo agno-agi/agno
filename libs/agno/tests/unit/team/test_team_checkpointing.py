@@ -227,6 +227,18 @@ class TestTeamFork:
         assert forked.forked_from_run_id == "team-orig"
         assert forked.forked_from_message_index == 5
 
+    def test_fork_at_negative_index_records_every_copied_message(self):
+        team = self._build_team_with_members()
+        forked = team_run._fork_team_run(team, message_index=-1)
+        assert len(forked.messages) == 5
+        assert forked.forked_from_message_index == 5
+
+    def test_fork_past_the_last_message_records_every_copied_message(self):
+        team = self._build_team_with_members()
+        forked = team_run._fork_team_run(team, message_index=10)
+        assert len(forked.messages) == 5
+        assert forked.forked_from_message_index == 5
+
     def test_fork_resets_metrics_and_created_at(self):
         team = self._build_team_with_members()
         forked = team_run._fork_team_run(team, message_index=5)
