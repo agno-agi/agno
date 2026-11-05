@@ -981,10 +981,13 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_error(f"Exception reading from runs table: {str(e)}")
             return [] if deserialize else ([], 0)
 
-    async def _ascrub_run_ids_from_legacy_blob(self, run_ids: List[str], sess: Any, sessions_table: Any) -> None:
-        """Async variant of the legacy-blob scrub. Runs inside the caller's transaction."""
+    async def _ascrub_run_ids_from_legacy_blob(self, run_ids: List[str], sess: Any, sessions_table: Any) -> bool:
+        """Async variant of the legacy-blob scrub. Runs inside the caller's transaction.
+
+        Returns True if any legacy blob held one of ``run_ids``.
+        """
         if not run_ids or sessions_table is None or "runs" not in sessions_table.c:
-            return
+            return False
         stmt = text(
             f"""
             UPDATE {sessions_table.fullname}
@@ -1002,7 +1005,8 @@ class AsyncPostgresDb(AsyncBaseDb):
               )
             """
         )
-        await sess.execute(stmt, {"ids": list(run_ids)})
+        result = await sess.execute(stmt, {"ids": list(run_ids)})
+        return (result.rowcount or 0) > 0
 
     async def delete_run(self, run_id: str) -> bool:
         """Delete a single run from the runs table.
@@ -1011,7 +1015,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             run_id (str): The ID of the run to delete.
 
         Returns:
-            bool: True if the run was deleted, False otherwise.
+            bool: True if the run was removed from the runs table or a legacy blob, False otherwise.
         """
         try:
             table = await self._get_table(table_type="runs")
@@ -1021,12 +1025,12 @@ class AsyncPostgresDb(AsyncBaseDb):
                 if table is not None:
                     result = await sess.execute(table.delete().where(table.c.run_id == run_id))
                     deleted = result.rowcount > 0  # type: ignore
-                await self._ascrub_run_ids_from_legacy_blob([run_id], sess, sessions_table)
-            return deleted
+                scrubbed = await self._ascrub_run_ids_from_legacy_blob([run_id], sess, sessions_table)
+            return deleted or scrubbed
 
         except Exception as e:
             log_error(f"Error deleting run: {str(e)}")
-            return False
+            raise e
 
     async def delete_runs(self, run_ids: List[str]) -> None:
         """Delete all given runs from the runs table.
@@ -1045,6 +1049,7 @@ class AsyncPostgresDb(AsyncBaseDb):
 
         except Exception as e:
             log_error(f"Error deleting runs: {str(e)}")
+            raise e
 
     # -- Session methods --
     async def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
