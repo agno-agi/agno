@@ -57,6 +57,7 @@ class TestResolveDbFromConfigSqlite:
 
         resolved = resolve_db_from_config(data, registry=registry)
 
+        # The saved default metrics table, which to_dict leaves out, is not an override.
         assert resolved is os_db
 
     def test_overrides_return_clone_sharing_engine(self, tmp_path):

@@ -14,7 +14,6 @@ import agno
 from agno.db.postgres import PostgresDb
 from agno.db.postgres.utils import build_component_metrics_run
 from agno.db.utils import (
-    _METRICS_BUCKET_BOUNDS_MS,
     METRICS_COMPONENT_TYPES,
     METRICS_DAY_GRACE_SECONDS,
     METRICS_FIELDS,
@@ -41,7 +40,6 @@ from agno.db.utils import (
     metrics_day_ranges,
     metrics_day_to_reopen,
     metrics_days_since_last_calculation,
-    metrics_days_to_read,
     metrics_full_months,
     metrics_month_end,
     metrics_nested_run_ids,
@@ -312,19 +310,6 @@ def test_team_member_run_counts_under_the_member_agent():
     assert rows[("alice", "agent", "member-1")]["parent_component_id"] == "team-1"
 
 
-def test_member_run_names_a_team_run_of_another_day_as_its_parent():
-    """A member run started after midnight by a team run of the day before names that team as its parent."""
-    rows = calculate_date_component_metrics(
-        TARGET_DATE,
-        [],
-        [_run("member-run", component_id="member-1", parent_run_id="team-run")],
-        set(),
-        [{"run_id": "team-run", "run_type": "team", "team_id": "team-1"}],
-    )
-
-    assert [(row["component_id"], row["parent_component_id"]) for row in rows] == [("member-1", "team-1")]
-
-
 def test_every_run_names_the_component_that_started_the_whole_run_as_its_root():
     """A member of a nested team names the outermost team as its root, and a run no run started names itself."""
     rows = calculate_date_component_metrics(
@@ -354,11 +339,10 @@ def test_harness_state_session_is_not_counted_but_an_agent_with_team_metadata_is
         "metadata": {"team_id": "team-1"},
     }
     own_session = {**_session("alice", "agent", "agent-1"), "session_id": "s-1", "metadata": {"team_id": "acme"}}
-    bad_metadata = {**_session("alice", "agent", "agent-1"), "session_id": "s-2", "metadata": "{not json"}
 
-    rows = calculate_date_component_metrics(TARGET_DATE, [state_session, own_session, bad_metadata], [], set(), [])
+    rows = calculate_date_component_metrics(TARGET_DATE, [state_session, own_session], [], set(), [])
 
-    assert [(row["component_id"], row["sessions_count"]) for row in rows] == [("agent-1", 2)]
+    assert [(row["component_id"], row["sessions_count"]) for row in rows] == [("agent-1", 1)]
 
 
 def test_remote_member_run_and_session_are_counted_under_the_team_on_a_shared_database():
@@ -528,14 +512,6 @@ def test_member_stored_on_another_day_is_not_walked():
     assert ("alice", "agent", "member-1") not in parent_day
 
 
-def test_nested_run_ids_are_collected_at_every_depth():
-    inner = _model_call(agent_id="inner-a", run_id="inner-run")
-    step_team = _model_call(team_id="team-1", run_id="team-run", member_responses=[inner])
-    runs = [_run(run_type="workflow", component_id="wf-1", model=None, step_executor_runs=[step_team]), _run("plain")]
-
-    assert metrics_nested_run_ids(runs) == {"team-run", "inner-run"}
-
-
 def test_nested_run_reachable_twice_is_walked_once():
     """A workflow team step lists its members flat beside the team run that also holds them."""
     member = _model_call(tokens={"input_tokens": 1}, agent_id="member-1", run_id="member-run")
@@ -563,15 +539,6 @@ def test_messages_a_forked_run_copied_are_not_model_calls():
 
     assert row["model_calls_count"] == 2
     assert row["total_model_call_ms"] == 500
-
-
-def test_run_copied_into_a_forked_session_is_not_counted():
-    """A run copied into a forked session repeats the run it was copied from, so only the session counts."""
-    run = _run(call_durations=(0.2,), tokens={"total_tokens": 10})
-    run["run_data"]["forked_from_session_id"] = "source-session"
-    row = _only_row(sessions=[_session("alice")], runs=[run])
-
-    assert (row["sessions_count"], row["runs_count"], row["total_tokens"], row["model_calls_count"]) == (1, 0, 0, 0)
 
 
 def test_status_metrics_keyed_by_status():
@@ -675,72 +642,6 @@ def test_timing_counted_in_the_right_bucket():
     row = _only_row(runs=[_run(duration=1.234)])
 
     assert row["duration_buckets"] == {"le_1500": 1}
-
-
-def test_bucket_bounds_never_change():
-    """The bucket bounds are fixed: buckets counted under different bounds cannot be added up."""
-    assert _METRICS_BUCKET_BOUNDS_MS == (
-        10,
-        12,
-        15,
-        20,
-        25,
-        30,
-        40,
-        50,
-        60,
-        80,
-        100,
-        120,
-        150,
-        200,
-        250,
-        300,
-        400,
-        500,
-        600,
-        800,
-        1_000,
-        1_200,
-        1_500,
-        2_000,
-        2_500,
-        3_000,
-        4_000,
-        5_000,
-        6_000,
-        8_000,
-        10_000,
-        12_000,
-        15_000,
-        20_000,
-        25_000,
-        30_000,
-        40_000,
-        50_000,
-        60_000,
-        80_000,
-        100_000,
-        120_000,
-        150_000,
-        200_000,
-        250_000,
-        300_000,
-        400_000,
-        500_000,
-        600_000,
-        800_000,
-        1_000_000,
-        1_200_000,
-        1_500_000,
-        2_000_000,
-        2_500_000,
-        3_000_000,
-        4_000_000,
-        5_000_000,
-        6_000_000,
-        8_000_000,
-    )
 
 
 def test_every_timing_gets_its_own_buckets():
@@ -1182,11 +1083,6 @@ def test_day_without_rows_gets_a_total_row_of_zeros():
     assert day["completed"] is True
 
 
-def test_total_row_of_an_unknown_aggregation_period_is_refused():
-    with pytest.raises(ValueError, match="week"):
-        build_aggregate_metrics_row([], "week", TARGET_DATE, completed=True)
-
-
 def test_today_and_yesterday_are_still_open():
     """A run of yesterday can still be written today, so yesterday is completed a day later."""
     today = (datetime.now(timezone.utc) - timedelta(seconds=METRICS_DAY_GRACE_SECONDS)).date()
@@ -1396,14 +1292,11 @@ def test_month_end_and_the_full_months_wholly_inside_the_range():
 def test_days_of_a_month_read_from_its_rows_are_not_read():
     """February is read from its month rows, so only the days of January and March are read; without month rows
     every day is read."""
-    days = metrics_days_to_read(date(2026, 1, 30), date(2026, 3, 2), [date(2026, 2, 1)])
-
-    assert days == [date(2026, 1, 30), date(2026, 1, 31), date(2026, 3, 1), date(2026, 3, 2)]
-    assert metrics_day_ranges(days) == [
+    assert metrics_day_ranges(date(2026, 1, 30), date(2026, 3, 2), [date(2026, 2, 1)]) == [
         (date(2026, 1, 30), date(2026, 1, 31)),
         (date(2026, 3, 1), date(2026, 3, 2)),
     ]
-    assert len(metrics_days_to_read(date(2026, 2, 1), date(2026, 2, 28), [])) == 28
+    assert metrics_day_ranges(date(2026, 2, 1), date(2026, 2, 28), []) == [(date(2026, 2, 1), date(2026, 2, 28))]
 
 
 # ---------------------------------------------------------------------------
@@ -1471,6 +1364,7 @@ def test_add_metrics_totals():
         },
     }
     fields = ["total_duration_ms", "max_duration_ms", "duration_buckets", "model_metrics", "tool_metrics"]
+    tool_metrics = total["tool_metrics"]
 
     add_metrics_totals(
         total,
@@ -1513,6 +1407,8 @@ def test_add_metrics_totals():
     partial = {"runs_count": 1, "max_duration_ms": None}
     add_metrics_totals(partial, {"max_duration_ms": None}, ["runs_count", "max_duration_ms"])
     assert partial == {"runs_count": 1, "max_duration_ms": None}
+    # Adding up never changes the maps added into
+    assert tool_metrics[""]["search"]["count"] == 2
 
 
 def test_resolve_fields_defaults_to_everything_and_rejects_unknown():

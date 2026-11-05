@@ -13,12 +13,12 @@ from agno.db.utils import (
     METRICS_COST_FIELDS,
     METRICS_COUNT_MAP_COLUMNS,
     METRICS_MAX_COLUMNS,
+    METRICS_NESTED_RUN_KEYS,
     METRICS_SUM_FIELDS,
     METRICS_TOKEN_DETAILS_FIELDS,
     METRICS_TOKEN_FIELDS,
     build_aggregate_metrics_row,
     metrics_day_ranges,
-    metrics_days_to_read,
 )
 from agno.utils.log import log_debug, log_error, log_warning
 
@@ -69,13 +69,12 @@ _METRICS_CALL_DURATIONS_PATH: Any = literal_column(
 # The id of each tool call answered in the first $skip messages, the ones a forked run copied from the run it was
 # forked from
 _METRICS_COPIED_TOOL_CALL_IDS_PATH: Any = literal_column(
-    """'$.messages[0 to $skip - 1] ? (@.role == "tool" && @.tool_call_id != "").tool_call_id'::jsonpath"""
+    """'$.messages[0 to $skip - 1] ? (@.role == "tool" && @.tool_call_id.type() == "string" && @.tool_call_id != "")"""
+    """.tool_call_id'::jsonpath"""
 )
 
-# The keys of a stored run that hold the runs nested inside it, in the order the rollup walks them
-_METRICS_NESTED_RUN_KEYS = ("step_executor_runs", "member_responses", "workflow_agent_run")
-
-# Every run of one of those lists, or the one run a key holds on its own. A key stored as null holds none
+# Every run of a list under one of METRICS_NESTED_RUN_KEYS, or the one run a key holds on its own. A key stored as
+# null holds none
 _METRICS_NESTED_RUNS_PATH: Any = literal_column("""'$[*] ? (@.type() == "object")'::jsonpath""")
 
 
@@ -561,7 +560,12 @@ def _metrics_tool_calls(run_data: Any) -> Any:
         .table_valued(column("value", postgresql.JSONB))
         .render_derived()
     )
-    tool_calls = (
+    copied_tool_call = (
+        func.jsonb_path_query(run_data, _METRICS_COPIED_TOOL_CALL_IDS_PATH, func.jsonb_build_object("skip", skip))
+        .table_valued(column("value", postgresql.JSONB))
+        .render_derived(name="copied_tool_call")
+    )
+    return (
         select(
             func.jsonb_agg(
                 func.jsonb_build_object(
@@ -584,26 +588,11 @@ def _metrics_tool_calls(run_data: Any) -> Any:
                 )
             )
         )
-        .select_from(tool_call)
-        .where(func.jsonb_typeof(tool_call.c.value) == "object")
-    )
-    copied_tool_call = (
-        func.jsonb_path_query(run_data, _METRICS_COPIED_TOOL_CALL_IDS_PATH, func.jsonb_build_object("skip", skip))
-        .table_valued(column("value", postgresql.JSONB))
-        .render_derived(name="copied_tool_call")
-    )
-    # Joined only for a forked run, so a run that is not a fork never reads its messages, and a fork reads the ones it
-    # copied once, not again for each tool call
-    return case(
-        (
-            skip > 0,
-            tool_calls.select_from(
-                tool_call.outerjoin(copied_tool_call, copied_tool_call.c.value == tool_call.c.value["tool_call_id"])
-            )
-            .where(copied_tool_call.c.value.is_(None))
-            .scalar_subquery(),
-        ),
-        else_=tool_calls.scalar_subquery(),
+        .select_from(
+            tool_call.outerjoin(copied_tool_call, copied_tool_call.c.value == tool_call.c.value["tool_call_id"])
+        )
+        .where(func.jsonb_typeof(tool_call.c.value) == "object", copied_tool_call.c.value.is_(None))
+        .scalar_subquery()
     )
 
 
@@ -622,7 +611,7 @@ def build_component_metrics_runs_query(table: Table, start_timestamp: int, end_t
     """
     # Read in the database, so a run is never read whole
     nested_keys = values(column("position"), column("key"), name="nested_keys").data(
-        list(enumerate(_METRICS_NESTED_RUN_KEYS))
+        list(enumerate(METRICS_NESTED_RUN_KEYS))
     )
     nested_run = (
         func.jsonb_path_query(table.c.run_data.op("->")(nested_keys.c.key), _METRICS_NESTED_RUNS_PATH)
@@ -703,7 +692,7 @@ def build_component_metrics_runs_query(table: Table, start_timestamp: int, end_t
         _metrics_call_durations(table.c.run_data).label("call_durations"),
         _metrics_tool_calls(table.c.run_data).label("tools"),
         # Walked only for a run with runs nested inside it
-        case((table.c.run_data.has_any(postgresql.array(list(_METRICS_NESTED_RUN_KEYS))), nested_runs)).label(
+        case((table.c.run_data.has_any(postgresql.array(list(METRICS_NESTED_RUN_KEYS))), nested_runs)).label(
             "nested_runs"
         ),
         table.c.created_at,
@@ -880,7 +869,7 @@ def build_component_metrics_totals_queries(
     # where a list of days is planned as if each day held rows
     day_ranges = [
         and_(table.c.date >= first_day, table.c.date <= last_day)
-        for first_day, last_day in metrics_day_ranges(metrics_days_to_read(starting_date, ending_date, month_starts))
+        for first_day, last_day in metrics_day_ranges(starting_date, ending_date, month_starts)
     ]
     filters = []
     if day_ranges:
@@ -943,9 +932,7 @@ def build_component_metrics_totals_queries(
 
     # Each toolkit's tools hold several numbers and buckets each, so the maps are added up once read
     if "tool_metrics" in fields:
-        queries["tool_metrics"] = select(table.c.date, table.c.tool_metrics).where(
-            where, table.c.tool_metrics != func.jsonb_build_object()
-        )
+        queries["tool_metrics"] = select(table.c.date, table.c.tool_metrics).where(where)
 
     return queries
 

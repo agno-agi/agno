@@ -64,7 +64,6 @@ from agno.db.utils import (
     metrics_day_ranges,
     metrics_day_to_reopen,
     metrics_days_since_last_calculation,
-    metrics_days_to_read,
     metrics_full_months,
     metrics_month_end,
     metrics_nested_run_ids,
@@ -2862,9 +2861,7 @@ class FirestoreDb(BaseDb):
                 collection_ref.where(filter=FieldFilter("aggregation_period", "==", "daily"))
                 .where(filter=FieldFilter("date", ">=", first_day.isoformat()))
                 .where(filter=FieldFilter("date", "<=", last_day.isoformat()))
-                for first_day, last_day in metrics_day_ranges(
-                    metrics_days_to_read(starting_date, ending_date, month_starts)
-                )
+                for first_day, last_day in metrics_day_ranges(starting_date, ending_date, month_starts)
             ]
             if month_starts:
                 queries.append(

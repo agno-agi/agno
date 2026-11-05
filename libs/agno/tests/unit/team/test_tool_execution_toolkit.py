@@ -9,6 +9,7 @@ from agno.db.sqlite import SqliteDb
 from agno.models.base import Model
 from agno.models.response import ModelResponse
 from agno.run.base import RunStatus
+from agno.run.team import TeamRunEvent
 from agno.team import Team
 from agno.tools.calculator import CalculatorTools
 from agno.tools.toolkit import Toolkit
@@ -96,10 +97,11 @@ def _confirmation_team(db_file: str) -> Team:
 
 def test_team_run_stores_the_toolkit_of_each_tool_execution(tmp_path):
     """A team tool from a Toolkit records the toolkit's name on its stored tool execution; a plain function none."""
+    calculator = CalculatorTools()
     team = Team(
         model=ScriptedModel(_responses()),
         members=[Agent(name="member", model=ScriptedModel([]), telemetry=False)],
-        tools=[CalculatorTools(), count_files],
+        tools=[calculator, count_files],
         db=SqliteDb(db_file=str(tmp_path / "team.db")),
         telemetry=False,
     )
@@ -109,6 +111,8 @@ def test_team_run_stores_the_toolkit_of_each_tool_execution(tmp_path):
     stored = team.get_last_run_output(session_id="s")
     for tools in (run_output.tools, stored.tools):
         assert {tool.tool_name: tool.toolkit for tool in tools} == {"add": "calculator", "count_files": None}
+    # The Toolkit's own functions are left as they were.
+    assert calculator.functions["add"].owning_toolkit is None
 
 
 @pytest.mark.asyncio
@@ -129,8 +133,30 @@ async def test_team_arun_stores_the_toolkit_of_each_tool_execution(tmp_path):
         assert {tool.tool_name: tool.toolkit for tool in tools} == {"add": "calculator", "count_files": None}
 
 
+def test_team_streamed_run_stores_the_toolkit_of_each_tool_execution(tmp_path):
+    """The streamed team run path records the toolkit's name on the stored tool executions and completed events."""
+    team = Team(
+        model=ScriptedModel(_responses()),
+        members=[Agent(name="member", model=ScriptedModel([]), telemetry=False)],
+        tools=[CalculatorTools(), count_files],
+        db=SqliteDb(db_file=str(tmp_path / "team.db")),
+        telemetry=False,
+    )
+
+    events = list(team.run("add 1 and 2, then count the files", session_id="s", stream=True, stream_events=True))
+
+    completed = {
+        event.tool.tool_name: event.tool.toolkit
+        for event in events
+        if event.event == TeamRunEvent.tool_call_completed.value
+    }
+    assert completed == {"add": "calculator", "count_files": None}
+    stored = team.get_last_run_output(session_id="s")
+    assert {tool.tool_name: tool.toolkit for tool in stored.tools} == {"add": "calculator", "count_files": None}
+
+
 def test_team_confirmed_tool_keeps_its_toolkit_and_duration(tmp_path):
-    """A confirmed team Toolkit tool keeps the toolkit's name and stores its execution duration once the run continues."""
+    """A confirmed team Toolkit tool keeps the toolkit's name and stores its duration once the run continues."""
     team = _confirmation_team(str(tmp_path / "team.db"))
 
     paused = team.run("count the files", session_id="s")

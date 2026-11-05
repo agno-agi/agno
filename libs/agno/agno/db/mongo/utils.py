@@ -15,7 +15,6 @@ from agno.db.utils import (
     list_metrics_models,
     list_metrics_tools,
     metrics_day_ranges,
-    metrics_days_to_read,
 )
 from agno.utils.log import log_info, log_warning
 
@@ -552,7 +551,7 @@ def build_metrics_rows_filter(
     # Days that follow one another are looked up as one range
     filters: List[Dict[str, Any]] = [
         {"aggregation_period": "daily", "date": {"$gte": first_day.isoformat(), "$lte": last_day.isoformat()}}
-        for first_day, last_day in metrics_day_ranges(metrics_days_to_read(starting_date, ending_date, month_starts))
+        for first_day, last_day in metrics_day_ranges(starting_date, ending_date, month_starts)
     ]
     if month_starts:
         filters.append(

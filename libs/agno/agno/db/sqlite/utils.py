@@ -16,7 +16,6 @@ from agno.db.utils import (
     METRICS_TOKEN_FIELDS,
     build_aggregate_metrics_row,
     metrics_day_ranges,
-    metrics_days_to_read,
 )
 from agno.utils.log import log_debug, log_error, log_warning
 
@@ -844,7 +843,7 @@ def build_component_metrics_totals_queries(
     # instead of one per day
     day_ranges = [
         and_(table.c.date >= first_day, table.c.date <= last_day)
-        for first_day, last_day in metrics_day_ranges(metrics_days_to_read(starting_date, ending_date, month_starts))
+        for first_day, last_day in metrics_day_ranges(starting_date, ending_date, month_starts)
     ]
     filters = []
     if day_ranges:

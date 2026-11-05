@@ -8,7 +8,7 @@ POST /metrics/refresh, then read the stored result through GET /metrics.
 Prerequisites: OPENAI_API_KEY
 Run: .venvs/demo/bin/python cookbook/05_agent_os/13_observability/metrics.py
 Try: Compare agent_runs_count and total_tokens after another run, or set
-     METRICS_CALCULATION_ENABLED=false to stop calculating metrics.
+     METRICS_CALCULATION_ENABLED=false to see the refresh answer "disabled".
 """
 
 import asyncio
@@ -71,6 +71,12 @@ async def run_metrics_demo() -> None:
         )
         refresh_response.raise_for_status()
         refreshed_metrics = refresh_response.json()
+        # With metrics calculation off, the refresh answers a status, not the days
+        if isinstance(refreshed_metrics, dict):
+            print(
+                f"Refresh: {refreshed_metrics['status']} ({refreshed_metrics['message']})"
+            )
+            return
         if not refreshed_metrics:
             raise RuntimeError("POST /metrics/refresh returned no daily aggregate")
 
