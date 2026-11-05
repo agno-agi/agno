@@ -37,7 +37,10 @@ async def test_ainsert_handles_utf8_samples(knowledge, vector_db, text: str) -> 
 
 def test_insert_sync_replaces_invalid_surrogates(knowledge, vector_db) -> None:
     # Lone surrogate characters are not valid in UTF-8; they should be replaced with U+FFFD
-    knowledge.insert(text_content="bad\udffftext")
+    knowledge.insert(
+        name="invalid-surrogate-sync",
+        text_content="bad\udffftext",
+    )
     docs = vector_db.inserted_documents
     contents = "\n".join([getattr(d, "content", "") for d in docs])
     # Some environments render replacement as '?' when logging/printing
@@ -46,7 +49,10 @@ def test_insert_sync_replaces_invalid_surrogates(knowledge, vector_db) -> None:
 
 @pytest.mark.asyncio
 async def test_ainsert_replaces_invalid_surrogates(knowledge, vector_db) -> None:
-    await knowledge.ainsert(text_content="\ud800orphan")
+    await knowledge.ainsert(
+        name="invalid-surrogate-async",
+        text_content="\ud800orphan",
+    )
     docs = vector_db.inserted_documents
     contents = "\n".join([getattr(d, "content", "") for d in docs])
     assert "\ufffd" in contents or "�" in contents or "?" in contents
