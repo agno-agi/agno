@@ -36,6 +36,14 @@ class WhereClause:
     def and_(self, field: str, value: Any, operator: OPERATOR = "="):
         return self._add_filter(field, operator, value)
 
+    def and_condition(self, condition: str, params: Optional[dict[str, Any]] = None):
+        """AND a raw condition whose ``$name`` placeholders are bound from ``params``."""
+        self._params.update(params or {})
+        if self._conditions:
+            self._conditions.append("AND")
+        self._conditions.append(f"({condition})")
+        return self
+
     def build(self) -> tuple[str, dict[str, Any]]:
         if not self._conditions:
             return "", {}

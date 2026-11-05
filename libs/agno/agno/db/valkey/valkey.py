@@ -17,9 +17,12 @@ from agno.db.utils import (
     deserialize_sessions,
     drop_legacy_metrics,
     filter_context_runs,
+    filter_run_rows,
     merge_runs_table_with_legacy_blob,
     metric_record_day,
     metrics_starting_date_from_records,
+    session_rows_have_unindexed_runs,
+    with_stored_run_index,
 )
 from agno.db.valkey.utils import (
     apply_filters,
@@ -621,12 +624,18 @@ class ValkeyDb(BaseDb):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
-        status: Optional[RunStatus] = None,
+        status: Optional[Union[RunStatus, str, List[Union[RunStatus, str]]]] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        before_run_index: Optional[int] = None,
+        after_run_index: Optional[int] = None,
+        created_after: Optional[int] = None,
+        created_before: Optional[int] = None,
+        top_level_only: bool = False,
+        parent_run_ids: Optional[List[str]] = None,
     ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
         """Get all runs matching the given filters.
 
@@ -640,17 +649,25 @@ class ValkeyDb(BaseDb):
             else:
                 rows = self._get_all_records("runs")
 
-            conditions: Dict[str, Any] = {}
             if user_id is not None:
-                conditions["user_id"] = user_id
+                rows = apply_filters(records=rows, conditions={"user_id": user_id})
+            rows = filter_run_rows(
+                rows,
+                status=status,
+                before_run_index=before_run_index,
+                after_run_index=after_run_index,
+                created_after=created_after,
+                created_before=created_before,
+                top_level_only=top_level_only,
+                parent_run_ids=parent_run_ids,
+            )
+            conditions: Dict[str, Any] = {}
             if agent_id is not None:
                 conditions["agent_id"] = agent_id
             if team_id is not None:
                 conditions["team_id"] = team_id
             if workflow_id is not None:
                 conditions["workflow_id"] = workflow_id
-            if status is not None:
-                conditions["status"] = status.value if isinstance(status, RunStatus) else status
             rows = apply_filters(records=rows, conditions=conditions)
             total_count = len(rows)
 
@@ -667,6 +684,17 @@ class ValkeyDb(BaseDb):
             return [deserialize_run(r.get("run_type"), r["run_data"]) for r in rows]
         except Exception as e:
             log_error(f"Exception reading runs: {str(e)}")
+            raise e
+
+    def has_unindexed_runs(self, session_id: str) -> bool:
+        """Whether the session still embeds legacy runs or holds a run row without a run_index."""
+        try:
+            session = self._get_record("sessions", session_id)
+            if session is None:
+                return False
+            return session_rows_have_unindexed_runs(session, self._get_session_run_rows(session_id))
+        except Exception as e:
+            log_error(f"Exception checking for unindexed runs: {str(e)}")
             raise e
 
     def _scrub_run_ids_from_session_legacy_blob(self, session_id: str, run_ids: set) -> None:
@@ -830,6 +858,7 @@ class ValkeyDb(BaseDb):
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
         runs_limit: Optional[int] = None,
+        include_runs: bool = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Read a session from Valkey.
 
@@ -837,6 +866,7 @@ class ValkeyDb(BaseDb):
             session_id (str): The ID of the session to get.
             session_type (Optional[SessionType]): The type of session to get.
             user_id (Optional[str]): The ID of the user to filter by.
+            include_runs (bool): Set False to skip reading runs; the session's runs are None.
 
         Returns:
             Optional[Union[AgentSession, TeamSession, WorkflowSession]]: The session if found, None otherwise.
@@ -853,13 +883,20 @@ class ValkeyDb(BaseDb):
             if user_id is not None and session.get("user_id") != user_id:
                 return None
 
-            # Attach runs from the runs keys, merged with any legacy `runs` blob
-            runs_data = self._get_session_runs_data(session_id)
-            session["runs"] = merge_runs_table_with_legacy_blob(runs_data, session.get("runs"))
-            if runs_limit is not None:
-                # No query engine to push "last N" down: filter+slice in memory to
-                # match the SQL fast path (drop member/skip-status runs, then last N).
-                session["runs"] = filter_context_runs(session["runs"] or [])[-runs_limit:]
+            if not include_runs:
+                session["runs"] = None
+            else:
+                # Attach runs from the runs keys, merged with any legacy `runs` blob
+                runs_data = with_stored_run_index(
+                    (row["run_data"], row.get("run_index"))
+                    for row in self._get_session_run_rows(session_id)
+                    if row.get("run_data") is not None
+                )
+                session["runs"] = merge_runs_table_with_legacy_blob(runs_data, session.get("runs"))
+                if runs_limit is not None:
+                    # No query engine to push "last N" down: filter+slice in memory to
+                    # match the SQL fast path (drop member/skip-status runs, then last N).
+                    session["runs"] = filter_context_runs(session["runs"] or [])[-runs_limit:]
 
             if not deserialize:
                 return session

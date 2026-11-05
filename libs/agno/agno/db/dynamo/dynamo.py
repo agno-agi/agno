@@ -40,8 +40,11 @@ from agno.db.utils import (
     deserialize_sessions,
     drop_legacy_metrics,
     filter_context_runs,
+    filter_run_rows,
     merge_runs_table_with_legacy_blob,
     metrics_starting_date_from_records,
+    session_rows_have_unindexed_runs,
+    with_stored_run_index,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -245,7 +248,7 @@ class DynamoDb(BaseDb):
 
     # --- Runs ---
 
-    def _query_runs_by_session(self, session_id: str) -> List[Dict[str, Any]]:
+    def _query_runs_by_session(self, session_id: str, **query_kwargs: Any) -> List[Dict[str, Any]]:
         """Query all run items for a session, ordered by created_at via the GSI."""
         table_name = self._get_table("runs", create_table_if_not_found=False)
         items: List[Dict[str, Any]] = []
@@ -255,6 +258,7 @@ class DynamoDb(BaseDb):
                 IndexName="session_id-created_at-index",
                 KeyConditionExpression="session_id = :sid",
                 ExpressionAttributeValues={":sid": {"S": session_id}},
+                **query_kwargs,
             )
             items.extend(response.get("Items", []))
             while "LastEvaluatedKey" in response:
@@ -264,17 +268,20 @@ class DynamoDb(BaseDb):
                     KeyConditionExpression="session_id = :sid",
                     ExpressionAttributeValues={":sid": {"S": session_id}},
                     ExclusiveStartKey=response["LastEvaluatedKey"],
+                    **query_kwargs,
                 )
                 items.extend(response.get("Items", []))
         except self.client.exceptions.ResourceNotFoundException:
             return []
         return items
 
-    def _get_session_runs_data(self, session_id: str) -> List[Dict[str, Any]]:
+    def _get_session_runs_data(self, session_id: str, with_run_index: bool = False) -> List[Dict[str, Any]]:
         """Return raw run_data dicts for a session, ordered by run_index then created_at."""
         items = self._query_runs_by_session(session_id)
         rows = [deserialize_from_dynamodb_item(it) for it in items]
         rows.sort(key=lambda r: (r.get("run_index") or 0, r.get("created_at") or 0))
+        if with_run_index:
+            return with_stored_run_index((r["run_data"], r.get("run_index")) for r in rows if "run_data" in r)
         return [r["run_data"] for r in rows if "run_data" in r]
 
     def _get_sessions_runs(self, session_ids: List[str]) -> Optional[Dict[str, List[Dict[str, Any]]]]:
@@ -460,12 +467,18 @@ class DynamoDb(BaseDb):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
-        status: Optional[RunStatus] = None,
+        status: Optional[Union[RunStatus, str, List[Union[RunStatus, str]]]] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        before_run_index: Optional[int] = None,
+        after_run_index: Optional[int] = None,
+        created_after: Optional[int] = None,
+        created_before: Optional[int] = None,
+        top_level_only: bool = False,
+        parent_run_ids: Optional[List[str]] = None,
     ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
         try:
             table_name = self._get_table("runs", create_table_if_not_found=False)
@@ -488,15 +501,22 @@ class DynamoDb(BaseDb):
 
             if user_id is not None:
                 rows = [r for r in rows if r.get("user_id") == user_id]
+            rows = filter_run_rows(
+                rows,
+                status=status,
+                before_run_index=before_run_index,
+                after_run_index=after_run_index,
+                created_after=created_after,
+                created_before=created_before,
+                top_level_only=top_level_only,
+                parent_run_ids=parent_run_ids,
+            )
             if agent_id is not None:
                 rows = [r for r in rows if r.get("agent_id") == agent_id]
             if team_id is not None:
                 rows = [r for r in rows if r.get("team_id") == team_id]
             if workflow_id is not None:
                 rows = [r for r in rows if r.get("workflow_id") == workflow_id]
-            if status is not None:
-                status_value = status.value if isinstance(status, RunStatus) else status
-                rows = [r for r in rows if r.get("status") == status_value]
 
             total_count = len(rows)
 
@@ -513,6 +533,33 @@ class DynamoDb(BaseDb):
             return [deserialize_run(r.get("run_type"), r["run_data"]) for r in rows]
         except Exception as e:
             log_error(f"Error reading runs: {str(e)}")
+            raise e
+
+    def has_unindexed_runs(self, session_id: str) -> bool:
+        """Whether the session still embeds legacy runs or holds a run row without a run_index."""
+        try:
+            sessions_table = self._get_table("sessions", create_table_if_not_found=False)
+            try:
+                item = self.client.get_item(
+                    TableName=sessions_table,
+                    Key={"session_id": {"S": session_id}},
+                    ProjectionExpression="session_id, #runs",
+                    ExpressionAttributeNames={"#runs": "runs"},
+                ).get("Item")
+            except self.client.exceptions.ResourceNotFoundException:
+                return False
+            if not item:
+                return False
+            run_items = self._query_runs_by_session(
+                session_id,
+                ProjectionExpression="run_id, #run_index",
+                ExpressionAttributeNames={"#run_index": "run_index"},
+            )
+            return session_rows_have_unindexed_runs(
+                deserialize_from_dynamodb_item(item), [deserialize_from_dynamodb_item(it) for it in run_items]
+            )
+        except Exception as e:
+            log_error(f"Exception checking for unindexed runs: {str(e)}")
             raise e
 
     def _scrub_run_ids_from_session_legacy_blob(self, session_id: str, run_ids: set) -> None:
@@ -695,6 +742,7 @@ class DynamoDb(BaseDb):
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
         runs_limit: Optional[int] = None,
+        include_runs: bool = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Get a session from the database as a Session object.
@@ -704,6 +752,7 @@ class DynamoDb(BaseDb):
             session_type (Optional[SessionType]): The type of session to get. If None, the type is inferred.
             user_id (Optional[str]): The ID of the user to get the session for.
             deserialize (Optional[bool]): Whether to deserialize the session.
+            include_runs (bool): Set False to skip reading runs; the session's runs are None.
 
         Returns:
             Optional[Session]: The session data as a Session object.
@@ -730,16 +779,19 @@ class DynamoDb(BaseDb):
             if not session:
                 return None
 
-            # Attach runs from the runs table, merged with any legacy `runs` field
-            try:
-                runs_data = self._get_session_runs_data(session_id)
-                session["runs"] = merge_runs_table_with_legacy_blob(runs_data, session.get("runs"))
-                if runs_limit is not None:
-                    # No query engine to push "last N" down: filter+slice in memory to
-                    # match the SQL fast path (drop member/skip-status runs, then last N).
-                    session["runs"] = filter_context_runs(session["runs"] or [])[-runs_limit:]
-            except Exception as e:
-                log_error(f"Failed to load runs for session {session_id}: {str(e)}")
+            if not include_runs:
+                session["runs"] = None
+            else:
+                # Attach runs from the runs table, merged with any legacy `runs` field
+                try:
+                    runs_data = self._get_session_runs_data(session_id, with_run_index=True)
+                    session["runs"] = merge_runs_table_with_legacy_blob(runs_data, session.get("runs"))
+                    if runs_limit is not None:
+                        # No query engine to push "last N" down: filter+slice in memory to
+                        # match the SQL fast path (drop member/skip-status runs, then last N).
+                        session["runs"] = filter_context_runs(session["runs"] or [])[-runs_limit:]
+                except Exception as e:
+                    log_error(f"Failed to load runs for session {session_id}: {str(e)}")
 
             if not deserialize:
                 return session

@@ -127,6 +127,7 @@ class InMemoryDb(BaseDb):
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
         runs_limit: Optional[int] = None,
+        include_runs: bool = True,
     ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession, Dict[str, Any]]]:
         """Read a session from in-memory storage.
 
@@ -135,6 +136,7 @@ class InMemoryDb(BaseDb):
             session_type (Optional[SessionType]): The type of the session to read.
             user_id (Optional[str]): The ID of the user to read the session for.
             deserialize (Optional[bool]): Whether to deserialize the session.
+            include_runs (bool): Set False to skip copying runs; the session's runs are None.
 
         Returns:
             Union[Session, Dict[str, Any], None]:
@@ -151,7 +153,9 @@ class InMemoryDb(BaseDb):
             if user_id is not None and session_data.get("user_id") != user_id:
                 return None
 
-            if runs_limit is not None:
+            if not include_runs:
+                session_data_copy = deepcopy({**session_data, "runs": None})
+            elif runs_limit is not None:
                 # No query engine to push "last N" down: filter+slice in memory to
                 # match the SQL fast path (drop member/skip-status runs, then last N).
                 # Slice BEFORE copying so a bounded read copies only the window,
@@ -506,10 +510,15 @@ class InMemoryDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        before_run_index: Optional[int] = None,
+        after_run_index: Optional[int] = None,
+        created_after: Optional[int] = None,
+        created_before: Optional[int] = None,
+        top_level_only: bool = False,
+        parent_run_ids: Optional[List[str]] = None,
     ) -> Union[List[Any], Tuple[List[Dict[str, Any]], int]]:
         """Read runs across in-memory sessions with the same filters as SQL adapters."""
-        from agno.db.utils import deserialize_run, get_run_type
-        from agno.run.base import RunStatus
+        from agno.db.utils import deserialize_run, filter_run_rows
 
         try:
             rows: List[Dict[str, Any]] = []
@@ -518,17 +527,23 @@ class InMemoryDb(BaseDb):
                     continue
                 if user_id is not None and session.get("user_id") != user_id:
                     continue
-                if agent_id is not None and run.get("agent_id") != agent_id:
-                    continue
-                if team_id is not None and run.get("team_id") != team_id:
-                    continue
-                if workflow_id is not None and run.get("workflow_id") != workflow_id:
-                    continue
-                if status is not None:
-                    expected = status.value if isinstance(status, RunStatus) else status
-                    if run.get("status") != expected:
-                        continue
-                rows.append(deepcopy(run))
+                rows.append(self._run_row(session, run))
+            rows = filter_run_rows(
+                rows,
+                status=status,
+                before_run_index=before_run_index,
+                after_run_index=after_run_index,
+                created_after=created_after,
+                created_before=created_before,
+                top_level_only=top_level_only,
+                parent_run_ids=parent_run_ids,
+            )
+            if agent_id is not None:
+                rows = [r for r in rows if r["agent_id"] == agent_id]
+            if team_id is not None:
+                rows = [r for r in rows if r["team_id"] == team_id]
+            if workflow_id is not None:
+                rows = [r for r in rows if r["workflow_id"] == workflow_id]
 
             total_count = len(rows)
 
@@ -543,10 +558,37 @@ class InMemoryDb(BaseDb):
 
             if not deserialize:
                 return rows, total_count
-            return [deserialize_run(get_run_type(r), r) for r in rows]
+            return [deserialize_run(r["run_type"], r["run_data"]) for r in rows]
         except Exception as e:
             log_error(f"Error reading runs: {str(e)}")
             raise e
+
+    @staticmethod
+    def _run_row(session: Dict[str, Any], run: Dict[str, Any]) -> Dict[str, Any]:
+        """A copy of an inline run in the row shape the runs-table adapters return."""
+        from agno.db.utils import get_run_type
+
+        run_data = deepcopy(run)
+        return {
+            "run_id": run_data.get("run_id"),
+            "session_id": session.get("session_id"),
+            "run_type": get_run_type(run_data),
+            "agent_id": run_data.get("agent_id"),
+            "team_id": run_data.get("team_id"),
+            "workflow_id": run_data.get("workflow_id"),
+            "user_id": session.get("user_id"),
+            "parent_run_id": run_data.get("parent_run_id"),
+            "status": run_data.get("status"),
+            "run_index": run_data.get("run_index"),
+            "run_data": run_data,
+            "created_at": run_data.get("created_at"),
+        }
+
+    def has_unindexed_runs(self, session_id: str) -> bool:
+        """Whether some inline run of the session has no run_index."""
+        session = self._sessions.get(session_id)
+        runs = (session or {}).get("runs") or []
+        return any(not isinstance(run, dict) or not isinstance(run.get("run_index"), int) for run in runs)
 
     def upsert_run(
         self,

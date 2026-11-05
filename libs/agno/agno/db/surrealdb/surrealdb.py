@@ -51,6 +51,8 @@ from agno.db.utils import (
     drop_legacy_metrics,
     filter_context_runs,
     merge_runs_table_with_legacy_blob,
+    run_status_values,
+    with_stored_run_index,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -283,7 +285,7 @@ class SurrealDb(BaseDb):
                 dict,
             )
             rows = [desurrealize_run_row(r) for r in rows_raw]
-            run_data = [r["run_data"] for r in rows if "run_data" in r]
+            run_data = with_stored_run_index((r["run_data"], r.get("run_index")) for r in rows if "run_data" in r)
             run_data.reverse()
             return run_data
         rows_raw = self._query(
@@ -293,7 +295,7 @@ class SurrealDb(BaseDb):
             dict,
         )
         rows = [desurrealize_run_row(r) for r in rows_raw]
-        return [r["run_data"] for r in rows if "run_data" in r]
+        return with_stored_run_index((r["run_data"], r.get("run_index")) for r in rows if "run_data" in r)
 
     def _get_sessions_runs(self, session_ids: List[str]) -> Optional[Dict[str, List[Dict[str, Any]]]]:
         """Run dicts for several sessions in one read, used by the search fallback."""
@@ -426,12 +428,18 @@ class SurrealDb(BaseDb):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
-        status: Optional[RunStatus] = None,
+        status: Optional[Union[RunStatus, str, List[Union[RunStatus, str]]]] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        before_run_index: Optional[int] = None,
+        after_run_index: Optional[int] = None,
+        created_after: Optional[int] = None,
+        created_before: Optional[int] = None,
+        top_level_only: bool = False,
+        parent_run_ids: Optional[List[str]] = None,
     ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
         try:
             runs_table = self._get_table("runs", create_table_if_not_found=False)
@@ -449,9 +457,24 @@ class SurrealDb(BaseDb):
             where = where.and_("team_id", team_id)
         if workflow_id is not None:
             where = where.and_("workflow_id", workflow_id)
-        if status is not None:
-            status_value = status.value if isinstance(status, RunStatus) else status
-            where = where.and_("status", status_value)
+        statuses = run_status_values(status)
+        if statuses is not None:
+            where = where.and_("status", statuses, "IN")
+        if before_run_index is not None or after_run_index is not None:
+            # NONE and NULL compare below every number, so drop them before the range
+            where = where.and_condition("run_index != NONE AND run_index != NULL")
+        if before_run_index is not None:
+            where = where.and_condition("run_index < $before_run_index", {"before_run_index": before_run_index})
+        if after_run_index is not None:
+            where = where.and_condition("run_index > $after_run_index", {"after_run_index": after_run_index})
+        if created_after is not None:
+            where = where.and_("created_at", datetime.fromtimestamp(created_after, tz=timezone.utc), ">=")
+        if created_before is not None:
+            where = where.and_("created_at", datetime.fromtimestamp(created_before, tz=timezone.utc), "<=")
+        if parent_run_ids is not None:
+            where = where.and_("parent_run_id", list(parent_run_ids), "IN")
+        if top_level_only:
+            where = self._where_top_level_run(where, runs_table, session_id)
 
         where_clause, where_vars = where.build()
         total_count = self._count(runs_table, where_clause, where_vars)
@@ -469,6 +492,43 @@ class SurrealDb(BaseDb):
         if not deserialize:
             return list(rows), total_count
         return [deserialize_run(r.get("run_type"), r["run_data"]) for r in rows]
+
+    def _where_top_level_run(self, where: WhereClause, runs_table: str, session_id: Optional[str]) -> WhereClause:
+        """AND "no parent run in the same session": a null or self parent, or one the session does not hold."""
+        no_parent = "parent_run_id IS NONE OR parent_run_id IS NULL OR parent_run_id = run_id"
+        if session_id is None:
+            return where.and_condition(
+                f"{no_parent} OR parent_run_id NOT IN "
+                f"(SELECT VALUE run_id FROM {runs_table} WHERE session_id = $parent.session_id)"
+            )
+        # One projection read of the session's run ids instead of a subquery per candidate row
+        session_run_ids = self._query(
+            f"SELECT VALUE run_id FROM {runs_table} WHERE session_id = $sid", {"sid": session_id}, str
+        )
+        return where.and_condition(
+            f"{no_parent} OR parent_run_id NOT IN $session_run_ids", {"session_run_ids": list(session_run_ids)}
+        )
+
+    def has_unindexed_runs(self, session_id: str) -> bool:
+        """Whether the session still embeds legacy runs or holds a run row without a run_index."""
+        try:
+            sessions_table = self._get_table("sessions", create_table_if_not_found=False)
+            runs_table = self._get_table("runs", create_table_if_not_found=False)
+        except Exception:
+            return False
+        legacy = self._query_one(
+            "SELECT id FROM ONLY $record WHERE runs IS NOT NONE AND runs IS NOT NULL AND runs != [] AND runs != ''",
+            {"record": RecordID(sessions_table, session_id)},
+            dict,
+        )
+        if legacy is not None:
+            return True
+        unindexed = self._query(
+            f"SELECT id FROM {runs_table} WHERE session_id = $sid AND (run_index IS NONE OR run_index IS NULL) LIMIT 1",
+            {"sid": session_id},
+            dict,
+        )
+        return len(unindexed) > 0
 
     def _scrub_run_ids_from_legacy_blob(self, run_ids: List[str]) -> None:
         """Remove ``run_ids`` from every session record's legacy ``runs`` array.
@@ -571,6 +631,7 @@ class SurrealDb(BaseDb):
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
         runs_limit: Optional[int] = None,
+        include_runs: bool = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         r"""
         Read a session from the database.
@@ -580,6 +641,7 @@ class SurrealDb(BaseDb):
             session_type (Optional[SessionType]): Type of session to get. If None, the type is inferred.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
             deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
+            include_runs (bool): Set False to skip reading runs; the session's runs are None.
 
         Returns:
             Optional[Union[Session, Dict[str, Any]]]:
@@ -611,7 +673,9 @@ class SurrealDb(BaseDb):
         # Attach runs from the runs table, merged with any legacy `runs` blob.
         try:
             legacy_runs = desurrealized.get("runs")
-            if runs_limit is not None and not legacy_runs:
+            if not include_runs:
+                desurrealized["runs"] = None
+            elif runs_limit is not None and not legacy_runs:
                 # Fully migrated: push "most recent N" down to the DB (indexed).
                 desurrealized["runs"] = self._get_session_runs_data(session_id, limit=runs_limit)
             else:

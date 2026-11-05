@@ -52,6 +52,7 @@ from agno.db.schemas.service_accounts import (
 )
 from agno.db.sql import authz as authz_sql
 from agno.db.sql import mcp_oauth as mcp_oauth_sql
+from agno.db.sql.runs import filter_runs_statement, has_unindexed_runs_statement
 from agno.db.sqlite.schemas import get_table_schema_definition
 from agno.db.sqlite.utils import (
     apply_sorting,
@@ -78,6 +79,7 @@ from agno.db.utils import (
     owner_key,
     table_schema_mismatch_error,
     validate_pagination,
+    with_stored_run_index,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -992,7 +994,7 @@ class SqliteDb(BaseDb):
         # index serves it; created_at/run_id are deterministic tiebreakers.
         if limit is not None:
             stmt = (
-                select(runs_table.c.run_data)
+                select(runs_table.c.run_data, runs_table.c.run_index)
                 .where(runs_table.c.session_id == session_id)
                 .where(runs_table.c.parent_run_id.is_(None))
                 .where(or_(runs_table.c.status.is_(None), runs_table.c.status.notin_(HISTORY_SKIP_STATUSES)))
@@ -1003,11 +1005,11 @@ class SqliteDb(BaseDb):
                 )
                 .limit(limit)
             )
-            rows = [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in sess.execute(stmt).fetchall()]
+            rows = with_stored_run_index(sess.execute(stmt).fetchall())
             rows.reverse()
             return rows
         stmt = (
-            select(runs_table.c.run_data)
+            select(runs_table.c.run_data, runs_table.c.run_index)
             .where(runs_table.c.session_id == session_id)
             .order_by(
                 runs_table.c.run_index.asc(),
@@ -1015,7 +1017,21 @@ class SqliteDb(BaseDb):
                 runs_table.c.run_id.asc(),
             )
         )
-        return [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in sess.execute(stmt).fetchall()]
+        return with_stored_run_index(sess.execute(stmt).fetchall())
+
+    def has_unindexed_runs(self, session_id: str) -> bool:
+        """Whether the session still embeds legacy runs or holds a run row without a run_index."""
+        try:
+            table = self._get_table(table_type="sessions")
+            if table is None:
+                return False
+            runs_table = self._get_table(table_type="runs")
+            with self.Session() as sess:
+                legacy, unindexed = sess.execute(has_unindexed_runs_statement(table, runs_table, session_id)).one()
+            return bool(legacy or unindexed)
+        except Exception as e:
+            log_error(f"Exception checking for unindexed runs: {str(e)}")
+            raise e
 
     def _get_session_run_rows(self, sess, runs_table: Table, session_id: str) -> List[Tuple[str, str]]:
         """(run_id, raw run_data text) for the whole session, in insertion order.
@@ -1241,12 +1257,18 @@ class SqliteDb(BaseDb):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
-        status: Optional[RunStatus] = None,
+        status: Optional[Union[RunStatus, str, List[Union[RunStatus, str]]]] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        before_run_index: Optional[int] = None,
+        after_run_index: Optional[int] = None,
+        created_after: Optional[int] = None,
+        created_before: Optional[int] = None,
+        top_level_only: bool = False,
+        parent_run_ids: Optional[List[str]] = None,
     ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
         """Get all runs matching the given filters.
 
@@ -1256,12 +1278,16 @@ class SqliteDb(BaseDb):
             agent_id (Optional[str]): The ID of the agent to filter by.
             team_id (Optional[str]): The ID of the team to filter by.
             workflow_id (Optional[str]): The ID of the workflow to filter by.
-            status (Optional[RunStatus]): The run status to filter by.
+            status: The run status, or list of statuses, to filter by.
             limit (Optional[int]): The maximum number of runs to return.
             page (Optional[int]): The page number to return.
             sort_by (Optional[str]): The field to sort by. Defaults to run_index when filtering by session.
             sort_order (Optional[str]): The sort order.
             deserialize (Optional[bool]): Whether to deserialize the runs. Defaults to True.
+            before_run_index / after_run_index: Exclusive bounds on the stored run_index.
+            created_after / created_before: Inclusive bounds on created_at.
+            top_level_only (bool): Keep only runs with no parent run in the same session.
+            parent_run_ids (Optional[List[str]]): Keep only direct children of these runs.
 
         Returns:
             - When deserialize=True: List of run output objects
@@ -1285,9 +1311,17 @@ class SqliteDb(BaseDb):
                     stmt = stmt.where(table.c.team_id == team_id)
                 if workflow_id is not None:
                     stmt = stmt.where(table.c.workflow_id == workflow_id)
-                if status is not None:
-                    status_value = status.value if isinstance(status, RunStatus) else status
-                    stmt = stmt.where(table.c.status == status_value)
+                stmt = filter_runs_statement(
+                    stmt,
+                    table,
+                    status=status,
+                    before_run_index=before_run_index,
+                    after_run_index=after_run_index,
+                    created_after=created_after,
+                    created_before=created_before,
+                    top_level_only=top_level_only,
+                    parent_run_ids=parent_run_ids,
+                )
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
                 total_count = sess.execute(count_stmt).scalar() or 0
@@ -1750,6 +1784,7 @@ class SqliteDb(BaseDb):
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
         runs_limit: Optional[int] = None,
+        include_runs: bool = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Read a session from the database.
@@ -1764,6 +1799,7 @@ class SqliteDb(BaseDb):
                 indexed ``ORDER BY run_index DESC LIMIT`` query; for a session that still
                 carries a legacy ``runs`` blob it falls back to a full load + merge, then
                 slices, so no history is ever lost.
+            include_runs (bool): Set False to skip reading runs; the session's runs are None.
 
         Returns:
             Optional[Union[Session, Dict[str, Any]]]:
@@ -1798,7 +1834,9 @@ class SqliteDb(BaseDb):
                 run_rows: Optional[List[Tuple[str, str]]] = None
                 if session_raw is not None:
                     legacy_runs = session_raw.get("runs")
-                    if runs_table is not None and runs_limit is not None and not legacy_runs:
+                    if not include_runs:
+                        session_raw["runs"] = None
+                    elif runs_table is not None and runs_limit is not None and not legacy_runs:
                         # Fully migrated: push "most recent N" down to the DB (indexed).
                         session_raw["runs"] = self._get_session_runs_data(
                             sess=sess, runs_table=runs_table, session_id=session_id, limit=runs_limit

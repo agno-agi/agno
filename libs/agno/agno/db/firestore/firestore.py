@@ -13,9 +13,12 @@ from agno.db.firestore.utils import (
     apply_sorting,
     bulk_upsert_metrics,
     calculate_date_metrics,
+    count_query,
     create_collection_indexes,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
+    paginate_rows,
+    sort_run_rows,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -28,8 +31,12 @@ from agno.db.utils import (
     deserialize_sessions,
     drop_legacy_metrics,
     filter_context_runs,
+    filter_run_rows,
     merge_runs_table_with_legacy_blob,
     metrics_starting_date_from_records,
+    run_status_values,
+    session_rows_have_unindexed_runs,
+    with_stored_run_index,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -49,6 +56,23 @@ except ImportError:
 
 # Firestore batched writes have a hard 500-operation limit per commit.
 FIRESTORE_BATCH_LIMIT = 500
+
+# Firestore caps the disjunctions of `in` filters in one query at 30.
+FIRESTORE_IN_LIMIT = 30
+
+# Run fields read by the projection-only scan that resolves top_level_only.
+RUN_FILTER_FIELDS = [
+    "run_id",
+    "session_id",
+    "agent_id",
+    "team_id",
+    "workflow_id",
+    "user_id",
+    "parent_run_id",
+    "status",
+    "run_index",
+    "created_at",
+]
 
 
 class FirestoreDb(BaseDb):
@@ -310,7 +334,8 @@ class FirestoreDb(BaseDb):
             .order_by("run_index")
             .order_by("created_at")
         )
-        return [doc.to_dict().get("run_data") for doc in query.stream() if doc.exists]
+        docs = (doc.to_dict() or {} for doc in query.stream() if doc.exists)
+        return with_stored_run_index((data.get("run_data"), data.get("run_index")) for data in docs)
 
     def _get_sessions_runs(self, session_ids: List[str]) -> Optional[Dict[str, List[Dict[str, Any]]]]:
         """Run dicts for several sessions in one read, used by the search fallback."""
@@ -424,55 +449,165 @@ class FirestoreDb(BaseDb):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
-        status: Optional[RunStatus] = None,
+        status: Optional[Union[RunStatus, str, List[Union[RunStatus, str]]]] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        before_run_index: Optional[int] = None,
+        after_run_index: Optional[int] = None,
+        created_after: Optional[int] = None,
+        created_before: Optional[int] = None,
+        top_level_only: bool = False,
+        parent_run_ids: Optional[List[str]] = None,
     ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
-        """Get all runs matching the given filters."""
+        """Get all runs matching the given filters; top_level_only pages a projection-only read of the session."""
         try:
             collection_ref = self._get_collection(table_type="runs")
             if collection_ref is None:
                 return [] if deserialize else ([], 0)
 
-            query = collection_ref
-            if session_id is not None:
-                query = query.where(filter=FieldFilter("session_id", "==", session_id))
-            if user_id is not None:
-                query = query.where(filter=FieldFilter("user_id", "==", user_id))
-            if agent_id is not None:
-                query = query.where(filter=FieldFilter("agent_id", "==", agent_id))
-            if team_id is not None:
-                query = query.where(filter=FieldFilter("team_id", "==", team_id))
-            if workflow_id is not None:
-                query = query.where(filter=FieldFilter("workflow_id", "==", workflow_id))
-            if status is not None:
-                status_value = status.value if isinstance(status, RunStatus) else status
-                query = query.where(filter=FieldFilter("status", "==", status_value))
+            statuses = run_status_values(status)
+            if statuses is not None:
+                statuses = list(dict.fromkeys(statuses))
+            # Firestore rejects an empty `in` filter; an empty filter list matches nothing
+            if statuses == [] or parent_run_ids == []:
+                return [] if deserialize else ([], 0)
 
-            if sort_by is None:
-                query = query.order_by("run_index").order_by("created_at")
+            owner_filters = {"user_id": user_id, "agent_id": agent_id, "team_id": team_id, "workflow_id": workflow_id}
+            if top_level_only:
+                run_rows, total_count = self._get_top_level_runs_page(
+                    collection_ref,
+                    session_id=session_id,
+                    owner_filters=owner_filters,
+                    statuses=statuses,
+                    before_run_index=before_run_index,
+                    after_run_index=after_run_index,
+                    created_after=created_after,
+                    created_before=created_before,
+                    parent_run_ids=parent_run_ids,
+                    limit=limit,
+                    page=page,
+                    sort_by=sort_by,
+                    sort_order=sort_order,
+                )
             else:
-                query = apply_sorting(query, sort_by, sort_order)
+                query = collection_ref
+                if session_id is not None:
+                    query = query.where(filter=FieldFilter("session_id", "==", session_id))
+                for field, value in owner_filters.items():
+                    if value is not None:
+                        query = query.where(filter=FieldFilter(field, "==", value))
+                if statuses is not None:
+                    query = query.where(filter=FieldFilter("status", "in", statuses))
+                if before_run_index is not None:
+                    query = query.where(filter=FieldFilter("run_index", "<", before_run_index))
+                if after_run_index is not None:
+                    query = query.where(filter=FieldFilter("run_index", ">", after_run_index))
+                if created_after is not None:
+                    query = query.where(filter=FieldFilter("created_at", ">=", created_after))
+                if created_before is not None:
+                    query = query.where(filter=FieldFilter("created_at", "<=", created_before))
+                if sort_by is None:
+                    query = query.order_by("run_index").order_by("created_at")
+                else:
+                    query = apply_sorting(query, sort_by, sort_order)
 
-            all_docs = [doc.to_dict() for doc in query.stream() if doc.exists]
-            total_count = len(all_docs)
-
-            if limit is not None and page is not None:
-                start_index = (page - 1) * limit
-                run_rows = all_docs[start_index : start_index + limit]
-            elif limit is not None:
-                run_rows = all_docs[:limit]
-            else:
-                run_rows = all_docs
+                if parent_run_ids is not None:
+                    # `in` disjunctions multiply, so chunk parent ids to stay within the limit
+                    chunk_size = max(1, FIRESTORE_IN_LIMIT // len(statuses or [None]))
+                    all_docs: List[Dict[str, Any]] = []
+                    for start in range(0, len(parent_run_ids), chunk_size):
+                        chunk = parent_run_ids[start : start + chunk_size]
+                        chunk_query = query.where(filter=FieldFilter("parent_run_id", "in", chunk))
+                        all_docs.extend(doc.to_dict() for doc in chunk_query.stream() if doc.exists)
+                    if len(parent_run_ids) > chunk_size:
+                        all_docs = sort_run_rows(all_docs, sort_by, sort_order)
+                    total_count = len(all_docs)
+                    run_rows = paginate_rows(all_docs, limit, page)
+                elif limit is not None:
+                    total_count = count_query(query)
+                    run_rows = [doc.to_dict() for doc in apply_pagination(query, limit, page).stream() if doc.exists]
+                else:
+                    run_rows = [doc.to_dict() for doc in query.stream() if doc.exists]
+                    total_count = len(run_rows)
 
             if not deserialize:
                 return run_rows, total_count
             return [deserialize_run(d.get("run_type"), d["run_data"]) for d in run_rows]
         except Exception as e:
             log_error(f"Exception reading from runs collection: {str(e)}")
+            raise e
+
+    def _get_top_level_runs_page(
+        self,
+        collection_ref,
+        *,
+        session_id: Optional[str],
+        owner_filters: Dict[str, Optional[str]],
+        statuses: Optional[List[str]],
+        before_run_index: Optional[int],
+        after_run_index: Optional[int],
+        created_after: Optional[int],
+        created_before: Optional[int],
+        parent_run_ids: Optional[List[str]],
+        limit: Optional[int],
+        page: Optional[int],
+        sort_by: Optional[str],
+        sort_order: Optional[str],
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """(page of full run documents, count of all matches) for a top_level_only get_runs."""
+        scope = collection_ref
+        if session_id is not None:
+            scope = scope.where(filter=FieldFilter("session_id", "==", session_id))
+        rows = [doc.to_dict() or {} for doc in scope.select(RUN_FILTER_FIELDS).stream() if doc.exists]
+        rows = filter_run_rows(
+            rows,
+            status=statuses,
+            before_run_index=before_run_index,
+            after_run_index=after_run_index,
+            created_after=created_after,
+            created_before=created_before,
+            top_level_only=True,
+            parent_run_ids=parent_run_ids,
+        )
+        # Store queries skip null bounds; filter_run_rows keeps a null created_at
+        if created_after is not None or created_before is not None:
+            rows = [row for row in rows if row.get("created_at") is not None]
+        for field, value in owner_filters.items():
+            if value is not None:
+                rows = [row for row in rows if row.get(field) == value]
+        rows = sort_run_rows(rows, sort_by, sort_order)
+        page_rows = paginate_rows(rows, limit, page)
+        if not page_rows:
+            return [], len(rows)
+        snapshots = self.db_client.get_all([collection_ref.document(row["run_id"]) for row in page_rows])
+        docs_by_id = {snapshot.id: snapshot.to_dict() for snapshot in snapshots if snapshot.exists}
+        return [docs_by_id[row["run_id"]] for row in page_rows if row["run_id"] in docs_by_id], len(rows)
+
+    def has_unindexed_runs(self, session_id: str) -> bool:
+        """Whether the session still embeds legacy runs or holds a run document without a run_index."""
+        try:
+            sessions_ref = self._get_collection(table_type="sessions")
+            if sessions_ref is None:
+                return False
+            session_query = sessions_ref.where(filter=FieldFilter("session_id", "==", session_id))
+            for doc in session_query.select(["runs"]).limit(1).stream():
+                if session_rows_have_unindexed_runs(doc.to_dict(), []):
+                    return True
+            runs_ref = self._get_collection(table_type="runs")
+            if runs_ref is None:
+                return False
+            unindexed = (
+                runs_ref.where(filter=FieldFilter("session_id", "==", session_id))
+                .where(filter=FieldFilter("run_index", "==", None))
+                .select(["run_id"])
+                .limit(1)
+            )
+            return any(doc.exists for doc in unindexed.stream())
+        except Exception as e:
+            log_error(f"Exception checking for unindexed runs: {str(e)}")
             raise e
 
     def _scrub_run_ids_from_session_legacy_blob(self, session_id: str, run_ids: set) -> None:
@@ -689,6 +824,7 @@ class FirestoreDb(BaseDb):
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
         runs_limit: Optional[int] = None,
+        include_runs: bool = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Read a session from the database.
 
@@ -697,6 +833,7 @@ class FirestoreDb(BaseDb):
             session_type (Optional[SessionType]): The type of session to get. If None, the type is inferred.
             user_id (Optional[str]): The ID of the user to get the session for.
             deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
+            include_runs (bool): Set False to skip reading runs; the session's runs are None.
 
         Returns:
             Union[Session, Dict[str, Any], None]:
@@ -708,7 +845,9 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="sessions")
-            runs_collection_ref = self._get_collection(table_type="runs", create_collection_if_not_found=False)
+            runs_collection_ref = (
+                self._get_collection(table_type="runs", create_collection_if_not_found=False) if include_runs else None
+            )
 
             query = collection_ref.where(filter=FieldFilter("session_id", "==", session_id))
 
@@ -728,10 +867,12 @@ class FirestoreDb(BaseDb):
 
             # Attach runs from the runs collection, merged with any runs still
             # sitting in the legacy `runs` field.
-            if runs_collection_ref is not None:
+            if not include_runs:
+                session["runs"] = None
+            elif runs_collection_ref is not None:
                 runs_data = self._get_session_runs_docs(runs_collection_ref, session_id)
                 session["runs"] = merge_runs_table_with_legacy_blob(runs_data, session.get("runs"))
-            if runs_limit is not None:
+            if include_runs and runs_limit is not None:
                 # No query engine to push "last N" down: filter+slice in memory to
                 # match the SQL fast path (drop member/skip-status runs, then last N).
                 session["runs"] = filter_context_runs(session.get("runs") or [])[-runs_limit:]

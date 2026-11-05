@@ -1,10 +1,11 @@
-"""Atomic mutations shared by the SQL run stores."""
+"""Atomic mutations and run filters shared by the SQL run stores."""
 
 import time
-from typing import Any, Dict, Literal, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
-from sqlalchemy import Table, Text, case, cast, func, literal, or_, text, update
+from sqlalchemy import Table, Text, and_, case, cast, exists, func, literal, or_, select, text, update
 from sqlalchemy.sql.dml import Update
+from sqlalchemy.sql.elements import ColumnElement
 
 
 def cancel_pending_run_statement(
@@ -71,3 +72,70 @@ def apply_run_fields(run: Dict[str, Any], fields: Dict[str, Any]) -> Tuple[Dict[
         status = canonical_run_status(fields["status"])
         updated["status"] = status
     return updated, status
+
+
+def filter_runs_statement(
+    stmt: Any,
+    table: Table,
+    *,
+    status: Any = None,
+    before_run_index: Optional[int] = None,
+    after_run_index: Optional[int] = None,
+    created_after: Optional[int] = None,
+    created_before: Optional[int] = None,
+    top_level_only: bool = False,
+    parent_run_ids: Optional[List[str]] = None,
+) -> Any:
+    """Apply the ``get_runs`` status, run_index, created_at and parent filters to a runs select."""
+    from agno.db.utils import run_status_values
+
+    statuses = run_status_values(status)
+    if statuses is not None:
+        stmt = stmt.where(table.c.status.in_(statuses))
+    if before_run_index is not None:
+        stmt = stmt.where(table.c.run_index < before_run_index)
+    if after_run_index is not None:
+        stmt = stmt.where(table.c.run_index > after_run_index)
+    if created_after is not None:
+        stmt = stmt.where(table.c.created_at >= created_after)
+    if created_before is not None:
+        stmt = stmt.where(table.c.created_at <= created_before)
+    if parent_run_ids is not None:
+        stmt = stmt.where(table.c.parent_run_id.in_(parent_run_ids))
+    if top_level_only:
+        stmt = stmt.where(run_is_top_level(table))
+    return stmt
+
+
+def run_is_top_level(table: Table) -> ColumnElement:
+    """No parent run in the same session: a null or self parent, or one the session does not hold."""
+    parent = table.alias("parent_run")
+    return or_(
+        table.c.parent_run_id.is_(None),
+        table.c.parent_run_id == table.c.run_id,
+        ~exists().where(and_(parent.c.run_id == table.c.parent_run_id, parent.c.session_id == table.c.session_id)),
+    )
+
+
+def has_unindexed_runs_statement(sessions_table: Table, runs_table: Optional[Table], session_id: str) -> Any:
+    """Select one row of flags: the session still embeds legacy runs, and some run row lacks a run_index."""
+    legacy: ColumnElement[Any]
+    unindexed: ColumnElement[Any]
+    if "runs" in sessions_table.c:
+        legacy = (
+            select(sessions_table.c.session_id)
+            .where(sessions_table.c.session_id == session_id)
+            .where(func.coalesce(cast(sessions_table.c.runs, Text), "null").notin_(["null", "[]", '""']))
+            .exists()
+        )
+    else:
+        legacy = literal(False)
+    if runs_table is not None:
+        unindexed = (
+            select(runs_table.c.run_id)
+            .where(runs_table.c.session_id == session_id, runs_table.c.run_index.is_(None))
+            .exists()
+        )
+    else:
+        unindexed = literal(False)
+    return select(legacy.label("legacy"), unindexed.label("unindexed"))

@@ -33,9 +33,22 @@ def _get_data(response):
     return body, {}
 
 
+_STORED_RUN_INDEX = False
+
+
 def _seed_session(db: InMemoryDb, session: dict) -> None:
     """Insert a raw session dict directly into InMemoryDb's session store."""
+    if _STORED_RUN_INDEX:
+        for position, run in enumerate(session.get("runs") or []):
+            run["run_index"] = position
     db._sessions[session["session_id"]] = session
+
+
+@pytest.fixture(params=["whole_session", "get_runs"])
+def runs_read_path(request, monkeypatch):
+    """Run a test over both paged read paths: runs with a stored run_index page through get_runs."""
+    monkeypatch.setattr(f"{__name__}._STORED_RUN_INDEX", request.param == "get_runs")
+    return request.param
 
 
 @pytest.fixture
@@ -567,6 +580,7 @@ def _seed_agent_session_with_runs(db: InMemoryDb, session_id: str, count: int, s
     )
 
 
+@pytest.mark.usefixtures("runs_read_path")
 class TestSessionRunsPagination:
     """GET /sessions/{id}/runs pagination is opt-in via limit and pages by run_index."""
 
@@ -696,6 +710,7 @@ def _member_run(run_id: str, parent_run_id: str, created_at: int, **extra) -> di
     return {"run_id": run_id, "agent_id": "member", "parent_run_id": parent_run_id, "created_at": created_at, **extra}
 
 
+@pytest.mark.usefixtures("runs_read_path")
 class TestSessionRunsPaginationGroups:
     """Pages count top-level runs; member and step runs come along with their parent."""
 
@@ -816,6 +831,87 @@ class TestSessionRunsPaginationGroups:
         assert "newest_run_index" not in body["meta"]
 
 
+class _RecordingDb(InMemoryDb):
+    def __init__(self) -> None:
+        super().__init__()
+        self.session_reads: list = []
+        self.runs_reads: list = []
+
+    def get_session(self, *args, **kwargs):
+        self.session_reads.append(kwargs.get("include_runs", True))
+        return super().get_session(*args, **kwargs)
+
+    def get_runs(self, *args, **kwargs):
+        self.runs_reads.append(kwargs)
+        return super().get_runs(*args, **kwargs)
+
+
+def _seed_indexed_runs(db: InMemoryDb, session_id: str, count: int) -> None:
+    _seed_agent_session_with_runs(db, session_id, count=count)
+    for position, run in enumerate(db._sessions[session_id]["runs"]):
+        run["run_index"] = position
+
+
+class TestSessionRunsPagingReads:
+    """Pages read only their own runs, and cursors survive deleted runs."""
+
+    def test_page_reads_runs_without_loading_the_session_history(self):
+        db = _RecordingDb()
+        _seed_indexed_runs(db, "bounded", count=6)
+        client = _build_client(db)
+
+        body = client.get("/sessions/bounded/runs?user_id=user-1&limit=2&before_run_index=4").json()
+        assert [r["run_index"] for r in body["data"]] == [2, 3]
+        assert db.session_reads == [False]
+        assert db.runs_reads[0]["limit"] == 2
+        assert db.runs_reads[0]["before_run_index"] == 4
+        assert db.runs_reads[0]["top_level_only"] is True
+
+    def test_session_with_an_unindexed_run_falls_back_to_the_whole_session(self):
+        db = _RecordingDb()
+        _seed_agent_session_with_runs(db, "legacy", count=3)
+        client = _build_client(db)
+
+        body = client.get("/sessions/legacy/runs?user_id=user-1&limit=2").json()
+        assert [r["run_index"] for r in body["data"]] == [1, 2]
+        assert db.session_reads == [True]
+        assert db.runs_reads == []
+
+    def test_deleting_a_run_does_not_shift_cursors(self):
+        db = InMemoryDb()
+        _seed_indexed_runs(db, "deletes", count=6)
+        client = _build_client(db)
+
+        first = client.get("/sessions/deletes/runs?user_id=user-1&limit=2").json()
+        assert [r["run_id"] for r in first["data"]] == ["run-4", "run-5"]
+
+        assert db.delete_run("run-1")
+        seen = [r["run_id"] for r in first["data"]]
+        cursor = first["meta"]["oldest_run_index"]
+        while cursor is not None:
+            page = client.get(f"/sessions/deletes/runs?user_id=user-1&limit=2&before_run_index={cursor}").json()
+            seen = [r["run_id"] for r in page["data"]] + seen
+            cursor = page["meta"].get("oldest_run_index")
+        assert seen == ["run-0", "run-2", "run-3", "run-4", "run-5"]
+
+    def test_endpoints_agree_on_run_index_after_a_delete(self):
+        db = InMemoryDb()
+        _seed_indexed_runs(db, "agree", count=4)
+        client = _build_client(db)
+        assert db.delete_run("run-0")
+
+        listed = client.get("/sessions/agree/runs?user_id=user-1").json()
+        paged = client.get("/sessions/agree/runs?user_id=user-1&limit=10").json()["data"]
+        previews = client.get("/sessions/agree/run-previews?user_id=user-1").json()
+        single = client.get("/sessions/agree/runs/run-3?user_id=user-1").json()
+        expected = [("run-1", 1), ("run-2", 2), ("run-3", 3)]
+        assert [(r["run_id"], r["run_index"]) for r in listed] == expected
+        assert [(r["run_id"], r["run_index"]) for r in paged] == expected
+        assert [(r["run_id"], r["run_index"]) for r in previews] == expected
+        assert single["run_index"] == 3
+
+
+@pytest.mark.usefixtures("runs_read_path")
 class TestSessionRunPreviewsRunIndex:
     """GET /sessions/{id}/run-previews carries the same run_index as the runs endpoint."""
 

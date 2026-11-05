@@ -17,11 +17,15 @@ from agno.db.base import BaseDb, SessionType
 from agno.db.mongo.utils import (
     apply_pagination,
     apply_sorting,
+    build_runs_query,
     bulk_upsert_metrics,
     calculate_date_metrics,
     create_collection_indexes,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
+    legacy_runs_query,
+    runs_page_pipeline,
+    runs_sort_spec,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -37,6 +41,7 @@ from agno.db.utils import (
     filter_context_runs,
     merge_runs_table_with_legacy_blob,
     metrics_starting_date_from_days,
+    with_stored_run_index,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -437,7 +442,11 @@ class MongoDb(BaseDb):
                 {"$sort": {"_ri": -1, "_ca": -1}},
                 {"$limit": limit},
             ]
-            docs = [doc["run_data"] for doc in runs_collection.aggregate(pipeline) if "run_data" in doc]
+            docs = with_stored_run_index(
+                (doc["run_data"], doc.get("run_index"))
+                for doc in runs_collection.aggregate(pipeline)
+                if "run_data" in doc
+            )
             docs.reverse()  # back to chronological order
             return docs
 
@@ -446,7 +455,9 @@ class MongoDb(BaseDb):
             {"$addFields": {"_ri": {"$ifNull": ["$run_index", 0]}, "_ca": {"$ifNull": ["$created_at", 0]}}},
             {"$sort": {"_ri": 1, "_ca": 1}},
         ]
-        return [doc["run_data"] for doc in runs_collection.aggregate(pipeline) if "run_data" in doc]
+        return with_stored_run_index(
+            (doc["run_data"], doc.get("run_index")) for doc in runs_collection.aggregate(pipeline) if "run_data" in doc
+        )
 
     def _get_sessions_runs_docs(
         self, runs_collection: Collection, session_ids: List[str]
@@ -540,12 +551,18 @@ class MongoDb(BaseDb):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
-        status: Optional[RunStatus] = None,
+        status: Optional[Union[RunStatus, str, List[Union[RunStatus, str]]]] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        before_run_index: Optional[int] = None,
+        after_run_index: Optional[int] = None,
+        created_after: Optional[int] = None,
+        created_before: Optional[int] = None,
+        top_level_only: bool = False,
+        parent_run_ids: Optional[List[str]] = None,
     ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
         """Get all runs matching the given filters."""
         try:
@@ -553,42 +570,58 @@ class MongoDb(BaseDb):
             if collection is None:
                 return [] if deserialize else ([], 0)
 
-            query: Dict[str, Any] = {}
-            if session_id is not None:
-                query["session_id"] = session_id
-            if user_id is not None:
-                query["user_id"] = user_id
-            if agent_id is not None:
-                query["agent_id"] = agent_id
-            if team_id is not None:
-                query["team_id"] = team_id
-            if workflow_id is not None:
-                query["workflow_id"] = workflow_id
-            if status is not None:
-                query["status"] = status.value if isinstance(status, RunStatus) else status
+            query = build_runs_query(
+                session_id=session_id,
+                user_id=user_id,
+                agent_id=agent_id,
+                team_id=team_id,
+                workflow_id=workflow_id,
+                status=status,
+                before_run_index=before_run_index,
+                after_run_index=after_run_index,
+                created_after=created_after,
+                created_before=created_before,
+                parent_run_ids=parent_run_ids,
+            )
+            sort = runs_sort_spec(sort_by, sort_order)
 
-            total_count = collection.count_documents(query)
-
-            cursor = collection.find(query)
-            sort_criteria = apply_sorting({}, sort_by, sort_order)
-            if sort_criteria:
-                cursor = cursor.sort(sort_criteria)
+            if top_level_only:
+                page_pipeline, count_pipeline = runs_page_pipeline(query, sort, collection.name, limit, page)
+                counted = list(collection.aggregate(count_pipeline))
+                total_count = counted[0]["count"] if counted else 0
+                run_rows = list(collection.aggregate(page_pipeline))
             else:
-                cursor = cursor.sort([("run_index", 1), ("created_at", 1)])
-
-            query_args = apply_pagination({}, limit, page)
-            if query_args.get("skip"):
-                cursor = cursor.skip(query_args["skip"])
-            if query_args.get("limit"):
-                cursor = cursor.limit(query_args["limit"])
-
-            run_rows = list(cursor)
+                total_count = collection.count_documents(query)
+                cursor = collection.find(query).sort(sort)
+                query_args = apply_pagination({}, limit, page)
+                if query_args.get("skip"):
+                    cursor = cursor.skip(query_args["skip"])
+                if query_args.get("limit"):
+                    cursor = cursor.limit(query_args["limit"])
+                run_rows = list(cursor)
 
             if not deserialize:
                 return run_rows, total_count
             return [deserialize_run(doc.get("run_type"), doc["run_data"]) for doc in run_rows]
         except Exception as e:
             log_error(f"Exception reading from runs collection: {str(e)}")
+            raise e
+
+    def has_unindexed_runs(self, session_id: str) -> bool:
+        """Whether the session still embeds legacy runs or holds a run document without a run_index."""
+        try:
+            sessions = self._get_collection(table_type="sessions")
+            if sessions is None:
+                return False
+            if sessions.find_one(legacy_runs_query(session_id), {"_id": 1}) is not None:
+                return True
+            runs_collection = self._get_collection(table_type="runs")
+            if runs_collection is None:
+                return False
+            unindexed = runs_collection.find_one({"session_id": session_id, "run_index": None}, {"_id": 1})
+            return unindexed is not None
+        except Exception as e:
+            log_error(f"Exception checking for unindexed runs: {str(e)}")
             raise e
 
     def _scrub_run_ids_from_legacy_blob(self, run_ids: List[str]) -> None:
@@ -713,6 +746,7 @@ class MongoDb(BaseDb):
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
         runs_limit: Optional[int] = None,
+        include_runs: bool = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Read a session from the database.
 
@@ -721,6 +755,7 @@ class MongoDb(BaseDb):
             session_type (Optional[SessionType]): The type of session to get. If None, auto-detected from record.
             user_id (Optional[str]): The ID of the user to get the session for.
             deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
+            include_runs (bool): Set False to skip reading runs; the session's runs are None.
 
         Returns:
             Union[Session, Dict[str, Any], None]:
@@ -734,7 +769,9 @@ class MongoDb(BaseDb):
             collection = self._get_collection(table_type="sessions")
             if collection is None:
                 return None
-            runs_collection = self._get_collection(table_type="runs", create_collection_if_not_found=True)
+            runs_collection = (
+                self._get_collection(table_type="runs", create_collection_if_not_found=True) if include_runs else None
+            )
 
             query = {"session_id": session_id}
             if user_id is not None:
@@ -750,7 +787,9 @@ class MongoDb(BaseDb):
             # sitting in the legacy `runs` field (so partially-migrated sessions don't
             # silently lose history).
             legacy_runs = session.get("runs")
-            if runs_collection is not None and runs_limit is not None and not legacy_runs:
+            if not include_runs:
+                session["runs"] = None
+            elif runs_collection is not None and runs_limit is not None and not legacy_runs:
                 # Fully migrated: push "most recent N" down to the DB (indexed).
                 session["runs"] = self._get_session_runs_docs(runs_collection, session_id, limit=runs_limit)
             elif runs_collection is not None:
