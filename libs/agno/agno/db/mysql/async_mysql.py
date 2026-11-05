@@ -31,6 +31,7 @@ from agno.db.mysql.utils import (
     build_component_metrics_runs_query,
     build_component_metrics_totals_queries,
     build_metrics_by_owner_queries,
+    is_lock_not_available,
     set_json_column_types,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
@@ -47,7 +48,6 @@ from agno.db.utils import (
     SessionRunObjectCache,
     add_metrics_month_totals,
     aggregate_metrics_rows_to_write,
-    bound_index_name,
     build_aggregate_metrics_month_rows,
     build_aggregate_metrics_rows,
     build_component_metrics_totals,
@@ -91,6 +91,7 @@ from agno.utils.string import generate_id
 
 try:
     from sqlalchemy import (
+        JSON,
         TEXT,
         ForeignKey,
         Index,
@@ -331,9 +332,6 @@ class AsyncMySQLDb(AsyncBaseDb):
             # Add composite indexes with table-specific names
             for composite in schema_composite_indexes:
                 composite_name = f"{table_name}_{composite['name']}"
-                if table_type == "component_metrics":
-                    # Named after the session table, so a long session table name would push it past the limit
-                    composite_name = bound_index_name(type(self).__name__, composite_name)
                 table.append_constraint(Index(composite_name, *composite["columns"]))
 
             # Create schema if not exists
@@ -2301,7 +2299,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 table.c.team_id,
                 table.c.workflow_id,
                 table.c.created_at,
-                func.json_extract(table.c.session_data, "$.compaction_metrics").label("compaction_metrics"),
+                func.json_extract(table.c.session_data, "$.compaction_metrics", type_=JSON).label("compaction_metrics"),
             ).where(table.c.session_id.in_(written_session_ids[start : start + METRICS_IN_LIST_LIMIT]))
             stored_sessions_result = await sess.execute(stored_stmt)
             stored_sessions.update((row.session_id, row) for row in stored_sessions_result.fetchall())
@@ -2320,12 +2318,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                     and (record["session_data"] if isinstance(record["session_data"], dict) else {}).get(
                         "compaction_metrics"
                     )
-                    # MySQL returns the JSON a query extracts as text
-                    != (
-                        json.loads(stored_session.compaction_metrics)
-                        if isinstance(stored_session.compaction_metrics, str)
-                        else stored_session.compaction_metrics
-                    )
+                    != stored_session.compaction_metrics
                 )
             ):
                 session_ids.add(record["session_id"])
@@ -2356,7 +2349,8 @@ class AsyncMySQLDb(AsyncBaseDb):
             )
             row = result.mappings().first()
             if row is None:
-                return None, (await sess.execute(select(stale_lock_threshold))).scalar_one()
+                # Before the first refresh there is no lock to judge stale
+                return None, 0
         refresh_row = dict(row)
         return refresh_row, refresh_row.pop("stale_lock_threshold")
 
@@ -2420,9 +2414,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                         text("SET SESSION innodb_lock_wait_timeout = :seconds"), {"seconds": lock_wait_timeout}
                     )
         except DBAPIError as exc:
-            cause = getattr(exc, "orig", exc)
-            # 1205: the lock wait timed out
-            if cause.args[:1] != (1205,):
+            if not is_lock_not_available(exc):
                 raise
             return None
 
@@ -2448,9 +2440,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                         )
                 return True
             except DBAPIError as exc:
-                cause = getattr(exc, "orig", exc)
-                # 1205: the lock wait timed out
-                if cause.args[:1] != (1205,):
+                if not is_lock_not_available(exc):
                     raise
         return False
 
@@ -2471,13 +2461,20 @@ class AsyncMySQLDb(AsyncBaseDb):
         fingerprint: Optional[List[Any]] = None,
         stopped: bool = False,
         claimed_fingerprint: Optional[List[Any]] = None,
-        started_at: Optional[int] = None,
-        finished_at: Optional[int] = None,
     ) -> None:
         """Release the row of the metrics refreshes table: completed, with the fingerprint, without an error, failed
-        with one, and as the last completed refresh left it when the calculation stopped. A worker_id of None writes
-        the row only while no process holds it and no calculation started or finished after the read of started_at
-        and finished_at, and creates it when that read found none."""
+        with one, and as the last completed refresh left it when the calculation stopped.
+
+        Args:
+            refreshes_table (Table): The metrics refreshes table.
+            worker_id (Optional[str]): The id of the calculation that claimed the row. None writes the row only while
+                no process holds it, and creates it before any refresh.
+            error (Optional[str]): The error the calculation failed with. None when it completed.
+            fingerprint (Optional[List[Any]]): The fingerprint of yesterday and today, stored once it completed.
+            stopped (bool): Whether the calculation stopped before it finished.
+            claimed_fingerprint (Optional[List[Any]]): The fingerprint of the claimed row. A rebuild that marked
+                another one since keeps its mark.
+        """
         values: Dict[str, Any] = {"locked_by": None, "locked_at": None}
         if stopped:
             # The days it did not reach stay open for the next calculation; a first one that stopped has none to show
@@ -2493,7 +2490,8 @@ class AsyncMySQLDb(AsyncBaseDb):
             async with self.async_session_factory() as sess, sess.begin():
                 if not stopped and error is None:
                     # A rebuild that marked the fingerprint after the claim keeps its mark, so the next calculation
-                    # rebuilds yesterday and today. Compared here: MySQL never finds a JSON column equal to a string.
+                    # rebuilds yesterday and today. Compared here: MySQL never finds a JSON column equal to a string, and
+                    # MariaDB compares it as text, so the same fingerprint written with other spacing differs
                     # No fingerprint is stored as NULL, which a claim of NULL compares equal to
                     stored_fingerprint = (
                         await sess.execute(
@@ -2504,24 +2502,24 @@ class AsyncMySQLDb(AsyncBaseDb):
                     ).scalar()
                     if stored_fingerprint == claimed_fingerprint:
                         values["fingerprint"] = null() if fingerprint is None else fingerprint
-                if worker_id is None and error is not None and started_at is None:
-                    # Before any refresh there is no row to update; one created since keeps its own status
+                if worker_id is None:
+                    # Before any refresh there is no row to update. Each column keeps its value while a process holds
+                    # the row: MySQL has no condition on the update of a duplicate key
                     await sess.execute(
                         mysql.insert(refreshes_table)
                         .values(id=METRICS_REFRESH_ID, started_at=func.unix_timestamp(), status="failed", error=error)
-                        .prefix_with("IGNORE")
-                    )
-                elif worker_id is None and error is not None:
-                    # A plain update skips the row a calculation holds, instead of waiting for its lock
-                    await sess.execute(
-                        update(refreshes_table)
-                        .where(
-                            refreshes_table.c.id == METRICS_REFRESH_ID,
-                            refreshes_table.c.locked_by.is_(None),
-                            refreshes_table.c.started_at == started_at,
-                            refreshes_table.c.finished_at.is_not_distinct_from(finished_at),
+                        .on_duplicate_key_update(
+                            [
+                                (
+                                    name,
+                                    case(
+                                        (refreshes_table.c.locked_by.is_(None), value),
+                                        else_=refreshes_table.c[name],
+                                    ),
+                                )
+                                for name, value in values.items()
+                            ]
                         )
-                        .values(**values)
                     )
                 else:
                     await sess.execute(
@@ -2692,11 +2690,8 @@ class AsyncMySQLDb(AsyncBaseDb):
             if not batch:
                 break
             stored_rows.extend(dict(record._mapping) for record in batch)
-        everyone_row, changed_rows, stale_user_ids = await asyncio.to_thread(
-            aggregate_metrics_rows_to_write,
-            aggregate_metrics_rows,
-            stored_rows,
-            rows_changed,
+        everyone_row, changed_rows, stale_user_ids = aggregate_metrics_rows_to_write(
+            aggregate_metrics_rows, stored_rows, rows_changed
         )
         for start in range(0, len(stale_user_ids), METRICS_IN_LIST_LIMIT):
             await sess.execute(
@@ -2773,7 +2768,9 @@ class AsyncMySQLDb(AsyncBaseDb):
                 sessions_table.c.team_id,
                 sessions_table.c.workflow_id,
                 sessions_table.c.metadata,
-                func.json_extract(sessions_table.c.session_data, "$.compaction_metrics").label("compaction_metrics"),
+                func.json_extract(sessions_table.c.session_data, "$.compaction_metrics", type_=JSON).label(
+                    "compaction_metrics"
+                ),
             ).where(sessions_table.c.created_at >= start_timestamp, sessions_table.c.created_at < end_timestamp)
             sessions_result = await sess.execute(sessions_stmt)
             sessions = [dict(record._mapping) for record in sessions_result.fetchall()]
@@ -2828,6 +2825,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                     team_runs_stmt = build_component_metrics_runs_query(
                         runs_table, start_timestamp - 86400, start_timestamp
                     ).where(runs_table.c.session_id.in_(team_session_ids[start : start + METRICS_IN_LIST_LIMIT]))
+                    # Server-side cursor, so many team runs are read a batch at a time and never hold the event loop
                     team_runs_result = await sess.stream(team_runs_stmt)
                     team_runs: List[Dict[str, Any]] = []
                     while True:
@@ -2840,10 +2838,6 @@ class AsyncMySQLDb(AsyncBaseDb):
 
                 parent_runs.extend(await self._get_metrics_parent_runs(sess, runs_table, parent_run_ids))
 
-            # Added up in a thread, so a day of many runs never holds the event loop
-            records = await asyncio.to_thread(
-                calculate_date_component_metrics, date_to_process, sessions, runs, stored_run_ids, parent_runs
-            )
             # Server-side cursor, so a day of many rows is read a batch at a time and never holds the event loop
             stored_rows_result = await sess.stream(
                 select(table).where(table.c.aggregation_period == "daily", table.c.date == date_to_process)
@@ -2855,11 +2849,23 @@ class AsyncMySQLDb(AsyncBaseDb):
                     break
                 stored_rows.extend(dict(record._mapping) for record in batch)
 
+            def build_day_rows() -> Tuple[
+                List[Dict[str, Any]], List[Tuple[str, str, str, str, str]], List[Dict[str, Any]]
+            ]:
+                records = calculate_date_component_metrics(date_to_process, sessions, runs, stored_run_ids, parent_runs)
+                changed_rows, stale_keys = component_metrics_rows_to_write(records, stored_rows)
+                aggregate_metrics_rows = build_aggregate_metrics_rows(
+                    records, "daily", date_to_process, metrics_day_completed(date_to_process)
+                )
+                return changed_rows, stale_keys, aggregate_metrics_rows
+
+            # Added up in a thread, so a day of many runs never holds the event loop
+            changed_rows, stale_keys, aggregate_metrics_rows = await asyncio.to_thread(build_day_rows)
+
             # Checked in the transaction of the rows, so a process whose lock went stale never overwrites the rows of
             # the process that took the refresh over
             if not await self._heartbeat_metrics_refresh(sess, refreshes_table, worker_id):
                 return False
-            changed_rows, stale_keys = await asyncio.to_thread(component_metrics_rows_to_write, records, stored_rows)
             for start in range(0, len(stale_keys), METRICS_STALE_KEYS_LIMIT):
                 await sess.execute(
                     table.delete().where(
@@ -2886,13 +2892,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             await self._write_aggregate_metrics_rows(
                 sess,
                 aggregate_metrics_table,
-                await asyncio.to_thread(
-                    build_aggregate_metrics_rows,
-                    records,
-                    "daily",
-                    date_to_process,
-                    metrics_day_completed(date_to_process),
-                ),
+                aggregate_metrics_rows,
                 rows_changed=bool(changed_rows or stale_keys),
                 read_version=read_version,
             )
@@ -3013,23 +3013,12 @@ class AsyncMySQLDb(AsyncBaseDb):
         if rebuild_from is not None:
             # Reopened as a write reopens a day, before the claim, so a calculation another process is running
             # leaves them to the next one
-            started_at = finished_at = None
             try:
                 # A transaction of its own, without locking the refresh row, so it never waits on a day's calculation
                 async with self.async_session_factory() as sess, sess.begin():
                     # Read committed on MariaDB, as the days are
                     if self.db_engine.dialect.is_mariadb:  # type: ignore[attr-defined]
                         await sess.connection(execution_options={"isolation_level": "READ COMMITTED"})
-                    # A calculation that starts or finishes after this read keeps its own status
-                    refresh_times = (
-                        await sess.execute(
-                            select(refreshes_table.c.started_at, refreshes_table.c.finished_at).where(
-                                refreshes_table.c.id == METRICS_REFRESH_ID
-                            )
-                        )
-                    ).first()
-                    if refresh_times is not None:
-                        started_at, finished_at = refresh_times
                     await areopen_metrics_days_from(
                         session=sess, table=aggregate_metrics_table, starting_date=rebuild_from
                     )
@@ -3042,8 +3031,6 @@ class AsyncMySQLDb(AsyncBaseDb):
                     refreshes_table,
                     None,
                     error=database_error_message(e),
-                    started_at=started_at,
-                    finished_at=finished_at,
                 )
                 raise
 
@@ -3057,12 +3044,6 @@ class AsyncMySQLDb(AsyncBaseDb):
             dates_to_process, fingerprint = await self._get_metrics_dates_to_calculate(
                 aggregate_metrics_table, sessions_table, runs_table, refresh_row, rebuild_from
             )
-            if rebuild_from is not None:
-                # Yesterday and today are picked by their fingerprint, not by being open
-                today = datetime.now(timezone.utc).date()
-                dates_to_process = sorted(
-                    set(dates_to_process) | {day for day in [today - timedelta(days=1), today] if day >= rebuild_from}
-                )
 
             legacy_run_rows_by_day: Dict[date, List[Any]] = {}
             legacy_run_rows_by_id: Dict[str, Any] = {}
@@ -3361,8 +3342,8 @@ class AsyncMySQLDb(AsyncBaseDb):
             return rows, latest_updated_at
 
         except Exception as e:
-            log_warning(f"Exception getting metrics: {str(e)}")
-            return [], None
+            log_error(f"Exception getting metrics: {str(e)}")
+            raise e
 
     async def get_metrics_by_date(
         self,
@@ -3391,8 +3372,8 @@ class AsyncMySQLDb(AsyncBaseDb):
             return await super().get_metrics_by_date(starting_date, ending_date)
 
         except Exception as e:
-            log_warning(f"Exception getting metrics: {str(e)}")
-            return [], None
+            log_error(f"Exception getting metrics: {str(e)}")
+            raise e
 
     async def get_metrics_refresh_status(self) -> Optional[Dict[str, Any]]:
         """Get the status of the most recent calculate_metrics, from the metrics refreshes table.

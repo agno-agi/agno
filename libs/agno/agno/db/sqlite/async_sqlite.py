@@ -49,6 +49,7 @@ from agno.db.sqlite.utils import (
     build_component_metrics_runs_query,
     build_component_metrics_totals_queries,
     build_metrics_by_owner_queries,
+    is_lock_not_available,
 )
 from agno.db.utils import (
     AGGREGATE_METRICS_COUNT_COLUMNS,
@@ -2788,11 +2789,9 @@ class AsyncSqliteDb(AsyncBaseDb):
             sess (Any): The session of the write.
             created_ats (Sequence[Optional[int]]): The stored created_at of each run or session the write changed.
         """
-        # Sorted, so the days are reopened and logged in date order: SQLite's write lock covers the whole database
-        days = sorted(
-            {day for created_at in created_ats if (day := metrics_day_to_reopen(created_at)) is not None}
-            | self._metrics_days_not_reopened
-        )
+        days = {
+            day for created_at in created_ats if (day := metrics_day_to_reopen(created_at)) is not None
+        } | self._metrics_days_not_reopened
         if not days:
             return
         # No savepoint: SQLite rolls back only the statement that failed, and the write's transaction goes on
@@ -2836,19 +2835,17 @@ class AsyncSqliteDb(AsyncBaseDb):
         """Get the id of each session the given rows add, move to another owner or component, or give other
         compaction metrics."""
         written_session_ids = [record["session_id"] for record in session_records]
-        stored_sessions: Dict[str, Any] = {}
-        for start in range(0, len(written_session_ids), METRICS_IN_LIST_LIMIT):
-            stored_stmt = select(
-                table.c.session_id,
-                table.c.user_id,
-                table.c.agent_id,
-                table.c.team_id,
-                table.c.workflow_id,
-                table.c.created_at,
-                table.c.session_data["compaction_metrics"].label("compaction_metrics"),
-            ).where(table.c.session_id.in_(written_session_ids[start : start + METRICS_IN_LIST_LIMIT]))
-            stored_sessions_result = await sess.execute(stored_stmt)
-            stored_sessions.update((row.session_id, row) for row in stored_sessions_result.fetchall())
+        stored_stmt = select(
+            table.c.session_id,
+            table.c.user_id,
+            table.c.agent_id,
+            table.c.team_id,
+            table.c.workflow_id,
+            table.c.created_at,
+            table.c.session_data["compaction_metrics"].label("compaction_metrics"),
+        ).where(table.c.session_id.in_(written_session_ids))
+        stored_sessions_result = await sess.execute(stored_stmt)
+        stored_sessions: Dict[str, Any] = {row.session_id: row for row in stored_sessions_result.fetchall()}
         session_ids: Set[str] = set()
         for record in session_records:
             stored_session = stored_sessions.get(record["session_id"])
@@ -2888,7 +2885,10 @@ class AsyncSqliteDb(AsyncBaseDb):
         async with self.async_session_factory() as sess:
             result = await sess.execute(select(refreshes_table).where(refreshes_table.c.id == METRICS_REFRESH_ID))
             row = result.mappings().first()
-        return (dict(row) if row is not None else None), stale_lock_threshold
+        if row is None:
+            # Before the first refresh there is no lock to judge stale
+            return None, 0
+        return dict(row), stale_lock_threshold
 
     async def _claim_metrics_refresh(self, refreshes_table: Table, worker_id: str) -> Optional[Dict[str, Any]]:
         """Claim the row of the metrics refreshes table, so one process calculates metrics at a time.
@@ -2923,8 +2923,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         except OperationalError as exc:
             # The holder's calculation keeps the database locked while it writes a day, so this returns once the busy
             # timeout ends instead of raising
-            cause = getattr(exc, "orig", exc)
-            if "database is locked" not in str(cause):
+            if not is_lock_not_available(exc):
                 raise
             return None
 
@@ -2942,8 +2941,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                     )
                 return True
             except OperationalError as exc:
-                cause = getattr(exc, "orig", exc)
-                if "database is locked" not in str(cause):
+                if not is_lock_not_available(exc):
                     raise
         return False
 
@@ -2964,13 +2962,20 @@ class AsyncSqliteDb(AsyncBaseDb):
         fingerprint: Optional[List[Any]] = None,
         stopped: bool = False,
         claimed_fingerprint: Optional[List[Any]] = None,
-        started_at: Optional[int] = None,
-        finished_at: Optional[int] = None,
     ) -> None:
         """Release the row of the metrics refreshes table: completed, with the fingerprint, without an error, failed
-        with one, and as the last completed refresh left it when the calculation stopped. A worker_id of None writes
-        the row only while no process holds it and no calculation started or finished after the read of started_at
-        and finished_at, and creates it when that read found none."""
+        with one, and as the last completed refresh left it when the calculation stopped.
+
+        Args:
+            refreshes_table (Table): The metrics refreshes table.
+            worker_id (Optional[str]): The id of the calculation that claimed the row. None writes the row only while
+                no process holds it, and creates it before any refresh.
+            error (Optional[str]): The error the calculation failed with. None when it completed.
+            fingerprint (Optional[List[Any]]): The fingerprint of yesterday and today, stored once it completed.
+            stopped (bool): Whether the calculation stopped before it finished.
+            claimed_fingerprint (Optional[List[Any]]): The fingerprint of the claimed row. A rebuild that marked
+                another one since keeps its mark.
+        """
         values: Dict[str, Any] = {"locked_by": None, "locked_at": None}
         if stopped:
             # The days it did not reach stay open for the next calculation; a first one that stopped has none to show
@@ -2993,24 +2998,14 @@ class AsyncSqliteDb(AsyncBaseDb):
             values.update(status="failed", error=error)
         try:
             async with self.async_session_factory() as sess, sess.begin():
-                if worker_id is None and error is not None and started_at is None:
-                    # Before any refresh there is no row to update; one created since keeps its own status
+                if worker_id is None:
+                    # Before any refresh there is no row to update
                     await sess.execute(
                         sqlite.insert(refreshes_table)
                         .values(id=METRICS_REFRESH_ID, started_at=int(time.time()), status="failed", error=error)
-                        .on_conflict_do_nothing(index_elements=["id"])
-                    )
-                elif worker_id is None and error is not None:
-                    # A plain update skips the row a calculation holds, instead of waiting for its lock
-                    await sess.execute(
-                        update(refreshes_table)
-                        .where(
-                            refreshes_table.c.id == METRICS_REFRESH_ID,
-                            refreshes_table.c.locked_by.is_(None),
-                            refreshes_table.c.started_at == started_at,
-                            refreshes_table.c.finished_at.is_not_distinct_from(finished_at),
+                        .on_conflict_do_update(
+                            index_elements=["id"], set_=values, where=refreshes_table.c.locked_by.is_(None)
                         )
-                        .values(**values)
                     )
                 else:
                     await sess.execute(
@@ -3183,11 +3178,8 @@ class AsyncSqliteDb(AsyncBaseDb):
             if not batch:
                 break
             stored_rows.extend(dict(record._mapping) for record in batch)
-        everyone_row, changed_rows, stale_user_ids = await asyncio.to_thread(
-            aggregate_metrics_rows_to_write,
-            aggregate_metrics_rows,
-            stored_rows,
-            rows_changed,
+        everyone_row, changed_rows, stale_user_ids = aggregate_metrics_rows_to_write(
+            aggregate_metrics_rows, stored_rows, rows_changed
         )
         for start in range(0, len(stale_user_ids), METRICS_IN_LIST_LIMIT):
             await sess.execute(
@@ -3311,6 +3303,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                     team_runs_stmt = build_component_metrics_runs_query(
                         runs_table, start_timestamp - 86400, start_timestamp
                     ).where(runs_table.c.session_id.in_(team_session_ids[start : start + METRICS_IN_LIST_LIMIT]))
+                    # SQLite steps rows as they are fetched, so many team runs are read a batch at a time and never
+                    # hold the event loop
                     team_runs_result = await sess.stream(team_runs_stmt)
                     team_runs: List[Dict[str, Any]] = []
                     while True:
@@ -3323,10 +3317,6 @@ class AsyncSqliteDb(AsyncBaseDb):
 
                 parent_runs.extend(await self._get_metrics_parent_runs(sess, runs_table, parent_run_ids))
 
-            # Added up in a thread, so a day of many runs never holds the event loop
-            records = await asyncio.to_thread(
-                calculate_date_component_metrics, date_to_process, sessions, runs, stored_run_ids, parent_runs
-            )
             # SQLite steps rows as they are fetched, so a day of many rows is read a batch at a time and never holds
             # the event loop
             stored_rows_result = await sess.stream(
@@ -3339,11 +3329,23 @@ class AsyncSqliteDb(AsyncBaseDb):
                     break
                 stored_rows.extend(dict(record._mapping) for record in batch)
 
+            def build_day_rows() -> Tuple[
+                List[Dict[str, Any]], List[Tuple[str, str, str, str, str]], List[Dict[str, Any]]
+            ]:
+                records = calculate_date_component_metrics(date_to_process, sessions, runs, stored_run_ids, parent_runs)
+                changed_rows, stale_keys = component_metrics_rows_to_write(records, stored_rows)
+                aggregate_metrics_rows = build_aggregate_metrics_rows(
+                    records, "daily", date_to_process, metrics_day_completed(date_to_process)
+                )
+                return changed_rows, stale_keys, aggregate_metrics_rows
+
+            # Added up in a thread, so a day of many runs never holds the event loop
+            changed_rows, stale_keys, aggregate_metrics_rows = await asyncio.to_thread(build_day_rows)
+
             # Checked in the transaction of the rows, so a process whose lock went stale never overwrites the rows of
             # the process that took the refresh over
             if not await self._heartbeat_metrics_refresh(sess, refreshes_table, worker_id):
                 return False
-            changed_rows, stale_keys = await asyncio.to_thread(component_metrics_rows_to_write, records, stored_rows)
             for start in range(0, len(stale_keys), METRICS_STALE_KEYS_LIMIT):
                 await sess.execute(
                     table.delete().where(
@@ -3370,13 +3372,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             await self._write_aggregate_metrics_rows(
                 sess,
                 aggregate_metrics_table,
-                await asyncio.to_thread(
-                    build_aggregate_metrics_rows,
-                    records,
-                    "daily",
-                    date_to_process,
-                    metrics_day_completed(date_to_process),
-                ),
+                aggregate_metrics_rows,
                 rows_changed=bool(changed_rows or stale_keys),
                 read_version=read_version,
             )
@@ -3495,21 +3491,10 @@ class AsyncSqliteDb(AsyncBaseDb):
         if rebuild_from is not None:
             # Reopened as a write reopens a day, before the claim, so a calculation another process is running
             # leaves them to the next one
-            started_at = finished_at = None
             try:
                 # A transaction of its own, without locking the metrics refresh row: a day's calculation locks the
                 # database first
                 async with self.async_session_factory() as sess, sess.begin():
-                    # A calculation that starts or finishes after this read keeps its own status
-                    refresh_times = (
-                        await sess.execute(
-                            select(refreshes_table.c.started_at, refreshes_table.c.finished_at).where(
-                                refreshes_table.c.id == METRICS_REFRESH_ID
-                            )
-                        )
-                    ).first()
-                    if refresh_times is not None:
-                        started_at, finished_at = refresh_times
                     await areopen_metrics_days_from(
                         session=sess, table=aggregate_metrics_table, starting_date=rebuild_from
                     )
@@ -3522,8 +3507,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                     refreshes_table,
                     None,
                     error=database_error_message(e),
-                    started_at=started_at,
-                    finished_at=finished_at,
                 )
                 raise
 
@@ -3537,12 +3520,6 @@ class AsyncSqliteDb(AsyncBaseDb):
             dates_to_process, fingerprint = await self._get_metrics_dates_to_calculate(
                 aggregate_metrics_table, sessions_table, runs_table, refresh_row, rebuild_from
             )
-            if rebuild_from is not None:
-                # Yesterday and today are picked by their fingerprint, not by being open
-                today = datetime.now(timezone.utc).date()
-                dates_to_process = sorted(
-                    set(dates_to_process) | {day for day in [today - timedelta(days=1), today] if day >= rebuild_from}
-                )
 
             legacy_run_rows_by_day: Dict[date, List[Any]] = {}
             legacy_run_rows_by_id: Dict[str, Any] = {}

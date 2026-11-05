@@ -1,20 +1,18 @@
 """Utility functions for the MongoDB database class."""
 
-from datetime import date, datetime
+from datetime import date
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
 
 from agno.db.mongo.schemas import get_collection_indexes
 from agno.db.utils import (
     AGGREGATE_METRICS_KEY_COLUMNS,
     COMPONENT_METRICS_KEY_COLUMNS,
-    METRICS_COMPONENT_TYPES,
-    METRICS_COST_FIELDS,
-    METRICS_TOKEN_DETAILS_FIELDS,
-    METRICS_TOKEN_FIELDS,
+    METRICS_BY_OWNER_FIELDS,
+    METRICS_NESTED_RUN_KEYS,
     build_aggregate_metrics_row,
-    list_metrics_models,
-    list_metrics_tools,
     metrics_day_ranges,
+    metrics_rows_fields,
+    serialize_metrics_row,
 )
 from agno.utils.log import log_info, log_warning
 
@@ -32,12 +30,6 @@ if TYPE_CHECKING:
 LEGACY_METRICS_INDEX = "date_1_aggregation_period_1"
 INDEX_NOT_FOUND = 27  # MongoDB's IndexNotFound error code
 
-# A query document holds 16 MB at most, so $in lists are sent in chunks
-METRICS_IN_LIST_LIMIT = 10000
-
-
-# The keys of a stored run that hold the runs nested inside it, read whole, and only from the runs that have them
-_METRICS_NESTED_RUN_KEYS = ("step_executor_runs", "member_responses", "workflow_agent_run")
 
 # What component metrics count of a run. Of the messages only each request's duration and the tool call each answers
 # are read, never the content, and of the tool calls only what tool_metrics counts, never their arguments or result
@@ -202,7 +194,7 @@ def build_component_metrics_runs_projection() -> Dict[str, int]:
         "status": 1,
         "created_at": 1,
         **{f"run_data.{field}": 1 for field in _METRICS_RUN_DATA_FIELDS},
-        **{f"run_data.{key}": 1 for key in _METRICS_NESTED_RUN_KEYS},
+        **{f"run_data.{key}": 1 for key in METRICS_NESTED_RUN_KEYS},
     }
 
 
@@ -216,44 +208,8 @@ def build_component_metrics_legacy_runs_projection() -> Dict[str, int]:
         "created_at": 1,
         **{f"runs.{field}": 1 for field in _METRICS_LEGACY_RUN_FIELDS},
         **{f"runs.{field}": 1 for field in _METRICS_RUN_DATA_FIELDS},
-        **{f"runs.{key}": 1 for key in _METRICS_NESTED_RUN_KEYS},
+        **{f"runs.{key}": 1 for key in METRICS_NESTED_RUN_KEYS},
     }
-
-
-def serialize_metrics_row(row: Dict[str, Any]) -> Dict[str, Any]:
-    """Serialize a metrics row to the document stored for it: its date as text, its models as the list agno_metrics
-    keeps and its tools as a list, so no model id, toolkit or tool name becomes a field name."""
-    document = {**row, "date": row["date"].isoformat()}
-    if "model_metrics" in document:
-        document["model_metrics"] = list_metrics_models(document["model_metrics"])
-    if "tool_metrics" in document:
-        document["tool_metrics"] = list_metrics_tools(document["tool_metrics"])
-    return document
-
-
-def deserialize_metrics_row(document: Dict[str, Any]) -> Dict[str, Any]:
-    """Deserialize a stored metrics document to the row shape the metrics helpers compare and total."""
-    row = {**document, "date": datetime.strptime(document["date"], "%Y-%m-%d").date()}
-    if "model_metrics" in row:
-        model_metrics: Dict[str, Dict[str, Dict[str, Any]]] = {}
-        for model in row["model_metrics"] or []:
-            model_totals: Dict[str, Any] = {"count": model["count"]}
-            if model.get("cost") is not None:
-                model_totals["cost"] = model["cost"]
-            model_metrics.setdefault(model["model_provider"], {})[model["model_id"]] = model_totals
-        row["model_metrics"] = model_metrics
-    if "tool_metrics" in row:
-        tool_metrics: Dict[str, Dict[str, Dict[str, Any]]] = {}
-        for tool in row["tool_metrics"] or []:
-            tool_metrics.setdefault(tool["toolkit"], {})[tool["tool_name"]] = {
-                "count": tool["count"],
-                "failed_count": tool["failed_count"],
-                "total_ms": tool["total_ms"],
-                "max_ms": tool["max_ms"],
-                "buckets": tool["buckets"],
-            }
-        row["tool_metrics"] = tool_metrics
-    return row
 
 
 def _component_metrics_upserts(component_metrics_records: List[Dict[str, Any]]) -> List[UpdateOne]:
@@ -433,7 +389,7 @@ def _reopen_metrics_row(row_date: date, aggregation_period: str) -> Tuple[Dict[s
 
 
 def reopen_metrics_day(collection: Collection, day: date) -> None:
-    """Reopen a day's aggregate metrics row, so the next refresh rebuilds the day.
+    """Reopen a day's aggregate metrics row, so the next calculation rebuilds the day.
 
     Args:
         collection (Collection): The aggregate metrics collection.
@@ -443,7 +399,7 @@ def reopen_metrics_day(collection: Collection, day: date) -> None:
 
 
 async def areopen_metrics_day(collection: "AsyncMongoCollectionType", day: date) -> None:
-    """Reopen a day's aggregate metrics row, so the next refresh rebuilds the day.
+    """Reopen a day's aggregate metrics row, so the next calculation rebuilds the day.
 
     Args:
         collection (AsyncMongoCollectionType): The aggregate metrics collection.
@@ -462,8 +418,8 @@ def _reopen_metrics_days_from(starting_date: date) -> Tuple[Dict[str, Any], Dict
 
 
 def reopen_metrics_days_from(collection: Collection, starting_date: date) -> None:
-    """Reopen every day's aggregate metrics row from the given date on, as a write reopens a day, so the next refresh
-    rebuilds them.
+    """Reopen every day's aggregate metrics row from the given date on, as a write reopens
+    a day, so the next calculation rebuilds them.
 
     Args:
         collection (Collection): The aggregate metrics collection.
@@ -473,8 +429,8 @@ def reopen_metrics_days_from(collection: Collection, starting_date: date) -> Non
 
 
 async def areopen_metrics_days_from(collection: "AsyncMongoCollectionType", starting_date: date) -> None:
-    """Reopen every day's aggregate metrics row from the given date on, as a write reopens a day, so the next refresh
-    rebuilds them.
+    """Reopen every day's aggregate metrics row from the given date on, as a write reopens
+    a day, so the next calculation rebuilds them.
 
     Args:
         collection (AsyncMongoCollectionType): The aggregate metrics collection.
@@ -484,7 +440,7 @@ async def areopen_metrics_days_from(collection: "AsyncMongoCollectionType", star
 
 
 def reopen_metrics_month(collection: Collection, month_start: date) -> None:
-    """Reopen a month's aggregate metrics row, so the next refresh rebuilds the month.
+    """Reopen a month's aggregate metrics row, so the next calculation rebuilds the month.
 
     Args:
         collection (Collection): The aggregate metrics collection.
@@ -494,7 +450,7 @@ def reopen_metrics_month(collection: Collection, month_start: date) -> None:
 
 
 async def areopen_metrics_month(collection: "AsyncMongoCollectionType", month_start: date) -> None:
-    """Reopen a month's aggregate metrics row, so the next refresh rebuilds the month.
+    """Reopen a month's aggregate metrics row, so the next calculation rebuilds the month.
 
     Args:
         collection (AsyncMongoCollectionType): The aggregate metrics collection.
@@ -567,34 +523,9 @@ def build_metrics_rows_filter(
 
 def build_metrics_rows_projection(fields: Sequence[str]) -> Dict[str, int]:
     """Build the projection of a stored metrics row with only what totalling the given fields reads."""
-    projection = {"_id": 0, "aggregation_period": 1, "date": 1, "updated_at": 1, **{field: 1 for field in fields}}
-    if any(field in [*METRICS_TOKEN_DETAILS_FIELDS, "audio_total_tokens", *METRICS_COST_FIELDS] for field in fields):
-        projection["token_details"] = 1
-    # The aggregate metrics collection keeps the sessions of each type, and the component metrics collection the runs of
-    # each component, with the run that started them
-    if "sessions_count" in fields:
-        projection.update({f"{component_type}_sessions_count": 1 for component_type in METRICS_COMPONENT_TYPES})
-    if "root_runs_count" in fields:
-        projection.update({"runs_count": 1, "parent_component_id": 1})
-    return projection
+    return {"_id": 0, **{field: 1 for field in metrics_rows_fields(fields)}}
 
 
 def build_metrics_by_owner_projection() -> Dict[str, int]:
     """Build the projection of a stored component metrics row with only what get_metrics reads of it."""
-    return {
-        "_id": 0,
-        "date": 1,
-        "user_id": 1,
-        "component_type": 1,
-        "sessions_count": 1,
-        "runs_count": 1,
-        **{
-            field: 1
-            for field in METRICS_TOKEN_FIELDS
-            if field not in [*METRICS_TOKEN_DETAILS_FIELDS, "audio_total_tokens"]
-        },
-        "token_details": 1,
-        "model_metrics": 1,
-        "created_at": 1,
-        "updated_at": 1,
-    }
+    return {"_id": 0, **{field: 1 for field in METRICS_BY_OWNER_FIELDS}}

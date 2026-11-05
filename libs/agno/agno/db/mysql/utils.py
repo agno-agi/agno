@@ -10,6 +10,7 @@ from agno.db.utils import (
     METRICS_COST_FIELDS,
     METRICS_COUNT_MAP_COLUMNS,
     METRICS_MAX_COLUMNS,
+    METRICS_NESTED_RUN_KEYS,
     METRICS_SUM_FIELDS,
     METRICS_TOKEN_DETAILS_FIELDS,
     METRICS_TOKEN_FIELDS,
@@ -73,10 +74,7 @@ _METRICS_TOOL_MESSAGES: Any = literal_column(
 # JSON false, read from a JSON document: MariaDB has no CAST to JSON
 _METRICS_JSON_FALSE: Any = literal_column("JSON_EXTRACT('false', '$')")
 
-# The keys of a stored run that hold the runs nested inside it, in the order the rollup walks them
-_METRICS_NESTED_RUN_KEYS = ("step_executor_runs", "member_responses", "workflow_agent_run")
-
-# Every run of one of those lists, with its position in the list
+# Every run of a list under one of METRICS_NESTED_RUN_KEYS, with its position in the list
 _METRICS_NESTED_RUNS: Any = literal_column("'$[*]' COLUMNS (ordinality FOR ORDINALITY, value JSON PATH '$')")
 
 # The one run a key holds on its own. MySQL's $[*] matches nothing in an object
@@ -90,14 +88,20 @@ _METRICS_LEGACY_RUNS: Any = literal_column(
     "created_at BIGINT PATH '$.created_at', run_data JSON PATH '$')"
 )
 
-# Every key of a JSON object
-_METRICS_KEYS: Any = literal_column("'$[*]' COLUMNS (entry_key VARCHAR(255) PATH '$')")
+# Every key of a JSON object. Binary collation keeps string comparisons case-sensitive, matching other SQL backends.
+_METRICS_KEYS: Any = literal_column("'$[*]' COLUMNS (entry_key VARCHAR(255) COLLATE utf8mb4_bin PATH '$')")
 
 # The JSON_TYPE of a JSON number
 _METRICS_NUMBER_TYPES = ("INTEGER", "UNSIGNED INTEGER", "DOUBLE", "DECIMAL")
 
 
 # -- DB util methods --
+def is_lock_not_available(error: Exception) -> bool:
+    """Whether a database error is MySQL's ER_LOCK_WAIT_TIMEOUT (error 1205)."""
+    cause = getattr(error, "orig", error)
+    return cause.args[:1] == (1205,)
+
+
 def apply_sorting(stmt, table: Table, sort_by: Optional[str] = None, sort_order: Optional[str] = None):
     """Apply sorting to the given SQLAlchemy statement.
 
@@ -222,13 +226,15 @@ def set_json_column_types(table: Table, table_type: str) -> None:
 
 
 # -- Component metrics util methods --
-def bulk_upsert_component_metrics(session: Session, table: Table, component_metrics_records: list[dict]) -> None:
+def bulk_upsert_component_metrics(
+    session: Session, table: Table, component_metrics_records: List[Dict[str, Any]]
+) -> None:
     """Bulk upsert component metrics into the database, in the session's transaction.
 
     Args:
         session (Session): The session to upsert with.
         table (Table): The table to upsert into.
-        component_metrics_records (list[dict]): The component metrics records to upsert.
+        component_metrics_records (List[Dict[str, Any]]): The component metrics records to upsert.
     """
     if not component_metrics_records:
         return
@@ -247,14 +253,14 @@ def bulk_upsert_component_metrics(session: Session, table: Table, component_metr
 
 
 async def abulk_upsert_component_metrics(
-    session: AsyncSession, table: Table, component_metrics_records: list[dict]
+    session: AsyncSession, table: Table, component_metrics_records: List[Dict[str, Any]]
 ) -> None:
     """Bulk upsert component metrics into the database, in the session's transaction.
 
     Args:
         session (AsyncSession): The session to upsert with.
         table (Table): The table to upsert into.
-        component_metrics_records (list[dict]): The component metrics records to upsert.
+        component_metrics_records (List[Dict[str, Any]]): The component metrics records to upsert.
     """
     if not component_metrics_records:
         return
@@ -443,8 +449,8 @@ def reopen_metrics_days_from(session: Session, table: Table, starting_date: date
     # Read first, then reopened by key: an update over a range of dates locks the user rows of those days too, which a
     # day's calculation writes before its everyone row
     days = list(session.execute(_metrics_days_from(table, starting_date)).scalars().all())
-    for start in range(0, len(days), METRICS_IN_LIST_LIMIT):
-        session.execute(_reopen_metrics_days_in(table, days[start : start + METRICS_IN_LIST_LIMIT]))
+    if days:
+        session.execute(_reopen_metrics_days_in(table, days))
 
 
 async def areopen_metrics_days_from(session: AsyncSession, table: Table, starting_date: date) -> None:
@@ -459,8 +465,8 @@ async def areopen_metrics_days_from(session: AsyncSession, table: Table, startin
     # Read first, then reopened by key: an update over a range of dates locks the user rows of those days too, which a
     # day's calculation writes before its everyone row
     days = list((await session.execute(_metrics_days_from(table, starting_date))).scalars().all())
-    for start in range(0, len(days), METRICS_IN_LIST_LIMIT):
-        await session.execute(_reopen_metrics_days_in(table, days[start : start + METRICS_IN_LIST_LIMIT]))
+    if days:
+        await session.execute(_reopen_metrics_days_in(table, days))
 
 
 def reopen_metrics_month(session: Session, table: Table, month_start: date) -> None:
@@ -552,7 +558,9 @@ def _metrics_copied_tool_call_ids(run_data: Any) -> Any:
     )
 
 
-def _metrics_uncopied_tool_calls(tool_calls: Any, copied_tool_call_ids: Any) -> List[Dict[str, Any]]:
+def _metrics_uncopied_tool_calls(
+    tool_calls: Optional[List[Dict[str, Any]]], copied_tool_call_ids: Any
+) -> List[Dict[str, Any]]:
     """The tool calls of a run, skipping those a forked run copied from the run it was forked from."""
     copied = {tool_call_id for tool_call_id in copied_tool_call_ids or [] if tool_call_id}
     return [tool_call for tool_call in tool_calls or [] if tool_call.get("tool_call_id") not in copied]
@@ -681,7 +689,7 @@ def build_component_metrics_runs_query(table: Table, start_timestamp: int, end_t
     """
     # One row per nested run, read a level at a time. The path orders them the way the rollup walks them
     nested_selects = []
-    for position, key in enumerate(_METRICS_NESTED_RUN_KEYS):
+    for position, key in enumerate(METRICS_NESTED_RUN_KEYS):
         nested_run = func.json_table(
             func.json_extract(table.c.run_data, f"$.{key}"),
             _METRICS_NESTED_RUN if key == "workflow_agent_run" else _METRICS_NESTED_RUNS,
@@ -705,7 +713,7 @@ def build_component_metrics_runs_query(table: Table, start_timestamp: int, end_t
     # MySQL takes every SELECT that starts the recursion ahead of the ones that follow it
     nested = nested_selects[0].cte("nested", recursive=True)
     nested_selects = nested_selects[1:]
-    for position, key in enumerate(_METRICS_NESTED_RUN_KEYS):
+    for position, key in enumerate(METRICS_NESTED_RUN_KEYS):
         nested_run = func.json_table(
             func.json_extract(nested.c.run_data, f"$.{key}"),
             _METRICS_NESTED_RUN if key == "workflow_agent_run" else _METRICS_NESTED_RUNS,
@@ -847,11 +855,10 @@ def _metrics_models(table: Table) -> Tuple[Any, Any, Any, Any, Any]:
     count and cost of each of its models, and the provider, the id, the count and the cost of the model."""
     provider = _metrics_entries(table.c.model_metrics)
     model = _metrics_entries(_metrics_entry(table.c.model_metrics, provider.c.entry_key))
-    # Binary collation keeps string comparisons case-sensitive, matching other SQL backends.
     return (
         table.join(provider, true()).join(model, true()),
-        provider.c.entry_key.collate("utf8mb4_bin").label("model_provider"),
-        model.c.entry_key.collate("utf8mb4_bin").label("model_id"),
+        provider.c.entry_key.label("model_provider"),
+        model.c.entry_key.label("model_id"),
         cast(_metrics_entry(table.c.model_metrics, provider.c.entry_key, model.c.entry_key, "count"), BigInteger),
         cast(_metrics_entry(table.c.model_metrics, provider.c.entry_key, model.c.entry_key, "cost"), Numeric(65, 30)),
     )
@@ -910,18 +917,16 @@ def build_component_metrics_totals_queries(
     for field in fields:
         if field in METRICS_COUNT_MAP_COLUMNS:
             entry = _metrics_entries(table.c[field])
-            # Binary collation keeps string comparisons case-sensitive, matching other SQL backends.
-            entry_key = entry.c.entry_key.collate("utf8mb4_bin")
             count_map_queries.append(
                 select(
                     table.c.date,
                     literal(field).label("field"),
-                    entry_key.label("key"),
+                    entry.c.entry_key.label("key"),
                     func.sum(cast(_metrics_entry(table.c[field], entry.c.entry_key), BigInteger)).label("count"),
                 )
                 .select_from(table.join(entry, true()))
                 .where(where)
-                .group_by(table.c.date, entry_key)
+                .group_by(table.c.date, entry.c.entry_key)
             )
     if count_map_queries:
         queries["count_maps"] = union_all(*count_map_queries)
@@ -929,17 +934,16 @@ def build_component_metrics_totals_queries(
     # Only the numbers of additional_metrics are totalled; the rest keeps no meaning across rows
     if "additional_metrics" in fields:
         entry = _metrics_entries(table.c.additional_metrics)
-        entry_key = entry.c.entry_key.collate("utf8mb4_bin")
         value = _metrics_entry(table.c.additional_metrics, entry.c.entry_key)
         queries["additional_metrics"] = (
             select(
                 table.c.date,
-                entry_key.label("key"),
+                entry.c.entry_key.label("key"),
                 func.sum(cast(value, Numeric(65, 30))).label("value"),
             )
             .select_from(table.join(entry, true()))
             .where(where, func.json_type(value).in_(_METRICS_NUMBER_TYPES))
-            .group_by(table.c.date, entry_key)
+            .group_by(table.c.date, entry.c.entry_key)
         )
 
     if "model_metrics" in fields:

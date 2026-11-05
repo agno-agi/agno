@@ -20,7 +20,6 @@ if TYPE_CHECKING:
 from agno.db.base import BaseDb, SessionType
 from agno.db.migrations.manager import MigrationManager
 from agno.db.mongo.utils import (
-    METRICS_IN_LIST_LIMIT,
     apply_pagination,
     apply_sorting,
     build_component_metrics_legacy_runs_projection,
@@ -33,7 +32,6 @@ from agno.db.mongo.utils import (
     bulk_upsert_aggregate_metrics_rows,
     bulk_upsert_component_metrics,
     create_collection_indexes,
-    deserialize_metrics_row,
     reopen_metrics_day,
     reopen_metrics_days_from,
     reopen_metrics_month,
@@ -44,13 +42,12 @@ from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
     AGGREGATE_METRICS_COUNT_COLUMNS,
+    AGGREGATE_METRICS_ROWS_FIELDS,
     HISTORY_SKIP_STATUSES,
     METRICS_BATCH_SIZE,
     METRICS_LOCK_SECONDS,
     METRICS_REFRESH_ID,
     METRICS_STOPPED_ERROR,
-    METRICS_TOKEN_DETAILS_FIELDS,
-    METRICS_TOKEN_FIELDS,
     add_metrics_month_totals,
     aggregate_metrics_rows_to_write,
     build_aggregate_metrics_month_rows,
@@ -61,6 +58,7 @@ from agno.db.utils import (
     calculate_date_component_metrics,
     component_metrics_rows_to_write,
     database_error_message,
+    deserialize_metrics_row,
     deserialize_run,
     deserialize_session,
     deserialize_session_json_fields,
@@ -205,8 +203,6 @@ class MongoDb(BaseDb):
         self._metrics_refreshed_at: float = 0.0
         # The days whose metrics a write could not reopen, retried by the next write
         self._metrics_days_not_reopened: Set[date] = set()
-        # Whether a session holds legacy runs, None until a read of every session found out
-        self._metrics_legacy_runs: Optional[bool] = None
 
     def close(self) -> None:
         """Close the MongoDB client connection.
@@ -1253,10 +1249,9 @@ class MongoDb(BaseDb):
             # would lose history for sessions not yet migrated to the runs collection.
             legacy_runs_by_id: Dict[str, Any] = {}
             stored_sessions: Dict[str, Dict[str, Any]] = {}
-            written_session_ids = list(sessions_by_id.keys())
-            for start in range(0, len(written_session_ids), METRICS_IN_LIST_LIMIT):
+            if sessions_by_id:
                 for doc in collection.find(
-                    {"session_id": {"$in": written_session_ids[start : start + METRICS_IN_LIST_LIMIT]}},
+                    {"session_id": {"$in": list(sessions_by_id.keys())}},
                     {
                         "session_id": 1,
                         "user_id": 1,
@@ -1854,7 +1849,7 @@ class MongoDb(BaseDb):
                 table_type="aggregate_metrics", create_collection_if_not_found=True
             )
             if aggregate_metrics_collection is None:
-                raise ValueError("Aggregate metrics collection was not provided on initialization")
+                return
             for day in days:
                 reopen_metrics_day(aggregate_metrics_collection, day)
             self._metrics_days_not_reopened.difference_update(days)
@@ -1924,17 +1919,24 @@ class MongoDb(BaseDb):
         fingerprint: Optional[List[Any]] = None,
         stopped: bool = False,
         claimed_fingerprint: Optional[List[Any]] = None,
-        started_at: Optional[int] = None,
-        finished_at: Optional[int] = None,
     ) -> None:
         """Release the document of the metrics refreshes collection: completed, with the fingerprint, without an
-        error, failed with one, and as the last completed refresh left it when the calculation stopped. A worker_id
-        of None writes the document only while no process holds it and no calculation started or finished after the
-        read of started_at and finished_at, and creates it when that read found none."""
+        error, failed with one, and as the last completed refresh left it when the calculation stopped.
+
+        Args:
+            refreshes_collection (Collection): The metrics refreshes collection.
+            worker_id (Optional[str]): The id of the calculation that claimed the document. None writes the document
+                only while no process holds it, and creates it before any refresh.
+            error (Optional[str]): The error the calculation failed with. None when it completed.
+            fingerprint (Optional[List[Any]]): The fingerprint of yesterday and today, stored once it completed.
+            stopped (bool): Whether the calculation stopped before it finished.
+            claimed_fingerprint (Optional[List[Any]]): The fingerprint of the claimed document. A rebuild that marked
+                another one since keeps its mark.
+        """
         values: Dict[str, Any] = {"locked_by": None, "locked_at": None}
         if stopped:
             # The days it did not reach stay open for the next calculation; a first one that stopped has none to show
-            finished = {"$ne": [{"$ifNull": ["$finished_at", None]}, None]}
+            finished = {"$ne": ["$finished_at", None]}
             values.update(
                 status={"$cond": [finished, "completed", "failed"]},
                 error={"$cond": [finished, None, METRICS_STOPPED_ERROR]},
@@ -1942,10 +1944,10 @@ class MongoDb(BaseDb):
         elif error is None:
             values.update(status="completed", error=None, finished_at=int(time.time()))
             # A rebuild that marked the fingerprint after the claim keeps its mark, so the next calculation rebuilds
-            # yesterday and today. A missing fingerprint compares equal to a claim of None
+            # yesterday and today
             values["fingerprint"] = {
                 "$cond": [
-                    {"$eq": [{"$ifNull": ["$fingerprint", None]}, {"$literal": claimed_fingerprint}]},
+                    {"$eq": ["$fingerprint", {"$literal": claimed_fingerprint}]},
                     {"$literal": fingerprint},
                     "$fingerprint",
                 ]
@@ -1953,25 +1955,20 @@ class MongoDb(BaseDb):
         else:
             values.update(status="failed", error=error)
         try:
-            if worker_id is None and error is not None and started_at is None:
-                # Before any refresh there is no document to update; one created since keeps its own status
-                refreshes_collection.update_one(
-                    {"id": METRICS_REFRESH_ID},
-                    {
-                        "$setOnInsert": {
-                            **values,
-                            "started_at": int(time.time()),
-                            "finished_at": None,
-                            "fingerprint": None,
-                        }
-                    },
-                    upsert=True,
-                )
-            elif worker_id is None and error is not None:
-                refreshes_collection.update_one(
-                    {"id": METRICS_REFRESH_ID, "locked_by": None, "started_at": started_at, "finished_at": finished_at},
-                    [{"$set": values}],
-                )
+            if worker_id is None:
+                # Before any refresh there is no document to update. A held one fails the filter, so the upsert inserts
+                # a second document with its id and is refused with a duplicate key error
+                try:
+                    refreshes_collection.update_one(
+                        {"id": METRICS_REFRESH_ID, "locked_by": None},
+                        {
+                            "$set": values,
+                            "$setOnInsert": {"started_at": int(time.time()), "finished_at": None, "fingerprint": None},
+                        },
+                        upsert=True,
+                    )
+                except DuplicateKeyError:
+                    pass
             else:
                 refreshes_collection.update_one({"id": METRICS_REFRESH_ID, "locked_by": worker_id}, [{"$set": values}])
         except Exception as e:
@@ -2093,9 +2090,7 @@ class MongoDb(BaseDb):
         runs_collection: Optional[Collection],
         start_timestamp: int,
         end_timestamp: int,
-        refreshes_collection: Collection,
-        worker_id: str,
-    ) -> Optional[Tuple[Dict[date, List[Dict[str, Any]]], Dict[str, Dict[str, Any]]]]:
+    ) -> Tuple[Dict[date, List[Dict[str, Any]]], Dict[str, Dict[str, Any]]]:
         """Get the runs not yet migrated out of the sessions' legacy runs field, created in the given time range.
 
         Sessions are read a batch at a time, and the legacy runs of each batch created in the range are checked
@@ -2106,12 +2101,10 @@ class MongoDb(BaseDb):
             runs_collection (Optional[Collection]): The runs collection. A run it also holds is read from there.
             start_timestamp (int): The start of the range, included.
             end_timestamp (int): The end of the range, not included.
-            refreshes_collection (Collection): The metrics refreshes collection.
-            worker_id (str): The id of the calculation holding the metrics refresh, heartbeated with every batch.
 
         Returns:
-            Optional[Tuple[Dict[date, List[Dict[str, Any]]], Dict[str, Dict[str, Any]]]]: The legacy runs by the UTC
-                day they were created on, and by their id. None when the metrics refresh was taken over.
+            Tuple[Dict[date, List[Dict[str, Any]]], Dict[str, Dict[str, Any]]]: The legacy runs by the UTC day they
+                were created on, and by their id.
         """
         cursor = sessions_collection.find(
             {
@@ -2131,8 +2124,6 @@ class MongoDb(BaseDb):
             sessions = list(islice(cursor, METRICS_BATCH_SIZE))
             if not sessions:
                 break
-            if not self._heartbeat_metrics_refresh(refreshes_collection, worker_id):
-                return None
             legacy_runs = [
                 legacy_run
                 for legacy_run in get_metrics_legacy_runs(sessions)
@@ -2142,11 +2133,11 @@ class MongoDb(BaseDb):
             migrated_run_ids: Set[str] = set()
             if runs_collection is not None:
                 legacy_run_ids = [legacy_run["run_id"] for legacy_run in legacy_runs]
-                for start in range(0, len(legacy_run_ids), METRICS_IN_LIST_LIMIT):
+                if legacy_run_ids:
                     migrated_run_ids.update(
                         document["run_id"]
                         for document in runs_collection.find(
-                            {"run_id": {"$in": legacy_run_ids[start : start + METRICS_IN_LIST_LIMIT]}},
+                            {"run_id": {"$in": legacy_run_ids}},
                             {"run_id": 1, "_id": False},
                         )
                     )
@@ -2164,21 +2155,20 @@ class MongoDb(BaseDb):
         seen_run_ids: Set[str] = set()
         while parent_run_ids:
             seen_run_ids.update(parent_run_ids)
-            for start in range(0, len(parent_run_ids), METRICS_IN_LIST_LIMIT):
-                parent_runs.extend(
-                    runs_collection.find(
-                        {"run_id": {"$in": parent_run_ids[start : start + METRICS_IN_LIST_LIMIT]}},
-                        {
-                            "_id": False,
-                            "run_id": 1,
-                            "run_type": 1,
-                            "agent_id": 1,
-                            "team_id": 1,
-                            "workflow_id": 1,
-                            "parent_run_id": 1,
-                        },
-                    )
+            parent_runs.extend(
+                runs_collection.find(
+                    {"run_id": {"$in": parent_run_ids}},
+                    {
+                        "_id": False,
+                        "run_id": 1,
+                        "run_type": 1,
+                        "agent_id": 1,
+                        "team_id": 1,
+                        "workflow_id": 1,
+                        "parent_run_id": 1,
+                    },
                 )
+            )
             parent_run_ids = sorted(
                 {run["parent_run_id"] for run in parent_runs if run.get("parent_run_id")} - seen_run_ids
             )
@@ -2206,12 +2196,12 @@ class MongoDb(BaseDb):
         everyone_row, changed_rows, stale_user_ids = aggregate_metrics_rows_to_write(
             aggregate_metrics_rows, stored_rows, rows_changed
         )
-        for start in range(0, len(stale_user_ids), METRICS_IN_LIST_LIMIT):
+        if stale_user_ids:
             aggregate_metrics_collection.delete_many(
                 {
                     "aggregation_period": period,
                     "date": period_date,
-                    "user_id": {"$in": stale_user_ids[start : start + METRICS_IN_LIST_LIMIT]},
+                    "user_id": {"$in": stale_user_ids},
                 }
             )
         bulk_upsert_aggregate_metrics_rows(aggregate_metrics_collection, changed_rows)
@@ -2286,8 +2276,6 @@ class MongoDb(BaseDb):
                 # Checked between batches too, so a stop never waits for the whole of a large day
                 if should_stop is not None and should_stop():
                     return False
-                if not self._heartbeat_metrics_refresh(refreshes_collection, worker_id):
-                    return False
                 runs.extend(batch)
         # A legacy run migrated to the runs collection since the legacy runs were read is among the day's runs, and
         # is counted from there
@@ -2305,11 +2293,11 @@ class MongoDb(BaseDb):
         if runs_collection is not None:
             # A nested run also stored as a run of its own is counted from that document, whatever day it is on
             run_ids = sorted(nested_run_ids)
-            for start in range(0, len(run_ids), METRICS_IN_LIST_LIMIT):
+            if run_ids:
                 stored_run_ids.update(
                     document["run_id"]
                     for document in runs_collection.find(
-                        {"run_id": {"$in": run_ids[start : start + METRICS_IN_LIST_LIMIT]}},
+                        {"run_id": {"$in": run_ids}},
                         # Only run_id, so the run_id index answers the query without reading the documents
                         {"run_id": 1, "_id": False},
                     )
@@ -2317,13 +2305,13 @@ class MongoDb(BaseDb):
 
             # A remote member's run after midnight is named by its team's run of the day before
             team_session_ids = sorted(metrics_remote_member_team_session_ids(runs))
-            for start in range(0, len(team_session_ids), METRICS_IN_LIST_LIMIT):
+            if team_session_ids:
                 team_runs = list(
                     runs_collection.find(
                         {
                             "created_at": {"$gte": start_timestamp - 86400, "$lt": start_timestamp},
                             "run_data.forked_from_session_id": None,
-                            "session_id": {"$in": team_session_ids[start : start + METRICS_IN_LIST_LIMIT]},
+                            "session_id": {"$in": team_session_ids},
                         },
                         build_component_metrics_runs_projection(),
                     )
@@ -2366,11 +2354,12 @@ class MongoDb(BaseDb):
             for row in stored_rows
         }
         stale_ids = [stored_ids[stale_key] for stale_key in stale_keys]
-        for start in range(0, len(stale_ids), METRICS_IN_LIST_LIMIT):
-            collection.delete_many({"_id": {"$in": stale_ids[start : start + METRICS_IN_LIST_LIMIT]}})
+        if stale_ids:
+            collection.delete_many({"_id": {"$in": stale_ids}})
         bulk_upsert_component_metrics(collection, changed_rows)
 
-        # Written last, so its version never moves without the rows it tells of
+        # Written last, and completed only while its version is still the one the rows were written under, so a reopen
+        # written since keeps the day open
         self._write_aggregate_metrics_rows(
             aggregate_metrics_collection,
             build_aggregate_metrics_rows(records, "daily", date_to_process, metrics_day_completed(date_to_process)),
@@ -2447,7 +2436,7 @@ class MongoDb(BaseDb):
             if calculated_dates is None:
                 return None
             if not calculated_dates:
-                # Nothing changed: today's metrics come back, as they did when every refresh calculated today
+                # A refresh that changed no day answers with today's metrics
                 calculated_dates = [datetime.now(timezone.utc).date()]
             metrics, _ = self._get_metrics_rows(calculated_dates[0], calculated_dates[-1], None)
             return [metric for metric in metrics if metric["date"] in calculated_dates]
@@ -2493,12 +2482,7 @@ class MongoDb(BaseDb):
         if rebuild_from is not None:
             # Reopened as a write reopens a day, before the claim, so a calculation another process is running
             # leaves them to the next one
-            started_at = finished_at = None
             try:
-                # A calculation that starts or finishes after this read keeps its own status
-                stored_row = self._get_metrics_refresh_row(refreshes_collection)[0]
-                if stored_row is not None:
-                    started_at, finished_at = stored_row.get("started_at"), stored_row.get("finished_at")
                 reopen_metrics_days_from(aggregate_metrics_collection, rebuild_from)
                 # Yesterday and today are picked by the fingerprint, so it is marked for the next one too
                 refreshes_collection.update_one(
@@ -2510,8 +2494,6 @@ class MongoDb(BaseDb):
                     refreshes_collection,
                     None,
                     error=database_error_message(e),
-                    started_at=started_at,
-                    finished_at=finished_at,
                 )
                 raise
 
@@ -2525,27 +2507,13 @@ class MongoDb(BaseDb):
             dates_to_process, fingerprint = self._get_metrics_dates_to_calculate(
                 aggregate_metrics_collection, sessions_collection, runs_collection, refresh_row, rebuild_from
             )
-            if rebuild_from is not None:
-                # Yesterday and today are picked by their fingerprint, not by being open
-                today = datetime.now(timezone.utc).date()
-                dates_to_process = sorted(
-                    set(dates_to_process) | {day for day in [today - timedelta(days=1), today] if day >= rebuild_from}
-                )
 
             legacy_runs_by_day: Dict[date, List[Dict[str, Any]]] = {}
             legacy_runs_by_id: Dict[str, Dict[str, Any]] = {}
-            if rebuild_from is not None:
-                # Every session is read again, for the legacy runs a process of an earlier release saved since
-                self._metrics_legacy_runs = None
-            # Read once for every day until the v3.0.0 migration is stamped: no index finds one day's legacy runs. A
-            # store created by 3.0 or 3.1 stamps no version, so they are read only while a read of every session found
-            # some
-            if (
-                dates_to_process
-                and self._metrics_legacy_runs is not False
-                and packaging_version.parse(self.get_latest_schema_version(self.session_table_name) or "2.0.0")
-                < packaging_version.parse("3.0.0")
-            ):
+            # Read once for every day until the v3.0.0 migration is stamped: no index finds one day's legacy runs
+            if dates_to_process and packaging_version.parse(
+                self.get_latest_schema_version(self.session_table_name) or "2.0.0"
+            ) < packaging_version.parse("3.0.0"):
                 start_timestamp = int(
                     datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
                 )
@@ -2554,22 +2522,11 @@ class MongoDb(BaseDb):
                     .replace(tzinfo=timezone.utc)
                     .timestamp()
                 )
-                if self._metrics_legacy_runs is None:
-                    # The first read reads every session, so one that finds no legacy runs finds none anywhere
-                    start_timestamp, end_timestamp = 0, max(end_timestamp, int(time.time()) + 1)
-                legacy_runs = self._get_metrics_legacy_runs(
-                    sessions_collection,
-                    runs_collection,
-                    start_timestamp,
-                    end_timestamp,
-                    refreshes_collection,
-                    worker_id,
+                legacy_runs_by_day, legacy_runs_by_id = self._get_metrics_legacy_runs(
+                    sessions_collection, runs_collection, start_timestamp, end_timestamp
                 )
-                if legacy_runs is None or not self._heartbeat_metrics_refresh(refreshes_collection, worker_id):
+                if not self._heartbeat_metrics_refresh(refreshes_collection, worker_id):
                     return None
-                legacy_runs_by_day, legacy_runs_by_id = legacy_runs
-                if self._metrics_legacy_runs is None:
-                    self._metrics_legacy_runs = bool(legacy_runs_by_id)
                 # A legacy run is dated on its own day, which may hold no session or run of the collections
                 today = datetime.now(timezone.utc).date()
                 dates_to_process = sorted(
@@ -2693,26 +2650,7 @@ class MongoDb(BaseDb):
         # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row
         query["$or"] = [{column: {"$gt": 0}} for column in AGGREGATE_METRICS_COUNT_COLUMNS if column != "users_count"]
         # Only what build_metrics_from_aggregate_metrics reads, so the maps of timings are never decoded
-        projection = {
-            "_id": False,
-            **{
-                column: 1
-                for column in [
-                    "date",
-                    "user_id",
-                    *AGGREGATE_METRICS_COUNT_COLUMNS,
-                    *[
-                        field
-                        for field in METRICS_TOKEN_FIELDS
-                        if field not in [*METRICS_TOKEN_DETAILS_FIELDS, "audio_total_tokens"]
-                    ],
-                    "token_details",
-                    "model_metrics",
-                    "created_at",
-                    "updated_at",
-                ]
-            },
-        }
+        projection = {"_id": False, **{column: 1 for column in AGGREGATE_METRICS_ROWS_FIELDS}}
         rows = [
             deserialize_metrics_row(document)
             for document in aggregate_metrics_collection.find(query, projection).sort([("date", 1), ("user_id", 1)])

@@ -6,7 +6,6 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from agno.db.json import JsonDb
-from agno.db.json import json_db as json_db_module
 from agno.db.utils import METRICS_LOCK_SECONDS, METRICS_STOPPED_ERROR
 from agno.metrics import RunMetrics, ToolCallMetrics
 from agno.models.message import Message
@@ -404,43 +403,6 @@ def test_calculate_metrics_dates_releases_the_lock_when_stopped(tmp_path):
     assert db.calculate_metrics_dates(should_stop=lambda: True) is None
     status = db.get_metrics_refresh_status()
     assert (status["status"], status["error"]) == ("completed", None)
-
-
-def test_claim_metrics_refresh_returns_none_when_its_lock_file_never_reads(tmp_path):
-    """Ensure a lock file that can be neither created nor read returns None instead of retrying forever"""
-    db = _stored_sessions(tmp_path)
-    os.symlink(db.db_path / "missing.json", db.db_path / f"{db.metrics_refreshes_table_name}_lock.json")
-
-    assert db._claim_metrics_refresh("another-worker") is None
-
-
-def test_calculate_metrics_reads_the_legacy_runs_again_only_on_a_rebuild(tmp_path, monkeypatch):
-    """Ensure an unstamped store skips the legacy runs read once one found none, until rebuild_from reads them again"""
-    db = JsonDb(db_path=str(tmp_path))
-    yesterday = _utc_date(1)
-    db.upsert_session(
-        AgentSession(session_id="legacy", agent_id="agent-1", user_id="alice", created_at=_noon_utc(yesterday))
-    )
-    # A store created on 3.0 or 3.1 stamps no schema version
-    db._write_json_file(db.versions_table_name, [])
-    reads = []
-    get_metrics_legacy_runs = json_db_module.get_metrics_legacy_runs
-    monkeypatch.setattr(
-        json_db_module, "get_metrics_legacy_runs", lambda sessions: reads.append(1) or get_metrics_legacy_runs(sessions)
-    )
-
-    db.calculate_metrics_dates()
-    # A new run today changes the fingerprint, so yesterday and today are rebuilt
-    _persist(
-        db,
-        AgentSession(session_id="new", agent_id="agent-1", user_id="bob", created_at=_noon_utc(_utc_date(0))),
-        [_agent_run("new_run", _noon_utc(_utc_date(0)), 10)],
-    )
-    assert db.calculate_metrics_dates()
-    assert len(reads) == 1
-
-    db.calculate_metrics_dates(rebuild_from=yesterday)
-    assert len(reads) == 2
 
 
 def test_calculate_metrics_takes_over_a_lock_that_went_stale(tmp_path):

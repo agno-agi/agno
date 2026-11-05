@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
+from agno.db.migrations.manager import MigrationManager
 from agno.db.mongo import MongoDb
 from agno.db.mongo.utils import (
     build_component_metrics_legacy_runs_projection,
@@ -40,7 +41,9 @@ def test_created_sessions_collection_stores_latest_schema_version():
     ):
         db._get_collection("sessions", create_collection_if_not_found=True)
 
-    upsert_schema_version.assert_called_once_with(table_name=db.session_table_name, version="3.0.0")
+    upsert_schema_version.assert_called_once_with(
+        table_name=db.session_table_name, version=MigrationManager(db).latest_schema_version.public
+    )
 
 
 class TestSyncMongoLearnings:
@@ -143,24 +146,6 @@ def test_text_filters_match_literal_text():
     assert memories_query["memory"] == {"$regex": r"v1\.2\(draft", "$options": "i"}
 
 
-def test_metrics_legacy_runs_stop_when_refresh_taken_over():
-    """The legacy runs are read with a heartbeat per batch, and stop once another process took the refresh over."""
-    db = _db()
-
-    cursor = MagicMock()
-    cursor.batch_size.return_value = cursor
-    cursor.__iter__.return_value = iter([{"session_id": "s1", "created_at": 0, "runs": [{"run_id": "r1"}]}])
-    sessions_collection = Mock()
-    sessions_collection.find.return_value = cursor
-
-    with patch.object(db, "_heartbeat_metrics_refresh", Mock(return_value=False)) as heartbeat:
-        result = db._get_metrics_legacy_runs(sessions_collection, None, 0, 86400, Mock(), "worker")
-
-    assert result is None
-    heartbeat.assert_called_once()
-    cursor.__iter__.assert_called_once()
-
-
 def test_metrics_runs_projections_keep_session_id():
     """A run and a legacy run keep their session, which names the session of each remote member run nested in them."""
     assert build_component_metrics_runs_projection()["session_id"] == 1
@@ -247,11 +232,9 @@ def test_component_metrics_totals_read_tool_metrics():
 
 
 def test_metrics_rebuild_reopen_failure_marks_refresh_failed():
-    """A rebuild whose reopen fails shows the error in the refresh status, unless a process holds the refresh or a
-    calculation started or finished after the rebuild read it."""
+    """A rebuild whose reopen fails shows the error in the refresh status, unless a process holds the refresh."""
     db = _db()
     refreshes_collection = Mock()
-    refreshes_collection.find_one.return_value = {"id": METRICS_REFRESH_ID, "started_at": 100, "finished_at": 200}
 
     with (
         patch.object(db, "_get_collection", side_effect=lambda table_type, **kwargs: refreshes_collection),
@@ -260,31 +243,6 @@ def test_metrics_rebuild_reopen_failure_marks_refresh_failed():
         with pytest.raises(Exception, match="reopen failed"):
             db.calculate_metrics_dates(rebuild_from=date(2026, 10, 1))
 
-    query, pipeline = refreshes_collection.update_one.call_args.args
-    assert query == {"id": METRICS_REFRESH_ID, "locked_by": None, "started_at": 100, "finished_at": 200}
-    assert pipeline[0]["$set"]["status"] == "failed"
-
-
-def test_an_unstamped_sessions_collection_with_no_legacy_runs_is_read_for_them_once():
-    """A sessions collection stamped with no version, as 3.0 and 3.1 left it, is read for legacy runs once, and not
-    again once that read of every session found none."""
-    db = _db()
-    legacy_reads = Mock(return_value=({}, {}))
-
-    with (
-        patch.object(db, "_get_collection", return_value=Mock()),
-        patch.object(db, "get_latest_schema_version", return_value="2.0.0"),
-        patch.object(db, "_claim_metrics_refresh", return_value={"finished_at": 1, "fingerprint": None}),
-        patch.object(db, "_get_metrics_dates_to_calculate", return_value=([date(2026, 10, 1)], None)),
-        patch.object(db, "_get_metrics_legacy_runs", legacy_reads),
-        patch.object(db, "_heartbeat_metrics_refresh", return_value=True),
-        patch.object(db, "_calculate_date_metrics", return_value=True),
-        patch.object(db, "_get_open_metrics_months", return_value=[]),
-        patch.object(db, "_calculate_month_metrics", return_value=True),
-        patch.object(db, "_release_metrics_refresh"),
-    ):
-        assert db.calculate_metrics_dates() == [date(2026, 10, 1)]
-        assert db.calculate_metrics_dates() == [date(2026, 10, 1)]
-
-    # The one read starts at 0, so it read every session
-    assert [read.args[2] for read in legacy_reads.call_args_list] == [0]
+    query, update = refreshes_collection.update_one.call_args.args
+    assert query == {"id": METRICS_REFRESH_ID, "locked_by": None}
+    assert update["$set"]["status"] == "failed"

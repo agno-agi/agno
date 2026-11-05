@@ -483,14 +483,6 @@ def deserialize_metrics_row(item: Dict[str, Any]) -> Dict[str, Any]:
     return row
 
 
-def deserialize_metrics_refresh_row(item: Dict[str, Any]) -> Dict[str, Any]:
-    """Deserialize a DynamoDB item of the metrics refreshes table to its row, the columns it keeps no attribute for
-    None."""
-    record = deserialize_from_dynamodb_item(item)
-    columns = ["id", "locked_by", "locked_at", "started_at", "finished_at", "status", "error", "fingerprint"]
-    return {column: record.get(column) for column in columns}
-
-
 def heartbeat_metrics_refresh_update(table_name: str, worker_id: str) -> Dict[str, Any]:
     """Build the update that refreshes locked_at for this worker's metrics refresh, on the condition that it holds it."""
     return {
@@ -534,7 +526,7 @@ def reopen_metrics_row(dynamodb_client, table_name: str, row_date: date, aggrega
 
 
 def reopen_metrics_day(dynamodb_client, table_name: str, day: date) -> None:
-    """Reopen a day's everyone row of the aggregate metrics table, so the next refresh rebuilds the day.
+    """Reopen a day's everyone row of the aggregate metrics table, so the next calculation rebuilds the day.
 
     Args:
         dynamodb_client: DynamoDB client
@@ -545,7 +537,7 @@ def reopen_metrics_day(dynamodb_client, table_name: str, day: date) -> None:
 
 
 def reopen_metrics_month(dynamodb_client, table_name: str, month_start: date) -> None:
-    """Reopen a month's everyone row of the aggregate metrics table, so the next refresh rebuilds the month.
+    """Reopen a month's everyone row of the aggregate metrics table, so the next calculation rebuilds the month.
 
     Args:
         dynamodb_client: DynamoDB client

@@ -7,11 +7,10 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import UUID
 
 from agno.db.utils import (
+    METRICS_NESTED_RUN_KEYS,
     METRICS_REFRESH_ID,
-    METRICS_TOKEN_FIELDS,
     aggregate_metrics_row_to_store,
     build_aggregate_metrics_row,
-    get_metrics_legacy_runs,
     get_sort_value,
 )
 from agno.utils.log import log_warning
@@ -20,13 +19,6 @@ try:
     from redis import Redis, RedisCluster
 except ImportError:
     raise ImportError("`redis` not installed. Please install it using `pip install redis`")
-
-
-# Keys each SCAN call walks: SCAN walks every key of the database, not only the matching ones, 10 by default
-METRICS_SCAN_COUNT = 1000
-
-# The keys of a stored run that hold the runs nested inside it, in the order the rollup walks them
-_METRICS_NESTED_RUN_KEYS = ("step_executor_runs", "member_responses", "workflow_agent_run")
 
 
 # -- Serialization and deserialization --
@@ -65,22 +57,19 @@ def generate_index_key(prefix: str, table_type: str, index_field: str, index_val
     return f"{prefix}:{table_type}:index:{index_field}:{index_value}"
 
 
-def get_all_keys_for_table(
-    redis_client: Union[Redis, RedisCluster], prefix: str, table_type: str, count: Optional[int] = None
-) -> List[str]:
+def get_all_keys_for_table(redis_client: Union[Redis, RedisCluster], prefix: str, table_type: str) -> List[str]:
     """Get all relevant keys for the given table type.
 
     Args:
         redis_client (Redis): The Redis client.
         prefix (str): The prefix for the keys.
         table_type (str): The table type.
-        count (Optional[int]): How many keys each SCAN call walks. ``None`` uses the Redis default.
 
     Returns:
         List[str]: A list of all relevant keys for the given table type.
     """
     pattern = f"{prefix}:{table_type}:*"
-    all_keys = redis_client.scan_iter(match=pattern, count=count)
+    all_keys = redis_client.scan_iter(match=pattern)
     relevant_keys = []
 
     # Helper namespaces, matched by prefix so a record id that merely contains one
@@ -219,7 +208,7 @@ def generate_created_at_index_key(prefix: str, table_type: str) -> str:
 
 def generate_metrics_prefix(prefix: str) -> str:
     """Generate the prefix of every key of the metrics tables. The braces make it the keys' hash tag, so they share one
-    cluster slot and a transaction can write the rows of a day together with the metrics refresh."""
+    cluster slot and a transaction can write a batch of metrics rows together with the metrics refresh."""
     return f"{{{prefix}}}"
 
 
@@ -277,10 +266,8 @@ def deserialize_aggregate_metrics_record(fields: Dict[Any, Any]) -> Dict[str, An
     record = {
         (column.decode() if isinstance(column, bytes) else column): json.loads(value)
         for column, value in fields.items()
-        if value is not None
     }
-    if "date" in record:
-        record["date"] = date.fromisoformat(record["date"])
+    record["date"] = date.fromisoformat(record["date"])
     return record
 
 
@@ -357,7 +344,8 @@ def upsert_aggregate_metrics_row(
         expire (Optional[int]): The TTL of the key in seconds.
 
     Returns:
-        bool: False when another process took the metrics refresh over, and nothing was written.
+        bool: False when another process took the metrics refresh over, or a write conflicted with it through every
+            try, and nothing was written.
     """
     from redis.exceptions import WatchError
 
@@ -394,6 +382,7 @@ def upsert_aggregate_metrics_row(
                 return True
         except WatchError:
             continue
+    log_warning("Metrics refresh: aggregate metrics row write did not settle after 10 attempts (contention)")
     return False
 
 
@@ -483,7 +472,7 @@ def _reopen_metrics_row(pipe: Any, prefix: str, row_date: date, aggregation_peri
 
 
 def reopen_metrics_day(pipe: Any, prefix: str, day: date, expire: Optional[int] = None) -> None:
-    """Reopen a day's aggregate metrics row, in the given pipeline, so the next refresh rebuilds the day.
+    """Reopen a day's aggregate metrics row, in the given pipeline, so the next calculation rebuilds the day.
 
     Args:
         pipe (Any): The pipeline of the write that changed the day.
@@ -495,7 +484,7 @@ def reopen_metrics_day(pipe: Any, prefix: str, day: date, expire: Optional[int] 
 
 
 def reopen_metrics_month(pipe: Any, prefix: str, month_start: date, expire: Optional[int] = None) -> None:
-    """Reopen a month's aggregate metrics row, in the given pipeline, so the next refresh rebuilds the month.
+    """Reopen a month's aggregate metrics row, in the given pipeline, so the next calculation rebuilds the month.
 
     Args:
         pipe (Any): The pipeline of the day rebuilt in the month.
@@ -552,39 +541,13 @@ def _build_component_metrics_tool_calls(run_data: Dict[str, Any]) -> List[Dict[s
 
 def _build_component_metrics_run_data(run_data: Dict[str, Any]) -> Dict[str, Any]:
     """The run_data of a stored run, or of a run nested inside it, with only what component metrics count."""
-    metrics = run_data.get("metrics") or {}
-    trimmed_metrics = {
-        key: metrics[key]
-        for key in list(METRICS_TOKEN_FIELDS) + ["cost", "additional_metrics", "duration", "time_to_first_token"]
-        if metrics.get(key) is not None
-    }
-    # Of the details, only the id, provider and cost of each model the call used
-    details = metrics.get("details")
-    trimmed_metrics["details"] = (
-        {
-            model_type: [
-                {
-                    "id": model_metrics.get("id"),
-                    "provider": model_metrics.get("provider"),
-                    "cost": model_metrics.get("cost"),
-                }
-                for model_metrics in model_type_metrics
-                if isinstance(model_metrics, dict)
-            ]
-            if isinstance(model_type_metrics, list)
-            else []
-            for model_type, model_type_metrics in details.items()
-        }
-        if isinstance(details, dict)
-        else bool(details)
-    )
     trimmed: Dict[str, Any] = {
         "run_id": run_data.get("run_id"),
         "agent_id": run_data.get("agent_id"),
         "team_id": run_data.get("team_id"),
         "session_id": run_data.get("session_id"),
         "parent_run_id": run_data.get("parent_run_id"),
-        "metrics": trimmed_metrics,
+        "metrics": run_data.get("metrics"),
         "model": run_data.get("model"),
         "model_provider": run_data.get("model_provider"),
         "forked_from_session_id": run_data.get("forked_from_session_id"),
@@ -600,7 +563,7 @@ def _build_component_metrics_run_data(run_data: Dict[str, Any]) -> Dict[str, Any
         ],
         "tools": _build_component_metrics_tool_calls(run_data),
     }
-    for key in _METRICS_NESTED_RUN_KEYS:
+    for key in METRICS_NESTED_RUN_KEYS:
         nested = run_data.get(key)
         # A workflow agent's run is stored as the run itself, the other nested runs in lists
         if isinstance(nested, dict):
@@ -619,9 +582,8 @@ def build_component_metrics_run(run: Dict[str, Any]) -> Dict[str, Any]:
         run (Dict[str, Any]): The run, as stored.
 
     Returns:
-        Dict[str, Any]: The run, with the run_data calculate_date_component_metrics reads: no message content, of the
-            metrics only the token counts, the cost, the timings and the models of the details, and of the tool calls
-            only what tool_metrics counts.
+        Dict[str, Any]: The run, with the run_data calculate_date_component_metrics reads: no message content, and of
+            the tool calls only what tool_metrics counts.
     """
     return {
         "run_id": run.get("run_id"),
@@ -636,12 +598,6 @@ def build_component_metrics_run(run: Dict[str, Any]) -> Dict[str, Any]:
         "run_data": _build_component_metrics_run_data(run.get("run_data") or {}),
         "created_at": run.get("created_at"),
     }
-
-
-def build_component_metrics_legacy_runs(session: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Build the runs kept in the legacy runs field of a session, as runs table records with only what component
-    metrics count, each reduced before the next one is read."""
-    return [build_component_metrics_run(legacy_run) for legacy_run in get_metrics_legacy_runs([session])]
 
 
 def build_component_metrics_session(session: Dict[str, Any]) -> Dict[str, Any]:

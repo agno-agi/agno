@@ -14,12 +14,10 @@ if TYPE_CHECKING:
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.redis.utils import (
-    METRICS_SCAN_COUNT,
     aggregate_metrics_record_id,
     apply_filters,
     apply_pagination,
     apply_sorting,
-    build_component_metrics_legacy_runs,
     build_component_metrics_run,
     build_component_metrics_session,
     bulk_upsert_aggregate_metrics_rows,
@@ -70,6 +68,7 @@ from agno.db.utils import (
     drop_legacy_metrics,
     filter_context_runs,
     get_metrics_fingerprint,
+    get_metrics_legacy_runs,
     get_metrics_reopen_session_ids,
     get_metrics_rows_by_key,
     get_months_to_calculate_metrics_for,
@@ -79,6 +78,7 @@ from agno.db.utils import (
     metric_record_day,
     metrics_calculation_enabled,
     metrics_day_completed,
+    metrics_day_ranges,
     metrics_day_to_reopen,
     metrics_days_since_last_calculation,
     metrics_full_months,
@@ -1071,7 +1071,7 @@ class RedisDb(BaseDb):
             # would lose history for sessions not yet migrated.
             if existing and existing.get("runs") is not None:
                 data["runs"] = existing["runs"]
-            # The stored created_at, which keeps the session on the day it was created
+            # The stored created_at, which a session keeps
             if existing and existing.get("created_at") is not None:
                 data["created_at"] = existing["created_at"]
 
@@ -1511,17 +1511,15 @@ class RedisDb(BaseDb):
         whether a session held legacy runs then."""
         return f"{self._metrics_prefix()}:metrics_index"
 
-    def _add_metrics_index_entries(self, pipe: Any, table_type: str, record_id: str, created_at: Optional[int]) -> None:
+    def _add_metrics_index_entries(self, pipe: Any, table_type: str, record_id: str, created_at: int) -> None:
         """Add a session or run to the sorted set that lists its table by created_at, in the given pipeline.
 
         Args:
             pipe (Any): The pipeline of the write.
             table_type (str): "sessions" or "runs".
             record_id (str): The ID of the session or run.
-            created_at (Optional[int]): Its stored created_at.
+            created_at (int): Its stored created_at.
         """
-        if created_at is None:
-            return
         index_key = generate_created_at_index_key(self.db_prefix, table_type)
         pipe.zadd(index_key, {record_id: created_at})
         if self.expire is not None:
@@ -1562,9 +1560,10 @@ class RedisDb(BaseDb):
         """Get the row of the metrics refreshes table, and the locked_at at or before which its lock is stale, by the
         Redis server's clock."""
         raw = self.redis_client.get(self._metrics_refresh_key())
-        stale_lock_threshold = self._q_server_now() - METRICS_LOCK_SECONDS
         if raw is None:
-            return None, stale_lock_threshold
+            # Before the first refresh there is no lock to judge stale
+            return None, 0
+        stale_lock_threshold = self._q_server_now() - METRICS_LOCK_SECONDS
         return json.loads(raw if isinstance(raw, str) else raw.decode()), stale_lock_threshold  # type: ignore[union-attr]
 
     def _claim_metrics_refresh(self, worker_id: str) -> Optional[Dict[str, Any]]:
@@ -1634,10 +1633,12 @@ class RedisDb(BaseDb):
                     return True
             except WatchError:
                 continue  # the refresh changed under us; re-read and re-check
+        log_warning("Metrics refresh: rebuild mark did not settle after 10 attempts (contention)")
         return False
 
     def _heartbeat_metrics_refresh(self, worker_id: str) -> bool:
-        """Refresh locked_at for this worker's metrics refresh. False when another process took it over."""
+        """Refresh locked_at for this worker's metrics refresh. False when another process took it over, or a write
+        conflicted with it through every try."""
         from redis.exceptions import WatchError
 
         refresh_key = self._metrics_refresh_key()
@@ -1656,6 +1657,7 @@ class RedisDb(BaseDb):
                     return True
             except WatchError:
                 continue  # the refresh changed under us; re-read and re-check
+        log_warning("Metrics refresh: heartbeat did not settle after 10 attempts (contention)")
         return False
 
     def _release_metrics_refresh(
@@ -1665,13 +1667,19 @@ class RedisDb(BaseDb):
         fingerprint: Optional[List[Any]] = None,
         stopped: bool = False,
         claimed_fingerprint: Optional[List[Any]] = None,
-        started_at: Optional[int] = None,
-        finished_at: Optional[int] = None,
     ) -> None:
         """Release the row of the metrics refreshes table: completed, with the fingerprint, without an error, failed
-        with one, and as the last completed refresh left it when the calculation stopped. A worker_id of None writes
-        the row only while no process holds it and no calculation started or finished after the read of started_at
-        and finished_at, and creates it when that read found none."""
+        with one, and as the last completed refresh left it when the calculation stopped.
+
+        Args:
+            worker_id (Optional[str]): The id of the calculation that claimed the row. None writes the row only while
+                no process holds it, and creates it before any refresh.
+            error (Optional[str]): The error the calculation failed with. None when it completed.
+            fingerprint (Optional[List[Any]]): The fingerprint of yesterday and today, stored once it completed.
+            stopped (bool): Whether the calculation stopped before it finished.
+            claimed_fingerprint (Optional[List[Any]]): The fingerprint of the claimed row. A rebuild that marked
+                another one since keeps its mark.
+        """
         from redis.exceptions import WatchError
 
         refresh_key = self._metrics_refresh_key()
@@ -1684,26 +1692,15 @@ class RedisDb(BaseDb):
                         refresh_row = (
                             json.loads(raw if isinstance(raw, str) else raw.decode()) if raw is not None else {}
                         )
-                        if worker_id is None and error is not None and started_at is None:
-                            # Before any refresh there is no row to update; one created since keeps its own status
-                            if raw is not None:
-                                pipe.unwatch()
-                                return
+                        if worker_id is None and raw is None:
+                            # Before any refresh there is no row to update
                             refresh_row = {
                                 "id": METRICS_REFRESH_ID,
                                 "started_at": self._q_server_now(),
                                 "finished_at": None,
                                 "fingerprint": None,
                             }
-                        elif (
-                            raw is None
-                            or refresh_row.get("locked_by") != worker_id
-                            or (
-                                worker_id is None
-                                and (refresh_row.get("started_at"), refresh_row.get("finished_at"))
-                                != (started_at, finished_at)
-                            )
-                        ):
+                        elif raw is None or refresh_row.get("locked_by") != worker_id:
                             pipe.unwatch()
                             return
                         refresh_row.update(locked_by=None, locked_at=None)
@@ -1735,6 +1732,7 @@ class RedisDb(BaseDb):
                         return
                 except WatchError:
                     continue  # the refresh changed under us; re-read and re-check
+            log_warning("Metrics refresh: release did not settle after 10 attempts (contention)")
         except Exception as e:
             log_debug(f"Error releasing metrics refresh: {e}")
 
@@ -1762,9 +1760,7 @@ class RedisDb(BaseDb):
 
         legacy_runs = False
         for table_type in ["sessions", "runs"]:
-            keys = get_all_keys_for_table(
-                redis_client=self.redis_client, prefix=self.db_prefix, table_type=table_type, count=METRICS_SCAN_COUNT
-            )
+            keys = get_all_keys_for_table(redis_client=self.redis_client, prefix=self.db_prefix, table_type=table_type)
             key_prefix = generate_redis_key(prefix=self.db_prefix, table_type=table_type, key_id="")
             for batch_start in range(0, len(keys), METRICS_BATCH_SIZE):
                 if not self._heartbeat_metrics_refresh(worker_id):
@@ -2015,9 +2011,7 @@ class RedisDb(BaseDb):
             Optional[Tuple[Dict[date, List[Dict[str, Any]]], Dict[str, Dict[str, Any]]]]: The legacy runs by the UTC
                 day they were created on, and by their id. None when the metrics refresh was taken over.
         """
-        keys = get_all_keys_for_table(
-            redis_client=self.redis_client, prefix=self.db_prefix, table_type="sessions", count=METRICS_SCAN_COUNT
-        )
+        keys = get_all_keys_for_table(redis_client=self.redis_client, prefix=self.db_prefix, table_type="sessions")
         legacy_runs_by_day: Dict[date, List[Dict[str, Any]]] = {}
         legacy_runs_by_id: Dict[str, Dict[str, Any]] = {}
         for batch_start in range(0, len(keys), METRICS_BATCH_SIZE):
@@ -2036,8 +2030,8 @@ class RedisDb(BaseDb):
                 if created_at >= end_timestamp or (session.get("updated_at") or created_at) < start_timestamp:
                     continue
                 legacy_runs.extend(
-                    legacy_run
-                    for legacy_run in build_component_metrics_legacy_runs(session)
+                    build_component_metrics_run(legacy_run)
+                    for legacy_run in get_metrics_legacy_runs([session])
                     if start_timestamp <= (legacy_run["created_at"] or 0) < end_timestamp
                 )
             # The runs table wins on a run in both, as merge_runs_table_with_legacy_blob does
@@ -2125,7 +2119,8 @@ class RedisDb(BaseDb):
 
     def _write_metrics_rows(self, worker_id: str, write: Callable[[Any], None]) -> bool:
         """Run the given writes of metrics rows in one transaction, only while this worker still holds the metrics
-        refresh. False when another process took it over, and nothing was written.
+        refresh. False when another process took it over, or a write conflicted with it through every try, and
+        nothing was written.
 
         The row of the metrics refreshes table is watched, as _q_fenced_update watches a job, so a takeover between
         the check and the writes fails the transaction.
@@ -2152,6 +2147,7 @@ class RedisDb(BaseDb):
                     return True
             except WatchError:
                 continue  # the refresh changed under us; re-read and re-check
+        log_warning("Metrics refresh: metrics rows write did not settle after 10 attempts (contention)")
         return False
 
     def _write_aggregate_metrics_rows(
@@ -2178,22 +2174,19 @@ class RedisDb(BaseDb):
         stored_by_user = {row["user_id"]: row for row in stored_rows}
         stale_rows = [stored_by_user[user_id] for user_id in stale_user_ids]
         for batch_start in range(0, max(len(stale_rows), len(changed_rows)), METRICS_BATCH_SIZE):
-            if not self._write_metrics_rows(
-                worker_id,
-                partial(
-                    delete_aggregate_metrics_rows,
-                    prefix=self._metrics_prefix(),
-                    aggregate_metrics_rows=stale_rows[batch_start : batch_start + METRICS_BATCH_SIZE],
-                ),
-            ) or not self._write_metrics_rows(
-                worker_id,
-                partial(
-                    bulk_upsert_aggregate_metrics_rows,
-                    prefix=self._metrics_prefix(),
-                    aggregate_metrics_rows=changed_rows[batch_start : batch_start + METRICS_BATCH_SIZE],
-                    expire=self.expire,
-                ),
-            ):
+            batch_stale_rows = stale_rows[batch_start : batch_start + METRICS_BATCH_SIZE]
+            batch_changed_rows = changed_rows[batch_start : batch_start + METRICS_BATCH_SIZE]
+
+            # The stale rows are deleted with the rows written, so no takeover lands between them
+            def _write_batch(pipe: Any) -> None:
+                delete_aggregate_metrics_rows(
+                    pipe, prefix=self._metrics_prefix(), aggregate_metrics_rows=batch_stale_rows
+                )
+                bulk_upsert_aggregate_metrics_rows(
+                    pipe, prefix=self._metrics_prefix(), aggregate_metrics_rows=batch_changed_rows, expire=self.expire
+                )
+
+            if not self._write_metrics_rows(worker_id, _write_batch):
                 return False
 
         # Written last, so its version never moves without the rows it tells of
@@ -2211,7 +2204,8 @@ class RedisDb(BaseDb):
         worker_id: str,
         should_stop: Optional[Callable[[], bool]] = None,
     ) -> bool:
-        """Rebuild one day's component and aggregate metrics rows. False when nothing was written."""
+        """Rebuild one day's component and aggregate metrics rows. False when it stopped or another process took the
+        refresh over, and nothing more was written."""
         # Read before the day's runs, so a run written while they are read moves it
         read_version = self._get_aggregate_metrics_version("daily", date_to_process)
 
@@ -2278,22 +2272,22 @@ class RedisDb(BaseDb):
         # Each batch is written only while this worker still holds the refresh, so a process whose lock went stale
         # never overwrites the rows of the process that took the refresh over
         for batch_start in range(0, max(len(stale_rows), len(changed_rows)), METRICS_BATCH_SIZE):
-            if not self._write_metrics_rows(
-                worker_id,
-                partial(
-                    delete_component_metrics,
+            batch_stale_rows = stale_rows[batch_start : batch_start + METRICS_BATCH_SIZE]
+            batch_changed_rows = changed_rows[batch_start : batch_start + METRICS_BATCH_SIZE]
+
+            # The stale rows are deleted with the rows written, so no takeover lands between them
+            def _write_batch(pipe: Any) -> None:
+                delete_component_metrics(
+                    pipe, prefix=self._metrics_prefix(), component_metrics_records=batch_stale_rows
+                )
+                bulk_upsert_component_metrics(
+                    pipe,
                     prefix=self._metrics_prefix(),
-                    component_metrics_records=stale_rows[batch_start : batch_start + METRICS_BATCH_SIZE],
-                ),
-            ) or not self._write_metrics_rows(
-                worker_id,
-                partial(
-                    bulk_upsert_component_metrics,
-                    prefix=self._metrics_prefix(),
-                    component_metrics_records=changed_rows[batch_start : batch_start + METRICS_BATCH_SIZE],
+                    component_metrics_records=batch_changed_rows,
                     expire=self.expire,
-                ),
-            ):
+                )
+
+            if not self._write_metrics_rows(worker_id, _write_batch):
                 return False
 
         # Written after the component rows, so its version never moves without the rows it tells of
@@ -2319,7 +2313,7 @@ class RedisDb(BaseDb):
 
     def _calculate_month_metrics(self, month_start: date, worker_id: str) -> bool:
         """Rebuild the month rows of the aggregate metrics table from the component metrics rows of the month's days.
-        False when another process took the refresh over, and nothing was written."""
+        False when another process took the refresh over, and nothing more was written."""
         read_version = self._get_aggregate_metrics_version("monthly", month_start)
         month_days = [
             month_start + timedelta(days=offset)
@@ -2368,7 +2362,7 @@ class RedisDb(BaseDb):
             if calculated_dates is None:
                 return None
             if not calculated_dates:
-                # Nothing changed: today's metrics come back, as they did when every refresh calculated today
+                # A refresh that changed no day answers with today's metrics
                 calculated_dates = [datetime.now(timezone.utc).date()]
             metrics, _ = self._get_metrics_rows(calculated_dates[0], calculated_dates[-1], None)
             return [metric for metric in metrics if metric["date"] in calculated_dates]
@@ -2396,12 +2390,7 @@ class RedisDb(BaseDb):
             Exception: If an error occurs during metrics calculation.
         """
         if rebuild_from is not None:
-            started_at = finished_at = None
             try:
-                # A calculation that starts or finishes after this read keeps its own status
-                stored_row = self._get_metrics_refresh_row()[0]
-                if stored_row is not None:
-                    started_at, finished_at = stored_row.get("started_at"), stored_row.get("finished_at")
                 # Reopened as a write reopens a day, before the claim, so a calculation another process is running
                 # leaves them to the next one
                 everyone_record_ids = self._get_metrics_everyone_record_ids()
@@ -2420,9 +2409,7 @@ class RedisDb(BaseDb):
                     return None
             except Exception as e:
                 # Failed before the claim, so the refresh status shows it
-                self._release_metrics_refresh(
-                    None, error=database_error_message(e), started_at=started_at, finished_at=finished_at
-                )
+                self._release_metrics_refresh(None, error=database_error_message(e))
                 raise
 
         worker_id = str(uuid4())
@@ -2436,12 +2423,6 @@ class RedisDb(BaseDb):
             if index_state is None:
                 return None
             dates_to_process, fingerprint = self._get_metrics_dates_to_calculate(refresh_row, rebuild_from)
-            if rebuild_from is not None:
-                # Yesterday and today are picked by their fingerprint, not by being open
-                today = datetime.now(timezone.utc).date()
-                dates_to_process = sorted(
-                    set(dates_to_process) | {day for day in [today - timedelta(days=1), today] if day >= rebuild_from}
-                )
 
             legacy_runs_by_day: Dict[date, List[Dict[str, Any]]] = {}
             legacy_runs_by_id: Dict[str, Dict[str, Any]] = {}
@@ -2608,7 +2589,8 @@ class RedisDb(BaseDb):
 
     def _metrics_calculated(self) -> bool:
         """Whether the first calculate_metrics has finished, so reads take the metrics tables over agno_metrics."""
-        refresh_row = self._get_metrics_refresh_row()[0]
+        raw = self.redis_client.get(self._metrics_refresh_key())
+        refresh_row = json.loads(raw if isinstance(raw, str) else raw.decode()) if raw is not None else None  # type: ignore[union-attr]
         return refresh_row is not None and refresh_row["finished_at"] is not None
 
     def _refresh_metrics_before_read(self) -> None:
@@ -2787,13 +2769,12 @@ class RedisDb(BaseDb):
         # Every owner is read from the everyone rows and a user from the user's rows; the runs with no user have no
         # aggregate metrics row of their own, so they are read from their component rows
         table_type = "component_metrics" if user_id == "" else "aggregate_metrics"
+        ranges = metrics_day_ranges(starting_date, ending_date, month_starts)
         record_ids = []
         for record_id in self._get_metrics_record_ids(table_type, "user_id", [user_id or ""]):
             day, aggregation_period = metrics_record_key(record_id)
             if (
-                aggregation_period == "daily"
-                and starting_date <= day <= ending_date
-                and day.replace(day=1) not in month_starts
+                aggregation_period == "daily" and any(first_day <= day <= last_day for first_day, last_day in ranges)
             ) or (aggregation_period == "monthly" and day in month_starts):
                 record_ids.append(record_id)
         if table_type == "component_metrics":

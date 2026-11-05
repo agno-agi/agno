@@ -391,11 +391,6 @@ def test_calculate_date_metrics_writes_nothing_after_losing_the_lock(sqlite_db, 
     assert sqlite_db._claim_metrics_refresh(refreshes_table, "third-worker") is None
 
 
-# =============================================================================
-# Async AsyncSqliteDb
-# =============================================================================
-
-
 def _save_today_run(db: SqliteDb, run_id: str) -> None:
     """Save one more run of bob's today, updated before the current second."""
     db.upsert_run(_run(run_id, "bob", 1, 2, _noon_utc(0)), session_id="bob_session", user_id="bob")
@@ -414,6 +409,11 @@ def test_calculate_metrics_dates_releases_the_lock_when_stopped(sqlite_db):
     assert sqlite_db.calculate_metrics_dates(should_stop=lambda: True) is None
     status = sqlite_db.get_metrics_refresh_status()
     assert (status["status"], status["error"]) == ("completed", None)
+
+
+# =============================================================================
+# Async AsyncSqliteDb
+# =============================================================================
 
 
 @pytest.mark.asyncio
@@ -462,9 +462,10 @@ async def test_async_saves_reopen_a_closed_day_and_deletes_do_not(async_sqlite_d
 
 
 @pytest.mark.asyncio
-async def test_async_calculate_metrics_skips_a_rebuild_already_running(async_sqlite_db):
+async def test_async_calculate_metrics_skips_a_rebuild_already_running(async_sqlite_db, monkeypatch):
     """Ensure a calculation returns None at once while another worker holds the refresh, a stale lock reads as failed
-    and is taken over, and a stopped calculation releases the refresh"""
+    and is taken over, a stopped calculation releases the refresh, and a read calculates nothing once refresh on read
+    is stopped"""
     refreshes_table = await async_sqlite_db._get_table("metrics_refreshes", create_table_if_not_found=True)
     assert (await async_sqlite_db._claim_metrics_refresh(refreshes_table, "other-worker"))["status"] == "running"
     assert await async_sqlite_db.calculate_metrics() is None
@@ -486,8 +487,16 @@ async def test_async_calculate_metrics_skips_a_rebuild_already_running(async_sql
     status = await async_sqlite_db.get_metrics_refresh_status()
     assert status["status"] == "completed" and status["finished_at"] is not None
 
+    calculations = []
+
+    async def calculate_metrics_dates(*args, **kwargs):
+        calculations.append(args)
+        return []
+
+    monkeypatch.setattr(async_sqlite_db, "calculate_metrics_dates", calculate_metrics_dates)
     async_sqlite_db.stop_metrics_refresh_on_read()
-    assert async_sqlite_db._metrics_refreshed_at == float("inf")
+    await async_sqlite_db.get_metrics()
+    assert calculations == []
 
 
 @pytest.mark.asyncio

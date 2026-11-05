@@ -427,7 +427,7 @@ class InMemoryDb(BaseDb):
                 if existing_uid is not None and existing_uid != session_dict.get("user_id"):
                     return None
                 session_dict["updated_at"] = int(time.time())
-                # The stored created_at, which keeps the session on the day it was created
+                # The stored created_at, which a session keeps
                 if existing_session.get("created_at") is not None:
                     session_dict["created_at"] = existing_session["created_at"]
                 # A session-row update must never drop runs written by
@@ -616,6 +616,8 @@ class InMemoryDb(BaseDb):
             run_id = run_dict.get("run_id")
             if run_id is None:
                 raise ValueError("Run must have a run_id")
+            # A run without created_at is dated when it is stored, as the runs table dates it
+            run_dict["created_at"] = run_dict.get("created_at") or int(time.time())
 
             session = self._sessions.get(session_id)
             if session is None:
@@ -1033,7 +1035,10 @@ class InMemoryDb(BaseDb):
         """Get the metrics refresh row, and the locked_at at or before which its lock is stale, by the process's
         clock."""
         refresh_rows = self._metrics_refreshes
-        return (refresh_rows[0] if refresh_rows else None), int(time.time()) - METRICS_LOCK_SECONDS
+        if not refresh_rows:
+            # Before the first refresh there is no lock to judge stale
+            return None, 0
+        return refresh_rows[0], int(time.time()) - METRICS_LOCK_SECONDS
 
     def _claim_metrics_refresh(self, worker_id: str) -> Optional[Dict[str, Any]]:
         """Claim the metrics refresh row, so one calculation runs at a time.
@@ -1115,22 +1120,26 @@ class InMemoryDb(BaseDb):
         fingerprint: Optional[List[Any]] = None,
         stopped: bool = False,
         claimed_fingerprint: Optional[List[Any]] = None,
-        started_at: Optional[int] = None,
-        finished_at: Optional[int] = None,
     ) -> None:
         """Release the metrics refresh row: completed, with the fingerprint, without an error, failed with one, and
-        as the last completed refresh left it when the calculation stopped. A worker_id of None writes the row only
-        while no calculation holds it and none started or finished after the read of started_at and finished_at, and
-        creates it when that read found none."""
+        as the last completed refresh left it when the calculation stopped.
+
+        Args:
+            worker_id (Optional[str]): The id of the calculation that claimed the row. None writes the row only while
+                no calculation holds it, and creates it before any refresh.
+            error (Optional[str]): The error the calculation failed with. None when it completed.
+            fingerprint (Optional[List[Any]]): The fingerprint of yesterday and today, stored once it completed.
+            stopped (bool): Whether the calculation stopped before it finished.
+            claimed_fingerprint (Optional[List[Any]]): The fingerprint of the claimed row. A rebuild that marked
+                another one since keeps its mark.
+        """
         try:
             if self._metrics_refresh_locks.get(METRICS_REFRESH_ID) != worker_id:
                 return
             for attempt in range(METRICS_WRITE_RETRIES + 1):
                 refresh_rows = self._metrics_refreshes
-                if worker_id is None and error is not None and started_at is None:
-                    # Before any refresh there is no row to update; one created since keeps its own status
-                    if refresh_rows:
-                        return
+                if worker_id is None and not refresh_rows:
+                    # Before any refresh there is no row to update
                     refresh_row: Dict[str, Any] = {
                         "id": METRICS_REFRESH_ID,
                         "started_at": int(time.time()),
@@ -1138,12 +1147,6 @@ class InMemoryDb(BaseDb):
                         "fingerprint": None,
                     }
                 elif not refresh_rows or refresh_rows[0]["locked_by"] != worker_id:
-                    return
-                elif (
-                    worker_id is None
-                    and error is not None
-                    and (refresh_rows[0]["started_at"] != started_at or refresh_rows[0]["finished_at"] != finished_at)
-                ):
                     return
                 else:
                     refresh_row = refresh_rows[0]
@@ -1212,7 +1215,7 @@ class InMemoryDb(BaseDb):
         worker_id: str,
     ) -> bool:
         """Write the component metrics rows of the calculated days, then the aggregate metrics rows of each calculated
-        day and month. False when another process took the refresh over, and nothing was written.
+        day and month. False when another calculation took the refresh over, and nothing more was written.
 
         Args:
             rows_by_key (Optional[Dict[Tuple[Any, ...], Dict[str, Any]]]): Every component metrics row, by key. None
@@ -1228,8 +1231,8 @@ class InMemoryDb(BaseDb):
         }
         if rows_by_key is None and not periods:
             return True
-        # Checked before the rows are written, so a process whose lock went stale never overwrites the rows of the
-        # process that took the refresh over
+        # Checked before the rows are written, so a calculation whose lock went stale never overwrites the rows of the
+        # calculation that took the refresh over
         if not self._heartbeat_metrics_refresh(worker_id):
             return False
         if rows_by_key is not None:
@@ -1262,7 +1265,7 @@ class InMemoryDb(BaseDb):
     def calculate_metrics(self, rebuild_from: Optional[date] = None) -> Optional[list[dict]]:
         """Calculate metrics for every day that changed since the last calculation.
 
-        One process calculates at a time: the others return at once, having read nothing.
+        One calculation runs at a time on this database: the others return at once, having read nothing.
 
         Args:
             rebuild_from (Optional[date]): Also rebuild every day from this date to today, as after a release that
@@ -1270,7 +1273,7 @@ class InMemoryDb(BaseDb):
 
         Returns:
             Optional[list[dict]]: The metrics of the days calculated, or of today when nothing changed, as get_metrics
-                returns them. None when another process is calculating them.
+                returns them. None when another calculation is running.
 
         Raises:
             Exception: If an error occurs during metrics calculation.
@@ -1280,7 +1283,7 @@ class InMemoryDb(BaseDb):
             if calculated_dates is None:
                 return None
             if not calculated_dates:
-                # Nothing changed: today's metrics come back, as they did when every refresh calculated today
+                # A refresh that changed no day answers with today's metrics
                 calculated_dates = [datetime.now(timezone.utc).date()]
             metrics, _ = self._get_metrics_rows(calculated_dates[0], calculated_dates[-1], None)
             return [metric for metric in metrics if metric["date"] in calculated_dates]
@@ -1304,7 +1307,7 @@ class InMemoryDb(BaseDb):
             rebuild_from (Optional[date]): Also rebuild every day from this date to today.
 
         Returns:
-            Optional[List[date]]: The days calculated, oldest first. None when another process is calculating them.
+            Optional[List[date]]: The days calculated, oldest first. None when another calculation is running.
 
         Raises:
             Exception: If an error occurs during metrics calculation.
@@ -1314,14 +1317,9 @@ class InMemoryDb(BaseDb):
             self._aggregate_metrics = []
 
         if rebuild_from is not None:
-            # Reopened as a write reopens a day, before the claim, so a calculation another process is running
-            # leaves them to the next one
-            started_at = finished_at = None
+            # Reopened as a write reopens a day, before the claim, so a calculation already running leaves them to the
+            # next one
             try:
-                # A calculation that starts or finishes after this read keeps its own status
-                refresh_row = self._get_metrics_refresh_row()[0]
-                if refresh_row is not None:
-                    started_at, finished_at = refresh_row["started_at"], refresh_row["finished_at"]
                 for attempt in range(METRICS_WRITE_RETRIES + 1):
                     aggregate_metrics_rows = self._aggregate_metrics
                     aggregate_metrics_by_key = get_metrics_rows_by_key(
@@ -1338,9 +1336,7 @@ class InMemoryDb(BaseDb):
                     return None
             except Exception as e:
                 # Failed before the claim, so the refresh status shows it
-                self._release_metrics_refresh(
-                    None, error=database_error_message(e), started_at=started_at, finished_at=finished_at
-                )
+                self._release_metrics_refresh(None, error=database_error_message(e))
                 raise
 
         worker_id = str(uuid4())
@@ -1364,12 +1360,6 @@ class InMemoryDb(BaseDb):
             dates_to_process, fingerprint = get_metrics_dates_to_calculate(
                 aggregate_metrics_by_key, sessions, runs, refresh_row, rebuild_from
             )
-            if rebuild_from is not None:
-                # Yesterday and today are picked by their fingerprint, not by being open
-                today = datetime.now(timezone.utc).date()
-                dates_to_process = sorted(
-                    set(dates_to_process) | {day for day in [today - timedelta(days=1), today] if day >= rebuild_from}
-                )
 
             calculated_dates: List[date] = []
             periods: List[Tuple[List[Dict[str, Any]], bool, Optional[int]]] = []
@@ -1402,7 +1392,6 @@ class InMemoryDb(BaseDb):
                         sessions_by_day.get(date_to_process, []),
                         runs_by_day.get(date_to_process, []),
                         stored_rows_by_day.get(date_to_process, []),
-                        set(runs_by_id),
                         runs_by_id,
                     )
                     stored_everyone_row = aggregate_metrics_by_key.get(("daily", date_to_process, ""))
@@ -1543,8 +1532,8 @@ class InMemoryDb(BaseDb):
 
     def _refresh_metrics_before_read(self) -> None:
         """Calculate metrics before a read, at most once per minute per process, once a first calculate_metrics has
-        finished and unless metrics calculation is turned off. Another process calculating them holds the metrics
-        refresh, so the read goes on at once."""
+        finished and unless metrics calculation is turned off. A calculation already running holds the metrics refresh,
+        so the read goes on at once."""
         if time.time() - self._metrics_refreshed_at < 60:
             return
         # Stamp first so failed runs are throttled too instead of retried on every read

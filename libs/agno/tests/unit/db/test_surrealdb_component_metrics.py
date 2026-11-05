@@ -13,6 +13,7 @@ import pytest
 
 surrealdb = pytest.importorskip("surrealdb")
 
+from agno.db.migrations.manager import MigrationManager  # noqa: E402
 from agno.db.surrealdb import SurrealDb  # noqa: E402
 from agno.db.surrealdb.metrics import desurrealize_metrics_row  # noqa: E402
 from agno.db.utils import METRICS_LOCK_SECONDS, METRICS_REFRESH_ID, METRICS_STOPPED_ERROR  # noqa: E402
@@ -390,6 +391,29 @@ def test_calculate_metrics_counts_runs_kept_in_the_legacy_runs_field(surreal_db:
     assert (row["agent_sessions_count"], row["agent_runs_count"], row["input_tokens"]) == (1, 2, 40)
 
 
+def test_the_legacy_runs_read_leaves_out_a_run_copied_into_a_forked_session(surreal_db: SurrealDb):
+    """Ensure a legacy run a forked session copied is not read, as the runs table read leaves it out"""
+    old_day = utc_date(3)
+    legacy_run = agent_run("legacy_run", noon_utc(old_day), 30)
+    copied_run = agent_run("copied_run", noon_utc(old_day), 30)
+    copied_run.forked_from_session_id = "legacy_session"
+    for session_id, run in [("legacy_session", legacy_run), ("forked_session", copied_run)]:
+        surreal_db.upsert_session(
+            AgentSession(session_id=session_id, agent_id="agent-1", user_id="alice", created_at=noon_utc(old_day))
+        )
+        surreal_db._query(
+            "UPDATE $record SET runs = $runs",
+            {"record": RecordID("test_sessions", session_id), "runs": [run.to_dict()]},
+            dict,
+        )
+
+    legacy_runs = surreal_db._get_metrics_legacy_runs(
+        "test_sessions", None, datetime.fromtimestamp(0, tz=timezone.utc), datetime.now(timezone.utc)
+    )
+
+    assert [run["run_id"] for run in legacy_runs] == ["legacy_run"]
+
+
 def test_calculate_metrics_counts_tool_calls(surreal_db: SurrealDb):
     """Ensure each tool call is counted under its tool, that a tool call a forked run copied is not, and that a totals
     read adds the tools up"""
@@ -464,12 +488,13 @@ def test_calculate_metrics_dates_releases_the_lock_when_stopped(surreal_db: Surr
 
 
 def test_a_created_sessions_table_reads_no_legacy_runs(surreal_db: SurrealDb, monkeypatch):
-    """Ensure creating the sessions table stores schema version 3.0.0, so a calculation reads no legacy runs"""
+    """Ensure creating the sessions table stores the latest schema version, so a calculation reads no legacy runs"""
     surreal_db.upsert_session(
         AgentSession(session_id="new_session", agent_id="agent-1", created_at=noon_utc(utc_date(1)))
     )
     surreal_db.upsert_run(agent_run("new_run", noon_utc(utc_date(1)), 10), session_id="new_session", run_index=0)
-    assert surreal_db.get_latest_schema_version(surreal_db.session_table_name) == "3.0.0"
+    latest_schema_version = MigrationManager(surreal_db).latest_schema_version.public
+    assert surreal_db.get_latest_schema_version(surreal_db.session_table_name) == latest_schema_version
 
     def _fail_legacy_runs_read(*args, **kwargs):
         raise AssertionError("legacy runs were read")

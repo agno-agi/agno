@@ -200,6 +200,20 @@ def test_release_metrics_refresh_keeps_a_rebuild_mark_over_a_claim_of_no_fingerp
     assert "fingerprint" not in statement
 
 
+def test_has_legacy_runs_column_reads_the_connection_database_without_a_db_schema(mock_engine):
+    """Without a db_schema the runs column is looked up in the connection's database."""
+    db = SingleStoreDb(db_engine=mock_engine)
+    session = MagicMock()
+    session.__enter__.return_value = session
+    session.execute.return_value.scalar.return_value = 1
+    db.Session = Mock(return_value=session)
+
+    assert db._has_legacy_runs_column() is True
+    statement, params = session.execute.call_args.args
+    assert "TABLE_SCHEMA = COALESCE(:schema, DATABASE())" in str(statement)
+    assert params["schema"] is None
+
+
 def test_tool_calls_the_runs_query_reads_are_counted_in_tool_metrics():
     """Each tool call the runs query reads is put back on its run, a nested run's read as stored, and counted under
     its tool."""

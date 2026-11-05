@@ -49,7 +49,7 @@ from agno.db.surrealdb.models import (
     serialize_user_memory,
 )
 from agno.db.surrealdb.queries import COUNT_QUERY, WhereClause, order_limit_start
-from agno.db.surrealdb.utils import build_client
+from agno.db.surrealdb.utils import build_client, database_error, is_transaction_conflict
 from agno.db.utils import (
     AGGREGATE_METRICS_COUNT_COLUMNS,
     AGGREGATE_METRICS_KEY_COLUMNS,
@@ -436,7 +436,7 @@ class SurrealDb(BaseDb):
                 {"record": RecordID(runs_table, row["run_id"]), "content": content},
                 dict,
             )
-            # The stored created_at, which dates the run
+            # The stored created_at, which a resumed run keeps
             self._reopen_metrics_days([row["created_at"]])
         except Exception as e:
             log_error(f"Exception upserting run into runs table: {str(e)}")
@@ -946,7 +946,7 @@ class SurrealDb(BaseDb):
         content = serialize_session(session, self.table_names, include_runs=False)
         if legacy_runs is not None:
             content["runs"] = legacy_runs
-        # The stored created_at, which keeps the session on the day it was created
+        # The stored created_at, which a session keeps
         if existing_row and existing_row.get("created_at") is not None:
             content["created_at"] = existing_row["created_at"]
 
@@ -1012,7 +1012,7 @@ class SurrealDb(BaseDb):
             content = serialize_session(session, self.table_names, include_runs=False)
             if legacy_runs is not None:
                 content["runs"] = legacy_runs
-            # The stored created_at, which keeps the session on the day it was created
+            # The stored created_at, which a session keeps
             stored_session = stored_sessions.get(session.session_id)
             if stored_session and stored_session.get("created_at") is not None:
                 content["created_at"] = stored_session["created_at"]
@@ -1424,10 +1424,9 @@ class SurrealDb(BaseDb):
             self._metrics_days_not_reopened.difference_update(days)
         except Exception as e:
             self._metrics_days_not_reopened.update(days)
-            # The query helper raises the database's own error as the context of its own
-            error = e.__context__ if isinstance(e.__context__, Exception) else e
             log_warning(
-                f"Could not reopen the metrics of {', '.join(str(day) for day in days)}: {database_error_message(error)}"
+                f"Could not reopen the metrics of {', '.join(str(day) for day in days)}: "
+                f"{database_error_message(database_error(e))}"
             )
 
     def _get_table_if_exists(self, table_type: TableType) -> Optional[str]:
@@ -1442,8 +1441,8 @@ class SurrealDb(BaseDb):
             return self._get_table(table_type, create_table_if_not_found=True)
         except Exception as exc:
             # Another replica may have completed the first-time DDL meanwhile: SurrealDB fails the later DEFINE TABLE
-            # with "already exists", or with "Transaction conflict: ... This transaction can be retried"
-            if ("already exists" not in str(exc) and "can be retried" not in str(exc)) or not self.table_exists(
+            # with "already exists", or with a transaction conflict
+            if ("already exists" not in str(exc) and not is_transaction_conflict(exc)) or not self.table_exists(
                 table_name
             ):
                 raise
@@ -1495,9 +1494,8 @@ class SurrealDb(BaseDb):
                 {"refresh": RecordID(refreshes_table, METRICS_REFRESH_ID), "worker_id": worker_id},
             )
         except Exception as e:
-            # Another process claimed it at the same moment: SurrealDB fails the later write with "Transaction
-            # conflict: ... This transaction can be retried"
-            if "can be retried" not in str(e):
+            # Another process claimed it at the same moment: SurrealDB fails the later write with a transaction conflict
+            if not is_transaction_conflict(e):
                 raise
             return None
         if isinstance(response, list) and len(response) > 0 and isinstance(response[0], dict):
@@ -1515,9 +1513,9 @@ class SurrealDb(BaseDb):
                 )
                 return True
             except Exception as e:
-                # A calculation heartbeats the row in each day's transaction: SurrealDB fails the later write with
-                # "Transaction conflict: ... This transaction can be retried"
-                if "can be retried" not in str(e):
+                # A calculation heartbeats the row in each day's transaction: SurrealDB fails the later write with a
+                # transaction conflict
+                if not is_transaction_conflict(e):
                     raise
         return False
 
@@ -1533,13 +1531,20 @@ class SurrealDb(BaseDb):
         fingerprint: Optional[List[Any]] = None,
         stopped: bool = False,
         claimed_fingerprint: Optional[List[Any]] = None,
-        started_at: Optional[int] = None,
-        finished_at: Optional[int] = None,
     ) -> None:
         """Release the row of the metrics refreshes table: completed, with the fingerprint, without an error, failed
-        with one, and as the last completed refresh left it when the calculation stopped. A worker_id of None writes
-        the row only while no process holds it and no calculation started or finished after the read of started_at
-        and finished_at, and creates it when that read found none."""
+        with one, and as the last completed refresh left it when the calculation stopped.
+
+        Args:
+            refreshes_table (str): The metrics refreshes table.
+            worker_id (Optional[str]): The id of the calculation that claimed the row. None writes the row only while
+                no process holds it, and creates it before any refresh.
+            error (Optional[str]): The error the calculation failed with. None when it completed.
+            fingerprint (Optional[List[Any]]): The fingerprint of yesterday and today, stored once it completed.
+            stopped (bool): Whether the calculation stopped before it finished.
+            claimed_fingerprint (Optional[List[Any]]): The fingerprint of the claimed row. A rebuild that marked
+                another one since keeps its mark.
+        """
         variables: Dict[str, Any] = {"refresh": RecordID(refreshes_table, METRICS_REFRESH_ID), "worker_id": worker_id}
         if stopped:
             # The days it did not reach stay open for the next calculation; a first one that stopped has none to show
@@ -1560,23 +1565,19 @@ class SurrealDb(BaseDb):
         else:
             variables["error"] = error
             assignments = 'status = "failed", error = $error'
-        condition = "locked_by = $worker_id"
-        if worker_id is None and error is not None:
-            variables.update(started_at=started_at, finished_at=finished_at)
-            condition += " AND started_at = $started_at AND finished_at = $finished_at"
         try:
-            if worker_id is None and error is not None and started_at is None:
-                # Before any refresh there is no row to update; one created since keeps its own status
+            if worker_id is None:
+                # Before any refresh there is no row to update
                 self._query(
-                    f"INSERT IGNORE INTO {refreshes_table} "
-                    '{id: $refresh, started_at: time::unix(time::now()), status: "failed", error: $error} RETURN NONE',
+                    "UPSERT $refresh SET started_at = started_at ?? time::unix(time::now()), locked_by = NONE, "
+                    f"locked_at = NONE, {assignments} WHERE locked_by = NONE RETURN NONE",
                     variables,
                     dict,
                 )
             else:
                 self._query(
-                    f"UPDATE $refresh SET locked_by = NONE, locked_at = NONE, {assignments} WHERE {condition} "
-                    "RETURN NONE",
+                    f"UPDATE $refresh SET locked_by = NONE, locked_at = NONE, {assignments} "
+                    "WHERE locked_by = $worker_id RETURN NONE",
                     variables,
                     dict,
                 )
@@ -1982,7 +1983,7 @@ class SurrealDb(BaseDb):
             if calculated_dates is None:
                 return None
             if not calculated_dates:
-                # Nothing changed: today's metrics come back, as they did when every refresh calculated today
+                # A refresh that changed no day answers with today's metrics
                 calculated_dates = [datetime.now(timezone.utc).date()]
             metrics, _ = self._get_metrics_rows(calculated_dates[0], calculated_dates[-1], None)
             return [metric for metric in metrics if metric["date"] in calculated_dates]
@@ -2021,27 +2022,18 @@ class SurrealDb(BaseDb):
         if rebuild_from is not None:
             # Reopened as a write reopens a day, before the claim, so a calculation another process is running
             # leaves them to the next one
-            started_at = finished_at = None
             try:
-                # A calculation that starts or finishes after this read keeps its own status
-                stored_row = self._get_metrics_refresh_row(refreshes_table)[0]
-                if stored_row is not None:
-                    started_at, finished_at = stored_row["started_at"], stored_row["finished_at"]
                 # A statement of its own, without the refresh row: a day's calculation heartbeats that row
                 reopen_metrics_days_from(self.client, aggregate_metrics_table, rebuild_from)
                 # Yesterday and today are picked by the fingerprint, so it is marked for the next one too
                 if not self._mark_metrics_refresh_rebuild(refreshes_table):
                     return None
             except Exception as e:
-                # Failed before the claim, so the refresh status shows it. The query helper raises the database's
-                # own error as the context of its own
-                error = e.__context__ if isinstance(e.__context__, Exception) else e
+                # Failed before the claim, so the refresh status shows it
                 self._release_metrics_refresh(
                     refreshes_table,
                     None,
-                    error=database_error_message(error),
-                    started_at=started_at,
-                    finished_at=finished_at,
+                    error=database_error_message(database_error(e)),
                 )
                 raise
 
@@ -2055,12 +2047,6 @@ class SurrealDb(BaseDb):
             dates_to_process, fingerprint = self._get_metrics_dates_to_calculate(
                 aggregate_metrics_table, sessions_table, runs_table, refresh_row, rebuild_from
             )
-            if rebuild_from is not None:
-                # Yesterday and today are picked by their fingerprint, not by being open
-                today = datetime.now(timezone.utc).date()
-                dates_to_process = sorted(
-                    set(dates_to_process) | {day for day in [today - timedelta(days=1), today] if day >= rebuild_from}
-                )
 
             legacy_runs_by_day: Dict[date, List[Dict[str, Any]]] = {}
             legacy_runs_by_id: Dict[str, Dict[str, Any]] = {}
@@ -2134,9 +2120,9 @@ class SurrealDb(BaseDb):
                         )
                         break
                     except Exception as e:
-                        # A write reopened the day at the same moment: SurrealDB fails the later write with
-                        # "Transaction conflict: ... This transaction can be retried", and the day is calculated again
-                        if "can be retried" not in str(e):
+                        # A write reopened the day at the same moment: SurrealDB fails the later write with a
+                        # transaction conflict, and the day is calculated again
+                        if not is_transaction_conflict(e):
                             raise
                 else:
                     # The write that conflicted both times reopened the day, so the next calculation picks it up
@@ -2164,9 +2150,7 @@ class SurrealDb(BaseDb):
                     return None
 
         except Exception as e:
-            # The query helper raises the database's own error as the context of its own
-            error = e.__context__ if isinstance(e.__context__, Exception) else e
-            self._release_metrics_refresh(refreshes_table, worker_id, error=database_error_message(error))
+            self._release_metrics_refresh(refreshes_table, worker_id, error=database_error_message(database_error(e)))
             raise
 
         self._release_metrics_refresh(

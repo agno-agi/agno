@@ -27,6 +27,7 @@ from agno.db.singlestore.utils import (
     bulk_upsert_aggregate_metrics_rows,
     bulk_upsert_component_metrics,
     create_schema,
+    is_lock_not_available,
     is_table_available,
     is_valid_table,
     reopen_metrics_day,
@@ -45,7 +46,6 @@ from agno.db.utils import (
     SessionRunObjectCache,
     add_metrics_month_totals,
     aggregate_metrics_rows_to_write,
-    bound_index_name,
     build_aggregate_metrics_month_rows,
     build_aggregate_metrics_rows,
     build_metrics_by_owner,
@@ -88,6 +88,7 @@ from agno.utils.string import generate_id
 
 try:
     from sqlalchemy import (
+        JSON,
         TEXT,
         ForeignKey,
         Index,
@@ -100,6 +101,7 @@ try:
         or_,
         select,
         tuple_,
+        type_coerce,
         union,
         update,
     )
@@ -398,9 +400,6 @@ class SingleStoreDb(BaseDb):
             # Add multi-column (composite) indexes with table-specific names
             for composite in schema_composite_indexes:
                 composite_name = f"{table_name}_{composite['name']}"
-                if table_type == "component_metrics":
-                    # Named after the session table, so a long session table name would push it past the limit
-                    composite_name = bound_index_name(type(self).__name__, composite_name)
                 table.append_constraint(Index(composite_name, *composite["columns"]))
 
             # Create schema if one is specified
@@ -2271,7 +2270,9 @@ class SingleStoreDb(BaseDb):
                 table.c.team_id,
                 table.c.workflow_id,
                 table.c.created_at,
-                func.JSON_EXTRACT_JSON(table.c.session_data, "compaction_metrics").label("compaction_metrics"),
+                type_coerce(func.JSON_EXTRACT_JSON(table.c.session_data, "compaction_metrics"), JSON).label(
+                    "compaction_metrics"
+                ),
             ).where(table.c.session_id.in_(written_session_ids[start : start + METRICS_IN_LIST_LIMIT]))
             stored_sessions.update((row.session_id, row) for row in sess.execute(stored_stmt).fetchall())
         session_ids: Set[str] = set()
@@ -2289,12 +2290,7 @@ class SingleStoreDb(BaseDb):
                     and (record["session_data"] if isinstance(record["session_data"], dict) else {}).get(
                         "compaction_metrics"
                     )
-                    # SingleStore returns the JSON a query extracts as text
-                    != (
-                        json.loads(stored_session.compaction_metrics)
-                        if isinstance(stored_session.compaction_metrics, str)
-                        else stored_session.compaction_metrics
-                    )
+                    != stored_session.compaction_metrics
                 )
             ):
                 session_ids.add(record["session_id"])
@@ -2328,7 +2324,8 @@ class SingleStoreDb(BaseDb):
                 .first()
             )
             if row is None:
-                return None, sess.execute(select(stale_lock_threshold)).scalar_one()
+                # Before the first refresh there is no lock to judge stale
+                return None, 0
         refresh_row = dict(row)
         return refresh_row, refresh_row.pop("stale_lock_threshold")
 
@@ -2381,9 +2378,8 @@ class SingleStoreDb(BaseDb):
                 row = result.mappings().one()
                 return dict(row) if row["locked_by"] == worker_id else None
         except DBAPIError as exc:
-            cause = getattr(exc, "orig", exc)
-            # 1205: the lock wait timed out, after the leaves' lock_wait_timeout, which a session cannot shorten
-            if cause.args[:1] != (1205,):
+            # The lock wait times out after the leaves' lock_wait_timeout, which a session cannot shorten
+            if not is_lock_not_available(exc):
                 raise
             return None
 
@@ -2401,9 +2397,7 @@ class SingleStoreDb(BaseDb):
                 )
             return True
         except DBAPIError as exc:
-            cause = getattr(exc, "orig", exc)
-            # 1205: the lock wait timed out
-            if cause.args[:1] != (1205,):
+            if not is_lock_not_available(exc):
                 raise
             return False
 
@@ -2424,13 +2418,20 @@ class SingleStoreDb(BaseDb):
         fingerprint: Optional[List[Any]] = None,
         stopped: bool = False,
         claimed_fingerprint: Optional[List[Any]] = None,
-        started_at: Optional[int] = None,
-        finished_at: Optional[int] = None,
     ) -> None:
         """Release the row of the metrics refreshes table: completed, with the fingerprint, without an error, failed
-        with one, and as the last completed refresh left it when the calculation stopped. A worker_id of None writes
-        the row only while no process holds it and no calculation started or finished after the read of started_at
-        and finished_at, and creates it when that read found none."""
+        with one, and as the last completed refresh left it when the calculation stopped.
+
+        Args:
+            refreshes_table (Table): The metrics refreshes table.
+            worker_id (Optional[str]): The id of the calculation that claimed the row. None writes the row only while
+                no process holds it, and creates it before any refresh.
+            error (Optional[str]): The error the calculation failed with. None when it completed.
+            fingerprint (Optional[List[Any]]): The fingerprint of yesterday and today, stored once it completed.
+            stopped (bool): Whether the calculation stopped before it finished.
+            claimed_fingerprint (Optional[List[Any]]): The fingerprint of the claimed row. A rebuild that marked
+                another one since keeps its mark.
+        """
         values: Dict[str, Any] = {"locked_by": None, "locked_at": None}
         if stopped:
             # The days it did not reach stay open for the next calculation; a first one that stopped has none to show
@@ -2446,8 +2447,9 @@ class SingleStoreDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 if not stopped and error is None:
                     # A rebuild that marked the fingerprint after the claim keeps its mark, so the next calculation
-                    # rebuilds yesterday and today. Compared here: SingleStore never finds a JSON column equal to a
-                    # string. No fingerprint is stored as NULL, which a claim of NULL compares equal to
+                    # rebuilds yesterday and today. Compared here: SingleStore compares a JSON column with a string as
+                    # text, so the same fingerprint written with other spacing differs. No fingerprint is stored as
+                    # NULL, which a claim of NULL compares equal to
                     stored_fingerprint = sess.execute(
                         select(refreshes_table.c.fingerprint)
                         .where(refreshes_table.c.id == METRICS_REFRESH_ID)
@@ -2455,24 +2457,24 @@ class SingleStoreDb(BaseDb):
                     ).scalar()
                     if stored_fingerprint == claimed_fingerprint:
                         values["fingerprint"] = null() if fingerprint is None else fingerprint
-                if worker_id is None and error is not None and started_at is None:
-                    # Before any refresh there is no row to update; one created since keeps its own status
+                if worker_id is None:
+                    # Before any refresh there is no row to update. Each column keeps its value while a process holds
+                    # the row: SingleStore has no condition on the update of a duplicate key
                     sess.execute(
                         mysql.insert(refreshes_table)
                         .values(id=METRICS_REFRESH_ID, started_at=func.unix_timestamp(), status="failed", error=error)
-                        .prefix_with("IGNORE")
-                    )
-                elif worker_id is None and error is not None:
-                    # A plain update skips the row a calculation holds, instead of waiting for its lock
-                    sess.execute(
-                        update(refreshes_table)
-                        .where(
-                            refreshes_table.c.id == METRICS_REFRESH_ID,
-                            refreshes_table.c.locked_by.is_(None),
-                            refreshes_table.c.started_at == started_at,
-                            refreshes_table.c.finished_at.is_not_distinct_from(finished_at),
+                        .on_duplicate_key_update(
+                            [
+                                (
+                                    name,
+                                    case(
+                                        (refreshes_table.c.locked_by.is_(None), value),
+                                        else_=refreshes_table.c[name],
+                                    ),
+                                )
+                                for name, value in values.items()
+                            ]
                         )
-                        .values(**values)
                     )
                 else:
                     sess.execute(
@@ -2626,13 +2628,15 @@ class SingleStoreDb(BaseDb):
     def _has_legacy_runs_column(self) -> bool:
         """Whether the sessions table still has the legacy runs column, which its schema does not declare."""
         with self.Session() as sess:
+            # Without a db_schema the tables are in the connection's database
             return (
                 sess.execute(
                     text(
                         "SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS "
-                        "WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table AND COLUMN_NAME = 'runs'"
+                        "WHERE TABLE_SCHEMA = COALESCE(:schema, DATABASE()) AND TABLE_NAME = :table "
+                        "AND COLUMN_NAME = 'runs'"
                     ),
-                    {"schema": self.db_schema or "agno", "table": self.session_table_name},
+                    {"schema": self.db_schema, "table": self.session_table_name},
                 ).scalar()
                 is not None
             )
@@ -2722,7 +2726,9 @@ class SingleStoreDb(BaseDb):
                 sessions_table.c.team_id,
                 sessions_table.c.workflow_id,
                 sessions_table.c.metadata,
-                func.JSON_EXTRACT_JSON(sessions_table.c.session_data, "compaction_metrics").label("compaction_metrics"),
+                type_coerce(func.JSON_EXTRACT_JSON(sessions_table.c.session_data, "compaction_metrics"), JSON).label(
+                    "compaction_metrics"
+                ),
             ).where(sessions_table.c.created_at >= start_timestamp, sessions_table.c.created_at < end_timestamp)
             result = sess.execute(sessions_stmt).fetchall()
             sessions = [dict(record._mapping) for record in result]
@@ -2929,18 +2935,9 @@ class SingleStoreDb(BaseDb):
         if rebuild_from is not None:
             # Reopened as a write reopens a day, before the claim, so a calculation another process is running
             # leaves them to the next one
-            started_at = finished_at = None
             try:
                 # A transaction of its own, without locking the refresh row, so it never waits on a day's calculation
                 with self.Session() as sess, sess.begin():
-                    # A calculation that starts or finishes after this read keeps its own status
-                    refresh_times = sess.execute(
-                        select(refreshes_table.c.started_at, refreshes_table.c.finished_at).where(
-                            refreshes_table.c.id == METRICS_REFRESH_ID
-                        )
-                    ).first()
-                    if refresh_times is not None:
-                        started_at, finished_at = refresh_times
                     reopen_metrics_days_from(session=sess, table=aggregate_metrics_table, starting_date=rebuild_from)
                 # Yesterday and today are picked by the fingerprint, so it is marked for the next one too
                 if not self._mark_metrics_refresh_rebuild(refreshes_table):
@@ -2951,8 +2948,6 @@ class SingleStoreDb(BaseDb):
                     refreshes_table,
                     None,
                     error=database_error_message(e),
-                    started_at=started_at,
-                    finished_at=finished_at,
                 )
                 raise
 
@@ -2966,12 +2961,6 @@ class SingleStoreDb(BaseDb):
             dates_to_process, fingerprint = self._get_metrics_dates_to_calculate(
                 aggregate_metrics_table, sessions_table, runs_table, refresh_row, rebuild_from
             )
-            if rebuild_from is not None:
-                # Yesterday and today are picked by their fingerprint, not by being open
-                today = datetime.now(timezone.utc).date()
-                dates_to_process = sorted(
-                    set(dates_to_process) | {day for day in [today - timedelta(days=1), today] if day >= rebuild_from}
-                )
 
             legacy_run_rows_by_day: Dict[date, List[Any]] = {}
             legacy_run_rows_by_id: Dict[str, Any] = {}

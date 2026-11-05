@@ -19,12 +19,9 @@ from agno.db.firestore.utils import (
     apply_sorting,
     component_metrics_record_id,
     create_collection_indexes,
-    deserialize_metrics_refresh_row,
-    deserialize_metrics_row,
     reopen_metrics_day,
     reopen_metrics_days_from,
     reopen_metrics_month,
-    serialize_metrics_row,
 )
 from agno.db.migrations.manager import MigrationManager
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
@@ -32,7 +29,9 @@ from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
     AGGREGATE_METRICS_COUNT_COLUMNS,
+    AGGREGATE_METRICS_ROWS_FIELDS,
     METRICS_BATCH_SIZE,
+    METRICS_BY_OWNER_FIELDS,
     METRICS_LOCK_SECONDS,
     METRICS_REFRESH_ID,
     METRICS_STOPPED_ERROR,
@@ -47,6 +46,8 @@ from agno.db.utils import (
     calculate_date_component_metrics,
     component_metrics_rows_to_write,
     database_error_message,
+    deserialize_metrics_refresh_row,
+    deserialize_metrics_row,
     deserialize_run,
     deserialize_session,
     deserialize_session_json_fields,
@@ -69,8 +70,10 @@ from agno.db.utils import (
     metrics_nested_run_ids,
     metrics_refresh_status,
     metrics_remote_member_team_session_ids,
+    metrics_rows_fields,
     metrics_versions,
     resolve_metrics_fields,
+    serialize_metrics_row,
     total_metrics_rows,
 )
 from agno.run.agent import RunOutput
@@ -82,7 +85,12 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from google.api_core.exceptions import AlreadyExists, FailedPrecondition, NotFound  # type: ignore[import-untyped]
+    from google.api_core.exceptions import (  # type: ignore[import-untyped]
+        Aborted,
+        AlreadyExists,
+        FailedPrecondition,
+        NotFound,
+    )
     from google.cloud.firestore import (  # type: ignore[import-untyped]
         DELETE_FIELD,
         Client,
@@ -179,8 +187,6 @@ class FirestoreDb(BaseDb):
         self._metrics_refreshed_at: float = 0.0
         # The days whose metrics a write could not reopen, retried by the next write
         self._metrics_days_not_reopened: Set[date] = set()
-        # Whether a session holds legacy runs, None until a read of every session found out
-        self._metrics_legacy_runs: Optional[bool] = None
 
     # -- DB methods --
 
@@ -1186,7 +1192,6 @@ class FirestoreDb(BaseDb):
             if result is None:
                 return None
             if result.get("session_id") in reopen_session_ids:
-                # The stored created_at, which keeps the session on the day it was created
                 self._reopen_metrics_days([result.get("created_at")])
             deserialized_session = deserialize_session_json_fields(result)
 
@@ -1719,7 +1724,10 @@ class FirestoreDb(BaseDb):
         stale, by the process clock."""
         stale_lock_threshold = int(time.time()) - METRICS_LOCK_SECONDS
         snapshot = refreshes_collection_ref.document(METRICS_REFRESH_ID).get()
-        return (deserialize_metrics_refresh_row(snapshot.to_dict()) if snapshot.exists else None), stale_lock_threshold
+        if not snapshot.exists:
+            # Before the first refresh there is no lock to judge stale
+            return None, 0
+        return deserialize_metrics_refresh_row(snapshot.to_dict()), stale_lock_threshold
 
     def _claim_metrics_refresh(self, refreshes_collection_ref, worker_id: str) -> Optional[Dict[str, Any]]:
         """Claim the document of the metrics refreshes collection, so one process calculates metrics at a time.
@@ -1760,6 +1768,21 @@ class FirestoreDb(BaseDb):
         transaction.update(refresh_ref, {"locked_at": int(time.time())})
         return True
 
+    def _mark_metrics_refresh_rebuild(self, refreshes_collection_ref) -> bool:
+        """Write a mark no fingerprint equals on the document of the metrics refreshes collection, so the next
+        calculation rebuilds yesterday and today. False when a transaction kept the document locked through every try."""
+        for _ in range(3):
+            try:
+                refreshes_collection_ref.document(METRICS_REFRESH_ID).update({"fingerprint": ["rebuild", uuid4().hex]})
+                return True
+            except NotFound:
+                # Before the first refresh there is no document to mark
+                return True
+            except Aborted:
+                # A transaction reading the document holds its lock until it commits
+                continue
+        return False
+
     def _release_metrics_refresh(
         self,
         refreshes_collection_ref,
@@ -1768,30 +1791,33 @@ class FirestoreDb(BaseDb):
         fingerprint: Optional[List[Any]] = None,
         stopped: bool = False,
         claimed_fingerprint: Optional[List[Any]] = None,
-        started_at: Optional[int] = None,
-        finished_at: Optional[int] = None,
     ) -> None:
         """Release the document of the metrics refreshes collection: completed, with the fingerprint, without an
-        error, failed with one, and as the last completed refresh left it when the calculation stopped. A worker_id
-        of None writes the document only while no process holds it and no calculation started or finished after the
-        read of started_at and finished_at, and creates it when that read found none."""
+        error, failed with one, and as the last completed refresh left it when the calculation stopped.
+
+        Args:
+            refreshes_collection_ref: The metrics refreshes collection.
+            worker_id (Optional[str]): The id of the calculation that claimed the document. None writes the document
+                only while no process holds it, and creates it before any refresh.
+            error (Optional[str]): The error the calculation failed with. None when it completed.
+            fingerprint (Optional[List[Any]]): The fingerprint of yesterday and today, stored once it completed.
+            stopped (bool): Whether the calculation stopped before it finished.
+            claimed_fingerprint (Optional[List[Any]]): The fingerprint of the claimed document. A rebuild that marked
+                another one since keeps its mark.
+        """
         refresh_ref = refreshes_collection_ref.document(METRICS_REFRESH_ID)
 
         @transactional
         def _release(transaction) -> None:
             snapshot = refresh_ref.get(transaction=transaction)
             refresh_row = (snapshot.to_dict() or {}) if snapshot.exists else {}
-            if worker_id is None and error is not None and started_at is None:
-                # Before any refresh there is no document to update; one created since keeps its own status
-                if not snapshot.exists:
-                    created_row = deserialize_metrics_refresh_row({})
-                    created_row.update(id=METRICS_REFRESH_ID, started_at=int(time.time()), status="failed", error=error)
-                    transaction.set(refresh_ref, created_row)
+            if refresh_row.get("locked_by") != worker_id:
                 return
-            if refresh_row.get("locked_by") != worker_id or (
-                worker_id is None
-                and (refresh_row.get("started_at"), refresh_row.get("finished_at")) != (started_at, finished_at)
-            ):
+            if not snapshot.exists:
+                # Before any refresh there is no document to update
+                created_row = deserialize_metrics_refresh_row({})
+                created_row.update(id=METRICS_REFRESH_ID, started_at=int(time.time()), status="failed", error=error)
+                transaction.set(refresh_ref, created_row)
                 return
             values: Dict[str, Any] = {"locked_by": None, "locked_at": None}
             if stopped:
@@ -2099,8 +2125,8 @@ class FirestoreDb(BaseDb):
 
         everyone_ref = aggregate_metrics_collection_ref.document(aggregate_metrics_record_id(period, period_date, ""))
         expected_version = read_version
-        # Rows written in more than one commit move the everyone row's version in the first, so a commit that fails
-        # later never leaves rows changed under the version read before them
+        # Rows of more than one commit move the everyone row's version in the first, so a commit that fails later never
+        # leaves them under the version read before them; rows of one commit keep it until the everyone row's write
         if len(writes) >= FIRESTORE_BATCH_LIMIT - 1 and "" in stored_by_user:
             writes.insert(0, (everyone_ref, {"version": Increment(1)}))
             expected_version = read_version + 1 if read_version is not None else None
@@ -2139,7 +2165,8 @@ class FirestoreDb(BaseDb):
                 )
             return True
 
-        # Written last, so its version never moves without the rows it tells of
+        # Written last, and completed only while its version is still the one the rows were written under, so a reopen
+        # written since keeps the period open
         return _write_everyone_row(self.db_client.transaction())
 
     def _calculate_date_metrics(
@@ -2222,12 +2249,15 @@ class FirestoreDb(BaseDb):
                     ]
                 )
             )
-            run_docs = list(runs_query.stream())
-            for start in range(0, len(run_docs), METRICS_BATCH_SIZE):
+            run_docs = runs_query.stream()
+            while True:
+                batch = list(islice(run_docs, METRICS_BATCH_SIZE))
+                if not batch:
+                    break
+                runs.extend(doc.to_dict() for doc in batch)
                 # Checked between batches too, so a stop never waits for the whole of a large day
                 if should_stop is not None and should_stop():
                     return False
-                runs.extend(doc.to_dict() for doc in run_docs[start : start + METRICS_BATCH_SIZE])
 
         # A legacy run migrated to the runs collection since the legacy runs were read is among the day's runs, and
         # is counted from there
@@ -2388,7 +2418,7 @@ class FirestoreDb(BaseDb):
             if calculated_dates is None:
                 return None
             if not calculated_dates:
-                # Nothing changed: today's metrics come back, as they did when every refresh calculated today
+                # A refresh that changed no day answers with today's metrics
                 calculated_dates = [datetime.now(timezone.utc).date()]
             metrics, _ = self._get_metrics_rows(calculated_dates[0], calculated_dates[-1], None)
             return [metric for metric in metrics if metric["date"] in calculated_dates]
@@ -2436,28 +2466,17 @@ class FirestoreDb(BaseDb):
         if rebuild_from is not None:
             # Reopened as a write reopens a day, before the claim, so a calculation another process is running
             # leaves them to the next one
-            started_at = finished_at = None
             try:
-                # A calculation that starts or finishes after this read keeps its own status
-                stored_row = self._get_metrics_refresh_row(refreshes_collection_ref)[0]
-                if stored_row is not None:
-                    started_at, finished_at = stored_row["started_at"], stored_row["finished_at"]
                 reopen_metrics_days_from(self.db_client, aggregate_metrics_collection_ref, rebuild_from)
                 # Yesterday and today are picked by the fingerprint, so it is marked for the next one too
-                try:
-                    refreshes_collection_ref.document(METRICS_REFRESH_ID).update(
-                        {"fingerprint": ["rebuild", uuid4().hex]}
-                    )
-                except NotFound:
-                    pass
+                if not self._mark_metrics_refresh_rebuild(refreshes_collection_ref):
+                    return None
             except Exception as e:
                 # Failed before the claim, so the refresh status shows it
                 self._release_metrics_refresh(
                     refreshes_collection_ref,
                     None,
                     error=database_error_message(e),
-                    started_at=started_at,
-                    finished_at=finished_at,
                 )
                 raise
 
@@ -2475,27 +2494,13 @@ class FirestoreDb(BaseDb):
                 refresh_row,
                 rebuild_from,
             )
-            if rebuild_from is not None:
-                # Yesterday and today are picked by their fingerprint, not by being open
-                today = datetime.now(timezone.utc).date()
-                dates_to_process = sorted(
-                    set(dates_to_process) | {day for day in [today - timedelta(days=1), today] if day >= rebuild_from}
-                )
 
             legacy_runs_by_day: Dict[date, List[Dict[str, Any]]] = {}
             legacy_runs_by_id: Dict[str, Dict[str, Any]] = {}
-            if rebuild_from is not None:
-                # Every session is read again, for the legacy runs a process of an earlier release saved since
-                self._metrics_legacy_runs = None
-            # Read once for every day until the v3.0.0 migration is stamped: no index finds one day's legacy runs. A
-            # store created by 3.0 or 3.1 stamps no version, so they are read only while a read of every session found
-            # some
-            if (
-                dates_to_process
-                and self._metrics_legacy_runs is not False
-                and packaging_version.parse(self.get_latest_schema_version(self.session_table_name) or "2.0.0")
-                < packaging_version.parse("3.0.0")
-            ):
+            # Read once for every day until the v3.0.0 migration is stamped: no index finds one day's legacy runs
+            if dates_to_process and packaging_version.parse(
+                self.get_latest_schema_version(self.session_table_name) or "2.0.0"
+            ) < packaging_version.parse("3.0.0"):
                 start_timestamp = int(
                     datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
                 )
@@ -2504,9 +2509,6 @@ class FirestoreDb(BaseDb):
                     .replace(tzinfo=timezone.utc)
                     .timestamp()
                 )
-                if self._metrics_legacy_runs is None:
-                    # The first read reads every session, so one that finds no legacy runs finds none anywhere
-                    start_timestamp, end_timestamp = 0, max(end_timestamp, int(time.time()) + 1)
                 legacy_runs_by_day, legacy_runs_by_id = self._get_metrics_legacy_runs(
                     sessions_collection_ref, runs_collection_ref, start_timestamp, end_timestamp
                 )
@@ -2514,8 +2516,6 @@ class FirestoreDb(BaseDb):
                     self.db_client.transaction(), refreshes_collection_ref, worker_id
                 ):
                     return None
-                if self._metrics_legacy_runs is None:
-                    self._metrics_legacy_runs = bool(legacy_runs_by_id)
                 # A legacy run is dated on its own day, which may hold no session or run of the collections
                 today = datetime.now(timezone.utc).date()
                 dates_to_process = sorted(
@@ -2603,7 +2603,7 @@ class FirestoreDb(BaseDb):
             query = query.where(filter=FieldFilter("date", "<=", ending_date.isoformat()))
         if user_id is not None:
             query = query.where(filter=FieldFilter("user_id", "==", user_id))
-        rows = [deserialize_metrics_row(doc.to_dict()) for doc in query.stream()]
+        rows = [deserialize_metrics_row(doc.to_dict()) for doc in query.select(list(METRICS_BY_OWNER_FIELDS)).stream()]
         if not rows:
             return [], None
 
@@ -2626,7 +2626,10 @@ class FirestoreDb(BaseDb):
             query = query.where(filter=FieldFilter("date", "<=", ending_date.isoformat()))
         if user_id is not None:
             query = query.where(filter=FieldFilter("user_id", "==", user_id))
-        rows = [deserialize_metrics_row(doc.to_dict()) for doc in query.stream()]
+        # Only what build_metrics_from_aggregate_metrics reads, so the maps of timings are never decoded
+        rows = [
+            deserialize_metrics_row(doc.to_dict()) for doc in query.select(list(AGGREGATE_METRICS_ROWS_FIELDS)).stream()
+        ]
         # Every user's rows are read with the everyone rows, one per day, which a filter on user_id would need an index
         # of its own to leave out
         if user_id is None:
@@ -2714,11 +2717,8 @@ class FirestoreDb(BaseDb):
             if self._metrics_calculated(self._get_collection(table_type="metrics_refreshes")):
                 return self._get_metrics_rows(starting_date, ending_date, user_id)
 
-            collection_ref = self._get_collection(table_type="metrics")
-            if collection_ref is None:
-                return [], None
-
-            query = collection_ref
+            # Read without _get_collection, which would create the deprecated collection and its indexes
+            query: Any = self.db_client.collection(self.metrics_table_name)
             if starting_date:
                 query = query.where(filter=FieldFilter("date", ">=", starting_date.isoformat()))
             if ending_date:
@@ -2872,7 +2872,9 @@ class FirestoreDb(BaseDb):
 
             records: List[Dict[str, Any]] = []
             for query in queries:
-                query = query.where(filter=FieldFilter("user_id", "==", user_id or ""))
+                query = query.where(filter=FieldFilter("user_id", "==", user_id or "")).select(
+                    metrics_rows_fields(fields)
+                )
                 records.extend(deserialize_metrics_row(doc.to_dict()) for doc in query.stream(transaction=transaction))
             return records, month_starts
 

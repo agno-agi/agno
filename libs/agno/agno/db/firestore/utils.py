@@ -9,9 +9,7 @@ from agno.db.firestore.schemas import get_collection_indexes
 from agno.db.utils import (
     build_aggregate_metrics_row,
     get_sort_value,
-    list_metrics_models,
-    list_metrics_tools,
-    metric_record_day,
+    serialize_metrics_row,
 )
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
@@ -223,50 +221,6 @@ def aggregate_metrics_record_id(aggregation_period: str, row_date: date, user_id
     return f"{row_date.isoformat()}_{user_segment}_{aggregation_period}"
 
 
-def serialize_metrics_row(record: Dict[str, Any]) -> Dict[str, Any]:
-    """Return a metrics row with its day as an ISO string, its models as the list agno_metrics keeps and its tools as
-    a list, the way Firestore stores it, so no model provider, toolkit or tool name becomes a field name."""
-    document = {**record, "date": record["date"].isoformat()}
-    if "model_metrics" in document:
-        document["model_metrics"] = list_metrics_models(document["model_metrics"])
-    if "tool_metrics" in document:
-        # Firestore rejects an empty field name, and a tool outside any toolkit is kept under the toolkit ""
-        document["tool_metrics"] = list_metrics_tools(document["tool_metrics"])
-    return document
-
-
-def deserialize_metrics_row(record: Dict[str, Any]) -> Dict[str, Any]:
-    """Return a stored metrics row with its day, stored as an ISO string, as a date."""
-    row = {**record, "date": metric_record_day(record)}
-    if "model_metrics" in row:
-        model_metrics: Dict[str, Dict[str, Dict[str, Any]]] = {}
-        for model in row["model_metrics"] or []:
-            model_totals: Dict[str, Any] = {"count": model["count"]}
-            if model.get("cost") is not None:
-                model_totals["cost"] = model["cost"]
-            model_metrics.setdefault(model["model_provider"], {})[model["model_id"]] = model_totals
-        row["model_metrics"] = model_metrics
-    if "tool_metrics" in row:
-        tool_metrics: Dict[str, Dict[str, Dict[str, Any]]] = {}
-        for tool in row["tool_metrics"] or []:
-            tool_metrics.setdefault(tool["toolkit"], {})[tool["tool_name"]] = {
-                "count": tool["count"],
-                "failed_count": tool["failed_count"],
-                "total_ms": tool["total_ms"],
-                "max_ms": tool["max_ms"],
-                "buckets": tool["buckets"],
-            }
-        row["tool_metrics"] = tool_metrics
-    return row
-
-
-def deserialize_metrics_refresh_row(record: Dict[str, Any]) -> Dict[str, Any]:
-    """Return the stored document of the metrics refreshes collection as its row, the columns it keeps no field for
-    None."""
-    columns = ["id", "locked_by", "locked_at", "started_at", "finished_at", "status", "error", "fingerprint"]
-    return {column: record.get(column) for column in columns}
-
-
 def _reopen_metrics_row(aggregate_metrics_collection_ref, row_date: date, aggregation_period: str) -> None:
     """Reopen a day's or a month's everyone row of the aggregate metrics collection, creating an empty open row when it
     has none."""
@@ -286,7 +240,7 @@ def _reopen_metrics_row(aggregate_metrics_collection_ref, row_date: date, aggreg
 
 
 def reopen_metrics_day(aggregate_metrics_collection_ref, day: date) -> None:
-    """Reopen a day's everyone row of the aggregate metrics collection, so the next refresh rebuilds the day.
+    """Reopen a day's everyone row of the aggregate metrics collection, so the next calculation rebuilds the day.
 
     Args:
         aggregate_metrics_collection_ref: The aggregate metrics collection.
@@ -296,7 +250,7 @@ def reopen_metrics_day(aggregate_metrics_collection_ref, day: date) -> None:
 
 
 def reopen_metrics_month(aggregate_metrics_collection_ref, month_start: date) -> None:
-    """Reopen a month's everyone row of the aggregate metrics collection, so the next refresh rebuilds the month.
+    """Reopen a month's everyone row of the aggregate metrics collection, so the next calculation rebuilds the month.
 
     Args:
         aggregate_metrics_collection_ref: The aggregate metrics collection.

@@ -697,10 +697,9 @@ def deserialize_metrics_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]
     """Read the rows of a metrics file with their date a date, as a JSON file keeps it as text."""
     deserialized_rows = []
     for row in rows:
-        try:
-            deserialized_rows.append({**row, "date": date.fromisoformat(row.get("date"))})  # type: ignore[arg-type]
-        except (TypeError, ValueError):
-            log_warning(f"Skipping metrics record {row.get('id')}: date {row.get('date')!r} is not a day")
+        day = metric_record_day(row)
+        if day is not None:
+            deserialized_rows.append({**row, "date": day})
     return deserialized_rows
 
 
@@ -921,6 +920,54 @@ def list_metrics_tools(tool_metrics: Dict[str, Dict[str, Dict[str, Any]]]) -> Li
     )
 
 
+def map_metrics_models(models: List[Dict[str, Any]]) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    """Map the models listed by list_metrics_models back to a model_metrics map: by provider and model, with its count
+    and its cost when it has one."""
+    model_metrics: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    for model in models:
+        model_totals: Dict[str, Any] = {"count": model["count"]}
+        if model.get("cost") is not None:
+            model_totals["cost"] = model["cost"]
+        model_metrics.setdefault(model["model_provider"], {})[model["model_id"]] = model_totals
+    return model_metrics
+
+
+def map_metrics_tools(tools: List[Dict[str, Any]]) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    """Map the tools listed by list_metrics_tools back to a tool_metrics map: by toolkit and tool, with its counts, its
+    durations and its buckets."""
+    tool_metrics: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    for tool in tools:
+        tool_metrics.setdefault(tool["toolkit"], {})[tool["tool_name"]] = {
+            "count": tool["count"],
+            "failed_count": tool["failed_count"],
+            "total_ms": tool["total_ms"],
+            "max_ms": tool["max_ms"],
+            "buckets": tool["buckets"],
+        }
+    return tool_metrics
+
+
+def serialize_metrics_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Serialize a metrics row to the document stored for it: its date as text, its models as the list agno_metrics
+    keeps and its tools as a list, so no model id, toolkit or tool name becomes a field name."""
+    document = {**row, "date": row["date"].isoformat()}
+    if "model_metrics" in document:
+        document["model_metrics"] = list_metrics_models(document["model_metrics"])
+    if "tool_metrics" in document:
+        document["tool_metrics"] = list_metrics_tools(document["tool_metrics"])
+    return document
+
+
+def deserialize_metrics_row(document: Dict[str, Any]) -> Dict[str, Any]:
+    """Deserialize a stored metrics document to the row shape the metrics helpers compare and total."""
+    row = {**document, "date": metric_record_day(document)}
+    if "model_metrics" in row:
+        row["model_metrics"] = map_metrics_models(row["model_metrics"] or [])
+    if "tool_metrics" in row:
+        row["tool_metrics"] = map_metrics_tools(row["tool_metrics"] or [])
+    return row
+
+
 def list_metrics_totals_models(totals: Dict[str, Any]) -> Dict[str, Any]:
     """Totals with their model_metrics listed by list_metrics_models, as get_component_metrics returns them."""
     if "model_metrics" not in totals:
@@ -1118,6 +1165,31 @@ METRICS_READ_FIELDS = (
 # keeps them.
 AGGREGATE_METRICS_COUNT_COLUMNS = _METRIC_COUNT_FIELDS
 
+# What get_metrics reads of a stored row of agno_aggregate_metrics, and of agno_component_metrics, so the maps of
+# timings are never decoded.
+AGGREGATE_METRICS_ROWS_FIELDS = (
+    "date",
+    "user_id",
+    *AGGREGATE_METRICS_COUNT_COLUMNS,
+    *[field for field in METRICS_TOKEN_FIELDS if field not in [*METRICS_TOKEN_DETAILS_FIELDS, "audio_total_tokens"]],
+    "token_details",
+    "model_metrics",
+    "created_at",
+    "updated_at",
+)
+METRICS_BY_OWNER_FIELDS = (
+    "date",
+    "user_id",
+    "component_type",
+    "sessions_count",
+    "runs_count",
+    *[field for field in METRICS_TOKEN_FIELDS if field not in [*METRICS_TOKEN_DETAILS_FIELDS, "audio_total_tokens"]],
+    "token_details",
+    "model_metrics",
+    "created_at",
+    "updated_at",
+)
+
 
 def resolve_metrics_fields(fields: Optional[Sequence[str]]) -> List[str]:
     """The columns a get_component_metrics call totals, rejecting any the table does not have."""
@@ -1127,6 +1199,20 @@ def resolve_metrics_fields(fields: Optional[Sequence[str]]) -> List[str]:
     if unknown:
         raise ValueError(f"Unknown metrics fields: {unknown}")
     return list(fields)
+
+
+def metrics_rows_fields(fields: Sequence[str]) -> List[str]:
+    """The fields of a stored metrics row that totalling the given fields reads."""
+    selected = ["aggregation_period", "date", "updated_at", *fields]
+    if any(field in [*METRICS_TOKEN_DETAILS_FIELDS, "audio_total_tokens", *METRICS_COST_FIELDS] for field in fields):
+        selected.append("token_details")
+    # The aggregate metrics table keeps the sessions of each type, and the component metrics table the runs of each
+    # component, with the run that started them
+    if "sessions_count" in fields:
+        selected.extend(f"{component_type}_sessions_count" for component_type in METRICS_COMPONENT_TYPES)
+    if "root_runs_count" in fields:
+        selected.extend(["runs_count", "parent_component_id"])
+    return list(dict.fromkeys(selected))
 
 
 def empty_metrics_totals(fields: Sequence[str] = METRICS_FIELDS) -> Dict[str, Any]:
@@ -1970,16 +2056,6 @@ def get_metrics_rows_by_key(
     return {tuple(row[column] for column in key_columns): row for row in rows}
 
 
-def _upsert_component_metrics_rows(
-    rows_by_key: Dict[Tuple[Any, ...], Dict[str, Any]], component_metrics_records: List[Dict[str, Any]]
-) -> None:
-    """Upsert component metrics into the given rows, by key. The created_at of a stored row is never overwritten."""
-    for record in component_metrics_records:
-        key = tuple(record[column] for column in COMPONENT_METRICS_KEY_COLUMNS)
-        stored_row = rows_by_key.get(key)
-        rows_by_key[key] = {**record, "created_at": stored_row["created_at"]} if stored_row is not None else record
-
-
 def aggregate_metrics_row_to_write(
     aggregate_metrics_row: Dict[str, Any], stored_aggregate_metrics_row: Optional[Dict[str, Any]], rows_changed: bool
 ) -> Optional[Dict[str, Any]]:
@@ -2216,7 +2292,6 @@ def calculate_date_metrics(
     sessions: List[Dict[str, Any]],
     runs: List[Dict[str, Any]],
     stored_rows: List[Dict[str, Any]],
-    run_ids: Set[str],
     runs_by_id: Dict[str, Dict[str, Any]],
 ) -> Tuple[List[Dict[str, Any]], bool]:
     """Rebuild the component metrics rows of one day into the given rows, and build its aggregate metrics rows.
@@ -2227,7 +2302,6 @@ def calculate_date_metrics(
         sessions (List[Dict[str, Any]]): The sessions created on the day.
         runs (List[Dict[str, Any]]): The runs created on the day, legacy runs included.
         stored_rows (List[Dict[str, Any]]): The component metrics rows stored for the day.
-        run_ids (Set[str]): The id of every run, legacy runs included.
         runs_by_id (Dict[str, Dict[str, Any]]): Every run, legacy runs included, by id.
 
     Returns:
@@ -2236,7 +2310,7 @@ def calculate_date_metrics(
     """
     # A nested run also stored as a run of its own, or as a legacy run of its own, is counted from that run,
     # whatever day it is on
-    stored_run_ids = metrics_nested_run_ids(runs) & run_ids
+    stored_run_ids = {run_id for run_id in metrics_nested_run_ids(runs) if run_id in runs_by_id}
 
     # A run started by a run of another day, such as a member run after midnight, names that run's agent, team or
     # workflow as its parent, read from every run of the calculation
@@ -2260,7 +2334,11 @@ def calculate_date_metrics(
     changed_rows, stale_keys = component_metrics_rows_to_write(records, stored_rows)
     for stale_key in stale_keys:
         rows_by_key.pop(("daily", date_to_process, *stale_key))
-    _upsert_component_metrics_rows(rows_by_key, changed_rows)
+    # The created_at of a stored row is never overwritten
+    for record in changed_rows:
+        key = tuple(record[column] for column in COMPONENT_METRICS_KEY_COLUMNS)
+        stored_row = rows_by_key.get(key)
+        rows_by_key[key] = {**record, "created_at": stored_row["created_at"]} if stored_row is not None else record
     return (
         build_aggregate_metrics_rows(records, "daily", date_to_process, metrics_day_completed(date_to_process)),
         bool(changed_rows or stale_keys),
@@ -2284,13 +2362,6 @@ def calculate_month_metrics(
     return build_aggregate_metrics_month_rows(month_start, per_owner)
 
 
-def metrics_days_to_read(starting_date: date, ending_date: date, month_starts: Sequence[date]) -> List[date]:
-    """The days of the date range that are not read from the rows of one of the given months."""
-    days_diff = (ending_date - starting_date).days + 1
-    days = [starting_date + timedelta(days=x) for x in range(days_diff)]
-    return [day for day in days if day.replace(day=1) not in month_starts]
-
-
 def metrics_day_ranges(starting_date: date, ending_date: date, month_starts: Sequence[date]) -> List[Tuple[date, date]]:
     """The first and last day of every run of days of the date range that are not read from the rows of one of the
     given months, which are inside the range."""
@@ -2303,6 +2374,13 @@ def metrics_day_ranges(starting_date: date, ending_date: date, month_starts: Seq
     if first_day <= ending_date:
         ranges.append((first_day, ending_date))
     return ranges
+
+
+def deserialize_metrics_refresh_row(record: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the stored document of the metrics refreshes table as its row, the columns it keeps no field for
+    None."""
+    columns = ["id", "locked_by", "locked_at", "started_at", "finished_at", "status", "error", "fingerprint"]
+    return {column: record.get(column) for column in columns}
 
 
 def metrics_refresh_status(
@@ -2563,12 +2641,15 @@ def total_metrics_rows(
         Tuple[List[Dict[str, Any]], Optional[int]]: One dict per date, oldest first, and when the rows were last
             updated. A month totalled from its month row is one dict, dated its first day.
     """
-    days = set(metrics_days_to_read(starting_date, ending_date, month_starts))
+    day_ranges = metrics_day_ranges(starting_date, ending_date, month_starts)
     totals_by_date: Dict[date, Dict[str, Any]] = {}
     latest_updated_at: Optional[int] = None
     for row in rows:
         if not (
-            (row["aggregation_period"] == "daily" and row["date"] in days)
+            (
+                row["aggregation_period"] == "daily"
+                and any(first_day <= row["date"] <= last_day for first_day, last_day in day_ranges)
+            )
             or (row["aggregation_period"] == "monthly" and row["date"] in month_starts)
         ):
             continue

@@ -52,6 +52,12 @@ METRICS_STALE_KEYS_LIMIT = 1000
 
 
 # -- DB util methods --
+def is_lock_not_available(error: Exception) -> bool:
+    """Whether a database error is SingleStore's ER_LOCK_WAIT_TIMEOUT (error 1205)."""
+    cause = getattr(error, "orig", error)
+    return cause.args[:1] == (1205,)
+
+
 def apply_sorting(stmt, table: Table, sort_by: Optional[str] = None, sort_order: Optional[str] = None):
     """Apply sorting to the given SQLAlchemy statement.
 
@@ -182,13 +188,15 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schem
 
 
 # -- Component metrics util methods --
-def bulk_upsert_component_metrics(session: Session, table: Table, component_metrics_records: list[dict]) -> None:
+def bulk_upsert_component_metrics(
+    session: Session, table: Table, component_metrics_records: List[Dict[str, Any]]
+) -> None:
     """Bulk upsert component metrics into the database, in the session's transaction.
 
     Args:
         session (Session): The session to upsert with.
         table (Table): The table to upsert into.
-        component_metrics_records (list[dict]): The component metrics records to upsert.
+        component_metrics_records (List[Dict[str, Any]]): The component metrics records to upsert.
     """
     if not component_metrics_records:
         return

@@ -11,6 +11,7 @@ from agno.db.utils import (
     METRICS_COST_FIELDS,
     METRICS_COUNT_MAP_COLUMNS,
     METRICS_MAX_COLUMNS,
+    METRICS_NESTED_RUN_KEYS,
     METRICS_SUM_FIELDS,
     METRICS_TOKEN_DETAILS_FIELDS,
     METRICS_TOKEN_FIELDS,
@@ -52,11 +53,14 @@ METRICS_IN_LIST_LIMIT = 900
 # A stored row's key binds five parameters, so stale rows are deleted 150 at a time
 METRICS_STALE_KEYS_LIMIT = 150
 
-# The keys of a stored run that hold the runs nested inside it, in the order the rollup walks them
-_METRICS_NESTED_RUN_KEYS = ("step_executor_runs", "member_responses", "workflow_agent_run")
-
 
 # -- DB util methods --
+
+
+def is_lock_not_available(error: Exception) -> bool:
+    """Whether a database error is SQLite's SQLITE_BUSY ("database is locked")."""
+    cause = getattr(error, "orig", error)
+    return "database is locked" in str(cause)
 
 
 def apply_sorting(stmt, table: Table, sort_by: Optional[str] = None, sort_order: Optional[str] = None):
@@ -209,13 +213,15 @@ def _get_table_columns(conn, table_name: str) -> set[str]:
 
 
 # -- Component metrics util methods --
-def bulk_upsert_component_metrics(session: Session, table: Table, component_metrics_records: list[dict]) -> None:
+def bulk_upsert_component_metrics(
+    session: Session, table: Table, component_metrics_records: List[Dict[str, Any]]
+) -> None:
     """Bulk upsert component metrics into the database, in the session's transaction.
 
     Args:
         session (Session): The session to upsert with.
         table (Table): The table to upsert into.
-        component_metrics_records (list[dict]): The component metrics records to upsert.
+        component_metrics_records (List[Dict[str, Any]]): The component metrics records to upsert.
     """
     if not component_metrics_records:
         return
@@ -235,14 +241,14 @@ def bulk_upsert_component_metrics(session: Session, table: Table, component_metr
 
 
 async def abulk_upsert_component_metrics(
-    session: AsyncSession, table: Table, component_metrics_records: list[dict]
+    session: AsyncSession, table: Table, component_metrics_records: List[Dict[str, Any]]
 ) -> None:
     """Bulk upsert component metrics into the database, in the session's transaction.
 
     Args:
         session (AsyncSession): The session to upsert with.
         table (Table): The table to upsert into.
-        component_metrics_records (list[dict]): The component metrics records to upsert.
+        component_metrics_records (List[Dict[str, Any]]): The component metrics records to upsert.
     """
     if not component_metrics_records:
         return
@@ -504,15 +510,15 @@ def _metrics_tool_calls(run_data: Any) -> Any:
                     "tool_name",
                     func.json_extract(tool_call.c.value, "$.tool_name"),
                     "tool_call_error",
-                    _metrics_json_value(tool_call.c.value, "$.tool_call_error"),
+                    func.json_extract(tool_call.c.value, "$.tool_call_error"),
                     "requires_confirmation",
-                    _metrics_json_value(tool_call.c.value, "$.requires_confirmation"),
+                    func.json_extract(tool_call.c.value, "$.requires_confirmation"),
                     "confirmed",
                     _metrics_json_value(tool_call.c.value, "$.confirmed"),
                     "requires_user_input",
-                    _metrics_json_value(tool_call.c.value, "$.requires_user_input"),
+                    func.json_extract(tool_call.c.value, "$.requires_user_input"),
                     "external_execution_required",
-                    _metrics_json_value(tool_call.c.value, "$.external_execution_required"),
+                    func.json_extract(tool_call.c.value, "$.external_execution_required"),
                     "metrics",
                     func.json_object("duration", func.json_extract(tool_call.c.value, "$.metrics.duration")),
                 )
@@ -541,7 +547,9 @@ def _metrics_copied_tool_call_ids(run_data: Any) -> Any:
     )
 
 
-def _metrics_uncopied_tool_calls(tool_calls: List[Dict[str, Any]], copied_tool_call_ids: Any) -> List[Dict[str, Any]]:
+def _metrics_uncopied_tool_calls(
+    tool_calls: Optional[List[Dict[str, Any]]], copied_tool_call_ids: Any
+) -> List[Dict[str, Any]]:
     """The tool calls of a run, skipping those a forked run copied from the run it was forked from."""
     copied = {tool_call_id for tool_call_id in copied_tool_call_ids or [] if tool_call_id}
     return [tool_call for tool_call in tool_calls or [] if tool_call.get("tool_call_id") not in copied]
@@ -576,7 +584,7 @@ def build_component_metrics_runs_query(table: Table, start_timestamp: int, end_t
     nested_keys = union_all(
         *[
             select(literal(position).label("position"), literal(key).label("key"))
-            for position, key in enumerate(_METRICS_NESTED_RUN_KEYS)
+            for position, key in enumerate(METRICS_NESTED_RUN_KEYS)
         ]
     ).subquery("nested_keys")
     nested_run = _metrics_nested_runs(table.c.run_data, nested_keys.c.key)
@@ -658,7 +666,7 @@ def build_component_metrics_runs_query(table: Table, start_timestamp: int, end_t
         # Walked only for a run with runs nested inside it
         case(
             (
-                or_(*[func.json_type(table.c.run_data, f"$.{key}").is_not(None) for key in _METRICS_NESTED_RUN_KEYS]),
+                or_(*[func.json_type(table.c.run_data, f"$.{key}").is_not(None) for key in METRICS_NESTED_RUN_KEYS]),
                 nested_runs,
             )
         ).label("nested_runs"),

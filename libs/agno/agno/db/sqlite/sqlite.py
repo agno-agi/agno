@@ -66,6 +66,7 @@ from agno.db.sqlite.utils import (
     build_metrics_by_owner_queries,
     bulk_upsert_aggregate_metrics_rows,
     bulk_upsert_component_metrics,
+    is_lock_not_available,
     is_table_available,
     is_valid_table,
     reopen_metrics_day,
@@ -3046,11 +3047,9 @@ class SqliteDb(BaseDb):
             sess (Any): The session of the write.
             created_ats (Sequence[Optional[int]]): The stored created_at of each run or session the write changed.
         """
-        # Sorted, so the days are reopened and logged in date order: SQLite's write lock covers the whole database
-        days = sorted(
-            {day for created_at in created_ats if (day := metrics_day_to_reopen(created_at)) is not None}
-            | self._metrics_days_not_reopened
-        )
+        days = {
+            day for created_at in created_ats if (day := metrics_day_to_reopen(created_at)) is not None
+        } | self._metrics_days_not_reopened
         if not days:
             return
         # No savepoint: SQLite rolls back only the statement that failed, and the write's transaction goes on
@@ -3090,18 +3089,16 @@ class SqliteDb(BaseDb):
         """Get the id of each session the given rows add, move to another owner or component, or give other
         compaction metrics."""
         written_session_ids = [record["session_id"] for record in session_records]
-        stored_sessions: Dict[str, Any] = {}
-        for start in range(0, len(written_session_ids), METRICS_IN_LIST_LIMIT):
-            stored_stmt = select(
-                table.c.session_id,
-                table.c.user_id,
-                table.c.agent_id,
-                table.c.team_id,
-                table.c.workflow_id,
-                table.c.created_at,
-                table.c.session_data["compaction_metrics"].label("compaction_metrics"),
-            ).where(table.c.session_id.in_(written_session_ids[start : start + METRICS_IN_LIST_LIMIT]))
-            stored_sessions.update((row.session_id, row) for row in sess.execute(stored_stmt).fetchall())
+        stored_stmt = select(
+            table.c.session_id,
+            table.c.user_id,
+            table.c.agent_id,
+            table.c.team_id,
+            table.c.workflow_id,
+            table.c.created_at,
+            table.c.session_data["compaction_metrics"].label("compaction_metrics"),
+        ).where(table.c.session_id.in_(written_session_ids))
+        stored_sessions: Dict[str, Any] = {row.session_id: row for row in sess.execute(stored_stmt).fetchall()}
         session_ids: Set[str] = set()
         for record in session_records:
             stored_session = stored_sessions.get(record["session_id"])
@@ -3144,7 +3141,10 @@ class SqliteDb(BaseDb):
                 .mappings()
                 .first()
             )
-        return (dict(row) if row is not None else None), stale_lock_threshold
+        if row is None:
+            # Before the first refresh there is no lock to judge stale
+            return None, 0
+        return dict(row), stale_lock_threshold
 
     def _claim_metrics_refresh(self, refreshes_table: Table, worker_id: str) -> Optional[Dict[str, Any]]:
         """Claim the row of the metrics refreshes table, so one process calculates metrics at a time.
@@ -3179,8 +3179,7 @@ class SqliteDb(BaseDb):
         except OperationalError as exc:
             # The holder's calculation keeps the database locked while it writes a day, so this returns once the busy
             # timeout ends instead of raising
-            cause = getattr(exc, "orig", exc)
-            if "database is locked" not in str(cause):
+            if not is_lock_not_available(exc):
                 raise
             return None
 
@@ -3198,8 +3197,7 @@ class SqliteDb(BaseDb):
                     )
                 return True
             except OperationalError as exc:
-                cause = getattr(exc, "orig", exc)
-                if "database is locked" not in str(cause):
+                if not is_lock_not_available(exc):
                     raise
         return False
 
@@ -3220,13 +3218,20 @@ class SqliteDb(BaseDb):
         fingerprint: Optional[List[Any]] = None,
         stopped: bool = False,
         claimed_fingerprint: Optional[List[Any]] = None,
-        started_at: Optional[int] = None,
-        finished_at: Optional[int] = None,
     ) -> None:
         """Release the row of the metrics refreshes table: completed, with the fingerprint, without an error, failed
-        with one, and as the last completed refresh left it when the calculation stopped. A worker_id of None writes
-        the row only while no process holds it and no calculation started or finished after the read of started_at
-        and finished_at, and creates it when that read found none."""
+        with one, and as the last completed refresh left it when the calculation stopped.
+
+        Args:
+            refreshes_table (Table): The metrics refreshes table.
+            worker_id (Optional[str]): The id of the calculation that claimed the row. None writes the row only while
+                no process holds it, and creates it before any refresh.
+            error (Optional[str]): The error the calculation failed with. None when it completed.
+            fingerprint (Optional[List[Any]]): The fingerprint of yesterday and today, stored once it completed.
+            stopped (bool): Whether the calculation stopped before it finished.
+            claimed_fingerprint (Optional[List[Any]]): The fingerprint of the claimed row. A rebuild that marked
+                another one since keeps its mark.
+        """
         values: Dict[str, Any] = {"locked_by": None, "locked_at": None}
         if stopped:
             # The days it did not reach stay open for the next calculation; a first one that stopped has none to show
@@ -3249,24 +3254,14 @@ class SqliteDb(BaseDb):
             values.update(status="failed", error=error)
         try:
             with self.Session() as sess, sess.begin():
-                if worker_id is None and error is not None and started_at is None:
-                    # Before any refresh there is no row to update; one created since keeps its own status
+                if worker_id is None:
+                    # Before any refresh there is no row to update
                     sess.execute(
                         sqlite.insert(refreshes_table)
                         .values(id=METRICS_REFRESH_ID, started_at=int(time.time()), status="failed", error=error)
-                        .on_conflict_do_nothing(index_elements=["id"])
-                    )
-                elif worker_id is None and error is not None:
-                    # A plain update skips the row a calculation holds, instead of waiting for its lock
-                    sess.execute(
-                        update(refreshes_table)
-                        .where(
-                            refreshes_table.c.id == METRICS_REFRESH_ID,
-                            refreshes_table.c.locked_by.is_(None),
-                            refreshes_table.c.started_at == started_at,
-                            refreshes_table.c.finished_at.is_not_distinct_from(finished_at),
+                        .on_conflict_do_update(
+                            index_elements=["id"], set_=values, where=refreshes_table.c.locked_by.is_(None)
                         )
-                        .values(**values)
                     )
                 else:
                     sess.execute(
@@ -3711,19 +3706,10 @@ class SqliteDb(BaseDb):
         if rebuild_from is not None:
             # Reopened as a write reopens a day, before the claim, so a calculation another process is running
             # leaves them to the next one
-            started_at = finished_at = None
             try:
                 # A transaction of its own, without locking the metrics refresh row: a day's calculation locks the
                 # database first
                 with self.Session() as sess, sess.begin():
-                    # A calculation that starts or finishes after this read keeps its own status
-                    refresh_times = sess.execute(
-                        select(refreshes_table.c.started_at, refreshes_table.c.finished_at).where(
-                            refreshes_table.c.id == METRICS_REFRESH_ID
-                        )
-                    ).first()
-                    if refresh_times is not None:
-                        started_at, finished_at = refresh_times
                     reopen_metrics_days_from(session=sess, table=aggregate_metrics_table, starting_date=rebuild_from)
                 # Yesterday and today are picked by the fingerprint, so it is marked for the next one too
                 if not self._mark_metrics_refresh_rebuild(refreshes_table):
@@ -3734,8 +3720,6 @@ class SqliteDb(BaseDb):
                     refreshes_table,
                     None,
                     error=database_error_message(e),
-                    started_at=started_at,
-                    finished_at=finished_at,
                 )
                 raise
 
@@ -3749,12 +3733,6 @@ class SqliteDb(BaseDb):
             dates_to_process, fingerprint = self._get_metrics_dates_to_calculate(
                 aggregate_metrics_table, sessions_table, runs_table, refresh_row, rebuild_from
             )
-            if rebuild_from is not None:
-                # Yesterday and today are picked by their fingerprint, not by being open
-                today = datetime.now(timezone.utc).date()
-                dates_to_process = sorted(
-                    set(dates_to_process) | {day for day in [today - timedelta(days=1), today] if day >= rebuild_from}
-                )
 
             legacy_run_rows_by_day: Dict[date, List[Any]] = {}
             legacy_run_rows_by_id: Dict[str, Any] = {}

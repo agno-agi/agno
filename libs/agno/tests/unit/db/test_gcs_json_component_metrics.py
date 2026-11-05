@@ -464,7 +464,7 @@ def test_calculate_metrics_counts_runs_kept_in_the_legacy_runs_column():
     assert (alice_row["runs_count"], alice_row["input_tokens"]) == (1, 10)
 
 
-def test_a_aggregate_metrics_write_made_since_the_read_is_never_written_over(monkeypatch):
+def test_an_aggregate_metrics_write_made_since_the_read_is_never_written_over(monkeypatch):
     """Ensure an aggregate metrics write made by another process since the read is never written over"""
     db = _new_db()
     _build_dataset(db)

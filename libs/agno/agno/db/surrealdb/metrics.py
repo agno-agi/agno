@@ -14,6 +14,7 @@ from agno.db.utils import (
     METRICS_BATCH_SIZE,
     METRICS_COMPONENT_TYPES,
     METRICS_COST_FIELDS,
+    METRICS_NESTED_RUN_KEYS,
     METRICS_REFRESH_ID,
     METRICS_TOKEN_DETAILS_FIELDS,
     build_aggregate_metrics_row,
@@ -22,11 +23,8 @@ from agno.db.utils import (
 # The columns of the row of the metrics refreshes table. SurrealDB keeps no field set to NONE
 _METRICS_REFRESH_COLUMNS = ("locked_by", "locked_at", "started_at", "finished_at", "status", "error", "fingerprint")
 
-# The keys of a stored run that hold the runs nested inside it
-_METRICS_NESTED_RUN_KEYS = ("step_executor_runs", "member_responses", "workflow_agent_run")
-
 # A run nested deeper than this is read whole
-_METRICS_NESTED_RUNS_DEPTH = 6
+_METRICS_NESTED_RUNS_DEPTH = 3
 
 # What component metrics count of a run and of every run nested inside it. Of the messages only each request's
 # duration and the tool call each answers are read, never the content, and of the tool calls only what tool_metrics
@@ -39,9 +37,7 @@ _METRICS_RUN_DATA_FIELDS = (
 )
 
 # What a legacy run keeps of its own beside run_data: the fields the runs table keeps a column of
-_METRICS_LEGACY_RUN_FIELDS = (
-    "run_id, agent_id, team_id, workflow_id, parent_run_id, status, created_at, forked_from_session_id"
-)
+_METRICS_LEGACY_RUN_FIELDS = "run_id, agent_id, team_id, workflow_id, parent_run_id, status, created_at"
 
 
 def _stored_day(value: Any) -> Optional[date]:
@@ -86,11 +82,11 @@ def desurrealize_metric(record: Dict[str, Any]) -> Dict[str, Any]:
 def _metrics_nested_runs_fields(depth: int = _METRICS_NESTED_RUNS_DEPTH) -> str:
     """The fields of the runs nested inside a stored run that component metrics count, down to the given depth."""
     if depth == 0:
-        return ", ".join(_METRICS_NESTED_RUN_KEYS)
+        return ", ".join(METRICS_NESTED_RUN_KEYS)
     nested_fields = _metrics_nested_runs_fields(depth - 1)
     return ", ".join(
         f"{key}.{{run_id, agent_id, team_id, session_id, parent_run_id, {_METRICS_RUN_DATA_FIELDS}, {nested_fields}}}"
-        for key in _METRICS_NESTED_RUN_KEYS
+        for key in METRICS_NESTED_RUN_KEYS
     )
 
 
@@ -175,10 +171,12 @@ def get_all_sessions_with_legacy_runs_for_component_metrics_calculation(
         List[Dict[str, Any]]: The sessions: their id, owner, creation time and legacy runs, with only what component
             metrics count of each.
     """
-    # Paged by offset over a filtered scan of the sessions table
+    # Paged by offset over a filtered scan of the sessions table. A run copied into a forked session repeats a run
+    # counted in the session it was made in
     query = dedent(f"""
         SELECT id, user_id, created_at,
-            runs.{{{_METRICS_LEGACY_RUN_FIELDS}, {_METRICS_RUN_DATA_FIELDS}, {_metrics_nested_runs_fields()}}} AS runs
+            runs[WHERE !forked_from_session_id]
+                .{{{_METRICS_LEGACY_RUN_FIELDS}, {_METRICS_RUN_DATA_FIELDS}, {_metrics_nested_runs_fields()}}} AS runs
         FROM {table}
         WHERE runs != NONE AND created_at < $end AND (updated_at ?? created_at) >= $start
         {order_limit_start("id", "ASC", METRICS_BATCH_SIZE, page)}
@@ -204,8 +202,9 @@ def get_all_runs_for_component_metrics_calculation(
 
     Returns:
         List[Dict[str, Any]]: The runs, with the run_data calculate_date_component_metrics reads. Of the messages it
-            reads only each request's duration, of the tool calls only what tool_metrics counts, and of the runs
-            nested inside a run the same.
+            reads only each request's duration and the role, from_history and tool_call_id that tell the run's own
+            requests and tool calls apart, of the tool calls only what tool_metrics counts, and of the runs nested
+            inside a run the same.
     """
     # A run copied into a forked session repeats a run counted in the session it was made in
     query = dedent(f"""
@@ -382,7 +381,7 @@ def reopen_metrics_day(
     client: Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection], table: str, day: date
 ) -> None:
     """Reopen a day's everyone row of the aggregate metrics table, inserting an empty open row when it has none, so the
-    next refresh rebuilds the day.
+    next calculation rebuilds the day.
 
     Args:
         table (str): The aggregate metrics table.
