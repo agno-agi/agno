@@ -1,10 +1,10 @@
 """Integration tests for OpenAI reasoning streaming functionality.
 
 This test verifies that reasoning content streams correctly (not all at once)
-for OpenAI o-series models when used as a reasoning_model.
+for OpenAI reasoning models when used as a reasoning_model.
 
-Note: OpenAI o-series models (o1, o3, o4) perform internal reasoning but do not
-expose the reasoning content via the API. The reasoning happens internally.
+Note: OpenAI reasoning models perform internal reasoning but do not expose the
+reasoning content via the API. The reasoning happens internally.
 
 These tests verify the streaming reasoning feature where reasoning content
 is delivered incrementally via RunEvent.reasoning_content_delta events.
@@ -18,11 +18,11 @@ from agno.run.agent import RunEvent
 
 
 def _get_reasoning_streaming_agent(**kwargs):
-    """Create an agent with OpenAI o-series reasoning_model for streaming reasoning tests."""
+    """Create an agent with an OpenAI reasoning_model for streaming reasoning tests."""
     default_config = {
         "model": OpenAIChat(id="gpt-4o-mini"),
-        # o3-mini provides reasoning internally, content is treated as reasoning
-        "reasoning_model": OpenAIChat(id="o3-mini"),
+        # The model reasons internally, so its content is treated as reasoning
+        "reasoning_model": OpenAIChat(id="gpt-5-mini"),
         "instructions": "You are an expert problem-solving assistant. Think step by step.",
         "markdown": True,
         "telemetry": False,
@@ -32,7 +32,7 @@ def _get_reasoning_streaming_agent(**kwargs):
 
 
 def test_reasoning_model_streams_content_deltas():
-    """Test that OpenAI o-series reasoning_model streams content via reasoning_content_delta events."""
+    """Test that an OpenAI reasoning_model streams content via reasoning_content_delta events."""
     agent = _get_reasoning_streaming_agent()
 
     prompt = "What is 25 * 37? Show your reasoning step by step."
@@ -56,7 +56,7 @@ def test_reasoning_model_streams_content_deltas():
     # Assertions
     assert reasoning_started, "Should have received reasoning_started event"
     assert reasoning_completed, "Should have received reasoning_completed event"
-    # Note: For o-series models, the content output is treated as reasoning
+    # Note: For reasoning models, the content output is treated as reasoning
     # The streaming behavior may vary based on model capabilities
     assert len(reasoning_deltas) >= 1, (
         f"Should have received at least one reasoning_content_delta event, but got {len(reasoning_deltas)}"
@@ -69,7 +69,7 @@ def test_reasoning_model_streams_content_deltas():
 
 @pytest.mark.asyncio
 async def test_reasoning_model_streams_content_deltas_async():
-    """Test that OpenAI o-series reasoning_model streams content via reasoning_content_delta events (async)."""
+    """Test that an OpenAI reasoning_model streams content via reasoning_content_delta events (async)."""
     agent = _get_reasoning_streaming_agent()
 
     prompt = "What is 25 * 37? Show your reasoning step by step."

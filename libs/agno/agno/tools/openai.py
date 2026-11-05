@@ -33,7 +33,7 @@ class OpenAITools(Toolkit):
         text_to_speech_voice (OpenAIVoice): Voice to use for TTS. Default is "alloy".
         text_to_speech_model (OpenAITTSModel): Model to use for TTS. Default is "tts-1".
         text_to_speech_format (OpenAITTSFormat): Audio format for TTS. Default is "mp3".
-        image_model (str, optional): Model to use for image generation. Default is "dall-e-3".
+        image_model (str, optional): Model to use for image generation. Default is "gpt-image-2".
         image_quality (str, optional): Quality setting for image generation.
         image_size (str, optional): Size setting for image generation.
         image_style (str, optional): Style setting for image generation.
@@ -50,7 +50,7 @@ class OpenAITools(Toolkit):
         text_to_speech_voice: OpenAIVoice = "alloy",
         text_to_speech_model: OpenAITTSModel = "tts-1",
         text_to_speech_format: OpenAITTSFormat = "mp3",
-        image_model: Optional[str] = "dall-e-3",
+        image_model: Optional[str] = "gpt-image-2",
         image_quality: Optional[str] = None,
         image_size: Optional[Literal["256x256", "512x512", "1024x1024", "1792x1024", "1024x1792"]] = None,
         image_style: Optional[Literal["vivid", "natural"]] = None,

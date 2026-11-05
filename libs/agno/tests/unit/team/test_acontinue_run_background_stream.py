@@ -466,8 +466,12 @@ class TestQueuedCancelWithoutRunResponse:
             ):
                 collected.append(chunk)
 
-        # The session run (loaded by run_id) was persisted as CANCELLED
+        # The session run (loaded by run_id) was persisted as CANCELLED, and as
+        # a paused run with history, never as one that never started
+        from agno.run.base import CancellationStage
+
         assert session_run.status == RunStatus.cancelled
+        assert session_run.cancellation_stage is CancellationStage.paused
         assert mock_save.await_count >= 1
         # The event stream was marked CANCELLED, not COMPLETED
         assert mock_stream.complete_run.call_args is not None

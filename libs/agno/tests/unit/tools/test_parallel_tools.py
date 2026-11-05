@@ -21,6 +21,54 @@ def parallel_tools(mock_parallel_client):
 # === Initialization ===
 
 
+@pytest.mark.parametrize("owner", ["toolkit", "agent", "team", "registry"])
+def test_copy_preserves_live_client_and_isolates_toolkit_state(owner, monkeypatch):
+    import gc
+    import sys
+    from copy import deepcopy
+
+    from agno.agent import Agent
+    from agno.registry import Registry
+    from agno.team import Team
+
+    # A real SDK client contains locks; no requests are made. Mock clients hide
+    # the failed deepcopy and the partially constructed HTTP client's finalizer.
+    unraisable = []
+    monkeypatch.setattr(sys, "unraisablehook", unraisable.append)
+    toolkit = ParallelTools(api_key="test-no-network", include_domains=["example.com"], all=True)
+    try:
+        if owner == "agent":
+            copied = Agent(tools=[toolkit]).deep_copy().tools[0]
+        elif owner == "team":
+            copied = Team(members=[], tools=[toolkit]).deep_copy().tools[0]
+        elif owner == "registry":
+            copied = deepcopy(Registry(tools=[toolkit])).tools[0]
+        else:
+            copied = deepcopy(toolkit)
+        gc.collect()
+        assert not unraisable
+        assert copied is not toolkit
+        assert copied.parallel_client is toolkit.parallel_client
+        assert copied.functions is not toolkit.functions
+        assert copied.functions.keys() == toolkit.functions.keys()
+        for name, function in copied.functions.items():
+            assert function is not toolkit.functions[name]
+            assert function.entrypoint.__self__ is copied
+        copied.include_domains.append("other.example")
+        assert toolkit.include_domains == ["example.com"]
+        copied.functions["parallel_search"].description = "changed"
+        assert toolkit.functions["parallel_search"].description != "changed"
+        result = Mock()
+        result.model_dump.return_value = {"results": []}
+        monkeypatch.setattr(toolkit.parallel_client, "search", Mock(return_value=result))
+        assert json.loads(copied.parallel_search(objective="test")) == {"results": []}
+        assert toolkit.parallel_client.search.call_args.kwargs["advanced_settings"]["source_policy"] == {
+            "include_domains": ["example.com", "other.example"]
+        }
+    finally:
+        toolkit.parallel_client.close()
+
+
 def test_init_with_api_key(mock_parallel_client):
     tools = ParallelTools(api_key="test-key")
     assert tools.api_key == "test-key"

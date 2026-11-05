@@ -597,7 +597,14 @@ class SuperserveTools(Toolkit):
     # Core tools (async)
     # ------------------------------------------------------------------
     async def arun_python_code(self, agent: Union[Agent, Team], code: str) -> str:
-        """Async variant of run_python_code."""
+        """Execute Python code in the sandbox and return its output.
+
+        Args:
+            code: Python code to execute.
+
+        Returns:
+            The command output (stdout, stderr, exit code) or an error message.
+        """
         try:
             sandbox = await self._aget_sandbox(agent)
             path = f"/tmp/agno_run_{uuid4().hex[:8]}.py"
@@ -608,7 +615,14 @@ class SuperserveTools(Toolkit):
             return self._error("Error executing code", e)
 
     async def arun_command(self, agent: Union[Agent, Team], command: str) -> str:
-        """Async variant of run_command."""
+        """Execute a shell command in the sandbox.
+
+        Args:
+            command: Shell command to execute.
+
+        Returns:
+            The command output (stdout, stderr, exit code) or an error message.
+        """
         try:
             sandbox = await self._aget_sandbox(agent)
             result = await sandbox.commands.run(command, timeout_seconds=self.command_timeout)
@@ -617,7 +631,15 @@ class SuperserveTools(Toolkit):
             return self._error("Error executing command", e)
 
     async def acreate_file(self, agent: Union[Agent, Team], file_path: str, content: str) -> str:
-        """Async variant of create_file."""
+        """Create or overwrite a file in the sandbox.
+
+        Args:
+            file_path: Absolute path to the file in the sandbox.
+            content: Text content to write.
+
+        Returns:
+            A success message or an error message.
+        """
         try:
             sandbox = await self._aget_sandbox(agent)
             await sandbox.files.write(file_path, content)
@@ -626,7 +648,14 @@ class SuperserveTools(Toolkit):
             return self._error("Error creating file", e)
 
     async def aread_file(self, agent: Union[Agent, Team], file_path: str) -> str:
-        """Async variant of read_file."""
+        """Read a file's contents from the sandbox.
+
+        Args:
+            file_path: Absolute path to the file in the sandbox.
+
+        Returns:
+            The file contents as text or an error message.
+        """
         try:
             sandbox = await self._aget_sandbox(agent)
             return await sandbox.files.read_text(file_path)
@@ -634,7 +663,14 @@ class SuperserveTools(Toolkit):
             return self._error("Error reading file", e)
 
     async def alist_files(self, agent: Union[Agent, Team], directory: str = "/") -> str:
-        """Async variant of list_files."""
+        """List the contents of a directory in the sandbox.
+
+        Args:
+            directory: Directory to list (default: root).
+
+        Returns:
+            The directory listing or an error message.
+        """
         try:
             sandbox = await self._aget_sandbox(agent)
             result = await sandbox.commands.run(
@@ -647,7 +683,14 @@ class SuperserveTools(Toolkit):
             return self._error("Error listing files", e)
 
     async def adelete_file(self, agent: Union[Agent, Team], file_path: str) -> str:
-        """Async variant of delete_file."""
+        """Delete a file or directory in the sandbox.
+
+        Args:
+            file_path: Absolute path to the file or directory in the sandbox.
+
+        Returns:
+            A success message or an error message.
+        """
         try:
             sandbox = await self._aget_sandbox(agent)
             result = await sandbox.commands.run(
@@ -660,7 +703,16 @@ class SuperserveTools(Toolkit):
             return self._error("Error deleting file", e)
 
     async def adownload_directory(self, agent: Union[Agent, Team], sandbox_path: str, local_path: str) -> str:
-        """Async variant of download_directory."""
+        """Download a directory from the sandbox as a zip archive saved locally.
+
+        Args:
+            sandbox_path: Directory path in the sandbox to download.
+            local_path: Path within the tool's output directory to write the zip archive to
+                (e.g. "out.zip"). Must stay inside that directory.
+
+        Returns:
+            The local path written or an error message.
+        """
         try:
             sandbox = await self._aget_sandbox(agent)
             data = await sandbox.files.download_dir(sandbox_path, timeout=self.command_timeout)
@@ -672,7 +724,11 @@ class SuperserveTools(Toolkit):
             return self._error("Error downloading directory", e)
 
     async def aget_sandbox_info(self, agent: Union[Agent, Team]) -> str:
-        """Async variant of get_sandbox_info."""
+        """Get information about the current sandbox.
+
+        Returns:
+            JSON with the sandbox id, name, status, and metadata, or an error message.
+        """
         try:
             sandbox = await self._aget_sandbox(agent)
             info = await sandbox.get_info()
@@ -683,7 +739,11 @@ class SuperserveTools(Toolkit):
             return self._error("Error getting sandbox info", e)
 
     async def alist_sandboxes(self) -> str:
-        """Async variant of list_sandboxes."""
+        """List all sandboxes belonging to the team.
+
+        Returns:
+            JSON list of sandboxes (id, name, status) or an error message.
+        """
         try:
             sandboxes = await AsyncSandbox.list(api_key=self.api_key, base_url=self.base_url)
             return json.dumps([{"id": s.id, "name": s.name, "status": s.status.value} for s in sandboxes])
@@ -691,7 +751,11 @@ class SuperserveTools(Toolkit):
             return self._error("Error listing sandboxes", e)
 
     async def ashutdown_sandbox(self, agent: Union[Agent, Team]) -> str:
-        """Async variant of shutdown_sandbox."""
+        """Delete the current sandbox and release its resources.
+
+        Returns:
+            A success message or an error message.
+        """
         try:
             if self._async_sandbox is None and not self._resolve_sandbox_id(agent):
                 return "No active sandbox to shut down."
@@ -706,7 +770,14 @@ class SuperserveTools(Toolkit):
             return self._error("Error shutting down sandbox", e)
 
     async def ashutdown_sandbox_by_id(self, agent: Union[Agent, Team], sandbox_id: str) -> str:
-        """Async variant of shutdown_sandbox_by_id."""
+        """Delete a specific sandbox by its id, e.g. one returned by list_sandboxes.
+
+        Args:
+            sandbox_id: The id of the sandbox to delete.
+
+        Returns:
+            A success message or an error message.
+        """
         try:
             await AsyncSandbox.kill_by_id(sandbox_id, api_key=self.api_key, base_url=self.base_url)
             if self._is_current_sandbox(agent, sandbox_id):
@@ -718,7 +789,14 @@ class SuperserveTools(Toolkit):
             return self._error("Error shutting down sandbox", e)
 
     async def aget_preview_url(self, agent: Union[Agent, Team], port: int) -> str:
-        """Async variant of get_preview_url."""
+        """Get a public URL for a port exposed inside the sandbox.
+
+        Args:
+            port: Port a process inside the sandbox is listening on.
+
+        Returns:
+            A public URL routing to that port, or an error message.
+        """
         try:
             sandbox = await self._aget_sandbox(agent)
             return sandbox.get_preview_url(port)
@@ -729,7 +807,11 @@ class SuperserveTools(Toolkit):
     # Lifecycle tools (async, opt-in)
     # ------------------------------------------------------------------
     async def apause_sandbox(self, agent: Union[Agent, Team]) -> str:
-        """Async variant of pause_sandbox."""
+        """Pause the current sandbox to save resources. It can be resumed later.
+
+        Returns:
+            A success message or an error message.
+        """
         try:
             sandbox = await self._aget_sandbox(agent)
             await sandbox.pause()
@@ -738,7 +820,11 @@ class SuperserveTools(Toolkit):
             return self._error("Error pausing sandbox", e)
 
     async def aresume_sandbox(self, agent: Union[Agent, Team]) -> str:
-        """Async variant of resume_sandbox."""
+        """Resume the current paused sandbox.
+
+        Returns:
+            A success message or an error message.
+        """
         try:
             sandbox = await self._aget_sandbox(agent)
             await sandbox.resume()
@@ -750,7 +836,18 @@ class SuperserveTools(Toolkit):
     # Secret tools (async, opt-in)
     # ------------------------------------------------------------------
     async def aattach_secret(self, agent: Union[Agent, Team], env_key: str, secret_name: str) -> str:
-        """Async variant of attach_secret."""
+        """Bind a team secret to the sandbox under an environment variable.
+
+        The sandbox sees a proxy token; the real credential is swapped in only for
+        outbound requests to the secret's allowed hosts.
+
+        Args:
+            env_key: Environment variable name the sandbox will see.
+            secret_name: Name of the team secret to bind.
+
+        Returns:
+            A success message or an error message.
+        """
         try:
             sandbox = await self._aget_sandbox(agent)
             await sandbox.attach_secret(env_key, secret_name)
@@ -759,7 +856,14 @@ class SuperserveTools(Toolkit):
             return self._error("Error attaching secret", e)
 
     async def adetach_secret(self, agent: Union[Agent, Team], env_key: str) -> str:
-        """Async variant of detach_secret."""
+        """Remove a secret binding from the sandbox by its environment variable key.
+
+        Args:
+            env_key: Environment variable name of the binding to remove.
+
+        Returns:
+            A success message or an error message.
+        """
         try:
             sandbox = await self._aget_sandbox(agent)
             await sandbox.detach_secret(env_key)

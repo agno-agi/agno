@@ -83,7 +83,7 @@ class GoogleBigQueryTools(Toolkit):
     def describe_table(self, table_id: str) -> str:
         """Use this function to describe a table.
         Args:
-            table_name (str): The name of the table to get the schema for.
+            table_id (str): The ID of the table to get the schema for.
         Returns:
             str: schema of a table
         """
