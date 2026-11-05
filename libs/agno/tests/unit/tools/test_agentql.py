@@ -13,11 +13,11 @@ try:
 except (ImportError, ModuleNotFoundError):
     AGENTQL_AVAILABLE = False
 
-# Keep collection identical across CI shards even when the optional SDK cannot import.
-pytestmark = pytest.mark.skipif(not AGENTQL_AVAILABLE, reason="agentql not available or has broken dependencies")
+# Skip entire module if agentql is not properly available
+if not AGENTQL_AVAILABLE:
+    pytest.skip("agentql not available or has broken dependencies", allow_module_level=True)
 
-if AGENTQL_AVAILABLE:
-    from agno.tools.agentql import AgentQLTools
+from agno.tools.agentql import AgentQLTools
 
 
 @pytest.fixture
