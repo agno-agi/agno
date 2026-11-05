@@ -13,7 +13,7 @@ from agno.db.dynamo import DynamoDb  # noqa: E402
 from agno.db.dynamo.utils import (  # noqa: E402
     deserialize_metrics_row,
     serialize_to_dynamo_item,
-    user_metrics_key,
+    aggregate_metrics_key,
 )
 from agno.db.migrations.manager import MigrationManager  # noqa: E402
 from agno.db.utils import (  # noqa: E402
@@ -44,7 +44,7 @@ def dynamo_db(monkeypatch):
             session_table="sessions",
             runs_table="runs",
             component_metrics_table="component_metrics",
-            user_metrics_table="user_metrics",
+            aggregate_metrics_table="aggregate_metrics",
             metrics_refreshes_table="metrics_refreshes",
         )
         for table_type in ["sessions", "runs"]:
@@ -63,7 +63,7 @@ def _items(db: DynamoDb, table_name: str) -> List[Dict[str, Any]]:
 
 def _row(db: DynamoDb, aggregation_period: str, day: date, user_id: str) -> Optional[Dict[str, Any]]:
     item = db.client.get_item(
-        TableName=db.user_metrics_table_name, Key=user_metrics_key(aggregation_period, day, user_id)
+        TableName=db.aggregate_metrics_table_name, Key=aggregate_metrics_key(aggregation_period, day, user_id)
     ).get("Item")
     return deserialize_metrics_row(item) if item else None
 
@@ -200,12 +200,12 @@ def _ground_truth(db: DynamoDb, day: date, user_id: Optional[str]) -> Dict[str, 
     return truth
 
 
-def _stored_user_metrics_row(db: DynamoDb, day: date, user_id: str) -> Dict[str, Any]:
-    """The stored user metrics row of a day and user, with its token counts flattened as get_metrics reads them."""
+def _stored_aggregate_metrics_row(db: DynamoDb, day: date, user_id: str) -> Dict[str, Any]:
+    """The stored aggregate metrics row of a day and user, with its token counts flattened as get_metrics reads them."""
     row = _row(db, "daily", day, user_id)
     metric = next(
         m
-        for m in db._get_user_metrics_rows(day, day, user_id)[0]
+        for m in db._get_aggregate_metrics_rows(day, day, user_id)[0]
         if m["date"] == day and (m["user_id"] or "") == user_id
     )
     return {
@@ -221,14 +221,14 @@ def test_calculate_metrics_matches_the_stored_sessions_and_runs(dynamo_db: Dynam
 
     for day in [_utc_date(OLD_DAY), _utc_date(MID_DAY)]:
         truth = _ground_truth(dynamo_db, day, None)
-        stored = _stored_user_metrics_row(dynamo_db, day, "")
+        stored = _stored_aggregate_metrics_row(dynamo_db, day, "")
         assert {key: stored[key] for key in truth} == truth
         assert _everyone_row(dynamo_db, day)["completed"] is True
         for user_id in ["alice", "bob"]:
             user_truth = _ground_truth(dynamo_db, day, user_id)
             if not any(user_truth[f"{t}_sessions_count"] for t in ["agent", "team", "workflow"]):
                 continue
-            stored = _stored_user_metrics_row(dynamo_db, day, user_id)
+            stored = _stored_aggregate_metrics_row(dynamo_db, day, user_id)
             assert {key: stored[key] for key in user_truth} == user_truth
 
     totals, _ = dynamo_db.get_metrics_totals(
@@ -300,7 +300,7 @@ def test_calculate_metrics_takes_over_a_lock_that_went_stale(dynamo_db: DynamoDb
 
     assert dynamo_db.calculate_metrics() is None
     assert dynamo_db.get_metrics_refresh_status()["status"] == "running"
-    assert _items(dynamo_db, dynamo_db._get_table("user_metrics")) == []
+    assert _items(dynamo_db, dynamo_db._get_table("aggregate_metrics")) == []
     assert _items(dynamo_db, dynamo_db._get_table("component_metrics")) == []
 
     # A lock without a heartbeat for longer than its lease went stale: its process stopped

@@ -22,13 +22,13 @@ from agno.db.redis.utils import (
     build_component_metrics_run,
     build_component_metrics_session,
     bulk_upsert_component_metrics,
-    bulk_upsert_user_metrics_rows,
+    bulk_upsert_aggregate_metrics_rows,
     create_index_entries,
     delete_component_metrics,
-    delete_user_metrics_rows,
+    delete_aggregate_metrics_rows,
     deserialize_component_metrics_record,
     deserialize_data,
-    deserialize_user_metrics_record,
+    deserialize_aggregate_metrics_record,
     generate_created_at_index_key,
     generate_index_key,
     generate_metrics_prefix,
@@ -41,8 +41,8 @@ from agno.db.redis.utils import (
     reopen_metrics_days_from,
     reopen_metrics_month,
     serialize_data,
-    upsert_user_metrics_row,
-    user_metrics_record_id,
+    upsert_aggregate_metrics_row,
+    aggregate_metrics_record_id,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -53,13 +53,13 @@ from agno.db.utils import (
     METRICS_LOCK_SECONDS,
     METRICS_REFRESH_ID,
     METRICS_STOPPED_ERROR,
-    USER_METRICS_COUNT_COLUMNS,
+    AGGREGATE_METRICS_COUNT_COLUMNS,
     add_metrics_month_totals,
     build_metrics_by_owner_from_rows,
-    build_metrics_from_user_metrics,
+    build_metrics_from_aggregate_metrics,
     build_single_run_row,
-    build_user_metrics_month_rows,
-    build_user_metrics_rows,
+    build_aggregate_metrics_month_rows,
+    build_aggregate_metrics_rows,
     calculate_date_component_metrics,
     component_metrics_rows_to_write,
     database_error_message,
@@ -88,7 +88,7 @@ from agno.db.utils import (
     metrics_versions,
     resolve_metrics_fields,
     total_metrics_rows,
-    user_metrics_rows_to_write,
+    aggregate_metrics_rows_to_write,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -119,7 +119,7 @@ class RedisDb(BaseDb):
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         component_metrics_table: Optional[str] = None,
-        user_metrics_table: Optional[str] = None,
+        aggregate_metrics_table: Optional[str] = None,
         metrics_refreshes_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
@@ -148,7 +148,7 @@ class RedisDb(BaseDb):
             metrics_table (Optional[str]): Name of the table to store metrics
             component_metrics_table (Optional[str]): Name of the table to store the metrics of each agent, team and
                 workflow
-            user_metrics_table (Optional[str]): Name of the table to store the metrics of each user
+            aggregate_metrics_table (Optional[str]): Name of the table to store the metrics of each user
             metrics_refreshes_table (Optional[str]): Name of the table to store the metrics refreshes
             eval_table (Optional[str]): Name of the table to store evaluation runs
             knowledge_table (Optional[str]): Name of the table to store knowledge documents
@@ -170,7 +170,7 @@ class RedisDb(BaseDb):
             memory_table=memory_table,
             metrics_table=metrics_table,
             component_metrics_table=component_metrics_table,
-            user_metrics_table=user_metrics_table,
+            aggregate_metrics_table=aggregate_metrics_table,
             metrics_refreshes_table=metrics_refreshes_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
@@ -179,7 +179,7 @@ class RedisDb(BaseDb):
         )
 
         if metrics_table is not None:
-            log_warning("metrics_table is deprecated; use component_metrics_table and user_metrics_table.")
+            log_warning("metrics_table is deprecated; use component_metrics_table and aggregate_metrics_table.")
 
         self.db_prefix = db_prefix
         self.expire = expire
@@ -220,8 +220,8 @@ class RedisDb(BaseDb):
         elif table_type == "component_metrics":
             return self.component_metrics_table_name
 
-        elif table_type == "user_metrics":
-            return self.user_metrics_table_name
+        elif table_type == "aggregate_metrics":
+            return self.aggregate_metrics_table_name
 
         elif table_type == "metrics_refreshes":
             return self.metrics_refreshes_table_name
@@ -1831,11 +1831,11 @@ class RedisDb(BaseDb):
         return days
 
     def _get_metrics_record_ids(self, table_type: str, index_field: str, index_values: List[str]) -> List[str]:
-        """Get the IDs of the component metrics or user metrics rows indexed under any of the given values of a
+        """Get the IDs of the component metrics or aggregate metrics rows indexed under any of the given values of a
         field.
 
         Args:
-            table_type (str): "component_metrics" or "user_metrics".
+            table_type (str): "component_metrics" or "aggregate_metrics".
             index_field (str): The indexed field: "date" or "user_id".
             index_values (List[str]): The values of the field.
 
@@ -1867,49 +1867,49 @@ class RedisDb(BaseDb):
             records.extend(deserialize_component_metrics_record(data) for data in pipeline.execute() if data)
         return records
 
-    def _get_user_metrics_records(self, record_ids: List[str]) -> List[Dict[str, Any]]:
-        """Get the user metrics rows with the given IDs, a batch at a time, each with its version and its date
+    def _get_aggregate_metrics_records(self, record_ids: List[str]) -> List[Dict[str, Any]]:
+        """Get the aggregate metrics rows with the given IDs, a batch at a time, each with its version and its date
         read back as a date."""
         records: List[Dict[str, Any]] = []
         for batch_start in range(0, len(record_ids), METRICS_BATCH_SIZE):
             pipeline = self.redis_client.pipeline(transaction=False)
             for record_id in record_ids[batch_start : batch_start + METRICS_BATCH_SIZE]:
                 pipeline.hgetall(
-                    generate_redis_key(prefix=self._metrics_prefix(), table_type="user_metrics", key_id=record_id)
+                    generate_redis_key(prefix=self._metrics_prefix(), table_type="aggregate_metrics", key_id=record_id)
                 )
-            records.extend(deserialize_user_metrics_record(fields) for fields in pipeline.execute() if fields)
+            records.extend(deserialize_aggregate_metrics_record(fields) for fields in pipeline.execute() if fields)
         return records
 
-    def _get_user_metrics_version(self, aggregation_period: str, record_date: date) -> Optional[int]:
+    def _get_aggregate_metrics_version(self, aggregation_period: str, record_date: date) -> Optional[int]:
         """Get the version of the everyone row of the given period. None when it has none."""
         version = self.redis_client.hget(
             generate_redis_key(
                 prefix=self._metrics_prefix(),
-                table_type="user_metrics",
-                key_id=user_metrics_record_id(aggregation_period, record_date, ""),
+                table_type="aggregate_metrics",
+                key_id=aggregate_metrics_record_id(aggregation_period, record_date, ""),
             ),
             "version",
         )
         return int(version) if version is not None else None  # type: ignore[arg-type]
 
-    def _get_user_metrics_column(self, record_ids: List[str], column: str) -> List[Any]:
-        """Get one column of each of the given rows of the user metrics table, a batch at a time. None for a row
+    def _get_aggregate_metrics_column(self, record_ids: List[str], column: str) -> List[Any]:
+        """Get one column of each of the given rows of the aggregate metrics table, a batch at a time. None for a row
         that has none."""
         values: List[Any] = []
         for batch_start in range(0, len(record_ids), METRICS_BATCH_SIZE):
             pipeline = self.redis_client.pipeline(transaction=False)
             for record_id in record_ids[batch_start : batch_start + METRICS_BATCH_SIZE]:
                 pipeline.hget(
-                    generate_redis_key(prefix=self._metrics_prefix(), table_type="user_metrics", key_id=record_id),
+                    generate_redis_key(prefix=self._metrics_prefix(), table_type="aggregate_metrics", key_id=record_id),
                     column,
                 )
             values.extend(json.loads(value) if value is not None else None for value in pipeline.execute())
         return values
 
     def _get_metrics_everyone_record_ids(self) -> List[str]:
-        """Get the ID of every everyone row of the user metrics table, of days and of months. Every calculated day has
+        """Get the ID of every everyone row of the aggregate metrics table, of days and of months. Every calculated day has
         one, so their dates are the days metrics were calculated for."""
-        return self._get_metrics_record_ids("user_metrics", "user_id", [""])
+        return self._get_metrics_record_ids("aggregate_metrics", "user_id", [""])
 
     def _get_metrics_records_of_days(
         self, table_type: str, starting_date: Optional[date], ending_date: Optional[date]
@@ -1967,7 +1967,7 @@ class RedisDb(BaseDb):
         ]
         completed_by_day = {
             metrics_record_key(record_id)[0]: bool(completed)
-            for record_id, completed in zip(record_ids, self._get_user_metrics_column(record_ids, "completed"))
+            for record_id, completed in zip(record_ids, self._get_aggregate_metrics_column(record_ids, "completed"))
         }
         dates_to_process.update(day for day, completed in completed_by_day.items() if not completed and day < yesterday)
         if not first_calculation:
@@ -1994,7 +1994,7 @@ class RedisDb(BaseDb):
         ]
         return [
             metrics_record_key(record_id)[0]
-            for record_id, completed in zip(record_ids, self._get_user_metrics_column(record_ids, "completed"))
+            for record_id, completed in zip(record_ids, self._get_aggregate_metrics_column(record_ids, "completed"))
             if not completed
         ]
 
@@ -2154,22 +2154,22 @@ class RedisDb(BaseDb):
                 continue  # the refresh changed under us; re-read and re-check
         return False
 
-    def _write_user_metrics_rows(
-        self, user_metrics_rows: List[Dict[str, Any]], rows_changed: bool, read_version: Optional[int], worker_id: str
+    def _write_aggregate_metrics_rows(
+        self, aggregate_metrics_rows: List[Dict[str, Any]], rows_changed: bool, read_version: Optional[int], worker_id: str
     ) -> bool:
-        """Write a period's rows of the user metrics table, from build_user_metrics_rows: the user rows, then the
+        """Write a period's rows of the aggregate metrics table, from build_aggregate_metrics_rows: the user rows, then the
         everyone row, which is completed only while it still has the version read before the period's rows. False when
         another process took the metrics refresh over, and nothing more was written."""
-        period, period_date = user_metrics_rows[0]["aggregation_period"], user_metrics_rows[0]["date"]
-        stored_rows = self._get_user_metrics_records(
+        period, period_date = aggregate_metrics_rows[0]["aggregation_period"], aggregate_metrics_rows[0]["date"]
+        stored_rows = self._get_aggregate_metrics_records(
             [
                 record_id
-                for record_id in self._get_metrics_record_ids("user_metrics", "date", [period_date.isoformat()])
+                for record_id in self._get_metrics_record_ids("aggregate_metrics", "date", [period_date.isoformat()])
                 if metrics_record_key(record_id)[1] == period
             ]
         )
-        everyone_row, changed_rows, stale_user_ids = user_metrics_rows_to_write(
-            user_metrics_rows, stored_rows, rows_changed
+        everyone_row, changed_rows, stale_user_ids = aggregate_metrics_rows_to_write(
+            aggregate_metrics_rows, stored_rows, rows_changed
         )
         stored_by_user = {row["user_id"]: row for row in stored_rows}
         stale_rows = [stored_by_user[user_id] for user_id in stale_user_ids]
@@ -2177,16 +2177,16 @@ class RedisDb(BaseDb):
             if not self._write_metrics_rows(
                 worker_id,
                 partial(
-                    delete_user_metrics_rows,
+                    delete_aggregate_metrics_rows,
                     prefix=self._metrics_prefix(),
-                    user_metrics_rows=stale_rows[batch_start : batch_start + METRICS_BATCH_SIZE],
+                    aggregate_metrics_rows=stale_rows[batch_start : batch_start + METRICS_BATCH_SIZE],
                 ),
             ) or not self._write_metrics_rows(
                 worker_id,
                 partial(
-                    bulk_upsert_user_metrics_rows,
+                    bulk_upsert_aggregate_metrics_rows,
                     prefix=self._metrics_prefix(),
-                    user_metrics_rows=changed_rows[batch_start : batch_start + METRICS_BATCH_SIZE],
+                    aggregate_metrics_rows=changed_rows[batch_start : batch_start + METRICS_BATCH_SIZE],
                     expire=self.expire,
                 ),
             ):
@@ -2194,7 +2194,7 @@ class RedisDb(BaseDb):
 
         # Written last, so its version never moves without the rows it tells of
         if everyone_row is not None:
-            return upsert_user_metrics_row(
+            return upsert_aggregate_metrics_row(
                 self.redis_client, self._metrics_prefix(), everyone_row, read_version, worker_id, self.expire
             )
         return True
@@ -2207,9 +2207,9 @@ class RedisDb(BaseDb):
         worker_id: str,
         should_stop: Optional[Callable[[], bool]] = None,
     ) -> bool:
-        """Rebuild one day's component and user metrics rows. False when nothing was written."""
+        """Rebuild one day's component and aggregate metrics rows. False when nothing was written."""
         # Read before the day's runs, so a run written while they are read moves it
-        read_version = self._get_user_metrics_version("daily", date_to_process)
+        read_version = self._get_aggregate_metrics_version("daily", date_to_process)
 
         sessions = self._get_metrics_day_records(
             "sessions", date_to_process, build_component_metrics_session, should_stop
@@ -2293,8 +2293,8 @@ class RedisDb(BaseDb):
                 return False
 
         # Written after the component rows, so its version never moves without the rows it tells of
-        if not self._write_user_metrics_rows(
-            build_user_metrics_rows(records, "daily", date_to_process, metrics_day_completed(date_to_process)),
+        if not self._write_aggregate_metrics_rows(
+            build_aggregate_metrics_rows(records, "daily", date_to_process, metrics_day_completed(date_to_process)),
             rows_changed=bool(changed_rows or stale_keys),
             read_version=read_version,
             worker_id=worker_id,
@@ -2314,9 +2314,9 @@ class RedisDb(BaseDb):
         return True
 
     def _calculate_month_metrics(self, month_start: date, worker_id: str) -> bool:
-        """Rebuild the month rows of the user metrics table from the component metrics rows of the month's days. False
+        """Rebuild the month rows of the aggregate metrics table from the component metrics rows of the month's days. False
         when another process took the refresh over, and nothing was written."""
-        read_version = self._get_user_metrics_version("monthly", month_start)
+        read_version = self._get_aggregate_metrics_version("monthly", month_start)
         month_days = [
             month_start + timedelta(days=offset)
             for offset in range((metrics_month_end(month_start) - month_start).days + 1)
@@ -2335,8 +2335,8 @@ class RedisDb(BaseDb):
         if not self._heartbeat_metrics_refresh(worker_id):
             return False
         # Added up per owner and component over the month, so a user of several days is one user of the month
-        return self._write_user_metrics_rows(
-            build_user_metrics_month_rows(month_start, per_owner),
+        return self._write_aggregate_metrics_rows(
+            build_aggregate_metrics_month_rows(month_start, per_owner),
             rows_changed=False,
             read_version=read_version,
             worker_id=worker_id,
@@ -2539,17 +2539,17 @@ class RedisDb(BaseDb):
         latest_updated_at = max((row["updated_at"] for row in rows if row.get("updated_at") is not None), default=None)
         return build_metrics_by_owner_from_rows(rows), latest_updated_at
 
-    def _get_user_metrics_rows(
+    def _get_aggregate_metrics_rows(
         self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
     ) -> Tuple[List[dict], Optional[int]]:
-        """Get the day rows of the user metrics table in the shape of the metrics table: the everyone rows for ``""``, one
+        """Get the day rows of the aggregate metrics table in the shape of the metrics table: the everyone rows for ``""``, one
         user's rows for a name, and every user's rows for ``None``."""
         if user_id is None:
-            record_ids = self._get_metrics_records_of_days("user_metrics", starting_date, ending_date)
+            record_ids = self._get_metrics_records_of_days("aggregate_metrics", starting_date, ending_date)
         else:
             record_ids = [
                 record_id
-                for record_id in self._get_metrics_record_ids("user_metrics", "user_id", [user_id])
+                for record_id in self._get_metrics_record_ids("aggregate_metrics", "user_id", [user_id])
                 if metrics_record_key(record_id)[1] == "daily"
                 and (starting_date is None or metrics_record_key(record_id)[0] >= starting_date)
                 and (ending_date is None or metrics_record_key(record_id)[0] <= ending_date)
@@ -2557,10 +2557,10 @@ class RedisDb(BaseDb):
         rows = sorted(
             (
                 row
-                for row in self._get_user_metrics_records(record_ids)
+                for row in self._get_aggregate_metrics_records(record_ids)
                 if (user_id is not None or row["user_id"])
                 # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row
-                and any(row[column] for column in USER_METRICS_COUNT_COLUMNS if column != "users_count")
+                and any(row[column] for column in AGGREGATE_METRICS_COUNT_COLUMNS if column != "users_count")
             ),
             key=lambda row: (row["date"], row["user_id"]),
         )
@@ -2571,18 +2571,18 @@ class RedisDb(BaseDb):
         # everyone row, so the everyone rows stand for them
         updated_at_ids = [
             record_id
-            for record_id in self._get_metrics_record_ids("user_metrics", "user_id", [user_id or ""])
+            for record_id in self._get_metrics_record_ids("aggregate_metrics", "user_id", [user_id or ""])
             if metrics_record_key(record_id)[1] == "daily"
         ]
         latest_updated_at = max(
             (
                 updated_at
-                for updated_at in self._get_user_metrics_column(updated_at_ids, "updated_at")
+                for updated_at in self._get_aggregate_metrics_column(updated_at_ids, "updated_at")
                 if updated_at is not None
             ),
             default=None,
         )
-        return build_metrics_from_user_metrics(rows), latest_updated_at
+        return build_metrics_from_aggregate_metrics(rows), latest_updated_at
 
     def _get_metrics_rows(
         self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
@@ -2591,7 +2591,7 @@ class RedisDb(BaseDb):
         finished: a user's from that user's rows, the runs with no user from their component metrics rows."""
         if user_id == "":
             return self._get_metrics_by_owner(starting_date, ending_date, user_id)
-        metrics, latest_updated_at = self._get_user_metrics_rows(starting_date, ending_date, user_id)
+        metrics, latest_updated_at = self._get_aggregate_metrics_rows(starting_date, ending_date, user_id)
         if user_id is not None:
             return metrics, latest_updated_at
 
@@ -2632,7 +2632,7 @@ class RedisDb(BaseDb):
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
-        Metrics are read from the user metrics and component metrics once the first calculate_metrics has finished,
+        Metrics are read from the aggregate metrics and component metrics once the first calculate_metrics has finished,
         and from the deprecated metrics table until then. They are refreshed first, at most once per minute per
         process, unless stop_metrics_refresh_on_read was called.
 
@@ -2701,7 +2701,7 @@ class RedisDb(BaseDb):
     ) -> Tuple[List[dict], Optional[int]]:
         """Get the metrics of every user, one row per day, matching the given date range.
 
-        Read from the everyone rows of the user metrics table once the first calculate_metrics has finished, and from the
+        Read from the everyone rows of the aggregate metrics table once the first calculate_metrics has finished, and from the
         deprecated metrics table until then. They are refreshed first, as get_metrics does.
 
         Args:
@@ -2717,7 +2717,7 @@ class RedisDb(BaseDb):
         try:
             self._refresh_metrics_before_read()
             if self._metrics_calculated():
-                return self._get_user_metrics_rows(starting_date, ending_date, "")
+                return self._get_aggregate_metrics_rows(starting_date, ending_date, "")
             return super().get_metrics_by_date(starting_date, ending_date)
 
         except Exception as e:
@@ -2757,7 +2757,7 @@ class RedisDb(BaseDb):
             user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner, ``""`` the runs
                 with no user.
             fields (List[str]): The columns to total.
-            use_month_rows (bool): Total a calendar month inside the date range from its month user metrics row, as one
+            use_month_rows (bool): Total a calendar month inside the date range from its month aggregate metrics row, as one
                 date.
 
         Returns:
@@ -2775,14 +2775,14 @@ class RedisDb(BaseDb):
         month_starts = sorted(
             metrics_record_key(record_id)[0]
             for record_id, completed in zip(
-                month_record_ids, self._get_user_metrics_column(month_record_ids, "completed")
+                month_record_ids, self._get_aggregate_metrics_column(month_record_ids, "completed")
             )
             if completed
         )
 
         # Every owner is read from the everyone rows and a user from the user's rows; the runs with no user have no
-        # user metrics row of their own, so they are read from their component rows
-        table_type = "component_metrics" if user_id == "" else "user_metrics"
+        # aggregate metrics row of their own, so they are read from their component rows
+        table_type = "component_metrics" if user_id == "" else "aggregate_metrics"
         record_ids = []
         for record_id in self._get_metrics_record_ids(table_type, "user_id", [user_id or ""]):
             day, aggregation_period = metrics_record_key(record_id)
@@ -2795,7 +2795,7 @@ class RedisDb(BaseDb):
         if table_type == "component_metrics":
             rows = self._get_component_metrics_records(record_ids)
         else:
-            rows = self._get_user_metrics_records(record_ids)
+            rows = self._get_aggregate_metrics_records(record_ids)
         return total_metrics_rows(rows, starting_date, ending_date, fields, month_starts=month_starts)
 
     def get_component_metrics(
@@ -2871,7 +2871,7 @@ class RedisDb(BaseDb):
             raise e
 
     def get_metrics_versions(self, starting_date: date, ending_date: date) -> Optional[Dict[str, int]]:
-        """Get the version of every everyone row of a day or a month of the user metrics in the given date range.
+        """Get the version of every everyone row of a day or a month of the aggregate metrics in the given date range.
 
         Metrics are refreshed first, as get_metrics refreshes them.
 
@@ -2906,7 +2906,7 @@ class RedisDb(BaseDb):
                         date=metrics_record_key(record_id)[0],
                         version=version,
                     )
-                    for record_id, version in zip(record_ids, self._get_user_metrics_column(record_ids, "version"))
+                    for record_id, version in zip(record_ids, self._get_aggregate_metrics_column(record_ids, "version"))
                     if version is not None
                 ]
             )

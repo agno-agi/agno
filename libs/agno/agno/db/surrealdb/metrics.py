@@ -15,8 +15,8 @@ from agno.db.utils import (
     METRICS_COST_FIELDS,
     METRICS_REFRESH_ID,
     METRICS_TOKEN_DETAILS_FIELDS,
-    USER_METRICS_KEY_COLUMNS,
-    build_user_metrics_row,
+    AGGREGATE_METRICS_KEY_COLUMNS,
+    build_aggregate_metrics_row,
 )
 
 # The columns of the row of the metrics refreshes table. SurrealDB keeps no field set to NONE
@@ -98,7 +98,7 @@ def metrics_record_id(table: str, record: Dict[str, Any], key_columns: Sequence[
 
 
 def desurrealize_metrics_row(record: Dict[str, Any]) -> Dict[str, Any]:
-    """Return a stored row of the component metrics or user metrics table in the shape the rollup builds, to
+    """Return a stored row of the component metrics or aggregate metrics table in the shape the rollup builds, to
     compare and total it.
 
     Unlike desurrealize_metric, the empty-string user_id is kept as it is built, and the date is a plain date.
@@ -221,30 +221,30 @@ def get_all_runs_for_component_metrics_calculation(
 def bulk_upsert_metrics_rows(
     client: Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection],
     heartbeat: Tuple[str, Dict[str, Any]],
-    user_metrics_table: str,
+    aggregate_metrics_table: str,
     table: Optional[str] = None,
     component_metrics_records: Sequence[Dict[str, Any]] = (),
     stale_ids: Sequence[RecordID] = (),
-    user_metrics_rows: Sequence[Dict[str, Any]] = (),
-    stale_user_metrics_ids: Sequence[RecordID] = (),
+    aggregate_metrics_rows: Sequence[Dict[str, Any]] = (),
+    stale_aggregate_metrics_ids: Sequence[RecordID] = (),
     everyone_row: Optional[Dict[str, Any]] = None,
     read_version: Optional[int] = None,
     reopen_month_start: Optional[date] = None,
 ) -> bool:
-    """Write a period's rows of the component metrics and user metrics tables in one transaction, only while this
+    """Write a period's rows of the component metrics and aggregate metrics tables in one transaction, only while this
     worker still holds the metrics refresh, and delete the given rows first.
 
     Args:
         heartbeat (Tuple[str, Dict[str, Any]]): The statement that refreshes locked_at of the metrics refresh,
             returning its row only while this worker holds it, and its variables.
-        user_metrics_table (str): The user metrics table.
+        aggregate_metrics_table (str): The aggregate metrics table.
         table (Optional[str]): The component metrics table. None writes no component metrics row.
         component_metrics_records (Sequence[Dict[str, Any]]): The component metrics rows to upsert.
         stale_ids (Sequence[RecordID]): The ids of the stored component metrics rows to delete.
-        user_metrics_rows (Sequence[Dict[str, Any]]): The user rows of the user metrics table to upsert. A user row is
+        aggregate_metrics_rows (Sequence[Dict[str, Any]]): The user rows of the aggregate metrics table to upsert. A user row is
             written with its period's everyone row, so its completed and version are never compared.
-        stale_user_metrics_ids (Sequence[RecordID]): The ids of the stored user rows of the user metrics table to delete.
-        everyone_row (Optional[Dict[str, Any]]): The everyone row to upsert, from build_user_metrics_rows. None
+        stale_aggregate_metrics_ids (Sequence[RecordID]): The ids of the stored user rows of the aggregate metrics table to delete.
+        everyone_row (Optional[Dict[str, Any]]): The everyone row to upsert, from build_aggregate_metrics_rows. None
             writes none.
         read_version (Optional[int]): The version of the stored everyone row read before its period's rows were
             rebuilt. None when there was no stored row.
@@ -277,12 +277,12 @@ def bulk_upsert_metrics_rows(
             f"INSERT INTO {table} $records ON DUPLICATE KEY UPDATE {', '.join(update_columns)} RETURN NONE;"
         )
 
-    if stale_user_metrics_ids:
-        variables["stale_user_metrics_ids"] = list(stale_user_metrics_ids)
-        statements.append("DELETE $stale_user_metrics_ids;")
+    if stale_aggregate_metrics_ids:
+        variables["stale_aggregate_metrics_ids"] = list(stale_aggregate_metrics_ids)
+        statements.append("DELETE $stale_aggregate_metrics_ids;")
 
     for name, rows in [
-        ("user_metrics_rows", list(user_metrics_rows)),
+        ("aggregate_metrics_rows", list(aggregate_metrics_rows)),
         ("everyone_row", [everyone_row] if everyone_row else []),
     ]:
         if not rows:
@@ -292,7 +292,7 @@ def bulk_upsert_metrics_rows(
         variables[name] = [
             {
                 **surrealize_dates(row),
-                "id": metrics_record_id(user_metrics_table, row, USER_METRICS_KEY_COLUMNS),
+                "id": metrics_record_id(aggregate_metrics_table, row, AGGREGATE_METRICS_KEY_COLUMNS),
                 "version": 1,
             }
             for row in rows
@@ -301,7 +301,7 @@ def bulk_upsert_metrics_rows(
         update_columns = [
             f"{column} = $input.{column}"
             for column in rows[0]
-            if column not in [*USER_METRICS_KEY_COLUMNS, "created_at", "version", "completed"]
+            if column not in [*AGGREGATE_METRICS_KEY_COLUMNS, "created_at", "version", "completed"]
         ]
         if name == "everyone_row":
             # Compared in the statement, before the version moves, so a reopen written since the version was read
@@ -314,13 +314,13 @@ def bulk_upsert_metrics_rows(
             update_columns.append("completed = $input.completed")
         update_columns.append("version += 1")
         statements.append(
-            f"INSERT INTO {user_metrics_table} ${name} ON DUPLICATE KEY UPDATE {', '.join(update_columns)} RETURN NONE;"
+            f"INSERT INTO {aggregate_metrics_table} ${name} ON DUPLICATE KEY UPDATE {', '.join(update_columns)} RETURN NONE;"
         )
 
     if reopen_month_start is not None:
-        variables["reopen_month_row"] = _reopen_metrics_row(user_metrics_table, reopen_month_start, "monthly")
+        variables["reopen_month_row"] = _reopen_metrics_row(aggregate_metrics_table, reopen_month_start, "monthly")
         statements.append(
-            f"INSERT INTO {user_metrics_table} [$reopen_month_row] ON DUPLICATE KEY UPDATE completed = false, "
+            f"INSERT INTO {aggregate_metrics_table} [$reopen_month_row] ON DUPLICATE KEY UPDATE completed = false, "
             "version += 1 RETURN NONE;"
         )
 
@@ -361,14 +361,14 @@ def heartbeat_metrics_refresh(table: str, worker_id: str) -> Tuple[str, Dict[str
 
 
 def _reopen_metrics_row(table: str, row_date: date, aggregation_period: str) -> Dict[str, Any]:
-    """Build the empty open everyone row of a day or a month of the user metrics table, which a reopen inserts when
+    """Build the empty open everyone row of a day or a month of the aggregate metrics table, which a reopen inserts when
     the period has none."""
     return {
-        **surrealize_dates(build_user_metrics_row([], aggregation_period, row_date, completed=False)),
+        **surrealize_dates(build_aggregate_metrics_row([], aggregation_period, row_date, completed=False)),
         "id": metrics_record_id(
             table,
             {"aggregation_period": aggregation_period, "date": row_date, "user_id": ""},
-            USER_METRICS_KEY_COLUMNS,
+            AGGREGATE_METRICS_KEY_COLUMNS,
         ),
         "version": 1,
     }
@@ -377,11 +377,11 @@ def _reopen_metrics_row(table: str, row_date: date, aggregation_period: str) -> 
 def reopen_metrics_day(
     client: Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection], table: str, day: date
 ) -> None:
-    """Reopen a day's everyone row of the user metrics table, inserting an empty open row when it has none, so the
+    """Reopen a day's everyone row of the aggregate metrics table, inserting an empty open row when it has none, so the
     next refresh rebuilds the day.
 
     Args:
-        table (str): The user metrics table.
+        table (str): The aggregate metrics table.
         day (date): The day, from metrics_day_to_reopen.
     """
     utils.query(
@@ -395,11 +395,11 @@ def reopen_metrics_day(
 def reopen_metrics_days_from(
     client: Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection], table: str, starting_date: date
 ) -> None:
-    """Reopen every day's everyone row of the user metrics table from the given date on, as a write reopens a day,
+    """Reopen every day's everyone row of the aggregate metrics table from the given date on, as a write reopens a day,
     so the next calculation rebuilds them.
 
     Args:
-        table (str): The user metrics table.
+        table (str): The aggregate metrics table.
         starting_date (date): The first day to reopen.
     """
     utils.query(
@@ -416,7 +416,7 @@ def build_metrics_rows_fields(fields: Sequence[str], table_type: str) -> str:
 
     Args:
         fields (Sequence[str]): The columns to total.
-        table_type (str): "component_metrics" or "user_metrics", whose row is read.
+        table_type (str): "component_metrics" or "aggregate_metrics", whose row is read.
 
     Returns:
         str: The fields, for a SELECT.
@@ -425,9 +425,9 @@ def build_metrics_rows_fields(fields: Sequence[str], table_type: str) -> str:
     for field in fields:
         if field in [*METRICS_TOKEN_DETAILS_FIELDS, "audio_total_tokens", *METRICS_COST_FIELDS]:
             selected.append("token_details")
-        # The user metrics table keeps the sessions of each type, and the component metrics table the runs of each
+        # The aggregate metrics table keeps the sessions of each type, and the component metrics table the runs of each
         # component, with the run that started them
-        elif field == "sessions_count" and table_type == "user_metrics":
+        elif field == "sessions_count" and table_type == "aggregate_metrics":
             selected.extend(f"{component_type}_sessions_count" for component_type in METRICS_COMPONENT_TYPES)
         elif field == "root_runs_count" and table_type == "component_metrics":
             selected.extend(["runs_count", "parent_component_id"])

@@ -21,7 +21,7 @@ TableType = Literal[
     "memories",
     "metrics",
     "component_metrics",
-    "user_metrics",
+    "aggregate_metrics",
     "metrics_refreshes",
     "runs",
     "sessions",
@@ -293,7 +293,7 @@ def get_schema(table_type: TableType, table_name: str) -> str:
             DEFINE INDEX idx_aggregation_period_date ON {table_name} FIELDS aggregation_period, date;
             DEFINE INDEX idx_user_id_date ON {table_name} FIELDS user_id, date;
             """)
-    elif table_type == "user_metrics":
+    elif table_type == "aggregate_metrics":
         return dedent(f"""
             {define_table}
             DEFINE INDEX idx_aggregation_period_date ON {table_name} FIELDS aggregation_period, date;

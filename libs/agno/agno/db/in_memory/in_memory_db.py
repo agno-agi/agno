@@ -16,10 +16,10 @@ from agno.db.utils import (
     METRICS_REFRESH_ID,
     METRICS_STOPPED_ERROR,
     METRICS_WRITE_RETRIES,
-    USER_METRICS_COUNT_COLUMNS,
-    USER_METRICS_KEY_COLUMNS,
+    AGGREGATE_METRICS_COUNT_COLUMNS,
+    AGGREGATE_METRICS_KEY_COLUMNS,
     build_metrics_by_owner_from_rows,
-    build_metrics_from_user_metrics,
+    build_metrics_from_aggregate_metrics,
     calculate_date_metrics,
     calculate_month_metrics,
     database_error_message,
@@ -47,10 +47,10 @@ from agno.db.utils import (
     metrics_versions,
     reopen_metrics_days_from,
     reopen_metrics_month,
-    reopened_user_metrics_row,
+    reopened_aggregate_metrics_row,
     resolve_metrics_fields,
     total_metrics_rows,
-    write_user_metrics_rows,
+    write_aggregate_metrics_rows,
 )
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -81,7 +81,7 @@ class InMemoryDb(BaseDb):
         self._metrics: List[Dict[str, Any]] = []
         self._component_metrics: List[Dict[str, Any]] = []
         # None until a calculation started
-        self._user_metrics: Optional[List[Dict[str, Any]]] = None
+        self._aggregate_metrics: Optional[List[Dict[str, Any]]] = None
         self._metrics_refreshes: List[Dict[str, Any]] = []
         # The worker holding the metrics refresh, by refresh id. Memory has no transaction or row lock, so this and the
         # retried writes are how two threads avoid overwriting each other's metrics
@@ -1005,22 +1005,22 @@ class InMemoryDb(BaseDb):
             return
         try:
             for attempt in range(METRICS_WRITE_RETRIES + 1):
-                user_metrics_rows = self._user_metrics
-                # No user metrics rows until a calculation started: the first one builds every day
-                if user_metrics_rows is None:
+                aggregate_metrics_rows = self._aggregate_metrics
+                # No aggregate metrics rows until a calculation started: the first one builds every day
+                if aggregate_metrics_rows is None:
                     self._metrics_days_not_reopened.clear()
                     return
-                user_metrics_by_key = get_metrics_rows_by_key(user_metrics_rows, USER_METRICS_KEY_COLUMNS)
+                aggregate_metrics_by_key = get_metrics_rows_by_key(aggregate_metrics_rows, AGGREGATE_METRICS_KEY_COLUMNS)
                 for day in days:
-                    user_metrics_by_key[("daily", day, "")] = reopened_user_metrics_row(
-                        user_metrics_by_key.get(("daily", day, "")), day
+                    aggregate_metrics_by_key[("daily", day, "")] = reopened_aggregate_metrics_row(
+                        aggregate_metrics_by_key.get(("daily", day, "")), day
                     )
                 # Replaced only while it is still the list read, so a write made since is never written over
-                if self._user_metrics is user_metrics_rows:
-                    self._user_metrics = list(user_metrics_by_key.values())
+                if self._aggregate_metrics is aggregate_metrics_rows:
+                    self._aggregate_metrics = list(aggregate_metrics_by_key.values())
                     break
                 if attempt == METRICS_WRITE_RETRIES:
-                    raise RuntimeError("The user metrics rows were written by another thread on every try")
+                    raise RuntimeError("The aggregate metrics rows were written by another thread on every try")
             self._metrics_days_not_reopened.difference_update(days)
         except Exception as e:
             self._metrics_days_not_reopened.update(days)
@@ -1210,14 +1210,14 @@ class InMemoryDb(BaseDb):
         periods: List[Tuple[List[Dict[str, Any]], bool, Optional[int]]],
         worker_id: str,
     ) -> bool:
-        """Write the component metrics rows of the calculated days, then the user metrics rows of each calculated day
+        """Write the component metrics rows of the calculated days, then the aggregate metrics rows of each calculated day
         and month. False when another process took the refresh over, and nothing was written.
 
         Args:
             rows_by_key (Optional[Dict[Tuple[Any, ...], Dict[str, Any]]]): Every component metrics row, by key. None
                 when no row changed.
-            periods (List[Tuple[List[Dict[str, Any]], bool, Optional[int]]]): The user metrics rows of each day and
-                month, from build_user_metrics_rows, whether its component rows changed, and the version of its
+            periods (List[Tuple[List[Dict[str, Any]], bool, Optional[int]]]): The aggregate metrics rows of each day and
+                month, from build_aggregate_metrics_rows, whether its component rows changed, and the version of its
                 everyone row read before its runs.
             worker_id (str): The id of this calculation.
         """
@@ -1239,21 +1239,21 @@ class InMemoryDb(BaseDb):
         # Read here, so a write that reopened a day since is kept. Written last, so a version never moves without the
         # rows it tells of
         for attempt in range(METRICS_WRITE_RETRIES + 1):
-            user_metrics_rows = self._user_metrics
-            user_metrics_by_key = get_metrics_rows_by_key(user_metrics_rows or [], USER_METRICS_KEY_COLUMNS)
+            aggregate_metrics_rows = self._aggregate_metrics
+            aggregate_metrics_by_key = get_metrics_rows_by_key(aggregate_metrics_rows or [], AGGREGATE_METRICS_KEY_COLUMNS)
             for period_rows, rows_changed, read_version in periods:
-                write_user_metrics_rows(user_metrics_by_key, period_rows, rows_changed, read_version)
+                write_aggregate_metrics_rows(aggregate_metrics_by_key, period_rows, rows_changed, read_version)
                 month_start = period_rows[0]["date"].replace(day=1)
                 if rows_changed and month_start not in month_starts:
                     # Reopened with the day, so a calculation that stops before its months leaves the month for
                     # the next
-                    reopen_metrics_month(user_metrics_by_key, month_start)
+                    reopen_metrics_month(aggregate_metrics_by_key, month_start)
             # Replaced only while it is still the list read, so a reopen written since is kept
-            if self._user_metrics is user_metrics_rows:
-                self._user_metrics = list(user_metrics_by_key.values())
+            if self._aggregate_metrics is aggregate_metrics_rows:
+                self._aggregate_metrics = list(aggregate_metrics_by_key.values())
                 break
             if attempt == METRICS_WRITE_RETRIES:
-                raise RuntimeError("The user metrics rows were written by another thread on every try")
+                raise RuntimeError("The aggregate metrics rows were written by another thread on every try")
         return True
 
     def calculate_metrics(self, rebuild_from: Optional[date] = None) -> Optional[list[dict]]:
@@ -1307,8 +1307,8 @@ class InMemoryDb(BaseDb):
             Exception: If an error occurs during metrics calculation.
         """
         # Created before the claim, so a write during the first calculation reopens its day
-        if self._user_metrics is None:
-            self._user_metrics = []
+        if self._aggregate_metrics is None:
+            self._aggregate_metrics = []
 
         if rebuild_from is not None:
             # Reopened as a write reopens a day, before the claim, so a calculation another process is running
@@ -1320,14 +1320,14 @@ class InMemoryDb(BaseDb):
                 if refresh_row is not None:
                     started_at, finished_at = refresh_row["started_at"], refresh_row["finished_at"]
                 for attempt in range(METRICS_WRITE_RETRIES + 1):
-                    user_metrics_rows = self._user_metrics
-                    user_metrics_by_key = get_metrics_rows_by_key(user_metrics_rows, USER_METRICS_KEY_COLUMNS)
-                    reopen_metrics_days_from(user_metrics_by_key, rebuild_from)
-                    if self._user_metrics is user_metrics_rows:
-                        self._user_metrics = list(user_metrics_by_key.values())
+                    aggregate_metrics_rows = self._aggregate_metrics
+                    aggregate_metrics_by_key = get_metrics_rows_by_key(aggregate_metrics_rows, AGGREGATE_METRICS_KEY_COLUMNS)
+                    reopen_metrics_days_from(aggregate_metrics_by_key, rebuild_from)
+                    if self._aggregate_metrics is aggregate_metrics_rows:
+                        self._aggregate_metrics = list(aggregate_metrics_by_key.values())
                         break
                     if attempt == METRICS_WRITE_RETRIES:
-                        raise RuntimeError("The user metrics rows were written by another thread on every try")
+                        raise RuntimeError("The aggregate metrics rows were written by another thread on every try")
                 # Yesterday and today are picked by the fingerprint, so it is marked for the next one too
                 if not self._mark_metrics_refresh_rebuild():
                     return None
@@ -1345,7 +1345,7 @@ class InMemoryDb(BaseDb):
             return None
 
         try:
-            user_metrics_by_key = get_metrics_rows_by_key(self._user_metrics or [], USER_METRICS_KEY_COLUMNS)
+            aggregate_metrics_by_key = get_metrics_rows_by_key(self._aggregate_metrics or [], AGGREGATE_METRICS_KEY_COLUMNS)
 
             # Read after the versions of the days, so a run written while they are calculated moves its day. A
             # manual compaction's usage, which no run carries, is read from the session's data
@@ -1355,7 +1355,7 @@ class InMemoryDb(BaseDb):
             ]
             runs = self._get_metrics_runs()
             dates_to_process, fingerprint = get_metrics_dates_to_calculate(
-                user_metrics_by_key, sessions, runs, refresh_row, rebuild_from
+                aggregate_metrics_by_key, sessions, runs, refresh_row, rebuild_from
             )
             if rebuild_from is not None:
                 # Yesterday and today are picked by their fingerprint, not by being open
@@ -1389,7 +1389,7 @@ class InMemoryDb(BaseDb):
                     if should_stop is not None and should_stop():
                         stopped = True
                         break
-                    user_metrics_rows, day_rows_changed = calculate_date_metrics(
+                    aggregate_metrics_rows, day_rows_changed = calculate_date_metrics(
                         rows_by_key,
                         date_to_process,
                         sessions_by_day.get(date_to_process, []),
@@ -1398,10 +1398,10 @@ class InMemoryDb(BaseDb):
                         set(runs_by_id),
                         runs_by_id,
                     )
-                    stored_everyone_row = user_metrics_by_key.get(("daily", date_to_process, ""))
+                    stored_everyone_row = aggregate_metrics_by_key.get(("daily", date_to_process, ""))
                     periods.append(
                         (
-                            user_metrics_rows,
+                            aggregate_metrics_rows,
                             day_rows_changed,
                             stored_everyone_row["version"] if stored_everyone_row is not None else None,
                         )
@@ -1413,14 +1413,14 @@ class InMemoryDb(BaseDb):
             month_starts = sorted(
                 month_start
                 for month_start in set(get_months_to_calculate_metrics_for(calculated_dates))
-                | set(get_open_metrics_months(user_metrics_by_key))
+                | set(get_open_metrics_months(aggregate_metrics_by_key))
                 if metrics_day_completed(metrics_month_end(month_start))
             )
             for month_start in month_starts:
                 if stopped or (should_stop is not None and should_stop()):
                     stopped = True
                     break
-                stored_everyone_row = user_metrics_by_key.get(("monthly", month_start, ""))
+                stored_everyone_row = aggregate_metrics_by_key.get(("monthly", month_start, ""))
                 periods.append(
                     (
                         calculate_month_metrics(rows_by_key, month_start),
@@ -1476,22 +1476,22 @@ class InMemoryDb(BaseDb):
         latest_updated_at = max((row["updated_at"] for row in rows if row.get("updated_at") is not None), default=None)
         return build_metrics_by_owner_from_rows(day_rows), latest_updated_at
 
-    def _get_user_metrics_rows(
+    def _get_aggregate_metrics_rows(
         self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
     ) -> Tuple[List[dict], Optional[int]]:
-        """Get the day user metrics rows in the shape of the metrics table: the everyone rows for ``""``, one
+        """Get the day aggregate metrics rows in the shape of the metrics table: the everyone rows for ``""``, one
         user's rows for a name, and every user's rows for ``None``."""
-        user_metrics_rows = self._user_metrics or []
+        aggregate_metrics_rows = self._aggregate_metrics or []
         rows = sorted(
             (
                 row
-                for row in user_metrics_rows
+                for row in aggregate_metrics_rows
                 if row["aggregation_period"] == "daily"
                 and (starting_date is None or row["date"] >= starting_date)
                 and (ending_date is None or row["date"] <= ending_date)
                 and (row["user_id"] != "" if user_id is None else row["user_id"] == user_id)
                 # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row
-                and any(row[column] for column in USER_METRICS_COUNT_COLUMNS if column != "users_count")
+                and any(row[column] for column in AGGREGATE_METRICS_COUNT_COLUMNS if column != "users_count")
             ),
             key=lambda row: (row["date"], row["user_id"]),
         )
@@ -1502,14 +1502,14 @@ class InMemoryDb(BaseDb):
         latest_updated_at = max(
             (
                 row["updated_at"]
-                for row in user_metrics_rows
+                for row in aggregate_metrics_rows
                 if row["aggregation_period"] == "daily"
                 and (row["user_id"] != "" if user_id is None else row["user_id"] == user_id)
                 and row["updated_at"] is not None
             ),
             default=None,
         )
-        return build_metrics_from_user_metrics(rows), latest_updated_at
+        return build_metrics_from_aggregate_metrics(rows), latest_updated_at
 
     def _get_metrics_rows(
         self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
@@ -1518,7 +1518,7 @@ class InMemoryDb(BaseDb):
         finished: a user's from that user's rows, the runs with no user from their component metrics rows."""
         if user_id == "":
             return self._get_metrics_by_owner(starting_date, ending_date, user_id)
-        metrics, latest_updated_at = self._get_user_metrics_rows(starting_date, ending_date, user_id)
+        metrics, latest_updated_at = self._get_aggregate_metrics_rows(starting_date, ending_date, user_id)
         if user_id is not None:
             return metrics, latest_updated_at
 
@@ -1559,7 +1559,7 @@ class InMemoryDb(BaseDb):
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
-        Metrics are read from the user metrics and component metrics rows once the first calculate_metrics has
+        Metrics are read from the aggregate metrics and component metrics rows once the first calculate_metrics has
         finished, and from the deprecated metrics rows until then. They are refreshed first, at most once per minute
         per process, unless stop_metrics_refresh_on_read was called.
 
@@ -1611,7 +1611,7 @@ class InMemoryDb(BaseDb):
     ) -> Tuple[List[dict], Optional[int]]:
         """Get the metrics of every user, one row per day, matching the given date range.
 
-        Read from the everyone user metrics rows once the first calculate_metrics has finished, and from
+        Read from the everyone aggregate metrics rows once the first calculate_metrics has finished, and from
         the deprecated metrics rows until then. They are refreshed first, as get_metrics does.
 
         Args:
@@ -1627,7 +1627,7 @@ class InMemoryDb(BaseDb):
         try:
             self._refresh_metrics_before_read()
             if self._metrics_calculated():
-                return self._get_user_metrics_rows(starting_date, ending_date, "")
+                return self._get_aggregate_metrics_rows(starting_date, ending_date, "")
             return super().get_metrics_by_date(starting_date, ending_date)
 
         except Exception as e:
@@ -1667,19 +1667,19 @@ class InMemoryDb(BaseDb):
             user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with
                 no user.
             fields (List[str]): The columns to total.
-            use_month_rows (bool): Total a calendar month inside the date range from its month user metrics row, as one
+            use_month_rows (bool): Total a calendar month inside the date range from its month aggregate metrics row, as one
                 date.
 
         Returns:
             Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each date, and when they were last updated.
         """
-        user_metrics_rows = self._user_metrics or []
+        aggregate_metrics_rows = self._aggregate_metrics or []
         # Every owner is read from the everyone rows and a user from the user's rows; the runs with no user have no
-        # user metrics row of their own, so they are read from their component rows
+        # aggregate metrics row of their own, so they are read from their component rows
         if user_id == "":
             rows = [row for row in self._component_metrics if row["user_id"] == ""]
         else:
-            rows = [row for row in user_metrics_rows if row["user_id"] == (user_id or "")]
+            rows = [row for row in aggregate_metrics_rows if row["user_id"] == (user_id or "")]
 
         # The component metrics rows are day rows only, so the runs with no user are read day by day
         full_months = metrics_full_months(starting_date, ending_date) if use_month_rows and user_id != "" else []
@@ -1687,7 +1687,7 @@ class InMemoryDb(BaseDb):
         # yet built, is read from its days
         month_starts = [
             row["date"]
-            for row in user_metrics_rows
+            for row in aggregate_metrics_rows
             if row["aggregation_period"] == "monthly"
             and row["user_id"] == ""
             and row["completed"]
@@ -1768,7 +1768,7 @@ class InMemoryDb(BaseDb):
             raise e
 
     def get_metrics_versions(self, starting_date: date, ending_date: date) -> Optional[Dict[str, int]]:
-        """Get the version of every everyone row of a day or a month of the user metrics in the given date range.
+        """Get the version of every everyone row of a day or a month of the aggregate metrics in the given date range.
 
         Metrics are refreshed first, as get_metrics refreshes them.
 
@@ -1792,7 +1792,7 @@ class InMemoryDb(BaseDb):
             return metrics_versions(
                 [
                     SimpleNamespace(**row)
-                    for row in self._user_metrics or []
+                    for row in self._aggregate_metrics or []
                     if row["user_id"] == "" and starting_date <= row["date"] <= ending_date
                 ]
             )

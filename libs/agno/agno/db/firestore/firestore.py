@@ -24,7 +24,7 @@ from agno.db.firestore.utils import (
     reopen_metrics_days_from,
     reopen_metrics_month,
     serialize_metrics_row,
-    user_metrics_record_id,
+    aggregate_metrics_record_id,
 )
 from agno.db.migrations.manager import MigrationManager
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
@@ -35,13 +35,13 @@ from agno.db.utils import (
     METRICS_LOCK_SECONDS,
     METRICS_REFRESH_ID,
     METRICS_STOPPED_ERROR,
-    USER_METRICS_COUNT_COLUMNS,
+    AGGREGATE_METRICS_COUNT_COLUMNS,
     add_metrics_month_totals,
     build_metrics_by_owner_from_rows,
-    build_metrics_from_user_metrics,
+    build_metrics_from_aggregate_metrics,
     build_single_run_row,
-    build_user_metrics_month_rows,
-    build_user_metrics_rows,
+    build_aggregate_metrics_month_rows,
+    build_aggregate_metrics_rows,
     calculate_date_component_metrics,
     component_metrics_rows_to_write,
     database_error_message,
@@ -72,8 +72,8 @@ from agno.db.utils import (
     metrics_versions,
     resolve_metrics_fields,
     total_metrics_rows,
-    user_metrics_row_to_store,
-    user_metrics_rows_to_write,
+    aggregate_metrics_row_to_store,
+    aggregate_metrics_rows_to_write,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -112,7 +112,7 @@ class FirestoreDb(BaseDb):
         memory_collection: Optional[str] = None,
         metrics_collection: Optional[str] = None,
         component_metrics_collection: Optional[str] = None,
-        user_metrics_collection: Optional[str] = None,
+        aggregate_metrics_collection: Optional[str] = None,
         metrics_refreshes_collection: Optional[str] = None,
         eval_collection: Optional[str] = None,
         knowledge_collection: Optional[str] = None,
@@ -132,7 +132,7 @@ class FirestoreDb(BaseDb):
             metrics_collection (Optional[str]): Name of the collection to store metrics.
             component_metrics_collection (Optional[str]): Name of the collection to store the metrics of each agent,
                 team and workflow.
-            user_metrics_collection (Optional[str]): Name of the collection to store the metrics of each user.
+            aggregate_metrics_collection (Optional[str]): Name of the collection to store the metrics of each user.
             metrics_refreshes_collection (Optional[str]): Name of the collection to store the metrics refreshes.
             eval_collection (Optional[str]): Name of the collection to store evaluation runs.
             knowledge_collection (Optional[str]): Name of the collection to store knowledge documents.
@@ -154,7 +154,7 @@ class FirestoreDb(BaseDb):
             memory_table=memory_collection,
             metrics_table=metrics_collection,
             component_metrics_table=component_metrics_collection,
-            user_metrics_table=user_metrics_collection,
+            aggregate_metrics_table=aggregate_metrics_collection,
             metrics_refreshes_table=metrics_refreshes_collection,
             eval_table=eval_collection,
             knowledge_table=knowledge_collection,
@@ -164,7 +164,7 @@ class FirestoreDb(BaseDb):
 
         if metrics_collection is not None:
             log_warning(
-                "metrics_collection is deprecated; use component_metrics_collection and user_metrics_collection."
+                "metrics_collection is deprecated; use component_metrics_collection and aggregate_metrics_collection."
             )
 
         _client: Optional[Client] = db_client
@@ -257,15 +257,15 @@ class FirestoreDb(BaseDb):
             )
             return self.component_metrics_collection
 
-        if table_type == "user_metrics":
-            if self.user_metrics_table_name is None:
-                raise ValueError("User metrics collection was not provided on initialization")
-            self.user_metrics_collection = self._get_or_create_collection(
-                collection_name=self.user_metrics_table_name,
-                collection_type="user_metrics",
+        if table_type == "aggregate_metrics":
+            if self.aggregate_metrics_table_name is None:
+                raise ValueError("Aggregate metrics collection was not provided on initialization")
+            self.aggregate_metrics_collection = self._get_or_create_collection(
+                collection_name=self.aggregate_metrics_table_name,
+                collection_type="aggregate_metrics",
                 create_collection_if_not_found=create_collection_if_not_found,
             )
-            return self.user_metrics_collection
+            return self.aggregate_metrics_collection
 
         if table_type == "metrics_refreshes":
             if self.metrics_refreshes_table_name is None:
@@ -1701,14 +1701,14 @@ class FirestoreDb(BaseDb):
         try:
             # Looked up only when a day reopens. None when no day was calculated yet: a collection exists only while
             # it holds a document
-            user_metrics_collection_ref = getattr(self, "user_metrics_collection", None)
-            if user_metrics_collection_ref is None:
-                if not list(self.db_client.collection(self.user_metrics_table_name).limit(1).stream()):
+            aggregate_metrics_collection_ref = getattr(self, "aggregate_metrics_collection", None)
+            if aggregate_metrics_collection_ref is None:
+                if not list(self.db_client.collection(self.aggregate_metrics_table_name).limit(1).stream()):
                     self._metrics_days_not_reopened.clear()
                     return
-                user_metrics_collection_ref = self._get_collection(table_type="user_metrics")
+                aggregate_metrics_collection_ref = self._get_collection(table_type="aggregate_metrics")
             for day in days:
-                reopen_metrics_day(user_metrics_collection_ref, day)
+                reopen_metrics_day(aggregate_metrics_collection_ref, day)
             self._metrics_days_not_reopened.difference_update(days)
         except Exception as e:
             self._metrics_days_not_reopened.update(days)
@@ -1882,7 +1882,7 @@ class FirestoreDb(BaseDb):
 
     def _get_metrics_dates_to_calculate(
         self,
-        user_metrics_collection_ref,
+        aggregate_metrics_collection_ref,
         sessions_collection_ref,
         runs_collection_ref,
         refresh_row: Dict[str, Any],
@@ -1891,7 +1891,7 @@ class FirestoreDb(BaseDb):
         """Get the days whose metrics a calculation rebuilds, and the fingerprint of yesterday and today.
 
         Args:
-            user_metrics_collection_ref: The user metrics collection.
+            aggregate_metrics_collection_ref: The aggregate metrics collection.
             sessions_collection_ref: The sessions collection.
             runs_collection_ref: The runs collection.
             refresh_row (Dict[str, Any]): The document of the metrics refreshes collection, from
@@ -1913,7 +1913,7 @@ class FirestoreDb(BaseDb):
 
         # Every earlier day still open: not yet completed, or reopened by a write since
         open_docs = (
-            user_metrics_collection_ref.where(filter=FieldFilter("aggregation_period", "==", "daily"))
+            aggregate_metrics_collection_ref.where(filter=FieldFilter("aggregation_period", "==", "daily"))
             .where(filter=FieldFilter("user_id", "==", ""))
             .where(filter=FieldFilter("completed", "==", False))
             .where(filter=FieldFilter("date", "<", yesterday.isoformat()))
@@ -1932,7 +1932,7 @@ class FirestoreDb(BaseDb):
             completed_days: Set[date] = set()
             if first_calculation:
                 completed_docs = (
-                    user_metrics_collection_ref.where(filter=FieldFilter("aggregation_period", "==", "daily"))
+                    aggregate_metrics_collection_ref.where(filter=FieldFilter("aggregation_period", "==", "daily"))
                     .where(filter=FieldFilter("user_id", "==", ""))
                     .where(filter=FieldFilter("completed", "==", True))
                     .select(["date"])
@@ -1953,12 +1953,12 @@ class FirestoreDb(BaseDb):
 
         return sorted(dates_to_process), fingerprint
 
-    def _get_open_metrics_months(self, user_metrics_collection_ref) -> List[date]:
+    def _get_open_metrics_months(self, aggregate_metrics_collection_ref) -> List[date]:
         """Get the first day of every month before the current one whose month row is still open: not completed yet,
         or reopened by a day a calculation rebuilt before it stopped."""
         current_month = datetime.now(timezone.utc).date().replace(day=1)
         docs = (
-            user_metrics_collection_ref.where(filter=FieldFilter("aggregation_period", "==", "monthly"))
+            aggregate_metrics_collection_ref.where(filter=FieldFilter("aggregation_period", "==", "monthly"))
             .where(filter=FieldFilter("user_id", "==", ""))
             .where(filter=FieldFilter("completed", "==", False))
             .where(filter=FieldFilter("date", "<", current_month.isoformat()))
@@ -2045,18 +2045,18 @@ class FirestoreDb(BaseDb):
             )
         return parent_runs
 
-    def _write_user_metrics_rows(
+    def _write_aggregate_metrics_rows(
         self,
-        user_metrics_collection_ref,
-        user_metrics_rows: List[Dict[str, Any]],
+        aggregate_metrics_collection_ref,
+        aggregate_metrics_rows: List[Dict[str, Any]],
         rows_changed: bool,
         read_version: Optional[int],
         refreshes_collection_ref,
         worker_id: str,
         row_writes: Sequence[Tuple[Any, Optional[Dict[str, Any]]]] = (),
     ) -> bool:
-        """Write a period's rows: the given component metrics writes, then the user rows of the user metrics
-        collection, then the everyone row, from build_user_metrics_rows. False when another process took the refresh
+        """Write a period's rows: the given component metrics writes, then the user rows of the aggregate metrics
+        collection, then the everyone row, from build_aggregate_metrics_rows. False when another process took the refresh
         over.
 
         Firestore commits 500 writes at most at once, so the refresh is heartbeated in each commit, and the
@@ -2064,8 +2064,8 @@ class FirestoreDb(BaseDb):
         version read before the period's rows.
 
         Args:
-            user_metrics_collection_ref: The user metrics collection.
-            user_metrics_rows (List[Dict[str, Any]]): The period's rows, the everyone row first.
+            aggregate_metrics_collection_ref: The aggregate metrics collection.
+            aggregate_metrics_rows (List[Dict[str, Any]]): The period's rows, the everyone row first.
             rows_changed (bool): Whether a component metrics row of the period was written or deleted.
             read_version (Optional[int]): The version of the everyone row read before the period's rows were rebuilt.
             refreshes_collection_ref: The metrics refreshes collection.
@@ -2073,32 +2073,32 @@ class FirestoreDb(BaseDb):
             row_writes (Sequence[Tuple[Any, Optional[Dict[str, Any]]]]): The component metrics documents to write
                 first, each with its data, or None to delete it.
         """
-        period, period_date = user_metrics_rows[0]["aggregation_period"], user_metrics_rows[0]["date"]
+        period, period_date = aggregate_metrics_rows[0]["aggregation_period"], aggregate_metrics_rows[0]["date"]
         stored_docs = (
-            user_metrics_collection_ref.where(filter=FieldFilter("aggregation_period", "==", period))
+            aggregate_metrics_collection_ref.where(filter=FieldFilter("aggregation_period", "==", period))
             .where(filter=FieldFilter("date", "==", period_date.isoformat()))
             .stream()
         )
         stored_by_user = {
             row["user_id"]: row for row in (deserialize_metrics_row(doc.to_dict()) for doc in stored_docs)
         }
-        everyone_row, changed_rows, stale_user_ids = user_metrics_rows_to_write(
-            user_metrics_rows, list(stored_by_user.values()), rows_changed
+        everyone_row, changed_rows, stale_user_ids = aggregate_metrics_rows_to_write(
+            aggregate_metrics_rows, list(stored_by_user.values()), rows_changed
         )
         writes = list(row_writes)
         writes.extend(
-            (user_metrics_collection_ref.document(user_metrics_record_id(period, period_date, user_id)), None)
+            (aggregate_metrics_collection_ref.document(aggregate_metrics_record_id(period, period_date, user_id)), None)
             for user_id in stale_user_ids
         )
         writes.extend(
             (
-                user_metrics_collection_ref.document(user_metrics_record_id(period, period_date, row["user_id"])),
-                serialize_metrics_row(user_metrics_row_to_store(row, stored_by_user.get(row["user_id"]), None)),
+                aggregate_metrics_collection_ref.document(aggregate_metrics_record_id(period, period_date, row["user_id"])),
+                serialize_metrics_row(aggregate_metrics_row_to_store(row, stored_by_user.get(row["user_id"]), None)),
             )
             for row in changed_rows
         )
 
-        everyone_ref = user_metrics_collection_ref.document(user_metrics_record_id(period, period_date, ""))
+        everyone_ref = aggregate_metrics_collection_ref.document(aggregate_metrics_record_id(period, period_date, ""))
         expected_version = read_version
         # Rows written in more than one commit move the everyone row's version in the first, so a commit that fails
         # later never leaves rows changed under the version read before them
@@ -2136,7 +2136,7 @@ class FirestoreDb(BaseDb):
                 stored_row = deserialize_metrics_row(snapshot.to_dict()) if snapshot.exists else None
                 transaction.set(
                     everyone_ref,
-                    serialize_metrics_row(user_metrics_row_to_store(everyone_row, stored_row, expected_version)),
+                    serialize_metrics_row(aggregate_metrics_row_to_store(everyone_row, stored_row, expected_version)),
                 )
             return True
 
@@ -2146,7 +2146,7 @@ class FirestoreDb(BaseDb):
     def _calculate_date_metrics(
         self,
         collection_ref,
-        user_metrics_collection_ref,
+        aggregate_metrics_collection_ref,
         sessions_collection_ref,
         runs_collection_ref,
         date_to_process: date,
@@ -2156,7 +2156,7 @@ class FirestoreDb(BaseDb):
         worker_id: str,
         should_stop: Optional[Callable[[], bool]] = None,
     ) -> bool:
-        """Rebuild one day's component and user metrics rows. False when the refresh was taken over or stopped."""
+        """Rebuild one day's component and aggregate metrics rows. False when the refresh was taken over or stopped."""
         start_timestamp = int(
             datetime.combine(date_to_process, datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
         )
@@ -2166,7 +2166,7 @@ class FirestoreDb(BaseDb):
             .timestamp()
         )
         # Read before the day's runs, so a run written while they are read moves it
-        everyone_doc = user_metrics_collection_ref.document(user_metrics_record_id("daily", date_to_process, "")).get()
+        everyone_doc = aggregate_metrics_collection_ref.document(aggregate_metrics_record_id("daily", date_to_process, "")).get()
         read_version = (everyone_doc.to_dict() or {}).get("version") if everyone_doc.exists else None
 
         sessions_query = (
@@ -2315,9 +2315,9 @@ class FirestoreDb(BaseDb):
                 row = {**row, "created_at": stored_row["created_at"]}
             row_writes.append((collection_ref.document(doc_id), serialize_metrics_row(row)))
 
-        if not self._write_user_metrics_rows(
-            user_metrics_collection_ref,
-            build_user_metrics_rows(records, "daily", date_to_process, metrics_day_completed(date_to_process)),
+        if not self._write_aggregate_metrics_rows(
+            aggregate_metrics_collection_ref,
+            build_aggregate_metrics_rows(records, "daily", date_to_process, metrics_day_completed(date_to_process)),
             rows_changed=bool(changed_rows or stale_keys),
             read_version=read_version,
             refreshes_collection_ref=refreshes_collection_ref,
@@ -2327,15 +2327,15 @@ class FirestoreDb(BaseDb):
             return False
         if changed_rows or stale_keys:
             # Reopened with the day, so a calculation that stops before its months leaves the month for the next
-            reopen_metrics_month(user_metrics_collection_ref, date_to_process.replace(day=1))
+            reopen_metrics_month(aggregate_metrics_collection_ref, date_to_process.replace(day=1))
         return True
 
     def _calculate_month_metrics(
-        self, collection_ref, user_metrics_collection_ref, month_start: date, refreshes_collection_ref, worker_id: str
+        self, collection_ref, aggregate_metrics_collection_ref, month_start: date, refreshes_collection_ref, worker_id: str
     ) -> bool:
-        """Rebuild the month rows of the user metrics collection from the component metrics rows of the month's
+        """Rebuild the month rows of the aggregate metrics collection from the component metrics rows of the month's
         days. False when another process took the refresh over."""
-        everyone_doc = user_metrics_collection_ref.document(user_metrics_record_id("monthly", month_start, "")).get()
+        everyone_doc = aggregate_metrics_collection_ref.document(aggregate_metrics_record_id("monthly", month_start, "")).get()
         read_version = (everyone_doc.to_dict() or {}).get("version") if everyone_doc.exists else None
         # Streamed, so a month of many rows is added up a batch at a time instead of held whole
         docs = (
@@ -2352,9 +2352,9 @@ class FirestoreDb(BaseDb):
             add_metrics_month_totals(per_owner, [deserialize_metrics_row(doc.to_dict()) for doc in batch])
 
         # Added up per owner and component over the month, so a user of several days is one user of the month
-        return self._write_user_metrics_rows(
-            user_metrics_collection_ref,
-            build_user_metrics_month_rows(month_start, per_owner),
+        return self._write_aggregate_metrics_rows(
+            aggregate_metrics_collection_ref,
+            build_aggregate_metrics_month_rows(month_start, per_owner),
             rows_changed=False,
             read_version=read_version,
             refreshes_collection_ref=refreshes_collection_ref,
@@ -2411,8 +2411,8 @@ class FirestoreDb(BaseDb):
             Exception: If an error occurs during metrics calculation.
         """
         collection_ref = self._get_collection(table_type="component_metrics", create_collection_if_not_found=True)
-        user_metrics_collection_ref = self._get_collection(
-            table_type="user_metrics", create_collection_if_not_found=True
+        aggregate_metrics_collection_ref = self._get_collection(
+            table_type="aggregate_metrics", create_collection_if_not_found=True
         )
         refreshes_collection_ref = self._get_collection(
             table_type="metrics_refreshes", create_collection_if_not_found=True
@@ -2420,7 +2420,7 @@ class FirestoreDb(BaseDb):
         sessions_collection_ref = self._get_collection(table_type="sessions")
         if (
             collection_ref is None
-            or user_metrics_collection_ref is None
+            or aggregate_metrics_collection_ref is None
             or refreshes_collection_ref is None
             or sessions_collection_ref is None
         ):
@@ -2437,7 +2437,7 @@ class FirestoreDb(BaseDb):
                 stored_row = self._get_metrics_refresh_row(refreshes_collection_ref)[0]
                 if stored_row is not None:
                     started_at, finished_at = stored_row["started_at"], stored_row["finished_at"]
-                reopen_metrics_days_from(self.db_client, user_metrics_collection_ref, rebuild_from)
+                reopen_metrics_days_from(self.db_client, aggregate_metrics_collection_ref, rebuild_from)
                 # Yesterday and today are picked by the fingerprint, so it is marked for the next one too
                 try:
                     refreshes_collection_ref.document(METRICS_REFRESH_ID).update(
@@ -2464,7 +2464,7 @@ class FirestoreDb(BaseDb):
 
         try:
             dates_to_process, fingerprint = self._get_metrics_dates_to_calculate(
-                user_metrics_collection_ref, sessions_collection_ref, runs_collection_ref, refresh_row, rebuild_from
+                aggregate_metrics_collection_ref, sessions_collection_ref, runs_collection_ref, refresh_row, rebuild_from
             )
             if rebuild_from is not None:
                 # Yesterday and today are picked by their fingerprint, not by being open
@@ -2526,7 +2526,7 @@ class FirestoreDb(BaseDb):
                     return None
                 if not self._calculate_date_metrics(
                     collection_ref,
-                    user_metrics_collection_ref,
+                    aggregate_metrics_collection_ref,
                     sessions_collection_ref,
                     runs_collection_ref,
                     date_to_process,
@@ -2545,7 +2545,7 @@ class FirestoreDb(BaseDb):
             month_starts = sorted(
                 month_start
                 for month_start in set(get_months_to_calculate_metrics_for(calculated_dates))
-                | set(self._get_open_metrics_months(user_metrics_collection_ref))
+                | set(self._get_open_metrics_months(aggregate_metrics_collection_ref))
                 if metrics_day_completed(metrics_month_end(month_start))
             )
             for month_start in month_starts:
@@ -2553,7 +2553,7 @@ class FirestoreDb(BaseDb):
                     self._release_metrics_refresh(refreshes_collection_ref, worker_id, stopped=True)
                     return None
                 if not self._calculate_month_metrics(
-                    collection_ref, user_metrics_collection_ref, month_start, refreshes_collection_ref, worker_id
+                    collection_ref, aggregate_metrics_collection_ref, month_start, refreshes_collection_ref, worker_id
                 ):
                     return None
 
@@ -2601,16 +2601,16 @@ class FirestoreDb(BaseDb):
         latest_updated_at = max((row["updated_at"] for row in rows if row.get("updated_at") is not None), default=None)
         return build_metrics_by_owner_from_rows(rows), latest_updated_at
 
-    def _get_user_metrics_rows(
+    def _get_aggregate_metrics_rows(
         self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
     ) -> Tuple[List[dict], Optional[int]]:
-        """Get the day rows of the user metrics collection in the shape of the metrics table: the everyone rows for
+        """Get the day rows of the aggregate metrics collection in the shape of the metrics table: the everyone rows for
         ``""``, one user's rows for a name, and every user's rows for ``None``."""
-        user_metrics_collection_ref = self._get_collection(table_type="user_metrics")
-        if user_metrics_collection_ref is None:
+        aggregate_metrics_collection_ref = self._get_collection(table_type="aggregate_metrics")
+        if aggregate_metrics_collection_ref is None:
             return [], None
 
-        query = user_metrics_collection_ref.where(filter=FieldFilter("aggregation_period", "==", "daily"))
+        query = aggregate_metrics_collection_ref.where(filter=FieldFilter("aggregation_period", "==", "daily"))
         if starting_date:
             query = query.where(filter=FieldFilter("date", ">=", starting_date.isoformat()))
         if ending_date:
@@ -2624,11 +2624,11 @@ class FirestoreDb(BaseDb):
             rows = [row for row in rows if row["user_id"] != ""]
         # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row
         rows = [
-            row for row in rows if any(row[column] for column in USER_METRICS_COUNT_COLUMNS if column != "users_count")
+            row for row in rows if any(row[column] for column in AGGREGATE_METRICS_COUNT_COLUMNS if column != "users_count")
         ]
         rows.sort(key=lambda row: (row["date"], row["user_id"]))
         latest_updated_at = max((row["updated_at"] for row in rows if row.get("updated_at") is not None), default=None)
-        return build_metrics_from_user_metrics(rows), latest_updated_at
+        return build_metrics_from_aggregate_metrics(rows), latest_updated_at
 
     def _get_metrics_rows(
         self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
@@ -2637,7 +2637,7 @@ class FirestoreDb(BaseDb):
         finished: a user's from that user's rows, the runs with no user from their component metrics rows."""
         if user_id == "":
             return self._get_metrics_by_owner(starting_date, ending_date, user_id)
-        metrics, latest_updated_at = self._get_user_metrics_rows(starting_date, ending_date, user_id)
+        metrics, latest_updated_at = self._get_aggregate_metrics_rows(starting_date, ending_date, user_id)
         if user_id is not None:
             return metrics, latest_updated_at
 
@@ -2683,7 +2683,7 @@ class FirestoreDb(BaseDb):
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
-        Metrics are read from the user metrics and component metrics once the first calculate_metrics has finished,
+        Metrics are read from the aggregate metrics and component metrics once the first calculate_metrics has finished,
         and from the deprecated metrics collection until then. They are refreshed first, at most once per minute per
         process, unless stop_metrics_refresh_on_read was called.
 
@@ -2749,7 +2749,7 @@ class FirestoreDb(BaseDb):
     ) -> Tuple[List[dict], Optional[int]]:
         """Get the metrics of every user, one row per day, matching the given date range.
 
-        Read from the everyone rows of the user metrics once the first calculate_metrics has finished, and from the
+        Read from the everyone rows of the aggregate metrics once the first calculate_metrics has finished, and from the
         deprecated metrics collection until then. They are refreshed first, as get_metrics does.
 
         Args:
@@ -2765,7 +2765,7 @@ class FirestoreDb(BaseDb):
         try:
             self._refresh_metrics_before_read()
             if self._metrics_calculated(self._get_collection(table_type="metrics_refreshes")):
-                return self._get_user_metrics_rows(starting_date, ending_date, "")
+                return self._get_aggregate_metrics_rows(starting_date, ending_date, "")
             return super().get_metrics_by_date(starting_date, ending_date)
 
         except Exception as e:
@@ -2808,19 +2808,19 @@ class FirestoreDb(BaseDb):
             user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with
                 no user.
             fields (List[str]): The columns to total.
-            use_month_rows (bool): Total a calendar month inside the date range from its month user metrics row, as one
+            use_month_rows (bool): Total a calendar month inside the date range from its month aggregate metrics row, as one
                 date.
 
         Returns:
             Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each date, and when they were last updated.
         """
-        user_metrics_collection_ref = self._get_collection(table_type="user_metrics")
+        aggregate_metrics_collection_ref = self._get_collection(table_type="aggregate_metrics")
         # Every owner is read from the everyone rows and a user from the user's rows; the runs with no user have no
-        # user metrics row of their own, so they are read from their component rows
+        # aggregate metrics row of their own, so they are read from their component rows
         collection_ref = (
-            self._get_collection(table_type="component_metrics") if user_id == "" else user_metrics_collection_ref
+            self._get_collection(table_type="component_metrics") if user_id == "" else aggregate_metrics_collection_ref
         )
-        if user_metrics_collection_ref is None or collection_ref is None:
+        if aggregate_metrics_collection_ref is None or collection_ref is None:
             return [], None
 
         # The component metrics collection keeps day rows only, so the runs with no user are read day by day
@@ -2834,7 +2834,7 @@ class FirestoreDb(BaseDb):
                 # or not yet built, is read from its days. The full months follow each other, so a range finds them
                 # however long the window is
                 months_query = (
-                    user_metrics_collection_ref.where(filter=FieldFilter("aggregation_period", "==", "monthly"))
+                    aggregate_metrics_collection_ref.where(filter=FieldFilter("aggregation_period", "==", "monthly"))
                     .where(filter=FieldFilter("user_id", "==", ""))
                     .where(filter=FieldFilter("completed", "==", True))
                     .where(filter=FieldFilter("date", ">=", full_months[0].isoformat()))
@@ -2944,7 +2944,7 @@ class FirestoreDb(BaseDb):
             raise e
 
     def get_metrics_versions(self, starting_date: date, ending_date: date) -> Optional[Dict[str, int]]:
-        """Get the version of every everyone row of a day or a month of the user metrics in the given date range.
+        """Get the version of every everyone row of a day or a month of the aggregate metrics in the given date range.
 
         Metrics are refreshed first, as get_metrics refreshes them.
 
@@ -2955,7 +2955,7 @@ class FirestoreDb(BaseDb):
         Returns:
             Optional[Dict[str, int]]: The version of each everyone row, keyed by its aggregation period and date. The
                 same again only while no calculation wrote a row of the date range. ``None`` until the first
-                calculate_metrics has finished, or without a user metrics collection: a read would find no rows to
+                calculate_metrics has finished, or without an aggregate metrics collection: a read would find no rows to
                 total.
 
         Raises:
@@ -2963,14 +2963,14 @@ class FirestoreDb(BaseDb):
         """
         try:
             self._refresh_metrics_before_read()
-            user_metrics_collection_ref = self._get_collection(table_type="user_metrics")
-            if user_metrics_collection_ref is None or not self._metrics_calculated(
+            aggregate_metrics_collection_ref = self._get_collection(table_type="aggregate_metrics")
+            if aggregate_metrics_collection_ref is None or not self._metrics_calculated(
                 self._get_collection(table_type="metrics_refreshes")
             ):
                 return None
 
             docs = (
-                user_metrics_collection_ref.where(filter=FieldFilter("user_id", "==", ""))
+                aggregate_metrics_collection_ref.where(filter=FieldFilter("user_id", "==", ""))
                 .where(filter=FieldFilter("date", ">=", starting_date.isoformat()))
                 .where(filter=FieldFilter("date", "<=", ending_date.isoformat()))
                 .select(["aggregation_period", "date", "version"])

@@ -60,13 +60,13 @@ def _stored_rows(db, table_name):
         + ((row["component_type"], row["component_id"]) if "component_type" in row else ()): row
         for row in {
             db.component_metrics_table_name: db._component_metrics,
-            db.user_metrics_table_name: db._user_metrics,
+            db.aggregate_metrics_table_name: db._aggregate_metrics,
         }[table_name]
     }
 
 
 def _everyone_row(db, day, period="daily"):
-    return _stored_rows(db, db.user_metrics_table_name)[(period, day, "")]
+    return _stored_rows(db, db.aggregate_metrics_table_name)[(period, day, "")]
 
 
 def _stored_sessions():
@@ -174,9 +174,9 @@ def _ground_truth(runs: List[Tuple[Any, Optional[str]]]) -> Dict[Any, Dict[str, 
 
 
 def _assert_matches_ground_truth(db, runs):
-    user_metrics_rows = _stored_rows(db, db.user_metrics_table_name)
+    aggregate_metrics_rows = _stored_rows(db, db.aggregate_metrics_table_name)
     for (day, user_id), counts in _ground_truth(runs).items():
-        row = user_metrics_rows[("daily", day, user_id)]
+        row = aggregate_metrics_rows[("daily", day, user_id)]
         assert {
             **{column: row[column] for column in counts if column != "cache_read_tokens"},
             "cache_read_tokens": row["token_details"].get("cache_read_tokens", 0),
@@ -184,7 +184,7 @@ def _assert_matches_ground_truth(db, runs):
 
 
 def test_calculate_metrics_matches_a_direct_count_of_the_runs():
-    """Ensure every day's user metrics rows match a direct count of the stored runs"""
+    """Ensure every day's aggregate metrics rows match a direct count of the stored runs"""
     db = InMemoryDb()
     runs = _build_dataset(db)
 
@@ -193,16 +193,16 @@ def test_calculate_metrics_matches_a_direct_count_of_the_runs():
     old_day, yesterday, today = _utc_date(3), _utc_date(1), _utc_date(0)
     assert {metric["date"] for metric in calculated} == {old_day, yesterday, today}
     _assert_matches_ground_truth(db, runs)
-    user_metrics_rows = _stored_rows(db, db.user_metrics_table_name)
-    assert user_metrics_rows[("daily", old_day, "")]["agent_sessions_count"] == 1
-    assert user_metrics_rows[("daily", yesterday, "")]["team_sessions_count"] == 1
-    assert user_metrics_rows[("daily", today, "")]["workflow_sessions_count"] == 1
+    aggregate_metrics_rows = _stored_rows(db, db.aggregate_metrics_table_name)
+    assert aggregate_metrics_rows[("daily", old_day, "")]["agent_sessions_count"] == 1
+    assert aggregate_metrics_rows[("daily", yesterday, "")]["team_sessions_count"] == 1
+    assert aggregate_metrics_rows[("daily", today, "")]["workflow_sessions_count"] == 1
     assert (
-        user_metrics_rows[("daily", yesterday, "")]["users_count"],
-        user_metrics_rows[("daily", today, "")]["users_count"],
+        aggregate_metrics_rows[("daily", yesterday, "")]["users_count"],
+        aggregate_metrics_rows[("daily", today, "")]["users_count"],
     ) == (1, 0)
-    assert user_metrics_rows[("daily", old_day, "")]["completed"] is True
-    assert user_metrics_rows[("daily", yesterday, "")]["completed"] is False
+    assert aggregate_metrics_rows[("daily", old_day, "")]["completed"] is True
+    assert aggregate_metrics_rows[("daily", yesterday, "")]["completed"] is False
 
     # The member run is counted under the team that started it
     rows = _stored_rows(db, db.component_metrics_table_name)
@@ -278,8 +278,8 @@ def test_calculate_metrics_dates_releases_the_lock_when_stopped():
         return len(calls) > 1
 
     assert db.calculate_metrics_dates(should_stop=should_stop) is None
-    assert ("daily", _utc_date(1), "") in _stored_rows(db, db.user_metrics_table_name)
-    assert ("daily", _utc_date(0), "") not in _stored_rows(db, db.user_metrics_table_name)
+    assert ("daily", _utc_date(1), "") in _stored_rows(db, db.aggregate_metrics_table_name)
+    assert ("daily", _utc_date(0), "") not in _stored_rows(db, db.aggregate_metrics_table_name)
     assert db.get_metrics_refresh_status()["status"] == "failed"
     assert db.calculate_metrics() is not None
 

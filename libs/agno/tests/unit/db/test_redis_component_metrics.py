@@ -132,7 +132,7 @@ def _versions(db: RedisDb, starting_date: date, ending_date: date) -> Dict[str, 
     ]
     return {
         f"{row['aggregation_period']} {row['date'].isoformat()}": row["version"]
-        for row in db._get_user_metrics_records(record_ids)
+        for row in db._get_aggregate_metrics_records(record_ids)
     }
 
 

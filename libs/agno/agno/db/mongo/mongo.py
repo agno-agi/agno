@@ -31,13 +31,13 @@ from agno.db.mongo.utils import (
     build_metrics_rows_filter,
     build_metrics_rows_projection,
     bulk_upsert_component_metrics,
-    bulk_upsert_user_metrics_rows,
+    bulk_upsert_aggregate_metrics_rows,
     create_collection_indexes,
     deserialize_metrics_row,
     reopen_metrics_day,
     reopen_metrics_days_from,
     reopen_metrics_month,
-    upsert_user_metrics_row,
+    upsert_aggregate_metrics_row,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -50,13 +50,13 @@ from agno.db.utils import (
     METRICS_STOPPED_ERROR,
     METRICS_TOKEN_DETAILS_FIELDS,
     METRICS_TOKEN_FIELDS,
-    USER_METRICS_COUNT_COLUMNS,
+    AGGREGATE_METRICS_COUNT_COLUMNS,
     add_metrics_month_totals,
     build_metrics_by_owner_from_rows,
-    build_metrics_from_user_metrics,
+    build_metrics_from_aggregate_metrics,
     build_single_run_row,
-    build_user_metrics_month_rows,
-    build_user_metrics_rows,
+    build_aggregate_metrics_month_rows,
+    build_aggregate_metrics_rows,
     calculate_date_component_metrics,
     component_metrics_rows_to_write,
     database_error_message,
@@ -85,7 +85,7 @@ from agno.db.utils import (
     metrics_versions,
     resolve_metrics_fields,
     total_metrics_rows,
-    user_metrics_rows_to_write,
+    aggregate_metrics_rows_to_write,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -118,7 +118,7 @@ class MongoDb(BaseDb):
         memory_collection: Optional[str] = None,
         metrics_collection: Optional[str] = None,
         component_metrics_collection: Optional[str] = None,
-        user_metrics_collection: Optional[str] = None,
+        aggregate_metrics_collection: Optional[str] = None,
         metrics_refreshes_collection: Optional[str] = None,
         eval_collection: Optional[str] = None,
         knowledge_collection: Optional[str] = None,
@@ -142,7 +142,7 @@ class MongoDb(BaseDb):
             metrics_collection (Optional[str]): Name of the collection to store metrics.
             component_metrics_collection (Optional[str]): Name of the collection to store the metrics of each agent,
                 team and workflow.
-            user_metrics_collection (Optional[str]): Name of the collection to store the metrics of each user.
+            aggregate_metrics_collection (Optional[str]): Name of the collection to store the metrics of each user.
             metrics_refreshes_collection (Optional[str]): Name of the collection to store the metrics refreshes.
             eval_collection (Optional[str]): Name of the collection to store evaluation runs.
             knowledge_collection (Optional[str]): Name of the collection to store knowledge documents.
@@ -169,7 +169,7 @@ class MongoDb(BaseDb):
             memory_table=memory_collection,
             metrics_table=metrics_collection,
             component_metrics_table=component_metrics_collection,
-            user_metrics_table=user_metrics_collection,
+            aggregate_metrics_table=aggregate_metrics_collection,
             metrics_refreshes_table=metrics_refreshes_collection,
             eval_table=eval_collection,
             knowledge_table=knowledge_collection,
@@ -181,7 +181,7 @@ class MongoDb(BaseDb):
         )
         if metrics_collection is not None:
             log_warning(
-                "metrics_collection is deprecated; use component_metrics_collection and user_metrics_collection."
+                "metrics_collection is deprecated; use component_metrics_collection and aggregate_metrics_collection."
             )
 
         _client: Optional[MongoClient] = db_client
@@ -244,7 +244,7 @@ class MongoDb(BaseDb):
             ("memories", self.memory_table_name),
             ("metrics", self.metrics_table_name),
             ("component_metrics", self.component_metrics_table_name),
-            ("user_metrics", self.user_metrics_table_name),
+            ("aggregate_metrics", self.aggregate_metrics_table_name),
             ("metrics_refreshes", self.metrics_refreshes_table_name),
             ("evals", self.eval_table_name),
             ("knowledge", self.knowledge_table_name),
@@ -323,16 +323,16 @@ class MongoDb(BaseDb):
                 )
             return self.component_metrics_collection
 
-        if table_type == "user_metrics":
-            if getattr(self, "user_metrics_collection", None) is None:
-                if self.user_metrics_table_name is None:
-                    raise ValueError("User metrics collection was not provided on initialization")
-                self.user_metrics_collection = self._get_or_create_collection(
-                    collection_name=self.user_metrics_table_name,
-                    collection_type="user_metrics",
+        if table_type == "aggregate_metrics":
+            if getattr(self, "aggregate_metrics_collection", None) is None:
+                if self.aggregate_metrics_table_name is None:
+                    raise ValueError("Aggregate metrics collection was not provided on initialization")
+                self.aggregate_metrics_collection = self._get_or_create_collection(
+                    collection_name=self.aggregate_metrics_table_name,
+                    collection_type="aggregate_metrics",
                     create_collection_if_not_found=create_collection_if_not_found,
                 )
-            return self.user_metrics_collection
+            return self.aggregate_metrics_collection
 
         if table_type == "metrics_refreshes":
             if getattr(self, "metrics_refreshes_collection", None) is None:
@@ -1846,18 +1846,18 @@ class MongoDb(BaseDb):
             return
         try:
             # Looked up only when a day reopens. Never created here: none exists when no day was calculated yet
-            if getattr(self, "user_metrics_collection", None) is None and not self.table_exists(
-                self.user_metrics_table_name
+            if getattr(self, "aggregate_metrics_collection", None) is None and not self.table_exists(
+                self.aggregate_metrics_table_name
             ):
                 self._metrics_days_not_reopened.clear()
                 return
-            user_metrics_collection = self._get_collection(
-                table_type="user_metrics", create_collection_if_not_found=True
+            aggregate_metrics_collection = self._get_collection(
+                table_type="aggregate_metrics", create_collection_if_not_found=True
             )
-            if user_metrics_collection is None:
-                raise ValueError("User metrics collection was not provided on initialization")
+            if aggregate_metrics_collection is None:
+                raise ValueError("Aggregate metrics collection was not provided on initialization")
             for day in days:
-                reopen_metrics_day(user_metrics_collection, day)
+                reopen_metrics_day(aggregate_metrics_collection, day)
             self._metrics_days_not_reopened.difference_update(days)
         except Exception as e:
             self._metrics_days_not_reopened.update(days)
@@ -2000,7 +2000,7 @@ class MongoDb(BaseDb):
 
     def _get_metrics_dates_to_calculate(
         self,
-        user_metrics_collection: Collection,
+        aggregate_metrics_collection: Collection,
         sessions_collection: Collection,
         runs_collection: Optional[Collection],
         refresh_row: Dict[str, Any],
@@ -2009,7 +2009,7 @@ class MongoDb(BaseDb):
         """Get the days whose metrics a calculation rebuilds, and the fingerprint of yesterday and today.
 
         Args:
-            user_metrics_collection (Collection): The user metrics collection.
+            aggregate_metrics_collection (Collection): The aggregate metrics collection.
             sessions_collection (Collection): The sessions collection.
             runs_collection (Optional[Collection]): The runs collection.
             refresh_row (Dict[str, Any]): The document of the metrics refreshes collection, from
@@ -2032,7 +2032,7 @@ class MongoDb(BaseDb):
         # Every earlier day still open: not yet completed, or reopened by a write since
         dates_to_process.update(
             deserialize_metrics_row(document)["date"]
-            for document in user_metrics_collection.find(
+            for document in aggregate_metrics_collection.find(
                 {
                     "aggregation_period": "daily",
                     "user_id": "",
@@ -2055,7 +2055,7 @@ class MongoDb(BaseDb):
             if first_calculation:
                 completed_days = {
                     deserialize_metrics_row(document)["date"]
-                    for document in user_metrics_collection.find(
+                    for document in aggregate_metrics_collection.find(
                         {"aggregation_period": "daily", "user_id": "", "completed": True}, {"_id": False, "date": 1}
                     )
                 }
@@ -2071,13 +2071,13 @@ class MongoDb(BaseDb):
 
         return sorted(dates_to_process), fingerprint
 
-    def _get_open_metrics_months(self, user_metrics_collection: Collection) -> List[date]:
+    def _get_open_metrics_months(self, aggregate_metrics_collection: Collection) -> List[date]:
         """Get the first day of every month before the current one whose month row is still open: not completed yet,
         or reopened by a day a calculation rebuilt before it stopped."""
         current_month = datetime.now(timezone.utc).date().replace(day=1)
         return [
             deserialize_metrics_row(document)["date"]
-            for document in user_metrics_collection.find(
+            for document in aggregate_metrics_collection.find(
                 {
                     "aggregation_period": "monthly",
                     "user_id": "",
@@ -2190,41 +2190,41 @@ class MongoDb(BaseDb):
             )
         return parent_runs
 
-    def _write_user_metrics_rows(
+    def _write_aggregate_metrics_rows(
         self,
-        user_metrics_collection: Collection,
-        user_metrics_rows: List[Dict[str, Any]],
+        aggregate_metrics_collection: Collection,
+        aggregate_metrics_rows: List[Dict[str, Any]],
         rows_changed: bool,
         read_version: Optional[int],
     ) -> None:
-        """Write a period's rows of the user metrics collection, from build_user_metrics_rows: the user rows, then
+        """Write a period's rows of the aggregate metrics collection, from build_aggregate_metrics_rows: the user rows, then
         the everyone row, which is completed only while it still has the version read before the period's rows."""
-        period, period_date = user_metrics_rows[0]["aggregation_period"], user_metrics_rows[0]["date"].isoformat()
+        period, period_date = aggregate_metrics_rows[0]["aggregation_period"], aggregate_metrics_rows[0]["date"].isoformat()
         stored_rows = [
             deserialize_metrics_row(document)
-            for document in user_metrics_collection.find(
+            for document in aggregate_metrics_collection.find(
                 {"aggregation_period": period, "date": period_date}, {"_id": False}
             )
         ]
-        everyone_row, changed_rows, stale_user_ids = user_metrics_rows_to_write(
-            user_metrics_rows, stored_rows, rows_changed
+        everyone_row, changed_rows, stale_user_ids = aggregate_metrics_rows_to_write(
+            aggregate_metrics_rows, stored_rows, rows_changed
         )
         for start in range(0, len(stale_user_ids), METRICS_IN_LIST_LIMIT):
-            user_metrics_collection.delete_many(
+            aggregate_metrics_collection.delete_many(
                 {
                     "aggregation_period": period,
                     "date": period_date,
                     "user_id": {"$in": stale_user_ids[start : start + METRICS_IN_LIST_LIMIT]},
                 }
             )
-        bulk_upsert_user_metrics_rows(user_metrics_collection, changed_rows)
+        bulk_upsert_aggregate_metrics_rows(aggregate_metrics_collection, changed_rows)
         if everyone_row is not None:
-            upsert_user_metrics_row(user_metrics_collection, everyone_row, read_version)
+            upsert_aggregate_metrics_row(aggregate_metrics_collection, everyone_row, read_version)
 
     def _calculate_date_metrics(
         self,
         collection: Collection,
-        user_metrics_collection: Collection,
+        aggregate_metrics_collection: Collection,
         sessions_collection: Collection,
         runs_collection: Optional[Collection],
         date_to_process: date,
@@ -2234,7 +2234,7 @@ class MongoDb(BaseDb):
         worker_id: str,
         should_stop: Optional[Callable[[], bool]] = None,
     ) -> bool:
-        """Rebuild one day's component and user metrics rows. False when the refresh was taken over or stopped."""
+        """Rebuild one day's component and aggregate metrics rows. False when the refresh was taken over or stopped."""
         start_timestamp = int(
             datetime.combine(date_to_process, datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
         )
@@ -2245,10 +2245,10 @@ class MongoDb(BaseDb):
         )
         date_key = date_to_process.isoformat()
         # Read before the day's runs, so a run written while they are read moves it
-        stored_user_metrics_row = user_metrics_collection.find_one(
+        stored_aggregate_metrics_row = aggregate_metrics_collection.find_one(
             {"aggregation_period": "daily", "date": date_key, "user_id": ""}, {"_id": False, "version": 1}
         )
-        read_version = stored_user_metrics_row["version"] if stored_user_metrics_row is not None else None
+        read_version = stored_aggregate_metrics_row["version"] if stored_aggregate_metrics_row is not None else None
 
         sessions = list(
             sessions_collection.find(
@@ -2356,7 +2356,7 @@ class MongoDb(BaseDb):
         # Rows written in more than one request move the everyone row's version first, so a request that fails later
         # never leaves rows changed under the version read before them
         if rows_changed and read_version is not None:
-            user_metrics_collection.update_one(
+            aggregate_metrics_collection.update_one(
                 {"aggregation_period": "daily", "date": date_key, "user_id": ""}, {"$inc": {"version": 1}}
             )
             expected_version = read_version + 1
@@ -2376,32 +2376,32 @@ class MongoDb(BaseDb):
         bulk_upsert_component_metrics(collection, changed_rows)
 
         # Written last, so its version never moves without the rows it tells of
-        self._write_user_metrics_rows(
-            user_metrics_collection,
-            build_user_metrics_rows(records, "daily", date_to_process, metrics_day_completed(date_to_process)),
+        self._write_aggregate_metrics_rows(
+            aggregate_metrics_collection,
+            build_aggregate_metrics_rows(records, "daily", date_to_process, metrics_day_completed(date_to_process)),
             rows_changed=rows_changed,
             read_version=expected_version,
         )
         if rows_changed:
             # Reopened with the day, so a calculation that stops before its months leaves the month for the next
-            reopen_metrics_month(user_metrics_collection, date_to_process.replace(day=1))
+            reopen_metrics_month(aggregate_metrics_collection, date_to_process.replace(day=1))
         return True
 
     def _calculate_month_metrics(
         self,
         collection: Collection,
-        user_metrics_collection: Collection,
+        aggregate_metrics_collection: Collection,
         month_start: date,
         refreshes_collection: Collection,
         worker_id: str,
     ) -> bool:
-        """Rebuild the month rows of the user metrics collection from the component metrics rows of the month's
+        """Rebuild the month rows of the aggregate metrics collection from the component metrics rows of the month's
         days. False when another process took the refresh over, and nothing was written."""
-        stored_user_metrics_row = user_metrics_collection.find_one(
+        stored_aggregate_metrics_row = aggregate_metrics_collection.find_one(
             {"aggregation_period": "monthly", "date": month_start.isoformat(), "user_id": ""},
             {"_id": False, "version": 1},
         )
-        read_version = stored_user_metrics_row["version"] if stored_user_metrics_row is not None else None
+        read_version = stored_aggregate_metrics_row["version"] if stored_aggregate_metrics_row is not None else None
         # Server-side cursor, so a month of many rows is added up a batch at a time instead of held whole
         cursor = collection.find(
             {
@@ -2422,9 +2422,9 @@ class MongoDb(BaseDb):
         if not self._heartbeat_metrics_refresh(refreshes_collection, worker_id):
             return False
         # Added up per owner and component over the month, so a user of several days is one user of the month
-        self._write_user_metrics_rows(
-            user_metrics_collection,
-            build_user_metrics_month_rows(month_start, per_owner),
+        self._write_aggregate_metrics_rows(
+            aggregate_metrics_collection,
+            build_aggregate_metrics_month_rows(month_start, per_owner),
             rows_changed=False,
             read_version=read_version,
         )
@@ -2480,12 +2480,12 @@ class MongoDb(BaseDb):
             Exception: If an error occurs during metrics calculation.
         """
         collection = self._get_collection(table_type="component_metrics", create_collection_if_not_found=True)
-        user_metrics_collection = self._get_collection(table_type="user_metrics", create_collection_if_not_found=True)
+        aggregate_metrics_collection = self._get_collection(table_type="aggregate_metrics", create_collection_if_not_found=True)
         refreshes_collection = self._get_collection(table_type="metrics_refreshes", create_collection_if_not_found=True)
         sessions_collection = self._get_collection(table_type="sessions")
         if (
             collection is None
-            or user_metrics_collection is None
+            or aggregate_metrics_collection is None
             or refreshes_collection is None
             or sessions_collection is None
         ):
@@ -2502,7 +2502,7 @@ class MongoDb(BaseDb):
                 stored_row = self._get_metrics_refresh_row(refreshes_collection)[0]
                 if stored_row is not None:
                     started_at, finished_at = stored_row.get("started_at"), stored_row.get("finished_at")
-                reopen_metrics_days_from(user_metrics_collection, rebuild_from)
+                reopen_metrics_days_from(aggregate_metrics_collection, rebuild_from)
                 # Yesterday and today are picked by the fingerprint, so it is marked for the next one too
                 refreshes_collection.update_one(
                     {"id": METRICS_REFRESH_ID}, {"$set": {"fingerprint": ["rebuild", uuid4().hex]}}
@@ -2526,7 +2526,7 @@ class MongoDb(BaseDb):
 
         try:
             dates_to_process, fingerprint = self._get_metrics_dates_to_calculate(
-                user_metrics_collection, sessions_collection, runs_collection, refresh_row, rebuild_from
+                aggregate_metrics_collection, sessions_collection, runs_collection, refresh_row, rebuild_from
             )
             if rebuild_from is not None:
                 # Yesterday and today are picked by their fingerprint, not by being open
@@ -2592,7 +2592,7 @@ class MongoDb(BaseDb):
                     return None
                 if not self._calculate_date_metrics(
                     collection,
-                    user_metrics_collection,
+                    aggregate_metrics_collection,
                     sessions_collection,
                     runs_collection,
                     date_to_process,
@@ -2611,7 +2611,7 @@ class MongoDb(BaseDb):
             month_starts = sorted(
                 month_start
                 for month_start in set(get_months_to_calculate_metrics_for(calculated_dates))
-                | set(self._get_open_metrics_months(user_metrics_collection))
+                | set(self._get_open_metrics_months(aggregate_metrics_collection))
                 if metrics_day_completed(metrics_month_end(month_start))
             )
             for month_start in month_starts:
@@ -2619,7 +2619,7 @@ class MongoDb(BaseDb):
                     self._release_metrics_refresh(refreshes_collection, worker_id, stopped=True)
                     return None
                 if not self._calculate_month_metrics(
-                    collection, user_metrics_collection, month_start, refreshes_collection, worker_id
+                    collection, aggregate_metrics_collection, month_start, refreshes_collection, worker_id
                 ):
                     return None
 
@@ -2675,13 +2675,13 @@ class MongoDb(BaseDb):
 
         return build_metrics_by_owner_from_rows(rows), latest_updated_at
 
-    def _get_user_metrics_rows(
+    def _get_aggregate_metrics_rows(
         self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
     ) -> Tuple[List[dict], Optional[int]]:
-        """Get the day rows of the user metrics collection in the shape of the metrics table: the everyone rows for
+        """Get the day rows of the aggregate metrics collection in the shape of the metrics table: the everyone rows for
         ``""``, one user's rows for a name, and every user's rows for ``None``."""
-        user_metrics_collection = self._get_collection(table_type="user_metrics")
-        if user_metrics_collection is None:
+        aggregate_metrics_collection = self._get_collection(table_type="aggregate_metrics")
+        if aggregate_metrics_collection is None:
             return [], None
 
         query: Dict[str, Any] = {"aggregation_period": "daily"}
@@ -2694,8 +2694,8 @@ class MongoDb(BaseDb):
             query["date"] = date_filter
         query["user_id"] = {"$ne": ""} if user_id is None else user_id
         # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row
-        query["$or"] = [{column: {"$gt": 0}} for column in USER_METRICS_COUNT_COLUMNS if column != "users_count"]
-        # Only what build_metrics_from_user_metrics reads, so the maps of timings are never decoded
+        query["$or"] = [{column: {"$gt": 0}} for column in AGGREGATE_METRICS_COUNT_COLUMNS if column != "users_count"]
+        # Only what build_metrics_from_aggregate_metrics reads, so the maps of timings are never decoded
         projection = {
             "_id": False,
             **{
@@ -2703,7 +2703,7 @@ class MongoDb(BaseDb):
                 for column in [
                     "date",
                     "user_id",
-                    *USER_METRICS_COUNT_COLUMNS,
+                    *AGGREGATE_METRICS_COUNT_COLUMNS,
                     *[
                         field
                         for field in METRICS_TOKEN_FIELDS
@@ -2718,17 +2718,17 @@ class MongoDb(BaseDb):
         }
         rows = [
             deserialize_metrics_row(document)
-            for document in user_metrics_collection.find(query, projection).sort([("date", 1), ("user_id", 1)])
+            for document in aggregate_metrics_collection.find(query, projection).sort([("date", 1), ("user_id", 1)])
         ]
         if not rows:
             return [], None
 
         # Get the latest updated_at, scoped to the same user filter
-        latest_record = user_metrics_collection.find_one(
+        latest_record = aggregate_metrics_collection.find_one(
             {"aggregation_period": "daily", "user_id": query["user_id"]}, {"updated_at": 1}, sort=[("updated_at", -1)]
         )
         latest_updated_at = latest_record.get("updated_at") if latest_record else None
-        return build_metrics_from_user_metrics(rows), latest_updated_at
+        return build_metrics_from_aggregate_metrics(rows), latest_updated_at
 
     def _get_metrics_rows(
         self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
@@ -2737,7 +2737,7 @@ class MongoDb(BaseDb):
         finished: a user's from that user's rows, the runs with no user from their component metrics rows."""
         if user_id == "":
             return self._get_metrics_by_owner(starting_date, ending_date, user_id)
-        metrics, latest_updated_at = self._get_user_metrics_rows(starting_date, ending_date, user_id)
+        metrics, latest_updated_at = self._get_aggregate_metrics_rows(starting_date, ending_date, user_id)
         if user_id is not None:
             return metrics, latest_updated_at
 
@@ -2783,7 +2783,7 @@ class MongoDb(BaseDb):
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
-        Metrics are read from the user metrics and component metrics once the first calculate_metrics has finished,
+        Metrics are read from the aggregate metrics and component metrics once the first calculate_metrics has finished,
         and from the deprecated metrics collection until then. They are refreshed first, at most once per minute per
         process, unless stop_metrics_refresh_on_read was called.
 
@@ -2849,7 +2849,7 @@ class MongoDb(BaseDb):
     ) -> Tuple[List[dict], Optional[int]]:
         """Get the metrics of every user, one row per day, matching the given date range.
 
-        Read from the everyone rows of the user metrics once the first calculate_metrics has finished, and from the
+        Read from the everyone rows of the aggregate metrics once the first calculate_metrics has finished, and from the
         deprecated metrics collection until then. They are refreshed first, as get_metrics does.
 
         Args:
@@ -2865,7 +2865,7 @@ class MongoDb(BaseDb):
         try:
             self._refresh_metrics_before_read()
             if self._metrics_calculated(self._get_collection(table_type="metrics_refreshes")):
-                return self._get_user_metrics_rows(starting_date, ending_date, "")
+                return self._get_aggregate_metrics_rows(starting_date, ending_date, "")
             return super().get_metrics_by_date(starting_date, ending_date)
 
         except Exception as e:
@@ -2908,17 +2908,17 @@ class MongoDb(BaseDb):
             user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with
                 no user.
             fields (List[str]): The columns to total.
-            use_month_rows (bool): Total a calendar month inside the date range from its month user metrics row, as one
+            use_month_rows (bool): Total a calendar month inside the date range from its month aggregate metrics row, as one
                 date.
 
         Returns:
             Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each date, and when they were last updated.
         """
-        user_metrics_collection = self._get_collection(table_type="user_metrics")
+        aggregate_metrics_collection = self._get_collection(table_type="aggregate_metrics")
         # Every owner is read from the everyone rows and a user from the user's rows; the runs with no user have no
-        # user metrics row of their own, so they are read from their component rows
-        collection = self._get_collection(table_type="component_metrics") if user_id == "" else user_metrics_collection
-        if user_metrics_collection is None or collection is None:
+        # aggregate metrics row of their own, so they are read from their component rows
+        collection = self._get_collection(table_type="component_metrics") if user_id == "" else aggregate_metrics_collection
+        if aggregate_metrics_collection is None or collection is None:
             return [], None
 
         # The component metrics collection keeps day rows only, so the runs with no user are read day by day
@@ -2929,7 +2929,7 @@ class MongoDb(BaseDb):
             # not yet built, is read from its days
             month_starts = [
                 deserialize_metrics_row(document)["date"]
-                for document in user_metrics_collection.find(
+                for document in aggregate_metrics_collection.find(
                     {
                         "aggregation_period": "monthly",
                         "user_id": "",
@@ -3024,7 +3024,7 @@ class MongoDb(BaseDb):
             raise e
 
     def get_metrics_versions(self, starting_date: date, ending_date: date) -> Optional[Dict[str, int]]:
-        """Get the version of every everyone row of a day or a month of the user metrics in the given date range.
+        """Get the version of every everyone row of a day or a month of the aggregate metrics in the given date range.
 
         Metrics are refreshed first, as get_metrics refreshes them.
 
@@ -3035,7 +3035,7 @@ class MongoDb(BaseDb):
         Returns:
             Optional[Dict[str, int]]: The version of each everyone row, keyed by its aggregation period and date. The
                 same again only while no calculation wrote a row of the date range. ``None`` until the first
-                calculate_metrics has finished, or without a user metrics collection: a read would find no rows to
+                calculate_metrics has finished, or without an aggregate metrics collection: a read would find no rows to
                 total.
 
         Raises:
@@ -3043,7 +3043,7 @@ class MongoDb(BaseDb):
         """
         try:
             self._refresh_metrics_before_read()
-            collection = self._get_collection(table_type="user_metrics")
+            collection = self._get_collection(table_type="aggregate_metrics")
             if collection is None or not self._metrics_calculated(self._get_collection(table_type="metrics_refreshes")):
                 return None
 

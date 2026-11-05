@@ -78,15 +78,15 @@ def stored_rows(db: SurrealDb, table: str) -> List[Dict[str, Any]]:
     return [desurrealize_metrics_row(record) for record in db._query(f"SELECT * FROM {table}", {}, dict)]
 
 
-def user_metrics_rows(db: SurrealDb) -> Dict[Tuple[str, date, str], Dict[str, Any]]:
+def aggregate_metrics_rows(db: SurrealDb) -> Dict[Tuple[str, date, str], Dict[str, Any]]:
     return {
         (row["aggregation_period"], row["date"], row["user_id"]): row
-        for row in stored_rows(db, db.user_metrics_table_name)
+        for row in stored_rows(db, db.aggregate_metrics_table_name)
     }
 
 
 def everyone_row(db: SurrealDb, day: date, period: str = "daily") -> Dict[str, Any]:
-    return user_metrics_rows(db)[(period, day, "")]
+    return aggregate_metrics_rows(db)[(period, day, "")]
 
 
 def build_dataset(db: SurrealDb) -> None:
@@ -168,7 +168,7 @@ def ground_truth(db: SurrealDb) -> Dict[Tuple[date, str], Dict[str, int]]:
 
 
 def assert_matches_ground_truth(db: SurrealDb) -> None:
-    rows = user_metrics_rows(db)
+    rows = aggregate_metrics_rows(db)
     for (day, user_id), counts in ground_truth(db).items():
         row = rows[("daily", day, user_id)]
         assert {
@@ -178,7 +178,7 @@ def assert_matches_ground_truth(db: SurrealDb) -> None:
 
 
 def test_calculate_metrics_matches_a_direct_count_of_the_runs(surreal_db: SurrealDb):
-    """Ensure every day's user metrics rows match a direct count of the stored runs"""
+    """Ensure every day's aggregate metrics rows match a direct count of the stored runs"""
     build_dataset(surreal_db)
 
     calculated = surreal_db.calculate_metrics()
@@ -187,13 +187,13 @@ def test_calculate_metrics_matches_a_direct_count_of_the_runs(surreal_db: Surrea
     assert calculated is not None
     assert {metric["date"] for metric in calculated} == {old_day, yesterday, today}
     assert_matches_ground_truth(surreal_db)
-    user_metrics = user_metrics_rows(surreal_db)
-    assert user_metrics[("daily", yesterday, "")]["users_count"] == 1
-    assert user_metrics[("daily", today, "")]["users_count"] == 0
-    assert user_metrics[("daily", old_day, "")]["completed"] is True
-    assert user_metrics[("daily", yesterday, "")]["completed"] is False
-    assert user_metrics[("daily", old_day, "")]["model_metrics"] == {"OpenAI": {"gpt-5": {"count": 2}}}
-    assert user_metrics[("daily", old_day, "")]["duration_runs_count"] == 1
+    aggregate_metrics = aggregate_metrics_rows(surreal_db)
+    assert aggregate_metrics[("daily", yesterday, "")]["users_count"] == 1
+    assert aggregate_metrics[("daily", today, "")]["users_count"] == 0
+    assert aggregate_metrics[("daily", old_day, "")]["completed"] is True
+    assert aggregate_metrics[("daily", yesterday, "")]["completed"] is False
+    assert aggregate_metrics[("daily", old_day, "")]["model_metrics"] == {"OpenAI": {"gpt-5": {"count": 2}}}
+    assert aggregate_metrics[("daily", old_day, "")]["duration_runs_count"] == 1
 
     # The member run is counted under the team that started it
     rows = {
@@ -315,7 +315,7 @@ def test_calculate_metrics_takes_over_a_lock_that_went_stale(surreal_db: Surreal
 def test_calculate_date_metrics_writes_nothing_after_losing_the_lock(surreal_db: SurrealDb):
     """Ensure a calculation whose refresh another worker took over writes no more days"""
     build_dataset(surreal_db)
-    user_metrics_table = surreal_db._get_table("user_metrics")
+    aggregate_metrics_table = surreal_db._get_table("aggregate_metrics")
     table = surreal_db._get_table("component_metrics")
     refreshes_table = surreal_db._get_table("metrics_refreshes")
     assert surreal_db._claim_metrics_refresh(refreshes_table, "this-worker") is not None
@@ -325,7 +325,7 @@ def test_calculate_date_metrics_writes_nothing_after_losing_the_lock(surreal_db:
     assert not surreal_db._heartbeat_metrics_refresh(refreshes_table, "this-worker")
     assert not surreal_db._calculate_date_metrics(
         table,
-        user_metrics_table,
+        aggregate_metrics_table,
         surreal_db.session_table_name,
         surreal_db.runs_table_name,
         utc_date(3),
@@ -334,7 +334,7 @@ def test_calculate_date_metrics_writes_nothing_after_losing_the_lock(surreal_db:
         refreshes_table,
         "this-worker",
     )
-    assert user_metrics_rows(surreal_db) == {}
+    assert aggregate_metrics_rows(surreal_db) == {}
     assert stored_rows(surreal_db, table) == []
     assert surreal_db._heartbeat_metrics_refresh(refreshes_table, "another-worker")
 

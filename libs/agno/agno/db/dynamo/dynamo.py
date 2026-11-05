@@ -41,9 +41,9 @@ from agno.db.dynamo.utils import (
     serialize_eval_record,
     serialize_knowledge_row,
     serialize_to_dynamo_item,
-    serialize_user_metrics_row,
-    user_metrics_key,
-    user_metrics_period_user_id,
+    serialize_aggregate_metrics_row,
+    aggregate_metrics_key,
+    aggregate_metrics_period_user_id,
 )
 from agno.db.migrations.manager import MigrationManager
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
@@ -56,13 +56,13 @@ from agno.db.utils import (
     METRICS_REFRESH_ID,
     METRICS_STOPPED_ERROR,
     METRICS_WRITE_RETRIES,
-    USER_METRICS_COUNT_COLUMNS,
+    AGGREGATE_METRICS_COUNT_COLUMNS,
     add_metrics_month_totals,
     build_metrics_by_owner_from_rows,
-    build_metrics_from_user_metrics,
+    build_metrics_from_aggregate_metrics,
     build_single_run_row,
-    build_user_metrics_month_rows,
-    build_user_metrics_rows,
+    build_aggregate_metrics_month_rows,
+    build_aggregate_metrics_rows,
     calculate_date_component_metrics,
     component_metrics_rows_to_write,
     database_error_message,
@@ -91,8 +91,8 @@ from agno.db.utils import (
     metrics_versions,
     resolve_metrics_fields,
     total_metrics_rows,
-    user_metrics_row_to_store,
-    user_metrics_rows_to_write,
+    aggregate_metrics_row_to_store,
+    aggregate_metrics_rows_to_write,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -127,7 +127,7 @@ class DynamoDb(BaseDb):
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         component_metrics_table: Optional[str] = None,
-        user_metrics_table: Optional[str] = None,
+        aggregate_metrics_table: Optional[str] = None,
         metrics_refreshes_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
@@ -147,7 +147,7 @@ class DynamoDb(BaseDb):
             memory_table: The name of the memory table.
             metrics_table: The name of the metrics table.
             component_metrics_table: The name of the table to store the metrics of each agent, team and workflow.
-            user_metrics_table: The name of the table to store the metrics of each user.
+            aggregate_metrics_table: The name of the table to store the metrics of each user.
             metrics_refreshes_table: The name of the metrics refreshes table.
             eval_table: The name of the eval table.
             knowledge_table: The name of the knowledge table.
@@ -166,7 +166,7 @@ class DynamoDb(BaseDb):
             memory_table=memory_table,
             metrics_table=metrics_table,
             component_metrics_table=component_metrics_table,
-            user_metrics_table=user_metrics_table,
+            aggregate_metrics_table=aggregate_metrics_table,
             metrics_refreshes_table=metrics_refreshes_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
@@ -175,7 +175,7 @@ class DynamoDb(BaseDb):
         )
 
         if metrics_table is not None:
-            log_warning("metrics_table is deprecated; use component_metrics_table and user_metrics_table.")
+            log_warning("metrics_table is deprecated; use component_metrics_table and aggregate_metrics_table.")
 
         if db_client is not None:
             self.client = db_client
@@ -225,7 +225,7 @@ class DynamoDb(BaseDb):
             ("memories", self.memory_table_name),
             ("metrics", self.metrics_table_name),
             ("component_metrics", self.component_metrics_table_name),
-            ("user_metrics", self.user_metrics_table_name),
+            ("aggregate_metrics", self.aggregate_metrics_table_name),
             ("metrics_refreshes", self.metrics_refreshes_table_name),
             ("evals", self.eval_table_name),
             ("knowledge", self.knowledge_table_name),
@@ -246,7 +246,7 @@ class DynamoDb(BaseDb):
         Get table name and ensure the table exists, creating it if needed.
 
         Args:
-            table_type: Type of table ("sessions", "memories", "metrics", "component_metrics", "user_metrics",
+            table_type: Type of table ("sessions", "memories", "metrics", "component_metrics", "aggregate_metrics",
                 "metrics_refreshes", "evals", "knowledge", "traces", "spans")
 
         Returns:
@@ -267,8 +267,8 @@ class DynamoDb(BaseDb):
             table_name = self.metrics_table_name
         elif table_type == "component_metrics":
             table_name = self.component_metrics_table_name
-        elif table_type == "user_metrics":
-            table_name = self.user_metrics_table_name
+        elif table_type == "aggregate_metrics":
+            table_name = self.aggregate_metrics_table_name
         elif table_type == "metrics_refreshes":
             table_name = self.metrics_refreshes_table_name
         elif table_type == "evals":
@@ -1748,7 +1748,7 @@ class DynamoDb(BaseDb):
             return
         try:
             for day in days:
-                reopen_metrics_day(self.client, self.user_metrics_table_name, day)
+                reopen_metrics_day(self.client, self.aggregate_metrics_table_name, day)
             self._metrics_days_not_reopened.difference_update(days)
         except self.client.exceptions.ResourceNotFoundException:
             # No day was calculated yet, so there is nothing to reopen
@@ -2038,19 +2038,19 @@ class DynamoDb(BaseDb):
             if (session.get("updated_at") or session.get("created_at") or 0) >= start_timestamp
         ]
 
-    def _get_user_metrics_items(
+    def _get_aggregate_metrics_items(
         self,
-        user_metrics_table_name: str,
+        aggregate_metrics_table_name: str,
         aggregation_period: str,
         user_id: Optional[str],
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
         completed: Optional[bool] = None,
     ) -> List[Dict[str, Any]]:
-        """Get the user metrics rows of one period in the given date range, oldest first.
+        """Get the aggregate metrics rows of one period in the given date range, oldest first.
 
         Args:
-            user_metrics_table_name: The user metrics table.
+            aggregate_metrics_table_name: The aggregate metrics table.
             aggregation_period: "daily" or "monthly".
             user_id: The rows of this user, ``""`` the everyone rows, ``None`` the rows of every user and the everyone
                 rows, which are read from the period's index a moment after a write.
@@ -2065,14 +2065,14 @@ class DynamoDb(BaseDb):
         names = {"#key": "aggregation_period" if user_id is None else "period_user_id", "#date": "date"}
         values: Dict[str, Any] = {
             ":key": {
-                "S": aggregation_period if user_id is None else user_metrics_period_user_id(aggregation_period, user_id)
+                "S": aggregation_period if user_id is None else aggregate_metrics_period_user_id(aggregation_period, user_id)
             }
         }
         key_condition = "#key = :key AND #date BETWEEN :start_date AND :end_date"
         values[":start_date"] = {"S": (starting_date or date.min).isoformat()}
         values[":end_date"] = {"S": (ending_date or date.max).isoformat()}
         query_kwargs: Dict[str, Any] = {
-            "TableName": user_metrics_table_name,
+            "TableName": aggregate_metrics_table_name,
             "KeyConditionExpression": key_condition,
             "ExpressionAttributeNames": names,
             "ExpressionAttributeValues": values,
@@ -2184,7 +2184,7 @@ class DynamoDb(BaseDb):
 
     def _get_metrics_dates_to_calculate(
         self,
-        user_metrics_table_name: str,
+        aggregate_metrics_table_name: str,
         sessions_table_name: str,
         runs_table_name: str,
         refresh_row: Dict[str, Any],
@@ -2193,7 +2193,7 @@ class DynamoDb(BaseDb):
         """Get the days whose metrics a calculation rebuilds, and the fingerprint of yesterday and today.
 
         Args:
-            user_metrics_table_name: The user metrics table.
+            aggregate_metrics_table_name: The aggregate metrics table.
             sessions_table_name: The sessions table.
             runs_table_name: The runs table.
             refresh_row: The item of the metrics refreshes table, from _claim_metrics_refresh.
@@ -2215,8 +2215,8 @@ class DynamoDb(BaseDb):
         # Every earlier day still open: not yet completed, or reopened by a write since
         dates_to_process.update(
             row["date"]
-            for row in self._get_user_metrics_items(
-                user_metrics_table_name,
+            for row in self._get_aggregate_metrics_items(
+                aggregate_metrics_table_name,
                 "daily",
                 "",
                 ending_date=yesterday - timedelta(days=1),
@@ -2235,7 +2235,7 @@ class DynamoDb(BaseDb):
             if first_calculation:
                 completed_days = {
                     row["date"]
-                    for row in self._get_user_metrics_items(user_metrics_table_name, "daily", "", completed=True)
+                    for row in self._get_aggregate_metrics_items(aggregate_metrics_table_name, "daily", "", completed=True)
                 }
             # Only days with data, so one session dated long ago never builds every empty day since
             starting_date = rebuild_from if not first_calculation else None
@@ -2262,14 +2262,14 @@ class DynamoDb(BaseDb):
 
         return sorted(dates_to_process), fingerprint
 
-    def _get_open_metrics_months(self, user_metrics_table_name: str) -> List[date]:
+    def _get_open_metrics_months(self, aggregate_metrics_table_name: str) -> List[date]:
         """Get the first day of every month before the current one whose month row is still open: not completed yet,
         or reopened by a day a calculation rebuilt before it stopped."""
         current_month = datetime.now(timezone.utc).date().replace(day=1)
         return [
             row["date"]
-            for row in self._get_user_metrics_items(
-                user_metrics_table_name, "monthly", "", ending_date=current_month - timedelta(days=1), completed=False
+            for row in self._get_aggregate_metrics_items(
+                aggregate_metrics_table_name, "monthly", "", ending_date=current_month - timedelta(days=1), completed=False
             )
         ]
 
@@ -2356,47 +2356,47 @@ class DynamoDb(BaseDb):
             )
         return parent_runs
 
-    def _write_user_metrics_rows(
+    def _write_aggregate_metrics_rows(
         self,
-        user_metrics_table_name: str,
-        user_metrics_rows: List[Dict[str, Any]],
+        aggregate_metrics_table_name: str,
+        aggregate_metrics_rows: List[Dict[str, Any]],
         rows_changed: bool,
         read_version: Optional[int],
         refreshes_table_name: str,
         worker_id: str,
         row_writes: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     ) -> bool:
-        """Write a period's rows: the given component metrics writes, then the user rows of the user metrics table,
-        then the everyone row, from build_user_metrics_rows. False when another process took the refresh over.
+        """Write a period's rows: the given component metrics writes, then the user rows of the aggregate metrics table,
+        then the everyone row, from build_aggregate_metrics_rows. False when another process took the refresh over.
 
         DynamoDB writes 25 items at most at once, so the everyone row is written last, conditional on the version it
         is completed by: it is completed only while it still has the version read before the period's rows.
 
         Args:
-            user_metrics_table_name: The user metrics table.
-            user_metrics_rows: The period's rows, the everyone row first.
+            aggregate_metrics_table_name: The aggregate metrics table.
+            aggregate_metrics_rows: The period's rows, the everyone row first.
             rows_changed: Whether a component metrics row of the period was written or deleted.
             read_version: The version of the everyone row read before the period's rows were rebuilt.
             refreshes_table_name: The metrics refreshes table.
             worker_id: The id of this calculation, which holds the refresh.
             row_writes: The batch_write_item requests of the component metrics rows to write first, by table.
         """
-        period, period_date = user_metrics_rows[0]["aggregation_period"], user_metrics_rows[0]["date"]
+        period, period_date = aggregate_metrics_rows[0]["aggregation_period"], aggregate_metrics_rows[0]["date"]
         # Read through the period's index, a moment behind a write: every row it compares was written by an earlier
         # calculation, as one calculation writes a period once
-        stored_rows = self._get_user_metrics_items(user_metrics_table_name, period, None, period_date, period_date)
+        stored_rows = self._get_aggregate_metrics_items(aggregate_metrics_table_name, period, None, period_date, period_date)
         stored_by_user = {row["user_id"]: row for row in stored_rows}
-        everyone_row, changed_rows, stale_user_ids = user_metrics_rows_to_write(
-            user_metrics_rows, stored_rows, rows_changed
+        everyone_row, changed_rows, stale_user_ids = aggregate_metrics_rows_to_write(
+            aggregate_metrics_rows, stored_rows, rows_changed
         )
         writes = {table_name: list(requests) for table_name, requests in (row_writes or {}).items()}
-        writes.setdefault(user_metrics_table_name, []).extend(
-            [{"DeleteRequest": {"Key": user_metrics_key(period, period_date, user_id)}} for user_id in stale_user_ids]
+        writes.setdefault(aggregate_metrics_table_name, []).extend(
+            [{"DeleteRequest": {"Key": aggregate_metrics_key(period, period_date, user_id)}} for user_id in stale_user_ids]
             + [
                 {
                     "PutRequest": {
-                        "Item": serialize_user_metrics_row(
-                            user_metrics_row_to_store(row, stored_by_user.get(row["user_id"]), None)
+                        "Item": serialize_aggregate_metrics_row(
+                            aggregate_metrics_row_to_store(row, stored_by_user.get(row["user_id"]), None)
                         )
                     }
                 }
@@ -2404,7 +2404,7 @@ class DynamoDb(BaseDb):
             ]
         )
 
-        everyone_key = user_metrics_key(period, period_date, "")
+        everyone_key = aggregate_metrics_key(period, period_date, "")
         expected_version = read_version
         # Heartbeated before the period's writes, so a process whose lock went stale never overwrites the rows of the
         # process that took the refresh over
@@ -2415,7 +2415,7 @@ class DynamoDb(BaseDb):
         requests_count = sum(-(-len(requests) // DYNAMO_BATCH_SIZE_LIMIT) for requests in writes.values())
         if requests_count > 1 and "" in stored_by_user:
             self.client.update_item(
-                TableName=user_metrics_table_name,
+                TableName=aggregate_metrics_table_name,
                 Key=everyone_key,
                 UpdateExpression="ADD #version :one",
                 ExpressionAttributeNames={"#version": "version"},
@@ -2429,20 +2429,20 @@ class DynamoDb(BaseDb):
         if everyone_row is None:
             if not self._heartbeat_metrics_refresh(refreshes_table_name, worker_id):
                 # The rows took several batch requests: a lock lost between them would leave stale rows completed
-                reopen_metrics_row(self.client, user_metrics_table_name, period_date, period)
+                reopen_metrics_row(self.client, aggregate_metrics_table_name, period_date, period)
                 return False
             return True
         # Written last, so its version never moves without the rows it tells of. A reopen written between its read and
         # its write fails the condition, and the row is read again, as batch_write_with_retry retries
         for attempt in range(METRICS_WRITE_RETRIES + 1):
             stored_item = self.client.get_item(
-                TableName=user_metrics_table_name, Key=everyone_key, ConsistentRead=True
+                TableName=aggregate_metrics_table_name, Key=everyone_key, ConsistentRead=True
             ).get("Item")
             stored_row = deserialize_metrics_row(stored_item) if stored_item else None
             put_kwargs: Dict[str, Any] = {
-                "TableName": user_metrics_table_name,
-                "Item": serialize_user_metrics_row(
-                    user_metrics_row_to_store(everyone_row, stored_row, expected_version)
+                "TableName": aggregate_metrics_table_name,
+                "Item": serialize_aggregate_metrics_row(
+                    aggregate_metrics_row_to_store(everyone_row, stored_row, expected_version)
                 ),
             }
             # Conditional on the version it is completed by, so a reopen written since keeps the period open
@@ -2465,7 +2465,7 @@ class DynamoDb(BaseDb):
                 reasons = e.response.get("CancellationReasons") or []
                 if reasons and reasons[0].get("Code") == "ConditionalCheckFailed":
                     # The rows took several batch requests: a lock lost between them would leave stale rows completed
-                    reopen_metrics_row(self.client, user_metrics_table_name, period_date, period)
+                    reopen_metrics_row(self.client, aggregate_metrics_table_name, period_date, period)
                     return False
                 if attempt == METRICS_WRITE_RETRIES:
                     raise
@@ -2474,7 +2474,7 @@ class DynamoDb(BaseDb):
     def _calculate_date_metrics(
         self,
         table_name: str,
-        user_metrics_table_name: str,
+        aggregate_metrics_table_name: str,
         sessions_table_name: str,
         runs_table_name: str,
         date_to_process: date,
@@ -2484,7 +2484,7 @@ class DynamoDb(BaseDb):
         worker_id: str,
         should_stop: Optional[Callable[[], bool]] = None,
     ) -> bool:
-        """Rebuild one day's component and user metrics rows. False when the refresh was taken over or stopped."""
+        """Rebuild one day's component and aggregate metrics rows. False when the refresh was taken over or stopped."""
         start_timestamp = int(
             datetime.combine(date_to_process, datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
         )
@@ -2495,8 +2495,8 @@ class DynamoDb(BaseDb):
         )
         # Read before the day's runs, so a run written while they are read moves it
         everyone_item = self.client.get_item(
-            TableName=user_metrics_table_name,
-            Key=user_metrics_key("daily", date_to_process, ""),
+            TableName=aggregate_metrics_table_name,
+            Key=aggregate_metrics_key("daily", date_to_process, ""),
             ProjectionExpression="#version",
             ExpressionAttributeNames={"#version": "version"},
             ConsistentRead=True,
@@ -2612,9 +2612,9 @@ class DynamoDb(BaseDb):
                 {"PutRequest": {"Item": serialize_component_metrics_row({**row, "created_at": created_at})}}
             )
 
-        if not self._write_user_metrics_rows(
-            user_metrics_table_name,
-            build_user_metrics_rows(records, "daily", date_to_process, metrics_day_completed(date_to_process)),
+        if not self._write_aggregate_metrics_rows(
+            aggregate_metrics_table_name,
+            build_aggregate_metrics_rows(records, "daily", date_to_process, metrics_day_completed(date_to_process)),
             rows_changed=bool(changed_rows or stale_keys),
             read_version=read_version,
             refreshes_table_name=refreshes_table_name,
@@ -2624,22 +2624,22 @@ class DynamoDb(BaseDb):
             return False
         if changed_rows or stale_keys:
             # Reopened with the day, so a calculation that stops before its months leaves the month for the next
-            reopen_metrics_month(self.client, user_metrics_table_name, date_to_process.replace(day=1))
+            reopen_metrics_month(self.client, aggregate_metrics_table_name, date_to_process.replace(day=1))
         return True
 
     def _calculate_month_metrics(
         self,
         table_name: str,
-        user_metrics_table_name: str,
+        aggregate_metrics_table_name: str,
         month_start: date,
         refreshes_table_name: str,
         worker_id: str,
     ) -> bool:
-        """Rebuild the month rows of the user metrics table from the component metrics rows of the month's days.
+        """Rebuild the month rows of the aggregate metrics table from the component metrics rows of the month's days.
         False when another process took the refresh over."""
         everyone_item = self.client.get_item(
-            TableName=user_metrics_table_name,
-            Key=user_metrics_key("monthly", month_start, ""),
+            TableName=aggregate_metrics_table_name,
+            Key=aggregate_metrics_key("monthly", month_start, ""),
             ProjectionExpression="#version",
             ExpressionAttributeNames={"#version": "version"},
             ConsistentRead=True,
@@ -2654,9 +2654,9 @@ class DynamoDb(BaseDb):
             day += timedelta(days=1)
 
         # Added up per owner and component over the month, so a user of several days is one user of the month
-        return self._write_user_metrics_rows(
-            user_metrics_table_name,
-            build_user_metrics_month_rows(month_start, per_owner),
+        return self._write_aggregate_metrics_rows(
+            aggregate_metrics_table_name,
+            build_aggregate_metrics_month_rows(month_start, per_owner),
             rows_changed=False,
             read_version=read_version,
             refreshes_table_name=refreshes_table_name,
@@ -2712,12 +2712,12 @@ class DynamoDb(BaseDb):
             Exception: If an error occurs during metrics calculation.
         """
         table_name = self._get_table("component_metrics", create_table_if_not_found=True)
-        user_metrics_table_name = self._get_table("user_metrics", create_table_if_not_found=True)
+        aggregate_metrics_table_name = self._get_table("aggregate_metrics", create_table_if_not_found=True)
         refreshes_table_name = self._get_table("metrics_refreshes", create_table_if_not_found=True)
         sessions_table_name = self.session_table_name
         if (
             table_name is None
-            or user_metrics_table_name is None
+            or aggregate_metrics_table_name is None
             or refreshes_table_name is None
             or not self.table_exists(sessions_table_name)
         ):
@@ -2736,7 +2736,7 @@ class DynamoDb(BaseDb):
                 stored_row = self._get_metrics_refresh_row(refreshes_table_name)[0]
                 if stored_row is not None:
                     started_at, finished_at = stored_row["started_at"], stored_row["finished_at"]
-                reopen_metrics_days_from(self.client, user_metrics_table_name, rebuild_from)
+                reopen_metrics_days_from(self.client, aggregate_metrics_table_name, rebuild_from)
                 # Yesterday and today are picked by the fingerprint, so it is marked for the next one too
                 try:
                     self.client.update_item(
@@ -2769,7 +2769,7 @@ class DynamoDb(BaseDb):
 
         try:
             dates_to_process, fingerprint = self._get_metrics_dates_to_calculate(
-                user_metrics_table_name, sessions_table_name, runs_table_name, refresh_row, rebuild_from
+                aggregate_metrics_table_name, sessions_table_name, runs_table_name, refresh_row, rebuild_from
             )
             if rebuild_from is not None:
                 # Yesterday and today are picked by their fingerprint, not by being open
@@ -2829,7 +2829,7 @@ class DynamoDb(BaseDb):
                     return None
                 if not self._calculate_date_metrics(
                     table_name,
-                    user_metrics_table_name,
+                    aggregate_metrics_table_name,
                     sessions_table_name,
                     runs_table_name,
                     date_to_process,
@@ -2848,7 +2848,7 @@ class DynamoDb(BaseDb):
             month_starts = sorted(
                 month_start
                 for month_start in set(get_months_to_calculate_metrics_for(calculated_dates))
-                | set(self._get_open_metrics_months(user_metrics_table_name))
+                | set(self._get_open_metrics_months(aggregate_metrics_table_name))
                 if metrics_day_completed(metrics_month_end(month_start))
             )
             for month_start in month_starts:
@@ -2856,7 +2856,7 @@ class DynamoDb(BaseDb):
                     self._release_metrics_refresh(refreshes_table_name, worker_id, stopped=True)
                     return None
                 if not self._calculate_month_metrics(
-                    table_name, user_metrics_table_name, month_start, refreshes_table_name, worker_id
+                    table_name, aggregate_metrics_table_name, month_start, refreshes_table_name, worker_id
                 ):
                     return None
 
@@ -2880,10 +2880,10 @@ class DynamoDb(BaseDb):
         that counts nothing has no component metrics rows."""
         return [
             row["date"]
-            for row in self._get_user_metrics_items(
-                self.user_metrics_table_name, "daily", "", starting_date, ending_date
+            for row in self._get_aggregate_metrics_items(
+                self.aggregate_metrics_table_name, "daily", "", starting_date, ending_date
             )
-            if any(row.get(column) for column in USER_METRICS_COUNT_COLUMNS if column != "users_count")
+            if any(row.get(column) for column in AGGREGATE_METRICS_COUNT_COLUMNS if column != "users_count")
         ]
 
     def _get_metrics_by_owner(
@@ -2904,14 +2904,14 @@ class DynamoDb(BaseDb):
         latest_updated_at = max((row["updated_at"] for row in rows if row.get("updated_at") is not None), default=None)
         return build_metrics_by_owner_from_rows(rows), latest_updated_at
 
-    def _get_user_metrics_rows(
+    def _get_aggregate_metrics_rows(
         self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
     ) -> Tuple[List[dict], Optional[int]]:
-        """Get the day rows of the user metrics table in the shape of the metrics table: the everyone rows for ``""``, one
+        """Get the day rows of the aggregate metrics table in the shape of the metrics table: the everyone rows for ``""``, one
         user's rows for a name, and every user's rows for ``None``."""
         try:
-            rows = self._get_user_metrics_items(
-                self.user_metrics_table_name, "daily", user_id, starting_date, ending_date
+            rows = self._get_aggregate_metrics_items(
+                self.aggregate_metrics_table_name, "daily", user_id, starting_date, ending_date
             )
         except self.client.exceptions.ResourceNotFoundException:
             return [], None
@@ -2919,11 +2919,11 @@ class DynamoDb(BaseDb):
             rows = [row for row in rows if row["user_id"] != ""]
         # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row
         rows = [
-            row for row in rows if any(row[column] for column in USER_METRICS_COUNT_COLUMNS if column != "users_count")
+            row for row in rows if any(row[column] for column in AGGREGATE_METRICS_COUNT_COLUMNS if column != "users_count")
         ]
         rows.sort(key=lambda row: (row["date"], row["user_id"]))
         latest_updated_at = max((row["updated_at"] for row in rows if row.get("updated_at") is not None), default=None)
-        return build_metrics_from_user_metrics(rows), latest_updated_at
+        return build_metrics_from_aggregate_metrics(rows), latest_updated_at
 
     def _get_metrics_rows(
         self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
@@ -2932,7 +2932,7 @@ class DynamoDb(BaseDb):
         finished: a user's from that user's rows, the runs with no user from their component metrics rows."""
         if user_id == "":
             return self._get_metrics_by_owner(starting_date, ending_date, user_id)
-        metrics, latest_updated_at = self._get_user_metrics_rows(starting_date, ending_date, user_id)
+        metrics, latest_updated_at = self._get_aggregate_metrics_rows(starting_date, ending_date, user_id)
         if user_id is not None:
             return metrics, latest_updated_at
 
@@ -2957,7 +2957,7 @@ class DynamoDb(BaseDb):
         """
         Get metrics from the database.
 
-        Metrics are read from the user metrics and component metrics once the first calculate_metrics has finished,
+        Metrics are read from the aggregate metrics and component metrics once the first calculate_metrics has finished,
         and from the deprecated metrics table until then. A read never calculates them: checking whether the sessions
         and runs changed reads every one of the last two days, so calculate_metrics does.
 
@@ -3049,7 +3049,7 @@ class DynamoDb(BaseDb):
     ) -> Tuple[List[dict], Optional[int]]:
         """Get the metrics of every user, one row per day, matching the given date range.
 
-        Read from the everyone rows of the user metrics once the first calculate_metrics has finished, and from the
+        Read from the everyone rows of the aggregate metrics once the first calculate_metrics has finished, and from the
         deprecated metrics table until then.
 
         Args:
@@ -3064,7 +3064,7 @@ class DynamoDb(BaseDb):
         """
         try:
             if self._metrics_calculated(self.metrics_refreshes_table_name):
-                return self._get_user_metrics_rows(starting_date, ending_date, "")
+                return self._get_aggregate_metrics_rows(starting_date, ending_date, "")
             return super().get_metrics_by_date(starting_date, ending_date)
 
         except Exception as e:
@@ -3103,12 +3103,12 @@ class DynamoDb(BaseDb):
             ending_date: The last day to total.
             user_id: Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with no user.
             fields: The columns to total.
-            use_month_rows: Total a calendar month inside the date range from its month user metrics row, as one date.
+            use_month_rows: Total a calendar month inside the date range from its month aggregate metrics row, as one date.
 
         Returns:
             Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each date, and when they were last updated.
         """
-        user_metrics_table_name = self.user_metrics_table_name
+        aggregate_metrics_table_name = self.aggregate_metrics_table_name
         try:
             # The component metrics table keeps day rows only, so the runs with no user are read day by day
             full_months = metrics_full_months(starting_date, ending_date) if use_month_rows and user_id != "" else []
@@ -3118,8 +3118,8 @@ class DynamoDb(BaseDb):
                 # or not yet built, is read from its days
                 month_starts = [
                     row["date"]
-                    for row in self._get_user_metrics_items(
-                        user_metrics_table_name, "monthly", "", full_months[0], full_months[-1], completed=True
+                    for row in self._get_aggregate_metrics_items(
+                        aggregate_metrics_table_name, "monthly", "", full_months[0], full_months[-1], completed=True
                     )
                 ]
             days = metrics_days_to_read(starting_date, ending_date, month_starts)
@@ -3127,7 +3127,7 @@ class DynamoDb(BaseDb):
             rows: List[Dict[str, Any]] = []
             if user_id == "":
                 # Every owner is read from the everyone rows and a user from the user's rows; the runs with no user
-                # have no user metrics row of their own, so they are read from their component rows
+                # have no aggregate metrics row of their own, so they are read from their component rows
                 counted_days = set(self._get_metrics_counted_days(starting_date, ending_date))
                 for day in days:
                     if day in counted_days:
@@ -3135,12 +3135,12 @@ class DynamoDb(BaseDb):
             else:
                 if days:
                     rows.extend(
-                        self._get_user_metrics_items(user_metrics_table_name, "daily", user_id or "", days[0], days[-1])
+                        self._get_aggregate_metrics_items(aggregate_metrics_table_name, "daily", user_id or "", days[0], days[-1])
                     )
                 if month_starts:
                     rows.extend(
-                        self._get_user_metrics_items(
-                            user_metrics_table_name, "monthly", user_id or "", month_starts[0], month_starts[-1]
+                        self._get_aggregate_metrics_items(
+                            aggregate_metrics_table_name, "monthly", user_id or "", month_starts[0], month_starts[-1]
                         )
                     )
         except self.client.exceptions.ResourceNotFoundException:
@@ -3218,7 +3218,7 @@ class DynamoDb(BaseDb):
             raise e
 
     def get_metrics_versions(self, starting_date: date, ending_date: date) -> Optional[Dict[str, int]]:
-        """Get the version of every everyone row of a day or a month of the user metrics in the given date range.
+        """Get the version of every everyone row of a day or a month of the aggregate metrics in the given date range.
 
         Args:
             starting_date: The first day of the date range.
@@ -3227,7 +3227,7 @@ class DynamoDb(BaseDb):
         Returns:
             Optional[Dict[str, int]]: The version of each everyone row, keyed by its aggregation period and date. The
                 same again only while no calculation wrote a row of the date range. ``None`` until the first
-                calculate_metrics has finished, or without a user metrics table: a read would find no rows to total.
+                calculate_metrics has finished, or without an aggregate metrics table: a read would find no rows to total.
 
         Raises:
             Exception: If an error occurs during retrieval.
@@ -3240,8 +3240,8 @@ class DynamoDb(BaseDb):
             rows: List[Dict[str, Any]] = []
             for aggregation_period in ["daily", "monthly"]:
                 rows.extend(
-                    self._get_user_metrics_items(
-                        self.user_metrics_table_name, aggregation_period, "", starting_date, ending_date
+                    self._get_aggregate_metrics_items(
+                        self.aggregate_metrics_table_name, aggregation_period, "", starting_date, ending_date
                     )
                 )
             return metrics_versions([SimpleNamespace(**row) for row in rows])

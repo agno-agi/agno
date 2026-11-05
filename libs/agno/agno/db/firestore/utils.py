@@ -6,7 +6,7 @@ from datetime import date
 from typing import Any, Dict, List, Optional
 
 from agno.db.firestore.schemas import get_collection_indexes
-from agno.db.utils import build_user_metrics_row, get_sort_value, list_metrics_models, metric_record_day
+from agno.db.utils import build_aggregate_metrics_row, get_sort_value, list_metrics_models, metric_record_day
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
@@ -210,8 +210,8 @@ def component_metrics_record_id(record: Dict[str, Any]) -> str:
     return f"{record['date'].isoformat()}_{key_segment}_{record['aggregation_period']}"
 
 
-def user_metrics_record_id(aggregation_period: str, row_date: date, user_id: str) -> str:
-    """The id of the document a row of the user metrics collection is stored under, one per period, day and user."""
+def aggregate_metrics_record_id(aggregation_period: str, row_date: date, user_id: str) -> str:
+    """The id of the document a row of the aggregate metrics collection is stored under, one per period, day and user."""
     user_segment = hashlib.sha256(user_id.encode("utf-8")).hexdigest()
     return f"{row_date.isoformat()}_{user_segment}_{aggregation_period}"
 
@@ -246,10 +246,10 @@ def deserialize_metrics_refresh_row(record: Dict[str, Any]) -> Dict[str, Any]:
     return {column: record.get(column) for column in columns}
 
 
-def _reopen_metrics_row(user_metrics_collection_ref, row_date: date, aggregation_period: str) -> None:
-    """Reopen a day's or a month's everyone row of the user metrics collection, creating an empty open row when it
+def _reopen_metrics_row(aggregate_metrics_collection_ref, row_date: date, aggregation_period: str) -> None:
+    """Reopen a day's or a month's everyone row of the aggregate metrics collection, creating an empty open row when it
     has none."""
-    doc_ref = user_metrics_collection_ref.document(user_metrics_record_id(aggregation_period, row_date, ""))
+    doc_ref = aggregate_metrics_collection_ref.document(aggregate_metrics_record_id(aggregation_period, row_date, ""))
     try:
         # Moved in the write, so two writers reopening the same row never give it the same version
         doc_ref.update({"completed": False, "version": Increment(1)})
@@ -257,44 +257,44 @@ def _reopen_metrics_row(user_metrics_collection_ref, row_date: date, aggregation
         try:
             doc_ref.create(
                 serialize_metrics_row(
-                    {**build_user_metrics_row([], aggregation_period, row_date, completed=False), "version": 1}
+                    {**build_aggregate_metrics_row([], aggregation_period, row_date, completed=False), "version": 1}
                 )
             )
         except AlreadyExists:
             doc_ref.update({"completed": False, "version": Increment(1)})
 
 
-def reopen_metrics_day(user_metrics_collection_ref, day: date) -> None:
-    """Reopen a day's everyone row of the user metrics collection, so the next refresh rebuilds the day.
+def reopen_metrics_day(aggregate_metrics_collection_ref, day: date) -> None:
+    """Reopen a day's everyone row of the aggregate metrics collection, so the next refresh rebuilds the day.
 
     Args:
-        user_metrics_collection_ref: The user metrics collection.
+        aggregate_metrics_collection_ref: The aggregate metrics collection.
         day (date): The day, from metrics_day_to_reopen.
     """
-    _reopen_metrics_row(user_metrics_collection_ref, day, "daily")
+    _reopen_metrics_row(aggregate_metrics_collection_ref, day, "daily")
 
 
-def reopen_metrics_month(user_metrics_collection_ref, month_start: date) -> None:
-    """Reopen a month's everyone row of the user metrics collection, so the next refresh rebuilds the month.
+def reopen_metrics_month(aggregate_metrics_collection_ref, month_start: date) -> None:
+    """Reopen a month's everyone row of the aggregate metrics collection, so the next refresh rebuilds the month.
 
     Args:
-        user_metrics_collection_ref: The user metrics collection.
+        aggregate_metrics_collection_ref: The aggregate metrics collection.
         month_start (date): The first day of the month.
     """
-    _reopen_metrics_row(user_metrics_collection_ref, month_start, "monthly")
+    _reopen_metrics_row(aggregate_metrics_collection_ref, month_start, "monthly")
 
 
-def reopen_metrics_days_from(client: Client, user_metrics_collection_ref, starting_date: date) -> None:
-    """Reopen every day's everyone row of the user metrics collection from the given date on, as a write reopens a
+def reopen_metrics_days_from(client: Client, aggregate_metrics_collection_ref, starting_date: date) -> None:
+    """Reopen every day's everyone row of the aggregate metrics collection from the given date on, as a write reopens a
     day, so the next calculation rebuilds them.
 
     Args:
         client (Client): The Firestore client.
-        user_metrics_collection_ref: The user metrics collection.
+        aggregate_metrics_collection_ref: The aggregate metrics collection.
         starting_date (date): The first day to reopen.
     """
     docs = (
-        user_metrics_collection_ref.where(filter=FieldFilter("aggregation_period", "==", "daily"))
+        aggregate_metrics_collection_ref.where(filter=FieldFilter("aggregation_period", "==", "daily"))
         .where(filter=FieldFilter("user_id", "==", ""))
         .where(filter=FieldFilter("date", ">=", starting_date.isoformat()))
         .select(["date"])

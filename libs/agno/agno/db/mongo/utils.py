@@ -10,8 +10,8 @@ from agno.db.utils import (
     METRICS_COST_FIELDS,
     METRICS_TOKEN_DETAILS_FIELDS,
     METRICS_TOKEN_FIELDS,
-    USER_METRICS_KEY_COLUMNS,
-    build_user_metrics_row,
+    AGGREGATE_METRICS_KEY_COLUMNS,
+    build_aggregate_metrics_row,
     list_metrics_models,
     metrics_day_ranges,
     metrics_days_to_read,
@@ -281,29 +281,29 @@ async def abulk_upsert_component_metrics(
     await collection.bulk_write(_component_metrics_upserts(component_metrics_records))
 
 
-def _user_metrics_upsert(
-    user_metrics_row: Dict[str, Any], read_version: Optional[int]
+def _aggregate_metrics_upsert(
+    aggregate_metrics_row: Dict[str, Any], read_version: Optional[int]
 ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
-    """Build the filter and the update of the upsert of a user metrics row.
+    """Build the filter and the update of the upsert of an aggregate metrics row.
 
     A new row starts at version 1, and every write of a stored one moves its version by one in the same update, so
     two writers never give it the same version.
 
     Args:
-        user_metrics_row (Dict[str, Any]): The row, from build_user_metrics_row.
+        aggregate_metrics_row (Dict[str, Any]): The row, from build_aggregate_metrics_row.
         read_version (Optional[int]): The version of the stored row read before its rows were rebuilt. None when
             there was no stored row.
 
     Returns:
         Tuple[Dict[str, Any], List[Dict[str, Any]]]: The filter and the update pipeline.
     """
-    document = serialize_metrics_row(user_metrics_row)
+    document = serialize_metrics_row(aggregate_metrics_row)
     # The key and created_at are never overwritten. Each value is a literal, so a string starting with $ is never
     # read as a field
     fields: Dict[str, Any] = {
         key: {"$literal": value}
         for key, value in document.items()
-        if key not in [*USER_METRICS_KEY_COLUMNS, "created_at", "version", "completed"]
+        if key not in [*AGGREGATE_METRICS_KEY_COLUMNS, "created_at", "version", "completed"]
     }
     fields["created_at"] = {"$ifNull": ["$created_at", {"$literal": document["created_at"]}]}
     fields["version"] = {"$add": [{"$ifNull": ["$version", 0]}, 1]}
@@ -315,53 +315,53 @@ def _user_metrics_upsert(
             {"$and": [document["completed"], {"$eq": ["$version", {"$literal": read_version}]}]},
         ]
     }
-    key_filter = {column: document[column] for column in USER_METRICS_KEY_COLUMNS}
+    key_filter = {column: document[column] for column in AGGREGATE_METRICS_KEY_COLUMNS}
     return key_filter, [{"$set": fields}]
 
 
-def upsert_user_metrics_row(
-    collection: Collection, user_metrics_row: Dict[str, Any], read_version: Optional[int]
+def upsert_aggregate_metrics_row(
+    collection: Collection, aggregate_metrics_row: Dict[str, Any], read_version: Optional[int]
 ) -> None:
-    """Upsert a user metrics row into the database.
+    """Upsert an aggregate metrics row into the database.
 
     Args:
-        collection (Collection): The user metrics collection.
-        user_metrics_row (Dict[str, Any]): The row, from build_user_metrics_row.
+        collection (Collection): The aggregate metrics collection.
+        aggregate_metrics_row (Dict[str, Any]): The row, from build_aggregate_metrics_row.
         read_version (Optional[int]): The version of the stored row read before its rows were rebuilt.
     """
-    key_filter, update = _user_metrics_upsert(user_metrics_row, read_version)
+    key_filter, update = _aggregate_metrics_upsert(aggregate_metrics_row, read_version)
     collection.update_one(key_filter, update, upsert=True)
 
 
-async def aupsert_user_metrics_row(
-    collection: "AsyncMongoCollectionType", user_metrics_row: Dict[str, Any], read_version: Optional[int]
+async def aupsert_aggregate_metrics_row(
+    collection: "AsyncMongoCollectionType", aggregate_metrics_row: Dict[str, Any], read_version: Optional[int]
 ) -> None:
-    """Upsert a user metrics row into the database.
+    """Upsert an aggregate metrics row into the database.
 
     Args:
-        collection (AsyncMongoCollectionType): The user metrics collection.
-        user_metrics_row (Dict[str, Any]): The row, from build_user_metrics_row.
+        collection (AsyncMongoCollectionType): The aggregate metrics collection.
+        aggregate_metrics_row (Dict[str, Any]): The row, from build_aggregate_metrics_row.
         read_version (Optional[int]): The version of the stored row read before its rows were rebuilt.
     """
-    key_filter, update = _user_metrics_upsert(user_metrics_row, read_version)
+    key_filter, update = _aggregate_metrics_upsert(aggregate_metrics_row, read_version)
     await collection.update_one(key_filter, update, upsert=True)
 
 
-def _user_metrics_rows_upserts(user_metrics_rows: List[Dict[str, Any]]) -> List[UpdateOne]:
-    """Build the upsert of each user row of the user metrics collection. A user row is written with its period's
+def _aggregate_metrics_rows_upserts(aggregate_metrics_rows: List[Dict[str, Any]]) -> List[UpdateOne]:
+    """Build the upsert of each user row of the aggregate metrics collection. A user row is written with its period's
     everyone row, so its completed and version are never compared."""
     upserts = []
-    for user_metrics_row in user_metrics_rows:
-        document = serialize_metrics_row(user_metrics_row)
+    for aggregate_metrics_row in aggregate_metrics_rows:
+        document = serialize_metrics_row(aggregate_metrics_row)
         # The key and created_at are never overwritten
         fields = {
             key: value
             for key, value in document.items()
-            if key not in [*USER_METRICS_KEY_COLUMNS, "created_at", "version"]
+            if key not in [*AGGREGATE_METRICS_KEY_COLUMNS, "created_at", "version"]
         }
         upserts.append(
             UpdateOne(
-                {column: document[column] for column in USER_METRICS_KEY_COLUMNS},
+                {column: document[column] for column in AGGREGATE_METRICS_KEY_COLUMNS},
                 {"$set": fields, "$setOnInsert": {"created_at": document["created_at"]}, "$inc": {"version": 1}},
                 upsert=True,
             )
@@ -369,69 +369,69 @@ def _user_metrics_rows_upserts(user_metrics_rows: List[Dict[str, Any]]) -> List[
     return upserts
 
 
-def bulk_upsert_user_metrics_rows(collection: Collection, user_metrics_rows: List[Dict[str, Any]]) -> None:
-    """Bulk upsert the user rows of a period into the user metrics collection, in one request.
+def bulk_upsert_aggregate_metrics_rows(collection: Collection, aggregate_metrics_rows: List[Dict[str, Any]]) -> None:
+    """Bulk upsert the user rows of a period into the aggregate metrics collection, in one request.
 
     Args:
-        collection (Collection): The user metrics collection.
-        user_metrics_rows (List[Dict[str, Any]]): The user rows, from build_user_metrics_rows.
+        collection (Collection): The aggregate metrics collection.
+        aggregate_metrics_rows (List[Dict[str, Any]]): The user rows, from build_aggregate_metrics_rows.
     """
-    if not user_metrics_rows:
+    if not aggregate_metrics_rows:
         return
-    collection.bulk_write(_user_metrics_rows_upserts(user_metrics_rows))
+    collection.bulk_write(_aggregate_metrics_rows_upserts(aggregate_metrics_rows))
 
 
-async def abulk_upsert_user_metrics_rows(
-    collection: "AsyncMongoCollectionType", user_metrics_rows: List[Dict[str, Any]]
+async def abulk_upsert_aggregate_metrics_rows(
+    collection: "AsyncMongoCollectionType", aggregate_metrics_rows: List[Dict[str, Any]]
 ) -> None:
-    """Bulk upsert the user rows of a period into the user metrics collection, in one request.
+    """Bulk upsert the user rows of a period into the aggregate metrics collection, in one request.
 
     Args:
-        collection (AsyncMongoCollectionType): The user metrics collection.
-        user_metrics_rows (List[Dict[str, Any]]): The user rows, from build_user_metrics_rows.
+        collection (AsyncMongoCollectionType): The aggregate metrics collection.
+        aggregate_metrics_rows (List[Dict[str, Any]]): The user rows, from build_aggregate_metrics_rows.
     """
-    if not user_metrics_rows:
+    if not aggregate_metrics_rows:
         return
-    await collection.bulk_write(_user_metrics_rows_upserts(user_metrics_rows))
+    await collection.bulk_write(_aggregate_metrics_rows_upserts(aggregate_metrics_rows))
 
 
 def _reopen_metrics_row(row_date: date, aggregation_period: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    """Build the filter and the update that reopen a day's or a month's everyone row of the user metrics collection,
+    """Build the filter and the update that reopen a day's or a month's everyone row of the aggregate metrics collection,
     inserting an empty open row when it has none."""
-    empty_row = serialize_metrics_row(build_user_metrics_row([], aggregation_period, row_date, completed=False))
-    key_filter = {column: empty_row[column] for column in USER_METRICS_KEY_COLUMNS}
+    empty_row = serialize_metrics_row(build_aggregate_metrics_row([], aggregation_period, row_date, completed=False))
+    key_filter = {column: empty_row[column] for column in AGGREGATE_METRICS_KEY_COLUMNS}
     update = {
         "$set": {"completed": False},
         "$inc": {"version": 1},
         "$setOnInsert": {
-            key: value for key, value in empty_row.items() if key not in [*USER_METRICS_KEY_COLUMNS, "completed"]
+            key: value for key, value in empty_row.items() if key not in [*AGGREGATE_METRICS_KEY_COLUMNS, "completed"]
         },
     }
     return key_filter, update
 
 
 def reopen_metrics_day(collection: Collection, day: date) -> None:
-    """Reopen a day's user metrics row, so the next refresh rebuilds the day.
+    """Reopen a day's aggregate metrics row, so the next refresh rebuilds the day.
 
     Args:
-        collection (Collection): The user metrics collection.
+        collection (Collection): The aggregate metrics collection.
         day (date): The day, from metrics_day_to_reopen.
     """
     collection.update_one(*_reopen_metrics_row(day, "daily"), upsert=True)
 
 
 async def areopen_metrics_day(collection: "AsyncMongoCollectionType", day: date) -> None:
-    """Reopen a day's user metrics row, so the next refresh rebuilds the day.
+    """Reopen a day's aggregate metrics row, so the next refresh rebuilds the day.
 
     Args:
-        collection (AsyncMongoCollectionType): The user metrics collection.
+        collection (AsyncMongoCollectionType): The aggregate metrics collection.
         day (date): The day, from metrics_day_to_reopen.
     """
     await collection.update_one(*_reopen_metrics_row(day, "daily"), upsert=True)
 
 
 def _reopen_metrics_days_from(starting_date: date) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    """Build the filter and the update that reopen every day's everyone row of the user metrics collection from the
+    """Build the filter and the update that reopen every day's everyone row of the aggregate metrics collection from the
     given date on."""
     return (
         {"aggregation_period": "daily", "user_id": "", "date": {"$gte": starting_date.isoformat()}},
@@ -440,42 +440,42 @@ def _reopen_metrics_days_from(starting_date: date) -> Tuple[Dict[str, Any], Dict
 
 
 def reopen_metrics_days_from(collection: Collection, starting_date: date) -> None:
-    """Reopen every day's user metrics row from the given date on, as a write reopens a day, so the next refresh
+    """Reopen every day's aggregate metrics row from the given date on, as a write reopens a day, so the next refresh
     rebuilds them.
 
     Args:
-        collection (Collection): The user metrics collection.
+        collection (Collection): The aggregate metrics collection.
         starting_date (date): The first day to reopen.
     """
     collection.update_many(*_reopen_metrics_days_from(starting_date))
 
 
 async def areopen_metrics_days_from(collection: "AsyncMongoCollectionType", starting_date: date) -> None:
-    """Reopen every day's user metrics row from the given date on, as a write reopens a day, so the next refresh
+    """Reopen every day's aggregate metrics row from the given date on, as a write reopens a day, so the next refresh
     rebuilds them.
 
     Args:
-        collection (AsyncMongoCollectionType): The user metrics collection.
+        collection (AsyncMongoCollectionType): The aggregate metrics collection.
         starting_date (date): The first day to reopen.
     """
     await collection.update_many(*_reopen_metrics_days_from(starting_date))
 
 
 def reopen_metrics_month(collection: Collection, month_start: date) -> None:
-    """Reopen a month's user metrics row, so the next refresh rebuilds the month.
+    """Reopen a month's aggregate metrics row, so the next refresh rebuilds the month.
 
     Args:
-        collection (Collection): The user metrics collection.
+        collection (Collection): The aggregate metrics collection.
         month_start (date): The first day of the month.
     """
     collection.update_one(*_reopen_metrics_row(month_start, "monthly"), upsert=True)
 
 
 async def areopen_metrics_month(collection: "AsyncMongoCollectionType", month_start: date) -> None:
-    """Reopen a month's user metrics row, so the next refresh rebuilds the month.
+    """Reopen a month's aggregate metrics row, so the next refresh rebuilds the month.
 
     Args:
-        collection (AsyncMongoCollectionType): The user metrics collection.
+        collection (AsyncMongoCollectionType): The aggregate metrics collection.
         month_start (date): The first day of the month.
     """
     await collection.update_one(*_reopen_metrics_row(month_start, "monthly"), upsert=True)
@@ -518,7 +518,7 @@ def build_metrics_rows_filter(
     Args:
         starting_date (date): The first day to read.
         ending_date (date): The last day to read.
-        user_id (str): The user whose rows are read. "" for the everyone rows of the user metrics collection, or the
+        user_id (str): The user whose rows are read. "" for the everyone rows of the aggregate metrics collection, or the
             rows with no user of the component metrics collection.
         month_starts (Sequence[date]): The first day of every month inside the date range to read the month row of
             instead of its days.
@@ -548,7 +548,7 @@ def build_metrics_rows_projection(fields: Sequence[str]) -> Dict[str, int]:
     projection = {"_id": 0, "aggregation_period": 1, "date": 1, "updated_at": 1, **{field: 1 for field in fields}}
     if any(field in [*METRICS_TOKEN_DETAILS_FIELDS, "audio_total_tokens", *METRICS_COST_FIELDS] for field in fields):
         projection["token_details"] = 1
-    # The user metrics collection keeps the sessions of each type, and the component metrics collection the runs of
+    # The aggregate metrics collection keeps the sessions of each type, and the component metrics collection the runs of
     # each component, with the run that started them
     if "sessions_count" in fields:
         projection.update({f"{component_type}_sessions_count": 1 for component_type in METRICS_COMPONENT_TYPES})

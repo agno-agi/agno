@@ -154,9 +154,9 @@ async def _astored_rows(db: AsyncSqliteDb) -> Dict[tuple, Dict]:
         }
 
 
-def _stored_user_metrics_rows(db: SqliteDb) -> Dict[tuple, Dict]:
-    """Every day and month row of agno_user_metrics, keyed by (aggregation_period, date, user_id)."""
-    table = db._get_table("user_metrics", create_table_if_not_found=True)
+def _stored_aggregate_metrics_rows(db: SqliteDb) -> Dict[tuple, Dict]:
+    """Every day and month row of agno_aggregate_metrics, keyed by (aggregation_period, date, user_id)."""
+    table = db._get_table("aggregate_metrics", create_table_if_not_found=True)
     with db.Session() as sess:
         return {
             (row.aggregation_period, row.date, row.user_id): dict(row._mapping)
@@ -164,9 +164,9 @@ def _stored_user_metrics_rows(db: SqliteDb) -> Dict[tuple, Dict]:
         }
 
 
-async def _astored_user_metrics_rows(db: AsyncSqliteDb) -> Dict[tuple, Dict]:
-    """Every day and month row of agno_user_metrics, keyed by (aggregation_period, date, user_id)."""
-    table = await db._get_table("user_metrics", create_table_if_not_found=True)
+async def _astored_aggregate_metrics_rows(db: AsyncSqliteDb) -> Dict[tuple, Dict]:
+    """Every day and month row of agno_aggregate_metrics, keyed by (aggregation_period, date, user_id)."""
+    table = await db._get_table("aggregate_metrics", create_table_if_not_found=True)
     async with db.async_session_factory() as sess:
         return {
             (row.aggregation_period, row.date, row.user_id): dict(row._mapping)
@@ -179,8 +179,8 @@ def _numbers(row: Dict) -> tuple:
     return row["sessions_count"], row["runs_count"], row["total_tokens"]
 
 
-def _user_metrics_numbers(row: Dict) -> tuple:
-    """The sessions, runs and total tokens of a user metrics row."""
+def _aggregate_metrics_numbers(row: Dict) -> tuple:
+    """The sessions, runs and total tokens of an aggregate metrics row."""
     return (
         row["agent_sessions_count"] + row["team_sessions_count"] + row["workflow_sessions_count"],
         row["agent_runs_count"] + row["team_runs_count"] + row["workflow_runs_count"],
@@ -266,19 +266,19 @@ def test_get_component_metrics(sqlite_db):
 def test_calculate_metrics_rebuilds_a_reopened_day(sqlite_db):
     """Ensure a run saved on a completed day reopens the day, and the next calculation counts it"""
     sqlite_db.calculate_metrics()
-    version = _stored_user_metrics_rows(sqlite_db)[("daily", _utc_date(2), "")]["version"]
+    version = _stored_aggregate_metrics_rows(sqlite_db)[("daily", _utc_date(2), "")]["version"]
 
     sqlite_db.upsert_run(
         _run("alice_run_3", "alice", 1, 1, _noon_utc(2) + 120), session_id="alice_session", user_id="alice"
     )
-    reopened = _stored_user_metrics_rows(sqlite_db)[("daily", _utc_date(2), "")]
+    reopened = _stored_aggregate_metrics_rows(sqlite_db)[("daily", _utc_date(2), "")]
     assert (reopened["completed"], reopened["version"]) == (False, version + 1)
 
     _backdate(sqlite_db)
     sqlite_db.calculate_metrics()
-    rebuilt = _stored_user_metrics_rows(sqlite_db)[("daily", _utc_date(2), "")]
+    rebuilt = _stored_aggregate_metrics_rows(sqlite_db)[("daily", _utc_date(2), "")]
     assert rebuilt["completed"] is True
-    assert _user_metrics_numbers(rebuilt) == (2, 4, 467)
+    assert _aggregate_metrics_numbers(rebuilt) == (2, 4, 467)
 
 
 def test_session_save_reopens_the_day_the_session_is_stored_on(sqlite_db):
@@ -286,10 +286,10 @@ def test_session_save_reopens_the_day_the_session_is_stored_on(sqlite_db):
     sqlite_db.calculate_metrics()
     alice_session = _sample_sessions()[0]
     sqlite_db.upsert_session(alice_session)
-    assert _stored_user_metrics_rows(sqlite_db)[("daily", _utc_date(2), "")]["completed"] is True
+    assert _stored_aggregate_metrics_rows(sqlite_db)[("daily", _utc_date(2), "")]["completed"] is True
 
     sqlite_db.upsert_sessions([_session("new_session", "carol", [], _noon_utc(2))])
-    assert _stored_user_metrics_rows(sqlite_db)[("daily", _utc_date(2), "")]["completed"] is False
+    assert _stored_aggregate_metrics_rows(sqlite_db)[("daily", _utc_date(2), "")]["completed"] is False
 
 
 def _set_refresh_row(db: SqliteDb, **values) -> None:
@@ -393,22 +393,22 @@ async def test_async_saves_reopen_a_closed_day_and_deletes_do_not(async_sqlite_d
     await async_sqlite_db.calculate_metrics()
     await async_sqlite_db.delete_session("bob_session")
     await async_sqlite_db.upsert_session(_sample_sessions()[0])
-    assert (await _astored_user_metrics_rows(async_sqlite_db))[("daily", _utc_date(2), "")]["completed"] is True
+    assert (await _astored_aggregate_metrics_rows(async_sqlite_db))[("daily", _utc_date(2), "")]["completed"] is True
 
     await async_sqlite_db.upsert_run(
         _run("alice_run_3", "alice", 1, 1, _noon_utc(2) + 120), session_id="alice_session", user_id="alice"
     )
-    reopened = (await _astored_user_metrics_rows(async_sqlite_db))[("daily", _utc_date(2), "")]
+    reopened = (await _astored_aggregate_metrics_rows(async_sqlite_db))[("daily", _utc_date(2), "")]
     assert (reopened["completed"], reopened["version"]) == (False, 2)
 
     await _abackdate(async_sqlite_db)
     await async_sqlite_db.calculate_metrics()
-    rebuilt = (await _astored_user_metrics_rows(async_sqlite_db))[("daily", _utc_date(2), "")]
+    rebuilt = (await _astored_aggregate_metrics_rows(async_sqlite_db))[("daily", _utc_date(2), "")]
     assert rebuilt["completed"] is True
-    assert _user_metrics_numbers(rebuilt) == (1, 3, 167)
+    assert _aggregate_metrics_numbers(rebuilt) == (1, 3, 167)
 
     await async_sqlite_db.upsert_sessions([_session("new_session", "carol", [], _noon_utc(2))])
-    assert (await _astored_user_metrics_rows(async_sqlite_db))[("daily", _utc_date(2), "")]["completed"] is False
+    assert (await _astored_aggregate_metrics_rows(async_sqlite_db))[("daily", _utc_date(2), "")]["completed"] is False
 
 
 @pytest.mark.asyncio

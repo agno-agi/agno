@@ -268,8 +268,8 @@ COMPONENT_METRICS_TABLE_SCHEMA = {
     "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
 }
 
-USER_METRICS_TABLE_SCHEMA = {
-    "TableName": "agno_user_metrics",
+AGGREGATE_METRICS_TABLE_SCHEMA = {
+    "TableName": "agno_aggregate_metrics",
     # The everyone rows of a period are keyed by the period, a user's by the period and the user, so a date range
     # of either is one query
     "KeySchema": [
@@ -538,7 +538,7 @@ def get_table_schema_definition(table_type: str) -> Dict[str, Any]:
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
         "component_metrics": COMPONENT_METRICS_TABLE_SCHEMA,
-        "user_metrics": USER_METRICS_TABLE_SCHEMA,
+        "aggregate_metrics": AGGREGATE_METRICS_TABLE_SCHEMA,
         "metrics_refreshes": METRICS_REFRESHES_TABLE_SCHEMA,
         "traces": TRACE_TABLE_SCHEMA,
         "spans": SPAN_TABLE_SCHEMA,

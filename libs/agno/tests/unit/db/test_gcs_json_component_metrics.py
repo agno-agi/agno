@@ -139,7 +139,7 @@ def _stored_rows(db, table_name):
 
 
 def _everyone_row(db, day, period="daily"):
-    return _stored_rows(db, db.user_metrics_table_name)[(period, day, "")]
+    return _stored_rows(db, db.aggregate_metrics_table_name)[(period, day, "")]
 
 
 def _stored_sessions():
@@ -248,9 +248,9 @@ def _ground_truth(runs: List[Tuple[Any, Optional[str]]]) -> Dict[Any, Dict[str, 
 
 
 def _assert_matches_ground_truth(db, runs):
-    user_metrics_rows = _stored_rows(db, db.user_metrics_table_name)
+    aggregate_metrics_rows = _stored_rows(db, db.aggregate_metrics_table_name)
     for (day, user_id), counts in _ground_truth(runs).items():
-        row = user_metrics_rows[("daily", day, user_id)]
+        row = aggregate_metrics_rows[("daily", day, user_id)]
         assert {
             **{column: row[column] for column in counts if column != "cache_read_tokens"},
             "cache_read_tokens": row["token_details"].get("cache_read_tokens", 0),
@@ -258,7 +258,7 @@ def _assert_matches_ground_truth(db, runs):
 
 
 def test_calculate_metrics_matches_a_direct_count_of_the_runs():
-    """Ensure every day's user metrics rows match a direct count of the stored runs"""
+    """Ensure every day's aggregate metrics rows match a direct count of the stored runs"""
     db = _new_db()
     runs = _build_dataset(db)
 
@@ -267,16 +267,16 @@ def test_calculate_metrics_matches_a_direct_count_of_the_runs():
     old_day, yesterday, today = _utc_date(3), _utc_date(1), _utc_date(0)
     assert {metric["date"] for metric in calculated} == {old_day, yesterday, today}
     _assert_matches_ground_truth(db, runs)
-    user_metrics_rows = _stored_rows(db, db.user_metrics_table_name)
-    assert user_metrics_rows[("daily", old_day, "")]["agent_sessions_count"] == 1
-    assert user_metrics_rows[("daily", yesterday, "")]["team_sessions_count"] == 1
-    assert user_metrics_rows[("daily", today, "")]["workflow_sessions_count"] == 1
+    aggregate_metrics_rows = _stored_rows(db, db.aggregate_metrics_table_name)
+    assert aggregate_metrics_rows[("daily", old_day, "")]["agent_sessions_count"] == 1
+    assert aggregate_metrics_rows[("daily", yesterday, "")]["team_sessions_count"] == 1
+    assert aggregate_metrics_rows[("daily", today, "")]["workflow_sessions_count"] == 1
     assert (
-        user_metrics_rows[("daily", yesterday, "")]["users_count"],
-        user_metrics_rows[("daily", today, "")]["users_count"],
+        aggregate_metrics_rows[("daily", yesterday, "")]["users_count"],
+        aggregate_metrics_rows[("daily", today, "")]["users_count"],
     ) == (1, 0)
-    assert user_metrics_rows[("daily", old_day, "")]["completed"] is True
-    assert user_metrics_rows[("daily", yesterday, "")]["completed"] is False
+    assert aggregate_metrics_rows[("daily", old_day, "")]["completed"] is True
+    assert aggregate_metrics_rows[("daily", yesterday, "")]["completed"] is False
 
     # The member run is counted under the team that started it
     rows = _stored_rows(db, db.component_metrics_table_name)
@@ -342,8 +342,8 @@ def test_calculate_metrics_dates_releases_the_lock_when_stopped():
         return len(calls) > 1
 
     assert db.calculate_metrics_dates(should_stop=should_stop) is None
-    assert ("daily", _utc_date(1), "") in _stored_rows(db, db.user_metrics_table_name)
-    assert ("daily", _utc_date(0), "") not in _stored_rows(db, db.user_metrics_table_name)
+    assert ("daily", _utc_date(1), "") in _stored_rows(db, db.aggregate_metrics_table_name)
+    assert ("daily", _utc_date(0), "") not in _stored_rows(db, db.aggregate_metrics_table_name)
     assert db.get_metrics_refresh_status()["status"] == "failed"
     assert db.calculate_metrics() is not None
 
@@ -396,7 +396,7 @@ def test_calculate_metrics_counts_runs_kept_in_the_legacy_runs_column():
     alice_row = _stored_rows(db, db.component_metrics_table_name)[("daily", yesterday, "alice", "agent", "agent-1")]
     assert (alice_row["sessions_count"], alice_row["runs_count"], alice_row["input_tokens"]) == (1, 2, 30)
     # A legacy team member run is counted once
-    bob_row = _stored_rows(db, db.user_metrics_table_name)[("daily", yesterday, "bob")]
+    bob_row = _stored_rows(db, db.aggregate_metrics_table_name)[("daily", yesterday, "bob")]
     assert (bob_row["team_runs_count"], bob_row["agent_runs_count"], bob_row["input_tokens"]) == (1, 1, 50)
 
     # Once the v3.0.0 migration is stamped, the legacy runs field is a backup only
@@ -406,8 +406,8 @@ def test_calculate_metrics_counts_runs_kept_in_the_legacy_runs_column():
     assert (alice_row["runs_count"], alice_row["input_tokens"]) == (1, 10)
 
 
-def test_a_user_metrics_write_made_since_the_read_is_never_written_over(monkeypatch):
-    """Ensure a user metrics write made by another process since the read is never written over"""
+def test_a_aggregate_metrics_write_made_since_the_read_is_never_written_over(monkeypatch):
+    """Ensure an aggregate metrics write made by another process since the read is never written over"""
     db = _new_db()
     _build_dataset(db)
     db.calculate_metrics()
@@ -417,10 +417,10 @@ def test_a_user_metrics_write_made_since_the_read_is_never_written_over(monkeypa
 
     def read_then_reopen(filename, create_table_if_not_found=False):
         result = read_json_file_with_generation(filename, create_table_if_not_found)
-        if filename != db.user_metrics_table_name:
+        if filename != db.aggregate_metrics_table_name:
             return result
         if not reads:
-            # Another process reopens the day between the calculation's read of the user metrics and its write
+            # Another process reopens the day between the calculation's read of the aggregate metrics and its write
             _new_db().upsert_run(
                 _agent_run("alice_paused_run", _noon_utc(old_day) + 60, 50), session_id="alice_session", user_id="alice"
             )
@@ -436,8 +436,8 @@ def test_a_user_metrics_write_made_since_the_read_is_never_written_over(monkeypa
         db.calculate_metrics(rebuild_from=old_day)
     del db._read_json_file_with_generation
 
-    # The write found the user metrics written since its read, read them again and kept the reopen
-    assert reads[:2] == [db.user_metrics_table_name, db.user_metrics_table_name]
+    # The write found the aggregate metrics written since its read, read them again and kept the reopen
+    assert reads[:2] == [db.aggregate_metrics_table_name, db.aggregate_metrics_table_name]
     assert _everyone_row(db, old_day)["completed"] is False
 
 

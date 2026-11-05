@@ -283,7 +283,7 @@ class _FakeGlideClient:
                 self.hincrby(key, *rest)
         return 1
 
-    def _upsert_user_metrics_row(self, keys, args):
+    def _upsert_aggregate_metrics_row(self, keys, args):
         if not self._holds(keys[0], args[0]):
             return 0
         fields = json.loads(args[2])
@@ -310,7 +310,7 @@ class _FakeGlideClient:
             valkey_utils._HEARTBEAT_METRICS_REFRESH_SCRIPT: self._heartbeat,
             valkey_utils._RELEASE_METRICS_REFRESH_SCRIPT: self._release,
             valkey_utils._FENCED_METRICS_WRITES_SCRIPT: self._fenced_writes,
-            valkey_utils._UPSERT_USER_METRICS_ROW_SCRIPT: self._upsert_user_metrics_row,
+            valkey_utils._UPSERT_AGGREGATE_METRICS_ROW_SCRIPT: self._upsert_aggregate_metrics_row,
         }[script]
         return run(keys or [], args or [])
 
@@ -455,7 +455,7 @@ def _versions(db: ValkeyDb, starting_date: date, ending_date: date) -> Dict[str,
     ]
     return {
         f"{row['aggregation_period']} {row['date'].isoformat()}": row["version"]
-        for row in db._get_user_metrics_records(record_ids)
+        for row in db._get_aggregate_metrics_records(record_ids)
     }
 
 

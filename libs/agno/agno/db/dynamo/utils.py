@@ -6,7 +6,7 @@ from typing import Any, Callable, Dict, List, Optional, Union
 from agno.db.base import SessionType
 from agno.db.schemas.evals import EvalRunRecord
 from agno.db.schemas.knowledge import KnowledgeRow
-from agno.db.utils import METRICS_REFRESH_ID, build_user_metrics_row, get_sort_value
+from agno.db.utils import METRICS_REFRESH_ID, build_aggregate_metrics_row, get_sort_value
 from agno.session import Session
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
@@ -445,31 +445,31 @@ def serialize_component_metrics_row(row: Dict[str, Any]) -> Dict[str, Any]:
     return serialize_to_dynamo_item(data)
 
 
-def user_metrics_period_user_id(aggregation_period: str, user_id: str) -> str:
-    """Return the hash key of the user metrics rows of a period and user: the period alone for the everyone rows."""
+def aggregate_metrics_period_user_id(aggregation_period: str, user_id: str) -> str:
+    """Return the hash key of the aggregate metrics rows of a period and user: the period alone for the everyone rows."""
     return f"{aggregation_period}#{user_id}" if user_id else aggregation_period
 
 
-def user_metrics_key(aggregation_period: str, row_date: date, user_id: str) -> Dict[str, Any]:
-    """Return the key of a user metrics row: its period and user, and its day."""
+def aggregate_metrics_key(aggregation_period: str, row_date: date, user_id: str) -> Dict[str, Any]:
+    """Return the key of an aggregate metrics row: its period and user, and its day."""
     return {
-        "period_user_id": {"S": user_metrics_period_user_id(aggregation_period, user_id)},
+        "period_user_id": {"S": aggregate_metrics_period_user_id(aggregation_period, user_id)},
         "date": {"S": row_date.isoformat()},
     }
 
 
-def serialize_user_metrics_row(row: Dict[str, Any]) -> Dict[str, Any]:
-    """Serialize a user metrics row to a DynamoDB item, with its key and its day as an ISO string, and an open everyone
+def serialize_aggregate_metrics_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Serialize an aggregate metrics row to a DynamoDB item, with its key and its day as an ISO string, and an open everyone
     row with its period as open_period, the key of the index of the open rows."""
     item = serialize_to_dynamo_item({**row, "date": row["date"].isoformat()})
-    item.update(user_metrics_key(row["aggregation_period"], row["date"], row["user_id"]))
+    item.update(aggregate_metrics_key(row["aggregation_period"], row["date"], row["user_id"]))
     if row["user_id"] == "" and not row["completed"]:
         item["open_period"] = {"S": row["aggregation_period"]}
     return item
 
 
 def deserialize_metrics_row(item: Dict[str, Any]) -> Dict[str, Any]:
-    """Deserialize a DynamoDB item to a component metrics or user metrics row.
+    """Deserialize a DynamoDB item to a component metrics or aggregate metrics row.
 
     Args:
         item: The DynamoDB item.
@@ -503,12 +503,12 @@ def heartbeat_metrics_refresh_update(table_name: str, worker_id: str) -> Dict[st
 
 
 def reopen_metrics_row(dynamodb_client, table_name: str, row_date: date, aggregation_period: str) -> None:
-    """Reopen a day's or a month's everyone row of the user metrics table, putting an empty open row when it has
+    """Reopen a day's or a month's everyone row of the aggregate metrics table, putting an empty open row when it has
     none."""
     # Moved in the write, so two writers reopening the same row never give it the same version
     reopen_kwargs: Dict[str, Any] = {
         "TableName": table_name,
-        "Key": user_metrics_key(aggregation_period, row_date, ""),
+        "Key": aggregate_metrics_key(aggregation_period, row_date, ""),
         "UpdateExpression": "SET #completed = :false, #open_period = :period ADD #version :one",
         "ExpressionAttributeNames": {"#completed": "completed", "#open_period": "open_period", "#version": "version"},
         "ExpressionAttributeValues": {
@@ -523,8 +523,8 @@ def reopen_metrics_row(dynamodb_client, table_name: str, row_date: date, aggrega
         try:
             dynamodb_client.put_item(
                 TableName=table_name,
-                Item=serialize_user_metrics_row(
-                    {**build_user_metrics_row([], aggregation_period, row_date, completed=False), "version": 1}
+                Item=serialize_aggregate_metrics_row(
+                    {**build_aggregate_metrics_row([], aggregation_period, row_date, completed=False), "version": 1}
                 ),
                 ConditionExpression="attribute_not_exists(period_user_id)",
             )
@@ -533,34 +533,34 @@ def reopen_metrics_row(dynamodb_client, table_name: str, row_date: date, aggrega
 
 
 def reopen_metrics_day(dynamodb_client, table_name: str, day: date) -> None:
-    """Reopen a day's everyone row of the user metrics table, so the next refresh rebuilds the day.
+    """Reopen a day's everyone row of the aggregate metrics table, so the next refresh rebuilds the day.
 
     Args:
         dynamodb_client: DynamoDB client
-        table_name: The user metrics table.
+        table_name: The aggregate metrics table.
         day: The day, from metrics_day_to_reopen.
     """
     reopen_metrics_row(dynamodb_client, table_name, day, "daily")
 
 
 def reopen_metrics_month(dynamodb_client, table_name: str, month_start: date) -> None:
-    """Reopen a month's everyone row of the user metrics table, so the next refresh rebuilds the month.
+    """Reopen a month's everyone row of the aggregate metrics table, so the next refresh rebuilds the month.
 
     Args:
         dynamodb_client: DynamoDB client
-        table_name: The user metrics table.
+        table_name: The aggregate metrics table.
         month_start: The first day of the month.
     """
     reopen_metrics_row(dynamodb_client, table_name, month_start, "monthly")
 
 
 def reopen_metrics_days_from(dynamodb_client, table_name: str, starting_date: date) -> None:
-    """Reopen every day's everyone row of the user metrics table from the given date on, as a write reopens a day,
+    """Reopen every day's everyone row of the aggregate metrics table from the given date on, as a write reopens a day,
     so the next calculation rebuilds them.
 
     Args:
         dynamodb_client: DynamoDB client
-        table_name: The user metrics table.
+        table_name: The aggregate metrics table.
         starting_date: The first day to reopen.
     """
     items = query_all_items(

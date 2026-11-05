@@ -9,11 +9,11 @@ from uuid import UUID
 from agno.db.utils import (
     METRICS_REFRESH_ID,
     METRICS_TOKEN_FIELDS,
-    build_user_metrics_row,
+    build_aggregate_metrics_row,
     get_metrics_legacy_runs,
     get_sort_value,
     metrics_parent_run_id,
-    user_metrics_row_to_store,
+    aggregate_metrics_row_to_store,
 )
 from agno.utils.log import log_warning
 
@@ -243,14 +243,14 @@ def component_metrics_record_id(record: Dict[str, Any]) -> str:
     return f"{record['date'].isoformat()}_{key_segment}_{record['aggregation_period']}"
 
 
-def user_metrics_record_id(aggregation_period: str, row_date: date, user_id: str) -> str:
-    """The id of the key a row of the user metrics table is stored under, one per period, day and user."""
+def aggregate_metrics_record_id(aggregation_period: str, row_date: date, user_id: str) -> str:
+    """The id of the key a row of the aggregate metrics table is stored under, one per period, day and user."""
     user_segment = hashlib.sha256(user_id.encode("utf-8")).hexdigest()
     return f"{row_date.isoformat()}_{user_segment}_{aggregation_period}"
 
 
 def metrics_record_key(record_id: Any) -> Tuple[date, str]:
-    """Read the day and the period off the id of a component metrics or user metrics row."""
+    """Read the day and the period off the id of a component metrics or aggregate metrics row."""
     # Coerce bytes -> str (decode_responses may not be set)
     record_id = record_id.decode() if isinstance(record_id, (bytes, bytearray)) else str(record_id)
     return date.fromisoformat(record_id[:10]), record_id.rsplit("_", 1)[1]
@@ -268,13 +268,13 @@ def deserialize_component_metrics_record(data: Any) -> Dict[str, Any]:
     return record
 
 
-def serialize_user_metrics_record(record: Dict[str, Any]) -> Dict[str, str]:
-    """Serialize each column of a user metrics row to a field of the hash it is stored in."""
+def serialize_aggregate_metrics_record(record: Dict[str, Any]) -> Dict[str, str]:
+    """Serialize each column of an aggregate metrics row to a field of the hash it is stored in."""
     return {column: json.dumps(value, ensure_ascii=False, cls=CustomEncoder) for column, value in record.items()}
 
 
-def deserialize_user_metrics_record(fields: Dict[Any, Any]) -> Dict[str, Any]:
-    """Deserialize the fields of a stored user metrics row, with its day read back as a date."""
+def deserialize_aggregate_metrics_record(fields: Dict[Any, Any]) -> Dict[str, Any]:
+    """Deserialize the fields of a stored aggregate metrics row, with its day read back as a date."""
     record = {
         (column.decode() if isinstance(column, bytes) else column): json.loads(value)
         for column, value in fields.items()
@@ -335,15 +335,15 @@ def delete_component_metrics(pipe: Any, prefix: str, component_metrics_records: 
         pipe.delete(generate_redis_key(prefix=prefix, table_type="component_metrics", key_id=record_id))
 
 
-def upsert_user_metrics_row(
+def upsert_aggregate_metrics_row(
     redis_client: Union[Redis, RedisCluster],
     prefix: str,
-    user_metrics_row: Dict[str, Any],
+    aggregate_metrics_row: Dict[str, Any],
     read_version: Optional[int],
     worker_id: str,
     expire: Optional[int] = None,
 ) -> bool:
-    """Upsert a user metrics row into the database, only while the given worker still holds the metrics refresh.
+    """Upsert an aggregate metrics row into the database, only while the given worker still holds the metrics refresh.
 
     The stored version is compared and the row written in one transaction that watches the row and the metrics
     refresh, so a write that reopens the period, or a process that takes the refresh over, fails it. The row is then
@@ -352,7 +352,7 @@ def upsert_user_metrics_row(
     Args:
         redis_client (Union[Redis, RedisCluster]): The Redis client.
         prefix (str): The prefix of the metrics keys.
-        user_metrics_row (Dict[str, Any]): The row, from build_user_metrics_row.
+        aggregate_metrics_row (Dict[str, Any]): The row, from build_aggregate_metrics_row.
         read_version (Optional[int]): The version of the stored row read before its rows were rebuilt.
         worker_id (str): The id of the calculation that holds the metrics refresh.
         expire (Optional[int]): The TTL of the key in seconds.
@@ -362,10 +362,10 @@ def upsert_user_metrics_row(
     """
     from redis.exceptions import WatchError
 
-    record_id = user_metrics_record_id(
-        user_metrics_row["aggregation_period"], user_metrics_row["date"], user_metrics_row["user_id"]
+    record_id = aggregate_metrics_record_id(
+        aggregate_metrics_row["aggregation_period"], aggregate_metrics_row["date"], aggregate_metrics_row["user_id"]
     )
-    key = generate_redis_key(prefix=prefix, table_type="user_metrics", key_id=record_id)
+    key = generate_redis_key(prefix=prefix, table_type="aggregate_metrics", key_id=record_id)
     refresh_key = generate_redis_key(prefix=prefix, table_type="metrics_refreshes", key_id=METRICS_REFRESH_ID)
     for _ in range(10):
         try:
@@ -377,16 +377,16 @@ def upsert_user_metrics_row(
                     pipe.unwatch()
                     return False
                 fields = pipe.hgetall(key)
-                stored_row = deserialize_user_metrics_record(fields) if fields else None  # type: ignore[arg-type]
-                row = user_metrics_row_to_store(user_metrics_row, stored_row, read_version)
+                stored_row = deserialize_aggregate_metrics_record(fields) if fields else None  # type: ignore[arg-type]
+                row = aggregate_metrics_row_to_store(aggregate_metrics_row, stored_row, read_version)
                 pipe.multi()
-                pipe.hset(key, mapping=serialize_user_metrics_record(row))  # type: ignore[arg-type]
+                pipe.hset(key, mapping=serialize_aggregate_metrics_record(row))  # type: ignore[arg-type]
                 if expire is not None:
                     pipe.expire(key, expire)
                 create_index_entries(
                     redis_client=pipe,
                     prefix=prefix,
-                    table_type="user_metrics",
+                    table_type="aggregate_metrics",
                     record_id=record_id,
                     record_data=row,
                     index_fields=["date", "user_id"],
@@ -398,10 +398,10 @@ def upsert_user_metrics_row(
     return False
 
 
-def bulk_upsert_user_metrics_rows(
-    pipe: Any, prefix: str, user_metrics_rows: List[Dict[str, Any]], expire: Optional[int] = None
+def bulk_upsert_aggregate_metrics_rows(
+    pipe: Any, prefix: str, aggregate_metrics_rows: List[Dict[str, Any]], expire: Optional[int] = None
 ) -> None:
-    """Upsert the user rows of a period into the user metrics table, in the given pipeline.
+    """Upsert the user rows of a period into the aggregate metrics table, in the given pipeline.
 
     A user row is written with its period's everyone row, so its completed is never compared. Every write moves its
     version by one in the same pipeline, so two writers never give it the same version, and created_at is never
@@ -410,15 +410,15 @@ def bulk_upsert_user_metrics_rows(
     Args:
         pipe (Any): The pipeline to upsert in.
         prefix (str): The prefix of the metrics keys.
-        user_metrics_rows (List[Dict[str, Any]]): The user rows, from build_user_metrics_rows.
+        aggregate_metrics_rows (List[Dict[str, Any]]): The user rows, from build_aggregate_metrics_rows.
         expire (Optional[int]): The TTL of the keys in seconds.
     """
-    for user_metrics_row in user_metrics_rows:
-        record_id = user_metrics_record_id(
-            user_metrics_row["aggregation_period"], user_metrics_row["date"], user_metrics_row["user_id"]
+    for aggregate_metrics_row in aggregate_metrics_rows:
+        record_id = aggregate_metrics_record_id(
+            aggregate_metrics_row["aggregation_period"], aggregate_metrics_row["date"], aggregate_metrics_row["user_id"]
         )
-        key = generate_redis_key(prefix=prefix, table_type="user_metrics", key_id=record_id)
-        fields = serialize_user_metrics_record(user_metrics_row)
+        key = generate_redis_key(prefix=prefix, table_type="aggregate_metrics", key_id=record_id)
+        fields = serialize_aggregate_metrics_record(aggregate_metrics_row)
         created_at = fields.pop("created_at")
         pipe.hset(key, mapping=fields)
         pipe.hsetnx(key, "created_at", created_at)
@@ -428,46 +428,46 @@ def bulk_upsert_user_metrics_rows(
         create_index_entries(
             redis_client=pipe,
             prefix=prefix,
-            table_type="user_metrics",
+            table_type="aggregate_metrics",
             record_id=record_id,
-            record_data=user_metrics_row,
+            record_data=aggregate_metrics_row,
             index_fields=["date", "user_id"],
         )
 
 
-def delete_user_metrics_rows(pipe: Any, prefix: str, user_metrics_rows: List[Dict[str, Any]]) -> None:
-    """Delete the given stored user rows of the user metrics table, in the given pipeline.
+def delete_aggregate_metrics_rows(pipe: Any, prefix: str, aggregate_metrics_rows: List[Dict[str, Any]]) -> None:
+    """Delete the given stored user rows of the aggregate metrics table, in the given pipeline.
 
     Args:
         pipe (Any): The pipeline to delete in.
         prefix (str): The prefix of the metrics keys.
-        user_metrics_rows (List[Dict[str, Any]]): The stored rows to delete.
+        aggregate_metrics_rows (List[Dict[str, Any]]): The stored rows to delete.
     """
-    for user_metrics_row in user_metrics_rows:
-        record_id = user_metrics_record_id(
-            user_metrics_row["aggregation_period"], user_metrics_row["date"], user_metrics_row["user_id"]
+    for aggregate_metrics_row in aggregate_metrics_rows:
+        record_id = aggregate_metrics_record_id(
+            aggregate_metrics_row["aggregation_period"], aggregate_metrics_row["date"], aggregate_metrics_row["user_id"]
         )
         remove_index_entries(
             redis_client=pipe,
             prefix=prefix,
-            table_type="user_metrics",
+            table_type="aggregate_metrics",
             record_id=record_id,
-            record_data=user_metrics_row,
+            record_data=aggregate_metrics_row,
             index_fields=["date", "user_id"],
         )
-        pipe.delete(generate_redis_key(prefix=prefix, table_type="user_metrics", key_id=record_id))
+        pipe.delete(generate_redis_key(prefix=prefix, table_type="aggregate_metrics", key_id=record_id))
 
 
 def _reopen_metrics_row(pipe: Any, prefix: str, row_date: date, aggregation_period: str, expire: Optional[int]) -> None:
-    """Add the reopen of a day's or a month's everyone row of the user metrics table to the given pipeline.
+    """Add the reopen of a day's or a month's everyone row of the aggregate metrics table to the given pipeline.
 
     Every field of an empty open row is set only where the row has none, then the row is opened and its version moved
     by one, so the reopen never reads the row: a period with no row gets an empty open row at version 1.
     """
-    record_id = user_metrics_record_id(aggregation_period, row_date, "")
-    key = generate_redis_key(prefix=prefix, table_type="user_metrics", key_id=record_id)
-    empty_row = {**build_user_metrics_row([], aggregation_period, row_date, completed=False), "version": 0}
-    for column, value in serialize_user_metrics_record(empty_row).items():
+    record_id = aggregate_metrics_record_id(aggregation_period, row_date, "")
+    key = generate_redis_key(prefix=prefix, table_type="aggregate_metrics", key_id=record_id)
+    empty_row = {**build_aggregate_metrics_row([], aggregation_period, row_date, completed=False), "version": 0}
+    for column, value in serialize_aggregate_metrics_record(empty_row).items():
         pipe.hsetnx(key, column, value)
     pipe.hset(key, "completed", json.dumps(False))
     pipe.hincrby(key, "version", 1)
@@ -476,7 +476,7 @@ def _reopen_metrics_row(pipe: Any, prefix: str, row_date: date, aggregation_peri
     create_index_entries(
         redis_client=pipe,
         prefix=prefix,
-        table_type="user_metrics",
+        table_type="aggregate_metrics",
         record_id=record_id,
         record_data=empty_row,
         index_fields=["date", "user_id"],
@@ -484,7 +484,7 @@ def _reopen_metrics_row(pipe: Any, prefix: str, row_date: date, aggregation_peri
 
 
 def reopen_metrics_day(pipe: Any, prefix: str, day: date, expire: Optional[int] = None) -> None:
-    """Reopen a day's user metrics row, in the given pipeline, so the next refresh rebuilds the day.
+    """Reopen a day's aggregate metrics row, in the given pipeline, so the next refresh rebuilds the day.
 
     Args:
         pipe (Any): The pipeline of the write that changed the day.
@@ -496,7 +496,7 @@ def reopen_metrics_day(pipe: Any, prefix: str, day: date, expire: Optional[int] 
 
 
 def reopen_metrics_month(pipe: Any, prefix: str, month_start: date, expire: Optional[int] = None) -> None:
-    """Reopen a month's user metrics row, in the given pipeline, so the next refresh rebuilds the month.
+    """Reopen a month's aggregate metrics row, in the given pipeline, so the next refresh rebuilds the month.
 
     Args:
         pipe (Any): The pipeline of the day rebuilt in the month.
@@ -510,7 +510,7 @@ def reopen_metrics_month(pipe: Any, prefix: str, month_start: date, expire: Opti
 def reopen_metrics_days_from(
     pipe: Any, prefix: str, everyone_record_ids: List[str], starting_date: date, expire: Optional[int] = None
 ) -> None:
-    """Reopen every day's everyone row of the user metrics table from the given date on, as a write reopens a day,
+    """Reopen every day's everyone row of the aggregate metrics table from the given date on, as a write reopens a day,
     in the given pipeline, so the next calculation rebuilds them.
 
     Args:

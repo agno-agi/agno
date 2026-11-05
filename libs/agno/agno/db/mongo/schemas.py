@@ -101,7 +101,7 @@ COMPONENT_METRICS_COLLECTION_SCHEMA = [
     {"key": [("user_id", 1), ("date", 1)]},
 ]
 
-USER_METRICS_COLLECTION_SCHEMA = [
+AGGREGATE_METRICS_COLLECTION_SCHEMA = [
     {"key": [("aggregation_period", 1), ("date", 1), ("user_id", 1)], "unique": True},
 ]
 
@@ -196,7 +196,7 @@ def get_collection_indexes(collection_type: str) -> List[Dict[str, Any]]:
         "memories": MEMORY_COLLECTION_SCHEMA,
         "metrics": METRICS_COLLECTION_SCHEMA,
         "component_metrics": COMPONENT_METRICS_COLLECTION_SCHEMA,
-        "user_metrics": USER_METRICS_COLLECTION_SCHEMA,
+        "aggregate_metrics": AGGREGATE_METRICS_COLLECTION_SCHEMA,
         "metrics_refreshes": METRICS_REFRESHES_COLLECTION_SCHEMA,
         "evals": EVAL_COLLECTION_SCHEMA,
         "knowledge": KNOWLEDGE_COLLECTION_SCHEMA,

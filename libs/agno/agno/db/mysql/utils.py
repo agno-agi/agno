@@ -12,8 +12,8 @@ from agno.db.utils import (
     METRICS_SUM_FIELDS,
     METRICS_TOKEN_DETAILS_FIELDS,
     METRICS_TOKEN_FIELDS,
-    USER_METRICS_KEY_COLUMNS,
-    build_user_metrics_row,
+    AGGREGATE_METRICS_KEY_COLUMNS,
+    build_aggregate_metrics_row,
     metrics_day_ranges,
     metrics_days_to_read,
 )
@@ -266,28 +266,28 @@ async def abulk_upsert_component_metrics(
     await session.execute(stmt, component_metrics_records)
 
 
-def _user_metrics_upsert(table: Table, user_metrics_row: Dict[str, Any], read_version: Optional[int]) -> Any:
-    """Build the upsert of a user metrics row.
+def _aggregate_metrics_upsert(table: Table, aggregate_metrics_row: Dict[str, Any], read_version: Optional[int]) -> Any:
+    """Build the upsert of an aggregate metrics row.
 
     A new row starts at version 1, and every write of a stored one moves its version by one in the same
     statement, so two writers never give it the same version.
 
     Args:
-        table (Table): The user metrics table.
-        user_metrics_row (Dict[str, Any]): The row, from build_user_metrics_row.
+        table (Table): The aggregate metrics table.
+        aggregate_metrics_row (Dict[str, Any]): The row, from build_aggregate_metrics_row.
         read_version (Optional[int]): The version of the stored row read before its rows were rebuilt. None when
             there was no stored row.
 
     Returns:
         Any: The upsert statement.
     """
-    stmt = mysql.insert(table).values({**user_metrics_row, "version": 1})
+    stmt = mysql.insert(table).values({**aggregate_metrics_row, "version": 1})
 
     # Columns to update in case of conflict. The conflict key and created_at are never overwritten.
     update_columns: List[Tuple[str, Any]] = [
         (col.name, stmt.inserted[col.name])
         for col in table.columns
-        if col.name not in [*USER_METRICS_KEY_COLUMNS, "created_at", "version", "completed"]
+        if col.name not in [*AGGREGATE_METRICS_KEY_COLUMNS, "created_at", "version", "completed"]
     ]
     # Compared in the statement, so a reopen written since the version was read keeps the period open. MySQL sets
     # the columns in order, each seeing the ones before, so the version is compared before it moves
@@ -302,36 +302,36 @@ def _user_metrics_upsert(table: Table, user_metrics_row: Dict[str, Any], read_ve
     return stmt.on_duplicate_key_update(update_columns)
 
 
-def upsert_user_metrics_row(
-    session: Session, table: Table, user_metrics_row: Dict[str, Any], read_version: Optional[int]
+def upsert_aggregate_metrics_row(
+    session: Session, table: Table, aggregate_metrics_row: Dict[str, Any], read_version: Optional[int]
 ) -> None:
-    """Upsert a user metrics row into the database, in the session's transaction.
+    """Upsert an aggregate metrics row into the database, in the session's transaction.
 
     Args:
         session (Session): The session to upsert with.
         table (Table): The table to upsert into.
-        user_metrics_row (Dict[str, Any]): The row, from build_user_metrics_row.
+        aggregate_metrics_row (Dict[str, Any]): The row, from build_aggregate_metrics_row.
         read_version (Optional[int]): The version of the stored row read before its rows were rebuilt.
     """
-    session.execute(_user_metrics_upsert(table, user_metrics_row, read_version))
+    session.execute(_aggregate_metrics_upsert(table, aggregate_metrics_row, read_version))
 
 
-async def aupsert_user_metrics_row(
-    session: AsyncSession, table: Table, user_metrics_row: Dict[str, Any], read_version: Optional[int]
+async def aupsert_aggregate_metrics_row(
+    session: AsyncSession, table: Table, aggregate_metrics_row: Dict[str, Any], read_version: Optional[int]
 ) -> None:
-    """Upsert a user metrics row into the database, in the session's transaction.
+    """Upsert an aggregate metrics row into the database, in the session's transaction.
 
     Args:
         session (AsyncSession): The session to upsert with.
         table (Table): The table to upsert into.
-        user_metrics_row (Dict[str, Any]): The row, from build_user_metrics_row.
+        aggregate_metrics_row (Dict[str, Any]): The row, from build_aggregate_metrics_row.
         read_version (Optional[int]): The version of the stored row read before its rows were rebuilt.
     """
-    await session.execute(_user_metrics_upsert(table, user_metrics_row, read_version))
+    await session.execute(_aggregate_metrics_upsert(table, aggregate_metrics_row, read_version))
 
 
-def _user_metrics_rows_upsert(table: Table) -> Any:
-    """Build the bulk upsert of user rows of the user metrics table. A user row is written with its period's
+def _aggregate_metrics_rows_upsert(table: Table) -> Any:
+    """Build the bulk upsert of user rows of the aggregate metrics table. A user row is written with its period's
     everyone row, so its completed and version are never compared."""
     stmt = mysql.insert(table)
 
@@ -339,81 +339,81 @@ def _user_metrics_rows_upsert(table: Table) -> Any:
     update_columns: Dict[str, Any] = {
         col.name: stmt.inserted[col.name]
         for col in table.columns
-        if col.name not in [*USER_METRICS_KEY_COLUMNS, "created_at", "version"]
+        if col.name not in [*AGGREGATE_METRICS_KEY_COLUMNS, "created_at", "version"]
     }
     # Inlined: the driver sends many rows as one INSERT only when every parameter is in its VALUES
     update_columns["version"] = table.c.version + literal_column("1")
     return stmt.on_duplicate_key_update(**update_columns)
 
 
-def bulk_upsert_user_metrics_rows(session: Session, table: Table, user_metrics_rows: List[Dict[str, Any]]) -> None:
-    """Bulk upsert the user rows of a period into the user metrics table, in the session's transaction.
+def bulk_upsert_aggregate_metrics_rows(session: Session, table: Table, aggregate_metrics_rows: List[Dict[str, Any]]) -> None:
+    """Bulk upsert the user rows of a period into the aggregate metrics table, in the session's transaction.
 
     Args:
         session (Session): The session to upsert with.
-        table (Table): The user metrics table.
-        user_metrics_rows (List[Dict[str, Any]]): The user rows, from build_user_metrics_rows.
+        table (Table): The aggregate metrics table.
+        aggregate_metrics_rows (List[Dict[str, Any]]): The user rows, from build_aggregate_metrics_rows.
     """
-    if not user_metrics_rows:
+    if not aggregate_metrics_rows:
         return
-    session.execute(_user_metrics_rows_upsert(table), [{**row, "version": 1} for row in user_metrics_rows])
+    session.execute(_aggregate_metrics_rows_upsert(table), [{**row, "version": 1} for row in aggregate_metrics_rows])
 
 
-async def abulk_upsert_user_metrics_rows(
-    session: AsyncSession, table: Table, user_metrics_rows: List[Dict[str, Any]]
+async def abulk_upsert_aggregate_metrics_rows(
+    session: AsyncSession, table: Table, aggregate_metrics_rows: List[Dict[str, Any]]
 ) -> None:
-    """Bulk upsert the user rows of a period into the user metrics table, in the session's transaction.
+    """Bulk upsert the user rows of a period into the aggregate metrics table, in the session's transaction.
 
     Args:
         session (AsyncSession): The session to upsert with.
-        table (Table): The user metrics table.
-        user_metrics_rows (List[Dict[str, Any]]): The user rows, from build_user_metrics_rows.
+        table (Table): The aggregate metrics table.
+        aggregate_metrics_rows (List[Dict[str, Any]]): The user rows, from build_aggregate_metrics_rows.
     """
-    if not user_metrics_rows:
+    if not aggregate_metrics_rows:
         return
-    await session.execute(_user_metrics_rows_upsert(table), [{**row, "version": 1} for row in user_metrics_rows])
+    await session.execute(_aggregate_metrics_rows_upsert(table), [{**row, "version": 1} for row in aggregate_metrics_rows])
 
 
 def _reopen_metrics_row(table: Table, row_date: date, aggregation_period: str) -> Any:
-    """Build the reopen of a day's or a month's everyone row of the user metrics table, inserting an empty open row
+    """Build the reopen of a day's or a month's everyone row of the aggregate metrics table, inserting an empty open row
     when it has none."""
     stmt = mysql.insert(table).values(
-        {**build_user_metrics_row([], aggregation_period, row_date, completed=False), "version": 1}
+        {**build_aggregate_metrics_row([], aggregation_period, row_date, completed=False), "version": 1}
     )
     return stmt.on_duplicate_key_update(completed=False, version=table.c.version + 1)
 
 
 def reopen_metrics_day(session: Session, table: Table, day: date) -> None:
-    """Reopen a day's user metrics row, in the session's transaction, so the next calculation rebuilds the day.
+    """Reopen a day's aggregate metrics row, in the session's transaction, so the next calculation rebuilds the day.
 
     Args:
         session (Session): The session of the write that changed the day.
-        table (Table): The user metrics table.
+        table (Table): The aggregate metrics table.
         day (date): The day, from metrics_day_to_reopen.
     """
     session.execute(_reopen_metrics_row(table, day, "daily"))
 
 
 async def areopen_metrics_day(session: AsyncSession, table: Table, day: date) -> None:
-    """Reopen a day's user metrics row, in the session's transaction, so the next calculation rebuilds the day.
+    """Reopen a day's aggregate metrics row, in the session's transaction, so the next calculation rebuilds the day.
 
     Args:
         session (AsyncSession): The session of the write that changed the day.
-        table (Table): The user metrics table.
+        table (Table): The aggregate metrics table.
         day (date): The day, from metrics_day_to_reopen.
     """
     await session.execute(_reopen_metrics_row(table, day, "daily"))
 
 
 def _metrics_days_from(table: Table, starting_date: date) -> Any:
-    """Build the read of the date of every day's everyone row of the user metrics table from the given date on."""
+    """Build the read of the date of every day's everyone row of the aggregate metrics table from the given date on."""
     return select(table.c.date).where(
         table.c.aggregation_period == "daily", table.c.user_id == "", table.c.date >= starting_date
     )
 
 
 def _reopen_metrics_days_in(table: Table, days: List[date]) -> Any:
-    """Build the reopen of the given days' everyone rows of the user metrics table."""
+    """Build the reopen of the given days' everyone rows of the aggregate metrics table."""
     return (
         update(table)
         .where(table.c.aggregation_period == "daily", table.c.user_id == "", table.c.date.in_(days))
@@ -422,12 +422,12 @@ def _reopen_metrics_days_in(table: Table, days: List[date]) -> Any:
 
 
 def reopen_metrics_days_from(session: Session, table: Table, starting_date: date) -> None:
-    """Reopen every day's user metrics row from the given date on, in the session's transaction, as a write reopens
+    """Reopen every day's aggregate metrics row from the given date on, in the session's transaction, as a write reopens
     a day, so the next calculation rebuilds them.
 
     Args:
         session (Session): The session to reopen with.
-        table (Table): The user metrics table.
+        table (Table): The aggregate metrics table.
         starting_date (date): The first day to reopen.
     """
     # Read first, then reopened by key: an update over a range of dates locks the user rows of those days too, which a
@@ -438,12 +438,12 @@ def reopen_metrics_days_from(session: Session, table: Table, starting_date: date
 
 
 async def areopen_metrics_days_from(session: AsyncSession, table: Table, starting_date: date) -> None:
-    """Reopen every day's user metrics row from the given date on, in the session's transaction, as a write reopens
+    """Reopen every day's aggregate metrics row from the given date on, in the session's transaction, as a write reopens
     a day, so the next calculation rebuilds them.
 
     Args:
         session (AsyncSession): The session to reopen with.
-        table (Table): The user metrics table.
+        table (Table): The aggregate metrics table.
         starting_date (date): The first day to reopen.
     """
     # Read first, then reopened by key: an update over a range of dates locks the user rows of those days too, which a
@@ -454,22 +454,22 @@ async def areopen_metrics_days_from(session: AsyncSession, table: Table, startin
 
 
 def reopen_metrics_month(session: Session, table: Table, month_start: date) -> None:
-    """Reopen a month's user metrics row, in the session's transaction, so the next calculation rebuilds the month.
+    """Reopen a month's aggregate metrics row, in the session's transaction, so the next calculation rebuilds the month.
 
     Args:
         session (Session): The session of the day rebuilt in the month.
-        table (Table): The user metrics table.
+        table (Table): The aggregate metrics table.
         month_start (date): The first day of the month.
     """
     session.execute(_reopen_metrics_row(table, month_start, "monthly"))
 
 
 async def areopen_metrics_month(session: AsyncSession, table: Table, month_start: date) -> None:
-    """Reopen a month's user metrics row, in the session's transaction, so the next calculation rebuilds the month.
+    """Reopen a month's aggregate metrics row, in the session's transaction, so the next calculation rebuilds the month.
 
     Args:
         session (AsyncSession): The session of the day rebuilt in the month.
-        table (Table): The user metrics table.
+        table (Table): The aggregate metrics table.
         month_start (date): The first day of the month.
     """
     await session.execute(_reopen_metrics_row(table, month_start, "monthly"))
@@ -761,7 +761,7 @@ def _metrics_column(table: Table, field: str) -> Any:
         return cast(func.json_extract(table.c.token_details, f"$.{field}"), Numeric(65, 30))
     if field in (*METRICS_TOKEN_DETAILS_FIELDS, *METRICS_COST_FIELDS):
         return cast(func.json_extract(table.c.token_details, f"$.{field}"), BigInteger)
-    # The user metrics table keeps the sessions of each type only
+    # The aggregate metrics table keeps the sessions of each type only
     if field == "sessions_count" and field not in table.c:
         return table.c.agent_sessions_count + table.c.team_sessions_count + table.c.workflow_sessions_count
     # The component metrics table keeps the runs of each component: the root runs are those no other run started
@@ -796,10 +796,10 @@ def build_component_metrics_totals_queries(
     """Build the queries that total the component metrics of each day in the given date range.
 
     Args:
-        table (Table): The user metrics table, or the component metrics table to total the runs with no user.
+        table (Table): The aggregate metrics table, or the component metrics table to total the runs with no user.
         starting_date (date): The first day to total.
         ending_date (date): The last day to total.
-        user_id (str): The user whose rows are totalled: ``""`` totals the everyone rows of the user metrics table, or
+        user_id (str): The user whose rows are totalled: ``""`` totals the everyone rows of the aggregate metrics table, or
             the rows with no user of the component metrics table.
         fields (Sequence[str]): The columns to total.
         month_starts (Sequence[date]): The first day of every month inside the date range to total from its month

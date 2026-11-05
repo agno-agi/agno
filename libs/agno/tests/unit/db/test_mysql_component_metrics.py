@@ -13,7 +13,7 @@ from sqlalchemy.sql.dml import Insert
 
 from agno.db.mysql.mysql import MySQLDb
 from agno.db.mysql.schemas import SESSION_TABLE_SCHEMA, get_table_schema_definition
-from agno.db.mysql.utils import upsert_user_metrics_row
+from agno.db.mysql.utils import upsert_aggregate_metrics_row
 
 TODAY = datetime.now(timezone.utc).date()
 
@@ -27,7 +27,7 @@ def _table(name: str, schema: dict) -> Table:
 TABLES = {
     "sessions": _table("test_sessions", SESSION_TABLE_SCHEMA),
     "component_metrics": _table("test_component_metrics", get_table_schema_definition("component_metrics")),
-    "user_metrics": _table("test_user_metrics", get_table_schema_definition("user_metrics")),
+    "aggregate_metrics": _table("test_aggregate_metrics", get_table_schema_definition("aggregate_metrics")),
     "metrics_refreshes": _table("test_metrics_refreshes", get_table_schema_definition("metrics_refreshes")),
 }
 
@@ -120,8 +120,8 @@ def _written(session, table_name):
     return [row for name, rows in session.writes if name == table_name for row in rows]
 
 
-def test_calculate_metrics_writes_each_day_and_its_user_metrics_rows_last(mysql_db):
-    """Each day gets one row per user, then its user metrics rows; only a day ended a day ago is completed, and the
+def test_calculate_metrics_writes_each_day_and_its_aggregate_metrics_rows_last(mysql_db):
+    """Each day gets one row per user, then its aggregate metrics rows; only a day ended a day ago is completed, and the
     lock is released with the fingerprint."""
     session = _FakeSession({"test_sessions": [_session_row("alice"), _session_row("bob")]})
     mysql_db.Session = Mock(return_value=session)
@@ -133,7 +133,7 @@ def test_calculate_metrics_writes_each_day_and_its_user_metrics_rows_last(mysql_
     assert [(row["date"], row["user_id"], row["sessions_count"]) for row in rows] == [
         (TODAY - timedelta(days=days_ago), user_id, 1) for days_ago in [2, 1, 0] for user_id in ["alice", "bob"]
     ]
-    everyone_rows = [row for row in _written(session, "test_user_metrics") if row["user_id"] == ""]
+    everyone_rows = [row for row in _written(session, "test_aggregate_metrics") if row["user_id"] == ""]
     assert [
         (row["aggregation_period"], row["date"], row["agent_sessions_count"], row["completed"])
         for row in everyone_rows
@@ -156,17 +156,17 @@ def test_calculate_metrics_writes_each_day_and_its_user_metrics_rows_last(mysql_
 def test_everyone_row_completed_is_compared_before_the_version_moves():
     """The everyone row is completed only while it keeps the version read, compared before the upsert moves it."""
     session = Mock()
-    upsert_user_metrics_row(
+    upsert_aggregate_metrics_row(
         session,
-        TABLES["user_metrics"],
+        TABLES["aggregate_metrics"],
         {"aggregation_period": "daily", "date": TODAY, "user_id": "", "completed": True},
         read_version=3,
     )
 
     statement = str(session.execute.call_args.args[0].compile(dialect=mysql.dialect()))
     assert "ON DUPLICATE KEY UPDATE" in statement
-    completed = statement.index("completed = (test_user_metrics.version = %s AND")
-    assert completed < statement.index("version = (test_user_metrics.version + %s)")
+    completed = statement.index("completed = (test_aggregate_metrics.version = %s AND")
+    assert completed < statement.index("version = (test_aggregate_metrics.version + %s)")
 
 
 def test_reopen_metrics_days_raises_when_a_deadlock_rolled_back_the_write(mysql_db):

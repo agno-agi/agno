@@ -22,10 +22,10 @@ from agno.db.utils import (
     METRICS_REFRESH_ID,
     METRICS_STOPPED_ERROR,
     METRICS_WRITE_RETRIES,
-    USER_METRICS_COUNT_COLUMNS,
-    USER_METRICS_KEY_COLUMNS,
+    AGGREGATE_METRICS_COUNT_COLUMNS,
+    AGGREGATE_METRICS_KEY_COLUMNS,
     build_metrics_by_owner_from_rows,
-    build_metrics_from_user_metrics,
+    build_metrics_from_aggregate_metrics,
     build_single_run_row,
     calculate_date_metrics,
     calculate_month_metrics,
@@ -55,10 +55,10 @@ from agno.db.utils import (
     metrics_versions,
     reopen_metrics_days_from,
     reopen_metrics_month,
-    reopened_user_metrics_row,
+    reopened_aggregate_metrics_row,
     resolve_metrics_fields,
     total_metrics_rows,
-    write_user_metrics_rows,
+    write_aggregate_metrics_rows,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -84,7 +84,7 @@ class GcsJsonDb(BaseDb):
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         component_metrics_table: Optional[str] = None,
-        user_metrics_table: Optional[str] = None,
+        aggregate_metrics_table: Optional[str] = None,
         metrics_refreshes_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
@@ -106,7 +106,7 @@ class GcsJsonDb(BaseDb):
             metrics_table (Optional[str]): Name of the JSON file to store metrics.
             component_metrics_table (Optional[str]): Name of the JSON file to store the metrics of each agent, team
                 and workflow.
-            user_metrics_table (Optional[str]): Name of the JSON file to store the metrics of each user.
+            aggregate_metrics_table (Optional[str]): Name of the JSON file to store the metrics of each user.
             metrics_refreshes_table (Optional[str]): Name of the JSON file to store the metrics refreshes.
             eval_table (Optional[str]): Name of the JSON file to store evaluation runs.
             knowledge_table (Optional[str]): Name of the JSON file to store knowledge content.
@@ -129,7 +129,7 @@ class GcsJsonDb(BaseDb):
             memory_table=memory_table,
             metrics_table=metrics_table,
             component_metrics_table=component_metrics_table,
-            user_metrics_table=user_metrics_table,
+            aggregate_metrics_table=aggregate_metrics_table,
             metrics_refreshes_table=metrics_refreshes_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
@@ -147,7 +147,7 @@ class GcsJsonDb(BaseDb):
         self.bucket = self.client.bucket(self.bucket_name)
 
         if metrics_table is not None:
-            log_warning("metrics_table is deprecated; use component_metrics_table and user_metrics_table.")
+            log_warning("metrics_table is deprecated; use component_metrics_table and aggregate_metrics_table.")
 
         # The days whose metrics a write could not reopen, retried by the next write
         self._metrics_days_not_reopened: Set[date] = set()
@@ -1227,22 +1227,22 @@ class GcsJsonDb(BaseDb):
             return
         try:
             for attempt in range(METRICS_WRITE_RETRIES + 1):
-                user_metrics_rows, generation = self._read_json_file_with_generation(self.user_metrics_table_name)
-                # No user metrics file until a calculation started: the first one builds every day
+                aggregate_metrics_rows, generation = self._read_json_file_with_generation(self.aggregate_metrics_table_name)
+                # No aggregate metrics file until a calculation started: the first one builds every day
                 if generation == 0:
                     self._metrics_days_not_reopened.clear()
                     return
-                user_metrics_by_key = get_metrics_rows_by_key(
-                    deserialize_metrics_rows(user_metrics_rows), USER_METRICS_KEY_COLUMNS
+                aggregate_metrics_by_key = get_metrics_rows_by_key(
+                    deserialize_metrics_rows(aggregate_metrics_rows), AGGREGATE_METRICS_KEY_COLUMNS
                 )
                 for day in days:
-                    user_metrics_by_key[("daily", day, "")] = reopened_user_metrics_row(
-                        user_metrics_by_key.get(("daily", day, "")), day
+                    aggregate_metrics_by_key[("daily", day, "")] = reopened_aggregate_metrics_row(
+                        aggregate_metrics_by_key.get(("daily", day, "")), day
                     )
                 try:
                     self._write_json_file(
-                        self.user_metrics_table_name,
-                        list(user_metrics_by_key.values()),
+                        self.aggregate_metrics_table_name,
+                        list(aggregate_metrics_by_key.values()),
                         if_generation_match=generation,
                         indent=None,
                     )
@@ -1428,15 +1428,15 @@ class GcsJsonDb(BaseDb):
         periods: List[Tuple[List[Dict[str, Any]], bool, Optional[int]]],
         worker_id: str,
     ) -> bool:
-        """Write the component metrics rows of the calculated days, then the user metrics rows of each calculated day
+        """Write the component metrics rows of the calculated days, then the aggregate metrics rows of each calculated day
         and month. False when another process took the refresh over, and nothing was written.
 
         Args:
             rows_by_key (Optional[Dict[Tuple[Any, ...], Dict[str, Any]]]): Every component metrics row, by key. None
                 when no row changed.
             rows_generation (int): The generation of the component metrics file when its rows were read.
-            periods (List[Tuple[List[Dict[str, Any]], bool, Optional[int]]]): The user metrics rows of each day and
-                month, from build_user_metrics_rows, whether its component rows changed, and the version of its
+            periods (List[Tuple[List[Dict[str, Any]], bool, Optional[int]]]): The aggregate metrics rows of each day and
+                month, from build_aggregate_metrics_rows, whether its component rows changed, and the version of its
                 everyone row read before its runs.
             worker_id (str): The id of this calculation.
         """
@@ -1469,21 +1469,21 @@ class GcsJsonDb(BaseDb):
         # Written last, so a version never moves without the rows it tells of, and read again when another process
         # wrote since, so a reopen written then is kept
         for attempt in range(METRICS_WRITE_RETRIES + 1):
-            user_metrics_rows, generation = self._read_json_file_with_generation(self.user_metrics_table_name)
-            user_metrics_by_key = get_metrics_rows_by_key(
-                deserialize_metrics_rows(user_metrics_rows), USER_METRICS_KEY_COLUMNS
+            aggregate_metrics_rows, generation = self._read_json_file_with_generation(self.aggregate_metrics_table_name)
+            aggregate_metrics_by_key = get_metrics_rows_by_key(
+                deserialize_metrics_rows(aggregate_metrics_rows), AGGREGATE_METRICS_KEY_COLUMNS
             )
             for period_rows, rows_changed, read_version in periods:
-                write_user_metrics_rows(user_metrics_by_key, period_rows, rows_changed, read_version)
+                write_aggregate_metrics_rows(aggregate_metrics_by_key, period_rows, rows_changed, read_version)
                 month_start = period_rows[0]["date"].replace(day=1)
                 if rows_changed and month_start not in month_starts:
                     # Reopened with the day, so a calculation that stops before its months leaves the month for
                     # the next
-                    reopen_metrics_month(user_metrics_by_key, month_start)
+                    reopen_metrics_month(aggregate_metrics_by_key, month_start)
             try:
                 self._write_json_file(
-                    self.user_metrics_table_name,
-                    list(user_metrics_by_key.values()),
+                    self.aggregate_metrics_table_name,
+                    list(aggregate_metrics_by_key.values()),
                     if_generation_match=generation,
                     indent=None,
                 )
@@ -1548,7 +1548,7 @@ class GcsJsonDb(BaseDb):
         # Created before the claim, so a write during the first calculation reopens its day. Only while it does
         # not exist, so a file another process wrote is never written over
         try:
-            self._write_json_file(self.user_metrics_table_name, [], if_generation_match=0, indent=None)
+            self._write_json_file(self.aggregate_metrics_table_name, [], if_generation_match=0, indent=None)
         except PreconditionFailed:
             pass
 
@@ -1562,15 +1562,15 @@ class GcsJsonDb(BaseDb):
                 if refresh_row is not None:
                     started_at, finished_at = refresh_row["started_at"], refresh_row["finished_at"]
                 for attempt in range(METRICS_WRITE_RETRIES + 1):
-                    user_metrics_rows, generation = self._read_json_file_with_generation(self.user_metrics_table_name)
-                    user_metrics_by_key = get_metrics_rows_by_key(
-                        deserialize_metrics_rows(user_metrics_rows), USER_METRICS_KEY_COLUMNS
+                    aggregate_metrics_rows, generation = self._read_json_file_with_generation(self.aggregate_metrics_table_name)
+                    aggregate_metrics_by_key = get_metrics_rows_by_key(
+                        deserialize_metrics_rows(aggregate_metrics_rows), AGGREGATE_METRICS_KEY_COLUMNS
                     )
-                    reopen_metrics_days_from(user_metrics_by_key, rebuild_from)
+                    reopen_metrics_days_from(aggregate_metrics_by_key, rebuild_from)
                     try:
                         self._write_json_file(
-                            self.user_metrics_table_name,
-                            list(user_metrics_by_key.values()),
+                            self.aggregate_metrics_table_name,
+                            list(aggregate_metrics_by_key.values()),
                             if_generation_match=generation,
                             indent=None,
                         )
@@ -1595,8 +1595,8 @@ class GcsJsonDb(BaseDb):
             return None
 
         try:
-            user_metrics_by_key = get_metrics_rows_by_key(
-                self._read_metrics_file(self.user_metrics_table_name), USER_METRICS_KEY_COLUMNS
+            aggregate_metrics_by_key = get_metrics_rows_by_key(
+                self._read_metrics_file(self.aggregate_metrics_table_name), AGGREGATE_METRICS_KEY_COLUMNS
             )
 
             # Read after the versions of the days, so a run written while they are calculated moves its day. A
@@ -1607,7 +1607,7 @@ class GcsJsonDb(BaseDb):
             ]
             runs = get_metrics_runs(self._read_runs_file(create_table_if_not_found=False))
             dates_to_process, fingerprint = get_metrics_dates_to_calculate(
-                user_metrics_by_key, sessions, runs, refresh_row, rebuild_from
+                aggregate_metrics_by_key, sessions, runs, refresh_row, rebuild_from
             )
             if rebuild_from is not None:
                 # Yesterday and today are picked by their fingerprint, not by being open
@@ -1672,7 +1672,7 @@ class GcsJsonDb(BaseDb):
                     if should_stop is not None and should_stop():
                         stopped = True
                         break
-                    user_metrics_rows, day_rows_changed = calculate_date_metrics(
+                    aggregate_metrics_rows, day_rows_changed = calculate_date_metrics(
                         rows_by_key,
                         date_to_process,
                         sessions_by_day.get(date_to_process, []),
@@ -1681,10 +1681,10 @@ class GcsJsonDb(BaseDb):
                         set(runs_by_id),
                         runs_by_id,
                     )
-                    stored_everyone_row = user_metrics_by_key.get(("daily", date_to_process, ""))
+                    stored_everyone_row = aggregate_metrics_by_key.get(("daily", date_to_process, ""))
                     periods.append(
                         (
-                            user_metrics_rows,
+                            aggregate_metrics_rows,
                             day_rows_changed,
                             stored_everyone_row["version"] if stored_everyone_row is not None else None,
                         )
@@ -1696,14 +1696,14 @@ class GcsJsonDb(BaseDb):
             month_starts = sorted(
                 month_start
                 for month_start in set(get_months_to_calculate_metrics_for(calculated_dates))
-                | set(get_open_metrics_months(user_metrics_by_key))
+                | set(get_open_metrics_months(aggregate_metrics_by_key))
                 if metrics_day_completed(metrics_month_end(month_start))
             )
             for month_start in month_starts:
                 if stopped or (should_stop is not None and should_stop()):
                     stopped = True
                     break
-                stored_everyone_row = user_metrics_by_key.get(("monthly", month_start, ""))
+                stored_everyone_row = aggregate_metrics_by_key.get(("monthly", month_start, ""))
                 periods.append(
                     (
                         calculate_month_metrics(rows_by_key, month_start),
@@ -1755,22 +1755,22 @@ class GcsJsonDb(BaseDb):
         latest_updated_at = max((row["updated_at"] for row in rows if row.get("updated_at") is not None), default=None)
         return build_metrics_by_owner_from_rows(day_rows), latest_updated_at
 
-    def _get_user_metrics_rows(
+    def _get_aggregate_metrics_rows(
         self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
     ) -> Tuple[List[dict], Optional[int]]:
-        """Get the day rows of the user metrics file in the shape of the metrics table: the everyone rows for ``""``,
+        """Get the day rows of the aggregate metrics file in the shape of the metrics table: the everyone rows for ``""``,
         one user's rows for a name, and every user's rows for ``None``."""
-        user_metrics_rows = self._read_metrics_file(self.user_metrics_table_name)
+        aggregate_metrics_rows = self._read_metrics_file(self.aggregate_metrics_table_name)
         rows = sorted(
             (
                 row
-                for row in user_metrics_rows
+                for row in aggregate_metrics_rows
                 if row["aggregation_period"] == "daily"
                 and (starting_date is None or row["date"] >= starting_date)
                 and (ending_date is None or row["date"] <= ending_date)
                 and (row["user_id"] != "" if user_id is None else row["user_id"] == user_id)
                 # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row
-                and any(row[column] for column in USER_METRICS_COUNT_COLUMNS if column != "users_count")
+                and any(row[column] for column in AGGREGATE_METRICS_COUNT_COLUMNS if column != "users_count")
             ),
             key=lambda row: (row["date"], row["user_id"]),
         )
@@ -1781,14 +1781,14 @@ class GcsJsonDb(BaseDb):
         latest_updated_at = max(
             (
                 row["updated_at"]
-                for row in user_metrics_rows
+                for row in aggregate_metrics_rows
                 if row["aggregation_period"] == "daily"
                 and (row["user_id"] != "" if user_id is None else row["user_id"] == user_id)
                 and row["updated_at"] is not None
             ),
             default=None,
         )
-        return build_metrics_from_user_metrics(rows), latest_updated_at
+        return build_metrics_from_aggregate_metrics(rows), latest_updated_at
 
     def _get_metrics_rows(
         self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
@@ -1797,7 +1797,7 @@ class GcsJsonDb(BaseDb):
         finished: a user's from that user's rows, the runs with no user from their component metrics rows."""
         if user_id == "":
             return self._get_metrics_by_owner(starting_date, ending_date, user_id)
-        metrics, latest_updated_at = self._get_user_metrics_rows(starting_date, ending_date, user_id)
+        metrics, latest_updated_at = self._get_aggregate_metrics_rows(starting_date, ending_date, user_id)
         if user_id is not None:
             return metrics, latest_updated_at
 
@@ -1821,7 +1821,7 @@ class GcsJsonDb(BaseDb):
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
-        Metrics are read from the user metrics and component metrics files once the first calculate_metrics has
+        Metrics are read from the aggregate metrics and component metrics files once the first calculate_metrics has
         finished, and from the deprecated metrics file until then. A read never calculates them: checking for new
         sessions and runs would download the whole runs file. calculate_metrics does.
 
@@ -1876,7 +1876,7 @@ class GcsJsonDb(BaseDb):
     ) -> Tuple[List[dict], Optional[int]]:
         """Get the metrics of every user, one row per day, matching the given date range.
 
-        Read from the everyone rows of the user metrics file once the first calculate_metrics has finished, and from
+        Read from the everyone rows of the aggregate metrics file once the first calculate_metrics has finished, and from
         the deprecated metrics file until then. A read never calculates them, as in get_metrics.
 
         Args:
@@ -1891,7 +1891,7 @@ class GcsJsonDb(BaseDb):
         """
         try:
             if self._metrics_calculated():
-                return self._get_user_metrics_rows(starting_date, ending_date, "")
+                return self._get_aggregate_metrics_rows(starting_date, ending_date, "")
             return super().get_metrics_by_date(starting_date, ending_date)
 
         except Exception as e:
@@ -1931,19 +1931,19 @@ class GcsJsonDb(BaseDb):
             user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with
                 no user.
             fields (List[str]): The columns to total.
-            use_month_rows (bool): Total a calendar month inside the date range from its month user metrics row, as one
+            use_month_rows (bool): Total a calendar month inside the date range from its month aggregate metrics row, as one
                 date.
 
         Returns:
             Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each date, and when they were last updated.
         """
-        user_metrics_rows = self._read_metrics_file(self.user_metrics_table_name)
+        aggregate_metrics_rows = self._read_metrics_file(self.aggregate_metrics_table_name)
         # Every owner is read from the everyone rows and a user from the user's rows; the runs with no user have no
-        # user metrics row of their own, so they are read from their component rows
+        # aggregate metrics row of their own, so they are read from their component rows
         if user_id == "":
             rows = [row for row in self._read_metrics_file(self.component_metrics_table_name) if row["user_id"] == ""]
         else:
-            rows = [row for row in user_metrics_rows if row["user_id"] == (user_id or "")]
+            rows = [row for row in aggregate_metrics_rows if row["user_id"] == (user_id or "")]
 
         # The component metrics file keeps day rows only, so the runs with no user are read day by day
         full_months = metrics_full_months(starting_date, ending_date) if use_month_rows and user_id != "" else []
@@ -1951,7 +1951,7 @@ class GcsJsonDb(BaseDb):
         # yet built, is read from its days
         month_starts = [
             row["date"]
-            for row in user_metrics_rows
+            for row in aggregate_metrics_rows
             if row["aggregation_period"] == "monthly"
             and row["user_id"] == ""
             and row["completed"]
@@ -2032,7 +2032,7 @@ class GcsJsonDb(BaseDb):
             raise e
 
     def get_metrics_versions(self, starting_date: date, ending_date: date) -> Optional[Dict[str, int]]:
-        """Get the version of every everyone row of a day or a month of the user metrics in the given date range.
+        """Get the version of every everyone row of a day or a month of the aggregate metrics in the given date range.
 
         A read never calculates them, as in get_metrics.
 
@@ -2055,7 +2055,7 @@ class GcsJsonDb(BaseDb):
             return metrics_versions(
                 [
                     SimpleNamespace(**row)
-                    for row in self._read_metrics_file(self.user_metrics_table_name)
+                    for row in self._read_metrics_file(self.aggregate_metrics_table_name)
                     if row["user_id"] == "" and starting_date <= row["date"] <= ending_date
                 ]
             )

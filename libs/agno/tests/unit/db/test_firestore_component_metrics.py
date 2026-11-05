@@ -18,7 +18,7 @@ try:
 except ImportError:
     FirestoreDb = None  # type: ignore[misc,assignment]
 
-from agno.db.utils import build_user_metrics_rows
+from agno.db.utils import build_aggregate_metrics_rows
 
 pytestmark = pytest.mark.skipif(FirestoreDb is None, reason="google-cloud-firestore not installed")
 
@@ -38,30 +38,30 @@ def _old_day_timestamp() -> int:
     return int(datetime(day.year, day.month, day.day, 12, tzinfo=timezone.utc).timestamp())
 
 
-def _mock_collections(db: FirestoreDb, user_metrics_exists: bool) -> MagicMock:
-    """Give db a user metrics collection that holds a document or not, and return it."""
-    db.user_metrics_table_name = "agno_user_metrics"
+def _mock_collections(db: FirestoreDb, aggregate_metrics_exists: bool) -> MagicMock:
+    """Give db an aggregate metrics collection that holds a document or not, and return it."""
+    db.aggregate_metrics_table_name = "agno_aggregate_metrics"
     db.db_client.collection.return_value.limit.return_value.stream.return_value = (
-        [MagicMock()] if user_metrics_exists else []
+        [MagicMock()] if aggregate_metrics_exists else []
     )
-    user_metrics_collection_ref = MagicMock()
-    collections = {"user_metrics": user_metrics_collection_ref}
+    aggregate_metrics_collection_ref = MagicMock()
+    collections = {"aggregate_metrics": aggregate_metrics_collection_ref}
     db._get_collection = MagicMock(side_effect=lambda table_type: collections[table_type])  # type: ignore[method-assign]
-    return user_metrics_collection_ref
+    return aggregate_metrics_collection_ref
 
 
 class TestReopenMetricsDays:
     def test_reopens_a_day_once_a_day_was_calculated(self, monkeypatch):
-        """A day is reopened once the user metrics collection holds a row, and left to the first calculation before"""
+        """A day is reopened once the aggregate metrics collection holds a row, and left to the first calculation before"""
         db = _make_db_with_mock_client(monkeypatch)
-        user_metrics_collection_ref = _mock_collections(db, user_metrics_exists=False)
+        aggregate_metrics_collection_ref = _mock_collections(db, aggregate_metrics_exists=False)
 
         db._reopen_metrics_days([_old_day_timestamp()])
-        user_metrics_collection_ref.document.return_value.update.assert_not_called()
+        aggregate_metrics_collection_ref.document.return_value.update.assert_not_called()
 
-        user_metrics_collection_ref = _mock_collections(db, user_metrics_exists=True)
+        aggregate_metrics_collection_ref = _mock_collections(db, aggregate_metrics_exists=True)
         db._reopen_metrics_days([_old_day_timestamp()])
-        user_metrics_collection_ref.document.return_value.update.assert_called_once()
+        aggregate_metrics_collection_ref.document.return_value.update.assert_called_once()
 
 
 class TestMetricsRefresh:
@@ -109,7 +109,7 @@ class TestMetricsFingerprint:
         assert db._get_metrics_fingerprint(sessions_collection_ref, None, date(2026, 1, 1)) is None
 
 
-class TestWriteUserMetricsRows:
+class TestWriteAggregateMetricsRows:
     def _write(self, monkeypatch, row_writes, heartbeat=True):
         db = _make_db_with_mock_client(monkeypatch)
         transactions = []
@@ -122,18 +122,18 @@ class TestWriteUserMetricsRows:
         db.db_client.transaction.side_effect = new_transaction
         db._heartbeat_metrics_refresh = MagicMock(return_value=heartbeat)  # type: ignore[method-assign]
         day = date(2026, 1, 1)
-        user_metrics_collection_ref = MagicMock()
+        aggregate_metrics_collection_ref = MagicMock()
         # The stored everyone row of the day, at version 3
-        stored_row = {**build_user_metrics_rows([], "daily", day, True)[0], "date": day.isoformat(), "version": 3}
-        user_metrics_collection_ref.where.return_value.where.return_value.stream.return_value = [
+        stored_row = {**build_aggregate_metrics_rows([], "daily", day, True)[0], "date": day.isoformat(), "version": 3}
+        aggregate_metrics_collection_ref.where.return_value.where.return_value.stream.return_value = [
             MagicMock(to_dict=MagicMock(return_value=stored_row))
         ]
-        user_metrics_collection_ref.document.return_value.get.return_value = MagicMock(
+        aggregate_metrics_collection_ref.document.return_value.get.return_value = MagicMock(
             exists=True, to_dict=MagicMock(return_value=stored_row)
         )
-        written = db._write_user_metrics_rows(
-            user_metrics_collection_ref,
-            build_user_metrics_rows([], "daily", day, False),
+        written = db._write_aggregate_metrics_rows(
+            aggregate_metrics_collection_ref,
+            build_aggregate_metrics_rows([], "daily", day, False),
             rows_changed=True,
             read_version=3,
             refreshes_collection_ref=MagicMock(),
@@ -168,7 +168,7 @@ class TestWriteUserMetricsRows:
 
 
 class TestCalculateMetrics:
-    def test_writes_each_day_and_its_user_metrics_rows_last(self, monkeypatch):
+    def test_writes_each_day_and_its_aggregate_metrics_rows_last(self, monkeypatch):
         """Each day gets one row per user, then its everyone row; only a day ended a day ago is completed, and
         the refresh is released with the fingerprint."""
         db = _make_db_with_mock_client(monkeypatch)
@@ -189,11 +189,11 @@ class TestCalculateMetrics:
             for user_id in ["alice", "bob"]
         ]
         collection_ref = MagicMock()
-        user_metrics_collection_ref = MagicMock()
-        user_metrics_collection_ref.document.return_value.get.return_value.exists = False
+        aggregate_metrics_collection_ref = MagicMock()
+        aggregate_metrics_collection_ref.document.return_value.get.return_value.exists = False
         collections = {
             "component_metrics": collection_ref,
-            "user_metrics": user_metrics_collection_ref,
+            "aggregate_metrics": aggregate_metrics_collection_ref,
             "metrics_refreshes": MagicMock(),
             "sessions": sessions_collection_ref,
             "runs": None,
@@ -216,7 +216,7 @@ class TestCalculateMetrics:
         everyone_rows = [
             call.args[1]
             for call in written
-            if call.args[0] is user_metrics_collection_ref.document.return_value and call.args[1]["user_id"] == ""
+            if call.args[0] is aggregate_metrics_collection_ref.document.return_value and call.args[1]["user_id"] == ""
         ]
         assert [
             (row["date"], row["agent_sessions_count"], row["completed"])

@@ -86,7 +86,7 @@ COMPONENT_METRICS_SCHEMA = {
     "updated_at": {"type": "integer"},
 }
 
-USER_METRICS_SCHEMA = {
+AGGREGATE_METRICS_SCHEMA = {
     "aggregation_period": {"type": "string", "primary_key": True},
     "date": {"type": "date", "primary_key": True},
     # Owner of this row. Empty string for the everyone row, which counts every run, runs with no user included
@@ -221,7 +221,7 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "memories": USER_MEMORY_SCHEMA,
         "metrics": METRICS_SCHEMA,
         "component_metrics": COMPONENT_METRICS_SCHEMA,
-        "user_metrics": USER_METRICS_SCHEMA,
+        "aggregate_metrics": AGGREGATE_METRICS_SCHEMA,
         "metrics_refreshes": METRICS_REFRESHES_SCHEMA,
         "evals": EVAL_SCHEMA,
         "knowledge": KNOWLEDGE_SCHEMA,

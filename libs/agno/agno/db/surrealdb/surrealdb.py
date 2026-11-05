@@ -59,14 +59,14 @@ from agno.db.utils import (
     METRICS_STOPPED_ERROR,
     METRICS_SUM_COLUMNS,
     METRICS_TOKEN_FIELDS,
-    USER_METRICS_COUNT_COLUMNS,
-    USER_METRICS_KEY_COLUMNS,
+    AGGREGATE_METRICS_COUNT_COLUMNS,
+    AGGREGATE_METRICS_KEY_COLUMNS,
     add_metrics_month_totals,
     build_metrics_by_owner_from_rows,
-    build_metrics_from_user_metrics,
+    build_metrics_from_aggregate_metrics,
     build_single_run_row,
-    build_user_metrics_month_rows,
-    build_user_metrics_rows,
+    build_aggregate_metrics_month_rows,
+    build_aggregate_metrics_rows,
     calculate_date_component_metrics,
     component_metrics_rows_to_write,
     database_error_message,
@@ -95,7 +95,7 @@ from agno.db.utils import (
     metrics_versions,
     resolve_metrics_fields,
     total_metrics_rows,
-    user_metrics_rows_to_write,
+    aggregate_metrics_rows_to_write,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -124,7 +124,7 @@ class SurrealDb(BaseDb):
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         component_metrics_table: Optional[str] = None,
-        user_metrics_table: Optional[str] = None,
+        aggregate_metrics_table: Optional[str] = None,
         metrics_refreshes_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
@@ -145,7 +145,7 @@ class SurrealDb(BaseDb):
             memory_table: The name of the memory table.
             metrics_table: The name of the metrics table.
             component_metrics_table: The name of the table to store the metrics of each agent, team and workflow.
-            user_metrics_table: The name of the table to store the metrics of each user.
+            aggregate_metrics_table: The name of the table to store the metrics of each user.
             metrics_refreshes_table: The name of the table to store the metrics refreshes.
             eval_table: The name of the eval table.
             knowledge_table: The name of the knowledge table.
@@ -165,7 +165,7 @@ class SurrealDb(BaseDb):
             memory_table=memory_table,
             metrics_table=metrics_table,
             component_metrics_table=component_metrics_table,
-            user_metrics_table=user_metrics_table,
+            aggregate_metrics_table=aggregate_metrics_table,
             metrics_refreshes_table=metrics_refreshes_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
@@ -173,7 +173,7 @@ class SurrealDb(BaseDb):
             spans_table=spans_table,
         )
         if metrics_table is not None:
-            log_warning("metrics_table is deprecated; use component_metrics_table and user_metrics_table.")
+            log_warning("metrics_table is deprecated; use component_metrics_table and aggregate_metrics_table.")
         self._client = client
         self._db_url = db_url
         self._db_creds = db_creds
@@ -255,8 +255,8 @@ class SurrealDb(BaseDb):
             table_name = self.metrics_table_name
         elif table_type == "component_metrics":
             table_name = self.component_metrics_table_name
-        elif table_type == "user_metrics":
-            table_name = self.user_metrics_table_name
+        elif table_type == "aggregate_metrics":
+            table_name = self.aggregate_metrics_table_name
         elif table_type == "metrics_refreshes":
             table_name = self.metrics_refreshes_table_name
         elif table_type == "traces":
@@ -1416,12 +1416,12 @@ class SurrealDb(BaseDb):
             return
         try:
             # Looked up only when a day reopens. None when no day was calculated yet
-            user_metrics_table = self._get_table_if_exists("user_metrics")
-            if user_metrics_table is None:
+            aggregate_metrics_table = self._get_table_if_exists("aggregate_metrics")
+            if aggregate_metrics_table is None:
                 self._metrics_days_not_reopened.clear()
                 return
             for day in days:
-                reopen_metrics_day(self.client, user_metrics_table, day)
+                reopen_metrics_day(self.client, aggregate_metrics_table, day)
             self._metrics_days_not_reopened.difference_update(days)
         except Exception as e:
             self._metrics_days_not_reopened.update(days)
@@ -1617,7 +1617,7 @@ class SurrealDb(BaseDb):
 
     def _get_metrics_dates_to_calculate(
         self,
-        user_metrics_table: str,
+        aggregate_metrics_table: str,
         sessions_table: str,
         runs_table: Optional[str],
         refresh_row: Dict[str, Any],
@@ -1626,7 +1626,7 @@ class SurrealDb(BaseDb):
         """Get the days whose metrics a calculation rebuilds, and the fingerprint of yesterday and today.
 
         Args:
-            user_metrics_table (str): The user metrics table.
+            aggregate_metrics_table (str): The aggregate metrics table.
             sessions_table (str): The sessions table.
             runs_table (Optional[str]): The runs table. None when no run was written yet.
             refresh_row (Dict[str, Any]): The row of the metrics refreshes table, from _claim_metrics_refresh.
@@ -1648,7 +1648,7 @@ class SurrealDb(BaseDb):
         # Every earlier day still open: not yet completed, or reopened by a write since
         result = self._query(
             dedent(f"""
-                SELECT date FROM {user_metrics_table}
+                SELECT date FROM {aggregate_metrics_table}
                 WHERE aggregation_period = "daily" AND user_id = "" AND completed = false AND date < $yesterday
             """),
             {"yesterday": datetime.combine(yesterday, datetime.min.time()).replace(tzinfo=timezone.utc)},
@@ -1667,7 +1667,7 @@ class SurrealDb(BaseDb):
             completed_days: Set[date] = set()
             if first_calculation:
                 result = self._query(
-                    f'SELECT date FROM {user_metrics_table} WHERE aggregation_period = "daily" AND user_id = "" '
+                    f'SELECT date FROM {aggregate_metrics_table} WHERE aggregation_period = "daily" AND user_id = "" '
                     "AND completed = true",
                     {},
                     dict,
@@ -1688,13 +1688,13 @@ class SurrealDb(BaseDb):
 
         return sorted(dates_to_process), fingerprint
 
-    def _get_open_metrics_months(self, user_metrics_table: str) -> List[date]:
+    def _get_open_metrics_months(self, aggregate_metrics_table: str) -> List[date]:
         """Get the first day of every month before the current one whose month row is still open: not completed yet,
         or reopened by a day a calculation rebuilt before it stopped."""
         current_month = datetime.now(timezone.utc).date().replace(day=1)
         result = self._query(
             dedent(f"""
-                SELECT date FROM {user_metrics_table}
+                SELECT date FROM {aggregate_metrics_table}
                 WHERE aggregation_period = "monthly" AND user_id = "" AND completed = false AND date < $current_month
             """),
             {"current_month": datetime.combine(current_month, datetime.min.time()).replace(tzinfo=timezone.utc)},
@@ -1759,29 +1759,29 @@ class SurrealDb(BaseDb):
             )
         return parent_runs
 
-    def _get_user_metrics_rows_to_write(
-        self, user_metrics_table: str, user_metrics_rows: List[Dict[str, Any]], rows_changed: bool
+    def _get_aggregate_metrics_rows_to_write(
+        self, aggregate_metrics_table: str, aggregate_metrics_rows: List[Dict[str, Any]], rows_changed: bool
     ) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]], List[RecordID]]:
-        """Compare a period's rows of the user metrics table, from build_user_metrics_rows, with the rows stored
+        """Compare a period's rows of the aggregate metrics table, from build_aggregate_metrics_rows, with the rows stored
         for it.
 
         Returns the everyone row to write, or None when the stored one stands, the user rows that are new or changed,
         and the id of every stored user row the period no longer has.
         """
-        period, period_date = user_metrics_rows[0]["aggregation_period"], user_metrics_rows[0]["date"]
+        period, period_date = aggregate_metrics_rows[0]["aggregation_period"], aggregate_metrics_rows[0]["date"]
         result = self._query(
-            f"SELECT * FROM {user_metrics_table} WHERE aggregation_period = $period AND date = $date",
+            f"SELECT * FROM {aggregate_metrics_table} WHERE aggregation_period = $period AND date = $date",
             {"period": period, "date": datetime.combine(period_date, datetime.min.time()).replace(tzinfo=timezone.utc)},
             dict,
         )
-        everyone_row, changed_rows, stale_user_ids = user_metrics_rows_to_write(
-            user_metrics_rows, [desurrealize_metrics_row(record) for record in result], rows_changed
+        everyone_row, changed_rows, stale_user_ids = aggregate_metrics_rows_to_write(
+            aggregate_metrics_rows, [desurrealize_metrics_row(record) for record in result], rows_changed
         )
         stale_ids = [
             metrics_record_id(
-                user_metrics_table,
+                aggregate_metrics_table,
                 {"aggregation_period": period, "date": period_date, "user_id": user_id},
-                USER_METRICS_KEY_COLUMNS,
+                AGGREGATE_METRICS_KEY_COLUMNS,
             )
             for user_id in stale_user_ids
         ]
@@ -1790,7 +1790,7 @@ class SurrealDb(BaseDb):
     def _calculate_date_metrics(
         self,
         table: str,
-        user_metrics_table: str,
+        aggregate_metrics_table: str,
         sessions_table: str,
         runs_table: Optional[str],
         date_to_process: date,
@@ -1800,7 +1800,7 @@ class SurrealDb(BaseDb):
         worker_id: str,
         should_stop: Optional[Callable[[], bool]] = None,
     ) -> bool:
-        """Rebuild one day's component and user metrics rows in one transaction. False when nothing was written."""
+        """Rebuild one day's component and aggregate metrics rows in one transaction. False when nothing was written."""
         start_timestamp = datetime.combine(date_to_process, datetime.min.time()).replace(tzinfo=timezone.utc)
         end_timestamp = start_timestamp + timedelta(days=1)
 
@@ -1809,9 +1809,9 @@ class SurrealDb(BaseDb):
             "SELECT VALUE version FROM ONLY $record",
             {
                 "record": metrics_record_id(
-                    user_metrics_table,
+                    aggregate_metrics_table,
                     {"aggregation_period": "daily", "date": date_to_process, "user_id": ""},
-                    USER_METRICS_KEY_COLUMNS,
+                    AGGREGATE_METRICS_KEY_COLUMNS,
                 )
             },
             int,
@@ -1878,9 +1878,9 @@ class SurrealDb(BaseDb):
         stored_ids = {
             tuple(row[column] for column in COMPONENT_METRICS_KEY_COLUMNS[2:]): row["id"] for row in stored_rows
         }
-        everyone_row, changed_user_metrics_rows, stale_user_metrics_ids = self._get_user_metrics_rows_to_write(
-            user_metrics_table,
-            build_user_metrics_rows(records, "daily", date_to_process, metrics_day_completed(date_to_process)),
+        everyone_row, changed_aggregate_metrics_rows, stale_aggregate_metrics_ids = self._get_aggregate_metrics_rows_to_write(
+            aggregate_metrics_table,
+            build_aggregate_metrics_rows(records, "daily", date_to_process, metrics_day_completed(date_to_process)),
             rows_changed=bool(changed_rows or stale_keys),
         )
 
@@ -1890,12 +1890,12 @@ class SurrealDb(BaseDb):
         return bulk_upsert_metrics_rows(
             self.client,
             heartbeat_metrics_refresh(refreshes_table, worker_id),
-            user_metrics_table,
+            aggregate_metrics_table,
             table=table,
             component_metrics_records=changed_rows,
             stale_ids=[stored_ids[key] for key in stale_keys],
-            user_metrics_rows=changed_user_metrics_rows,
-            stale_user_metrics_ids=stale_user_metrics_ids,
+            aggregate_metrics_rows=changed_aggregate_metrics_rows,
+            stale_aggregate_metrics_ids=stale_aggregate_metrics_ids,
             everyone_row=everyone_row,
             read_version=read_version,
             # Reopened with the day, so a calculation that stops before its months leaves the month for the next
@@ -1903,17 +1903,17 @@ class SurrealDb(BaseDb):
         )
 
     def _calculate_month_metrics(
-        self, table: str, user_metrics_table: str, month_start: date, refreshes_table: str, worker_id: str
+        self, table: str, aggregate_metrics_table: str, month_start: date, refreshes_table: str, worker_id: str
     ) -> bool:
-        """Rebuild the month rows of the user metrics table from the component metrics rows of the month's days,
+        """Rebuild the month rows of the aggregate metrics table from the component metrics rows of the month's days,
         written in one transaction. False when another process took the refresh over, and nothing was written."""
         read_version = self._query_one(
             "SELECT VALUE version FROM ONLY $record",
             {
                 "record": metrics_record_id(
-                    user_metrics_table,
+                    aggregate_metrics_table,
                     {"aggregation_period": "monthly", "date": month_start, "user_id": ""},
-                    USER_METRICS_KEY_COLUMNS,
+                    AGGREGATE_METRICS_KEY_COLUMNS,
                 )
             },
             int,
@@ -1941,8 +1941,8 @@ class SurrealDb(BaseDb):
                 page += 1
 
         # Added up per owner and component over the month, so a user of several days is one user of the month
-        everyone_row, changed_user_metrics_rows, stale_user_metrics_ids = self._get_user_metrics_rows_to_write(
-            user_metrics_table, build_user_metrics_month_rows(month_start, per_owner), rows_changed=False
+        everyone_row, changed_aggregate_metrics_rows, stale_aggregate_metrics_ids = self._get_aggregate_metrics_rows_to_write(
+            aggregate_metrics_table, build_aggregate_metrics_month_rows(month_start, per_owner), rows_changed=False
         )
 
         # The refresh is heartbeated in the transaction of the rows, so a process whose lock went stale never
@@ -1950,9 +1950,9 @@ class SurrealDb(BaseDb):
         return bulk_upsert_metrics_rows(
             self.client,
             heartbeat_metrics_refresh(refreshes_table, worker_id),
-            user_metrics_table,
-            user_metrics_rows=changed_user_metrics_rows,
-            stale_user_metrics_ids=stale_user_metrics_ids,
+            aggregate_metrics_table,
+            aggregate_metrics_rows=changed_aggregate_metrics_rows,
+            stale_aggregate_metrics_ids=stale_aggregate_metrics_ids,
             everyone_row=everyone_row,
             read_version=read_version,
         )
@@ -2007,7 +2007,7 @@ class SurrealDb(BaseDb):
             Exception: If an error occurs during metrics calculation.
         """
         table = self._get_metrics_table("component_metrics", self.component_metrics_table_name)
-        user_metrics_table = self._get_metrics_table("user_metrics", self.user_metrics_table_name)
+        aggregate_metrics_table = self._get_metrics_table("aggregate_metrics", self.aggregate_metrics_table_name)
         refreshes_table = self._get_metrics_table("metrics_refreshes", self.metrics_refreshes_table_name)
         sessions_table = self._get_table_if_exists("sessions")
         if sessions_table is None:
@@ -2025,7 +2025,7 @@ class SurrealDb(BaseDb):
                 if stored_row is not None:
                     started_at, finished_at = stored_row["started_at"], stored_row["finished_at"]
                 # A statement of its own, without the refresh row: a day's calculation heartbeats that row
-                reopen_metrics_days_from(self.client, user_metrics_table, rebuild_from)
+                reopen_metrics_days_from(self.client, aggregate_metrics_table, rebuild_from)
                 # Yesterday and today are picked by the fingerprint, so it is marked for the next one too
                 if not self._mark_metrics_refresh_rebuild(refreshes_table):
                     return None
@@ -2050,7 +2050,7 @@ class SurrealDb(BaseDb):
 
         try:
             dates_to_process, fingerprint = self._get_metrics_dates_to_calculate(
-                user_metrics_table, sessions_table, runs_table, refresh_row, rebuild_from
+                aggregate_metrics_table, sessions_table, runs_table, refresh_row, rebuild_from
             )
             if rebuild_from is not None:
                 # Yesterday and today are picked by their fingerprint, not by being open
@@ -2119,7 +2119,7 @@ class SurrealDb(BaseDb):
                     try:
                         calculated = self._calculate_date_metrics(
                             table,
-                            user_metrics_table,
+                            aggregate_metrics_table,
                             sessions_table,
                             runs_table,
                             date_to_process,
@@ -2148,7 +2148,7 @@ class SurrealDb(BaseDb):
             month_starts = sorted(
                 month_start
                 for month_start in set(get_months_to_calculate_metrics_for(calculated_dates))
-                | set(self._get_open_metrics_months(user_metrics_table))
+                | set(self._get_open_metrics_months(aggregate_metrics_table))
                 if metrics_day_completed(metrics_month_end(month_start))
             )
             for month_start in month_starts:
@@ -2156,7 +2156,7 @@ class SurrealDb(BaseDb):
                     self._release_metrics_refresh(refreshes_table, worker_id, stopped=True)
                     return None
                 if not self._calculate_month_metrics(
-                    table, user_metrics_table, month_start, refreshes_table, worker_id
+                    table, aggregate_metrics_table, month_start, refreshes_table, worker_id
                 ):
                     return None
 
@@ -2232,13 +2232,13 @@ class SurrealDb(BaseDb):
 
         return build_metrics_by_owner_from_rows(rows), latest_updated_at
 
-    def _get_user_metrics_rows(
+    def _get_aggregate_metrics_rows(
         self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
     ) -> Tuple[List[dict], Optional[int]]:
-        """Get the day rows of the user metrics table in the shape of the metrics table: the everyone rows for ``""``, one
+        """Get the day rows of the aggregate metrics table in the shape of the metrics table: the everyone rows for ``""``, one
         user's rows for a name, and every user's rows for ``None``."""
-        user_metrics_table = self._get_table_if_exists("user_metrics")
-        if user_metrics_table is None:
+        aggregate_metrics_table = self._get_table_if_exists("aggregate_metrics")
+        if aggregate_metrics_table is None:
             return [], None
 
         where = WhereClause().and_("aggregation_period", "daily")
@@ -2253,13 +2253,13 @@ class SurrealDb(BaseDb):
         where = where.and_("user_id", "", "!=") if user_id is None else where.and_("user_id", user_id)
         where_clause, where_vars = where.build()
         # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row
-        counted = " OR ".join(f"{column} > 0" for column in USER_METRICS_COUNT_COLUMNS if column != "users_count")
+        counted = " OR ".join(f"{column} > 0" for column in AGGREGATE_METRICS_COUNT_COLUMNS if column != "users_count")
 
-        # Only what build_metrics_from_user_metrics reads, so the maps of timings are never decoded
+        # Only what build_metrics_from_aggregate_metrics reads, so the maps of timings are never decoded
         fields = [
             "date",
             "user_id",
-            *USER_METRICS_COUNT_COLUMNS,
+            *AGGREGATE_METRICS_COUNT_COLUMNS,
             *[field for field in METRICS_TOKEN_FIELDS if field in METRICS_SUM_COLUMNS],
             "token_details",
             "model_metrics",
@@ -2268,7 +2268,7 @@ class SurrealDb(BaseDb):
         ]
 
         result = self._query(
-            f"SELECT {', '.join(fields)} FROM {user_metrics_table} {where_clause} AND ({counted}) "
+            f"SELECT {', '.join(fields)} FROM {aggregate_metrics_table} {where_clause} AND ({counted}) "
             "ORDER BY date ASC, user_id ASC",
             where_vars,
             dict,
@@ -2280,13 +2280,13 @@ class SurrealDb(BaseDb):
         # Get the latest updated_at, scoped to the same user filter
         user_filter = 'user_id != ""' if user_id is None else "user_id = $user_id"
         latest_record = self._query_one(
-            f'SELECT updated_at FROM {user_metrics_table} WHERE aggregation_period = "daily" '
+            f'SELECT updated_at FROM {aggregate_metrics_table} WHERE aggregation_period = "daily" '
             f"AND {user_filter} ORDER BY updated_at DESC LIMIT 1",
             {"user_id": user_id},
             dict,
         )
         latest_updated_at = desurrealize_metrics_row(latest_record)["updated_at"] if latest_record else None
-        return build_metrics_from_user_metrics(rows), latest_updated_at
+        return build_metrics_from_aggregate_metrics(rows), latest_updated_at
 
     def _get_metrics_rows(
         self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
@@ -2295,7 +2295,7 @@ class SurrealDb(BaseDb):
         finished: a user's from that user's rows, the runs with no user from their component metrics rows."""
         if user_id == "":
             return self._get_metrics_by_owner(starting_date, ending_date, user_id)
-        metrics, latest_updated_at = self._get_user_metrics_rows(starting_date, ending_date, user_id)
+        metrics, latest_updated_at = self._get_aggregate_metrics_rows(starting_date, ending_date, user_id)
         if user_id is not None:
             return metrics, latest_updated_at
 
@@ -2338,7 +2338,7 @@ class SurrealDb(BaseDb):
     ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
         """Get all metrics matching the given date range.
 
-        Metrics are read from the user metrics and component metrics once the first calculate_metrics has finished,
+        Metrics are read from the aggregate metrics and component metrics once the first calculate_metrics has finished,
         and from the deprecated metrics table until then. They are refreshed first, at most once per minute per
         process, unless stop_metrics_refresh_on_read was called.
 
@@ -2416,7 +2416,7 @@ class SurrealDb(BaseDb):
     ) -> Tuple[List[dict], Optional[int]]:
         """Get the metrics of every user, one row per day, matching the given date range.
 
-        Read from the everyone rows of the user metrics once the first calculate_metrics has finished, and from the
+        Read from the everyone rows of the aggregate metrics once the first calculate_metrics has finished, and from the
         deprecated metrics table until then. They are refreshed first, as get_metrics does.
 
         Args:
@@ -2432,7 +2432,7 @@ class SurrealDb(BaseDb):
         try:
             self._refresh_metrics_before_read()
             if self._metrics_calculated(self._get_table_if_exists("metrics_refreshes")):
-                return self._get_user_metrics_rows(starting_date, ending_date, "")
+                return self._get_aggregate_metrics_rows(starting_date, ending_date, "")
             return super().get_metrics_by_date(starting_date, ending_date)
 
         except Exception as e:
@@ -2475,18 +2475,18 @@ class SurrealDb(BaseDb):
             user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with
                 no user.
             fields (List[str]): The columns to total.
-            use_month_rows (bool): Total a calendar month inside the date range from its month user metrics row, as one
+            use_month_rows (bool): Total a calendar month inside the date range from its month aggregate metrics row, as one
                 date.
 
         Returns:
             Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each date, and when they were last updated.
         """
-        user_metrics_table = self._get_table_if_exists("user_metrics")
+        aggregate_metrics_table = self._get_table_if_exists("aggregate_metrics")
         # Every owner is read from the everyone rows and a user from the user's rows; the runs with no user have no
-        # user metrics row of their own, so they are read from their component rows
-        table_type: TableType = "component_metrics" if user_id == "" else "user_metrics"
+        # aggregate metrics row of their own, so they are read from their component rows
+        table_type: TableType = "component_metrics" if user_id == "" else "aggregate_metrics"
         table = self._get_table_if_exists(table_type)
-        if user_metrics_table is None or table is None:
+        if aggregate_metrics_table is None or table is None:
             return [], None
         selected_fields = build_metrics_rows_fields(fields, table_type)
 
@@ -2494,7 +2494,7 @@ class SurrealDb(BaseDb):
         full_months = metrics_full_months(starting_date, ending_date) if use_month_rows and user_id != "" else []
         # The full months follow each other, so a range finds them however long the window is
         month_starts_query = (
-            f"""SELECT VALUE date FROM {user_metrics_table}
+            f"""SELECT VALUE date FROM {aggregate_metrics_table}
                     WHERE aggregation_period = "monthly" AND user_id = "" AND completed = true
                         AND date >= $first_month AND date <= $last_month"""
             if full_months
@@ -2615,7 +2615,7 @@ class SurrealDb(BaseDb):
             raise e
 
     def get_metrics_versions(self, starting_date: date, ending_date: date) -> Optional[Dict[str, int]]:
-        """Get the version of every everyone row of a day or a month of the user metrics in the given date range.
+        """Get the version of every everyone row of a day or a month of the aggregate metrics in the given date range.
 
         Metrics are refreshed first, as get_metrics refreshes them.
 
@@ -2626,14 +2626,14 @@ class SurrealDb(BaseDb):
         Returns:
             Optional[Dict[str, int]]: The version of each everyone row, keyed by its aggregation period and date. The
                 same again only while no calculation wrote a row of the date range. ``None`` until the first
-                calculate_metrics has finished, or without a user metrics table: a read would find no rows to total.
+                calculate_metrics has finished, or without an aggregate metrics table: a read would find no rows to total.
 
         Raises:
             Exception: If an error occurs during retrieval.
         """
         try:
             self._refresh_metrics_before_read()
-            table = self._get_table_if_exists("user_metrics")
+            table = self._get_table_if_exists("aggregate_metrics")
             if table is None or not self._metrics_calculated(self._get_table_if_exists("metrics_refreshes")):
                 return None
 
