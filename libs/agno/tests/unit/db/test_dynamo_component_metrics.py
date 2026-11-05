@@ -465,3 +465,32 @@ def test_a_stopped_calculation_releases_the_refresh(dynamo_db: DynamoDb, dataset
     assert dynamo_db.calculate_metrics_dates(should_stop=lambda: True, rebuild_from=_utc_date(OLD_DAY)) is None
     status = dynamo_db.get_metrics_refresh_status()
     assert (status["status"], status["error"], status["finished_at"]) == ("completed", None, finished_at)
+
+
+def test_get_metrics_returns_a_day_with_only_a_regenerated_run(dynamo_db: DynamoDb):
+    """Ensure a day with only regenerated runs, which have tokens but no count, is returned for a user and for the
+    runs with no user"""
+    old_day, mid_day = _utc_date(OLD_DAY), _utc_date(MID_DAY)
+    for session_id, user_id, input_tokens in [("s_alice", "alice", 10), ("s_no_user", None, 20)]:
+        dynamo_db.upsert_session(
+            AgentSession(session_id=session_id, agent_id="agent-1", user_id=user_id, created_at=_timestamp(old_day))
+        )
+        regenerated_run = RunOutput(
+            run_id=f"{session_id}_run",
+            agent_id="agent-1",
+            user_id=user_id,
+            status=RunStatus.regenerated,
+            model="gpt-5.6-luna",
+            model_provider="OpenAI",
+            metrics=_metrics(input_tokens, 5),
+            created_at=_timestamp(mid_day),
+        )
+        dynamo_db.upsert_run(regenerated_run, session_id=session_id, user_id=user_id, run_index=0)
+
+    dynamo_db.calculate_metrics()
+
+    metrics, _ = dynamo_db.get_metrics(mid_day, mid_day)
+    assert [(row["user_id"], row["agent_runs_count"], row["token_metrics"]["total_tokens"]) for row in metrics] == [
+        (None, 0, 25),
+        ("alice", 0, 15),
+    ]

@@ -411,6 +411,27 @@ def test_calculate_metrics_dates_releases_the_lock_when_stopped(sqlite_db):
     assert (status["status"], status["error"]) == ("completed", None)
 
 
+def test_get_metrics_returns_a_day_with_only_a_regenerated_run(tmp_path):
+    """Ensure a day whose only run was regenerated, with tokens but no count, is returned"""
+    db = SqliteDb(db_file=str(tmp_path / "regenerated.db"))
+    _persist(
+        db,
+        _session(
+            "carol_session",
+            "carol",
+            [_run("regenerated_run", "carol", 20, 10, _noon_utc(2), status=RunStatus.regenerated)],
+            _noon_utc(3),
+        ),
+    )
+    _backdate(db)
+    db.calculate_metrics()
+
+    metrics, _ = db.get_metrics(_utc_date(2), _utc_date(2))
+    assert [(row["user_id"], row["agent_runs_count"], row["token_metrics"]["total_tokens"]) for row in metrics] == [
+        ("carol", 0, 30)
+    ]
+
+
 # =============================================================================
 # Async AsyncSqliteDb
 # =============================================================================

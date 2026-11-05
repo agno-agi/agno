@@ -736,3 +736,17 @@ def test_calculate_metrics_counts_tool_calls(db):
     assert metrics[0]["tool_metrics"] == expected
     totals, _ = db.get_metrics_totals(_utc_date(2), _utc_date(2), user_id="bob", fields=["tool_metrics"])
     assert totals == {"tool_metrics": expected}
+
+
+def test_get_metrics_returns_a_day_with_only_a_regenerated_run(db):
+    """Ensure a day with only a regenerated run, which has tokens but no count, is returned"""
+    _save(
+        db,
+        AgentSession(session_id="s-dave", agent_id="agent-1", user_id="dave", created_at=_noon_utc(2)),
+        [_run("r-dave", _noon_utc(3), 20, agent_id="agent-1", status="REGENERATED")],
+    )
+
+    db.calculate_metrics()
+
+    rows, _ = db.get_metrics(_utc_date(3), _utc_date(3), user_id="dave")
+    assert [(row["date"], row["token_metrics"]["total_tokens"]) for row in rows] == [(_utc_date(3), 30)]

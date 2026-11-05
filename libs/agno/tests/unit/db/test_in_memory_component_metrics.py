@@ -354,3 +354,21 @@ def test_calculate_metrics_takes_over_a_lock_that_went_stale():
     assert db.calculate_metrics()
     assert db.get_metrics_refresh_status()["status"] == "completed"
     assert db._heartbeat_metrics_refresh("stopped-worker") is False
+
+
+def test_get_metrics_returns_a_day_with_only_a_regenerated_run():
+    """Ensure a day with only a regenerated run, which has tokens but no count, is returned"""
+    db = InMemoryDb()
+    session_day, run_day = _utc_date(3), _utc_date(2)
+    _persist(
+        db,
+        AgentSession(session_id="dave_session", agent_id="agent-1", user_id="dave", created_at=_noon_utc(session_day)),
+        [_agent_run("regenerated_run", _noon_utc(run_day), 20, status=RunStatus.regenerated)],
+    )
+
+    db.calculate_metrics()
+
+    metrics, _ = db.get_metrics(run_day, run_day, user_id="dave")
+    assert [(row["date"], row["agent_runs_count"], row["token_metrics"]["total_tokens"]) for row in metrics] == [
+        (run_day, 0, 30)
+    ]

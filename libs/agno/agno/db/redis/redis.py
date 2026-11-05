@@ -2544,8 +2544,12 @@ class RedisDb(BaseDb):
                 row
                 for row in self._get_aggregate_metrics_records(record_ids)
                 if (user_id is not None or row["user_id"])
-                # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row
-                and any(row[column] for column in AGGREGATE_METRICS_COUNT_COLUMNS if column != "users_count")
+                # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row. A
+                # day whose only run is a regenerated one has its tokens but no count
+                and (
+                    any(row[column] for column in AGGREGATE_METRICS_COUNT_COLUMNS if column != "users_count")
+                    or row["total_tokens"] > 0
+                )
             ),
             key=lambda row: (row["date"], row["user_id"]),
         )

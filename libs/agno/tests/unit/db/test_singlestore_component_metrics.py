@@ -285,3 +285,15 @@ def test_component_metrics_read_returns_tool_metrics(singlestore_db):
 
     assert metrics == [{"date": TODAY, "tool_metrics": tool_metrics}]
     assert latest_updated_at == 1
+
+
+def test_get_metrics_returns_a_day_with_only_a_regenerated_run(singlestore_db):
+    """A day row with tokens but no sessions or runs counted is read, as get_metrics_totals counts it."""
+    session = _FakeSession()
+    session.execute = Mock(wraps=session.execute)
+    singlestore_db.Session = Mock(return_value=session)
+
+    singlestore_db._get_aggregate_metrics_rows(TODAY, TODAY, "")
+
+    statement = str(session.execute.call_args_list[0].args[0].compile(dialect=mysql.dialect()))
+    assert "test_aggregate_metrics.total_tokens > %s" in statement

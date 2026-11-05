@@ -429,3 +429,21 @@ def test_a_run_save_keeps_the_first_created_at_of_its_run(tmp_path):
     )
     stored_run = next(run for run in db._read_runs_file() if run["run_id"] == "alice_paused_run")
     assert stored_run["created_at"] == _noon_utc(old_day) + 60
+
+
+def test_get_metrics_returns_a_day_with_only_a_regenerated_run(tmp_path):
+    """Ensure a day with only a regenerated run, which has tokens but no count, is returned"""
+    db = JsonDb(db_path=str(tmp_path))
+    session_day, run_day = _utc_date(3), _utc_date(2)
+    _persist(
+        db,
+        AgentSession(session_id="dave_session", agent_id="agent-1", user_id="dave", created_at=_noon_utc(session_day)),
+        [_agent_run("regenerated_run", _noon_utc(run_day), 20, status=RunStatus.regenerated)],
+    )
+
+    db.calculate_metrics()
+
+    metrics, _ = db.get_metrics(run_day, run_day, user_id="dave")
+    assert [(row["date"], row["agent_runs_count"], row["token_metrics"]["total_tokens"]) for row in metrics] == [
+        (run_day, 0, 30)
+    ]

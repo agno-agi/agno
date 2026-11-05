@@ -1,4 +1,5 @@
 import asyncio
+from datetime import date
 from unittest.mock import AsyncMock, Mock, PropertyMock, patch
 
 import pytest
@@ -405,3 +406,19 @@ async def test_text_filters_match_literal_text():
     sessions_query, memories_query = [c.args[0] for c in mock_collection.count_documents.call_args_list]
     assert sessions_query["session_data.session_name"] == {"$regex": r"v1\.2\(draft", "$options": "i"}
     assert memories_query["memory"] == {"$regex": r"v1\.2\(draft", "$options": "i"}
+
+
+@pytest.mark.asyncio
+async def test_get_metrics_returns_a_day_with_only_a_regenerated_run():
+    """A day whose only run is a regenerated one has its tokens but no count, and get_metrics still reads it."""
+    db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
+    cursor = Mock()
+    cursor.sort.return_value = cursor
+    cursor.to_list = AsyncMock(return_value=[])
+    mock_collection = Mock()
+    mock_collection.find.return_value = cursor
+
+    with patch.object(db, "_get_collection", AsyncMock(return_value=mock_collection)):
+        await db._get_aggregate_metrics_rows(date(2026, 10, 1), date(2026, 10, 1), "")
+
+    assert {"total_tokens": {"$gt": 0}} in mock_collection.find.call_args.args[0]["$or"]

@@ -2239,8 +2239,14 @@ class SurrealDb(BaseDb):
             )
         where = where.and_("user_id", "", "!=") if user_id is None else where.and_("user_id", user_id)
         where_clause, where_vars = where.build()
-        # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row
-        counted = " OR ".join(f"{column} > 0" for column in AGGREGATE_METRICS_COUNT_COLUMNS if column != "users_count")
+        # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row. A day whose
+        # only run is a regenerated one has its tokens but no count
+        counted = " OR ".join(
+            [
+                *[f"{column} > 0" for column in AGGREGATE_METRICS_COUNT_COLUMNS if column != "users_count"],
+                "total_tokens > 0",
+            ]
+        )
 
         # Only what build_metrics_from_aggregate_metrics reads, so the maps of timings are never decoded
         fields = [

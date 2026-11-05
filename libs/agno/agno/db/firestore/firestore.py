@@ -2634,11 +2634,13 @@ class FirestoreDb(BaseDb):
         # of its own to leave out
         if user_id is None:
             rows = [row for row in rows if row["user_id"] != ""]
-        # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row
+        # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row. A day whose
+        # only run is a regenerated one has its tokens but no count
         rows = [
             row
             for row in rows
             if any(row[column] for column in AGGREGATE_METRICS_COUNT_COLUMNS if column != "users_count")
+            or row["total_tokens"] > 0
         ]
         rows.sort(key=lambda row: (row["date"], row["user_id"]))
         latest_updated_at = max((row["updated_at"] for row in rows if row.get("updated_at") is not None), default=None)

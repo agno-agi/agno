@@ -2871,7 +2871,8 @@ class DynamoDb(BaseDb):
 
     def _get_metrics_counted_days(self, starting_date: Optional[date], ending_date: Optional[date]) -> List[date]:
         """Get the days in the given date range whose everyone row counts any session or run, oldest first. A day
-        that counts nothing has no component metrics rows."""
+        that counts nothing has no component metrics rows. A day whose only run is a regenerated one has its tokens
+        but no count."""
         return [
             row["date"]
             for row in self._get_aggregate_metrics_items(
@@ -2880,9 +2881,10 @@ class DynamoDb(BaseDb):
                 "",
                 starting_date,
                 ending_date,
-                attributes=["date", *AGGREGATE_METRICS_COUNT_COLUMNS],
+                attributes=["date", *AGGREGATE_METRICS_COUNT_COLUMNS, "total_tokens"],
             )
             if any(row.get(column) for column in AGGREGATE_METRICS_COUNT_COLUMNS if column != "users_count")
+            or (row.get("total_tokens") or 0) > 0
         ]
 
     def _get_metrics_by_owner(
@@ -2922,11 +2924,13 @@ class DynamoDb(BaseDb):
             return [], None
         if user_id is None:
             rows = [row for row in rows if row["user_id"] != ""]
-        # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row
+        # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row. A day whose
+        # only run is a regenerated one has its tokens but no count
         rows = [
             row
             for row in rows
             if any(row[column] for column in AGGREGATE_METRICS_COUNT_COLUMNS if column != "users_count")
+            or row["total_tokens"] > 0
         ]
         rows.sort(key=lambda row: (row["date"], row["user_id"]))
         latest_updated_at = max((row["updated_at"] for row in rows if row.get("updated_at") is not None), default=None)

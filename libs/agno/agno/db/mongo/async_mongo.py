@@ -2887,8 +2887,12 @@ class AsyncMongoDb(AsyncBaseDb):
         if date_filter:
             query["date"] = date_filter
         query["user_id"] = {"$ne": ""} if user_id is None else user_id
-        # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row
-        query["$or"] = [{column: {"$gt": 0}} for column in AGGREGATE_METRICS_COUNT_COLUMNS if column != "users_count"]
+        # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row. A day whose
+        # only run is a regenerated one has its tokens but no count
+        query["$or"] = [
+            *[{column: {"$gt": 0}} for column in AGGREGATE_METRICS_COUNT_COLUMNS if column != "users_count"],
+            {"total_tokens": {"$gt": 0}},
+        ]
         # Only what build_metrics_from_aggregate_metrics reads, so the maps of timings are never decoded
         projection = {"_id": False, **{column: 1 for column in AGGREGATE_METRICS_ROWS_FIELDS}}
         rows = [

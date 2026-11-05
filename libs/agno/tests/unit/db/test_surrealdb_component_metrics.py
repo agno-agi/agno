@@ -469,6 +469,26 @@ def test_calculate_metrics_counts_tool_calls(surreal_db: SurrealDb):
     assert totals == {"tool_metrics": expected}
 
 
+def test_get_metrics_returns_a_day_with_only_a_regenerated_run(surreal_db: SurrealDb):
+    """Ensure a day whose only run was regenerated, with tokens but no count, is returned"""
+    day = utc_date(3)
+    surreal_db.upsert_session(
+        AgentSession(session_id="carol_session", agent_id="agent-1", user_id="carol", created_at=noon_utc(utc_date(2)))
+    )
+    surreal_db.upsert_run(
+        agent_run("regenerated_run", noon_utc(day), 20, status=RunStatus.regenerated),
+        session_id="carol_session",
+        user_id="carol",
+    )
+
+    surreal_db.calculate_metrics()
+
+    metrics, _ = surreal_db.get_metrics(starting_date=day, ending_date=day, user_id="carol")
+    assert [(row["date"], row["agent_runs_count"], row["token_metrics"]["total_tokens"]) for row in metrics] == [
+        (day, 0, 30)
+    ]
+
+
 def test_calculate_metrics_dates_releases_the_lock_when_stopped(surreal_db: SurrealDb):
     """Ensure a stopped calculation writes the days it calculated and releases the refresh"""
     build_dataset(surreal_db)

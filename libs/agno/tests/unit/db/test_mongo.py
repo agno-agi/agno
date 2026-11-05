@@ -246,3 +246,15 @@ def test_metrics_rebuild_reopen_failure_marks_refresh_failed():
     query, update = refreshes_collection.update_one.call_args.args
     assert query == {"id": METRICS_REFRESH_ID, "locked_by": None}
     assert update["$set"]["status"] == "failed"
+
+
+def test_get_metrics_returns_a_day_with_only_a_regenerated_run():
+    """A day whose only run is a regenerated one has its tokens but no count, and get_metrics still reads it."""
+    db = _db()
+    collection = Mock()
+    collection.find.return_value.sort.return_value = []
+
+    with patch.object(db, "_get_collection", return_value=collection):
+        db._get_aggregate_metrics_rows(date(2026, 10, 1), date(2026, 10, 1), "")
+
+    assert {"total_tokens": {"$gt": 0}} in collection.find.call_args.args[0]["$or"]

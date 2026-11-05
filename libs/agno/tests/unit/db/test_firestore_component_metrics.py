@@ -377,6 +377,29 @@ class TestComponentMetricsTotals:
         ]
 
 
+class TestGetMetrics:
+    def test_returns_a_day_with_only_a_regenerated_run(self, monkeypatch):
+        """Ensure a day whose only run was regenerated, with tokens but no count, is returned"""
+        db = _make_db_with_mock_client(monkeypatch)
+        day = date(2026, 1, 1)
+        aggregate_metrics_collection_ref = MagicMock()
+        db._get_collection = MagicMock(return_value=aggregate_metrics_collection_ref)  # type: ignore[method-assign]
+        stored_rows = [
+            {**build_aggregate_metrics_rows([], "daily", day, True)[0], "date": day.isoformat(), "total_tokens": tokens}
+            for tokens in [30, 0]
+        ]
+        days_query = aggregate_metrics_collection_ref.where.return_value.where.return_value.where.return_value
+        days_query.where.return_value.select.return_value.stream.return_value = [
+            MagicMock(to_dict=MagicMock(return_value=stored_row)) for stored_row in stored_rows
+        ]
+
+        metrics, _ = db._get_aggregate_metrics_rows(day, day, "")
+
+        assert [(row["date"], row["agent_runs_count"], row["token_metrics"]["total_tokens"]) for row in metrics] == [
+            (day, 0, 30)
+        ]
+
+
 class TestSessionsCollectionVersion:
     def test_keeps_the_stored_version_of_an_empty_sessions_collection(self, monkeypatch):
         """Ensure an empty sessions collection with a version stored keeps it"""

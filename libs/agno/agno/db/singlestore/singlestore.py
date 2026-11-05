@@ -3102,14 +3102,16 @@ class SingleStoreDb(BaseDb):
         filters.append(
             aggregate_metrics_table.c.user_id != "" if user_id is None else aggregate_metrics_table.c.user_id == user_id
         )
-        # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row
+        # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row. A day whose
+        # only run is a regenerated one has its tokens but no count
         filters.append(
             or_(
                 *[
                     aggregate_metrics_table.c[column] > 0
                     for column in AGGREGATE_METRICS_COUNT_COLUMNS
                     if column != "users_count"
-                ]
+                ],
+                aggregate_metrics_table.c.total_tokens > 0,
             )
         )
         # Only what build_metrics_from_aggregate_metrics reads, so the maps of timings are never decoded

@@ -1486,8 +1486,12 @@ class InMemoryDb(BaseDb):
                 and (starting_date is None or row["date"] >= starting_date)
                 and (ending_date is None or row["date"] <= ending_date)
                 and (row["user_id"] != "" if user_id is None else row["user_id"] == user_id)
-                # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row
-                and any(row[column] for column in AGGREGATE_METRICS_COUNT_COLUMNS if column != "users_count")
+                # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row. A
+                # day whose only run is a regenerated one has its tokens but no count
+                and (
+                    any(row[column] for column in AGGREGATE_METRICS_COUNT_COLUMNS if column != "users_count")
+                    or row["total_tokens"] > 0
+                )
             ),
             key=lambda row: (row["date"], row["user_id"]),
         )
