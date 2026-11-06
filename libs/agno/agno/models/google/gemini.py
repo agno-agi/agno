@@ -588,7 +588,7 @@ class Gemini(Model):
             return model_response
 
         except (ClientError, ServerError) as e:
-            log_error(f"Error from Gemini API: {str(e)}")
+            log_warning(f"Error from Gemini API: {str(e)}")
             error_message = str(e)
             if hasattr(e, "response"):
                 if hasattr(e.response, "text"):
@@ -605,7 +605,7 @@ class Gemini(Model):
             raise
         except Exception as e:
             error_message = self._format_unexpected_error_message(e)
-            log_error(f"Unknown error from Gemini API: {error_message}")
+            log_warning(f"Unknown error from Gemini API: {error_message}")
             raise ModelProviderError(message=error_message, model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(
@@ -643,7 +643,7 @@ class Gemini(Model):
             assistant_message.metrics.stop_timer()
 
         except (ClientError, ServerError) as e:
-            log_error(f"Error from Gemini API: {str(e)}")
+            log_warning(f"Error from Gemini API: {str(e)}")
             error_message = str(e)
             if hasattr(e, "response"):
                 if hasattr(e.response, "text"):
@@ -660,7 +660,7 @@ class Gemini(Model):
             raise
         except Exception as e:
             error_message = self._format_unexpected_error_message(e)
-            log_error(f"Unknown error from Gemini API: {error_message}")
+            log_warning(f"Unknown error from Gemini API: {error_message}")
             raise ModelProviderError(message=error_message, model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(
@@ -703,7 +703,7 @@ class Gemini(Model):
             return model_response
 
         except (ClientError, ServerError) as e:
-            log_error(f"Error from Gemini API: {str(e)}")
+            log_warning(f"Error from Gemini API: {str(e)}")
             error_message = str(e)
             if hasattr(e, "response"):
                 if hasattr(e.response, "text"):
@@ -720,7 +720,7 @@ class Gemini(Model):
             raise
         except Exception as e:
             error_message = self._format_unexpected_error_message(e)
-            log_error(f"Unknown error from Gemini API: {error_message}")
+            log_warning(f"Unknown error from Gemini API: {error_message}")
             raise ModelProviderError(message=error_message, model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(
@@ -761,7 +761,7 @@ class Gemini(Model):
             assistant_message.metrics.stop_timer()
 
         except (ClientError, ServerError) as e:
-            log_error(f"Error from Gemini API: {str(e)}")
+            log_warning(f"Error from Gemini API: {str(e)}")
             error_message = str(e)
             if hasattr(e, "response"):
                 if hasattr(e.response, "text"):
@@ -778,7 +778,7 @@ class Gemini(Model):
             raise
         except Exception as e:
             error_message = self._format_unexpected_error_message(e)
-            log_error(f"Unknown error from Gemini API: {error_message}")
+            log_warning(f"Unknown error from Gemini API: {error_message}")
             raise ModelProviderError(message=error_message, model_name=self.name, model_id=self.id) from e
 
     def _format_messages(self, messages: List[Message], compress_tool_results: bool = False):
