@@ -190,7 +190,20 @@ jobs:
                         && item.pull_request
                         && new Date(item.created_at) < new Date(pr.created_at)
                       ) {
-                        duplicates.push({ issue: issue.number, pr: item.number });
+                        // The search matches the bare number anywhere in the body
+                        // (e.g. "10659 passed" in a validation section), so confirm the
+                        // candidate body actually carries a closing reference to this
+                        // issue before calling it a duplicate. Candidate bodies come
+                        // straight from the search results, no extra request needed.
+                        const candidateBody = (item.body || '')
+                          .replace(/```[\s\S]*?```/g, '')
+                          .replace(/`[^`\n]*`/g, '');
+                        const candidateRefs = new Set(
+                          [...candidateBody.matchAll(closingRef)].map(m => parseInt(m[1], 10))
+                        );
+                        if (candidateRefs.has(issue.number)) {
+                          duplicates.push({ issue: issue.number, pr: item.number });
+                        }
                       }
                     }
                   }
