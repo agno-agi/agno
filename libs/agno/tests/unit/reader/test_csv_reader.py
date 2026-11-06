@@ -467,6 +467,95 @@ def test_read_file_opened_in_text_mode(csv_reader, csv_file):
     assert "John" in documents[1].content
 
 
+@pytest.fixture(params=["temporary", "spooled"], ids=["temporary-file", "spooled-file"])
+def temporary_csv_stream(request):
+    if request.param == "temporary":
+        stream = tempfile.TemporaryFile(mode="w+b")
+    else:
+        stream = tempfile.SpooledTemporaryFile(max_size=1024, mode="w+b")
+
+    stream.write(SAMPLE_CSV.encode("utf-8"))
+    stream.seek(0)
+    yield stream
+    stream.close()
+
+
+def _expected_stream_name(stream):
+    return stream.name.split(".")[0] if isinstance(stream.name, str) else "csv_file"
+
+
+@pytest.mark.parametrize("use_default_chunking", [False, True], ids=["unchunked", "default-chunked"])
+def test_read_temporary_stream_with_non_string_name(temporary_csv_stream, use_default_chunking):
+    """Temporary streams with an absent or non-string name use a stable fallback."""
+    reader = CSVReader() if use_default_chunking else CSVReader(chunk=False)
+    documents = reader.read(temporary_csv_stream)
+
+    expected_contents = SAMPLE_CSV.replace(",", ", ").splitlines()
+    assert [document.name for document in documents] == [_expected_stream_name(temporary_csv_stream)] * len(
+        expected_contents if use_default_chunking else [SAMPLE_CSV]
+    )
+    assert [document.content for document in documents] == (
+        expected_contents if use_default_chunking else [SAMPLE_CSV.replace(",", ", ")]
+    )
+    assert not temporary_csv_stream.closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_default_chunking", [False, True], ids=["unchunked", "default-chunked"])
+async def test_async_read_temporary_stream_with_non_string_name(temporary_csv_stream, use_default_chunking):
+    """The async reader handles the same real temporary stream variants."""
+    reader = CSVReader() if use_default_chunking else CSVReader(chunk=False)
+    documents = await reader.async_read(temporary_csv_stream)
+
+    expected_contents = SAMPLE_CSV.replace(",", ", ").splitlines()
+    assert [document.name for document in documents] == [_expected_stream_name(temporary_csv_stream)] * len(
+        expected_contents if use_default_chunking else [SAMPLE_CSV]
+    )
+    assert [document.content for document in documents] == (
+        expected_contents if use_default_chunking else [SAMPLE_CSV.replace(",", ", ")]
+    )
+    assert not temporary_csv_stream.closed
+
+
+def test_read_non_string_stream_name_allows_name_override():
+    stream = io.BytesIO(SAMPLE_CSV.encode("utf-8"))
+    stream.name = 12345
+
+    documents = CSVReader(chunk=False).read(stream)
+    assert documents[0].name == "csv_file"
+
+    stream.seek(0)
+    overridden_documents = CSVReader(chunk=False).read(stream, name="people")
+    assert overridden_documents[0].name == "people"
+    assert not stream.closed
+
+
+@pytest.mark.asyncio
+async def test_async_read_non_string_stream_name_allows_name_override():
+    stream = io.BytesIO(SAMPLE_CSV.encode("utf-8"))
+    stream.name = 12345
+
+    documents = await CSVReader(chunk=False).async_read(stream)
+    assert documents[0].name == "csv_file"
+
+    stream.seek(0)
+    overridden_documents = await CSVReader(chunk=False).async_read(stream, name="people")
+    assert overridden_documents[0].name == "people"
+    assert not stream.closed
+
+
+@pytest.mark.asyncio
+async def test_async_read_named_stream_uses_name_stem():
+    stream = io.BytesIO(SAMPLE_CSV.encode("utf-8"))
+    stream.name = "people.csv"
+
+    documents = await CSVReader(chunk=False).async_read(stream)
+
+    assert len(documents) == 1
+    assert documents[0].name == "people"
+    assert not stream.closed
+
+
 def test_read_text_stream_honours_encoding():
     """A non-utf-8 byte stream is still decoded with the reader's encoding."""
     documents = CSVReader(chunk=False, encoding="latin-1").read(
