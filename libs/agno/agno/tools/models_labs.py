@@ -46,6 +46,7 @@ class ModelsLabTools(Toolkit):
         model_id: Optional[str] = None,
         width: int = 512,
         height: int = 512,
+        timeout: int = 30,
         **kwargs,
     ):
         file_type_str = file_type.value.upper()
@@ -66,7 +67,7 @@ class ModelsLabTools(Toolkit):
         tools: List[Any] = []
         tools.append(self.generate_media)
 
-        super().__init__(name="models_labs", tools=tools, **kwargs)
+        super().__init__(name="models_labs", tools=tools, timeout=timeout, **kwargs)
 
     def _create_payload(self, prompt: str) -> Dict[str, Any]:
         """Create payload based on file type."""
@@ -148,6 +149,7 @@ class ModelsLabTools(Toolkit):
                     f"{self.fetch_url}/{media_id}",
                     json={"key": self.api_key},
                     headers={"Content-Type": "application/json"},
+                    timeout=self.timeout,
                 )
                 fetch_result = fetch_response.json()
 
@@ -171,7 +173,7 @@ class ModelsLabTools(Toolkit):
             headers = {"Content-Type": "application/json"}
 
             log_debug(f"Generating {self.file_type.value} for prompt: {prompt}")
-            response = requests.post(self.url, data=payload, headers=headers)
+            response = requests.post(self.url, data=payload, headers=headers, timeout=self.timeout)
             response.raise_for_status()
 
             result = response.json()

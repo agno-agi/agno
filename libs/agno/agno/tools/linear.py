@@ -11,6 +11,7 @@ class LinearTools(Toolkit):
     def __init__(
         self,
         api_key: Optional[str] = None,
+        timeout: int = 30,
         **kwargs,
     ):
         self.api_key = api_key or getenv("LINEAR_API_KEY")
@@ -32,13 +33,18 @@ class LinearTools(Toolkit):
             self.get_high_priority_issues,
         ]
 
-        super().__init__(name="linear_tools", tools=tools, **kwargs)
+        super().__init__(name="linear_tools", tools=tools, timeout=timeout, **kwargs)
 
     def _execute_query(self, query, variables=None):
         """Helper method to execute GraphQL queries with optional variables."""
 
         try:
-            response = requests.post(self.endpoint, json={"query": query, "variables": variables}, headers=self.headers)
+            response = requests.post(
+                self.endpoint,
+                json={"query": query, "variables": variables},
+                headers=self.headers,
+                timeout=self.timeout,
+            )
             response.raise_for_status()
 
             data = response.json()
