@@ -903,3 +903,49 @@ def test_instructions_preamble_lists_enabled_tools():
         assert "edit_file" not in first_line
         assert "write_file" not in first_line
         assert "run_shell" not in first_line
+
+
+def test_read_file_truncation_reports_actual_shown_lines():
+    """Test that read_file footer reports the post-truncation shown line range."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir, max_lines=10)
+
+        content = "\n".join(f"line {i}" for i in range(100))
+        (base_dir / "big.txt").write_text(content, encoding="utf-8")
+
+        result = tools.read_file("big.txt", offset=5, limit=50)
+        assert "[Showing lines 6-15 of 100 total]" in result
+        assert "15 | line 14" in result
+        assert "16 | line 15" not in result
+
+
+def test_grep_pattern_starting_with_dash():
+    """Test that grep handles patterns starting with '-' without treating them as flags."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir, enable_grep=True)
+
+        (base_dir / "cli.py").write_text("parser.add_argument('--timeout', default=30)\n", encoding="utf-8")
+
+        result = tools.grep("--timeout")
+        assert "cli.py:1:" in result
+        assert "--timeout" in result
+
+
+def test_grep_exact_limit_does_not_append_limit_footer():
+    """Test that grep only appends the limit footer when matches exceed limit."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir, enable_grep=True)
+
+        (base_dir / "test.py").write_text("match_one\nmatch_two\n", encoding="utf-8")
+
+        exact_result = tools.grep("match_", limit=2)
+        assert "match_one" in exact_result
+        assert "match_two" in exact_result
+        assert "[Results limited to 2 matches]" not in exact_result
+
+        capped_result = tools.grep("match_", limit=1)
+        assert "[Results limited to 1 matches]" in capped_result
+
