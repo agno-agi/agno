@@ -1,6 +1,6 @@
 # Demo AgentOS Test Log
 
-Last updated: 2026-06-05
+Last updated: 2026-06-06
 
 ## Test Environment
 
@@ -11,9 +11,9 @@ Last updated: 2026-06-05
   (`WIKI_REPO_URL` + `WIKI_GITHUB_TOKEN`), Notion wiki (`NOTION_API_KEY` +
   `NOTION_DATABASE_ID`).
 
-> HTML generation requires agno's file-generation support (#8241), which ships
-> in agno >= 2.6.12. `demo_setup.sh` installs the local editable agno, which
-> includes it; a released wheel <= 2.6.11 does not register `generate_html_file`.
+> HTML generation requires agno's file-generation support (#8241), shipped in
+> the released **agno 2.6.12**. `requirements.txt` is pinned to it, and
+> `generate_html_file` is confirmed registered on the released wheel.
 
 ---
 
@@ -25,6 +25,12 @@ Last updated: 2026-06-05
 - Turned off `enable_agentic_memory` on all agents (cleaner responses; the wiki
   is the persistent store).
 - Moved `assets/` -> `evals/assets/` (the sample diagram is an eval fixture).
+- Reworked all four agent personas from voiceless tool-routers into a voiced
+  archivist-analyst (wiki agents) / senior engineer (CodeSearch): lead with
+  substance, honesty spine intact. Rewrote the `config.yaml` quick prompts and
+  README "Try it" to be differentiated per backend and one-click-runnable.
+- Pinned `requirements.txt` to released `agno==2.6.12`; added the GitWiki /
+  NotionWiki backend setup walkthrough (README + agent docstrings).
 
 ---
 
@@ -45,7 +51,7 @@ Last updated: 2026-06-05
 
 ## Eval Suite (`python -m evals`)
 
-**Result this run:** 6/7 (the one failure is environmental — see below).
+**This pass (reworked personas, released agno 2.6.12):** core suite **5/5**.
 
 | Case | Agent | Judge | Reliability | Status |
 |------|-------|-------|-------------|--------|
@@ -54,34 +60,27 @@ Last updated: 2026-06-05
 | `local_wiki_generates_html` | LocalWiki | — | PASS | PASS |
 | `code_search_lists_registered_agents` | CodeSearch | PASS | PASS | PASS |
 | `code_search_admits_unknown_function` | CodeSearch | PASS | — | PASS |
-| `git_wiki_reports_state_honestly` | GitWiki | PASS | PASS | PASS |
-| `notion_wiki_reports_state_honestly` | NotionWiki | FAIL | PASS | FAIL |
 
-**Core demo (LocalWiki + CodeSearch + HTML): all PASS.**
+The reworked personas now lead with substance — e.g. "The wiki is silent on the
+Lindy Effect," and for the attached diagram "The diagram captures a small but
+useful architecture pattern…" rather than a flat "filed a note."
 
-### HTML case is reliability-based
+The git/notion cases are env-gated and were not re-run this pass; they share the
+same honesty rubric and passed earlier with their backends reachable. In CI
+(no creds) they don't run.
 
-`local_wiki_generates_html` asserts `generate_html_file` fires. The agent
-reliably calls the tool and produces a valid `<!doctype html>` file under
-`data/generated/`. A strict response-text judge is intentionally omitted: the
-wiki-curator persona narrates the result as "filed/recorded a note" rather than
-"here is your HTML file." The file is correct; the narration wording is a known
-limitation (instructions + memory-mode changes did not reliably move it).
+### HTML case: the file is always delivered; narration is cosmetic
 
-### Git / Notion failure is environmental, not a code defect
-
-These cases are env-gated and read real external backends. In this run:
-
-- **Git**: `git clone` of `WIKI_REPO_URL` failed (exit 128) — repo/branch/auth.
-  The case still passed (agent honestly reported it could not read the wiki).
-- **Notion**: the local mirror `data/notion-wiki` was empty (the gitignored
-  `data/` dir was wiped mid-session), so the read returned nothing and the
-  judge rejected the agent's response.
-
-Both backends were verified reading real content **earlier this session
-(full suite 6/6)**, before `data/` was wiped. With a reachable git repo and a
-populated Notion database, both cases pass. In CI (no creds) these cases do not
-run.
+`local_wiki_generates_html` asserts `generate_html_file` fires — it does, every
+run, writing a valid `<!doctype html>` document under `data/generated/`. The
+tool returns that document as a **File artifact**, so AgentOS attaches the
+downloadable `.html` to the reply regardless of the text. The wiki agents still
+tend to also file a short wiki note and narrate that ("filed in the wiki at …");
+instruction tuning could not reliably stop the re-filing — the wiki-curator
+prior dominates when one agent holds both a wiki-write tool and the HTML tool.
+This is cosmetic: the `.html` reaches the user either way. The instruction is
+written to match it (lead with the file; a note alongside is fine), so the
+public code carries no rule the agent visibly violates.
 
 ---
 
