@@ -48,3 +48,24 @@ def test_sql_tools_preserves_connection_parameters(user: str, password: str, sch
         assert tools.schema == schema
     finally:
         tools.db_engine.dispose()
+
+
+def test_sql_tools_keeps_supplied_engine_when_connection_fields_are_also_given() -> None:
+    """An explicit db_engine takes precedence over the connection fields."""
+    engine = create_engine("sqlite:///:memory:")
+
+    with patch("agno.tools.sql.create_engine") as build_engine:
+        tools = SQLTools(
+            db_engine=engine,
+            user="agent",
+            password="secret",
+            host="localhost",
+            port=3306,
+            dialect="mysql+pymysql",
+        )
+
+    try:
+        build_engine.assert_not_called()
+        assert tools.db_engine is engine
+    finally:
+        engine.dispose()
