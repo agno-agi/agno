@@ -595,3 +595,55 @@ async def test_transaction_rechecks_scope_after_final_application_read(system, m
     await execute(worker)
     assert db.get_task(task["id"])["status"] == "in_review"
     assert await worker.store.claim_job(worker.worker_id, worker.config.lock_grace_seconds) is None
+
+
+def leader_context(executor, task, session_id="conversation"):
+    from agno.company.lifecycle import _delegation
+    from agno.os.authz.run_context import restore_authorization
+    from agno.run.authorization import AUTHORIZATION_KEY
+
+    authority = restore_authorization(executor.app, _delegation(task)[AUTHORIZATION_KEY])
+    # The Super Agent leader shares the member's session and user but has its own run id.
+    return RunContext(run_id="leader-" + uuid4().hex, session_id=session_id, user_id="alice", authorization=authority)
+
+
+@pytest.mark.asyncio
+async def test_leader_resubmit_while_running_joins_delegated_run(system):
+    from agno.company.conversation import asubmit_company_task
+
+    host, db, worker, executor, client, auth, assessor, worker_model = system
+    task = await delegate(system)
+    receipt = await asubmit_company_task(host, task["id"], leader_context(executor, task))
+    assert receipt["run_id"] == task["job_id"]
+    assert db.get_task(task["id"])["job_id"] == task["job_id"]
+
+
+@pytest.mark.asyncio
+async def test_leader_resubmit_after_delegated_task_finished_returns_receipt(system):
+    from agno.company.conversation import asubmit_company_task
+
+    host, db, worker, executor, client, auth, assessor, worker_model = system
+    task = await delegate(system)
+    await execute(worker)
+    await execute(worker)
+    finished = db.get_task(task["id"])
+    assert finished["status"] == "done"
+    receipt = await asubmit_company_task(host, task["id"], leader_context(executor, task))
+    assert receipt["already_submitted"] is True
+    assert receipt["run_id"] == finished["job_id"]
+    assert receipt["task_status"] == "done"
+    assert db.get_task(task["id"]) == finished
+    assert await worker.store.claim_job(worker.worker_id, worker.config.lock_grace_seconds) is None
+    assert worker_model.attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_other_conversation_cannot_resubmit_finished_task(system):
+    from agno.company.conversation import asubmit_company_task
+
+    host, db, worker, executor, client, auth, assessor, worker_model = system
+    task = await delegate(system)
+    await execute(worker)
+    await execute(worker)
+    with pytest.raises(ValueError, match="Only accepted Tasks can be submitted"):
+        await asubmit_company_task(host, task["id"], leader_context(executor, task, session_id="other"))

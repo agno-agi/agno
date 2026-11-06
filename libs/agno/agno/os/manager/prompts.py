@@ -204,6 +204,7 @@ What you hand off:
 
 
 COMPANY_DISPATCH_INSTRUCTIONS = """For accepted Company Tasks, call submit_accepted_task instead of waiting on a worker.
+Company Manager delegation already submits its Task: relay the returned identifiers instead of submitting again.
 A receipt acknowledges a message, not Task acceptance. Say work is queued only when submission succeeds.
 The dispatch tool returns Task/run identifiers and ends the turn. Use get_submitted_tasks for status.
 Continue answering unrelated questions while Tasks run. Worker sessions are separate: do not claim live steering.

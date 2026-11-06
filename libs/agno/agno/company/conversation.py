@@ -38,6 +38,19 @@ def _identity(run_context: Any) -> Optional[str]:
     return authority.context.principal_id if authority is not None else getattr(run_context, "user_id", None)
 
 
+def _conversation_origins(
+    task: Dict[str, Any], session_id: str, identity: Optional[str], origin_run_id: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    return [
+        origin
+        for event in task.get("transitions") or []
+        for origin in [event.get("company_conversation", {}), *event.get("company_conversations", [])]
+        if origin.get("session_id") == session_id
+        and origin.get("user_id") == identity
+        and (origin_run_id is None or origin.get("run_id") == origin_run_id)
+    ]
+
+
 def _require_conversation(run_context: Any) -> str:
     session_id = getattr(run_context, "session_id", None)
     if not session_id:
@@ -99,6 +112,21 @@ async def asubmit_company_task(
     if task is None:
         raise ValueError("Task not found")
     if task["status"] not in {"ready", "in_progress"} or not task.get("accepted_at"):
+        # A manager member may already have dispatched this Task for the same conversation.
+        if (
+            task.get("job_id")
+            and task.get("executor_type")
+            and _conversation_origins(task, session_id, _identity(run_context))
+        ):
+            if authority is not None:
+                await authority.arequire(task["executor_type"] + "s", "run", task["executor_id"])
+            return {
+                "task_id": task_id,
+                "run_id": task["job_id"],
+                "session_id": task.get("session_id"),
+                "task_status": task["status"],
+                "already_submitted": True,
+            }
         raise ValueError("Only accepted Tasks can be submitted; request an accepted revision before another attempt")
     if authority is not None:
         await authority.arequire(task["executor_type"] + "s", "run", task["executor_id"])
@@ -152,14 +180,7 @@ async def aget_conversation_tasks(
     while True:
         tasks, total = await _call(agent_os._company_db, "get_tasks", limit=100, page=page)
         for task in tasks:
-            origins = [
-                origin
-                for event in task.get("transitions", [])
-                for origin in [event.get("company_conversation", {}), *event.get("company_conversations", [])]
-                if origin.get("session_id") == session_id
-                and origin.get("user_id") == identity
-                and (origin_run_id is None or origin.get("run_id") == origin_run_id)
-            ]
+            origins = _conversation_origins(task, session_id, identity, origin_run_id)
             if origins:
                 rows.append(
                     {
