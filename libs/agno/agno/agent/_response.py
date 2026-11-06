@@ -1674,7 +1674,13 @@ def handle_model_response_chunk(
                     if stream_events:
                         yield handle_event(  # type: ignore
                             create_tool_call_completed_event(
-                                from_run_response=run_response, tool=tool_call, content=model_response_event.content
+                                from_run_response=run_response,
+                                tool=tool_call,
+                                content=model_response_event.content,
+                                images=model_response_event.images,
+                                videos=model_response_event.videos,
+                                audio=model_response_event.audios,
+                                files=model_response_event.files,
                             ),
                             run_response,
                             events_to_skip=agent.events_to_skip,  # type: ignore
