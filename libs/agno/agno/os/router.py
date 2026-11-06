@@ -235,6 +235,7 @@ def get_base_router(
                     )
                 ),
             ),
+            allow_temporary_runs=os.allow_temporary_runs,
             interfaces=[
                 InterfaceResponse(type=interface.type, version=interface.version, route=interface.prefix)
                 for interface in os.interfaces

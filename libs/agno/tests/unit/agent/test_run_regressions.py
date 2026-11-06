@@ -47,7 +47,9 @@ def _patch_sync_dispatch_dependencies(
     monkeypatch.setattr(
         _storage,
         "read_or_create_session",
-        lambda agent, session_id=None, user_id=None: AgentSession(session_id=session_id, user_id=user_id, runs=runs),
+        lambda agent, session_id=None, user_id=None, **kwargs: AgentSession(
+            session_id=session_id, user_id=user_id, runs=runs
+        ),
     )
 
 
@@ -117,7 +119,9 @@ def test_continue_run_dispatch_handles_none_session_runs(monkeypatch: pytest.Mon
     monkeypatch.setattr(
         _storage,
         "read_or_create_session",
-        lambda agent, session_id=None, user_id=None: AgentSession(session_id=session_id, user_id=user_id, runs=None),
+        lambda agent, session_id=None, user_id=None, **kwargs: AgentSession(
+            session_id=session_id, user_id=user_id, runs=None
+        ),
     )
 
     with pytest.raises(RuntimeError, match="No runs found for run ID missing-run"):
@@ -136,7 +140,7 @@ async def test_acontinue_run_dispatch_handles_none_session_runs(monkeypatch: pyt
     monkeypatch.setattr(_storage, "update_metadata", lambda agent, session=None: None)
     monkeypatch.setattr(_storage, "load_session_state", lambda agent, session=None, session_state=None: session_state)
 
-    async def fake_aread_or_create_session(agent, session_id: str, user_id: Optional[str] = None):
+    async def fake_aread_or_create_session(agent, session_id: str, user_id: Optional[str] = None, store_run=True):
         return AgentSession(session_id=session_id, user_id=user_id, runs=None)
 
     async def fake_acleanup_and_store(agent, **kwargs: Any):
@@ -170,7 +174,7 @@ async def test_acontinue_run_stream_yields_error_event_without_attribute_error(
     agent = Agent(name="test-agent")
     run_id = "missing-stream-run"
 
-    async def fake_aread_or_create_session(agent, session_id: str, user_id: Optional[str] = None):
+    async def fake_aread_or_create_session(agent, session_id: str, user_id: Optional[str] = None, store_run=True):
         return AgentSession(session_id=session_id, user_id=user_id, runs=None)
 
     async def fake_disconnect_mcp_tools(agent):
@@ -211,7 +215,7 @@ async def test_arun_stream_impl_cleans_up_registered_run_on_session_read_failure
     agent = Agent(name="test-agent")
     run_id = "arun-stream-session-fail"
 
-    async def fail_aread_or_create_session(agent, session_id: str, user_id: Optional[str] = None):
+    async def fail_aread_or_create_session(agent, session_id: str, user_id: Optional[str] = None, store_run=True):
         raise RuntimeError("session read failed")
 
     async def fake_disconnect_mcp_tools(agent):
@@ -250,7 +254,7 @@ async def test_arun_impl_preserves_original_error_when_session_read_fails(monkey
     run_id = "arun-session-fail"
     cleanup_calls = []
 
-    async def fail_aread_or_create_session(agent, session_id: str, user_id: Optional[str] = None):
+    async def fail_aread_or_create_session(agent, session_id: str, user_id: Optional[str] = None, store_run=True):
         raise RuntimeError("session read failed")
 
     async def fake_acleanup_and_store(agent, **kwargs: Any):
@@ -287,7 +291,7 @@ async def test_acontinue_run_preserves_original_error_when_session_read_fails(mo
     run_id = "acontinue-session-fail"
     cleanup_calls = []
 
-    async def fail_aread_or_create_session(agent, session_id: str, user_id: Optional[str] = None):
+    async def fail_aread_or_create_session(agent, session_id: str, user_id: Optional[str] = None, store_run=True):
         raise RuntimeError("session read failed")
 
     async def fake_acleanup_and_store(agent, **kwargs: Any):
@@ -372,7 +376,9 @@ def _patch_continue_dispatch_dependencies(agent: Agent, monkeypatch: pytest.Monk
     monkeypatch.setattr(
         _storage,
         "read_or_create_session",
-        lambda agent, session_id=None, user_id=None: AgentSession(session_id=session_id, user_id=user_id, runs=[]),
+        lambda agent, session_id=None, user_id=None, **kwargs: AgentSession(
+            session_id=session_id, user_id=user_id, runs=[]
+        ),
     )
     monkeypatch.setattr(_init, "set_default_model", lambda agent: None)
     monkeypatch.setattr(_response, "get_response_format", lambda agent, run_context=None: None)

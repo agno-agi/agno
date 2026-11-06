@@ -29,6 +29,9 @@ class RunContext:
     session_state: Optional[Dict[str, Any]] = None
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
 
+    # False marks a temporary run: neither the run nor its session row is written to the database.
+    store_run: bool = True
+
     # Runtime-only caller authority. Never reconstructed from persisted run metadata.
     authorization: Any = field(default_factory=current_authorization, repr=False, compare=False)
 

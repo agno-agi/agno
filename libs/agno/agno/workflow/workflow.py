@@ -109,6 +109,7 @@ from agno.run.workflow import (
     WorkflowRunOutputEvent,
     WorkflowStartedEvent,
 )
+from agno.session._utils import is_transient
 from agno.session.workflow import WorkflowChatInteraction, WorkflowSession
 from agno.team.team import Team
 from agno.utils.agent import validate_input
@@ -1714,13 +1715,21 @@ class Workflow:
         self,
         session_id: str,
         user_id: Optional[str] = None,
+        store_run: bool = True,
     ) -> WorkflowSession:
+        """Read the session from the cache or database, creating it when it does not exist.
+
+        ``store_run=False`` loads the session for a temporary run: the returned object is a
+        private copy that is never cached or written back.
+        """
         from time import time
+
+        from agno.session._utils import transient_copy
 
         # Returning cached session if we have one
         cached_session = self._get_cached_session(session_id, user_id=user_id)
         if cached_session is not None:
-            return cached_session
+            return cached_session if store_run else transient_copy(cached_session)
 
         if self._has_async_db():
             raise ValueError(
@@ -1753,8 +1762,9 @@ class Workflow:
                 created_at=int(time()),
             )
 
-        # Cache the session if relevant
-        if workflow_session is not None and self.cache_session:
+        if not store_run:
+            workflow_session.transient = True
+        elif self.cache_session:
             self._set_cached_session(workflow_session)
 
         return workflow_session
@@ -1763,13 +1773,17 @@ class Workflow:
         self,
         session_id: str,
         user_id: Optional[str] = None,
+        store_run: bool = True,
     ) -> WorkflowSession:
+        """Async variant of :meth:`read_or_create_session`."""
         from time import time
+
+        from agno.session._utils import transient_copy
 
         # Returning cached session if we have one
         cached_session = self._get_cached_session(session_id, user_id=user_id)
         if cached_session is not None:
-            return cached_session
+            return cached_session if store_run else transient_copy(cached_session)
 
         # Try to load from database
         workflow_session = None
@@ -1797,8 +1811,9 @@ class Workflow:
                 created_at=int(time()),
             )
 
-        # Cache the session if relevant
-        if workflow_session is not None and self.cache_session:
+        if not store_run:
+            workflow_session.transient = True
+        elif self.cache_session:
             self._set_cached_session(workflow_session)
 
         return workflow_session
@@ -2343,6 +2358,10 @@ class Workflow:
         """
         from agno.session._utils import resolve_run_index
 
+        # A temporary run (store_run=False) keeps its private session copy in memory only.
+        if is_transient(session):
+            return
+
         run_index = resolve_run_index(session, run)
         self.save_session(session=session)
         self.save_run(
@@ -2386,6 +2405,10 @@ class Workflow:
     async def _apersist_session_and_run(self, session: WorkflowSession, run: "WorkflowRunOutput") -> None:
         """Async variant of ``_persist_session_and_run``."""
         from agno.session._utils import resolve_run_index
+
+        # A temporary run (store_run=False) keeps its private session copy in memory only.
+        if is_transient(session):
+            return
 
         run_index = resolve_run_index(session, run)
         await self.asave_session(session=session)
@@ -3902,7 +3925,11 @@ class Workflow:
         return await func(**call_kwargs)  # type: ignore
 
     async def _aload_or_create_session(
-        self, session_id: str, user_id: Optional[str], session_state: Optional[Dict[str, Any]]
+        self,
+        session_id: str,
+        user_id: Optional[str],
+        session_state: Optional[Dict[str, Any]],
+        store_run: bool = True,
     ) -> Tuple[WorkflowSession, Dict[str, Any], Optional[Dict[str, Any]]]:
         """Load or create session from database, update metadata, and prepare session state.
 
@@ -3915,9 +3942,11 @@ class Workflow:
 
         # Read existing session from database
         if self._has_async_db():
-            workflow_session = await self.aread_or_create_session(session_id=session_id, user_id=user_id)
+            workflow_session = await self.aread_or_create_session(
+                session_id=session_id, user_id=user_id, store_run=store_run
+            )
         else:
-            workflow_session = self.read_or_create_session(session_id=session_id, user_id=user_id)
+            workflow_session = self.read_or_create_session(session_id=session_id, user_id=user_id, store_run=store_run)
         # Snapshot BEFORE _update_metadata merges self.metadata into the session dict,
         # so the session layer keeps the session's own values (self < session < call-site).
         session_metadata = deepcopy(workflow_session.metadata)
@@ -3949,7 +3978,10 @@ class Workflow:
         # point, so the session-metadata snapshot cannot reach this run's metadata here;
         # arun() pre-reads the session for that when the DB is sync.
         workflow_session, run_context.session_state, _ = await self._aload_or_create_session(
-            session_id=session_id, user_id=user_id, session_state=run_context.session_state
+            session_id=session_id,
+            user_id=user_id,
+            session_state=run_context.session_state,
+            store_run=run_context.store_run,
         )
 
         workflow_run_response.status = RunStatus.running
@@ -4314,7 +4346,10 @@ class Workflow:
         # point, so the session-metadata snapshot cannot reach this run's metadata here;
         # arun() pre-reads the session for that when the DB is sync.
         workflow_session, run_context.session_state, _ = await self._aload_or_create_session(
-            session_id=session_id, user_id=user_id, session_state=run_context.session_state
+            session_id=session_id,
+            user_id=user_id,
+            session_state=run_context.session_state,
+            store_run=run_context.store_run,
         )
 
         workflow_run_response.status = RunStatus.running
@@ -5931,8 +5966,9 @@ class Workflow:
             self._persist_session_and_run(session=session, run=workflow_run_response)
 
         else:
-            # Workflow was executed by the tool
-            reloaded_session = self.get_session(session_id=session.session_id)
+            # Workflow was executed by the tool. A temporary run's executed run lives only on its
+            # private session copy, so that copy stands in for the reload.
+            reloaded_session = session if session.transient else self.get_session(session_id=session.session_id)
 
             executed_run = reloaded_session.get_run(run_id) if reloaded_session else None
             if reloaded_session and executed_run is not None:
@@ -6051,8 +6087,9 @@ class Workflow:
 
             return workflow_run_response
         else:
-            # Workflow was executed by the tool
-            reloaded_session = self.get_session(session_id=session.session_id)
+            # Workflow was executed by the tool. A temporary run's executed run lives only on its
+            # private session copy, so that copy stands in for the reload.
+            reloaded_session = session if session.transient else self.get_session(session_id=session.session_id)
 
             executed_run = reloaded_session.get_run(run_context.run_id) if reloaded_session else None
             if reloaded_session and executed_run is not None:
@@ -6118,10 +6155,11 @@ class Workflow:
         session_id: str,
         user_id: Optional[str],
         session_state: Optional[Dict[str, Any]],
+        store_run: bool = True,
     ) -> Tuple[WorkflowSession, Dict[str, Any]]:
         """Helper to load or create session for workflow agent execution"""
         workflow_session, _session_state, _ = await self._aload_or_create_session(
-            session_id=session_id, user_id=user_id, session_state=session_state
+            session_id=session_id, user_id=user_id, session_state=session_state, store_run=store_run
         )
         return workflow_session, _session_state
 
@@ -6156,7 +6194,10 @@ class Workflow:
             async def _stream():
                 await aregister_run(run_context.run_id)
                 session, _ = await self._aload_session_for_workflow_agent(
-                    run_context.session_id, run_context.user_id, run_context.session_state
+                    run_context.session_id,
+                    run_context.user_id,
+                    run_context.session_state,
+                    store_run=run_context.store_run,
                 )
                 async for event in self._arun_workflow_agent_stream(
                     agent_input=user_input,
@@ -6175,7 +6216,10 @@ class Workflow:
             async def _execute():
                 await aregister_run(run_context.run_id)
                 session, _ = await self._aload_session_for_workflow_agent(
-                    run_context.session_id, run_context.user_id, run_context.session_state
+                    run_context.session_id,
+                    run_context.user_id,
+                    run_context.session_state,
+                    store_run=run_context.store_run,
                 )
                 return await self._arun_workflow_agent(
                     agent_input=user_input,
@@ -6344,8 +6388,12 @@ class Workflow:
             await self._apersist_session_and_run(session=session, run=workflow_run_response)
 
         else:
-            # Workflow was executed by the tool
-            if self._has_async_db():
+            # Workflow was executed by the tool. A temporary run's executed run lives only on its
+            # private session copy, so that copy stands in for the reload.
+            reloaded_session: Optional[WorkflowSession]
+            if session.transient:
+                reloaded_session = session
+            elif self._has_async_db():
                 reloaded_session = await self.aget_session(session_id=session.session_id)
             else:
                 reloaded_session = self.get_session(session_id=session.session_id)
@@ -6474,7 +6522,10 @@ class Workflow:
             logger.info("=" * 80)
 
             log_debug("Reloading session from database to get the latest workflow run...")
-            if self._has_async_db():
+            reloaded_session: Optional[WorkflowSession]
+            if session.transient:
+                reloaded_session = session
+            elif self._has_async_db():
                 reloaded_session = await self.aget_session(session_id=session.session_id)
             else:
                 reloaded_session = self.get_session(session_id=session.session_id)
@@ -10565,6 +10616,7 @@ class Workflow:
         metadata: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
+        store_run: Optional[bool] = None,
     ) -> WorkflowRunOutput: ...
 
     @overload
@@ -10588,6 +10640,7 @@ class Workflow:
         metadata: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
+        store_run: Optional[bool] = None,
     ) -> Iterator[WorkflowRunOutputEvent]: ...
 
     def run(
@@ -10610,6 +10663,7 @@ class Workflow:
         metadata: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
+        store_run: Optional[bool] = None,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, Iterator[WorkflowRunOutputEvent]]:
         """Execute the workflow synchronously with optional streaming"""
@@ -10639,7 +10693,9 @@ class Workflow:
         # Read existing session from database
         from copy import deepcopy
 
-        workflow_session = self.read_or_create_session(session_id=session_id, user_id=user_id)
+        workflow_session = self.read_or_create_session(
+            session_id=session_id, user_id=user_id, store_run=store_run is not False
+        )
         # Snapshot BEFORE _update_metadata merges self.metadata into the session dict,
         # so the session layer keeps the session's own values (self < session < call-site).
         session_metadata = deepcopy(workflow_session.metadata)
@@ -10710,6 +10766,7 @@ class Workflow:
             workflow_name=self.name,
             dependencies=resolved["dependencies"],
             metadata=resolved["metadata"],
+            store_run=store_run is not False,
         )
 
         # Execute workflow agent if configured
@@ -10787,6 +10844,7 @@ class Workflow:
         metadata: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
+        store_run: Optional[bool] = None,
     ) -> WorkflowRunOutput: ...
 
     @overload
@@ -10812,6 +10870,7 @@ class Workflow:
         metadata: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
+        store_run: Optional[bool] = None,
     ) -> AsyncIterator[WorkflowRunOutputEvent]: ...
 
     def arun(  # type: ignore
@@ -10836,6 +10895,7 @@ class Workflow:
         metadata: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
+        store_run: Optional[bool] = None,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
         """Execute the workflow with optional streaming.
@@ -10859,6 +10919,11 @@ class Workflow:
         # Backward compat: if websocket is passed, treat as enable_websocket=True
         if websocket and not enable_websocket:
             enable_websocket = True
+
+        if background and store_run is False:
+            raise ValueError(
+                "store_run=False cannot be combined with background=True: a background run is polled from its stored run row"
+            )
 
         if background:
             if stream and enable_websocket:
@@ -10938,7 +11003,9 @@ class Workflow:
         if self.db is not None and not self._has_async_db():
             from copy import deepcopy
 
-            workflow_session = self.read_or_create_session(session_id=session_id, user_id=user_id)
+            workflow_session = self.read_or_create_session(
+                session_id=session_id, user_id=user_id, store_run=store_run is not False
+            )
             # Snapshot BEFORE _update_metadata merges self.metadata into the session dict,
             # so the session layer keeps the session's own values (self < session < call-site).
             session_metadata = deepcopy(workflow_session.metadata)
@@ -10963,6 +11030,7 @@ class Workflow:
             workflow_name=self.name,
             dependencies=resolved["dependencies"],
             metadata=resolved["metadata"],
+            store_run=store_run is not False,
         )
 
         log_debug(f"Workflow started: {self.id or self.name} run={run_id}")

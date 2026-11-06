@@ -84,6 +84,14 @@ def to_utc_datetime(value: Optional[Union[str, int, float, date, datetime]]) -> 
 MAX_FILES_METADATA_BYTES = 8000
 
 
+def is_temporary_run(store_run: Optional[str]) -> bool:
+    """Whether a run route's ``store_run`` form value asks for a temporary (unsaved) run.
+
+    Only an explicit false value opts out of storage; an absent or empty field keeps the default.
+    """
+    return store_run is not None and store_run.strip().lower() in ("false", "0", "no")
+
+
 def parse_files_metadata(files_metadata: Optional[str]) -> List[Optional[Dict[str, Any]]]:
     """Parse the per-file metadata array, refusing one too large to persist.
 
