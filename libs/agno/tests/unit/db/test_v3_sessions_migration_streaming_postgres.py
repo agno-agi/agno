@@ -17,6 +17,7 @@ import pytest
 from sqlalchemy import create_engine, event, text
 
 from agno.db.migrations.manager import MigrationManager
+from agno.db.migrations.versions import v3_0_0
 
 pytest.importorskip("psycopg")
 
@@ -168,6 +169,40 @@ async def test_async_postgres_migration_copies_every_run_and_keeps_the_legacy_co
 
     assert _runs_copied(schema) == SMALL_SESSIONS * RUNS_PER_SESSION
     assert _legacy_runs_kept(schema) == SMALL_SESSIONS
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["sync", "async"])
+async def test_postgres_migration_names_a_run_id_two_sessions_share(schema, mode, monkeypatch):
+    """The runs table has one row per run_id, so the second session's copy is left out, counted out and named."""
+    _seed_legacy_sessions(schema, SMALL_SESSIONS)
+    engine = create_engine(DB_URL)
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    f'UPDATE "{schema}"."{SESSIONS_TABLE}" '
+                    "SET runs = jsonb_set(runs, '{0,run_id}', '\"r1_1\"') WHERE session_id = 's2'"
+                )
+            )
+    finally:
+        engine.dispose()
+    db = (AsyncPostgresDb if mode == "async" else PostgresDb)(
+        db_url=DB_URL, db_schema=schema, session_table=SESSIONS_TABLE
+    )
+    infos: list = []
+    warnings: list = []
+    monkeypatch.setattr(v3_0_0, "log_info", infos.append)
+    monkeypatch.setattr(v3_0_0, "log_warning", warnings.append)
+
+    await MigrationManager(db).up(table_type="sessions")
+
+    copied = SMALL_SESSIONS * RUNS_PER_SESSION - 1
+    assert _runs_copied(schema) == copied
+    assert f"-- Copied {copied} runs from {SESSIONS_TABLE} into the runs table" in infos
+    [warning] = warnings
+    assert "1 run(s) were not copied" in warning
+    assert "r1_1 (kept for s1, not for s2)" in warning
 
 
 # ---------------------------------------------------------------------------
