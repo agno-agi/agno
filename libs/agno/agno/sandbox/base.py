@@ -97,6 +97,8 @@ class Sandbox(ABC):
     execution_timeout configure those turns.
     """
 
+    # Name a stored agent config refers to this sandbox by, resolved through the registry on load.
+    id: Optional[str] = None
     # Where session checkpoints are stored; None uses a local directory that survives only on this host.
     checkpoints: Optional["CheckpointStore"] = None
     # Variables for every harness computer, merged over the harness's model API key from the host.

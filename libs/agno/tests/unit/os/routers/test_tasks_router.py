@@ -176,6 +176,21 @@ def test_cross_product_status_pagination(client):
     )
 
 
+def test_allowed_transitions_follow_the_transition_rules(client):
+    task = create(client)
+    path = "/company/tasks/" + task["id"]
+    assert task["last_run"] is None
+    moves = {option["target"]: option for option in task["allowed_transitions"]}
+    assert moves["ready"]["allowed"] and moves["cancelled"]["allowed"]
+    # A direct start accepts a Backlog Task when the request names its executor.
+    assert moves["in_progress"] == {"target": "in_progress", "allowed": True, "reason": None, "starts_run": True}
+    blocked = client.post(path + "/transitions", json={"target": "in_review", "reason": "Skip"})
+    assert blocked.status_code == 409 and blocked.json()["detail"] == moves["in_review"]["reason"]
+    assert client.get(path).json()["allowed_transitions"] == task["allowed_transitions"]
+    ready = transition(client, path, "ready").json()
+    assert {option["target"]: option["allowed"] for option in ready["allowed_transitions"]}["in_progress"]
+
+
 @pytest.mark.parametrize("db", [None, InMemoryDb()])
 def test_unsupported_database(db):
     c = TestClient(

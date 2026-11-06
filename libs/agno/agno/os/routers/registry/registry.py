@@ -442,6 +442,20 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                     )
                 )
 
+        # Sandboxes (what a stored external agent's sandbox reference resolves to).
+        # Only the identity is listed: a sandbox's env carries credentials.
+        if resource_type is None or resource_type == RegistryResourceType.SANDBOX:
+            for sandbox in getattr(registry, "sandboxes", []) or []:
+                sandbox_id = _safe_str(getattr(sandbox, "id", None))
+                resources.append(
+                    RegistryContentResponse(
+                        name=sandbox_id or sandbox.__class__.__name__,
+                        id=sandbox_id,
+                        type=RegistryResourceType.SANDBOX,
+                        metadata={"id": sandbox_id, "class_path": _class_path(sandbox)},
+                    )
+                )
+
         # Agents (code-defined agents for workflow rehydration)
         if resource_type is None or resource_type == RegistryResourceType.AGENT:
             for agent in getattr(registry, "agents", []) or []:
