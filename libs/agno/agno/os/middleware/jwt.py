@@ -1566,7 +1566,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 # Only the in-process Company tick can enter this path. The
                 # saved accepting identity is checked below as for every schedule.
                 # A network caller cannot supply this request-local observation.
-                if task is not None and path == f"/company/tasks/{task['id']}/runs":
+                from agno.company.conversation import _conversation_task_submission
+
+                conversation_task = _conversation_task_submission.get()
+                if (task is not None and path == f"/company/tasks/{task['id']}/runs") or (
+                    conversation_task is not None and path == f"/company/tasks/{conversation_task}/runs"
+                ):
                     internal_scopes.extend(["tasks:write", "wiki:read"])
             request.state.scopes = internal_scopes
             # Trusted internal caller: mark AFTER the constant-time hmac match above so the

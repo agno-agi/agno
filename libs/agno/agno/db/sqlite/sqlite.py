@@ -8826,6 +8826,7 @@ class SqliteDb(BaseDb):
         user_id: Optional[str] = None,
         run_db_id: Optional[str] = None,
         session_user_id: Optional[str] = None,
+        conversation: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         from agno.db.schemas.tasks import task_run_fields
 
@@ -8839,7 +8840,7 @@ class SqliteDb(BaseDb):
             existing = dict(row._mapping)
             if existing["transitions"] != expected_transitions:
                 return None
-            fields = task_run_fields(existing, attempt, user_id, run_db_id, session_user_id)
+            fields = task_run_fields(existing, attempt, user_id, run_db_id, session_user_id, conversation)
             stmt = (
                 table.update()
                 .where(
@@ -8853,6 +8854,24 @@ class SqliteDb(BaseDb):
             )
             row = (sess.execute(stmt)).fetchone()
             return dict(row._mapping) if row else None
+
+    def claim_company_conversation(self, session_id: str, user_id: Optional[str], team_id: str) -> Dict[str, Any]:
+        from agno.db.sql.company import claim_company_conversation
+
+        table = self._get_table(table_type="sessions", create_table_if_not_found=True)
+        with self.Session() as sess, sess.begin():
+            return claim_company_conversation(sess, table, session_id, user_id, team_id)
+
+    def associate_task_conversation(
+        self, task_id: str, run_id: str, conversation: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        from agno.db.sql.company import associate_task_conversation
+
+        table = self._get_table(table_type="tasks")
+        if table is None:
+            return None
+        with self.Session() as sess, sess.begin():
+            return associate_task_conversation(sess, table, task_id, run_id, conversation)
 
     def complete_task_run(
         self,

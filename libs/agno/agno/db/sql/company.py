@@ -424,3 +424,56 @@ def company_table_creation_race(error: Exception) -> bool:
     cause = getattr(error, "orig", error)
     sqlstate = getattr(cause, "sqlstate", getattr(cause, "pgcode", None))
     return sqlstate in ("42P07", "23505") or (isinstance(error, OperationalError) and "already exists" in str(cause))
+
+
+def associate_task_conversation(
+    sess: Any, table: Any, task_id: str, run_id: str, conversation: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
+    """Atomically retain every conversation joining an existing Task attempt."""
+    from copy import deepcopy
+
+    from agno.db.schemas.tasks import task_run_id
+
+    row = sess.execute(
+        table.update()
+        .where(table.c.id == task_id, table.c.job_id == run_id, table.c.deleted_at.is_(None))
+        .values(updated_at=table.c.updated_at)
+        .returning(table)
+    ).first()
+    if row is None:
+        return None
+    task = dict(row._mapping)
+    history = deepcopy(task.get("transitions") or [])
+    for event in history:
+        if "attempt" not in event or task_run_id(task_id, event["attempt"]) != run_id:
+            continue
+        if event.get("company_conversation") == conversation or conversation in event.get("company_conversations", []):
+            return task
+        if not event.get("company_conversation"):
+            event["company_conversation"] = conversation
+        else:
+            event.setdefault("company_conversations", []).append(conversation)
+        updated = sess.execute(
+            table.update().where(table.c.id == task_id).values(transitions=history).returning(table)
+        ).first()
+        return dict(updated._mapping)
+    return None
+
+
+def claim_company_conversation(
+    sess: Any, table: Any, session_id: str, user_id: Optional[str], team_id: str
+) -> Dict[str, Any]:
+    """Claim a conversation's owner once without overwriting any existing session."""
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+    insert = pg_insert if sess.bind.dialect.name == "postgresql" else sqlite_insert
+    now = int(time.time())
+    sess.execute(
+        insert(table)
+        .values(
+            session_id=session_id, session_type="team", team_id=team_id, user_id=user_id, created_at=now, updated_at=now
+        )
+        .on_conflict_do_nothing(index_elements=[table.c.session_id])
+    )
+    return dict(sess.execute(select(table).where(table.c.session_id == session_id)).one()._mapping)

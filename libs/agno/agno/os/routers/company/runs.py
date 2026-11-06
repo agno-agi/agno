@@ -271,7 +271,23 @@ def get_company_runs_router(os: Any) -> APIRouter:
         from agno.os.routers.company.sandbox import _sandbox_start_gate
 
         component = executor(value)
-        if _automatic_task.get() is None:
+        from agno.company.conversation import _conversation_task_submission
+
+        conversation_submission = (
+            getattr(request.state, "is_internal_service", False) and _conversation_task_submission.get() == task_id
+        )
+        if conversation_submission:
+            from agno.os.authz.run_context import request_authorization
+
+            authority = request_authorization(request)
+            if authority is None and getattr(request.state, "authorization_enabled", False):
+                raise HTTPException(403, "Verified caller authority is required")
+            if authority is not None:
+                try:
+                    await authority.arequire(value["executor_type"] + "s", "run", value["executor_id"])
+                except PermissionError as exc:
+                    raise HTTPException(403, str(exc)) from exc
+        elif _automatic_task.get() is None:
             await _require_endpoint_permission(request, endpoint(value), "POST", action="accept")
 
         if _is_sandboxed(component):
@@ -317,6 +333,14 @@ def get_company_runs_router(os: Any) -> APIRouter:
                     raise HTTPException(403, str(exc)) from exc
         queue = worker(request)
         caller = resolve_run_user_id(request)
+        from agno.company.conversation import _conversation_task_submission
+
+        if getattr(request.state, "is_internal_service", False) and _conversation_task_submission.get() == task_id:
+            from agno.os.authz.run_context import request_authorization
+
+            conversation_authority = request_authorization(request)
+            if conversation_authority is not None:
+                caller = conversation_authority.context.principal_id
         if observed is not None:
             caller = value.get("accepted_by")
         # An omitted attempt joins the reserved run, otherwise it starts the next attempt.
