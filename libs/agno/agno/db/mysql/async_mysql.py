@@ -1017,7 +1017,7 @@ class AsyncMySQLDb(AsyncBaseDb):
 
         except Exception as e:
             log_error(f"Exception reading from session table: {str(e)}")
-            return None
+            raise e
 
     async def get_sessions(
         self,
