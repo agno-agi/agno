@@ -1387,6 +1387,9 @@ def run_dispatch(
     # Initialize the Agent
     agent.initialize_agent(debug_mode=debug_mode)
 
+    if agent.skills is not None:
+        agent.skills.reset_for_run()
+
     image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
         images=images, videos=videos, audios=audio, files=files
     )
@@ -2769,6 +2772,9 @@ def arun_dispatch(  # type: ignore
 
     # Initialize the Agent
     agent.initialize_agent(debug_mode=debug_mode)
+
+    if agent.skills is not None:
+        agent.skills.reset_for_run()
 
     image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
         images=images, videos=videos, audios=audio, files=files
