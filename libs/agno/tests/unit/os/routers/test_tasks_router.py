@@ -359,7 +359,7 @@ def test_project_approval_keeps_ready_validation_and_permissions(client):
             assert response.status_code == expected, response.text
             if expected == 422:
                 assert response.json()["detail"] == (
-                    "Project approval is required before Tasks enter non-Backlog stages"
+                    "Project approval is required before creating Tasks outside Backlog or moving them to Ready"
                 )
             assert client.get("/company/tasks").json()["meta"]["total_count"] == 0
         approved = client.post(

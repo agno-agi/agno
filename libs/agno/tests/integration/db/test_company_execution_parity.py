@@ -1301,7 +1301,16 @@ async def intake_proposal(manager, title, evidence, **kwargs):
     )
 
 
-async def routine_proposal(system, tmp_path, *, policy=None, executor_id="writer", template="intake"):
+async def routine_proposal(
+    system,
+    tmp_path,
+    *,
+    policy=None,
+    executor_id="writer",
+    template="intake",
+    approve_project=True,
+    required_checks=None,
+):
     from agno.company.manager import AsyncCompanyManager, CompanyManager
     from agno.company.routines import _manager_call, _RoutineAuthorization
     from agno.run.authorization import authorization_scope
@@ -1309,11 +1318,12 @@ async def routine_proposal(system, tmp_path, *, policy=None, executor_id="writer
     client, db, worker, os, _ = system
     product = (await client.post("/company/products", json={"name": "Docs"})).json()
     project = (await client.post("/company/projects", json={"product_id": product["id"], "name": "Release"})).json()
-    assert (
-        await client.post(
-            f"/company/projects/{project['id']}/transitions", json={"target": "active", "reason": "Start"}
-        )
-    ).status_code == 200
+    if approve_project:
+        assert (
+            await client.post(
+                f"/company/projects/{project['id']}/transitions", json={"target": "active", "reason": "Start"}
+            )
+        ).status_code == 200
     source_path = tmp_path / (product["id"] + ".md")
     source_path.write_text("# Release\nVerified Source material.\n")
     source = (
@@ -1327,7 +1337,7 @@ async def routine_proposal(system, tmp_path, *, policy=None, executor_id="writer
             "executor_id": "writer",
             "source_ids": [source["id"]],
             "work_scope": {"product_ids": [product["id"]], "project_ids": [project["id"]]},
-            "required_checks": ["project_active", "has_source_evidence", "executor_registered"],
+            "required_checks": required_checks or ["project_active", "has_source_evidence", "executor_registered"],
             "limits": {"max_acceptances": 1, "expires_at": int(time.time()) + 3600},
         }
     response = await client.post(
@@ -1360,6 +1370,44 @@ async def routine_proposal(system, tmp_path, *, policy=None, executor_id="writer
         )
     assert task["origin"] == "routine" and task["routine_id"] == routine["id"]
     return task, routine, manager
+
+
+@pytest.mark.asyncio
+async def test_auto_accept_waits_for_project_approval_without_failure_streak(system, tmp_path):
+    from agno.company.execution import _call
+    from agno.company.automation_history import aautomation_failures
+
+    client, db, _, _, _ = system
+    task, _, _ = await routine_proposal(
+        system,
+        tmp_path,
+        approve_project=False,
+        required_checks=["has_source_evidence", "executor_registered"],
+    )
+    executor, schedule = await automation(system)
+    for _ in range(2):
+        await _call(db, "update_schedule", schedule["id"], next_run_at=0)
+        result = await tick(executor, db)
+        assert result["status"] == "success", result
+        assert result["output"]["tasks"] == [
+            {
+                "task_id": task["id"],
+                "status": "skipped",
+                "reason": "Project approval is required before automatic Task acceptance",
+            }
+        ]
+        assert (await _call(db, "get_schedule_runs", schedule["id"]))[1] == 0
+        assert await aautomation_failures(db, db) == []
+    assert (await _call(db, "get_task", task["id"]))["status"] == "backlog"
+
+    approved = await client.post(
+        f"/company/projects/{task['project_id']}/transitions", json={"target": "active", "reason": "Approve"}
+    )
+    assert approved.status_code == 200, approved.text
+    await _call(db, "update_schedule", schedule["id"], next_run_at=0)
+    result = await tick(executor, db)
+    assert result["status"] == "success", result
+    assert (await _call(db, "get_task", task["id"]))["status"] == "in_progress"
 
 
 @pytest.mark.asyncio

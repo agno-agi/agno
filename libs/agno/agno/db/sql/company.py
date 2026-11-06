@@ -48,7 +48,7 @@ def require_project(
     product_id: str,
     task_status: Optional[str] = None,
     *,
-    allow_proposed: bool = True,
+    reject_proposed: bool = False,
     reject_cancelled: bool = False,
 ) -> None:
     if project_id is None:
@@ -60,8 +60,8 @@ def require_project(
         raise ValueError("Task and Project must belong to the same Product")
     if reject_cancelled and row._mapping["status"] == "cancelled":
         raise ValueError("Cannot change Task status in a cancelled Project")
-    if not allow_proposed and row._mapping["status"] == "proposed":
-        raise ValueError("Project approval is required before Tasks enter non-Backlog stages")
+    if reject_proposed and row._mapping["status"] == "proposed":
+        raise ValueError("Project approval is required before creating Tasks outside Backlog or moving them to Ready")
     if (
         task_status is not None
         and task_status not in {"done", "cancelled"}

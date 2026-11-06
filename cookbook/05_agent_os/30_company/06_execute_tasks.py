@@ -79,7 +79,7 @@ if __name__ == "__main__":
                 ).json()
                 approved = client.post(
                     f"/company/projects/{project['id']}/transitions",
-                    json={"target": "active", "reason": "Human approved Project scope"},
+                    json={"target": "active", "reason": "Scope agreed"},
                 )
                 assert approved.status_code == 200, approved.text
                 path = "/company/tasks/" + task["id"]

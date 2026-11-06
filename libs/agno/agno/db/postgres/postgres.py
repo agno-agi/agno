@@ -9682,7 +9682,7 @@ class PostgresDb(BaseDb):
                 task_data.get("project_id"),
                 task_data["product_id"],
                 task_data.get("status", "backlog"),
-                allow_proposed=task_data.get("status", "backlog") == "backlog",
+                reject_proposed=task_data.get("status", "backlog") != "backlog",
             )
             if task_data.get("dedupe_key") is not None:
                 from sqlalchemy.dialects.postgresql import insert
@@ -9981,7 +9981,7 @@ class PostgresDb(BaseDb):
     ) -> Optional[Dict[str, Any]]:
         """Apply a lifecycle transition only if the observed state still matches."""
         from agno.db.schemas.tasks import _acceptance_count, task_transition_fields
-        from agno.db.sql.company import lock_child, require_project
+        from agno.db.sql.company import lock_child, lock_product, require_project
 
         table = self._get_table(table_type="tasks")
         if table is None:
@@ -10012,6 +10012,11 @@ class PostgresDb(BaseDb):
                     >= auto_accept["max_acceptances"]
                 ):
                     raise ValueError("Routine acceptance limit reached")
+            else:
+                visible = sess.execute(stmt).fetchone()
+                if visible is None:
+                    return None
+                lock_product(sess, products, visible._mapping["product_id"])
             row = sess.execute(stmt).fetchone()
             if row is None:
                 return None
@@ -10019,15 +10024,13 @@ class PostgresDb(BaseDb):
             fields = task_transition_fields(existing, target, reason, accepted_by, executor_type, executor_id)
             if auto_accept is not None:
                 fields["transitions"][-1]["auto_accept"] = auto_accept
-            else:
-                lock_child(sess, products, projects, table, task_id)
             require_project(
                 sess,
                 projects,
                 existing["project_id"],
                 existing["product_id"],
                 target if target == "ready" or existing["status"] in {"done", "cancelled"} else None,
-                allow_proposed=target != "ready",
+                reject_proposed=target == "ready",
                 reject_cancelled=True,
             )
             update = table.update().where(

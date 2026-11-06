@@ -47,7 +47,7 @@ async def exercise(db):
         manager.transition_project,
         project_id=first["id"],
         target="active",
-        reason="Human approved Project scope",
+        reason="Scope agreed",
     )
     old = await call(
         manager.create_task,
@@ -69,7 +69,7 @@ async def exercise(db):
         manager.transition_project,
         project_id=second["id"],
         target="active",
-        reason="Human approved Project scope",
+        reason="Scope agreed",
     )
     await call(
         manager.transition_task,

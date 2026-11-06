@@ -104,7 +104,7 @@ or start a run; creating a Task directly in Ready also requires approval.
 When no Project fits, propose one with `propose_company_project` and use its ID
 for Backlog proposals. A human can then transition it to `active`. Project approval
 does not accept or execute Tasks.
-Existing duplicate proposals remain retrievable. A Backlog Task can move between Projects
+New Backlog proposals reuse an existing Task with the same key. A Backlog Task can move between Projects
 but cannot clear its Project. Existing nullable storage rows remain readable.
 
 A proposal-only Company Manager prompt can make these two approval steps explicit:

@@ -1,12 +1,15 @@
 """Work lifecycle parity on PostgreSQL and SQLite, sync and native async."""
 
+import asyncio
 import inspect
+import threading
 import time
 from uuid import uuid4
 
 import pytest
 import pytest_asyncio
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from agno.agent import Agent
 from agno.company import AsyncCompanyManager, CompanyManager
@@ -57,6 +60,79 @@ def manager(db):
         agents=[Agent(id="writer"), Agent(id="current"), Agent(id="stale")], teams=[Team(id="writers", members=[])]
     )
     return AsyncCompanyManager(db, registry) if isinstance(db, AsyncBaseDb) else CompanyManager(db, registry)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("db", ["postgres", "async_postgres"], indirect=True)
+async def test_postgres_acceptance_uses_current_project_after_lock(db, monkeypatch):
+    import agno.db.sql.company as company
+
+    m = manager(db)
+    product = await call(m.create, name="Project move race")
+    approved = await call(m.create_project, product_id=product["id"], name="Approved")
+    proposed = await call(m.create_project, product_id=product["id"], name="Proposed")
+    await call(m.transition_project, project_id=approved["id"], target="active", reason="Approve")
+    task = await call(m.create_task, product_id=product["id"], project_id=approved["id"], title="Draft")
+    accept_args = (task["id"], "ready", "Accept")
+    accept_kwargs = {"executor_type": "agent", "executor_id": "writer"}
+
+    if isinstance(db, AsyncPostgresDb):
+        paused = asyncio.Event()
+        proceed = asyncio.Event()
+        original = AsyncSession.run_sync
+
+        async def pause_before_lock(session, fn, *args, **kwargs):
+            if asyncio.current_task() is acceptance and fn is company.lock_product:
+                paused.set()
+                await asyncio.wait_for(proceed.wait(), 10)
+            return await original(session, fn, *args, **kwargs)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(AsyncSession, "run_sync", pause_before_lock)
+            acceptance = asyncio.create_task(db.transition_task(*accept_args, **accept_kwargs))
+            await asyncio.wait_for(paused.wait(), 10)
+            moved = await db.update_task(task["id"], project_id=proposed["id"])
+            proceed.set()
+            with pytest.raises(ValueError, match="Project approval is required"):
+                await acceptance
+    else:
+        paused = threading.Event()
+        proceed = threading.Event()
+        original = company.lock_product
+
+        def pause_before_lock(*args, **kwargs):
+            if not paused.is_set():
+                paused.set()
+                assert proceed.wait(10)
+            return original(*args, **kwargs)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(company, "lock_product", pause_before_lock)
+            acceptance = asyncio.create_task(asyncio.to_thread(db.transition_task, *accept_args, **accept_kwargs))
+            assert await asyncio.to_thread(paused.wait, 10)
+            moved = await asyncio.to_thread(db.update_task, task["id"], project_id=proposed["id"])
+            proceed.set()
+            with pytest.raises(ValueError, match="Project approval is required"):
+                await acceptance
+
+    assert moved is not None
+    current = await call(db.get_task, task["id"])
+    assert current["project_id"] == proposed["id"]
+    assert current["status"] == "backlog"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("db", ["postgres", "async_postgres"], indirect=True)
+async def test_postgres_transition_hides_archived_or_other_owner_task(db):
+    m = manager(db)
+    product = await call(m.create, name="Archived work")
+    project = await call(m.create_project, product_id=product["id"], name="Project")
+    task = await call(m.create_task, product_id=product["id"], project_id=project["id"], title="Draft", user_id="alice")
+    assert await call(db.transition_task, task["id"], "cancelled", "Stop", user_id="bob") is None
+    await call(m.delete_task, task["id"])
+    await call(m.delete_project, project["id"])
+    assert await call(db.transition_task, task["id"], "cancelled", "Stop") is None
+    assert await call(db.transition_task, task["id"], "cancelled", "Stop", user_id="bob") is None
 
 
 @pytest.mark.asyncio
@@ -406,14 +482,90 @@ async def test_stale_acceptance_cannot_overwrite_a_backlog_roundtrip(db, monkeyp
     project = await call(m.create_project, product_id=parent["id"], name="Release")
     await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
     task = await call(m.create_task, product_id=parent["id"], title="Work", project_id=project["id"])
+    if isinstance(db, (PostgresDb, AsyncPostgresDb)):
+        import agno.db.sql.company as company
+
+        if isinstance(db, AsyncPostgresDb):
+            paused = asyncio.Event()
+            proceed = asyncio.Event()
+            attempted = asyncio.Event()
+            original_run_sync = AsyncSession.run_sync
+            second = None
+
+            async def hold_first_transition(session, fn, *args, **kwargs):
+                if asyncio.current_task() is first and fn is company.require_project:
+                    paused.set()
+                    await asyncio.wait_for(proceed.wait(), 5)
+                if asyncio.current_task() is second and fn is company.lock_product:
+                    attempted.set()
+                return await original_run_sync(session, fn, *args, **kwargs)
+
+            with monkeypatch.context() as patch:
+                patch.setattr(AsyncSession, "run_sync", hold_first_transition)
+                first = asyncio.create_task(
+                    m.transition_task(
+                        task_id=task["id"],
+                        target="ready",
+                        reason="Current",
+                        executor_type="agent",
+                        executor_id="current",
+                    )
+                )
+                await asyncio.wait_for(paused.wait(), 5)
+                second = asyncio.create_task(m.transition_task(task_id=task["id"], target="backlog", reason="Rescope"))
+                await asyncio.wait_for(attempted.wait(), 5)
+                with pytest.raises(asyncio.TimeoutError):
+                    await asyncio.wait_for(asyncio.shield(second), 0.05)
+                proceed.set()
+                accepted = await first
+                returned = await asyncio.wait_for(second, 5)
+        else:
+            from concurrent.futures import ThreadPoolExecutor
+
+            original = task_schema.task_transition_fields
+            original_lock = company.lock_product
+            owner = threading.current_thread()
+            attempted = threading.Event()
+
+            def tracked_lock(*args, **kwargs):
+                if threading.current_thread() is not owner:
+                    attempted.set()
+                return original_lock(*args, **kwargs)
+
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                pending = None
+
+                def start_competing_move(existing, *args, **kwargs):
+                    nonlocal pending
+                    if pending is None:
+                        pending = pool.submit(m.transition_task, task_id=task["id"], target="backlog", reason="Rescope")
+                        assert attempted.wait(5)
+                        assert not pending.done()
+                    return original(existing, *args, **kwargs)
+
+                with monkeypatch.context() as patch:
+                    patch.setattr(task_schema, "task_transition_fields", start_competing_move)
+                    patch.setattr(company, "lock_product", tracked_lock)
+                    accepted = m.transition_task(
+                        task_id=task["id"],
+                        target="ready",
+                        reason="Current",
+                        executor_type="agent",
+                        executor_id="current",
+                    )
+                assert pending is not None
+                returned = pending.result(timeout=5)
+        assert accepted["status"] == "ready" and returned["status"] == "backlog"
+        saved = await call(m.get_task, task["id"])
+        assert saved["status"] == "backlog" and saved["executor_id"] is None
+        assert [entry["reason"] for entry in saved["transitions"]] == ["Current", "Rescope"]
+        return
     # Capture the observed row at the SQL validation boundary. The later writer
     # sees Backlog again, but must not overwrite the intervening history.
     original = task_schema.task_transition_fields
     if isinstance(db, AsyncBaseDb):
         # Native async concurrency is covered by the same SQL predicate. Use
         # two async transactions below instead of reentering the event loop.
-        import asyncio
-
         observed = asyncio.Event()
         resume = asyncio.Event()
         first = True

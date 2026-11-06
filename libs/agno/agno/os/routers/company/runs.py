@@ -145,7 +145,8 @@ def get_company_runs_router(os: Any) -> APIRouter:
 
     async def start_task(task_id: str, request: Request, body: TaskRunCreate):
         value = await task(task_id)
-        if reason := await _project_run_block(db, value):
+        reason = await _project_run_block(db, value)
+        if reason:
             raise HTTPException(409, reason)
         from agno.company.execution import _automatic_task
         from agno.company.sandbox import _is_sandboxed

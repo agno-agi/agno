@@ -672,10 +672,14 @@ async def test_project_approval_required_for_new_tasks(archive, monkeypatch, ent
             if entry_point == "http":
                 response = await create_task()
                 assert response.status_code == 422, response.text
-                assert response.json()["detail"] == "Project approval is required before Tasks enter non-Backlog stages"
+                assert (
+                    response.json()["detail"]
+                    == "Project approval is required before creating Tasks outside Backlog or moving them to Ready"
+                )
             else:
                 with pytest.raises(
-                    ValueError, match="^Project approval is required before Tasks enter non-Backlog stages$"
+                    ValueError,
+                    match="^Project approval is required before creating Tasks outside Backlog or moving them to Ready$",
                 ):
                     await create_task()
             assert await call(db, "get_tasks", include_deleted=True) == ([], 0)
