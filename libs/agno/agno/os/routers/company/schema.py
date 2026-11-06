@@ -164,6 +164,24 @@ class TaskUpdate(BaseModel):
         return value
 
 
+class TaskLastRun(BaseModel):
+    status: str
+    triggered_at: Optional[int] = None
+    completed_at: Optional[int] = None
+    run_id: Optional[str] = None
+    session_id: Optional[str] = None
+    error: Optional[str] = None
+    attempt: Optional[int] = None
+
+
+class TaskTransitionOption(BaseModel):
+    target: TaskStatus
+    allowed: bool
+    reason: Optional[str] = None
+    # In progress is entered with POST /company/tasks/{id}/runs, not a transition.
+    starts_run: bool = False
+
+
 class TaskResponse(BaseModel):
     @field_validator("transitions", mode="before")
     @classmethod
@@ -197,6 +215,8 @@ class TaskResponse(BaseModel):
     sandboxed: bool = False
     metadata: Optional[Dict[str, Any]] = None
     result: Optional[Dict[str, Any]] = None
+    last_run: Optional[TaskLastRun] = None
+    allowed_transitions: List[TaskTransitionOption] = Field(default_factory=list)
 
 
 class TaskTransition(BaseModel):
@@ -272,4 +292,13 @@ class DecisionResponse(BaseModel):
 
 class TaskRunCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    attempt: int = Field(1, ge=1, strict=True)
+    attempt: Optional[int] = Field(None, ge=1, strict=True)
+    executor_type: Optional[Literal["agent", "team", "workflow"]] = None
+    executor_id: Optional[str] = Field(None, min_length=1)
+
+    @model_validator(mode="after")
+    def validate_executor(self) -> "TaskRunCreate":
+        if self.executor_type is not None or self.executor_id is not None:
+            if self.executor_type is None or self.executor_id is None or not self.executor_id.strip():
+                raise ValueError("A direct start requires an executor type and id")
+        return self
