@@ -634,36 +634,81 @@ class TestUnresolvedTeamLevelRequirements:
 
 
 class TestAsyncGatherErrorHandling:
-    """Verify that _aroute_requirements_to_members handles member failures gracefully."""
+    """A member continue_run failure on the async path must propagate instead of
+    completing the team run silently, matching the sync path (#9421)."""
 
-    def test_gather_filters_exceptions(self):
-        """When asyncio.gather returns exceptions, they should be filtered out."""
-        # Simulate the post-gather filtering logic
-        results = ["[Agent A]: Success", Exception("Agent B failed"), None, "[Agent C]: Done"]
+    def _make_run_response_with_member_req(self):
+        run_response = MagicMock()
+        run_response.run_id = "team-run-1"
+        run_response.member_responses = []
 
-        member_results = []
-        for r in results:
-            if isinstance(r, Exception):
-                pass  # logged as warning
-            elif r is not None:
-                member_results.append(r)
+        member_run_output = MagicMock()
+        member_run_output.run_id = "member-run-1"
+        member_run_output.tools = None
+        member_run_output.is_paused = False
+        member_run_output.content = "done"
 
-        assert len(member_results) == 2
-        assert member_results[0] == "[Agent A]: Success"
-        assert member_results[1] == "[Agent C]: Done"
+        req = _make_requirement(requires_confirmation=True)
+        req.member_agent_id = "member-id-1"
+        req.member_run_id = "member-run-1"
+        req._member_run_response = member_run_output
 
-    def test_all_exceptions_yields_empty_results(self):
-        """When all members fail, result list should be empty."""
-        results = [Exception("fail 1"), Exception("fail 2")]
+        run_response.requirements = [req]
 
-        member_results = []
-        for r in results:
-            if isinstance(r, Exception):
-                pass
-            elif r is not None:
-                member_results.append(r)
+        session = MagicMock()
+        session.session_id = "session-1"
 
-        assert len(member_results) == 0
+        return run_response, session
+
+    def _run_route(self, member):
+        from agno.team._run import _aroute_requirements_to_members
+
+        run_response, session = self._make_run_response_with_member_req()
+        team = MagicMock()
+
+        async def _exercise():
+            with patch("agno.team._tools._find_member_route_by_id", return_value=(0, member)):
+                return await _aroute_requirements_to_members(team, run_response=run_response, session=session)
+
+        return asyncio.run(_exercise())
+
+    def test_member_failure_propagates(self):
+        """A member-side error (ValueError, RunNotFoundError, ...) must not be
+        swallowed into a warning — otherwise the team run completes silently."""
+        member = MagicMock()
+        member.name = "Member 1"
+        member.acontinue_run = AsyncMock(side_effect=ValueError("member boom"))
+
+        raised = None
+        try:
+            self._run_route(member)
+        except ValueError as e:
+            raised = e
+        assert raised is not None and "member boom" in str(raised)
+
+    def test_run_not_continuable_error_propagates(self):
+        """A member refusing the continue outright still surfaces its paused state."""
+        from agno.exceptions import RunNotContinuableError
+
+        member = MagicMock()
+        member.name = "Member 1"
+        member.acontinue_run = AsyncMock(side_effect=RunNotContinuableError("refused"))
+
+        raised = None
+        try:
+            self._run_route(member)
+        except RunNotContinuableError as e:
+            raised = e
+        assert raised is not None
+
+    def test_successful_members_return_results(self):
+        """A healthy member still contributes its result string (no over-raising)."""
+        member = MagicMock()
+        member.name = "Member 1"
+        member.acontinue_run = AsyncMock(return_value=MagicMock(is_paused=False, content="ok"))
+
+        results = self._run_route(member)
+        assert results == ["[Member 1]: ok"]
 
 
 # ===========================================================================
