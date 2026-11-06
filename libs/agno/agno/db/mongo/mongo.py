@@ -20,8 +20,14 @@ from agno.db.mongo.utils import (
     bulk_upsert_metrics,
     calculate_date_metrics,
     create_collection_indexes,
+    decode_legacy_runs,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
+    get_json_legacy_runs_query,
+    get_json_legacy_session_ids,
+    get_metrics_sessions_pipeline,
+    iter_session_id_batches,
+    run_model_and_provider,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -1693,41 +1699,37 @@ class MongoDb(BaseDb):
                 else:
                     query["created_at"] = {"$lte": end_timestamp}
 
-            projection = {
-                "session_id": 1,
-                "user_id": 1,
-                "session_data": 1,
-                "runs": 1,  # the legacy field — for un-migrated sessions
-                "created_at": 1,
-                "session_type": 1,
-            }
-
-            sessions = list(collection.find(query, projection))
+            sessions = list(collection.aggregate(get_metrics_sessions_pipeline(query)))
 
             # Attach lightweight run info (model + provider) from the runs collection.
             # calculate_date_metrics only needs len(runs) and run["model"] / run["model_provider"].
+            runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
             if runs_collection is not None and sessions:
                 session_ids = [s["session_id"] for s in sessions]
-                runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
-                for doc in runs_collection.find(
-                    {"session_id": {"$in": session_ids}},
-                    {"session_id": 1, "run_data.model": 1, "run_data.model_provider": 1},
-                ):
-                    run_data = doc.get("run_data") or {}
-                    runs_by_session.setdefault(doc["session_id"], []).append(
-                        {"model": run_data.get("model"), "model_provider": run_data.get("model_provider")}
-                    )
+                for batch in iter_session_id_batches(session_ids):
+                    for doc in runs_collection.find(
+                        {"session_id": {"$in": batch}},
+                        {"session_id": 1, "run_data.model": 1, "run_data.model_provider": 1},
+                    ):
+                        runs_by_session.setdefault(doc["session_id"], []).append(
+                            run_model_and_provider(doc.get("run_data") or {})
+                        )
 
-                for s in sessions:
-                    rb = runs_by_session.get(s["session_id"], [])
-                    if rb or not s.get("runs"):
-                        s["runs"] = rb
+            # Read only after the runs lookup: migrated sessions' legacy strings are neither loaded nor decoded
+            for batch in iter_session_id_batches(get_json_legacy_session_ids(sessions, runs_by_session)):
+                for doc in collection.find(get_json_legacy_runs_query(batch), {"session_id": 1, "runs": 1}):
+                    runs_by_session[doc["session_id"]] = decode_legacy_runs(doc["runs"])
+
+            # Runs not yet migrated count from the legacy field, already reduced to model and provider
+            for s in sessions:
+                legacy_runs = s.pop("legacy_runs", [])
+                s["runs"] = runs_by_session.get(s["session_id"]) or legacy_runs
 
             return sessions
 
         except Exception as e:
             log_error(f"Exception reading from sessions collection: {str(e)}")
-            return []
+            raise e
 
     def _get_metrics_calculation_starting_date(self, collection: Collection) -> Optional[date]:
         """Get the first date for which metrics calculation is needed."""
@@ -1763,7 +1765,7 @@ class MongoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception getting metrics calculation starting date: {str(e)}")
-            return None
+            raise e
 
     def calculate_metrics(self) -> Optional[list[dict]]:
         """Calculate metrics for all dates without complete metrics."""

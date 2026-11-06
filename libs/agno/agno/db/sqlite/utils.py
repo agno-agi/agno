@@ -10,7 +10,7 @@ from agno.db.sqlite.schemas import get_table_schema_definition
 from agno.utils.log import log_debug, log_error, log_warning
 
 try:
-    from sqlalchemy import Table, func
+    from sqlalchemy import Table, case, func
     from sqlalchemy.dialects import sqlite
     from sqlalchemy.engine import Engine
     from sqlalchemy.inspection import inspect
@@ -398,3 +398,20 @@ def get_dates_to_calculate_metrics_for(starting_date: date) -> list[date]:
     if days_diff <= 0:
         return []
     return [starting_date + timedelta(days=x) for x in range(days_diff)]
+
+
+def legacy_runs_array(runs_column: Any) -> Any:
+    """The legacy ``runs`` column as a JSON array, or an empty one.
+
+    v2 stored the runs JSON-encoded a second time, so the column holds a JSON string whose content is the array.
+    """
+    encoded = func.json_extract(runs_column, "$")
+    decoded = case(
+        (func.json_valid(encoded) == 1, case((func.json_type(encoded) == "array", encoded), else_=func.json_array())),
+        else_=func.json_array(),
+    )
+    return case(
+        (func.json_type(runs_column) == "array", runs_column),
+        (func.json_type(runs_column) == "text", decoded),
+        else_=func.json_array(),
+    )

@@ -20,8 +20,14 @@ from agno.db.mongo.utils import (
     apply_sorting,
     calculate_date_metrics,
     create_collection_indexes_async,
+    decode_legacy_runs,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
+    get_json_legacy_runs_query,
+    get_json_legacy_session_ids,
+    get_metrics_sessions_pipeline,
+    iter_session_id_batches,
+    run_model_and_provider,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -1888,39 +1894,35 @@ class AsyncMongoDb(AsyncBaseDb):
                 else:
                     query["created_at"] = {"$lte": end_timestamp}
 
-            projection = {
-                "session_id": 1,
-                "user_id": 1,
-                "session_data": 1,
-                "runs": 1,
-                "created_at": 1,
-                "session_type": 1,
-            }
+            sessions = await self._aggregate_to_list(collection, get_metrics_sessions_pipeline(query))
 
-            sessions = await collection.find(query, projection).to_list(length=None)
-
+            runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
             if runs_collection is not None and sessions:
                 session_ids = [s["session_id"] for s in sessions]
-                runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
-                async for doc in runs_collection.find(
-                    {"session_id": {"$in": session_ids}},
-                    {"session_id": 1, "run_data.model": 1, "run_data.model_provider": 1},
-                ):
-                    run_data = doc.get("run_data") or {}
-                    runs_by_session.setdefault(doc["session_id"], []).append(
-                        {"model": run_data.get("model"), "model_provider": run_data.get("model_provider")}
-                    )
+                for batch in iter_session_id_batches(session_ids):
+                    async for doc in runs_collection.find(
+                        {"session_id": {"$in": batch}},
+                        {"session_id": 1, "run_data.model": 1, "run_data.model_provider": 1},
+                    ):
+                        runs_by_session.setdefault(doc["session_id"], []).append(
+                            run_model_and_provider(doc.get("run_data") or {})
+                        )
 
-                for s in sessions:
-                    rb = runs_by_session.get(s["session_id"], [])
-                    if rb or not s.get("runs"):
-                        s["runs"] = rb
+            # Read only after the runs lookup: migrated sessions' legacy strings are neither loaded nor decoded
+            for batch in iter_session_id_batches(get_json_legacy_session_ids(sessions, runs_by_session)):
+                async for doc in collection.find(get_json_legacy_runs_query(batch), {"session_id": 1, "runs": 1}):
+                    runs_by_session[doc["session_id"]] = decode_legacy_runs(doc["runs"])
+
+            # Runs not yet migrated count from the legacy field, already reduced to model and provider
+            for s in sessions:
+                legacy_runs = s.pop("legacy_runs", [])
+                s["runs"] = runs_by_session.get(s["session_id"]) or legacy_runs
 
             return sessions
 
         except Exception as e:
             log_error(f"Exception reading from sessions collection: {str(e)}")
-            return []
+            raise e
 
     async def _get_metrics_calculation_starting_date(self, collection: AsyncMongoCollectionType) -> Optional[date]:
         """Get the first date for which metrics calculation is needed."""
@@ -1958,7 +1960,7 @@ class AsyncMongoDb(AsyncBaseDb):
 
         except Exception as e:
             log_error(f"Exception getting metrics calculation starting date: {str(e)}")
-            return None
+            raise e
 
     async def calculate_metrics(self) -> Optional[list[dict]]:
         """Calculate metrics for all dates without complete metrics."""
