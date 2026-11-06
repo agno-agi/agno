@@ -20,11 +20,13 @@ from agno.db.mongo.utils import (
     apply_sorting,
     calculate_date_metrics,
     create_collection_indexes_async,
+    decode_legacy_runs,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
+    get_json_legacy_runs_query,
+    get_json_legacy_session_ids,
     get_metrics_sessions_pipeline,
     iter_session_id_batches,
-    reduce_metrics_session,
     run_model_and_provider,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
@@ -1892,11 +1894,7 @@ class AsyncMongoDb(AsyncBaseDb):
                 else:
                     query["created_at"] = {"$lte": end_timestamp}
 
-            # Iterated, not materialized, so each legacy runs JSON string is reduced as it is read
-            cursor: Any = collection.aggregate(get_metrics_sessions_pipeline(query))
-            if asyncio.iscoroutine(cursor):
-                cursor = await cursor
-            sessions = [reduce_metrics_session(s) async for s in cursor]
+            sessions = await self._aggregate_to_list(collection, get_metrics_sessions_pipeline(query))
 
             runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
             if runs_collection is not None and sessions:
@@ -1909,6 +1907,11 @@ class AsyncMongoDb(AsyncBaseDb):
                         runs_by_session.setdefault(doc["session_id"], []).append(
                             run_model_and_provider(doc.get("run_data") or {})
                         )
+
+            # Read only after the runs lookup: migrated sessions' legacy strings are neither loaded nor decoded
+            for batch in iter_session_id_batches(get_json_legacy_session_ids(sessions, runs_by_session)):
+                async for doc in collection.find(get_json_legacy_runs_query(batch), {"session_id": 1, "runs": 1}):
+                    runs_by_session[doc["session_id"]] = decode_legacy_runs(doc["runs"])
 
             # Runs not yet migrated count from the legacy field, already reduced to model and provider
             for s in sessions:

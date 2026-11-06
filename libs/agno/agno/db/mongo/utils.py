@@ -50,21 +50,32 @@ def get_metrics_sessions_pipeline(query: Dict[str, Any]) -> List[Dict[str, Any]]
                     }
                 },
                 # Before v2.1.1 the runs were stored as a JSON string, which can only be decoded in Python
-                "legacy_runs_json": {"$cond": [{"$eq": [{"$type": "$runs"}, "string"]}, "$runs", "$$REMOVE"]},
+                "legacy_runs_is_json": {"$eq": [{"$type": "$runs"}, "string"]},
             }
         },
     ]
 
 
-def reduce_metrics_session(session: Dict[str, Any]) -> Dict[str, Any]:
+def get_json_legacy_session_ids(
+    sessions: List[Dict[str, Any]], runs_by_session: Dict[str, List[Dict[str, Any]]]
+) -> List[str]:
+    """Sessions whose legacy runs are a JSON string and still needed: migrated runs supersede the legacy field."""
+    return [
+        s["session_id"]
+        for s in sessions
+        if s.pop("legacy_runs_is_json", False) and not runs_by_session.get(s["session_id"])
+    ]
+
+
+def get_json_legacy_runs_query(session_ids: List[str]) -> Dict[str, Any]:
+    """Query for the given sessions' legacy runs stored as a non-empty JSON string."""
+    return {"session_id": {"$in": session_ids}, "runs": {"$type": "string", "$ne": ""}}
+
+
+def decode_legacy_runs(runs_json: str) -> List[Dict[str, Any]]:
     """Reduce legacy runs stored as a JSON string to model and provider, like the pipeline does for arrays."""
-    legacy_runs_json = session.pop("legacy_runs_json", None)
-    if legacy_runs_json:
-        runs = json.loads(legacy_runs_json)
-        session["legacy_runs"] = [
-            run_model_and_provider(run) for run in (runs if isinstance(runs, list) else []) if isinstance(run, dict)
-        ]
-    return session
+    runs = json.loads(runs_json)
+    return [run_model_and_provider(run) for run in (runs if isinstance(runs, list) else []) if isinstance(run, dict)]
 
 
 def run_model_and_provider(run: Dict[str, Any]) -> Dict[str, Any]:

@@ -20,11 +20,13 @@ from agno.db.mongo.utils import (
     bulk_upsert_metrics,
     calculate_date_metrics,
     create_collection_indexes,
+    decode_legacy_runs,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
+    get_json_legacy_runs_query,
+    get_json_legacy_session_ids,
     get_metrics_sessions_pipeline,
     iter_session_id_batches,
-    reduce_metrics_session,
     run_model_and_provider,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
@@ -1697,7 +1699,7 @@ class MongoDb(BaseDb):
                 else:
                     query["created_at"] = {"$lte": end_timestamp}
 
-            sessions = [reduce_metrics_session(s) for s in collection.aggregate(get_metrics_sessions_pipeline(query))]
+            sessions = list(collection.aggregate(get_metrics_sessions_pipeline(query)))
 
             # Attach lightweight run info (model + provider) from the runs collection.
             # calculate_date_metrics only needs len(runs) and run["model"] / run["model_provider"].
@@ -1712,6 +1714,11 @@ class MongoDb(BaseDb):
                         runs_by_session.setdefault(doc["session_id"], []).append(
                             run_model_and_provider(doc.get("run_data") or {})
                         )
+
+            # Read only after the runs lookup: migrated sessions' legacy strings are neither loaded nor decoded
+            for batch in iter_session_id_batches(get_json_legacy_session_ids(sessions, runs_by_session)):
+                for doc in collection.find(get_json_legacy_runs_query(batch), {"session_id": 1, "runs": 1}):
+                    runs_by_session[doc["session_id"]] = decode_legacy_runs(doc["runs"])
 
             # Runs not yet migrated count from the legacy field, already reduced to model and provider
             for s in sessions:

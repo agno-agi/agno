@@ -11,10 +11,14 @@ The same refresh fixed for PostgreSQL, pinned on every other adapter that has a 
 
 Runs against live servers (MySQL on 3306, SingleStore on 3307, MongoDB on 27017) with a unique
 schema or database per test; a backend whose server is absent is skipped.
+
+cookbook/scripts/run_singlestore.sh publishes 3306, which skips these tests and collides with MySQL.
+Start SingleStore on 3307 alongside MySQL instead.
 """
 
 import asyncio
 import inspect
+import json
 import os
 import sqlite3
 import subprocess
@@ -52,6 +56,9 @@ MONGO_SESSIONS_PAST_DOCUMENT_LIMIT = 5_000
 MONGO_LONG_SESSION_ID_BYTES = 4_000
 # Leave a run's model_provider key out instead of storing a value
 MISSING = object()
+LONG_MODEL_ID = "modèle-" + "m" * 1_025
+LONG_PROVIDER = "fournisseur-é" + "p" * 1_025
+TRUNCATED_RUNS_JSON = '[{"model": "gpt-5.5", "model_prov'
 
 
 def _created_at() -> int:
@@ -219,17 +226,24 @@ def ns(request):
 # ---------------------------------------------------------------------------
 
 
-def _legacy_run(session_id: str, index: int, run_bytes: int, provider: bool = True) -> Dict[str, Any]:
+def _legacy_run(
+    session_id: str,
+    index: int,
+    run_bytes: int,
+    provider: bool = True,
+    model: str = "gpt-5.5",
+    provider_name: str = "OpenAI",
+) -> Dict[str, Any]:
     run = {
         "run_id": f"{session_id}_r{index}",
         "agent_id": "a1",
         "status": "COMPLETED",
         "created_at": _created_at() + index,
-        "model": "gpt-5.5",
+        "model": model,
         "content": uuid.uuid4().hex * max(run_bytes // 32, 1),
     }
     if provider:
-        run["model_provider"] = "OpenAI"
+        run["model_provider"] = provider_name
     return run
 
 
@@ -245,6 +259,8 @@ def seed(
     session_id_bytes: int = 0,
     legacy_as_json_string: bool = False,
     table_run_provider: Any = "OpenAI",
+    legacy_model: str = "gpt-5.5",
+    legacy_provider: str = "OpenAI",
 ) -> int:
     """Add sessions created yesterday and return the bytes of legacy runs JSON added.
 
@@ -252,15 +268,16 @@ def seed(
     when ``migrated``. ``table_run_sessions`` hold one run in the runs table and no legacy runs.
     ``legacy_as_json_string`` stores the legacy runs as a JSON string, as v2 SQLite and MongoDB before v2.1.1 did.
     """
-    import json
-
     db = backend.seeder(ns)
     sessions: List[Dict[str, Any]] = []
     runs: List[Dict[str, Any]] = []
     payload = 0
     for s in range(first, first + legacy_sessions):
         session_id = f"s{s}"
-        legacy = [_legacy_run(session_id, r, run_bytes, provider) for r in range(RUNS_PER_SESSION)]
+        legacy = [
+            _legacy_run(session_id, r, run_bytes, provider, legacy_model, legacy_provider)
+            for r in range(RUNS_PER_SESSION)
+        ]
         payload += len(json.dumps(legacy))
         sessions.append({"session_id": session_id, "runs": json.dumps(legacy) if legacy_as_json_string else legacy})
         if migrated:
@@ -427,6 +444,63 @@ def test_metrics_count_legacy_runs_stored_as_a_json_string(ns, backend):
     ]
 
 
+@pytest.mark.parametrize("backend", list(BACKENDS))
+def test_metrics_keep_long_legacy_model_ids_and_providers_whole(ns, backend):
+    """Stored ids have no length limit, so a long one stays in the breakdown instead of being dropped."""
+    b = BACKENDS[backend]
+    seed(b, ns, legacy_sessions=1, legacy_model=LONG_MODEL_ID, legacy_provider=LONG_PROVIDER)
+
+    result = calculate(b, ns)
+
+    assert result is not None and len(result) == 1
+    assert result[0]["agent_runs_count"] == RUNS_PER_SESSION
+    assert _model_metrics(result) == [
+        {"model_id": LONG_MODEL_ID, "model_provider": LONG_PROVIDER, "count": RUNS_PER_SESSION}
+    ]
+
+
+def _set_legacy_runs_string(backend: Backend, ns: str, value: str) -> None:
+    backend.seeder(ns)._get_collection("sessions").update_many({}, {"$set": {"runs": value}})
+
+
+@pytest.mark.parametrize("value", [TRUNCATED_RUNS_JSON, ""], ids=["truncated", "empty"])
+@pytest.mark.parametrize("backend", MONGO_BACKENDS)
+def test_mongo_metrics_ignore_legacy_runs_string_of_a_migrated_session(ns, backend, value):
+    """The runs collection is the source of truth, so a migrated session's legacy string is never decoded."""
+    b = BACKENDS[backend]
+    seed(b, ns, legacy_sessions=SMALL_SESSIONS, migrated=True)
+    _set_legacy_runs_string(b, ns, value)
+
+    result = calculate(b, ns)
+
+    assert result is not None and len(result) == 1
+    assert result[0]["agent_runs_count"] == SMALL_SESSIONS * RUNS_PER_SESSION
+
+
+@pytest.mark.parametrize("backend", MONGO_BACKENDS)
+def test_mongo_metrics_raise_on_truncated_legacy_runs_string_of_an_unmigrated_session(ns, backend):
+    """With no migrated runs the string is the only record, so corrupt data surfaces instead of counting 0."""
+    b = BACKENDS[backend]
+    seed(b, ns, legacy_sessions=1)
+    _set_legacy_runs_string(b, ns, TRUNCATED_RUNS_JSON)
+
+    with pytest.raises(json.JSONDecodeError):
+        calculate(b, ns)
+
+
+@pytest.mark.parametrize("backend", MONGO_BACKENDS)
+def test_mongo_metrics_count_an_empty_legacy_runs_string_as_no_runs(ns, backend):
+    b = BACKENDS[backend]
+    seed(b, ns, legacy_sessions=1)
+    _set_legacy_runs_string(b, ns, "")
+
+    result = calculate(b, ns)
+
+    assert result is not None and len(result) == 1
+    assert result[0]["agent_sessions_count"] == 1
+    assert result[0]["agent_runs_count"] == 0
+
+
 @pytest.mark.parametrize("provider", [None, MISSING], ids=["null", "missing"])
 @pytest.mark.parametrize("backend", list(BACKENDS))
 def test_metrics_report_runs_table_run_without_provider_under_empty_provider(ns, backend, provider):
@@ -488,7 +562,9 @@ def _rename_column(backend: Backend, ns: str, table: str, column: str) -> None:
     schema = getattr(db, "db_schema", None)
     qualified = f"`{schema}`.{table}" if schema else table
     # SingleStore renames with CHANGE, the others with RENAME COLUMN
-    rename = f"CHANGE {column} {column}_old" if backend.name == "singlestore" else f"RENAME COLUMN {column} TO {column}_old"
+    rename = (
+        f"CHANGE {column} {column}_old" if backend.name == "singlestore" else f"RENAME COLUMN {column} TO {column}_old"
+    )
     with db.db_engine.begin() as conn:
         conn.execute(text(f"ALTER TABLE {qualified} {rename}"))
 
@@ -613,11 +689,7 @@ print(peak_bytes() - before)
 """
 
 
-@pytest.mark.parametrize("migrated", [True, False], ids=["migrated", "unmigrated"])
-@pytest.mark.parametrize("backend", list(BACKENDS))
-def test_metrics_refresh_memory_does_not_grow_with_the_legacy_column(ns, backend, migrated):
-    payload = seed(BACKENDS[backend], ns, legacy_sessions=LARGE_SESSIONS, run_bytes=RUN_BYTES, migrated=migrated)
-
+def _assert_refresh_memory_bounded(backend: str, ns: str, payload: int, sessions: int = LARGE_SESSIONS) -> None:
     done = subprocess.run(
         [sys.executable, "-c", _CHILD, os.path.dirname(__file__), backend, ns],
         capture_output=True,
@@ -627,8 +699,33 @@ def test_metrics_refresh_memory_does_not_grow_with_the_legacy_column(ns, backend
 
     assert done.returncode == 0, done.stderr[-2000:]
     runs_counted, growth = (int(line) for line in done.stdout.strip().splitlines()[-2:])
-    assert runs_counted == LARGE_SESSIONS * RUNS_PER_SESSION
+    assert runs_counted == sessions * RUNS_PER_SESSION
     assert growth < payload * MAX_GROWTH_FRACTION, (
         f"{backend} metrics refresh grew peak memory by {growth / 1e6:.0f} MB with "
         f"{payload / 1e6:.0f} MB of legacy runs; the refresh is loading the legacy runs column"
     )
+
+
+@pytest.mark.parametrize("migrated", [True, False], ids=["migrated", "unmigrated"])
+@pytest.mark.parametrize("backend", list(BACKENDS))
+def test_metrics_refresh_memory_does_not_grow_with_the_legacy_column(ns, backend, migrated):
+    payload = seed(BACKENDS[backend], ns, legacy_sessions=LARGE_SESSIONS, run_bytes=RUN_BYTES, migrated=migrated)
+
+    _assert_refresh_memory_bounded(backend, ns, payload)
+
+
+@pytest.mark.parametrize("migrated", [True, False], ids=["migrated", "unmigrated"])
+@pytest.mark.parametrize("backend", MONGO_BACKENDS)
+def test_mongo_metrics_refresh_memory_does_not_grow_with_legacy_runs_strings(ns, backend, migrated):
+    # Strings are decoded in Python one cursor batch at a time, a fixed cost the payload has to dwarf
+    sessions = 3 * LARGE_SESSIONS
+    payload = seed(
+        BACKENDS[backend],
+        ns,
+        legacy_sessions=sessions,
+        run_bytes=RUN_BYTES,
+        migrated=migrated,
+        legacy_as_json_string=True,
+    )
+
+    _assert_refresh_memory_bounded(backend, ns, payload, sessions)

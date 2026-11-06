@@ -415,7 +415,7 @@ def get_legacy_run_models_stmt(
         f"FROM {preparer.format_table(sessions_table)} AS s, "
         "JSON_TABLE("
         "CASE WHEN JSON_TYPE(s.runs) = 'ARRAY' THEN s.runs ELSE JSON_ARRAY() END, "
-        "'$[*]' COLUMNS (model VARCHAR(1024) PATH '$.model', model_provider VARCHAR(1024) PATH '$.model_provider')"
+        "'$[*]' COLUMNS (model LONGTEXT PATH '$.model', model_provider LONGTEXT PATH '$.model_provider')"
         f") AS legacy_run {where}"
     ).bindparams(**params)
 
