@@ -13,11 +13,14 @@ Examples for confirmation flows, user input prompts, and external tool handling.
 - `user_input_required.py` - Tools that require user input.
 - `confirmation_with_session_state.py` - Confirmation flow where the tool modifies session_state before pausing. Verifies that state changes survive the pause/continue round-trip.
 - `side_effecting_tool_approval.py` - Deterministic no-credentials example showing rejected calls skip the side effect and approved calls resume exactly once.
+- `sequential_confirmations.py` - Scripted two-call batch with policy ordering, one active confirmation at a time, and no model call between cards. Runs locally without API keys.
 
 ## Prerequisites
 - Load environment variables with `direnv allow` (including `OPENAI_API_KEY`).
 - Create the demo environment with `./scripts/demo_setup.sh`, then run cookbooks with `.venvs/demo/bin/python`.
 - Some examples require optional local services (for example pgvector) or provider-specific API keys.
+
+The sequential-confirmation example uses temporary SQLite storage and scripted synchronous responses. To resume after rebuilding an Agent, reuse its database and run/session IDs and reattach any `confirmation_policy` callable.
 
 ## Run
 - `.venvs/demo/bin/python cookbook/02_agents/10_human_in_the_loop/<file>.py`

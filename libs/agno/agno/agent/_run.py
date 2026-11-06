@@ -32,7 +32,14 @@ if TYPE_CHECKING:
 from agno.agent._init import _initialize_session_state
 from agno.agent._run_options import resolve_run_options
 from agno.agent._session import initialize_session, update_session_metrics
-from agno.agent._tools import result_store_kwargs
+from agno.agent._tools import (
+    aclaim_confirmation,
+    aprepare_confirmation_queue,
+    advance_confirmation_queue,
+    claim_confirmation,
+    prepare_confirmation_queue,
+    result_store_kwargs,
+)
 from agno.exceptions import (
     InputCheckError,
     OutputCheckError,
@@ -240,7 +247,13 @@ def handle_agent_run_paused(
     user_id: Optional[str] = None,
     run_context: Optional[RunContext] = None,
 ) -> RunOutput:
-    run_response.status = RunStatus.paused
+    prepare_confirmation_queue(agent, run_response, run_context)
+    run_response.status = (
+        RunStatus.completed
+        if (run_response.metadata or {}).get("ordered_confirmations") is not None
+        and not any(t.is_paused for t in run_response.tools or [])
+        else RunStatus.paused
+    )
     if not run_response.content:
         run_response.content = get_paused_content(run_response)
 
@@ -265,7 +278,13 @@ def handle_agent_run_paused_stream(
     run_context: Optional[RunContext] = None,
     yield_run_output: bool = False,
 ) -> Iterator[Union[RunOutputEvent, RunOutput]]:
-    run_response.status = RunStatus.paused
+    prepare_confirmation_queue(agent, run_response, run_context)
+    run_response.status = (
+        RunStatus.completed
+        if (run_response.metadata or {}).get("ordered_confirmations") is not None
+        and not any(t.is_paused for t in run_response.tools or [])
+        else RunStatus.paused
+    )
     if not run_response.content:
         run_response.content = get_paused_content(run_response)
 
@@ -280,7 +299,9 @@ def handle_agent_run_paused_stream(
             from_run_response=run_response,
             tools=run_response.tools,
             requirements=run_response.requirements,
-        ),
+        )
+        if run_response.status == RunStatus.paused
+        else create_run_completed_event(from_run_response=run_response),
         run_response,
         events_to_skip=agent.events_to_skip,  # type: ignore
         store_events=agent.store_events,
@@ -304,7 +325,13 @@ async def ahandle_agent_run_paused(
     user_id: Optional[str] = None,
     run_context: Optional[RunContext] = None,
 ) -> RunOutput:
-    run_response.status = RunStatus.paused
+    await aprepare_confirmation_queue(agent, run_response, run_context)
+    run_response.status = (
+        RunStatus.completed
+        if (run_response.metadata or {}).get("ordered_confirmations") is not None
+        and not any(t.is_paused for t in run_response.tools or [])
+        else RunStatus.paused
+    )
     if not run_response.content:
         run_response.content = get_paused_content(run_response)
 
@@ -330,7 +357,13 @@ async def ahandle_agent_run_paused_stream(
     run_context: Optional[RunContext] = None,
     yield_run_output: bool = False,
 ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
-    run_response.status = RunStatus.paused
+    await aprepare_confirmation_queue(agent, run_response, run_context)
+    run_response.status = (
+        RunStatus.completed
+        if (run_response.metadata or {}).get("ordered_confirmations") is not None
+        and not any(t.is_paused for t in run_response.tools or [])
+        else RunStatus.paused
+    )
     if not run_response.content:
         run_response.content = get_paused_content(run_response)
 
@@ -345,7 +378,9 @@ async def ahandle_agent_run_paused_stream(
             from_run_response=run_response,
             tools=run_response.tools,
             requirements=run_response.requirements,
-        ),
+        )
+        if run_response.status == RunStatus.paused
+        else create_run_completed_event(from_run_response=run_response),
         run_response,
         events_to_skip=agent.events_to_skip,  # type: ignore
         store_events=agent.store_events,
@@ -1356,6 +1391,9 @@ def run_dispatch(
     if isinstance(agent.media_storage, AsyncMediaStorage):
         raise ValueError("Cannot use sync run() with an AsyncMediaStorage. Use arun() instead.")
 
+    if agent.sequential_tool_confirmations and not callable(getattr(agent.db, "update_run_if_matches", None)):
+        raise ValueError("Sequential tool confirmations require a database with atomic run updates")
+
     # Set the id for the run and register it immediately for cancellation tracking
     run_id = run_id or str(uuid4())
 
@@ -1464,6 +1502,13 @@ def run_dispatch(
         session_state=run_context.session_state,
         input=run_input,
     )
+
+    if agent.sequential_tool_confirmations or "ordered_confirmations" in (run_response.metadata or {}):
+        run_response.metadata = dict(run_response.metadata or {})
+        run_response.metadata.pop("ordered_confirmations", None)
+        if agent.sequential_tool_confirmations:
+            run_response.metadata["ordered_confirmations"] = {"active": None, "queue": []}
+        run_context.metadata = run_response.metadata
 
     run_response.model = agent.model.id if agent.model is not None else None
     run_response.model_provider = agent.model.provider if agent.model is not None else None
@@ -2737,6 +2782,9 @@ def arun_dispatch(  # type: ignore
 ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
     """Async Run the Agent and return the response."""
 
+    if agent.sequential_tool_confirmations and not callable(getattr(agent.db, "update_run_if_matches", None)):
+        raise ValueError("Sequential tool confirmations require a database with atomic run updates")
+
     # Set the id for the run and register it immediately for cancellation tracking
     from agno.agent._response import get_response_format
 
@@ -2856,6 +2904,13 @@ def arun_dispatch(  # type: ignore
         session_state=run_context.session_state,
         input=run_input,
     )
+
+    if agent.sequential_tool_confirmations or "ordered_confirmations" in (run_response.metadata or {}):
+        run_response.metadata = dict(run_response.metadata or {})
+        run_response.metadata.pop("ordered_confirmations", None)
+        if agent.sequential_tool_confirmations:
+            run_response.metadata["ordered_confirmations"] = {"active": None, "queue": []}
+        run_context.metadata = run_response.metadata
 
     run_response.model = agent.model.id if agent.model is not None else None
     run_response.model_provider = agent.model.provider if agent.model is not None else None
@@ -3686,6 +3741,7 @@ def _continue_run(
     from agno.agent._telemetry import log_agent_telemetry
     from agno.agent._tools import handle_tool_call_updates
 
+    claim_confirmation(agent, run_response)
     register_run(run_response.run_id)  # type: ignore
 
     # Resume the run metrics timer: the run's duration runs from its start to its end, the wait included
@@ -3700,6 +3756,11 @@ def _continue_run(
             try:
                 # 1. Handle the updated tools
                 handle_tool_call_updates(agent, run_response=run_response, run_messages=run_messages, tools=tools)
+
+                if advance_confirmation_queue(agent, run_response, run_messages, tools):
+                    return handle_agent_run_paused(
+                        agent, run_response, session, run_context=run_context, user_id=user_id
+                    )
 
                 # Check for cancellation before model call
                 raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -3913,6 +3974,7 @@ def _continue_run_stream(
     from agno.agent._telemetry import log_agent_telemetry
     from agno.agent._tools import handle_tool_call_updates_stream
 
+    claim_confirmation(agent, run_response)
     register_run(run_response.run_id)  # type: ignore
 
     # Resume the run metrics timer: the run's duration runs from its start to its end, the wait included
@@ -3950,6 +4012,17 @@ def _continue_run_stream(
                     if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                         raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
+
+                if advance_confirmation_queue(agent, run_response, run_messages, tools):
+                    yield from handle_agent_run_paused_stream(
+                        agent,
+                        run_response,
+                        session,
+                        run_context=run_context,
+                        user_id=user_id,
+                        yield_run_output=yield_run_output,
+                    )
+                    return
 
                 # 3. Process model response
                 for event in handle_model_response_stream(
@@ -4468,7 +4541,12 @@ async def _acontinue_run_background_stream(
     # loaded run is used ONLY for the status persists - the continue dispatch
     # below still receives the caller's run_response untouched.
     persist_run = run_response or cast(Optional[RunOutput], agent_session.get_run(_run_id))
-    if persist_run:
+    # Leave ordered runs PAUSED until the executor atomically claims the decision.
+    ordered_state = (persist_run.metadata or {}).get("ordered_confirmations") if persist_run else None
+    ordered_confirmation = bool(isinstance(ordered_state, dict) and ordered_state.get("active")) or any(
+        req.tool_execution and req.tool_execution.confirmation_id for req in requirements or []
+    )
+    if persist_run and not ordered_confirmation:
         persist_run.status = RunStatus.pending
         storage_run = await abuild_offloaded_storage_copy(agent, persist_run, session_id) or persist_run
         agent_session.upsert_run(run=storage_run)
@@ -4478,11 +4556,12 @@ async def _acontinue_run_background_stream(
 
     # Pre-register with the event buffer so reconnecting clients can attach and
     # wait while the continue-run is still queued (no events buffered yet).
-    with contextlib.suppress(Exception):
-        # Fail-open: a Redis blip must not strand an accepted run
-        await get_event_stream().register_run(_run_id, RunStatus.pending)
+    if not ordered_confirmation:
+        with contextlib.suppress(Exception):
+            # Fail-open: a Redis blip must not strand an accepted run
+            await get_event_stream().register_run(_run_id, RunStatus.pending)
 
-    log_info(f"Background continue-run stream {_run_id} persisted with PENDING status")
+        log_info(f"Background continue-run stream {_run_id} persisted with PENDING status")
 
     # 2. Create queue for forwarding SSE strings to the caller
     sse_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
@@ -4492,23 +4571,34 @@ async def _acontinue_run_background_stream(
     # can be cancelled without consuming a slot.
     async def _background_producer() -> None:
         event_stream = get_event_stream()
-        from agno.os.utils import format_sse_event_with_index
+        from agno.os.utils import amark_continue_stream_running, format_sse_event_with_index
 
         slot_cm = background_run_slot(run_id=_run_id)
         slot_held = False
         producer_terminal: Optional[RunStatus] = None
+        ordered_started = False
+
+        async def on_confirmation_claim() -> None:
+            nonlocal ordered_started
+            if not ordered_started:
+                ordered_started = True
+                await amark_continue_stream_running(_run_id, component=agent, session_id=session_id, user_id=user_id)
+
+        if ordered_confirmation:
+            kwargs["_on_confirmation_claim"] = on_confirmation_claim
         try:
             await slot_cm.__aenter__()
             slot_held = True
 
             # Transition to RUNNING now that a slot is held (atomic helper).
             # persist_run covers the run-ID-only continue (loaded above).
-            if persist_run:
+            if persist_run and not ordered_confirmation:
                 persist_run.status = RunStatus.running
                 await apersist_run_transition(agent, "agent", session_id, persist_run, user_id=user_id)
-            with contextlib.suppress(Exception):
-                # Fail-open: coordination writes must not kill the run
-                await event_stream.set_run_status(_run_id, RunStatus.running)
+            if not ordered_confirmation:
+                with contextlib.suppress(Exception):
+                    # Fail-open: coordination writes must not kill the run
+                    await event_stream.set_run_status(_run_id, RunStatus.running)
 
             async for event in _acontinue_run_stream(
                 agent,
@@ -4555,6 +4645,8 @@ async def _acontinue_run_background_stream(
             # producer). producer_terminal makes the finally's sentinel say
             # CANCELLED - without it, complete_run's non-terminal coercion
             # turned an interrupted continue into a FALSE COMPLETED.
+            if ordered_confirmation:
+                raise
             producer_terminal = RunStatus.cancelled
             from agno.run.concurrency import is_worker_managed
 
@@ -4577,6 +4669,8 @@ async def _acontinue_run_background_stream(
                         await apersist_run_transition(agent, "agent", session_id, interrupted_run, user_id=user_id)
             raise
         except RunCancelledException:
+            if ordered_confirmation:
+                return
             # Cancelled while waiting for a slot — execution never started, so
             # persist CANCELLED and deregister the run here. HITL continues may
             # arrive with run_response=None (router passes only run_id): load
@@ -4602,7 +4696,16 @@ async def _acontinue_run_background_stream(
                     f"Failed to persist cancelled state for background continue-run stream {_run_id}", exc_info=True
                 )
             await acleanup_run(_run_id)
-        except Exception:
+        except Exception as error:
+            if ordered_confirmation:
+                source = persist_run or RunOutput(run_id=_run_id, session_id=session_id)
+                await sse_queue.put(
+                    format_sse_event_with_index(
+                        create_run_error_event(source, error=str(error), error_type=error_type_of(error)),
+                        run_id=_run_id,
+                    )
+                )
+                return
             log_error(f"Background continue-run stream {_run_id} failed", exc_info=True)
             producer_terminal = RunStatus.error
             # Persist ERROR status (loading from session when run_response is None)
@@ -4629,31 +4732,34 @@ async def _acontinue_run_background_stream(
             except Exception:
                 log_warning(f"Failed to signal primary queue for continue-run {_run_id} completion")
 
-            # Mark run terminal in the event stream and wake all tails
-            # (shielded to survive task cancellation)
-            try:
-                # producer_terminal wins: with run_response=None the old fallback
-                # marked a cancelled/errored run COMPLETED, so /resume lied
-                # about a run that never executed
-                final_status = producer_terminal or (run_response.status if run_response else None)
-                if final_status is None:
-                    # HTTP continues arrive with run_response=None: the run row
-                    # is the only truth for the final status. Falling through
-                    # to COMPLETED here marked a RE-PAUSED continue (a chained
-                    # HITL pause) with a completed sentinel - key refreshing
-                    # stopped and the next continue restarted indices.
-                    with contextlib.suppress(Exception):
-                        lookup_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
-                        final_status = getattr(lookup_session.get_run(_run_id), "status", None)
-                if isinstance(final_status, str) and not isinstance(final_status, RunStatus):
-                    # DB round-trips can degrade the enum to a plain str
-                    with contextlib.suppress(ValueError):
-                        final_status = RunStatus(final_status)
-                if not isinstance(final_status, RunStatus):
-                    final_status = RunStatus.completed
-                await asyncio.shield(event_stream.complete_run(_run_id, final_status))
-            except (Exception, asyncio.CancelledError):
-                log_warning(f"Failed to mark continue-run {_run_id} as completed in event stream")
+            if not ordered_confirmation or ordered_started:
+                # Mark run terminal in the event stream and wake all tails
+                # (shielded to survive task cancellation)
+                try:
+                    # producer_terminal wins: with run_response=None the old fallback
+                    # marked a cancelled/errored run COMPLETED, so /resume lied
+                    # about a run that never executed
+                    final_status = producer_terminal or (run_response.status if run_response else None)
+                    if final_status is None:
+                        # HTTP continues arrive with run_response=None: the run row
+                        # is the only truth for the final status. Falling through
+                        # to COMPLETED here marked a RE-PAUSED continue (a chained
+                        # HITL pause) with a completed sentinel - key refreshing
+                        # stopped and the next continue restarted indices.
+                        with contextlib.suppress(Exception):
+                            lookup_session = await aread_or_create_session(
+                                agent, session_id=session_id, user_id=user_id
+                            )
+                            final_status = getattr(lookup_session.get_run(_run_id), "status", None)
+                    if isinstance(final_status, str) and not isinstance(final_status, RunStatus):
+                        # DB round-trips can degrade the enum to a plain str
+                        with contextlib.suppress(ValueError):
+                            final_status = RunStatus(final_status)
+                    if not isinstance(final_status, RunStatus):
+                        final_status = RunStatus.completed
+                    await asyncio.shield(event_stream.complete_run(_run_id, final_status))
+                except (Exception, asyncio.CancelledError):
+                    log_warning(f"Failed to mark continue-run {_run_id} as completed in event stream")
 
     task = asyncio.create_task(_background_producer())
     _background_tasks.add(task)
@@ -4940,6 +5046,8 @@ async def _acontinue_run(
                     run_response=run_response,
                 )
 
+                await aclaim_confirmation(agent, run_response)
+
                 # Resume the run metrics timer: the run's duration runs from its start to its end, the wait included
                 run_response.metrics = run_response.metrics or RunMetrics()
                 run_response.metrics.resume_timer(run_response.created_at)
@@ -4954,6 +5062,11 @@ async def _acontinue_run(
                 await ahandle_tool_call_updates(
                     agent, run_response=run_response, run_messages=run_messages, tools=_tools
                 )
+
+                if advance_confirmation_queue(agent, run_response, run_messages, _tools):
+                    return await ahandle_agent_run_paused(
+                        agent, run_response, agent_session, run_context=run_context, user_id=user_id
+                    )
 
                 # 8. Get model response
                 model_response: ModelResponse = await acall_model_with_fallback(
@@ -5248,6 +5361,10 @@ async def _acontinue_run_stream(
     from agno.agent._telemetry import alog_agent_telemetry
     from agno.agent._tools import ahandle_tool_call_updates_stream, determine_tools_for_model
 
+    on_confirmation_claim = kwargs.pop("_on_confirmation_claim", None)
+    if not callable(on_confirmation_claim):
+        on_confirmation_claim = None
+
     log_debug(f"Agent Run Continue: {run_response.run_id if run_response else run_id}", center=True)  # type: ignore
 
     agent_session: Optional[AgentSession] = None
@@ -5463,6 +5580,8 @@ async def _acontinue_run_stream(
                     run_response=run_response,
                 )
 
+                await aclaim_confirmation(agent, run_response, on_claim=on_confirmation_claim)
+
                 # Resume the run metrics timer: the run's duration runs from its start to its end, the wait included
                 run_response.metrics = run_response.metrics or RunMetrics()
                 run_response.metrics.resume_timer(run_response.created_at)
@@ -5493,6 +5612,18 @@ async def _acontinue_run_stream(
                     if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                         await araise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
+
+                if advance_confirmation_queue(agent, run_response, run_messages, _tools):
+                    async for next_pause_event in ahandle_agent_run_paused_stream(
+                        agent,
+                        run_response,
+                        agent_session,
+                        run_context=run_context,
+                        user_id=user_id,
+                        yield_run_output=yield_run_output,
+                    ):
+                        yield next_pause_event
+                    return
 
                 # 8. Process model response
                 if agent.output_model is None:
@@ -5891,7 +6022,9 @@ def scrub_run_output_for_storage(agent: Agent, run_response: RunOutput) -> None:
         # store_media is off, so the media was never offloaded — the run keeps no pointer to it.
         scrub_media_from_run_output(run_response, keep_references=False)
 
-    if not agent.store_tool_messages:
+    if not agent.store_tool_messages and not (
+        run_response.status == RunStatus.paused and (run_response.metadata or {}).get("ordered_confirmations")
+    ):
         scrub_tool_results_from_run_output(run_response)
 
     if not agent.store_history_messages:

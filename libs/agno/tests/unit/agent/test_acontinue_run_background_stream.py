@@ -255,6 +255,7 @@ class TestRunIdOnlyContinuePersistsStatus:
         class RecordingRun:
             def __init__(self):
                 self.run_id = "r-1"
+                self.metadata = None
                 self.history = [RunStatus.paused]
                 self._status = RunStatus.paused
 
