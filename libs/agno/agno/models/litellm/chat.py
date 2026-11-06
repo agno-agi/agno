@@ -45,8 +45,8 @@ class LiteLLM(Model):
     api_key: Optional[str] = None
     api_base: Optional[str] = None
     max_tokens: Optional[int] = None
-    temperature: float = 0.7
-    top_p: float = 1.0
+    temperature: Optional[float] = 0.7
+    top_p: Optional[float] = 1.0
     metadata: Optional[Dict[str, Any]] = None
     extra_headers: Optional[Dict[str, Any]] = None
     extra_query: Optional[Dict[str, Any]] = None
@@ -219,6 +219,9 @@ class LiteLLM(Model):
             "top_p": self.top_p,
         }
 
+        # Claude rejects temperature and top_p together, and top_p=1.0 keeps every token anyway.
+        if self.top_p == 1.0 and self.temperature is not None and "claude" in self.id.lower():
+            base_params.pop("top_p")
         if self.max_tokens:
             base_params["max_tokens"] = self.max_tokens
         if self.api_key:
