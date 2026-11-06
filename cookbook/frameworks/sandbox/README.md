@@ -1,6 +1,6 @@
 # Sandboxed agents
 
-Run each turn of a Claude Code or Codex agent in its own computer: a Docker container on a host you operate, or an Amazon Bedrock AgentCore microVM. The agent's workspace and native conversation are checkpointed after every turn, so the next turn can run on a fresh computer anywhere, and AgentOS runs these agents behind a durable queue.
+Run each turn of a Claude Code or Codex agent in its own computer: a Docker container on a host you operate, an Amazon Bedrock AgentCore microVM, or an E2B microVM. The agent's workspace and native conversation are checkpointed after every turn, so the next turn can run on a fresh computer anywhere, and AgentOS runs these agents behind a durable queue.
 
 This is different from `DockerTools`, which gives an agent tools to manage containers on the host. `DockerSandbox` gives each session its own isolated container that the agent works inside.
 
@@ -23,6 +23,7 @@ The code is in `agno.sandbox`. `base.py` and `transfer.py` hold the protocols ev
 |---|---|
 | `agno.sandbox.docker` | `sandbox.py` (`DockerSandbox`), `transfer.py` (`DockerCheckpointTransfer`) |
 | `agno.sandbox.agentcore` | `sandbox.py` (`AgentCoreSandbox`), `transfer.py` (`AgentCoreCheckpointTransfer`), `server.py` (runs inside the microVM) |
+| `agno.sandbox.e2b` | `sandbox.py` (`E2BSandbox`), `transfer.py` (`E2BCheckpointTransfer`), `_archive.py` (checkpoint jobs inside the microVM) |
 
 Import the classes from the package, for example `from agno.sandbox.docker import DockerSandbox`. The checkpoint archive and stores in `checkpoint.py` and the runtime in `runtime.py` and `client.py` are shared by every provider.
 
@@ -32,8 +33,9 @@ Import the classes from the package, for example `from agno.sandbox.docker impor
 |---|---|
 | `docker/` | Cookbooks for `DockerSandbox`: execution, warm reuse, the runtime transport, checkpoints, the session coordinator and AgentOS. Start with [docker/README.md](docker/README.md). |
 | `agentcore/` | Deploying the runtime to Amazon Bedrock AgentCore and running the same agents there. Start with [agentcore/README.md](agentcore/README.md), which has the step-by-step setup. |
-| `Dockerfile`, `build_image.py` | The one runtime image both providers use; `build_image.py --tag agno-sandbox:local` builds it from the package sources. |
-| `warm_turns.py` | Provider-neutral: four coordinator turns on Docker or AgentCore showing warm reuse and the cold fallback, with create and restore counted per turn. |
+| `e2b/` | Building an E2B template and running the same agents on E2B microVMs, including a load test. Start with [e2b/README.md](e2b/README.md). |
+| `Dockerfile`, `build_image.py` | The runtime image Docker and AgentCore use, which `e2b/e2b_template.py` mirrors; `build_image.py --tag agno-sandbox:local` builds it from the package sources. |
+| `warm_turns.py` | Provider-neutral: four coordinator turns on Docker, AgentCore or E2B showing warm reuse and the cold fallback, with create and restore counted per turn. |
 
 Each folder keeps its own `TEST_LOG.md`.
 
@@ -44,7 +46,7 @@ Each folder keeps its own `TEST_LOG.md`.
 AGNO_TEST_DOCKER_IMAGE=python:3.12-slim .venv/bin/python -m pytest libs/agno/tests/integration/sandbox -q
 ```
 
-Integration tests use unique namespaces and remove only their own containers. See [docker/TEST_LOG.md](docker/TEST_LOG.md) and [agentcore/TEST_LOG.md](agentcore/TEST_LOG.md) for the tested environment and limits.
+Integration tests use unique namespaces and remove only their own containers. See [docker/TEST_LOG.md](docker/TEST_LOG.md) and [agentcore/TEST_LOG.md](agentcore/TEST_LOG.md) and [e2b/TEST_LOG.md](e2b/TEST_LOG.md) for the tested environment and limits.
 
 ## Checkpoint archive and storage
 
