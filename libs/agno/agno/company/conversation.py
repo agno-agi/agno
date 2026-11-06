@@ -109,7 +109,10 @@ async def asubmit_company_task(
         "component_type": component_type,
         "component_id": component_id,
     }
-    if task.get("session_id") == origin["session_id"]:
+    from uuid import NAMESPACE_URL, uuid5
+
+    worker_session = task.get("session_id") or str(uuid5(NAMESPACE_URL, "agno:company:task:" + task_id))
+    if worker_session == origin["session_id"]:
         raise ValueError("Task worker session must differ from the conversation session")
     transport = _conversation_task_submission.set(task_id)
     try:
@@ -122,6 +125,9 @@ async def asubmit_company_task(
             )
     finally:
         _conversation_task_submission.reset(transport)
+    associated = await _call(agent_os._company_db, "associate_task_conversation", task_id, receipt["run_id"], origin)
+    if associated is None:
+        raise ValueError("Task attempt changed before conversation association; reload its status")
     return {"task_id": task_id, **receipt}
 
 
@@ -147,11 +153,12 @@ async def aget_conversation_tasks(
         tasks, total = await _call(agent_os._company_db, "get_tasks", limit=100, page=page)
         for task in tasks:
             origins = [
-                event["company_conversation"]
+                origin
                 for event in task.get("transitions", [])
-                if event.get("company_conversation", {}).get("session_id") == session_id
-                and event["company_conversation"].get("user_id") == identity
-                and (origin_run_id is None or event["company_conversation"].get("run_id") == origin_run_id)
+                for origin in [event.get("company_conversation", {}), *event.get("company_conversations", [])]
+                if origin.get("session_id") == session_id
+                and origin.get("user_id") == identity
+                and (origin_run_id is None or origin.get("run_id") == origin_run_id)
             ]
             if origins:
                 rows.append(
@@ -204,11 +211,10 @@ async def asubmit_conversation(
     worker = getattr(getattr(app, "state", None), "queue_worker", None)
     if worker is None or not worker.config.durable or not store_serializes_sessions(worker.store):
         raise ValueError("Company conversations require a durable queue with session serialization")
-    session = await _call(manager.db, "get_session", session_id, deserialize=False)
-    if session is not None and session.get("user_id") != identity:
-        raise PermissionError("Conversation belongs to another caller")
     if not message.strip():
         raise ValueError("A message is required")
+    session = await _call(manager.db, "claim_company_conversation", session_id, identity, MANAGER_TEAM_ID)
+    _check_conversation_owner(session, identity)
     stable_id = (
         run_id
         or _conversation_run_id.get()
@@ -246,6 +252,7 @@ async def asubmit_conversation(
         "session_id": session_id,
         "run_id": stable_id,
         "user_id": identity,
+        "authorization_required": authority is not None or bool(agent_os.authorization),
         "component_type": "team",
         "component_id": MANAGER_TEAM_ID,
     }
@@ -274,3 +281,45 @@ async def asubmit_conversation(
 def submit_conversation(agent_os: Any, message: str, run_context: Any, **kwargs: Any) -> Dict[str, Any]:
     """Synchronous counterpart of asubmit_conversation."""
     return asyncio.run(asubmit_conversation(agent_os, message, run_context, **kwargs))
+
+
+def _check_conversation_owner(session: Optional[Dict[str, Any]], identity: Optional[str]) -> None:
+    from agno.registry._reserved import _manager_id
+
+    if session is None or session.get("user_id") != identity:
+        raise PermissionError("Conversation belongs to another caller")
+    if session.get("session_type") != "team" or _manager_id(session.get("team_id")) != MANAGER_TEAM_ID:
+        raise PermissionError("Session belongs to another component")
+
+
+async def _check_conversation_turn(worker: Any, job: Dict[str, Any], component: Any) -> None:
+    """Recheck persisted ownership and current caller grants before a queued coordinator runs."""
+    from agno.company.execution import _TaskRunRefused
+
+    origin = (job.get("payload") or {}).get("company_conversation")
+    if not origin or (job.get("payload") or {}).get("company_task_id"):
+        return
+    if job.get("component_type") != "team" or job.get("component_id") != MANAGER_TEAM_ID:
+        raise _TaskRunRefused("Conversation coordinator changed")
+    identity = job.get("user_id")
+    try:
+        session = await _call(component.db, "get_session", job["session_id"], deserialize=False)
+        _check_conversation_owner(session, identity)
+        if origin.get("authorization_required"):
+            authority = current_authorization()
+            if authority is None or authority.context.principal_id != identity:
+                raise PermissionError("Verified conversation caller is required")
+            await authority.arequire("teams", "run", MANAGER_TEAM_ID)
+            state = getattr(worker.authorization_app, "state", None)
+            directory = getattr(state, "user_store", None)
+            if directory is not None:
+                try:
+                    disabled = await directory.ais_disabled(identity)
+                except Exception:
+                    if getattr(state, "user_directory_fail_closed", False):
+                        raise
+                    disabled = False
+                if disabled:
+                    raise PermissionError("User is disabled")
+    except PermissionError as exc:
+        raise _TaskRunRefused(str(exc)) from exc

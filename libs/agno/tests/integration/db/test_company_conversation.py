@@ -111,6 +111,7 @@ async def system(request):
         id="conversation-test",
         authorization=auth,
         user_isolation=True,
+        user_directory=True if request.param else False,
         db=db,
         agents=[worker_agent],
         company=CompanyConfig(),
@@ -320,3 +321,113 @@ async def test_committed_ticket_recovers_conversation_after_projection_failure(s
     assert task["status"] == "in_review"
     start = next(event for event in task["transitions"] if event.get("company_conversation"))
     assert start["company_conversation"]["run_id"] == response.json()["run_id"]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_conversations_join_direct_submission_without_losing_origins(system):
+    client, db, worker, _, _ = system
+    task = await accepted(client)
+    direct = await client.post("/company/tasks/" + task["id"] + "/runs", json={})
+    assert direct.status_code == 202, direct.text
+    held = await worker.store.claim_job(worker.worker_id, worker.config.lock_grace_seconds)
+    assert held["id"] == direct.json()["run_id"]
+    receipts = await asyncio.gather(
+        *[
+            client.post("/company/conversations/" + name + "/messages", json={"message": "submit:" + task["id"]})
+            for name in ["first-join", "second-join"]
+        ]
+    )
+    assert all(response.status_code == 202 for response in receipts)
+    assert all(job["status"] == "completed" for job in await asyncio.gather(execute_one(worker), execute_one(worker)))
+    for name, receipt in zip(["first-join", "second-join"], receipts):
+        result = await client.get(
+            "/company/conversations/" + name + "/tasks", params={"origin_run_id": receipt.json()["run_id"]}
+        )
+        assert result.status_code == 200
+        assert result.json()[0]["run_id"] == direct.json()["run_id"]
+    replica = PostgresDb.from_dict(db.to_dict())
+    try:
+        event = replica.get_task(task["id"])["transitions"][-1]
+        origins = [event["company_conversation"], *event["company_conversations"]]
+        assert {origin["session_id"] for origin in origins} == {"first-join", "second-join"}
+    finally:
+        replica.close()
+    assert await worker.store.claim_job(worker.worker_id, worker.config.lock_grace_seconds) is None
+    await worker._execute_claimed(held)
+    assert db.get_task(task["id"])["status"] == "in_review"
+
+
+@pytest.mark.asyncio
+async def test_first_message_atomically_claims_conversation_owner(system):
+    client, db, worker, agent_os, _ = system
+    if not agent_os.authorization:
+        pytest.skip("Verified ownership requires authentication")
+    # Initialize ordinary run tables before racing the first request to this session.
+    warm = await client.post("/company/conversations/warm/messages", json={"message": "Hello"})
+    assert warm.status_code == 202
+    await execute_one(worker)
+    responses = await asyncio.gather(
+        *[
+            client.post(
+                "/company/conversations/shared-new/messages", json={"message": "Hello"}, headers=headers(user=user)
+            )
+            for user in ["alice", "bob"]
+        ]
+    )
+    assert sorted(response.status_code for response in responses) == [202, 403]
+    owner = db.get_session("shared-new", deserialize=False)["user_id"]
+    assert responses[["alice", "bob"].index(owner)].status_code == 202
+    assert (await execute_one(worker))["status"] == "completed"
+    assert await worker.store.claim_job(worker.worker_id, worker.config.lock_grace_seconds) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("system", ["managed"], indirect=True)
+@pytest.mark.parametrize("revoke", ["role", "disabled", "owner", "component"])
+async def test_queued_coordinator_rechecks_authority_and_session(system, revoke):
+    client, db, worker, agent_os, _ = system
+    receipt = await client.post("/company/conversations/revoked/messages", json={"message": "Hello"})
+    assert receipt.status_code == 202, receipt.text
+    if revoke == "role":
+        agent_os._test_authorization.unassign("alice", "caller")
+    elif revoke == "disabled":
+        await agent_os.user_directory.aset_disabled("alice", True)
+    else:
+        session = db.get_session("revoked")
+        if revoke == "owner":
+            table = db._get_table(table_type="sessions")
+            with db.Session() as transaction, transaction.begin():
+                transaction.execute(table.update().where(table.c.session_id == "revoked").values(user_id="bob"))
+        else:
+            session.team_id = "different-team"
+            db.upsert_session(session)
+    ran = []
+    original = agent_os.manager.model.ainvoke
+
+    async def record(*args, **kwargs):
+        ran.append(True)
+        return await original(*args, **kwargs)
+
+    agent_os.manager.model.ainvoke = record
+    assert (await execute_one(worker))["status"] == "failed"
+    assert ran == []
+
+
+@pytest.mark.asyncio
+async def test_unassigned_task_session_cannot_be_used_as_conversation(system):
+    from uuid import NAMESPACE_URL, uuid5
+
+    client, db, worker, _, _ = system
+    task = await accepted(client)
+    table = db._get_table(table_type="tasks")
+    with db.Session() as session, session.begin():
+        session.execute(table.update().where(table.c.id == task["id"]).values(session_id=None))
+    assert db.get_task(task["id"])["session_id"] is None
+    collision = str(uuid5(NAMESPACE_URL, "agno:company:task:" + task["id"]))
+    receipt = await client.post(
+        "/company/conversations/" + collision + "/messages", json={"message": "submit:" + task["id"]}
+    )
+    assert receipt.status_code == 202
+    await execute_one(worker)
+    assert db.get_task(task["id"])["status"] == "ready"
+    assert await worker.store.claim_job(worker.worker_id, worker.config.lock_grace_seconds) is None

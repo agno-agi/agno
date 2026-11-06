@@ -2090,6 +2090,16 @@ class BaseDb(ABC):
         """Reserve a Task attempt conditionally; user_id records the starting caller."""
         raise NotImplementedError("Company execution not supported by this database")
 
+    def claim_company_conversation(self, session_id: str, user_id: Optional[str], team_id: str) -> Dict[str, Any]:
+        """Initialize a conversation session once and return its persisted owner/component."""
+        raise NotImplementedError("Company conversation not supported by this database")
+
+    def associate_task_conversation(
+        self, task_id: str, run_id: str, conversation: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Atomically associate a conversation with the Task's current run."""
+        raise NotImplementedError("Company execution not supported by this database")
+
     def complete_task_run(
         self,
         task_id: str,
@@ -4146,6 +4156,16 @@ class AsyncBaseDb(ABC):
         conversation: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Reserve a Task attempt conditionally; user_id records the starting caller."""
+        raise NotImplementedError("Company execution not supported by this database")
+
+    async def claim_company_conversation(self, session_id: str, user_id: Optional[str], team_id: str) -> Dict[str, Any]:
+        """Initialize a conversation session once and return its persisted owner/component."""
+        raise NotImplementedError("Company conversation not supported by this database")
+
+    async def associate_task_conversation(
+        self, task_id: str, run_id: str, conversation: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Atomically associate a conversation with the Task's current run."""
         raise NotImplementedError("Company execution not supported by this database")
 
     async def complete_task_run(

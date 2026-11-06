@@ -2339,6 +2339,9 @@ class QueueWorker:
             slot_cm = background_run_slot(run_id=job_id)
             await slot_cm.__aenter__()
             slot_acquired = True
+            from agno.company.conversation import _check_conversation_turn
+
+            await _check_conversation_turn(self, job, component)
             # F3: the run is now EXECUTING - pollers must see RUNNING, not the
             # accept-time PENDING (arun's own persistence only lands at
             # cleanup). Fenced with this attempt's generation; best-effort.
