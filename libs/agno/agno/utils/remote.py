@@ -15,9 +15,7 @@ def serialize_input(
     elif isinstance(input, dict):
         return json.dumps(input)
     elif isinstance(input, list):
-        if any(isinstance(item, Message) for item in input):
-            return json.dumps([item.to_dict() for item in input])
-        else:
-            return json.dumps(input)
+        # Local runs accept Message objects and dictionaries in the same conversation.
+        return json.dumps([item.to_dict() if isinstance(item, Message) else item for item in input])
     elif isinstance(input, BaseModel):
         return input.model_dump_json()
