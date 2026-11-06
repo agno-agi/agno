@@ -647,12 +647,24 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
         finally:
             _automation_deadline.reset(token)
 
+    async def _continue_managed_task(self, task_id):
+        """Resume bounded outcome management after a settled worker ticket."""
+        from agno.company.lifecycle import _advance_task, _delegation
+
+        task = await _call(self.agent_os._company_db, "get_task", task_id)
+        if task is None or _delegation(task) is None:
+            return
+        await _advance_task(self.agent_os, self.app, task)
+        task = await _call(self.agent_os._company_db, "get_task", task_id)
+        if task is not None and task["status"] == "ready":
+            await self._dispatch(task)
+
     async def _tick(self):
         db = self.agent_os._company_db
         # Snapshot the candidate ids before mutation so paging cannot skip work.
         tasks: List[Dict[str, Any]] = []
         seen = set()
-        for status in ("backlog", "ready", "in_progress"):
+        for status in ("backlog", "ready", "in_progress", "in_review", "done"):
             page = 1
             while True:
                 _check_automation_deadline()
@@ -673,7 +685,15 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
                 if task is None:
                     raise _AutomationSkip("Task was deleted")
                 from agno.company.execution import _recover_task
+                from agno.company.lifecycle import _advance_task, _delegation
 
+                if _delegation(task) is not None and task.get("result") is not None:
+                    managed = await _advance_task(self.agent_os, self.app, task)
+                    if managed is not None:
+                        outcomes.append(managed)
+                    task = await _call(db, "get_task", candidate["id"])
+                    if task is None or task["status"] not in {"ready", "in_progress"}:
+                        continue
                 queue = getattr(self.app.state, "queue_worker", None)
                 if task.get("job_id") and queue is not None:
                     recovered = await _recover_task(self.agent_os, queue, task)

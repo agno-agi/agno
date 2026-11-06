@@ -21,6 +21,8 @@ class CompanyConfig:
     name: str = "Company"
     description: Optional[str] = None
 
+    max_task_attempts: int = 3
+
     def __post_init__(self) -> None:
         from agno.db.schemas.company import validate_company_details
 

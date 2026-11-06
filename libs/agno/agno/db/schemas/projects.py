@@ -36,7 +36,12 @@ def project_transition_fields(
     """Build lifecycle fields after validating a transition; callers persist atomically."""
     if not isinstance(reason, str) or not reason.strip():
         raise ValueError("A transition requires a non-empty reason")
-    if target not in PROJECT_TRANSITIONS.get(existing["status"], set()):
+    from agno.company.lifecycle import _decision
+
+    assessment = ((_decision.get() or {}).get("record") or {}).get("operation") == "project_assessment"
+    if target not in PROJECT_TRANSITIONS.get(existing["status"], set()) and not (
+        assessment and target == existing["status"] == "active"
+    ):
         raise ValueError(f"Invalid project transition from {existing['status']} to {target}")
     if target == "done":
         validate_project_completion(tasks)
@@ -46,6 +51,9 @@ def project_transition_fields(
         *(existing.get("transitions") or []),
         {"from": existing["status"], "target": target, "reason": reason, "user_id": accepted_by, "created_at": now},
     ]
+    from agno.company.lifecycle import _stamp_decision
+
+    _stamp_decision(existing, fields)
     return fields
 
 

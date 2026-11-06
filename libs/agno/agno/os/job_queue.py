@@ -2096,6 +2096,19 @@ class QueueWorker:
                 "store could not commit the write. The ticket stays RUNNING with an unrefreshed lease and "
                 "will be collected by the sweep."
             )
+        if applied and self.authorization_app is not None:
+            executor = getattr(self.authorization_app.state, "scheduler_executor", None)
+            continuation = getattr(executor, "_continue_managed_task", None)
+            if continuation is not None:
+                try:
+                    job = await self.store.get_job(job_id)
+                    task_id = ((job or {}).get("payload") or {}).get("company_task_id")
+                    if task_id:
+                        await continuation(task_id)
+                except Exception as exc:
+                    # The terminal worker must never rerun because assessment or
+                    # delivery failed. The existing Company tick resumes history.
+                    log_error(f"Company management after run {job_id} failed: {exc}")
         return applied
 
     async def _aretry_or_fail_ticket(

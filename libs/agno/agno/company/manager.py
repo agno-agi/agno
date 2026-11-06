@@ -208,6 +208,7 @@ class CompanyManager:
         self,
         *,
         product_id: str,
+        id: Optional[str] = None,
         name: str,
         outcome: Optional[str] = None,
         target_date: Optional[int] = None,
@@ -223,7 +224,7 @@ class CompanyManager:
         validate_project_fields(fields)
         if self.db.get_product(product_id, user_id=scoped_user_id) is None:
             raise LookupError("Product not found")
-        proposal_id = _project_proposal_id(product_id, name)
+        proposal_id = id or _project_proposal_id(product_id, name)
         if proposal_id is not None:
             existing = self.db.get_project(proposal_id, include_deleted=True)
             if existing is not None:
@@ -345,6 +346,7 @@ class CompanyManager:
         self,
         *,
         product_id: str,
+        id: Optional[str] = None,
         title: str,
         brief: Optional[str] = None,
         project_id: Optional[str] = None,
@@ -390,7 +392,7 @@ class CompanyManager:
         task = {
             **fields,
             "product_id": product_id,
-            "id": str(uuid4()),
+            "id": id or str(uuid4()),
             "status": "backlog",
             "origin": origin,
             "routine_id": routine_id,
@@ -1113,6 +1115,7 @@ class AsyncCompanyManager:
         self,
         *,
         product_id: str,
+        id: Optional[str] = None,
         name: str,
         outcome: Optional[str] = None,
         target_date: Optional[int] = None,
@@ -1128,7 +1131,7 @@ class AsyncCompanyManager:
         validate_project_fields(fields)
         if await self.db.get_product(product_id, user_id=scoped_user_id) is None:
             raise LookupError("Product not found")
-        proposal_id = _project_proposal_id(product_id, name)
+        proposal_id = id or _project_proposal_id(product_id, name)
         if proposal_id is not None:
             existing = await self.db.get_project(proposal_id, include_deleted=True)
             if existing is not None:
@@ -1250,6 +1253,7 @@ class AsyncCompanyManager:
         self,
         *,
         product_id: str,
+        id: Optional[str] = None,
         title: str,
         brief: Optional[str] = None,
         project_id: Optional[str] = None,
@@ -1295,7 +1299,7 @@ class AsyncCompanyManager:
         task = {
             **fields,
             "product_id": product_id,
-            "id": str(uuid4()),
+            "id": id or str(uuid4()),
             "status": "backlog",
             "origin": origin,
             "routine_id": routine_id,

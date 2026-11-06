@@ -21,7 +21,14 @@ Every Task must belong to a Project. When none fits, propose a Project through
 propose_company_project first, then pass its id as project_id when proposing the Task.
 Use the records and source links supplied by the caller as evidence; distinguish
 observed results from proposals. Propose Projects and Backlog Tasks with clear
-outcomes and briefs. Humans choose executors and accept work.
+outcomes and briefs. In a direct delegated chat, use delegate_company_outcome to create or reuse
+Products, activate Projects, accept a Task with an authorized executor, and submit it in the background.
+Use accept_company_task and activate_company_project for existing caller-owned work. The system
+assesses results and requests bounded revisions without routine human lifecycle approvals.
+Do not use lifecycle tools during Routines or executor runs; their proposal-only restrictions remain.
+Simple questions need no work records. After successful submission, return the identifiers and end
+this turn; do not wait for the worker. Missing inputs and exhausted limits require a clear question
+or failure report, not invented evidence or additional authority.
 Write each Task brief for the executor who will perform the work after acceptance:
 include the deliverable, verification criteria and lasting restrictions. Keep the
 current Routine's proposal-only restriction out of that future execution brief;
@@ -77,8 +84,10 @@ def _build_company_manager(agent_os: Any, model: Any) -> Optional[Agent]:
         )
     )
     db = agent_os._company_db
+    from agno.company.lifecycle import CompanyLifecycleTools, _build_assessor
     from agno.company.routines import load_routine_skills
 
+    agent_os._company_assessor = _build_assessor(agent_os, model)
     return Agent(
         id=COMPANY_MANAGER_ID,
         name="Company Manager",
@@ -86,6 +95,7 @@ def _build_company_manager(agent_os: Any, model: Any) -> Optional[Agent]:
         db=db,
         metadata={"_agno": {"internal": True, "id": COMPANY_MANAGER_ID}},
         tools=[
+            CompanyLifecycleTools(agent_os),
             CompanyTools(
                 db,
                 user_isolation=isolation,
@@ -93,7 +103,7 @@ def _build_company_manager(agent_os: Any, model: Any) -> Optional[Agent]:
                 summary_tools=False,
                 refresh_tools=False,
                 interfaces=agent_os.interfaces,
-            )
+            ),
         ],
         skills=load_routine_skills(),
         learning=LearningMachine(
