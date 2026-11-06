@@ -241,6 +241,42 @@ def test_read_file_too_long_by_lines_hint_includes_search():
         assert "search_content" in result
 
 
+def test_read_file_at_max_file_lines_is_readable():
+    """A file with exactly max_file_lines lines must not be rejected as too long.
+
+    Regression for #11460: the old count("\\n") + 1 over-counted any file
+    ending in a newline by one line, so a 5-line file was refused with
+    "6 lines > 5".
+    """
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir, max_file_lines=5)
+        (Path(tmp_dir) / "notes.txt").write_text("one\ntwo\nthree\nfour\nfive\n")
+        out = ws.read_file("notes.txt")
+        assert not out.startswith("Error"), out
+        assert out == "     1\tone\n     2\ttwo\n     3\tthree\n     4\tfour\n     5\tfive"
+
+
+def test_read_file_at_max_file_lines_without_trailing_newline():
+    """The boundary also holds for a file that does not end with a newline."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir, max_file_lines=5)
+        (Path(tmp_dir) / "notes.txt").write_text("one\ntwo\nthree\nfour\nfive")
+        out = ws.read_file("notes.txt")
+        assert not out.startswith("Error"), out
+        assert out == "     1\tone\n     2\ttwo\n     3\tthree\n     4\tfour\n     5\tfive"
+
+
+def test_read_file_over_max_file_lines_reports_real_count():
+    """A longer file is still refused, and the message carries the real line count."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir, max_file_lines=5)
+        # 6 lines, trailing newline: the buggy count reported 7.
+        (Path(tmp_dir) / "many.txt").write_text("\n".join(str(i) for i in range(1, 7)) + "\n")
+        result = ws.read_file("many.txt")
+        assert result.startswith("Error: file too long (6 lines > 5)"), result
+        assert "search_content" in result
+
+
 # ------------------------------------------------------------------
 # list_files (richer entries + recursive)
 # ------------------------------------------------------------------

@@ -181,6 +181,18 @@ def _extract_snippet(content: str, query: str, context_chars: int = 200) -> str:
     return snippet
 
 
+def _line_count(contents: str) -> int:
+    """Number of real lines, ignoring the empty element a terminal newline produces.
+
+    A file ending with a newline has as many lines as it has newline characters —
+    ``"a\\nb\\n"`` is 2 lines, not 3. Matches ``agno.fs.toolkit._line_count``.
+    """
+    lines = contents.split("\n")
+    if lines and lines[-1] == "":
+        lines = lines[:-1]
+    return len(lines)
+
+
 def _format_with_line_numbers(text: str, start_line: int = 1) -> str:
     """Prefix each line with its 1-indexed number, ``cat -n`` style.
 
@@ -684,7 +696,7 @@ class Workspace(Toolkit):
                         "Use start_line/end_line to read a chunk, "
                         "or use search_content to find specific text first."
                     )
-                line_count = contents.count("\n") + 1
+                line_count = _line_count(contents)
                 if line_count > self.max_file_lines:
                     return (
                         f"Error: file too long ({line_count} lines > {self.max_file_lines}). "
