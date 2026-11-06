@@ -15,9 +15,9 @@ def run_shell_command(args: List[str], tail: int = 100) -> str:
         if result.returncode != 0:
             return f"Error: {result.stderr}"
 
-        # return only the last n lines of the output; tail=0 returns nothing
-        # ([-0:] would return the whole output).
-        return "\n".join(result.stdout.split("\n")[-tail:]) if tail > 0 else ""
+        # Keep line endings so a trailing newline does not count as an extra empty
+        # line; tail=0 asks for no lines ([-0:] would return the whole output).
+        return "".join(result.stdout.splitlines(keepends=True)[-tail:]) if tail > 0 else ""
     except Exception as e:
         log_warning(f"Failed to run shell command: {str(e)}")
         return f"Error: {e}"

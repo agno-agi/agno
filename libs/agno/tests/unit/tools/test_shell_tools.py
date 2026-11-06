@@ -59,3 +59,22 @@ def test_utils_shell_zero_tail_returns_empty():
         [sys.executable, "-c", "import sys; sys.stdout.write(chr(97) + chr(10) + chr(98) + chr(10) + chr(99))"], tail=0
     )
     assert out == ""
+
+
+_TWO_LINES = [sys.executable, "-c", "print('first'); print('second')"]
+
+
+def test_run_shell_command_tail_ignores_trailing_newline():
+    """A trailing newline must not take up one of the requested tail lines."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tools = ShellTools(base_dir=tmp_dir)
+        assert tools.run_shell_command(_TWO_LINES, tail=1) == "second\n"
+        assert tools.run_shell_command(_TWO_LINES, tail=2) == "first\nsecond\n"
+        assert tools.run_shell_command(_TWO_LINES) == "first\nsecond\n"
+
+
+def test_utils_shell_tail_ignores_trailing_newline():
+    from agno.utils.shell import run_shell_command as util_run_shell_command
+
+    assert util_run_shell_command(_TWO_LINES, tail=1) == "second\n"
+    assert util_run_shell_command(_TWO_LINES, tail=2) == "first\nsecond\n"
