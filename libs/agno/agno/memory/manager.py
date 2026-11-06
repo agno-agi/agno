@@ -1436,7 +1436,7 @@ class MemoryManager:
             Returns:
                 str: A message indicating if the memory was cleared successfully or not.
             """
-            db.clear_memories()
+            self.clear_user_memories(user_id=user_id)
             log_debug("Memory cleared")
             return "Memory cleared successfully"
 
@@ -1576,10 +1576,7 @@ class MemoryManager:
             Returns:
                 str: A message indicating if the memory was cleared successfully or not.
             """
-            if isinstance(db, AsyncBaseDb):
-                await db.clear_memories()
-            else:
-                db.clear_memories()
+            await self.aclear_user_memories(user_id=user_id)
             log_debug("Memory cleared")
             return "Memory cleared successfully"
 
