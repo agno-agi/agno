@@ -87,6 +87,11 @@ def lock_child(sess: Any, products: Any, projects: Any, table: Any, record_id: s
 
 def open_project_tasks(tasks: Any, project_id: str) -> Any:
     """Visible non-terminal Tasks keep a Project from finishing or retiring; archived ones are hidden everywhere."""
+    from agno.company.lifecycle import _decision
+
+    marker = (_decision.get() or {}).get("record") or {}
+    if marker.get("operation") == "complete_project":
+        return select(tasks).where(tasks.c.project_id == project_id, tasks.c.deleted_at.is_(None))
     return select(tasks).where(
         tasks.c.project_id == project_id,
         tasks.c.deleted_at.is_(None),

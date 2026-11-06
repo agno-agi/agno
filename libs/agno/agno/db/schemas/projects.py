@@ -45,6 +45,12 @@ def project_transition_fields(
         raise ValueError(f"Invalid project transition from {existing['status']} to {target}")
     if target == "done":
         validate_project_completion(tasks)
+        marker = (_decision.get() or {}).get("record") or {}
+        if marker.get("operation") == "complete_project":
+            from agno.company.lifecycle import _project_evidence_key
+
+            if _project_evidence_key(tasks) != marker.get("assessed_tasks"):
+                raise ValueError("Project evidence changed during assessment")
     now = int(time.time())
     fields: Dict[str, Any] = {"status": target, "updated_at": now}
     fields["transitions"] = [

@@ -41,10 +41,14 @@ def _stamp_decision(existing: Dict[str, Any], fields: Dict[str, Any]) -> None:
         return
     if value["expected"] is not None and existing.get("transitions", []) != value["expected"]:
         raise ValueError("Work changed during the system decision; read it again")
+    for key in ("brief", "outcome"):
+        if key in value["record"] and key in existing and value["record"][key] != existing[key]:
+            raise ValueError("Delegated outcome changed during assessment")
     fields["transitions"][-1]["system_decision"] = {"managed_by": "super-agent", **value["record"]}
     from agno.run.authorization import authorization_snapshot
 
-    fields["transitions"][-1][AUTHORIZATION_KEY] = authorization_snapshot()
+    if "project_id" in existing:
+        fields["transitions"][-1][AUTHORIZATION_KEY] = authorization_snapshot()
 
 
 def _delegation(task: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -487,6 +491,7 @@ async def _advance_task(os: Any, app: Any, task: Dict[str, Any]) -> Optional[Dic
     target = "done" if assessment.decision == "done" else "ready" if assessment.decision == "revise" else "backlog"
     marker = {
         "operation": "assessment",
+        "brief": task["brief"],
         "task_id": task["id"],
         "authorizing_identity": identity,
         "run_id": task["job_id"],
@@ -547,7 +552,7 @@ async def _complete_project(
         page += 1
     if not tasks or any(task["status"] != "done" for task in tasks):
         return None
-    signature = {task["id"]: task.get("job_id") for task in tasks}
+    signature = _project_evidence_key(tasks)
     if any((entry.get("system_decision") or {}).get("assessed_tasks") == signature for entry in project["transitions"]):
         return None
     evidence = {
@@ -572,6 +577,7 @@ async def _complete_project(
     marker = {
         "operation": "complete_project" if assessment.decision == "done" else "project_assessment",
         "assessed_tasks": signature,
+        "outcome": project["outcome"],
         "project_id": project["id"],
         "authorizing_identity": identity,
         **assessment.model_dump(),
@@ -588,3 +594,18 @@ async def _complete_project(
             expected_updated_at=project["updated_at"],
         )
     return {"project_id": project["id"], "status": result["status"], "reason": assessment.reason} if result else None
+
+
+def _project_evidence_key(tasks: Any) -> Dict[str, str]:
+    from hashlib import sha256
+
+    return {
+        task["id"]: sha256(
+            json.dumps(
+                {key: task.get(key) for key in ("status", "brief", "job_id", "result", "transitions")},
+                sort_keys=True,
+                default=str,
+            ).encode()
+        ).hexdigest()
+        for task in tasks
+    }
