@@ -67,7 +67,7 @@ def _bind_ownership(component, component_id, session_id, run_id):
     sess = AgentSession(
         session_id=session_id,
         agent_id=component_id,
-        runs=[RunOutput(run_id=run_id, agent_id=component_id, session_id=session_id)],
+        runs=[RunOutput(run_id=run_id, agent_id=component_id, session_id=session_id, execution_origin="inline")],
     )
 
     async def _fake_aget_session(session_id=None, user_id=None, **kw):

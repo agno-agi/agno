@@ -111,7 +111,9 @@ class GcsJsonDb(BaseDb):
         """Get the full blob name including prefix for a given filename."""
         return f"{self.prefix}{filename}.json"
 
-    def _read_json_file(self, filename: str, create_table_if_not_found: Optional[bool] = False) -> List[Dict[str, Any]]:
+    def _read_json_file(
+        self, filename: str, create_table_if_not_found: Optional[bool] = False, *, raise_on_error: bool = False
+    ) -> List[Dict[str, Any]]:
         """Read data from a JSON file in GCS, creating it if it doesn't exist.
 
         Args:
@@ -134,6 +136,8 @@ class GcsJsonDb(BaseDb):
         try:
             data_str = blob.download_as_bytes().decode("utf-8")
         except NotFound:
+            if raise_on_error:
+                raise RuntimeError(f"The {filename} blob is unavailable")
             if create_table_if_not_found:
                 log_debug(f"Creating new GCS JSON file: {blob_name}")
                 blob.upload_from_string("[]", content_type="application/json")
@@ -196,8 +200,12 @@ class GcsJsonDb(BaseDb):
 
     # -- Run methods --
 
-    def _read_runs_file(self, create_table_if_not_found: Optional[bool] = True) -> List[Dict[str, Any]]:
-        return self._read_json_file(self.runs_table_name, create_table_if_not_found=create_table_if_not_found)
+    def _read_runs_file(
+        self, create_table_if_not_found: Optional[bool] = True, *, raise_on_error: bool = False
+    ) -> List[Dict[str, Any]]:
+        return self._read_json_file(
+            self.runs_table_name, create_table_if_not_found=create_table_if_not_found, raise_on_error=raise_on_error
+        )
 
     def _write_runs_file(self, rows: List[Dict[str, Any]]) -> None:
         self._write_json_file(self.runs_table_name, rows)
@@ -338,9 +346,11 @@ class GcsJsonDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        *,
+        raise_on_error: bool = False,
     ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
         try:
-            rows = self._read_runs_file(create_table_if_not_found=False)
+            rows = self._read_runs_file(create_table_if_not_found=False, raise_on_error=raise_on_error)
             if session_id is not None:
                 rows = [r for r in rows if r.get("session_id") == session_id]
             if user_id is not None:

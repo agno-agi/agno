@@ -24,6 +24,7 @@ from agno.db.redis.utils import (
     serialize_data,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
+from agno.db.schemas.jobs import QUEUE_ACCEPTANCE_TASK_IDS, QUEUE_ACCEPTANCE_TOKEN
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
@@ -258,7 +259,7 @@ class RedisDb(BaseDb):
             log_error(f"Error deleting record {record_id}: {str(e)}")
             return False
 
-    def _get_all_records(self, table_type: str) -> List[Dict[str, Any]]:
+    def _get_all_records(self, table_type: str, *, raise_on_error: bool = False) -> List[Dict[str, Any]]:
         """Generic method to get all records for a table type.
 
         Args:
@@ -276,6 +277,8 @@ class RedisDb(BaseDb):
             records = []
             for key in keys:
                 data = self.redis_client.get(key)
+                if data is None and raise_on_error:
+                    raise RuntimeError(f"Indexed {table_type} record {key} is unavailable")
                 if data:
                     records.append(deserialize_data(data))  # type: ignore
 
@@ -283,6 +286,8 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error getting all records for {table_type}: {str(e)}")
+            if raise_on_error:
+                raise
             return []
 
     def _schema_version_key(self, table_name: str) -> str:
@@ -527,6 +532,8 @@ class RedisDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        *,
+        raise_on_error: bool = False,
     ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
         """Get all runs matching the given filters.
 
@@ -535,20 +542,28 @@ class RedisDb(BaseDb):
         """
         try:
             # Fast path: filter by session_id uses the index
-            if session_id is not None:
+            if session_id is not None and raise_on_error:
+                # The session index is updated separately from the run key. Verify
+                # against the complete store so an interrupted upsert is visible.
+                rows = [
+                    row
+                    for row in self._get_all_records("runs", raise_on_error=True)
+                    if row.get("session_id") == session_id
+                ]
+            elif session_id is not None:
                 index_key = self._runs_by_session_index_key(session_id)
                 try:
                     run_ids: List[Any] = list(self.redis_client.zrange(index_key, 0, -1))  # type: ignore[arg-type]
                 except Exception:
                     run_ids = []
-                rows: List[Dict[str, Any]] = []
+                rows = []
                 for rid in run_ids or []:
                     run_id = rid.decode() if isinstance(rid, bytes) else str(rid)
                     row = self._get_record("runs", run_id)
                     if row is not None:
                         rows.append(row)
             else:
-                rows = self._get_all_records("runs")
+                rows = self._get_all_records("runs", raise_on_error=raise_on_error)
 
             conditions: Dict[str, Any] = {}
             if user_id is not None:
@@ -3132,6 +3147,7 @@ class RedisDb(BaseDb):
         session_id: Optional[Union[str, List[str]]] = None,
         user_id: Optional[str] = None,
         raise_on_error: bool = False,
+        company_task_id: Optional[Union[str, List[str]]] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Paginated job listing: (page of jobs, total matching count).
 
@@ -3145,6 +3161,7 @@ class RedisDb(BaseDb):
         plus the retention sweep)."""
         statuses = [status] if isinstance(status, str) else status
         session_ids = [session_id] if isinstance(session_id, str) else session_id
+        task_ids = [company_task_id] if isinstance(company_task_id, str) else company_task_id
         jobs: List[Dict[str, Any]] = []
         raw_ids = self.redis_client.zrevrange(self._q_key("all"), 0, -1)
         for raw_id in raw_ids:
@@ -3153,6 +3170,7 @@ class RedisDb(BaseDb):
                 job is not None
                 and (statuses is None or job["status"] in statuses)
                 and (session_ids is None or job.get("session_id") in session_ids)
+                and (task_ids is None or (job.get("payload") or {}).get("company_task_id") in task_ids)
                 and (user_id is None or job.get("user_id") == user_id)
             ):
                 jobs.append(job)
@@ -3161,9 +3179,14 @@ class RedisDb(BaseDb):
         start = max(page - 1, 0) * limit
         return jobs[start : start + limit], total_count
 
-    def requeue_job(self, job_id: str) -> bool:
+    def requeue_job(
+        self, job_id: str, *, acceptance_token: Optional[str] = None, acceptance_task_ids: Optional[List[str]] = None
+    ) -> bool:
         """Operator requeue for a terminally failed/cancelled job: grants
-        exactly one more execution by raising max_attempts to attempt + 1."""
+        exactly one more execution by raising max_attempts to attempt + 1.
+        A supplied acceptance token replaces the terminal ticket's prior owner."""
+        if (acceptance_token is None) != (acceptance_task_ids is None):
+            raise ValueError("Acceptance token and Task IDs must be supplied together")
         from redis.exceptions import WatchError
 
         job_key = self._q_job_key(job_id)
@@ -3183,6 +3206,12 @@ class RedisDb(BaseDb):
                         return False
                     if (job.get("payload") or {}).get("serialize_session") is True:
                         job = self._q_stamp_session_seq(pipe, job)
+                    if acceptance_token is not None:
+                        job["payload"] = {
+                            **(job.get("payload") or {}),
+                            QUEUE_ACCEPTANCE_TOKEN: acceptance_token,
+                            QUEUE_ACCEPTANCE_TASK_IDS: list(acceptance_task_ids or []),
+                        }
                     job.update(
                         status="queued",
                         max_attempts=job["attempt"] + 1,
@@ -3197,11 +3226,21 @@ class RedisDb(BaseDb):
                     pipe.zadd(self._q_key("queued"), {job_id: now})
                     pipe.execute()
                     return True
-            except WatchError:
+            except WatchError as exc:
+                # A lost EXEC response may have committed; it is not a rejected CAS.
+                if acceptance_token is not None and exc.__context__ is not None:
+                    raise
                 continue
         return False
 
-    def continue_job(self, job_id: str, continue_payload: Dict[str, Any]) -> Dict[str, Any]:
+    def continue_job(
+        self,
+        job_id: str,
+        continue_payload: Dict[str, Any],
+        *,
+        acceptance_token: Optional[str] = None,
+        acceptance_task_ids: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
         """Continuation CAS: flip the EXISTING paused ticket back to queued,
         mirroring requeue_job's WATCH/MULTI transition. No new rows, ever -
         id == run_id is load-bearing. Submit-time payload fields are kept;
@@ -3210,16 +3249,20 @@ class RedisDb(BaseDb):
         attempt + 1 - exactly one more execution, regardless of the configured
         retry budget.
 
+        A supplied acceptance token fills an absent owner only on the winning CAS.
+
         Returns {"outcome": "queued" | "attach" | "conflict", "job": row}:
         queued = CAS won; attach = ticket already queued/running (double-click
         idempotency - the caller attaches, this click's inputs are discarded);
         conflict = terminal ticket or no ticket (job is the row or None).
 
-        A WatchError means the ticket changed under us (e.g. the raced
+        A plain WatchError means the ticket changed under us (e.g. the raced
         double-click's CAS won): re-evaluate rather than failing, so the
-        second click resolves to attach. Exceptions propagate (like
-        enqueue_job): this CAS is the durable acceptance of the continue.
+        second click resolves to attach. With an acceptance token, transport
+        errors wrapped as WatchError propagate because the commit is uncertain.
         """
+        if (acceptance_token is None) != (acceptance_task_ids is None):
+            raise ValueError("Acceptance token and Task IDs must be supplied together")
         from redis.exceptions import WatchError
 
         job_key = self._q_job_key(job_id)
@@ -3242,6 +3285,9 @@ class RedisDb(BaseDb):
                         return {"outcome": "attach", "job": job}
                     payload = dict(job.get("payload") or {})
                     payload["continue"] = dict(continue_payload)
+                    if acceptance_token is not None and QUEUE_ACCEPTANCE_TOKEN not in payload:
+                        payload[QUEUE_ACCEPTANCE_TOKEN] = acceptance_token
+                        payload[QUEUE_ACCEPTANCE_TASK_IDS] = list(acceptance_task_ids or [])
                     job.update(
                         status="queued",
                         payload=payload,
@@ -3257,7 +3303,10 @@ class RedisDb(BaseDb):
                     pipe.zadd(self._q_key("queued"), {job_id: now})
                     pipe.execute()
                     return {"outcome": "queued", "job": job}
-            except WatchError:
+            except WatchError as exc:
+                # A lost EXEC response may have committed; it is not a rejected CAS.
+                if acceptance_token is not None and exc.__context__ is not None:
+                    raise
                 continue  # ticket changed under us; re-evaluate its new status
         raise RuntimeError("continue_job: ticket contention did not settle after 100 attempts")
 

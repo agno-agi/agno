@@ -90,6 +90,20 @@ class TestGetRun:
 
 
 class TestGetRuns:
+    def test_strict_read_distinguishes_empty_session_from_stored_runs(self, db_with_two_sessions):
+        rows, total = db_with_two_sessions.get_runs(session_id="s1", deserialize=False, raise_on_error=True)
+        assert total == 3
+        assert [row["run_id"] for row in rows] == ["r1", "r2", "r3"]
+        assert db_with_two_sessions.get_runs(session_id="absent", deserialize=False, raise_on_error=True) == ([], 0)
+
+    def test_strict_read_propagates_storage_failure(self, db_with_two_sessions, monkeypatch):
+        def fail():
+            raise RuntimeError("run storage unavailable")
+
+        monkeypatch.setattr(db_with_two_sessions, "_iter_session_runs", fail)
+        with pytest.raises(RuntimeError, match="run storage unavailable"):
+            db_with_two_sessions.get_runs(session_id="s1", deserialize=False, raise_on_error=True)
+
     def test_returns_all_runs_when_no_filter(self, db_with_two_sessions):
         ids = [r.run_id for r in db_with_two_sessions.get_runs()]
         assert set(ids) == {"r1", "r2", "r3", "r4", "r5"}

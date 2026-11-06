@@ -13,6 +13,7 @@ indexes the read paths actually need — a schema-level regression fence.
 from __future__ import annotations
 
 import importlib.util
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -69,3 +70,18 @@ class TestRunsCompositeIndexes:
             _composite_keys(),
             [("user_id", "ASCENDING"), ("status", "ASCENDING"), ("created_at", "DESCENDING")],
         )
+
+
+def test_strict_run_read_rechecks_collection_after_initialization():
+    from agno.db.firestore import FirestoreDb
+
+    client = MagicMock()
+    client.collections.return_value = []
+    client.collection.return_value.where.return_value.order_by.return_value.order_by.return_value.stream.return_value = []
+    db = FirestoreDb(db_client=client, runs_collection="runs")
+    db._runs_initialized = True
+
+    with pytest.raises(RuntimeError, match="runs collection is unavailable"):
+        db.get_runs(session_id="s1", deserialize=False, raise_on_error=True)
+
+    client.collections.assert_called()

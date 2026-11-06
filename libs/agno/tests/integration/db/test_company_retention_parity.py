@@ -22,7 +22,18 @@ from agno.run.authorization import authorization_scope
 
 
 @pytest_asyncio.fixture(params=["sqlite", "async_sqlite", "postgres", "async_postgres"])
-async def archive(request, tmp_path):
+async def archive(request, tmp_path, monkeypatch):
+    providers = []
+    get_app = AgentOS.get_app
+
+    def tracked_app(agent_os, *args, **kwargs):
+        app = get_app(agent_os, *args, **kwargs)
+        provider = agent_os._task_execution_provider
+        if provider is not None and provider not in providers:
+            providers.append(provider)
+        return app
+
+    monkeypatch.setattr(AgentOS, "get_app", tracked_app)
     schema = "archive_" + uuid4().hex
     if "postgres" in request.param:
         cls = AsyncPostgresDb if request.param.startswith("async") else PostgresDb
@@ -41,6 +52,8 @@ async def archive(request, tmp_path):
         )
 
     yield db, manager, call
+    for provider in providers:
+        await provider.aclose()
     await call(db, "close")
     if "postgres" in request.param:
         cleanup = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
@@ -634,3 +647,49 @@ async def test_completed_project_preserves_intake_dedupe(archive):
     assert (await call(db, "create_task", {**fields, "id": "repeat"}))["id"] == "proposal"
     with pytest.raises(ValueError, match="open work"):
         await call(db, "create_task", {**fields, "id": "new", "dedupe_key": "different"})
+
+
+@pytest.mark.asyncio
+async def test_execution_provenance_fresh_creation_and_intake_do_not_certify_duplicate(archive, monkeypatch):
+    import agno.company.sources as sources
+    from agno.company.declarations import IntakeProposal
+
+    db, manager, call = archive
+    product = await call(manager, "create", name="Provenance")
+    project = await call(manager, "create_project", product_id=product["id"], name="Ideas")
+    source = await call(manager, "create_source", product_id=product["id"], type="markdown", reference="/tmp/unused.md")
+    task = await call(manager, "create_task", product_id=product["id"], project_id=project["id"], title="New")
+    assert task["metadata"]["_agno_execution_provenance"] == {"complete": True, "stores": []}
+    # Evidence reading is unrelated to the fresh-session boundary under test.
+    monkeypatch.setattr(sources, "_proposal_fields", lambda *args: {"title": "Intake", "dedupe_key": "same"})
+    monkeypatch.setattr(manager, "read_source", lambda *args, **kwargs: [])
+    if isinstance(db, AsyncBaseDb):
+
+        async def read(*args, **kwargs):
+            return []
+
+        monkeypatch.setattr(manager, "read_source", read)
+    proposal = IntakeProposal(
+        title="Intake",
+        brief="Evidence",
+        proposal_key="same",
+        evidence_links=["https://example.com"],
+        evidence_hashes={"https://example.com": "hash"},
+    )
+    fresh = await call(
+        manager, "intake", source_id=source["id"], run_id="first", proposal=proposal, project_id=project["id"]
+    )
+    assert fresh["metadata"]["_agno_execution_provenance"] == {"complete": True, "stores": []}
+    table = await call(db, "_get_table", table_type="tasks")
+    statement = table.update().where(table.c.id == fresh["id"]).values(metadata=None)
+    if isinstance(db, AsyncBaseDb):
+        async with db.async_session_factory() as session, session.begin():
+            await session.execute(statement)
+    else:
+        with db.Session() as session, session.begin():
+            session.execute(statement)
+    for _ in range(2):
+        duplicate = await call(
+            manager, "intake", source_id=source["id"], run_id="retry", proposal=proposal, project_id=project["id"]
+        )
+        assert duplicate["id"] == fresh["id"] and duplicate["metadata"] is None

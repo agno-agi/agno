@@ -235,3 +235,48 @@ class TestForkEmptySourceStillRejects:
         agent.initialize_agent()
         with pytest.raises(ValueError, match="no runs"):
             agent_fork(agent, source_session_id="src", user_id="u1")
+
+
+@pytest.mark.parametrize("kind", ["agent", "team"])
+@pytest.mark.parametrize("attempt", [None, 0, 2])
+def test_fresh_run_fork_drops_queue_attempt(kind, attempt):
+    from agno.agent._run import _fork_run
+    from agno.team._run import _fork_team_run
+
+    original = _agent_run("queued", "answer") if kind == "agent" else _team_run("queued", "answer")
+    original.queue_attempt = attempt
+    original.execution_origin = "queue"
+    fork = _fork_run if kind == "agent" else _fork_team_run
+    ids = {original.run_id}
+    for _ in range(2):
+        result = fork(original, len(original.messages))
+        assert result.run_id not in ids
+        assert result.queue_attempt is None
+        assert result.execution_origin == "inline"
+        assert original.queue_attempt == attempt
+        ids.add(result.run_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["agent", "team"])
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_session_fork_drops_queue_attempt(tmp_path, kind, asynchronous):
+    db = SqliteDb(db_file=str(tmp_path / "fork.db"))
+    source = _seed_agent_source(db, ["queued"]) if kind == "agent" else _seed_team_source(db, ["queued"])
+    source.runs[0].queue_attempt = 2
+    source.runs[0].execution_origin = "queue"
+    db.upsert_run(run=source.runs[0], session_id="src", user_id="u1")
+    component = Agent(id="a1", db=db) if kind == "agent" else Team(id="t1", members=[], db=db)
+    try:
+        for _ in range(2):
+            if asynchronous:
+                session_id = await component.afork_session(source_session_id="src", user_id="u1")
+            else:
+                session_id = component.fork_session(source_session_id="src", user_id="u1")
+            forked = db.get_session(session_id, deserialize=True)
+            assert forked.runs[0].run_id != "queued"
+            assert forked.runs[0].queue_attempt is None
+            assert forked.runs[0].execution_origin == "inline"
+            assert db.get_session("src", deserialize=True).runs[0].queue_attempt == 2
+    finally:
+        db.close()

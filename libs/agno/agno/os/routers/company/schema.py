@@ -147,6 +147,29 @@ class TaskCreate(BaseModel):
         return self
 
 
+class DeleteTasksRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    task_ids: List[str] = Field(..., min_length=1)
+
+    @field_validator("task_ids")
+    @classmethod
+    def validate_task_ids(cls, value: List[str]) -> List[str]:
+        if any(not task_id.strip() for task_id in value):
+            raise ValueError("Task IDs must be non-empty")
+        return value
+
+
+class TaskDeleteFailure(BaseModel):
+    task_id: str
+    status_code: int
+    detail: str
+
+
+class DeleteTasksResponse(BaseModel):
+    deleted: List[str]
+    failed: List[TaskDeleteFailure]
+
+
 class TaskUpdate(BaseModel):
     executor_type: Optional[Literal["agent", "team", "workflow"]] = None
     executor_id: Optional[str] = Field(None, min_length=1)
@@ -189,6 +212,13 @@ class TaskResponse(BaseModel):
         from agno.db.schemas.tasks import public_task
 
         return public_task({"transitions": value})["transitions"]
+
+    @field_validator("metadata")
+    @classmethod
+    def public_metadata(cls, value: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        from agno.db.schemas.tasks import public_task
+
+        return public_task({"metadata": value})["metadata"]
 
     product_id: str = Field(..., min_length=1)
     title: str = Field(..., min_length=1)

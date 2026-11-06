@@ -15,9 +15,10 @@ from __future__ import annotations
 import inspect
 import json
 from datetime import datetime
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
+from sqlalchemy import Column, Integer, MetaData, Table
 
 
 def _module_source() -> str:
@@ -70,3 +71,31 @@ class TestParityWithSiblingSqlAdapters:
         create.assert_called_once()
         serializer = create.call_args.kwargs["json_serializer"]
         assert json.loads(serializer({"created": datetime(2026, 1, 2)})) == {"created": "2026-01-02T00:00:00"}
+
+
+def test_singlestore_get_runs_strict_rejects_missing_table():
+    try:
+        from agno.db.singlestore.singlestore import SingleStoreDb
+    except ImportError:
+        pytest.skip("singlestore driver not installed")
+    db = object.__new__(SingleStoreDb)
+    db._get_table = Mock(return_value=None)
+    assert db.get_runs(deserialize=False) == ([], 0)
+    with pytest.raises(RuntimeError, match="runs table is unavailable"):
+        db.get_runs(deserialize=False, raise_on_error=True)
+
+
+def test_singlestore_get_runs_strict_accepts_verified_empty_table():
+    from agno.db.singlestore.singlestore import SingleStoreDb
+
+    db = object.__new__(SingleStoreDb)
+    db._get_table = Mock(
+        return_value=Table("runs", MetaData(), Column("run_index", Integer), Column("created_at", Integer))
+    )
+    session = Mock()
+    session.__enter__ = Mock(return_value=session)
+    session.__exit__ = Mock(return_value=None)
+    session.execute.side_effect = [Mock(scalar=Mock(return_value=0)), Mock(fetchall=Mock(return_value=[]))]
+    db.Session = Mock(return_value=session)
+
+    assert db.get_runs(deserialize=False, raise_on_error=True) == ([], 0)

@@ -1,4 +1,4 @@
-"""Company archive transactions shared by the SQL adapters.
+"""Company archive and permanent-deletion transactions shared by the SQL adapters.
 
 The adapters resolve tables and own the transaction. Async adapters use
 AsyncSession.run_sync, so these same statements execute through their async driver.
@@ -7,7 +7,7 @@ status intact. Only the last archive event may authorize a cascading restore.
 """
 
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from sqlalchemy import func, literal, or_, select, union_all
 
@@ -29,13 +29,15 @@ def active_parents(stmt: Any, table: Any, products: Any, projects: Any = None) -
     return stmt
 
 
-def lock_product(sess: Any, products: Any, product_id: str) -> None:
+def lock_product(sess: Any, products: Any, product_id: str, *, include_deleted: bool = False) -> None:
     """Serialize hierarchy writes on the Product, including on SQLite.
 
     A no-op UPDATE obtains a write lock without changing the activity timestamp.
     Every child creation, move, transition and restore shares this lock with archive.
     """
-    stmt = products.update().where(products.c.id == product_id, products.c.deleted_at.is_(None))
+    stmt = products.update().where(products.c.id == product_id)
+    if not include_deleted:
+        stmt = stmt.where(products.c.deleted_at.is_(None))
     row = sess.execute(stmt.values(updated_at=products.c.updated_at).returning(products.c.id)).first()
     if row is None:
         raise ValueError("Product is missing or archived")
@@ -161,6 +163,204 @@ def _refuse_open_tasks(sess: Any, tasks: Any, condition: Any) -> None:
     )
     if rows:
         raise ValueError({"message": "Cannot archive with active Tasks", "tasks": [dict(row) for row in rows]})
+
+
+def _lock_purge_target(
+    sess: Any, products: Any, table: Any, record_id: str, user_id: Optional[str]
+) -> Optional[Dict[str, Any]]:
+    stmt = select(table).where(table.c.id == record_id)
+    if user_id is not None:
+        stmt = stmt.where(table.c.user_id == user_id)
+    row = sess.execute(stmt).mappings().first()
+    if row is None:
+        return None
+    lock_product(sess, products, row.get("product_id", row["id"]), include_deleted=True)
+    # A concurrent hierarchy mutation may have won the Product lock.
+    row = sess.execute(stmt).mappings().first()
+    return dict(row) if row is not None else None
+
+
+def _lock_task_rows(sess: Any, tasks: Any, condition: Any) -> List[Dict[str, Any]]:
+    return [
+        dict(row)
+        for row in sess.execute(
+            tasks.update().where(condition).values(updated_at=tasks.c.updated_at).returning(tasks)
+        ).mappings()
+    ]
+
+
+def acquire_task_execution(
+    sess: Any,
+    tasks: Any,
+    session_id: str,
+    token: str,
+    *,
+    expected_task_ids: Optional[Sequence[str]] = None,
+    execution_store: Optional[Dict[str, Any]] = None,
+) -> List[str]:
+    from agno.db.schemas.tasks import (
+        TASK_EXECUTION_CLAIMS,
+        TASK_EXECUTION_PROVENANCE,
+        TASK_EXECUTION_REVISION,
+        task_execution_stores,
+    )
+
+    rows = _lock_task_rows(sess, tasks, tasks.c.session_id == session_id)
+    if expected_task_ids is not None and {row["id"] for row in rows} != set(expected_task_ids):
+        raise ValueError("Task execution identity changed")
+    for row in rows:
+        metadata = dict(row.get("metadata") or {})
+        claims = list(metadata.get(TASK_EXECUTION_CLAIMS) or [])
+        if token not in claims:
+            metadata[TASK_EXECUTION_CLAIMS] = [*claims, token]
+            metadata[TASK_EXECUTION_REVISION] = metadata.get(TASK_EXECUTION_REVISION, 0) + 1
+        if execution_store is not None:
+            provenance = metadata.get(TASK_EXECUTION_PROVENANCE, {"complete": False, "stores": []})
+            stores = task_execution_stores(
+                {"metadata": {TASK_EXECUTION_PROVENANCE: provenance}}, require_complete=False
+            )
+            provenance = {"complete": provenance["complete"] and bool(execution_store), "stores": list(stores)}
+            if execution_store and execution_store not in stores:
+                provenance["stores"].append(execution_store)
+            metadata[TASK_EXECUTION_PROVENANCE] = provenance
+            task_execution_stores({"metadata": metadata}, require_complete=False)
+        if metadata != (row.get("metadata") or {}):
+            sess.execute(tasks.update().where(tasks.c.id == row["id"]).values(metadata=metadata))
+    return [row["id"] for row in rows]
+
+
+def _reconcile_task_execution_provenance(
+    sess: Any, tasks: Any, expected_task: Dict[str, Any], verified_stores: List[Dict[str, str]]
+) -> None:
+    """Record an offline operator's complete inventory after all producers are drained."""
+    from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS, TASK_EXECUTION_PROVENANCE, task_execution_stores
+
+    rows = _lock_task_rows(sess, tasks, tasks.c.id == expected_task["id"])
+    if rows != [expected_task]:
+        raise ValueError("Task changed during execution provenance verification")
+    metadata = dict(expected_task.get("metadata") or {})
+    if metadata.get(TASK_EXECUTION_CLAIMS):
+        raise ValueError("Cannot reconcile provenance with active Task executions")
+    stores = (
+        list(task_execution_stores(expected_task, require_complete=False))
+        if TASK_EXECUTION_PROVENANCE in metadata
+        else []
+    )
+    for store in verified_stores:
+        if store not in stores:
+            stores.append(store)
+    metadata[TASK_EXECUTION_PROVENANCE] = {"complete": True, "stores": stores}
+    task_execution_stores({"metadata": metadata})
+    sess.execute(tasks.update().where(tasks.c.id == expected_task["id"]).values(metadata=metadata))
+
+
+def release_task_execution(sess: Any, tasks: Any, session_id: str, token: str) -> None:
+    from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS
+
+    for row in _lock_task_rows(sess, tasks, tasks.c.session_id == session_id):
+        metadata = dict(row.get("metadata") or {})
+        claims = list(metadata.get(TASK_EXECUTION_CLAIMS) or [])
+        if token not in claims:
+            continue
+        claims.remove(token)
+        if claims:
+            metadata[TASK_EXECUTION_CLAIMS] = claims
+        else:
+            metadata.pop(TASK_EXECUTION_CLAIMS)
+        sess.execute(tasks.update().where(tasks.c.id == row["id"]).values(metadata=metadata))
+
+
+def _purge_tasks(sess: Any, tasks: Any, condition: Any, expected_tasks: Optional[List[Dict[str, Any]]]) -> None:
+    from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS, TASK_EXECUTION_REVISION, task_execution_stores
+
+    # Reservation and admission share these row locks with permanent deletion.
+    rows = _lock_task_rows(sess, tasks, condition)
+    if expected_tasks is not None:
+        if {row["id"]: row for row in rows} != {row["id"]: row for row in expected_tasks}:
+            raise ValueError("Tasks changed during deletion verification; retry the request")
+    for row in rows:
+        stores = task_execution_stores(row)
+        if (row.get("metadata") or {}).get(TASK_EXECUTION_CLAIMS):
+            raise ValueError("Cannot permanently delete with active Task executions")
+        if row["status"] == "in_progress" and row.get("result") is None:
+            raise ValueError("Cannot permanently delete with an unfinished Task attempt")
+        if expected_tasks is None and (
+            stores
+            or (row.get("metadata") or {}).get(TASK_EXECUTION_REVISION)
+            or row.get("job_id")
+            or row.get("result") is not None
+            or any("attempt" in entry for entry in row.get("transitions") or [])
+        ):
+            raise ValueError("Task execution verification is required before permanent deletion")
+    sess.execute(tasks.delete().where(condition))
+
+
+def purge_product(
+    sess: Any,
+    products: Any,
+    projects: Any,
+    tasks: Any,
+    sources: Any,
+    product_id: str,
+    user_id: Optional[str],
+    expected_tasks: Optional[List[Dict[str, Any]]],
+    verified_routine_ids: Optional[Sequence[str]],
+) -> bool:
+    product = _lock_purge_target(sess, products, products, product_id, user_id)
+    if product is None:
+        return False
+    if verified_routine_ids is None or set((product.get("metadata") or {}).get("routine_ids") or []) != set(
+        verified_routine_ids
+    ):
+        raise ValueError("Registered Routines must be deleted and their absence verified first")
+    _purge_tasks(sess, tasks, tasks.c.product_id == product_id, expected_tasks)
+    sess.execute(projects.delete().where(projects.c.product_id == product_id))
+    sess.execute(sources.delete().where(sources.c.product_id == product_id))
+    sess.execute(products.delete().where(products.c.id == product_id))
+    return True
+
+
+def purge_project(
+    sess: Any,
+    products: Any,
+    projects: Any,
+    tasks: Any,
+    project_id: str,
+    user_id: Optional[str],
+    expected_tasks: Optional[List[Dict[str, Any]]],
+) -> bool:
+    project = _lock_purge_target(sess, products, projects, project_id, user_id)
+    if project is None:
+        return False
+    _purge_tasks(sess, tasks, tasks.c.project_id == project_id, expected_tasks)
+    sess.execute(projects.delete().where(projects.c.id == project_id))
+    return True
+
+
+def purge_task(
+    sess: Any,
+    products: Any,
+    projects: Any,
+    tasks: Any,
+    task_id: str,
+    user_id: Optional[str],
+    expected_tasks: Optional[List[Dict[str, Any]]],
+) -> bool:
+    task = _lock_purge_target(sess, products, tasks, task_id, user_id)
+    if task is None:
+        return False
+    if (
+        task.get("project_id") is not None
+        and sess.execute(
+            select(projects.c.id).where(
+                projects.c.id == task["project_id"], projects.c.product_id == task["product_id"]
+            )
+        ).first()
+        is None
+    ):
+        raise ValueError("Task Project is missing")
+    _purge_tasks(sess, tasks, tasks.c.id == task_id, expected_tasks)
+    return True
 
 
 def archive_product(

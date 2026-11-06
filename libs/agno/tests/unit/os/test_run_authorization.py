@@ -1175,3 +1175,57 @@ def test_manager_tools_with_async_managed_roles(tmp_path, tool, arguments, compo
     else:
         assert "Permission required: filesystem:read" in content
         assert "source content" not in content
+
+
+@pytest.mark.asyncio
+async def test_task_execution_scope_is_bound_without_authorization(tmp_path):
+    from fastapi import APIRouter
+    from httpx import ASGITransport, AsyncClient
+
+    from agno.db.sqlite import SqliteDb
+    from agno.os import AgentOS, CompanyConfig
+    from agno.run.concurrency import current_task_execution_provider
+
+    db = SqliteDb(db_file=str(tmp_path / "task-scope.db"))
+    routes = APIRouter()
+    seen = []
+
+    @routes.get("/task-scope")
+    async def inspect_scope():
+        provider = current_task_execution_provider()
+        seen.append(provider)
+        return {"protected": provider is not None and provider.enabled}
+
+    os = AgentOS(db=db, company=CompanyConfig(), telemetry=False)
+    app = os.get_app()
+    app.include_router(routes)
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            for _ in range(2):
+                response = await client.get("/task-scope")
+                assert response.json() == {"protected": True}
+                assert current_task_execution_provider() is None
+    assert seen[0] is seen[1]
+
+
+@pytest.mark.asyncio
+async def test_task_execution_provider_closes_after_later_startup_failure(tmp_path, monkeypatch):
+    from agno.db.sqlite import AsyncSqliteDb
+    from agno.os import AgentOS, CompanyConfig
+    from agno.os.app import db_lifespan
+
+    db = AsyncSqliteDb(db_file=str(tmp_path / "startup-failure.db"))
+    os = AgentOS(db=db, company=CompanyConfig(), telemetry=False)
+
+    async def fail():
+        raise RuntimeError("sandbox table unavailable")
+
+    monkeypatch.setattr(os, "_acheck_sandbox_tables", fail)
+    try:
+        with pytest.raises(RuntimeError, match="sandbox table unavailable"):
+            async with db_lifespan(os.get_app(), os):
+                pytest.fail("startup should fail")
+        assert not os._task_execution_provider._thread.is_alive()
+    finally:
+        await os._task_execution_provider.aclose()
+        await db.close()

@@ -326,12 +326,17 @@ class HITLBridge:
     async def events(self, source: AsyncIterator[Any]) -> AsyncIterator[Any]:
         """Multiplex the adapter's events with this bridge's pause and continue events."""
 
+        failure: Optional[BaseException] = None
+
         async def produce() -> None:
+            nonlocal failure
             token = _current.set(self)
             try:
                 async for event in source:
                     await self.queue.put((event, None))
             except BaseException as error:
+                if not isinstance(error, asyncio.CancelledError):
+                    failure = error
                 await self.queue.put((error, None))
             finally:
                 _current.reset(token)
@@ -344,6 +349,8 @@ class HITLBridge:
                 if event is None:
                     break
                 if isinstance(event, BaseException):
+                    if event is failure:
+                        failure = None
                     raise event
                 yield event
                 if ready is not None:
@@ -353,6 +360,8 @@ class HITLBridge:
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
+            if failure is not None:
+                raise failure
 
 
 # A database without a conditional run update is used by one process: a per-run lock there keeps two

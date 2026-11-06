@@ -281,3 +281,859 @@ class TestQueueConfigEnvPrecedence:
         if config.max_concurrency is not None:
             set_background_max_concurrency(config.max_concurrency)
         assert get_background_max_concurrency() == 4
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_task_execution_provider_keeps_independent_claims(tmp_path, asynchronous):
+    from agno.company.execution import _call
+    from agno.company.manager import AsyncCompanyManager, CompanyManager
+    from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS
+    from agno.db.sqlite import AsyncSqliteDb, SqliteDb
+
+    db = (AsyncSqliteDb if asynchronous else SqliteDb)(db_file=str(tmp_path / "claims.db"))
+    manager = (AsyncCompanyManager if asynchronous else CompanyManager)(db)
+    product = await _call(manager, "create", name="Runtime")
+    project = await _call(manager, "create_project", product_id=product["id"], name="Review")
+    task = await _call(manager, "create_task", product_id=product["id"], project_id=project["id"], title="Draft")
+    assert hasattr(concurrency, "_TaskExecutionProvider"), "Runtime execution provider is missing"
+    provider = concurrency._TaskExecutionProvider(db)
+    await provider.ainitialize()
+    try:
+        for cycle in range(2):
+            first, second = f"first-{cycle}", f"second-{cycle}"
+            assert await provider.aacquire(task["session_id"], first) == [task["id"]]
+            assert await asyncio.to_thread(provider.acquire, task["session_id"], second) == [task["id"]]
+            await provider.arelease(task["session_id"], first)
+            row = await _call(db, "get_task", task["id"])
+            assert row["metadata"][TASK_EXECUTION_CLAIMS] == [second]
+            await asyncio.to_thread(provider.release, task["session_id"], second)
+            assert not (await _call(db, "get_task", task["id"]))["metadata"].get(TASK_EXECUTION_CLAIMS)
+    finally:
+        await provider.aclose()
+        await _call(db, "close")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("synchronous_run", [False, True])
+async def test_transient_claim_release_failure_does_not_leave_task_blocked(
+    tmp_path, monkeypatch, asynchronous, synchronous_run
+):
+    from agno.company.execution import _call
+    from agno.company.manager import AsyncCompanyManager, CompanyManager
+    from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS
+    from agno.db.sqlite import AsyncSqliteDb, SqliteDb
+
+    db = (AsyncSqliteDb if asynchronous else SqliteDb)(db_file=str(tmp_path / "release.db"))
+    manager = (AsyncCompanyManager if asynchronous else CompanyManager)(db)
+    product = await _call(manager, "create", name="Release")
+    project = await _call(manager, "create_project", product_id=product["id"], name="Release")
+    task = await _call(manager, "create_task", product_id=product["id"], project_id=project["id"], title="Run")
+    provider = concurrency._TaskExecutionProvider(db)
+    await provider.ainitialize()
+    guard_db = provider._owned_db or db
+    release = guard_db.release_task_execution
+    calls = 0
+
+    if asynchronous:
+
+        async def fail_once(session_id, token):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("transient release outage")
+            await release(session_id, token)
+
+    else:
+
+        def fail_once(session_id, token):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("transient release outage")
+            release(session_id, token)
+
+    monkeypatch.setattr(guard_db, "release_task_execution", fail_once)
+
+    class Runner:
+        def __init__(self, run_db):
+            self.db = run_db
+
+        @concurrency.guard_task_execution()
+        def run(self, session_id):
+            return "completed"
+
+        @concurrency.guard_task_execution()
+        async def arun(self, session_id):
+            return "completed"
+
+    try:
+        with concurrency.task_execution_scope(provider):
+            runner = Runner(db)
+            result = (
+                await asyncio.to_thread(runner.run, task["session_id"])
+                if synchronous_run
+                else await runner.arun(task["session_id"])
+            )
+            assert result == "completed"
+        assert calls == 2
+        assert not (await _call(db, "get_task", task["id"]))["metadata"].get(TASK_EXECUTION_CLAIMS)
+    finally:
+        await provider.aclose()
+        await _call(db, "close")
+
+
+@pytest.mark.asyncio
+async def test_task_execution_provider_opaque_async_database_stays_on_own_loop(tmp_path):
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from agno.db.sqlite import AsyncSqliteDb
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    db = AsyncSqliteDb(db_engine=engine, db_url="sqlite+aiosqlite:///must-not-be-used.db")
+    assert hasattr(concurrency, "_TaskExecutionProvider"), "Runtime execution provider is missing"
+    provider = concurrency._TaskExecutionProvider(db)
+    await provider.ainitialize()
+    try:
+        assert await provider.aacquire("unrelated", "first") == []
+        with pytest.raises(RuntimeError, match="async calling path"):
+            provider.acquire("unrelated", "second")
+        assert await asyncio.to_thread(lambda: asyncio.run(provider.aacquire("unrelated", "third"))) == []
+    finally:
+        await provider.aclose()
+        # Provider must not close an injected engine owned by the application.
+        assert await db.acquire_task_execution("unrelated", "fourth") == []
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_nonstreaming_workflow_background_run_remains_awaitable(monkeypatch):
+    from inspect import isawaitable
+
+    from agno.workflow import Workflow
+
+    class Provider:
+        enabled = True
+
+        async def aacquire(self, session_id, token, **kwargs):
+            return [session_id]
+
+        async def arelease(self, session_id, token):
+            return None
+
+    workflow = Workflow(name="Background stream", stream=True)
+
+    async def submit(*args, **kwargs):
+        return "submitted"
+
+    monkeypatch.setattr(workflow, "_arun_background", submit)
+    with concurrency.task_execution_scope(Provider()):
+        run = workflow.arun("hi", session_id="s1", background=True)
+        assert isawaitable(run)
+        assert await run == "submitted"
+
+
+@pytest.mark.parametrize("component_type", ["agent", "team"])
+def test_background_run_inherits_agent_or_team_stream_default(tmp_path, component_type):
+    from inspect import isasyncgen, iscoroutine
+
+    from agno.agent import Agent
+    from agno.db.sqlite import SqliteDb
+    from agno.team import Team
+
+    class Provider:
+        enabled = True
+
+    db = SqliteDb(db_file=str(tmp_path / "runs.db"))
+    component = (
+        Agent(name="Streaming agent", db=db, stream=True)
+        if component_type == "agent"
+        else Team(name="Streaming team", members=[], db=db, stream=True)
+    )
+    with concurrency.task_execution_scope(None):
+        control = component.arun("hi", session_id="session", background=True)
+    assert isasyncgen(control)
+    asyncio.run(control.aclose())
+
+    with concurrency.task_execution_scope(Provider()):
+        explicit = component.arun("hi", session_id="session", background=True, stream=True)
+    assert isasyncgen(explicit)
+    asyncio.run(explicit.aclose())
+
+    with concurrency.task_execution_scope(Provider()):
+        result = component.arun("hi", session_id="session", background=True)
+    try:
+        assert isasyncgen(result), "Company guard changed the background stream into a coroutine"
+    finally:
+        if iscoroutine(result):
+            result.close()
+        else:
+            asyncio.run(result.aclose())
+    db.close()
+
+
+def test_sync_external_agent_with_injected_async_company_db_fails_without_deadlock():
+    """A sync bridge cannot wait on the event loop that owns its Company DB."""
+    import subprocess
+    import sys
+
+    script = """
+import asyncio
+from typing import Any
+from sqlalchemy.ext.asyncio import create_async_engine
+from agno.agents.base import BaseExternalAgent
+from agno.db.sqlite import AsyncSqliteDb
+from agno.run.concurrency import _TaskExecutionProvider, task_execution_scope
+from agno.run.base import RunStatus
+
+class Echo(BaseExternalAgent):
+    async def _arun_adapter(self, input: Any, **kwargs: Any) -> str:
+        return "ok"
+    async def _arun_adapter_stream(self, input: Any, **kwargs: Any):
+        yield None
+
+async def main():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    db = AsyncSqliteDb(db_engine=engine)
+    provider = _TaskExecutionProvider(db)
+    await provider.ainitialize()
+    try:
+        with task_execution_scope(provider):
+            for stream in (False, True):
+                try:
+                    run = Echo(id="echo", db=db).run("hi", session_id="unrelated", stream=stream)
+                    if stream:
+                        list(run)
+                except RuntimeError as error:
+                    assert "async calling path" in str(error)
+                else:
+                    raise AssertionError("Expected a clear compatibility error")
+            result = await Echo(id="echo", db=db).arun("hi", session_id="ordinary")
+            assert result.status == RunStatus.completed
+    finally:
+        await provider.aclose()
+        await db.close()
+
+asyncio.run(main())
+"""
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=5)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_sync_tool_in_async_company_task_uses_database_owning_loop(cancel):
+    from threading import Event
+
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from agno.company.manager import AsyncCompanyManager
+    from agno.db.sqlite import AsyncSqliteDb
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    db = AsyncSqliteDb(db_engine=engine, db_url="sqlite+aiosqlite:///unused.db")
+    manager = AsyncCompanyManager(db)
+    product = await manager.create(name="Tool execution")
+    project = await manager.create_project(product_id=product["id"], name="Tool execution")
+    task = await manager.create_task(product_id=product["id"], project_id=project["id"], title="Use tool")
+    provider = concurrency._TaskExecutionProvider(db)
+    await provider.ainitialize()
+    entered, finish = Event(), Event()
+
+    def tool():
+        entered.set()
+        assert finish.wait(5)
+        return "tool result"
+
+    class Runner:
+        def __init__(self, run_db):
+            self.db = run_db
+
+        @concurrency.guard_task_execution()
+        async def arun(self, session_id):
+            return await asyncio.to_thread(concurrency.task_execution_thread, tool)
+
+    try:
+        with concurrency.task_execution_scope(provider):
+            run = asyncio.create_task(Runner(db).arun(task["session_id"]))
+            assert await asyncio.to_thread(entered.wait, 3)
+            assert (await db.get_task(task["id"]))["metadata"].get("_agno_execution_claims")
+            if cancel:
+                run.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await run
+                assert (await db.get_task(task["id"]))["metadata"].get("_agno_execution_claims")
+            finish.set()
+            if not cancel:
+                assert await run == "tool result"
+            await provider.aclose()
+        assert not (await db.get_task(task["id"]))["metadata"].get("_agno_execution_claims")
+    finally:
+        finish.set()
+        await provider.aclose()
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_release_failure_preserves_run_result_and_attempts_other_owners():
+    acquired, released = [], []
+
+    class Provider:
+        enabled = True
+
+        async def aacquire(self, session_id, token, **kwargs):
+            acquired.append((session_id, token))
+            return [session_id]
+
+        async def arelease(self, session_id, token):
+            released.append((session_id, token))
+            if session_id == "child":
+                raise RuntimeError("one release failed")
+
+    class Producer:
+        @concurrency.guard_task_execution()
+        async def root(self, session_id):
+            return await self.child("child")
+
+        @concurrency.guard_task_execution()
+        async def child(self, session_id):
+            return "successful result"
+
+    with concurrency.task_execution_scope(Provider()):
+        assert await Producer().root("root") == "successful result"
+    assert set(acquired) <= set(released)
+
+
+@pytest.mark.parametrize("tool_thread", [False, True])
+def test_sync_release_failure_preserves_run_result(tool_thread):
+    from threading import Lock
+
+    released = []
+
+    class Provider:
+        enabled = True
+        _lock = Lock()
+        _closing = False
+        _closed = False
+        _threads = set()
+
+        def acquire(self, session_id, token, **kwargs):
+            return [session_id]
+
+        def release(self, session_id, token):
+            released.append(session_id)
+            raise RuntimeError("release unavailable")
+
+    class Producer:
+        @concurrency.guard_task_execution()
+        def run(self, session_id):
+            return (
+                concurrency.task_execution_thread(lambda: "successful result") if tool_thread else "successful result"
+            )
+
+    with concurrency.task_execution_scope(Provider()):
+        assert Producer().run("task-session") == "successful result"
+    assert released == (["task-session", "task-session"] if tool_thread else ["task-session"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("child_db", [None, "invalid"])
+async def test_nested_component_without_database_uses_parent_store(tmp_path, child_db):
+    from agno.company.manager import CompanyManager
+    from agno.db.sqlite import SqliteDb
+
+    db = SqliteDb(db_file=str(tmp_path / "nested-store.db"))
+    manager = CompanyManager(db)
+    product = manager.create(name="Nested")
+    project = manager.create_project(product_id=product["id"], name="Nested")
+    task = manager.create_task(product_id=product["id"], project_id=project["id"], title="Nested")
+    provider = concurrency._TaskExecutionProvider(db)
+    await provider.ainitialize()
+
+    class Child:
+        def __init__(self):
+            self.db = None if child_db is None else object()
+
+        @concurrency.guard_task_execution()
+        async def arun(self, session_id):
+            return "done"
+
+    class Parent:
+        def __init__(self):
+            self.db = db
+
+        @concurrency.guard_task_execution()
+        async def arun(self, session_id):
+            return await Child().arun("derived-child-session")
+
+    try:
+        with concurrency.task_execution_scope(provider):
+            assert await Parent().arun(task["session_id"]) == "done"
+        provenance = db.get_task(task["id"])["metadata"]["_agno_execution_provenance"]
+        assert provenance["complete"] is (child_db is None)
+        assert len(provenance["stores"]) == 1
+    finally:
+        await provider.aclose()
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_task_execution_provider_checks_partial_capability():
+    from agno.db.in_memory import InMemoryDb
+
+    assert hasattr(concurrency, "_TaskExecutionProvider"), "Runtime execution provider is missing"
+    provider = concurrency._TaskExecutionProvider(InMemoryDb())
+    await provider.ainitialize()
+    assert await provider.aacquire("unrelated", "unused") == []
+    await provider.aclose()
+
+    class PartialCompanyDb(InMemoryDb):
+        def create_task(self, task_data, reuse=False):
+            return task_data
+
+    with pytest.raises(NotImplementedError, match="execution guard"):
+        concurrency._TaskExecutionProvider(PartialCompanyDb())
+
+
+@pytest.mark.asyncio
+async def test_task_execution_provider_requires_external_table(tmp_path):
+    from agno.db.sqlite import SqliteDb
+
+    db = SqliteDb(db_file=str(tmp_path / "external.db"))
+    provider = concurrency._TaskExecutionProvider(db, auto_provision=False)
+    try:
+        with pytest.raises(RuntimeError, match="Tasks table"):
+            await provider.ainitialize()
+    finally:
+        await provider.aclose()
+        db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("synchronous", [False, True])
+async def test_task_execution_provider_shutdown_drains_owned_write(tmp_path, synchronous):
+    import threading
+
+    from agno.db.sqlite import AsyncSqliteDb
+
+    db = AsyncSqliteDb(db_file=str(tmp_path / "drain.db"))
+    provider = concurrency._TaskExecutionProvider(db)
+    await provider.ainitialize()
+    entered, finish = threading.Event(), threading.Event()
+    original = provider._owned_db.acquire_task_execution
+
+    async def acquire(*args, **kwargs):
+        entered.set()
+        await asyncio.to_thread(finish.wait)
+        return await original(*args, **kwargs)
+
+    provider._owned_db.acquire_task_execution = acquire
+    if synchronous:
+        thread = threading.Thread(target=provider.acquire, args=("unrelated", "draining"), daemon=True)
+        thread.start()
+        write = None
+    else:
+        write = asyncio.create_task(provider.aacquire("unrelated", "draining"))
+    assert await asyncio.to_thread(entered.wait, 3)
+    closing = asyncio.create_task(provider.aclose())
+    try:
+        await asyncio.sleep(0.03)
+        assert not closing.done(), "provider closed before the admitted write finished"
+    finally:
+        finish.set()
+        # Avoid hanging a failing implementation whose loop already stopped.
+        if write is not None and closing.done():
+            write.cancel()
+        await asyncio.gather(*([write] if write is not None else []), closing, return_exceptions=True)
+        if synchronous:
+            thread.join(timeout=0.1)
+        await db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("repeat_cancel", [False, True])
+async def test_cancel_during_claim_acquisition_releases_committed_claim(tmp_path, repeat_cancel):
+    from threading import Event
+
+    from agno.company.manager import AsyncCompanyManager
+    from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS
+    from agno.db.sqlite import AsyncSqliteDb
+
+    db = AsyncSqliteDb(db_file=str(tmp_path / "cancel-acquire.db"))
+    manager = AsyncCompanyManager(db)
+    product = await manager.create(name="Cancelled acquisition")
+    project = await manager.create_project(product_id=product["id"], name="Draft")
+    task = await manager.create_task(product_id=product["id"], project_id=project["id"], title="Work")
+    provider = concurrency._TaskExecutionProvider(db)
+    await provider.ainitialize()
+    entered, finish, committed = Event(), Event(), Event()
+    original = provider._owned_db.acquire_task_execution
+
+    async def delayed_acquire(*args, **kwargs):
+        entered.set()
+        await asyncio.to_thread(finish.wait)
+        result = await original(*args, **kwargs)
+        committed.set()
+        return result
+
+    provider._owned_db.acquire_task_execution = delayed_acquire
+
+    class Runner:
+        def __init__(self, run_db):
+            self.db = run_db
+
+        @concurrency.guard_task_execution()
+        async def arun(self, session_id):
+            return "finished"
+
+    try:
+        with concurrency.task_execution_scope(provider):
+            run = asyncio.create_task(Runner(db).arun(task["session_id"]))
+            assert await asyncio.to_thread(entered.wait, 3)
+            run.cancel()
+            await asyncio.sleep(0)
+            if repeat_cancel:
+                run.cancel()
+                await asyncio.sleep(0)
+            finish.set()
+            with pytest.raises(asyncio.CancelledError):
+                await run
+            assert await asyncio.to_thread(committed.wait, 3)
+            if not repeat_cancel:
+                assert not (await db.get_task(task["id"]))["metadata"].get(TASK_EXECUTION_CLAIMS)
+            await provider.aclose()
+            assert not (await db.get_task(task["id"]))["metadata"].get(TASK_EXECUTION_CLAIMS)
+    finally:
+        finish.set()
+        await provider.aclose()
+        await db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("repeat_cancel", [False, True])
+async def test_cancel_during_parent_claim_acquisition_releases_both_claims(tmp_path, repeat_cancel):
+    from threading import Event
+
+    from agno.company.manager import AsyncCompanyManager
+    from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS
+    from agno.db.sqlite import AsyncSqliteDb
+
+    db = AsyncSqliteDb(db_file=str(tmp_path / "cancel-parent-acquire.db"))
+    manager = AsyncCompanyManager(db)
+    product = await manager.create(name="Cancelled parent acquisition")
+    project = await manager.create_project(product_id=product["id"], name="Draft")
+    parent = await manager.create_task(product_id=product["id"], project_id=project["id"], title="Parent")
+    child = await manager.create_task(product_id=product["id"], project_id=project["id"], title="Child")
+    provider = concurrency._TaskExecutionProvider(db)
+    await provider.ainitialize()
+    entered, finish, committed = Event(), Event(), Event()
+    original = provider._owned_db.acquire_task_execution
+    parent_acquisitions = 0
+
+    async def delayed_parent_acquire(session_id, *args, **kwargs):
+        nonlocal parent_acquisitions
+        if session_id == parent["session_id"]:
+            parent_acquisitions += 1
+            if parent_acquisitions == 2:
+                entered.set()
+                await asyncio.to_thread(finish.wait)
+                result = await original(session_id, *args, **kwargs)
+                committed.set()
+                return result
+        return await original(session_id, *args, **kwargs)
+
+    provider._owned_db.acquire_task_execution = delayed_parent_acquire
+
+    class Runner:
+        def __init__(self, run_db):
+            self.db = run_db
+
+        @concurrency.guard_task_execution()
+        async def root(self, session_id):
+            return await self.member(child["session_id"])
+
+        @concurrency.guard_task_execution()
+        async def member(self, session_id):
+            return "finished"
+
+    try:
+        with concurrency.task_execution_scope(provider):
+            run = asyncio.create_task(Runner(db).root(parent["session_id"]))
+            assert await asyncio.to_thread(entered.wait, 3)
+            run.cancel()
+            await asyncio.sleep(0)
+            if repeat_cancel:
+                run.cancel()
+                await asyncio.sleep(0)
+            finish.set()
+            with pytest.raises(asyncio.CancelledError):
+                await run
+            assert await asyncio.to_thread(committed.wait, 3)
+            if not repeat_cancel:
+                for task in (parent, child):
+                    assert not (await db.get_task(task["id"]))["metadata"].get(TASK_EXECUTION_CLAIMS)
+            await provider.aclose()
+            for task in (parent, child):
+                assert not (await db.get_task(task["id"]))["metadata"].get(TASK_EXECUTION_CLAIMS)
+    finally:
+        finish.set()
+        await provider.aclose()
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_task_execution_provider_failed_init_disposes_owned_loop(tmp_path):
+    from agno.db.sqlite import AsyncSqliteDb
+
+    db = AsyncSqliteDb(db_file=str(tmp_path / "missing-table.db"))
+    provider = concurrency._TaskExecutionProvider(db, auto_provision=False)
+    try:
+        with pytest.raises(RuntimeError, match="Tasks table"):
+            await provider.ainitialize()
+        assert not provider._thread.is_alive(), "failed startup left its owned database loop running"
+    finally:
+        await provider.aclose()
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_task_execution_provider_initialization_is_shared(tmp_path):
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from agno.db.sqlite import AsyncSqliteDb
+
+    db = AsyncSqliteDb(db_engine=create_async_engine("sqlite+aiosqlite:///:memory:"))
+    entered, finish = asyncio.Event(), asyncio.Event()
+    original = db._get_table
+    calls = 0
+
+    async def get_table(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        entered.set()
+        await finish.wait()
+        return await original(*args, **kwargs)
+
+    db._get_table = get_table
+    provider = concurrency._TaskExecutionProvider(db)
+    first = asyncio.create_task(provider.ainitialize())
+    await entered.wait()
+    second = asyncio.create_task(provider.ainitialize())
+    await asyncio.sleep(0)
+    assert not second.done()
+    assert calls == 1
+    finish.set()
+    await asyncio.gather(first, second)
+    await provider.aclose()
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_task_execution_provider_close_waits_for_initialization(tmp_path, monkeypatch):
+    from agno.db.sqlite import AsyncSqliteDb
+
+    db = AsyncSqliteDb(db_file=str(tmp_path / "initializing.db"))
+    provider = concurrency._TaskExecutionProvider(db)
+    entered, finish = asyncio.Event(), asyncio.Event()
+    original = provider._initialize
+
+    async def initialize():
+        entered.set()
+        await finish.wait()
+        await original()
+
+    monkeypatch.setattr(provider, "_initialize", initialize)
+    initializing = asyncio.create_task(provider.ainitialize())
+    await entered.wait()
+    closing = asyncio.create_task(provider.aclose())
+    try:
+        await asyncio.sleep(0.02)
+        assert not closing.done()
+    finally:
+        finish.set()
+        await asyncio.gather(initializing, closing, return_exceptions=True)
+        if provider._thread is not None and provider._thread.is_alive():
+            provider._loop.call_soon_threadsafe(provider._loop.stop)
+            await asyncio.to_thread(provider._thread.join)
+        await db.close()
+    assert not provider._thread.is_alive()
+
+
+@pytest.mark.asyncio
+async def test_task_stream_can_be_closed_by_another_task(tmp_path):
+    from agno.company.manager import CompanyManager
+    from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS
+    from agno.db.sqlite import SqliteDb
+
+    db = SqliteDb(db_file=str(tmp_path / "stream-close.db"))
+    manager = CompanyManager(db)
+    product = manager.create(name="Streams")
+    project = manager.create_project(product_id=product["id"], name="Draft")
+    task = manager.create_task(product_id=product["id"], project_id=project["id"], title="Work")
+    provider = concurrency._TaskExecutionProvider(db)
+    await provider.ainitialize()
+
+    class Producer:
+        @concurrency.guard_task_execution()
+        async def stream(self, session_id):
+            yield "first"
+            yield "second"
+
+    try:
+        for _ in range(2):
+            with concurrency.task_execution_scope(provider):
+                iterator = Producer().stream(task["session_id"])
+            assert await iterator.__anext__() == "first"
+            assert (db.get_task(task["id"])["metadata"] or {}).get(TASK_EXECUTION_CLAIMS)
+            await asyncio.create_task(iterator.aclose())
+            assert not (db.get_task(task["id"])["metadata"] or {}).get(TASK_EXECUTION_CLAIMS)
+            assert concurrency.current_task_execution() is None
+    finally:
+        await provider.aclose()
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_task_execution_bridge_preserves_relative_file_and_table(tmp_path, monkeypatch):
+    from agno.company.manager import AsyncCompanyManager
+    from agno.db.sqlite import AsyncSqliteDb
+
+    monkeypatch.chdir(tmp_path)
+    db = AsyncSqliteDb(db_file="relative.db", tasks_table="custom_tasks")
+    manager = AsyncCompanyManager(db)
+    product = await manager.create(name="Relative")
+    project = await manager.create_project(product_id=product["id"], name="Draft")
+    task = await manager.create_task(product_id=product["id"], project_id=project["id"], title="Work")
+    other = tmp_path / "elsewhere"
+    other.mkdir()
+    monkeypatch.chdir(other)
+    provider = concurrency._TaskExecutionProvider(db)
+    await provider.ainitialize()
+    try:
+        for token in ("first", "second"):
+            assert await asyncio.to_thread(provider.acquire, task["session_id"], token) == [task["id"]]
+            await provider.arelease(task["session_id"], token)
+        assert not (other / "relative.db").exists()
+    finally:
+        await provider.aclose()
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_task_execution_custom_async_adapter_is_not_cloned(tmp_path):
+    from agno.db.sqlite import AsyncSqliteDb
+
+    class CustomDb(AsyncSqliteDb):
+        def __init__(self, required_setting, **kwargs):
+            super().__init__(**kwargs)
+            self.required_setting = required_setting
+
+    db = CustomDb("custom", db_file=str(tmp_path / "custom.db"))
+    provider = concurrency._TaskExecutionProvider(db)
+    await provider.ainitialize()
+    try:
+        assert provider._owned_db is None
+        assert await provider.aacquire("ordinary", "first") == []
+        with pytest.raises(RuntimeError, match="async calling path"):
+            provider.acquire("ordinary", "second")
+    finally:
+        await provider.aclose()
+        await db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("separate_task", [False, True])
+async def test_retained_child_claim_survives_all_outer_wrappers(tmp_path, separate_task):
+    from agno.company.manager import CompanyManager
+    from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS
+    from agno.db.sqlite import SqliteDb
+
+    db = SqliteDb(db_file=str(tmp_path / "retained-child.db"))
+    manager = CompanyManager(db)
+    product = manager.create(name="Retained")
+    project = manager.create_project(product_id=product["id"], name="Draft")
+    task = manager.create_task(product_id=product["id"], project_id=project["id"], title="Root")
+    child = (
+        manager.create_task(product_id=product["id"], project_id=project["id"], title="Child")
+        if separate_task
+        else None
+    )
+    provider = concurrency._TaskExecutionProvider(db)
+    await provider.ainitialize()
+
+    class Producer:
+        @concurrency.guard_task_execution()
+        async def root(self, session_id):
+            await self.child(child["session_id"] if child else "derived-session")
+
+        @concurrency.guard_task_execution()
+        async def child(self, session_id):
+            concurrency.retain_task_execution()
+            concurrency.retain_task_execution()
+            raise RuntimeError("could not confirm termination")
+
+    try:
+        for _ in range(2):
+            with concurrency.task_execution_scope(provider):
+                with pytest.raises(RuntimeError, match="confirm termination"):
+                    await Producer().root(task["session_id"])
+            for row in [task] + ([child] if child else []):
+                tokens = (db.get_task(row["id"])["metadata"] or {}).get(TASK_EXECUTION_CLAIMS)
+                assert len(tokens) == 1
+                await provider.arelease(row["session_id"], tokens[0])
+    finally:
+        await provider.aclose()
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_child_identity_refusal_releases_definitely_acquired_claim(tmp_path):
+    from agno.company.manager import CompanyManager
+    from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS
+    from agno.db.sqlite import SqliteDb
+
+    db = SqliteDb(db_file=str(tmp_path / "child-refusal.db"))
+    manager = CompanyManager(db)
+    product = manager.create(name="Refusal")
+    project = manager.create_project(product_id=product["id"], name="Draft")
+    root = manager.create_task(product_id=product["id"], project_id=project["id"], title="Root")
+    child = manager.create_task(product_id=product["id"], project_id=project["id"], title="Child")
+    provider = concurrency._TaskExecutionProvider(db)
+    await provider.ainitialize()
+
+    class Producer:
+        @concurrency.guard_task_execution()
+        def prepare(self, session_id):
+            return self.stream(child["session_id"])
+
+        @concurrency.guard_task_execution()
+        async def stream(self, session_id):
+            yield "must not execute"
+
+    try:
+        with concurrency.task_execution_scope(provider):
+            iterator = Producer().prepare(root["session_id"])
+        table = db._get_table("tasks")
+        with db.Session() as session, session.begin():
+            session.execute(table.delete().where(table.c.id == root["id"]))
+        with pytest.raises(ValueError, match="identity changed"):
+            await iterator.__anext__()
+        assert not (db.get_task(child["id"])["metadata"] or {}).get(TASK_EXECUTION_CLAIMS)
+    finally:
+        await provider.aclose()
+        db.close()
+
+
+def test_new_task_execution_scope_does_not_inherit_previous_producer():
+    producer = concurrency._task_execution_producer.set(("old", "session", ("task",), {}))
+    claim = concurrency._task_execution_claim.set({"owners": [("old", "session", ("task",))]})
+    try:
+        for _ in range(2):
+            with concurrency.task_execution_scope(None):
+                assert concurrency.current_task_execution() is None
+                assert concurrency._task_execution_claim.get() is None
+            assert concurrency.current_task_execution()[0] == "old"
+    finally:
+        concurrency._task_execution_claim.reset(claim)
+        concurrency._task_execution_producer.reset(producer)

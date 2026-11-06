@@ -2557,7 +2557,12 @@ def build_mcp_server(
             ):
                 raise PermissionError(_MISSING_BRIDGE_DETAIL)
             authority = request_authorization(request) if request is not None else None
-            with authorization_scope(lambda: authority):
+            from agno.run.concurrency import task_execution_scope
+
+            provider = os._task_execution_provider
+            if provider is not None:
+                await provider.ainitialize()
+            with authorization_scope(lambda: authority), task_execution_scope(provider):
                 return await call_next(context)
 
     mcp.add_middleware(CallerAuthorizationMiddleware())

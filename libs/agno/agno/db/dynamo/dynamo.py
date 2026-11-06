@@ -466,22 +466,33 @@ class DynamoDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        *,
+        raise_on_error: bool = False,
     ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
         try:
             table_name = self._get_table("runs", create_table_if_not_found=False)
+            if raise_on_error and (table_name is None or not self.table_exists(table_name)):
+                raise RuntimeError("The runs table is unavailable")
             items: List[Dict[str, Any]] = []
             try:
-                if session_id is not None:
+                if session_id is not None and not raise_on_error:
                     items = self._query_runs_by_session(session_id)
                 else:
-                    response = self.client.scan(TableName=table_name)
+                    # Strict verification cannot use the eventually consistent session GSI.
+                    scan_kwargs: Dict[str, Any] = {"TableName": table_name}
+                    if raise_on_error:
+                        scan_kwargs["ConsistentRead"] = True
+                    if session_id is not None:
+                        scan_kwargs["FilterExpression"] = "session_id = :sid"
+                        scan_kwargs["ExpressionAttributeValues"] = {":sid": {"S": session_id}}
+                    response = self.client.scan(**scan_kwargs)
                     items.extend(response.get("Items", []))
                     while "LastEvaluatedKey" in response:
-                        response = self.client.scan(
-                            TableName=table_name, ExclusiveStartKey=response["LastEvaluatedKey"]
-                        )
+                        response = self.client.scan(**scan_kwargs, ExclusiveStartKey=response["LastEvaluatedKey"])
                         items.extend(response.get("Items", []))
             except self.client.exceptions.ResourceNotFoundException:
+                if raise_on_error:
+                    raise
                 items = []
 
             rows = [deserialize_from_dynamodb_item(it) for it in items]

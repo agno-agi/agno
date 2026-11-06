@@ -76,9 +76,10 @@ class RunAuthorizationMiddleware:
     establish identity after this middleware has entered the request.
     """
 
-    def __init__(self, app: ASGIApp, authorization_app: Any):
+    def __init__(self, app: ASGIApp, authorization_app: Any, task_execution_provider: Any = None):
         self.app = app
         self.authorization_app = authorization_app
+        self.task_execution_provider = task_execution_provider
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] not in ("http", "websocket"):
@@ -88,5 +89,12 @@ class RunAuthorizationMiddleware:
         # the authenticating AgentOS while sharing the live verified state.
         scope.setdefault("state", {})
         request = HTTPConnection({**scope, "app": self.authorization_app})
-        with authorization_scope(lambda: request_authorization(request)):
+        from agno.run.concurrency import task_execution_scope
+
+        if self.task_execution_provider is not None:
+            await self.task_execution_provider.ainitialize()
+        with (
+            authorization_scope(lambda: request_authorization(request)),
+            task_execution_scope(self.task_execution_provider),
+        ):
             await self.app(scope, receive, send)

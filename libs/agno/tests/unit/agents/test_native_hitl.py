@@ -1401,3 +1401,47 @@ async def test_reclaimed_terminal_native_run_settles_ticket_without_execution(tm
     assert (await store.get_job("run"))["status"] == status.value.lower()
     assert agent.calls == 0
     assert (await agent.aget_run_output("run", "session")).status == status
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("database", [SqliteDb, AsyncSqliteDb])
+async def test_company_claim_survives_native_approval_wait_after_disconnect(tmp_path, database):
+    from agno.company.execution import _call
+    from agno.company.manager import AsyncCompanyManager, CompanyManager
+    from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS
+    from agno.run.background import await_background_runs
+    from agno.run.concurrency import _TaskExecutionProvider, task_execution_scope
+
+    db = database(db_file=str(tmp_path / "approval.db"))
+    manager = (AsyncCompanyManager if database is AsyncSqliteDb else CompanyManager)(db)
+    product = await _call(manager, "create", name="Runtime")
+    project = await _call(manager, "create_project", product_id=product["id"], name="Draft")
+    task = await _call(manager, "create_task", product_id=product["id"], project_id=project["id"], title="Work")
+    provider = _TaskExecutionProvider(db)
+    await provider.ainitialize()
+    agent = Harness(id="test", db=db, hitl_timeout=5)
+    try:
+        for cycle in range(2):
+            run_id = f"run-{cycle}"
+            with task_execution_scope(provider):
+                stream = agent.arun("work", session_id=task["session_id"], run_id=run_id, background=True, stream=True)
+                await stream.__anext__()
+                await stream.aclose()
+            paused = await pending(agent, run_id, task["session_id"])
+            row = await _call(db, "get_task", task["id"])
+            assert row["metadata"].get(TASK_EXECUTION_CLAIMS), "Paused native execution lost its Task claim"
+            await submit_decisions(agent, run_id, task["session_id"], None, answered(paused, True))
+            await await_background_runs()
+            for _ in range(100):
+                if not (await _call(db, "get_task", task["id"]))["metadata"].get(TASK_EXECUTION_CLAIMS):
+                    break
+                await asyncio.sleep(0.01)
+            assert not (await _call(db, "get_task", task["id"]))["metadata"].get(TASK_EXECUTION_CLAIMS)
+        assert agent.executions == 2
+    finally:
+        current = await agent.aget_run_output(run_id, task["session_id"])
+        if current is not None and current.status in (RunStatus.running, RunStatus.paused):
+            await agent.acancel_run(run_id)
+        await await_background_runs()
+        await provider.aclose()
+        await _call(db, "close")
