@@ -1,6 +1,5 @@
 """Deterministic delegated lifecycle through real APIs and PostgreSQL queue tickets."""
 
-import asyncio
 import json
 import os
 from datetime import datetime, timedelta, timezone
@@ -12,7 +11,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 
 from agno.agent import Agent
-from agno.company.lifecycle import CompanyLifecycleTools, _advance_task
+from agno.company.lifecycle import CompanyLifecycleTools
 from agno.company.routines import _CompanyScheduleExecutor
 from agno.db.postgres import PostgresDb
 from agno.job_queue import QueueConfig
@@ -22,7 +21,6 @@ from agno.models.response import ModelResponse
 from agno.os import AgentOS, Authorization, CompanyConfig
 from agno.os.job_queue import QueueWorker, resolve_queue_store
 from agno.run import RunContext
-from agno.run.authorization import authorization_scope
 
 SECRET = "company-managed-lifecycle-test-secret-32-bytes"
 SCOPES = [
@@ -57,25 +55,44 @@ class OfflineModel(Model):
         self.attempts = 0
         self.always_revise = False
         self.bad_evidence = False
+        self.question = False
 
     def invoke(self, messages, **kwargs):
         content = next(str(message.content) for message in reversed(messages) if message.role == "user")
         if self.kind == "assessor":
             payload = json.loads(content)
             evidence = payload["evidence"]
-            done = payload["kind"] == "project" or ("version=2" in json.dumps(evidence) and not self.always_revise)
+            done = (
+                self.bad_evidence
+                or payload["kind"] == "project"
+                or ("version=2" in json.dumps(evidence) and not self.always_revise)
+            )
             result = {
-                "decision": "done" if done else "revise",
+                "decision": "question" if self.question else "done" if done else "revise",
                 "reason": "The checked artifact satisfies the outcome" if done else "The artifact needs version 2",
                 "evidence": ["invented"] if self.bad_evidence else list(evidence),
                 "next_instruction": None if done else "Produce and verify version=2",
             }
             return ModelResponse(role="assistant", content=json.dumps(result), response_usage=MessageMetrics())
         if self.kind == "worker":
+            last_user = max(i for i, message in enumerate(messages) if message.role == "user")
+            results = [message.content for message in messages[last_user + 1 :] if message.role == "tool"]
+            if results:
+                return ModelResponse(role="assistant", content=str(results[-1]), response_usage=MessageMetrics())
             self.attempts += 1
+            version = 2 if '"revision"' in content else 1
             return ModelResponse(
                 role="assistant",
-                content="checked artifact version=" + ("2" if '"revision"' in content else "1"),
+                tool_calls=[
+                    {
+                        "id": "verify-artifact",
+                        "type": "function",
+                        "function": {
+                            "name": "write_and_verify_artifact",
+                            "arguments": json.dumps({"version": version}),
+                        },
+                    }
+                ],
                 response_usage=MessageMetrics(),
             )
         last_user = max(i for i, message in enumerate(messages) if message.role == "user")
@@ -129,12 +146,25 @@ class OfflineModel(Model):
 
 
 @pytest.fixture
-async def system():
+async def system(tmp_path):
     schema = "managed_lifecycle_" + uuid4().hex
     url = os.environ.get("COMPANY_TEST_DB_URL", "postgresql+psycopg://agno:agno@127.0.0.1:5532/agno")
     db = PostgresDb(db_url=url, db_schema=schema)
     worker_model = OfflineModel("worker")
-    writer = Agent(id="writer", db=db, model=worker_model, telemetry=False)
+
+    def write_and_verify_artifact(version: int) -> str:
+        """Write a fixture artifact and independently read its bytes back for verification."""
+        from hashlib import sha256
+
+        path = tmp_path / f"artifact-{version}.txt"
+        path.write_text(f"version={version}")
+        content = path.read_text()
+        assert content == f"version={version}"
+        return json.dumps(
+            {"artifact": str(path), "content": content, "verified_sha256": sha256(path.read_bytes()).hexdigest()}
+        )
+
+    writer = Agent(id="writer", db=db, model=worker_model, tools=[write_and_verify_artifact], telemetry=False)
     auth = Authorization(db=db, verification_keys=[SECRET], algorithm="HS256", audience="lifecycle")
     auth.define_role("delegator", SCOPES).assign("alice", "delegator")
     config = QueueConfig(durable=True, db=db, max_attempts=1)
@@ -222,7 +252,7 @@ async def test_delegate_revision_and_completion_without_human_approvals(system):
     assert second["status"] == "completed"
     finished = db.get_task(task["id"])
     assert finished["status"] == "done", finished
-    assert db.get_project(task["project_id"])["status"] == "done"
+    assert db.get_project(task["project_id"])["status"] == "done", db.get_project(task["project_id"])
     assert worker_model.attempts == 2
     await executor._tick()
     assert worker_model.attempts == 2
@@ -264,3 +294,130 @@ async def test_arbitrary_component_cannot_use_lifecycle_tool(system):
             _agno_agent=host.agents[0],
             _agno_run_context=RunContext(run_id="r", session_id="s", user_id="alice"),
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["bad_evidence", "question"])
+async def test_missing_input_and_fabricated_verification_stop_execution(system, mode):
+    host, db, worker, executor, client, auth, assessor, worker_model = system
+    setattr(assessor, mode, True)
+    task = await delegate(system)
+    await execute(worker)
+    current = db.get_task(task["id"])
+    assert current["status"] == "backlog"
+    decision = current["transitions"][-1]["system_decision"]
+    assert decision["decision"] == ("question" if mode == "question" else "failed")
+    assert decision["reason"]
+    await executor._tick()
+    assert await worker.store.claim_job(worker.worker_id, worker.config.lock_grace_seconds) is None
+    assert worker_model.attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_restart_reconciles_persisted_completion_once(system):
+    host, db, worker, executor, client, auth, assessor, worker_model = system
+    task = await delegate(system)
+    del executor.app.state.scheduler_executor
+    await execute(worker)
+    assert db.get_task(task["id"])["status"] == "in_review"
+    # A fresh scheduler has no in-memory lifecycle state; it reads the existing
+    # Task, persisted run evidence and acceptance authority from PostgreSQL.
+    recovered = _CompanyScheduleExecutor(
+        host,
+        executor.app,
+        company_db=db,
+        schedule_db=db,
+        base_url="http://test",
+        internal_service_token=host._internal_service_token,
+    )
+    executor.app.state.scheduler_executor = recovered
+    await recovered._tick()
+    revised = db.get_task(task["id"])
+    assert revised["status"] == "in_progress"
+    await recovered._tick()
+    await execute(worker)
+    assert db.get_task(task["id"])["status"] == "done"
+    assert db.get_project(task["project_id"])["status"] == "done"
+    assert worker_model.attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_cancellation_during_assessment_is_not_overwritten(system, monkeypatch):
+    import agno.company.lifecycle as lifecycle
+
+    host, db, worker, executor, client, auth, assessor, worker_model = system
+    task = await delegate(system)
+    original = lifecycle._assess
+
+    async def cancel_after_assessment(*args, **kwargs):
+        assessment = await original(*args, **kwargs)
+        response = await client.post(
+            f"/company/tasks/{task['id']}/transitions",
+            headers=headers(),
+            json={"target": "cancelled", "reason": "User cancelled"},
+        )
+        assert response.status_code == 200, response.text
+        return assessment
+
+    monkeypatch.setattr(lifecycle, "_assess", cancel_after_assessment)
+    await execute(worker)
+    assert db.get_task(task["id"])["status"] == "cancelled"
+    await executor._tick()
+    assert db.get_task(task["id"])["status"] == "cancelled"
+    assert worker_model.attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_executor_permission_denial_creates_no_work(system):
+    host, db, worker, executor, client, auth, assessor, worker_model = system
+    auth.define_role("conversation-only", ["agents:company-manager:run", "company:read"]).assign(
+        "bob", "conversation-only"
+    )
+    response = await client.post(
+        "/agents/company-manager/runs",
+        headers=headers("bob"),
+        data={"message": "delegate", "session_id": "bob-conversation", "stream": "false"},
+    )
+    assert response.status_code == 200, response.text
+    assert db.get_tasks()[1] == 0
+    assert worker_model.attempts == 0
+
+
+@pytest.mark.asyncio
+async def test_duplicate_intake_does_not_reopen_failed_delegation(system):
+    from agno.company.conversation import _conversation_scope
+    from agno.company.lifecycle import _delegation
+    from agno.os.authz.run_context import restore_authorization
+    from agno.run.authorization import AUTHORIZATION_KEY, authorization_scope
+
+    host, db, worker, executor, client, auth, assessor, worker_model = system
+    task = await delegate(system)
+    origin = next(entry["company_conversation"] for entry in task["transitions"] if "company_conversation" in entry)
+    authority = restore_authorization(executor.app, _delegation(task)[AUTHORIZATION_KEY])
+    context = RunContext(
+        run_id=origin["run_id"], session_id=origin["session_id"], user_id="alice", authorization=authority
+    )
+    toolkit = next(tool for tool in host.company_manager.tools if isinstance(tool, CompanyLifecycleTools))
+
+    async def repeat():
+        with authorization_scope(lambda: authority), _conversation_scope(origin):
+            return json.loads(
+                await toolkit.adelegate_company_outcome(
+                    "SDK",
+                    "A verified version=2 artifact",
+                    "Deliver artifact",
+                    "Produce a checked artifact with version=2",
+                    "agent",
+                    "writer",
+                    _agno_agent=host.company_manager,
+                    _agno_run_context=context,
+                )
+            )
+
+    assert (await repeat())["run_id"] == task["job_id"]
+    assessor.question = True
+    await execute(worker)
+    assert (await repeat())["status"] == "backlog"
+    assert db.get_tasks()[1] == 1
+    assert db.get_task(task["id"])["status"] == "backlog"
+    assert await worker.store.claim_job(worker.worker_id, worker.config.lock_grace_seconds) is None

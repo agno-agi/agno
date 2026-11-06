@@ -426,3 +426,13 @@ with the `status` filter.
 SQLite and with `COMPANY_DB=postgres`, with no model calls.
 
 ---
+
+### 14_managed_lifecycle/managed_lifecycle.py
+
+**Status:** PASS
+
+**Description:** Actual Company Manager API and PostgreSQL queue with deterministic local models and checked artifacts; unrelated conversation before execution, one automatic revision, same Task/session, Task and Project completion.
+
+**Result:** Two attempts, both records Done; no lifecycle approvals or paid provider calls. See the example folder's TEST_LOG.md for regression coverage.
+
+---

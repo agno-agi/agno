@@ -53,9 +53,13 @@ def _stamp_decision(existing: Dict[str, Any], fields: Dict[str, Any]) -> None:
 
 def _delegation(task: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     for entry in reversed(task.get("transitions") or []):
+        if entry.get("target") != "ready":
+            continue
         marker = entry.get("system_decision") or {}
         if marker.get("operation") == "accept" and marker.get("task_id") == task.get("id"):
             return {**marker, AUTHORIZATION_KEY: entry.get(AUTHORIZATION_KEY)}
+        if marker.get("operation") != "assessment" or marker.get("decision") != "revise":
+            return None  # A manual/new acceptance replaces the delegated mandate.
     return None
 
 
@@ -269,7 +273,7 @@ class CompanyLifecycleTools(Toolkit):
                 task = await _call(manager, "get_task", task_id, user_id=identity)
         if task is None or task["project_id"] != project_id or task["brief"] != brief:
             raise ValueError("Delegation key was reused for different work")
-        if task["status"] == "backlog":
+        if task["status"] == "backlog" and not task.get("transitions"):
             task = await self._accept(os, authority, identity, task, executor_type, executor_id, session)
         if task["status"] not in {"ready", "in_progress"}:
             return json.dumps({"task_id": task_id, "project_id": project_id, "status": task["status"]})
@@ -459,16 +463,16 @@ async def _advance_task(os: Any, app: Any, task: Dict[str, Any]) -> Optional[Dic
     elif result.get("status") != "COMPLETED":
         assessment = OutcomeAssessment(decision="failed", reason=str(result.get("content") or "Execution failed"))
     else:
-        run_db = _task_run_database(os, task)
-        run = await _call(run_db, "get_run", task["job_id"], deserialize=False)
-        if run is None or run.get("session_id") != task["session_id"]:
-            raise ValueError("Deliverable run is unavailable")
-        data = run.get("run_data") or {}
-        evidence = {f"run:{task['job_id']}:content": data.get("content")}
-        for tool in data.get("tools") or []:
-            if not tool.get("tool_call_error") and tool.get("result") is not None:
-                evidence[f"run:{task['job_id']}:tool:{tool.get('tool_call_id')}"] = tool.get("result")
         try:
+            run_db = _task_run_database(os, task)
+            run = await _call(run_db, "get_run", task["job_id"], deserialize=False)
+            if run is None or run.get("session_id") != task["session_id"]:
+                raise ValueError("Deliverable run is unavailable")
+            data = run.get("run_data") or {}
+            evidence = {f"run:{task['job_id']}:content": data.get("content")}
+            for tool in data.get("tools") or []:
+                if not tool.get("tool_call_error") and tool.get("result") is not None:
+                    evidence[f"run:{task['job_id']}:tool:{tool.get('tool_call_id')}"] = tool.get("result")
             with authorization_scope(lambda: authority):
                 assessment = await _assess(
                     os,
@@ -550,7 +554,11 @@ async def _complete_project(
         if page * 100 >= total:
             break
         page += 1
-    if not tasks or any(task["status"] != "done" for task in tasks):
+    if (
+        not tasks
+        or any(task["status"] not in {"done", "cancelled"} for task in tasks)
+        or not any(task["status"] == "done" for task in tasks)
+    ):
         return None
     signature = _project_evidence_key(tasks)
     if any((entry.get("system_decision") or {}).get("assessed_tasks") == signature for entry in project["transitions"]):

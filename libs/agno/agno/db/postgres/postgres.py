@@ -9682,7 +9682,7 @@ class PostgresDb(BaseDb):
                 table.c.transitions == existing["transitions"],
             )
             if tasks_table is not None:
-                update = update.where(~open_query.exists())
+                update = update.where(~open_query.where(tasks_table.c.status.not_in(["done", "cancelled"])).exists())
             if expected_updated_at is not _UNSET_UPDATED_AT:
                 update = update.where(table.c.updated_at == expected_updated_at)
             if user_id is not None:
