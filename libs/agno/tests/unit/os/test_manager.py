@@ -155,7 +155,7 @@ def test_public_company_manager_routine_retains_manager_restrictions(db):
     )
     assert (
         _routine_executor_endpoint("agent", "company-manager-internal", os.registry, agent_os=os)
-        == "/agents/company-manager/runs"
+        == "/agents/company-manager-internal/runs"
     )
     for kind, target in [
         ("team", "os-manager-internal"),
@@ -2389,3 +2389,23 @@ def test_manager_without_component_catalog_still_constructs():
         telemetry=False,
     )
     assert os.manager.id == "super-agent"
+
+
+def test_legacy_routine_endpoint_preserves_schedule_provenance(db):
+    from agno.company import CompanyConfig
+    from agno.company.declarations import Routine
+    from agno.company.manager import _routine_provenance
+    from agno.company.routines import _schedule_fields
+    from agno.db.schemas.scheduler import match_run_endpoint
+
+    os = AgentOS(db=db, company=CompanyConfig(model=OfflineModel()), telemetry=False)
+    routine = Routine(
+        name="legacy",
+        executor_type="agent",
+        executor_id="company-manager-internal",
+        instructions="inspect",
+        cron_expr="0 9 * * *",
+    )
+    fields = _schedule_fields("product", routine, os.registry, agent_os=os)
+    provenance = _routine_provenance(routine)
+    assert match_run_endpoint(fields["endpoint"], provenance["target_type"], provenance["target_id"])
