@@ -859,6 +859,10 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
             if isinstance(os._company_db, AsyncBaseDb)
             else CompanyManager(os._company_db, os.registry)
         )
+        if not completing:
+            project = await _manager_call(manager, "get_project", task["project_id"])
+            if project and project["status"] == "proposed":
+                raise _AutomationSkip("Project approval is required before automatic Task acceptance")
         # Avoid Source IO for exhausted policies. The transaction repeats this
         # check under the Product lock, so concurrent acceptances remain bounded.
         if (
