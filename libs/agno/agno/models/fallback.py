@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import weakref
 from dataclasses import dataclass, field
 from inspect import isawaitable
 from time import monotonic
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Tuple, Union
 
-from agno.exceptions import ContextWindowExceededError, ModelProviderError, ModelRateLimitError
+from agno.exceptions import (
+    ContextWindowExceededError,
+    ModelAuthenticationError,
+    ModelProviderError,
+    ModelRateLimitError,
+)
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse, ModelResponseEvent
@@ -17,6 +23,10 @@ from agno.utils.log import log_debug, log_warning
 
 # Stream event type returned by response_stream / aresponse_stream
 StreamEvent = Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]
+
+# A model call failing with one of these may hand over to another model. Anything else (a
+# cancelled run, a tool error) ends the run with the messages produced so far.
+_SWITCHABLE_ERRORS = (ModelProviderError, ModelAuthenticationError)
 
 
 @dataclass
@@ -44,13 +54,14 @@ class FallbackConfig:
     # Signature: callback(primary_model_id: str, fallback_model_id: str, error: Exception) -> None
     callback: Optional[Callable[[str, str, Exception], None]] = None
     # Keep calling the fallback model that took over instead of trying the primary first on every call.
-    # Context-window fallbacks never stick: they depend on the request, not on the primary's health.
+    # Context-window errors neither set nor release it: they depend on the request, not the model's health.
     sticky: bool = False
     # Seconds to stay on a sticky fallback before trying the primary again. None stays until the fallback fails.
     retry_primary_after: Optional[float] = None
-    # Primary model key -> (fallback list name, index in that list, monotonic expiry). Shallow copies share it,
-    # so per-request agent copies (AgentOS) see the same sticky fallback.
-    _sticky_state: Dict[str, Tuple[str, int, Optional[float]]] = field(
+    # id(primary) -> (primary weakref, fallback list name, index in that list, monotonic expiry). Keyed by
+    # instance so primaries sharing a model id but not an endpoint or key stay apart. Shallow copies share
+    # this dict, and per-request agent copies (AgentOS) share the primary instance, so both see one entry.
+    _sticky_state: Dict[int, Tuple[weakref.ref, str, int, Optional[float]]] = field(
         default_factory=dict, init=False, repr=False, compare=False
     )
 
@@ -69,11 +80,15 @@ class FallbackConfig:
         """Return the fallback model currently standing in for ``primary``, if any."""
         if not self.sticky:
             return None
-        key = _sticky_key(primary)
+        key = id(primary)
         entry = self._sticky_state.get(key)
         if entry is None:
             return None
-        list_name, index, expires_at = entry
+        primary_ref, list_name, index, expires_at = entry
+        if primary_ref() is not primary:
+            # The id belonged to a primary that was garbage-collected
+            self._sticky_state.pop(key, None)
+            return None
         if expires_at is not None and monotonic() >= expires_at:
             self._sticky_state.pop(key, None)
             log_debug(f"Sticky fallback expired, trying primary model '{primary.id}' again")
@@ -92,7 +107,7 @@ class FallbackConfig:
             for index, candidate in enumerate(getattr(self, list_name)):
                 if candidate is fallback:
                     expires_at = None if self.retry_primary_after is None else monotonic() + self.retry_primary_after
-                    self._sticky_state[_sticky_key(primary)] = (list_name, index, expires_at)
+                    self._sticky_state[id(primary)] = (weakref.ref(primary), list_name, index, expires_at)
                     return
 
     def clear_sticky_fallback(self, primary: Optional[Model] = None) -> None:
@@ -100,7 +115,7 @@ class FallbackConfig:
         if primary is None:
             self._sticky_state.clear()
         else:
-            self._sticky_state.pop(_sticky_key(primary), None)
+            self._sticky_state.pop(id(primary), None)
 
     def resolve_models(self) -> None:
         """Resolve string model references to Model instances across all fallback lists.
@@ -126,13 +141,11 @@ class FallbackConfig:
                 setattr(self, attr, resolved)
 
 
-def _sticky_key(model: Model) -> str:
-    return f"{type(model).__name__}:{model.id}"
-
-
-def _release_sticky_fallback(
-    fallback_config: FallbackConfig, primary: Model, sticky: Model, error: ModelProviderError
-) -> None:
+def _on_sticky_failed(fallback_config: FallbackConfig, primary: Model, sticky: Model, error: Exception) -> None:
+    """Release the sticky fallback, unless the failure is about this request rather than the model."""
+    if _is_context_overflow(error):
+        log_warning(f"Sticky fallback model '{sticky.id}' rejected the request as too long, trying '{primary.id}'")
+        return
     fallback_config.clear_sticky_fallback(primary)
     log_warning(f"Sticky fallback model '{sticky.id}' failed, trying primary model '{primary.id}' again: {error}")
 
@@ -247,7 +260,7 @@ class _FallbackAttempt:
 
     The copy keeps a failed attempt from polluting what the next attempt sees. The caller's
     list is still brought up to date before every tool-batch callback, because the
-    checkpoint it writes reads that list, and is rolled back if the attempt fails.
+    checkpoint it writes reads that list.
     """
 
     def __init__(self, kwargs: dict, original_messages: Optional[List[Message]]) -> None:
@@ -274,9 +287,17 @@ class _FallbackAttempt:
             self.original_messages.extend(self.messages[self.synced :])
             self.synced = len(self.messages)
 
-    def rollback(self) -> None:
-        if self.original_messages is not None:
-            del self.original_messages[self.original_len :]
+    def finish(self, error: BaseException) -> None:
+        """Settle the caller's list after a failed call.
+
+        Rolled back when another model will take over, so it starts clean. Otherwise the run
+        ends here, and the caller keeps every completed turn, as it would on the primary.
+        """
+        if isinstance(error, _SWITCHABLE_ERRORS):
+            if self.original_messages is not None:
+                del self.original_messages[self.original_len :]
+        else:
+            self.sync()
 
 
 def call_model_with_fallback(
@@ -293,8 +314,8 @@ def call_model_with_fallback(
         try:
             log_debug(f"Using sticky fallback model '{sticky.id}' in place of '{model.id}'")
             return _call_fallback(sticky, "response", _clean_kwargs_for_fallback(kwargs), kwargs.get("messages"))
-        except ModelProviderError as sticky_error:
-            _release_sticky_fallback(fallback_config, model, sticky, sticky_error)
+        except _SWITCHABLE_ERRORS as sticky_error:
+            _on_sticky_failed(fallback_config, model, sticky, sticky_error)
     try:
         return model.response(**kwargs)
     except ModelProviderError as primary_error:
@@ -340,8 +361,8 @@ async def acall_model_with_fallback(
             return await _acall_fallback(
                 sticky, "aresponse", _clean_kwargs_for_fallback(kwargs), kwargs.get("messages")
             )
-        except ModelProviderError as sticky_error:
-            _release_sticky_fallback(fallback_config, model, sticky, sticky_error)
+        except _SWITCHABLE_ERRORS as sticky_error:
+            _on_sticky_failed(fallback_config, model, sticky, sticky_error)
     try:
         return await model.aresponse(**kwargs)
     except ModelProviderError as primary_error:
@@ -393,8 +414,8 @@ def call_model_stream_with_fallback(
             log_debug(f"Using sticky fallback model '{sticky.id}' in place of '{model.id}'")
             yield from _stream_fallback(sticky, _clean_kwargs_for_fallback(kwargs), kwargs.get("messages"))
             return
-        except ModelProviderError as sticky_error:
-            _release_sticky_fallback(fallback_config, model, sticky, sticky_error)
+        except _SWITCHABLE_ERRORS as sticky_error:
+            _on_sticky_failed(fallback_config, model, sticky, sticky_error)
             # Discard anything the sticky model streamed before it failed
             yield ModelResponse(event=ModelResponseEvent.fallback_model_activated.value)
     try:
@@ -440,8 +461,8 @@ async def acall_model_stream_with_fallback(
             async for event in _astream_fallback(sticky, _clean_kwargs_for_fallback(kwargs), kwargs.get("messages")):
                 yield event
             return
-        except ModelProviderError as sticky_error:
-            _release_sticky_fallback(fallback_config, model, sticky, sticky_error)
+        except _SWITCHABLE_ERRORS as sticky_error:
+            _on_sticky_failed(fallback_config, model, sticky, sticky_error)
             # Discard anything the sticky model streamed before it failed
             yield ModelResponse(event=ModelResponseEvent.fallback_model_activated.value)
     try:
@@ -507,8 +528,8 @@ def _call_fallback(
     attempt = _FallbackAttempt(kwargs, original_messages)
     try:
         result = getattr(fallback, method_name)(**attempt.kwargs)
-    except BaseException:
-        attempt.rollback()
+    except BaseException as e:
+        attempt.finish(e)
         raise
     attempt.sync()
     return result
@@ -521,8 +542,8 @@ async def _acall_fallback(
     attempt = _FallbackAttempt(kwargs, original_messages)
     try:
         result = await getattr(fallback, method_name)(**attempt.kwargs)
-    except BaseException:
-        attempt.rollback()
+    except BaseException as e:
+        attempt.finish(e)
         raise
     attempt.sync()
     return result
@@ -535,8 +556,8 @@ def _stream_fallback(
     attempt = _FallbackAttempt(kwargs, original_messages)
     try:
         yield from fallback.response_stream(**attempt.kwargs)
-    except BaseException:
-        attempt.rollback()
+    except BaseException as e:
+        attempt.finish(e)
         raise
     attempt.sync()
 
@@ -549,8 +570,8 @@ async def _astream_fallback(
     try:
         async for event in fallback.aresponse_stream(**attempt.kwargs):
             yield event
-    except BaseException:
-        attempt.rollback()
+    except BaseException as e:
+        attempt.finish(e)
         raise
     attempt.sync()
 

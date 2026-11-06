@@ -9,7 +9,13 @@ import pytest
 os.environ.setdefault("OPENAI_API_KEY", "test-key-for-testing")
 
 from agno.agent.agent import Agent
-from agno.exceptions import ContextWindowExceededError, ModelProviderError, ModelRateLimitError
+from agno.exceptions import (
+    ContextWindowExceededError,
+    ModelAuthenticationError,
+    ModelProviderError,
+    ModelRateLimitError,
+    RunCancelledException,
+)
 from agno.models.base import Model
 from agno.models.fallback import (
     FallbackConfig,
@@ -1158,6 +1164,7 @@ class TestStickyFallback:
         agent = Agent(model=primary, fallback_config=config, telemetry=False)
         request_copy = agent.deep_copy()
         assert request_copy.fallback_config is not config
+        assert request_copy.model is primary  # the instance sticky state is keyed on
 
         # Agent init resolves the copy's fallback list into fresh model instances
         request_copy.fallback_config.resolve_models()
@@ -1425,3 +1432,160 @@ class TestFallbackCheckpointSync:
 
         assert seen == [3]
         assert len(messages) == 3
+
+
+# =============================================================================
+# Sticky fallback: failure handling
+# =============================================================================
+
+
+def _sticky_setup():
+    primary = _make_model("primary")
+    fallback = _make_model("fallback")
+    config = FallbackConfig(on_error=[fallback], sticky=True)
+    config.set_sticky_fallback(primary, fallback)
+    return primary, fallback, config
+
+
+def _tool_turn(messages):
+    messages.append(Message(role="assistant", content="tool-turn"))
+    messages.append(Message(role="tool", content="tool-result"))
+
+
+class TestStickyFailureHandling:
+    def test_same_model_id_on_another_endpoint_is_not_redirected(self):
+        """Primaries sharing a class and id but not an endpoint keep separate sticky state."""
+        failing = OpenAIChat(id="shared-id", base_url="http://endpoint-a/v1")
+        healthy = OpenAIChat(id="shared-id", base_url="http://endpoint-b/v1")
+        fallback = _make_model("fallback")
+        config = FallbackConfig(on_error=[fallback], sticky=True)
+        config.set_sticky_fallback(failing, fallback)
+
+        assert config.get_sticky_fallback(failing) is fallback
+        assert config.get_sticky_fallback(healthy) is None
+
+    def test_cancelled_sticky_run_keeps_completed_turns(self):
+        primary, fallback, config = _sticky_setup()
+        messages = [Message(role="user", content="go")]
+
+        def _response(messages, **kwargs):
+            _tool_turn(messages)
+            raise RunCancelledException("cancelled")
+
+        with patch.object(primary, "response") as primary_response:
+            with patch.object(fallback, "response", side_effect=_response):
+                with pytest.raises(RunCancelledException):
+                    call_model_with_fallback(primary, config, messages=messages)
+
+        assert [m.content for m in messages] == ["go", "tool-turn", "tool-result"]
+        primary_response.assert_not_called()
+        assert config.get_sticky_fallback(primary) is fallback
+
+    def test_cancelled_checkpointed_sticky_run_keeps_completed_turns(self):
+        """Turns already mirrored for a checkpoint are not dropped when the run is cancelled."""
+        primary, fallback, config = _sticky_setup()
+        messages = [Message(role="user", content="go")]
+
+        def _response(messages, after_tool_results, **kwargs):
+            _tool_turn(messages)
+            after_tool_results(ModelResponse())
+            raise RunCancelledException("cancelled")
+
+        with patch.object(fallback, "response", side_effect=_response):
+            with pytest.raises(RunCancelledException):
+                call_model_with_fallback(primary, config, messages=messages, after_tool_results=lambda _: None)
+
+        assert [m.content for m in messages] == ["go", "tool-turn", "tool-result"]
+
+    @pytest.mark.asyncio
+    async def test_async_cancelled_sticky_run_keeps_completed_turns(self):
+        primary, fallback, config = _sticky_setup()
+        messages = [Message(role="user", content="go")]
+
+        async def _aresponse(messages, **kwargs):
+            _tool_turn(messages)
+            raise RunCancelledException("cancelled")
+
+        with patch.object(fallback, "aresponse", side_effect=_aresponse):
+            with pytest.raises(RunCancelledException):
+                await acall_model_with_fallback(primary, config, messages=messages)
+
+        assert [m.content for m in messages] == ["go", "tool-turn", "tool-result"]
+
+    def test_closed_sticky_stream_keeps_completed_turns(self):
+        """A consumer that stops reading (GeneratorExit) keeps what the sticky model already produced."""
+        primary, fallback, config = _sticky_setup()
+        messages = [Message(role="user", content="go")]
+
+        def _stream(messages, **kwargs):
+            _tool_turn(messages)
+            yield ModelResponse(content="chunk")
+            yield ModelResponse(content="never read")
+
+        with patch.object(fallback, "response_stream", side_effect=_stream):
+            stream = call_model_stream_with_fallback(primary, config, messages=messages)
+            next(stream)
+            stream.close()
+
+        assert [m.content for m in messages] == ["go", "tool-turn", "tool-result"]
+        assert config.get_sticky_fallback(primary) is fallback
+
+    def test_auth_error_releases_sticky_and_tries_primary(self):
+        primary, fallback, config = _sticky_setup()
+
+        with patch.object(primary, "response", return_value=ModelResponse(content="primary")):
+            with patch.object(fallback, "response", side_effect=ModelAuthenticationError("no key")):
+                result = call_model_with_fallback(primary, config, messages=[])
+
+        assert result.content == "primary"
+        assert config.get_sticky_fallback(primary) is None
+
+    @pytest.mark.asyncio
+    async def test_async_auth_error_releases_sticky_and_tries_primary(self):
+        primary, fallback, config = _sticky_setup()
+
+        with patch.object(primary, "aresponse", AsyncMock(return_value=ModelResponse(content="primary"))):
+            with patch.object(fallback, "aresponse", AsyncMock(side_effect=ModelAuthenticationError("no key"))):
+                result = await acall_model_with_fallback(primary, config, messages=[])
+
+        assert result.content == "primary"
+        assert config.get_sticky_fallback(primary) is None
+
+    def test_stream_auth_error_releases_sticky(self):
+        primary, fallback, config = _sticky_setup()
+
+        with patch.object(primary, "response_stream", return_value=iter([ModelResponse(content="primary")])):
+            with patch.object(fallback, "response_stream", side_effect=ModelAuthenticationError("no key")):
+                result = list(call_model_stream_with_fallback(primary, config, messages=[]))
+
+        assert result[-1].content == "primary"
+        assert config.get_sticky_fallback(primary) is None
+
+    def test_context_overflow_on_sticky_keeps_it(self):
+        """One oversized request tries the primary but leaves the sticky fallback for the next request."""
+        primary, fallback, config = _sticky_setup()
+
+        with patch.object(primary, "response", return_value=ModelResponse(content="primary")) as primary_response:
+            with patch.object(fallback, "response", side_effect=ContextWindowExceededError("too long")):
+                result = call_model_with_fallback(primary, config, messages=[])
+
+        assert result.content == "primary"
+        primary_response.assert_called_once()
+        assert config.get_sticky_fallback(primary) is fallback
+
+    @pytest.mark.asyncio
+    async def test_async_stream_context_overflow_on_sticky_keeps_it(self):
+        primary, fallback, config = _sticky_setup()
+
+        async def _overflow(**kwargs):
+            raise ContextWindowExceededError("too long")
+            yield  # pragma: no cover
+
+        async def _primary_stream(**kwargs):
+            yield ModelResponse(content="primary")
+
+        with patch.object(primary, "aresponse_stream", side_effect=_primary_stream):
+            with patch.object(fallback, "aresponse_stream", side_effect=_overflow):
+                [e async for e in acall_model_stream_with_fallback(primary, config, messages=[])]
+
+        assert config.get_sticky_fallback(primary) is fallback
