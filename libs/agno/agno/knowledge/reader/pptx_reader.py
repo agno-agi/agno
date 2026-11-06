@@ -73,7 +73,9 @@ class PPTXReader(Reader):
             else:
                 log_debug(f"Reading uploaded file: {getattr(file, 'name', 'BytesIO')}")
                 presentation = Presentation(file)
-                doc_name = name or getattr(file, "name", "pptx_file").split(".")[0]
+                # Native temporary streams may expose an integer descriptor or None as their name.
+                stream_name = getattr(file, "name", None)
+                doc_name = name or (stream_name.split(".")[0] if isinstance(stream_name, str) else "pptx_file")
 
             # Extract text from all slides
             slide_texts = []
