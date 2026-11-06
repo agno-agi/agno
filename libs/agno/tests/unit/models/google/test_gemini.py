@@ -8,7 +8,7 @@ import pytest
 pytest.importorskip("google.genai")
 
 from agno.exceptions import ModelProviderError
-from agno.media import File, Image, Video
+from agno.media import Audio, File, Image, Video
 from agno.models.google.gemini import Gemini
 from agno.models.message import Message
 
@@ -301,7 +301,93 @@ def test_format_messages_nests_tool_result_media_in_function_response():
     ]
 
 
-def test_format_messages_keeps_unsupported_tool_result_media_as_sibling():
+def test_function_call_media_reaches_gemini_function_response():
+    model = Gemini(api_key="test-key")
+    tool_result = Message(
+        role="tool",
+        content="Document prepared",
+        tool_call_id="call-123",
+        tool_name="read_document_file",
+        images=[Image(content=b"image-bytes", mime_type="image/png")],
+        files=[File(content=b"pdf-bytes", mime_type="application/pdf")],
+    )
+    messages = []
+
+    model.format_function_call_results(messages, [tool_result])
+    model._handle_function_call_media(messages, [tool_result])
+    formatted, _ = model._format_messages(messages)
+
+    assert len(formatted) == 1
+    assert len(formatted[0].parts) == 1
+    function_response = formatted[0].parts[0].function_response
+    assert function_response is not None
+    assert function_response.parts is not None
+    assert [part.inline_data.mime_type for part in function_response.parts if part.inline_data] == [
+        "image/png",
+        "application/pdf",
+    ]
+
+
+def test_function_call_media_separates_unsupported_gemini_media():
+    model = Gemini(api_key="test-key")
+    tool_result = Message(
+        role="tool",
+        content="Media prepared",
+        tool_call_id="call-123",
+        tool_name="render_media",
+        audio=[Audio(content=b"audio-bytes", mime_type="audio/mpeg")],
+        videos=[Video(content=b"video-bytes", mime_type="video/mp4")],
+    )
+    messages = []
+
+    model.format_function_call_results(messages, [tool_result])
+    model._handle_function_call_media(messages, [tool_result])
+    formatted, _ = model._format_messages(messages)
+
+    assert [content.role for content in formatted] == ["user", "user"]
+    assert len(formatted[0].parts) == 1
+    assert formatted[0].parts[0].function_response is not None
+    assert [part.inline_data.mime_type for part in formatted[1].parts if part.inline_data] == [
+        "video/mp4",
+        "audio/mpeg",
+    ]
+
+
+def test_function_call_media_respects_disabled_media_and_legacy_models():
+    tool_result = Message(
+        role="tool",
+        content="Document prepared",
+        tool_call_id="call-123",
+        tool_name="read_document_file",
+        images=[Image(content=b"image-bytes", mime_type="image/png")],
+    )
+    model = Gemini(api_key="test-key")
+    messages = [tool_result]
+
+    model._handle_function_call_media(messages, [tool_result], send_media_to_model=False)
+
+    assert len(messages) == 1
+    assert tool_result.images is None
+
+    legacy = Gemini(id="gemini-2.5-flash", api_key="test-key")
+    legacy_result = Message(
+        role="tool",
+        content="Document prepared",
+        tool_call_id="call-123",
+        tool_name="read_document_file",
+        images=[Image(content=b"image-bytes", mime_type="image/png")],
+    )
+    legacy_messages = [legacy_result]
+
+    legacy._handle_function_call_media(legacy_messages, [legacy_result])
+
+    assert legacy_result.images is None
+    assert len(legacy_messages) == 2
+    assert legacy_messages[1].role == "user"
+    assert legacy_messages[1].images is not None
+
+
+def test_format_messages_separates_unsupported_tool_result_media():
     model = Gemini(api_key="test-key")
     messages = [
         Message(
@@ -315,12 +401,12 @@ def test_format_messages_keeps_unsupported_tool_result_media_as_sibling():
 
     formatted, _ = model._format_messages(messages)
 
-    assert len(formatted) == 1
-    assert len(formatted[0].parts) == 2
+    assert [content.role for content in formatted] == ["user", "user"]
+    assert len(formatted[0].parts) == 1
     assert formatted[0].parts[0].function_response is not None
     assert formatted[0].parts[0].function_response.parts is None
-    assert formatted[0].parts[1].inline_data is not None
-    assert formatted[0].parts[1].inline_data.mime_type == "video/mp4"
+    assert formatted[1].parts[0].inline_data is not None
+    assert formatted[1].parts[0].inline_data.mime_type == "video/mp4"
 
 
 def test_format_messages_keeps_tool_result_media_as_sibling_for_legacy_models():
@@ -360,14 +446,14 @@ def test_format_messages_nests_only_supported_vertex_tool_result_media():
 
     formatted, _ = model._format_messages(messages)
 
-    assert len(formatted) == 1
-    assert len(formatted[0].parts) == 2
+    assert [content.role for content in formatted] == ["user", "user"]
+    assert len(formatted[0].parts) == 1
     function_response = formatted[0].parts[0].function_response
     assert function_response is not None
     assert function_response.parts is not None
     assert [part.file_data.mime_type for part in function_response.parts if part.file_data] == ["application/pdf"]
-    assert formatted[0].parts[1].file_data is not None
-    assert formatted[0].parts[1].file_data.mime_type == "video/mp4"
+    assert formatted[1].parts[0].file_data is not None
+    assert formatted[1].parts[0].file_data.mime_type == "video/mp4"
 
 
 class TestGeminiTimeout:
