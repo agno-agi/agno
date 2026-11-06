@@ -1573,6 +1573,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     conversation_task is not None and path == f"/company/tasks/{conversation_task}/runs"
                 ):
                     internal_scopes.extend(["tasks:write", "wiki:read"])
+            from agno.os.interfaces.slack.company import _slack_cancel
+
+            slack_cancel = _slack_cancel.get()
+            if slack_cancel is not None and method == "POST" and path == slack_cancel[0]:
+                internal_scopes.append("tasks:write")
             request.state.scopes = internal_scopes
             # Trusted internal caller: mark AFTER the constant-time hmac match above so the
             # provider-backed per-resource gate (check_resource_access) short-circuits — the
@@ -1611,6 +1616,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
             if owner_denial is not None:
                 return owner_denial
 
+            if slack_cancel is not None and method == "POST" and path == slack_cancel[0]:
+                # Trusted Slack cancellation has independently checked the current
+                # participant and Task association; route checks use that actor.
+                request.state.user_id = slack_cancel[1]
             return await call_next(request)
 
         # No JWT source configured: security-key mode (static comparison, mirroring

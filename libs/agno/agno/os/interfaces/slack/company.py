@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import re
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 from urllib.parse import quote, urlparse
@@ -11,6 +12,8 @@ from uuid import NAMESPACE_URL, uuid5
 
 from fastapi import HTTPException
 
+
+_slack_cancel: ContextVar[Optional[tuple[str, str]]] = ContextVar("slack_company_cancel", default=None)
 
 def _identity(*parts: str) -> str:
     return str(uuid5(NAMESPACE_URL, json.dumps(parts)))
@@ -142,6 +145,7 @@ class SlackCompany:
         event_id, message = data.get("event_id"), event.get("text")
         if not isinstance(event_id, str) or not event_id or not isinstance(message, str) or not message.strip():
             raise HTTPException(400, "Slack event id and message are required")
+        message = message.replace("<@" + self.bot_user_id + ">", "").strip()
         principal = authority.context.principal_id
         session_id = _identity(self._scope, channel, thread, principal)
         receipt_id = _identity(self._scope, event_id)
@@ -156,6 +160,9 @@ class SlackCompany:
             "notifications": {},
             "attempts": 0,
         }
+        cancellation = re.fullmatch(r"cancel\s+([a-zA-Z0-9_-]+)", message, flags=re.IGNORECASE)
+        if cancellation:
+            body.update(kind="cancel", task_id=cancellation.group(1))
         row = await self._store._receive(receipt_id, session_id, principal, body)
         if row["principal"] != principal or any(
             row["data"].get(key) != body[key] for key in ("user", "channel", "thread", "message")
@@ -194,6 +201,18 @@ class SlackCompany:
         from agno.company.execution import _call
 
         data = row["data"]
+        if data.get("kind") == "cancel":
+            task = await self._task(app, row, data["task_id"], write=True)
+            if task.get("job_id") and task["status"] not in {"done", "cancelled"}:
+                path = f"/company/runs/{quote(task['job_id'], safe='')}/cancel"
+                token = _slack_cancel.set((path, row["principal"]))
+                try:
+                    await self._request(app, row, "POST", path)
+                finally:
+                    _slack_cancel.reset(token)
+            data["state"] = "submitted"
+            self._intent(row, "cancel", "Cancellation processed for Task " + task["id"] + ".")
+            return
         if data.get("kind") == "continue":
             # The continue route validates persisted requirements and the queue
             # owns recovery. A terminal run is never restarted by a delivery retry.
@@ -233,6 +252,26 @@ class SlackCompany:
         data["state"] = "submitted"
         self._intent(row, "receipt", "Received. Your conversation is queued; delegated work is tracked separately.")
 
+    async def _task(self, app: Any, row: Dict[str, Any], task_id: str, *, write: bool = False) -> Dict[str, Any]:
+        from agno.company.conversation import aget_conversation_tasks
+        from agno.company.execution import _call
+        from agno.run import RunContext
+
+        authority = await self._authority(app, row["data"]["user"], row["principal"])
+        tasks = await aget_conversation_tasks(
+            self._os,
+            RunContext(run_id=row["data"]["run_id"], session_id=row["session_id"], user_id=row["principal"], authorization=authority),
+        )
+        if not any(task["task_id"] == task_id for task in tasks):
+            raise PermissionError("Task does not belong to this participant's conversation")
+        task = await _call(self._os._company_db, "get_task", task_id)
+        if task is None:
+            raise PermissionError("Task is unavailable")
+        if write:
+            await authority.arequire("tasks", "write")
+            await authority.arequire(task["executor_type"] + "s", "run", task["executor_id"])
+        return task
+
     async def _collect(self, app: Any, row: Dict[str, Any]) -> bool:
         from agno.company.execution import _call
 
@@ -240,7 +279,7 @@ class SlackCompany:
         await self._authority(app, data["user"], row["principal"])
         run = await _call(self._os.manager.db, "get_run", run_id=data["run_id"])
         complete = False
-        if data.get("kind") == "continue":
+        if data.get("kind") in {"continue", "cancel"}:
             return True  # The originating receipt delivers all subsequent run results.
         if run is not None:
             value = run.to_dict() if hasattr(run, "to_dict") else run
