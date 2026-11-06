@@ -929,12 +929,15 @@ def route_sampling_params_to_extra_body(
     When ``model_id`` names a model that rejects the sampling parameters, they are
     dropped with a warning instead of being sent: the model would answer the whole
     request with a 400, and the parameter is the only part of it that is unsupported.
+
+    The other models reject some values too. With thinking on (``enabled`` or ``adaptive``)
+    ``temperature`` may only be 1, ``top_p`` must be at least 0.95 and ``top_k`` must be
+    unset, and ``temperature`` and ``top_p`` are never accepted together. Such a value is
+    dropped with a warning as well, also when it came in through an explicit ``extra_body``.
     """
     moved = {name: request_params.pop(name) for name in SAMPLING_PARAMS if name in request_params}
-    if not moved:
-        return request_params
 
-    if model_id is not None and not supports_sampling_params(model_id):
+    if moved and model_id is not None and not supports_sampling_params(model_id):
         names = ", ".join(sorted(moved))
         log_warning(
             f"{model_id} rejects {names}, so the request is sent without {names}. "
@@ -943,7 +946,34 @@ def route_sampling_params_to_extra_body(
         return request_params
 
     # A caller who wrote extra_body themselves outranks the model's own fields.
-    request_params["extra_body"] = {**moved, **(request_params.get("extra_body") or {})}
+    extra_body = {**moved, **(request_params.get("extra_body") or {})}
+    # The SDK merges extra_body over the request, so a thinking config there is the one sent.
+    thinking = extra_body.get("thinking", request_params.get("thinking"))
+    thinking_on = isinstance(thinking, dict) and bool(thinking) and thinking.get("type") != "disabled"
+    temperature, top_p, top_k = extra_body.get("temperature"), extra_body.get("top_p"), extra_body.get("top_k")
+
+    rejected: Dict[str, str] = {}
+    if thinking_on:
+        if temperature is not None and temperature != 1:
+            rejected["temperature"] = "must be 1 with thinking on"
+        if top_p is not None and top_p < 0.95:
+            rejected["top_p"] = "must be at least 0.95 with thinking on"
+        if top_k is not None:
+            rejected["top_k"] = "must be unset with thinking on"
+    if temperature is not None and top_p is not None and not rejected.keys() & {"temperature", "top_p"}:
+        # With thinking on temperature can only be the default, so top_p is the one carrying intent.
+        loser, winner = ("temperature", "top_p") if thinking_on else ("top_p", "temperature")
+        rejected[loser] = f"not accepted together with {winner}"
+    if rejected:
+        dropped = ", ".join(f"{name}={extra_body.pop(name)} ({reason})" for name, reason in rejected.items())
+        log_warning(
+            f"Dropping {dropped} from the request, Anthropic rejects it with a 400. Unset the value to silence this warning."
+        )
+
+    if extra_body:
+        request_params["extra_body"] = extra_body
+    else:
+        request_params.pop("extra_body", None)
     return request_params
 
 
