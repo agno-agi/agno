@@ -45,6 +45,7 @@ viz_agent_full = Agent(
             enable_create_scatter_plot=True,
             enable_create_pie_chart=True,
             enable_create_histogram=True,
+            enable_create_multi_line_chart=True,
             output_dir="business_charts",
         )
     ],
@@ -217,6 +218,41 @@ if __name__ == "__main__":
         stream=True,
     )
 
+    print("\n" + "=" * 60 + "\n")
+
+    # Example 6: Multi-Line Chart - Comparing Multiple Series
+    print("Example 6: Multi-Line Chart - Revenue vs Expenses Over Time")
+    viz_agent.print_response(
+        """
+    Create a multi-line chart comparing our revenue and expenses over the past 6 months:
+
+    Revenue: Jan: $120,000, Feb: $135,000, Mar: $128,000, Apr: $145,000, May: $158,000, Jun: $162,000
+    Expenses: Jan: $95,000, Feb: $98,000, Mar: $102,000, Apr: $108,000, May: $110,000, Jun: $115,000
+    Profit: Jan: $25,000, Feb: $37,000, Mar: $26,000, Apr: $37,000, May: $48,000, Jun: $47,000
+
+    Title it "Revenue vs Expenses vs Profit Trend" and analyze the financial health.
+    """,
+        stream=True,
+    )
+
+    print("\n" + "=" * 60 + "\n")
+
+    # Example 7: Multi-Line Chart - Product Comparison
+    print("Example 7: Multi-Line Chart - Product Performance Comparison")
+    viz_agent.print_response(
+        """
+    Create a multi-line chart comparing monthly sales for three product lines:
+
+    Product A: Q1: 150, Q2: 180, Q3: 210, Q4: 250
+    Product B: Q1: 200, Q2: 190, Q3: 220, Q4: 230
+    Product C: Q1: 80, Q2: 120, Q3: 160, Q4: 200
+
+    Title it "Quarterly Product Sales Comparison" with x-axis "Quarter" and y-axis "Units Sold".
+    Identify which product is growing fastest.
+    """,
+        stream=True,
+    )
+
     print(
         "\nAll examples completed. Check the 'business_charts' folder for generated visualizations."
     )
@@ -259,7 +295,12 @@ if __name__ == "__main__":
        - Jan: 45, Feb: 52, Mar: 48, Apr: 61, May: 58, Jun: 67
        - Jul: 73, Aug: 69, Sep: 78, Oct: 84, Nov: 81, Dec: 89
 
-    3. Finally, create a pie chart showing our expense breakdown:
+    3. Create a multi-line chart comparing website traffic sources over the past 6 months:
+       - Organic Search: Jan: 12000, Feb: 13500, Mar: 14200, Apr: 15800, May: 16500, Jun: 17200
+       - Paid Ads: Jan: 8000, Feb: 8500, Mar: 9200, Apr: 9800, May: 10100, Jun: 10500
+       - Social Media: Jan: 3000, Feb: 3800, Mar: 4500, Apr: 5200, May: 6100, Jun: 7000
+
+    4. Finally, create a pie chart showing our expense breakdown:
        - Personnel: 45%
        - Technology: 25%
        - Marketing: 15%
