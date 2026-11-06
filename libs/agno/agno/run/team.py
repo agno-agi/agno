@@ -211,6 +211,8 @@ class BaseTeamRunEvent(BaseRunOutputEvent):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "BaseTeamRunEvent":
+        # Reconstruct on a local mapping; popping fields must not consume the caller's record.
+        data = data.copy()
         member_responses = data.pop("member_responses", None)
         event = super().from_dict(data)
 
@@ -976,6 +978,8 @@ class TeamRunOutput:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TeamRunOutput":
+        # Reconstruct on a local mapping; popping fields must not consume the caller's record.
+        data = data.copy()
         events = data.pop("events", None)
         final_events = []
         for event in events or []:

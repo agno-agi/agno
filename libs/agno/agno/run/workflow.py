@@ -239,6 +239,8 @@ class WorkflowCompletedEvent(BaseWorkflowRunOutputEvent):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "WorkflowCompletedEvent":
+        # Reconstruct on a local mapping; popping fields must not consume the caller's record.
+        data = data.copy()
         metrics_data = data.pop("metrics", None)
         event = super().from_dict(data)
         if metrics_data:
@@ -1000,6 +1002,8 @@ class WorkflowRunOutput:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any], _depth: int = 0) -> "WorkflowRunOutput":
+        # Reconstruct on a local mapping; popping fields must not consume the caller's record.
+        data = data.copy()
         # Import here to avoid circular import
         from agno.workflow.step import StepOutput
 
