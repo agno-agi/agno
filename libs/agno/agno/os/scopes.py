@@ -570,6 +570,8 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
                 "GET /company/products/*/wiki": ["wiki:read"],
                 "GET /company/products/*/wiki/*": ["wiki:read"],
                 "PUT /company/products/*/wiki/*": ["wiki:write"],
+                "POST /company/conversations/*/messages": ["teams:super-agent:run"],
+                "GET /company/conversations/*/tasks": ["tasks:read"],
                 "GET /company/details": ["company:read"],
                 "GET /company/details/access": ["company:read"],
                 "PATCH /company/details": ["agent_os:admin"],

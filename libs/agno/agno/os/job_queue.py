@@ -336,8 +336,18 @@ async def aenqueue_ticket(queue_worker: Any, job: Dict[str, Any], component: Any
     from agno.run.authorization import stamp_authorization
 
     job = {**job, "payload": stamp_authorization(job.get("payload"), include_trusted=True)}
+    from agno.company.conversation import _conversation_origin, _conversation_submission
     from agno.company.execution import _enqueue_ticket
 
+    if _conversation_submission.get():
+        job = {
+            **job,
+            "payload": {
+                **job["payload"],
+                "company_conversation": _conversation_origin.get(),
+                "serialize_session": True,
+            },
+        }
     config = queue_worker.config
     if config.queue_per_session or getattr(component, "one_turn_per_session", False) is True:
         job = {**job, "payload": {**(job.get("payload") or {}), "serialize_session": True}}
@@ -2155,7 +2165,9 @@ class QueueWorker:
                 from agno.company.execution import _ExecutorAuthorization
 
                 authority = _ExecutorAuthorization(authority)
-            with authorization_scope(lambda: authority):
+            from agno.company.conversation import _conversation_scope
+
+            with authorization_scope(lambda: authority), _conversation_scope(payload.get("company_conversation")):
                 await self._execute_claimed_inner(job, ownership)
 
     async def _await_with_timeout(self, execution: Any, ownership: Any, component: Any = None, job: Any = None) -> Any:

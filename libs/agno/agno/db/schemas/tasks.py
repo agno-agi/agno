@@ -136,6 +136,7 @@ def task_run_fields(
     user_id: Optional[str],
     run_db_id: Optional[str] = None,
     session_user_id: Optional[str] = None,
+    conversation: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Reserve execution in the Task lifecycle, retaining the session across attempts."""
     from uuid import NAMESPACE_URL, uuid5
@@ -167,6 +168,7 @@ def task_run_fields(
                 "created_at": now,
                 "attempt": attempt,
                 "run_db_id": run_db_id,
+                **({"company_conversation": conversation} if conversation is not None else {}),
             },
         ],
     }

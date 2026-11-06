@@ -760,6 +760,12 @@ class AgentOS:
                     "Company schedules: ask Company Manager, not Platform Builder, to create them."
                 )
             self.agents = [*(self.agents or []), self._company_manager]
+        if self._company_db is not None and self._manager is not None:
+            from agno.os.manager.prompts import COMPANY_DISPATCH_INSTRUCTIONS
+            from agno.tools.company_conversation import CompanyConversationTools
+
+            self._manager.team.tools = [*(self._manager.team.tools or []), CompanyConversationTools(self)]
+            self._manager.team.instructions = [*(self._manager.team.instructions or []), COMPANY_DISPATCH_INSTRUCTIONS]
         if self._company_db is not None:
             from agno.company.details import _company_instructions
 
@@ -1061,6 +1067,7 @@ class AgentOS:
             get_filesystem_router(self, settings=self.settings),
         ]
         if self.company is not None:
+            from agno.os.routers.company.conversations import get_company_conversations_router
             from agno.os.routers.company.details import get_company_details_router
             from agno.os.routers.company.heartbeat import get_heartbeat_router
             from agno.os.routers.company.playbook import get_playbook_router
@@ -1069,6 +1076,7 @@ class AgentOS:
             from agno.os.routers.company.runs import get_company_runs_router
             from agno.os.routers.company.tasks import get_tasks_router
 
+            updated_routers.append(get_company_conversations_router(self))
             updated_routers.append(get_company_details_router(self))
             updated_routers.append(get_products_router(db=self._company_db, settings=self.settings))
             updated_routers.append(get_heartbeat_router(self))
@@ -2128,6 +2136,7 @@ class AgentOS:
             get_filesystem_router(self, settings=self.settings),
         ]
         if self.company is not None:
+            from agno.os.routers.company.conversations import get_company_conversations_router
             from agno.os.routers.company.details import get_company_details_router
             from agno.os.routers.company.heartbeat import get_heartbeat_router
             from agno.os.routers.company.playbook import get_playbook_router
@@ -2136,6 +2145,7 @@ class AgentOS:
             from agno.os.routers.company.runs import get_company_runs_router
             from agno.os.routers.company.tasks import get_tasks_router
 
+            routers.append(get_company_conversations_router(self))
             routers.append(get_company_details_router(self))
             routers.append(get_products_router(db=self._company_db, settings=self.settings))
             routers.append(get_heartbeat_router(self))
@@ -2410,6 +2420,7 @@ class AgentOS:
         if self.base_app is not None:
             self._base_app_prepared = True
 
+        self._company_conversation_app = fastapi_app
         return fastapi_app
 
     def _get_service_account_verifier(self) -> Optional[Any]:

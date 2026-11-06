@@ -84,7 +84,11 @@ async def _call(target: Any, method: str, *args: Any, **kwargs: Any) -> Any:
 
 def _queued_run_id() -> str:
     submission = _task_submission.get()
-    return task_run_id(submission["task"]["id"], submission["attempt"]) if submission else str(uuid4())
+    if submission:
+        return task_run_id(submission["task"]["id"], submission["attempt"])
+    from agno.company.conversation import _conversation_run_id
+
+    return _conversation_run_id.get() or str(uuid4())
 
 
 async def _reserve_task(db: Any, job: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -106,6 +110,7 @@ async def _reserve_task(db: Any, job: Dict[str, Any]) -> Optional[Dict[str, Any]
             user_id=payload.get("company_started_by", job.get("user_id")),
             run_db_id=payload["company_run_db_id"],
             session_user_id=job.get("user_id"),
+            conversation=payload.get("company_conversation"),
         )
         task = reserved or await _call(db, "get_task", task["id"])
     if (
@@ -371,6 +376,8 @@ async def _enqueue_ticket(worker: Any, job: Dict[str, Any]) -> Dict[str, Any]:
     submission = _task_submission.get()
     if submission is None:
         return await worker.store.enqueue_job(job, max_depth=worker.config.max_queue_depth)
+    from agno.company.conversation import _conversation_origin
+
     task = submission["task"]
     history = task["transitions"]
     if _pending_task_attempt(task) is not None:
@@ -384,6 +391,7 @@ async def _enqueue_ticket(worker: Any, job: Dict[str, Any]) -> Dict[str, Any]:
             "company_task_attempt": submission["attempt"],
             "company_run_db_id": submission["run_db_id"],
             "company_started_by": submission.get("started_by"),
+            "company_conversation": _conversation_origin.get(),
         },
     }
     try:
