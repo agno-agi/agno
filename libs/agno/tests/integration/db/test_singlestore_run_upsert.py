@@ -44,6 +44,16 @@ def test_run_can_be_saved_and_read_back(db: SingleStoreDb) -> None:
     assert saved.content == {"answer": "hello"}
 
 
+def test_first_run_without_run_index_starts_at_zero(db: SingleStoreDb) -> None:
+    db.upsert_run(RunOutput(agent_id="a1", run_id="first", session_id="s1"), "s1")
+
+    with db.db_engine.connect() as connection:
+        rows = connection.execute(
+            text(f"SELECT run_id, run_index FROM {db.runs_table_name} WHERE session_id = 's1'")
+        ).all()
+    assert rows == [("first", 0)]
+
+
 def test_run_index_after_delete_and_update(db: SingleStoreDb) -> None:
     db.upsert_session(AgentSession(session_id="s1", agent_id="a1", created_at=1000, updated_at=1000))
     for index, run_id in enumerate(("r0", "r1", "r2")):
