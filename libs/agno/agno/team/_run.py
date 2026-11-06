@@ -548,6 +548,8 @@ def _run_tasks(
             log_warning(f"Failed to persist cancelled run: {store_err}")
         return run_response
 
+    except SessionNotSavedError:
+        raise
     except Exception as e:
         run_response.status = RunStatus.error
         flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
@@ -1056,6 +1058,8 @@ def _run_tasks_stream(
         if yield_run_output:
             yield run_response
 
+    except SessionNotSavedError:
+        raise
     except Exception as e:
         run_response.status = RunStatus.error
         flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
@@ -2467,6 +2471,8 @@ async def _arun_tasks(
             raise
         return run_response
 
+    except SessionNotSavedError:
+        raise
     except Exception as e:
         run_response.status = RunStatus.error
         flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
@@ -3016,6 +3022,8 @@ async def _arun_tasks_stream(
         if yield_run_output:
             yield run_response
 
+    except SessionNotSavedError:
+        raise
     except Exception as e:
         run_response.status = RunStatus.error
         flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))

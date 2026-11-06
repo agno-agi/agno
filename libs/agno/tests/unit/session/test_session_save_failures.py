@@ -17,6 +17,7 @@ from agno.run.agent import RunCompletedEvent
 from agno.run.team import RunCompletedEvent as TeamRunCompletedEvent
 from agno.session import AgentSession, TeamSession
 from agno.team import Team
+from agno.team.mode import TeamMode
 from agno.tools import tool
 
 
@@ -252,3 +253,32 @@ async def test_background_stream_reports_failed_session_save(rejected_run, conti
     assert [event for event in events if event in ("RunError", "TeamRunError")] == [expected_error]
     assert "RunCompleted" not in events
     assert "TeamRunCompleted" not in events
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rejected_run", ["team"], indirect=True)
+@pytest.mark.parametrize("async_run", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("stream", [False, True], ids=["plain", "stream"])
+async def test_task_mode_propagates_first_save_failure(rejected_run, async_run, stream):
+    team, executed, _ = rejected_run
+    team.mode = TeamMode.tasks
+    team.max_iterations = 1
+    db = InMemoryDb()
+    team.db = db
+    save = Mock(side_effect=[None, object()])
+    db.upsert_session = save
+
+    with pytest.raises(SessionNotSavedError):
+        if async_run and stream:
+            async for event in team.arun("do the work", stream=True, stream_events=True):
+                assert not isinstance(event, TeamRunCompletedEvent)
+        elif async_run:
+            await team.arun("do the work")
+        elif stream:
+            for event in team.run("do the work", stream=True, stream_events=True):
+                assert not isinstance(event, TeamRunCompletedEvent)
+        else:
+            team.run("do the work")
+
+    assert executed == ["called"]
+    save.assert_called_once()
