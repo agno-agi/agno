@@ -6,6 +6,7 @@ Examples for pre-hooks, post-hooks, tool hooks, and stream lifecycle hooks.
 - `post_hook_output.py` - Run a hook after the agent responds.
 - `pre_hook_input.py` - Run a hook before the agent processes input.
 - `session_state_hooks.py` - Hooks that read and modify session state.
+- `signed_tool_receipts.py` - Agent-wide tool middleware that emits signed, hash-chained receipts for tool calls.
 - `stream_hook.py` - Hook into the streaming lifecycle.
 - `tool_hooks.py` - Middleware hooks that wrap every tool call.
 
@@ -13,6 +14,7 @@ Examples for pre-hooks, post-hooks, tool hooks, and stream lifecycle hooks.
 - Load environment variables with `direnv allow` (including `OPENAI_API_KEY`).
 - Create the demo environment with `./scripts/demo_setup.sh`, then run cookbooks with `.venvs/demo/bin/python`.
 - Some examples require optional local services (for example pgvector) or provider-specific API keys.
+- `signed_tool_receipts.py` requires the optional `cryptography` package for Ed25519 signing.
 
 ## Run
 - `.venvs/demo/bin/python cookbook/02_agents/09_hooks/<file>.py`
