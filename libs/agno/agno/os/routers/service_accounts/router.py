@@ -1,6 +1,7 @@
 """Service accounts API router - mint, list, and revoke opaque machine tokens."""
 
 import asyncio
+import inspect
 import time
 from typing import Any, List, Literal, Optional
 from uuid import uuid4
@@ -84,7 +85,7 @@ def get_service_accounts_router(os_db: Any, settings: Any) -> APIRouter:
         if fn is None:
             raise HTTPException(status_code=503, detail="Service accounts not supported by the configured database")
         try:
-            if asyncio.iscoroutinefunction(fn):
+            if inspect.iscoroutinefunction(fn):
                 return await fn(*args, **kwargs)
             # Sync DB drivers do blocking I/O; keep it off the event loop like the
             # services layer and the ServiceAccountVerifier do.

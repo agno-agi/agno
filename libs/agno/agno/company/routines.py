@@ -1,6 +1,7 @@
 """Company schedule payloads and bundled Skills; the scheduler owns execution."""
 
 import asyncio
+import inspect
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -601,7 +602,7 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
 
                     next_run_at = None
                     try:
-                        if asyncio.iscoroutinefunction(getattr(db, "update_schedule", None)):
+                        if inspect.iscoroutinefunction(getattr(db, "update_schedule", None)):
                             await db.update_schedule(schedule_id, enabled=False)
                         else:
                             db.update_schedule(schedule_id, enabled=False)
@@ -618,7 +619,7 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
                         release_kwargs["worker_id"] = sched.locked_by
                     if sched.locked_at is not None and "locked_at" in parameters:
                         release_kwargs["locked_at"] = sched.locked_at
-                    if asyncio.iscoroutinefunction(getattr(db, "release_schedule", None)):
+                    if inspect.iscoroutinefunction(getattr(db, "release_schedule", None)):
                         await db.release_schedule(schedule_id, **release_kwargs)
                     else:
                         db.release_schedule(schedule_id, **release_kwargs)

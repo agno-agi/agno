@@ -1,6 +1,7 @@
 """Tests for the SchedulePoller."""
 
 import asyncio
+import inspect
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -178,6 +179,7 @@ class TestPollerPollOnce:
 
         mock_db = MagicMock()
         mock_db.claim_due_schedule = async_claim
+        assert inspect.iscoroutinefunction(mock_db.claim_due_schedule)
 
         poller = SchedulePoller(db=mock_db, executor=mock_executor)
         poller._running = True
