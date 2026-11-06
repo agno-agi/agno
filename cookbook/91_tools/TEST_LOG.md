@@ -1,5 +1,21 @@
 # Test Log
 
+### browser_use_tools.py
+
+**Status:** PASS (unit tests and cookbook pattern check); live agent run pending
+
+**Description:** An agent calls `run_browser_task` to read the top Hacker News
+story through the Browser Use Cloud agent. Needs `BROWSER_USE_API_KEY` and the
+credentials for the agent's model.
+
+**Result:** `pytest libs/agno/tests/unit/tools/test_browser_use.py` runs the real
+`browser-use-sdk` against a fake API v4 over `httpx.MockTransport` and passes on
+SDK 3.10.0 and 3.11.3. It covers the request body, session follow-ups, failed
+runs, API errors, a missing key, and cancellation on timeout, sync and async.
+A live run needs service and model credentials and has not been recorded here.
+
+---
+
 ### sixtydb_tools.py
 
 **Status:** PASS (local HTTP and cookbook checks); live agent run pending
