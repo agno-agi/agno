@@ -219,6 +219,7 @@ retaining a known old ID explicitly is necessary for those references.
 | File | Demonstrates |
 | --- | --- |
 | `06_execute_tasks.py` | Durable execution, duplicate starts, ordinary run history and attention with no model call. |
+| `12_task_board.py` | Direct start from Backlog, `last_run`, `allowed_transitions` and a board read by status with no model call. |
 
 `06_execute_tasks.py` starts an accepted workflow Task through its ordinary run
 route and the durable queue, waits for In review, reads paged history and checks
@@ -236,24 +237,43 @@ creates and removes its own database schema. `COMPANY_QUEUE_DB_URL` overrides
 the local PostgreSQL URL. SQLite follows the queue's existing development
 fallback; use PostgreSQL session storage for production attempt fencing.
 
-POST `/company/tasks/{id}/runs` accepts `{"attempt": 1}` (the default). Repeating
-an active attempt returns the first run. In review, a stale attempt returns 409. A full queue returns 429 without changing
-the Task or consuming the attempt; retry the same attempt when capacity is available.
+`12_task_board.py` starts a Backlog Task by naming its workflow executor in the
+run request, repeats the start, waits for In review, and reads each board column
+with the `status` filter. It makes no provider calls. With PostgreSQL running, run:
+
+```bash
+.venv/bin/python cookbook/05_agent_os/30_company/12_task_board.py
+COMPANY_DB=postgres .venv/bin/python cookbook/05_agent_os/30_company/12_task_board.py
+```
+
+POST `/company/tasks/{id}/runs` accepts an optional `attempt`. Without it, the request
+joins the reserved attempt, otherwise it starts the next one. Repeating
+an active attempt returns the first run. In review, a stale attempt returns 409.
+A full queue returns 429 without changing an accepted Task or consuming the
+attempt; retry the same attempt when capacity is available.
 The durable ticket is accepted before the Task moves to In progress, and the worker
 can recover that update if the submitting process stops. If acceptance changes
 before the Task can reserve a fresh ticket, the request returns 409 and cancels
 the waiting ticket; an already-claimed ticket is rejected by the worker.
-To request a revision from In review, POST to the runs route with `attempt` equal
-to the highest recorded attempt plus one. The reservation writes the In review
+To request a revision from In review, POST to the runs route without `attempt`, or with
+`attempt` equal to the highest recorded attempt plus one. The reservation writes the In review
 to In progress transition and clears the previous result, retaining the same
 session and executor. A rejected submission leaves the result and lifecycle unchanged.
 A fresh Ready Task starts attempt 1. Work returned to Backlog, edited, and accepted
-again starts the next unused attempt from Ready, retaining its session. Backlog
-cannot start a run. Failed or cancelled runs can still be retried while the Task
-remains In progress. No
+again starts the next unused attempt from Ready, retaining its session. A Backlog
+Task starts only when the request names `executor_type` and `executor_id`: the route
+accepts it with the same checks as moving it to Ready, then starts the run. If
+the run does not start, the Task returns to Backlog with the refusal as the
+transition reason. Repeating the start joins its run while the Task is Ready or
+its run is unfinished; after the run ends, the repeat returns 409. Failed or
+cancelled runs can still be retried while the Task remains In progress. No
 revision feedback field is accepted by this request. Each Task retains one session. GET on the same route returns ordinary session runs
 with `limit` and `page`. GET `/company/runs/{id}` reads an individual run and
 POST `/company/runs/{id}/cancel` uses the executor's existing cancellation route.
+
+Each Task response carries `last_run` (status, attempt, run id and times of its latest
+run) and `allowed_transitions` (each target, whether the move is allowed now, and why
+not).
 
 Start rechecks the registry, `tasks:write`, `wiki:read` and the executor's run
 permission. Registry-only executors receive their ordinary routes when Company
