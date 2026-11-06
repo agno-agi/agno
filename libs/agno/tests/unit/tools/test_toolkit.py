@@ -986,3 +986,103 @@ def test_explicit_tools_argument_preserved():
 
     assert example_func in toolkit.tools
     assert "example_func" in toolkit.functions
+
+
+class SharedNameToolkit(Toolkit):
+    """Two instances expose the same function names, like two scoped StudioRunnerTools."""
+
+    def __init__(self, label: str, **kwargs):
+        self.label = label
+        super().__init__(
+            name="shared_name_toolkit",
+            tools=[self.lookup, self.archive, self.tagged],
+            async_tools=[(self.alookup, "lookup")],
+            **kwargs,
+        )
+
+    def lookup(self, query: str) -> str:
+        """Look something up."""
+        return f"{self.label}:{query}"
+
+    async def alookup(self, query: str) -> str:
+        """Async look something up."""
+        return f"async-{self.label}:{query}"
+
+    def archive(self, item_id: str) -> str:
+        """Archive an item."""
+        return f"{self.label} archived {item_id}"
+
+    @tool(show_result=True)
+    def tagged(self, x: int) -> int:
+        """Decorated tool."""
+        return x
+
+
+def test_tool_name_prefix_defaults_to_unprefixed_names():
+    toolkit = SharedNameToolkit("a")
+
+    assert toolkit.tool_name_prefix is None
+    assert list(toolkit.functions) == ["lookup", "archive", "tagged"]
+
+
+def test_tool_name_prefix_applies_to_sync_async_and_decorated_tools():
+    toolkit = SharedNameToolkit("a", tool_name_prefix="support")
+
+    assert list(toolkit.functions) == ["support_lookup", "support_archive", "support_tagged"]
+    assert list(toolkit.async_functions) == ["support_lookup"]
+    for name, function in toolkit.get_async_functions().items():
+        assert function.name == name
+    assert toolkit.functions["support_tagged"].show_result is True
+
+
+def test_tool_name_prefix_keeps_filters_and_per_tool_lists_on_unprefixed_names():
+    toolkit = SharedNameToolkit(
+        "a",
+        tool_name_prefix="support",
+        include_tools=["lookup", "archive"],
+        requires_confirmation_tools=["archive"],
+        stop_after_tool_call_tools=["lookup"],
+    )
+
+    assert set(toolkit.functions) == {"support_lookup", "support_archive"}
+    assert toolkit.functions["support_archive"].requires_confirmation is True
+    assert toolkit.functions["support_lookup"].stop_after_tool_call is True
+    assert toolkit.functions["support_lookup"].requires_confirmation is not True
+
+    excluded = SharedNameToolkit("b", tool_name_prefix="support", exclude_tools=["archive"])
+    assert set(excluded.functions) == {"support_lookup", "support_tagged"}
+
+
+@pytest.mark.parametrize("async_mode", [False, True])
+def test_prefixed_toolkits_with_same_function_names_co_mount_on_one_agent(async_mode):
+    from agno.agent._tools import parse_tools
+    from agno.models.openai import OpenAIResponses
+
+    support = SharedNameToolkit("support", tool_name_prefix="support")
+    sales = SharedNameToolkit("sales", tool_name_prefix="sales")
+    agent = Agent(tools=[support, sales], telemetry=False)
+
+    functions = parse_tools(agent, agent.tools, OpenAIResponses(id="gpt-5.6-luna"), async_mode=async_mode)
+    by_name = {f.name: f for f in functions if isinstance(f, Function)}
+
+    assert set(by_name) == {
+        "support_lookup",
+        "support_archive",
+        "support_tagged",
+        "sales_lookup",
+        "sales_archive",
+        "sales_tagged",
+    }
+    assert by_name["support_archive"].entrypoint("x") == "support archived x"
+    assert by_name["sales_archive"].entrypoint("x") == "sales archived x"
+
+
+def test_unprefixed_toolkits_with_same_function_names_still_collapse():
+    from agno.agent._tools import parse_tools
+    from agno.models.openai import OpenAIResponses
+
+    agent = Agent(tools=[SharedNameToolkit("support"), SharedNameToolkit("sales")], telemetry=False)
+
+    functions = parse_tools(agent, agent.tools, OpenAIResponses(id="gpt-5.6-luna"))
+
+    assert sorted(f.name for f in functions if isinstance(f, Function)) == ["archive", "lookup", "tagged"]
