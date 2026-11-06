@@ -72,6 +72,23 @@ def test_generate_csv_file_from_dicts():
         assert "Ben,12" in lines
 
 
+def test_generate_csv_file_unions_keys_across_rows():
+    """Later dict rows may introduce keys that the first row does not have."""
+    tools = FileGenerationTools()
+    result = tools.generate_csv_file(
+        [
+            {"name": "Ada"},
+            {"name": "Ben", "city": "London"},
+        ]
+    )
+
+    file_artifact = _get_single_file(result)
+    decoded = file_artifact.content.decode("utf-8")
+    assert "name,city" in decoded
+    assert "Ada," in decoded
+    assert "Ben,London" in decoded
+
+
 def test_generate_csv_file_from_lists_with_headers():
     """Test CSV generation from list of lists with headers."""
     tools = FileGenerationTools()
