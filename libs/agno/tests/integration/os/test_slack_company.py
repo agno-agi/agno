@@ -29,9 +29,18 @@ class OfflineModel(Model):
     def __init__(self):
         super().__init__(id="fixture", provider="test")
         self.calls = 0
+        self.next_tool = None
 
     def invoke(self, *args, **kwargs):
         self.calls += 1
+        if self.next_tool:
+            tool = self.next_tool
+            self.next_tool = None
+            return ModelResponse(
+                role="assistant",
+                tool_calls=[{"id": "offline-tool", "type": "function", "function": {"name": tool, "arguments": "{}"}}],
+                response_usage=MessageMetrics(),
+            )
         return ModelResponse(content="Offline response", role="assistant", response_usage=MessageMetrics())
 
     async def ainvoke(self, *args, **kwargs):
@@ -291,3 +300,106 @@ def test_streaming_delivery_uses_existing_slack_transport(system):
         time.sleep(0.01)
     force_delivery(client, delivery, receipt_id)
     assert streams == ["Offline response"]
+
+
+def test_tool_confirmation_is_bound_to_original_participant(system):
+    from agno.tools import tool
+    from urllib.parse import urlencode
+
+    client, os, delivery, posts, outage, auth, model = system
+    calls = []
+
+    @tool(requires_confirmation=True)
+    def approved_local_action() -> str:
+        """Run the controlled fixture action after confirmation."""
+        calls.append(True)
+        return "verified local output"
+
+    os.manager.tools.append(approved_local_action)
+    model.next_tool = "approved_local_action"
+    body, headers = signed(event("approval"))
+    assert client.post("/slack/events", content=body, headers=headers).status_code == 200
+    receipt_id = _identity(delivery._scope, "approval")
+    row = client.portal.call(delivery._store._get, receipt_id)
+    for _ in range(200):
+        run = os.manager.db.get_run(row["data"]["run_id"])
+        if run is not None and str(getattr(run.status, "value", run.status)).upper() == "PAUSED":
+            break
+        time.sleep(0.01)
+    assert run.status.value == "PAUSED" and not calls
+    force_delivery(client, delivery, receipt_id)
+    assert any(post.get("blocks") for post in posts)
+    req = run.requirements[0]
+    payload = {
+        "type": "block_actions",
+        "team": {"id": "T1"},
+        "api_app_id": "A1",
+        "user": {"id": "U2"},
+        "channel": {"id": "C1"},
+        "message": {"ts": "3.000", "thread_ts": "1.000"},
+        "actions": [{"action_id": "row_approve", "value": req.id + "|" + run.run_id + "|", "action_ts": "4.000"}],
+    }
+
+    def click(data):
+        encoded = urlencode({"payload": json.dumps(data)}).encode()
+        timestamp = str(int(time.time()))
+        signature = hmac.new(SECRET.encode(), b"v0:" + timestamp.encode() + b":" + encoded, hashlib.sha256).hexdigest()
+        return client.post(
+            "/slack/interactions",
+            content=encoded,
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "X-Slack-Request-Timestamp": timestamp,
+                "X-Slack-Signature": "v0=" + signature,
+            },
+        )
+
+    assert click(payload).status_code == 403 and not calls
+    payload["user"]["id"] = "U1"
+    assert click(payload).status_code == 200
+    for _ in range(200):
+        if calls:
+            break
+        time.sleep(0.01)
+    assert calls == [True]
+    assert click(payload).status_code == 200
+    assert calls == [True]
+
+
+def test_disabled_user_cannot_receive_delayed_result(system):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    client, os, delivery, posts, outage, auth, model = system
+    outage["active"] = True
+    body, headers = signed(event("disabled"))
+    assert client.post("/slack/events", content=body, headers=headers).status_code == 200
+    client.app.state.user_store = SimpleNamespace(ais_disabled=AsyncMock(return_value=True))
+    outage["active"] = False
+    receipt_id = _identity(delivery._scope, "disabled")
+    force_delivery(client, delivery, receipt_id)
+    force_delivery(client, delivery, receipt_id)
+    assert not any("Offline response" in post["text"] for post in posts)
+    assert any("current platform access" in post["text"] for post in posts)
+
+
+def test_same_second_task_transitions_have_distinct_delivery_intents(system, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    client, os, delivery, posts, outage, auth, model = system
+    body, headers = signed(event("transitions"))
+    assert client.post("/slack/events", content=body, headers=headers).status_code == 200
+    receipt_id = _identity(delivery._scope, "transitions")
+    row = client.portal.call(delivery._store._get, receipt_id)
+    task = {"task_id": "task-1", "title": "Verified artifact", "status": "in_review", "updated_at": 100, "run_id": "attempt-1", "result": "first output"}
+    reader = AsyncMock(return_value=[task])
+    monkeypatch.setattr("agno.company.conversation.aget_conversation_tasks", reader)
+    client.portal.call(delivery._collect, client.app, row)
+    task.update(status="backlog", reason="Needs revision")
+    client.portal.call(delivery._collect, client.app, row)
+    task.update(status="done", run_id="attempt-2", result="Verified revision", reason=None)
+    client.portal.call(delivery._collect, client.app, row)
+    intents = [value for key, value in row["data"]["notifications"].items() if key.startswith("task:")]
+    assert len(intents) == 3
+    assert any("Verified revision" in item["text"] for item in intents)
+    assert any("assessing the evidence" in item["text"] for item in intents)

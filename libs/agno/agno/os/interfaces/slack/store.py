@@ -42,6 +42,10 @@ class _SlackStore:
         def initialize(conn):
             if conn.dialect.name == "postgresql":
                 conn.execute(text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": self.table.fullname})
+                if self.table.schema:
+                    from sqlalchemy.schema import CreateSchema
+
+                    conn.execute(CreateSchema(self.table.schema, if_not_exists=True))
             self.table.create(conn, checkfirst=True)
 
         await self._call(initialize)

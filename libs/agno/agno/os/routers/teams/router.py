@@ -1486,6 +1486,12 @@ def get_team_router(
                 session_id=session_id,
             )
 
+        # Internal transports forward the owning participant separately from
+        # their scheduler identity. Use the same resolved owner for continuation
+        # reads and writes as for the ownership gate above.
+        from agno.os.middleware.user_scope import resolve_run_user_id
+        user_id = resolve_run_user_id(request, user_id)
+
         # Version-stable continuation: a run started with an explicitly pinned
         # version (draft preview) recorded it in its run metadata; continue on
         # THAT version, not whatever is published/current now. No stamp

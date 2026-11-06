@@ -22,7 +22,8 @@ class SlackCompany:
 
     No Slack identity receives token scopes. Each action resolves current platform
     permissions for the configured principal. Each participant has a separate
-    conversation within a thread; shared Slack messages never expose their history.
+    conversation within a thread. Allowed channels are shared disclosure destinations:
+    replies are visible to channel members, while private session history is isolated.
     Requires CompanyOS, managed authorization, PostgreSQL and the durable queue.
     agent_os_url is the UI's Company URL for this configured AgentOS instance.
     """
@@ -84,6 +85,16 @@ class SlackCompany:
         actor = self.users.get(user)
         if actor is None or (principal is not None and actor != principal):
             raise PermissionError("Slack user is not mapped to this platform principal")
+        user_store = getattr(app.state, "user_store", None)
+        if user_store is not None:
+            try:
+                disabled = bool(await user_store.ais_disabled(actor))
+            except Exception:
+                if getattr(app.state, "user_directory_fail_closed", False):
+                    raise HTTPException(503, "User directory unavailable")
+                disabled = False
+            if disabled:
+                raise PermissionError("Platform principal is disabled")
         # Restored managed roles are resolved fresh, including revocations.
         from dataclasses import asdict
 
@@ -283,8 +294,14 @@ class SlackCompany:
             status = task["status"]
             active = active or status not in {"done", "cancelled"}
             if status in {"done", "cancelled", "in_review", "backlog"}:
-                key = "task:" + task["task_id"] + ":" + str(task.get("updated_at"))
-                detail = task.get("result") or task.get("reason") or status
+                key = "task:" + task["task_id"] + ":" + hashlib.sha256(
+                    json.dumps(task, sort_keys=True, default=str).encode()
+                ).hexdigest()
+                detail = (
+                    "Work finished; CompanyOS is assessing the evidence."
+                    if status == "in_review"
+                    else task.get("reason") or task.get("result") or status
+                )
                 link = (
                     self.agent_os_url
                     + ("&" if "?" in self.agent_os_url else "?")
