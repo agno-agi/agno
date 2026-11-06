@@ -3841,6 +3841,9 @@ def _continue_run(
                     log_warning(f"Failed to persist cancelled run: {store_err}")
                 return run_response
 
+            except ValueError:
+                # Validation errors (e.g. a tool still waiting for its external result) propagate to the caller
+                raise
             except Exception as e:
                 run_response = cast(RunOutput, run_response)
                 # Check if this is the last attempt
