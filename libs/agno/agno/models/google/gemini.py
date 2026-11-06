@@ -588,7 +588,7 @@ class Gemini(Model):
             return model_response
 
         except (ClientError, ServerError) as e:
-            log_error(f"Error from Gemini API: {str(e)}")
+            self._log_provider_error(f"Error from Gemini API: {str(e)}", getattr(e, "code", None) or 502)
             error_message = str(e)
             if hasattr(e, "response"):
                 if hasattr(e.response, "text"):
@@ -643,7 +643,7 @@ class Gemini(Model):
             assistant_message.metrics.stop_timer()
 
         except (ClientError, ServerError) as e:
-            log_error(f"Error from Gemini API: {str(e)}")
+            self._log_provider_error(f"Error from Gemini API: {str(e)}", getattr(e, "code", None) or 502)
             error_message = str(e)
             if hasattr(e, "response"):
                 if hasattr(e.response, "text"):
@@ -703,7 +703,7 @@ class Gemini(Model):
             return model_response
 
         except (ClientError, ServerError) as e:
-            log_error(f"Error from Gemini API: {str(e)}")
+            self._log_provider_error(f"Error from Gemini API: {str(e)}", getattr(e, "code", None) or 502)
             error_message = str(e)
             if hasattr(e, "response"):
                 if hasattr(e.response, "text"):
@@ -761,7 +761,7 @@ class Gemini(Model):
             assistant_message.metrics.stop_timer()
 
         except (ClientError, ServerError) as e:
-            log_error(f"Error from Gemini API: {str(e)}")
+            self._log_provider_error(f"Error from Gemini API: {str(e)}", getattr(e, "code", None) or 502)
             error_message = str(e)
             if hasattr(e, "response"):
                 if hasattr(e.response, "text"):
