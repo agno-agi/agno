@@ -14,6 +14,7 @@ import pytest
 from sqlalchemy import create_engine, text
 
 from agno.agent import Agent
+from agno.compression.manager import CompressionManager
 from agno.db.base import SessionType
 from agno.db.sqlite import SqliteDb
 from agno.media import Image
@@ -183,6 +184,33 @@ def test_large_result_is_replaced_by_a_small_envelope(db):
     assert "lines omitted ...]" in tool_message.content
     assert tool_message.content.startswith('<result id="res_')
     assert "read_result(" in tool_message.content
+
+
+def test_offloading_and_compression_leave_the_result_envelope_opaque(db, monkeypatch):
+    """Compression may run alongside offloading without consuming the pointer."""
+    compression_manager = CompressionManager(compress_tool_results=True, compress_tool_results_limit=1)
+    compression_calls = []
+
+    def record_compression(tool_result, run_metrics=None):
+        compression_calls.append(tool_result)
+        return "this must not replace an offloaded envelope"
+
+    monkeypatch.setattr(compression_manager, "_compress_tool_result", record_compression)
+    agent = Agent(
+        model=ScriptedToolModel(),
+        db=db,
+        tools=[fetch_page],
+        offload_tool_results=True,
+        compression_manager=compression_manager,
+    )
+    output = agent.run("go", session_id=_sid())
+    tool_message = _tool_messages(output)[0]
+
+    assert tool_message.content.startswith('<result id="res_')
+    assert tool_message.compressed_content is None
+    assert compression_calls == []
+    result_id = tool_message.content.split('id="')[1].split('"')[0]
+    assert agent._result_store.read(result_id, 1, 1).text.startswith("row 1: ")
 
 
 def test_the_persisted_session_row_carries_the_envelope_not_the_payload(db):
