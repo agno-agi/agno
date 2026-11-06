@@ -284,6 +284,16 @@ class FakeAgentOS:
         return httpx.Response(404, json={"detail": "Not Found"})
 
 
+@pytest.fixture(autouse=True)
+def isolated_cloud_login(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Point the os.agno.com login at an empty tmp dir, so no test reads or writes the
+    developer's real credentials."""
+    config = tmp_path / "agno-config"
+    monkeypatch.setenv("AGNO_CONFIG_DIR", str(config))
+    monkeypatch.delenv("AGNO_CLOUD_API_URL", raising=False)
+    return config
+
+
 @pytest.fixture
 def fake_os(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FakeAgentOS:
     """A security-key-mode fake AgentOS wired into every CLI HTTP client.
