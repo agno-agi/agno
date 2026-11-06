@@ -1,5 +1,6 @@
 """Deterministic delegated lifecycle through real APIs and PostgreSQL queue tickets."""
 
+import asyncio
 import json
 import os
 from datetime import datetime, timedelta, timezone
@@ -56,6 +57,8 @@ class OfflineModel(Model):
         self.always_revise = False
         self.bad_evidence = False
         self.question = False
+        self.started = None
+        self.release = None
 
     def invoke(self, messages, **kwargs):
         content = next(str(message.content) for message in reversed(messages) if message.role == "user")
@@ -96,6 +99,24 @@ class OfflineModel(Model):
                 response_usage=MessageMetrics(),
             )
         last_user = max(i for i, message in enumerate(messages) if message.role == "user")
+        if content == "status":
+            result = [message.content for message in messages[last_user + 1 :] if message.role == "tool"]
+            if result:
+                return ModelResponse(role="assistant", content=str(result[-1]), response_usage=MessageMetrics())
+            return ModelResponse(
+                role="assistant",
+                tool_calls=[
+                    {
+                        "id": "task-status",
+                        "type": "function",
+                        "function": {
+                            "name": "list_company_tasks",
+                            "arguments": "{}",
+                        },
+                    }
+                ],
+                response_usage=MessageMetrics(),
+            )
         if any(message.role == "tool" for message in messages[last_user + 1 :]) or content != "delegate":
             return ModelResponse(
                 role="assistant",
@@ -127,6 +148,9 @@ class OfflineModel(Model):
         )
 
     async def ainvoke(self, *args, **kwargs):
+        if self.started is not None:
+            self.started.set()
+            await self.release.wait()
         return self.invoke(*args, **kwargs)
 
     def invoke_stream(self, *args, **kwargs):
@@ -420,4 +444,154 @@ async def test_duplicate_intake_does_not_reopen_failed_delegation(system):
     assert (await repeat())["status"] == "backlog"
     assert db.get_tasks()[1] == 1
     assert db.get_task(task["id"])["status"] == "backlog"
+    assert await worker.store.claim_job(worker.worker_id, worker.config.lock_grace_seconds) is None
+
+
+@pytest.mark.asyncio
+async def test_status_and_unrelated_turns_while_worker_is_running(system):
+    host, db, worker, executor, client, auth, assessor, worker_model = system
+    task = await delegate(system)
+    worker_model.started = asyncio.Event()
+    worker_model.release = asyncio.Event()
+    active = asyncio.create_task(execute(worker))
+    try:
+        await asyncio.wait_for(worker_model.started.wait(), 5)
+        for message, expected in (("status", "in_progress"), ("unrelated", "Unrelated answer")):
+            reply = await asyncio.wait_for(
+                client.post(
+                    "/agents/company-manager/runs",
+                    headers=headers(),
+                    data={"message": message, "session_id": "conversation", "stream": "false"},
+                ),
+                5,
+            )
+            assert reply.status_code == 200 and expected in reply.text, reply.text
+            assert not active.done()
+        assert db.get_task(task["id"])["status"] == "in_progress"
+    finally:
+        worker_model.release.set()
+        await active
+    await execute(worker)
+    assert db.get_task(task["id"])["status"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_project_assessment_failure_is_visible_and_not_repeated(system, monkeypatch):
+    import agno.company.lifecycle as lifecycle
+
+    host, db, worker, executor, client, auth, assessor, worker_model = system
+    task = await delegate(system)
+    original = lifecycle._assess
+    assessments = 0
+
+    async def fail_project(os, identity, prompt, evidence):
+        nonlocal assessments
+        if prompt["kind"] == "project":
+            assessments += 1
+            return lifecycle.OutcomeAssessment(decision="failed", reason="Project verification unavailable")
+        return await original(os, identity, prompt, evidence)
+
+    monkeypatch.setattr(lifecycle, "_assess", fail_project)
+    await execute(worker)
+    await execute(worker)
+    assert db.get_task(task["id"])["status"] == "done"
+    project = db.get_project(task["project_id"])
+    assert project["status"] == "active"
+    assert project["transitions"][-1]["system_decision"]["decision"] == "failed"
+    await executor._tick()
+    assert assessments == 1
+    assert worker_model.attempts == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["brief", "permission"])
+async def test_changed_scope_or_permission_during_assessment_stops_decision(system, monkeypatch, change):
+    import agno.company.lifecycle as lifecycle
+
+    host, db, worker, executor, client, auth, assessor, worker_model = system
+    task = await delegate(system)
+    original = lifecycle._assess
+
+    async def change_after_assessment(*args, **kwargs):
+        assessment = await original(*args, **kwargs)
+        if change == "brief":
+            db.update_task(task["id"], brief="New scope requires new acceptance")
+        else:
+            auth.set_role_scopes("delegator", [scope for scope in SCOPES if scope != "tasks:write"])
+        return assessment
+
+    monkeypatch.setattr(lifecycle, "_assess", change_after_assessment)
+    await execute(worker)
+    current = db.get_task(task["id"])
+    assert current["status"] == "in_review"
+    assert not any(
+        entry.get("system_decision", {}).get("operation") == "assessment" for entry in current["transitions"]
+    )
+    await executor._tick()
+    assert await worker.store.claim_job(worker.worker_id, worker.config.lock_grace_seconds) is None
+    assert worker_model.attempts == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("when", ["before", "after"])
+@pytest.mark.parametrize("failure", ["disabled", "directory_unavailable"])
+async def test_disabled_author_cannot_resume_or_commit_assessment(system, monkeypatch, when, failure):
+    from unittest.mock import AsyncMock
+
+    import agno.company.lifecycle as lifecycle
+
+    host, db, worker, executor, client, auth, assessor, worker_model = system
+    task = await delegate(system)
+    original = lifecycle._assess
+    store = AsyncMock()
+    store.ais_disabled.return_value = False
+    executor.app.state.user_store = store
+    executor.app.state.user_directory_fail_closed = True
+
+    def deny():
+        if failure == "disabled":
+            store.ais_disabled.return_value = True
+        else:
+            store.ais_disabled.side_effect = RuntimeError("Directory unavailable")
+
+    if when == "before":
+        deny()
+
+    async def disable_after_assessment(*args, **kwargs):
+        result = await original(*args, **kwargs)
+        deny()
+        return result
+
+    monkeypatch.setattr(lifecycle, "_assess", disable_after_assessment)
+    # Execute the already authorized ticket without claiming a new human request.
+    await execute(worker)
+    current = db.get_task(task["id"])
+    assert current["status"] != "done"
+    assert not any(
+        entry.get("system_decision", {}).get("operation") == "assessment" for entry in current["transitions"]
+    )
+    await executor._tick()
+    assert await worker.store.claim_job(worker.worker_id, worker.config.lock_grace_seconds) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["brief", "project_outcome"])
+async def test_transaction_rechecks_scope_after_final_application_read(system, monkeypatch, change):
+    import agno.company.lifecycle as lifecycle
+
+    host, db, worker, executor, client, auth, assessor, worker_model = system
+    task = await delegate(system)
+    original = lifecycle._manager_call
+
+    async def change_before_transition(manager, method, **kwargs):
+        if method == "transition_task":
+            if change == "brief":
+                db.update_task(task["id"], brief="Updated after application checks")
+            else:
+                db.update_project(task["project_id"], outcome="Updated after application checks")
+        return await original(manager, method, **kwargs)
+
+    monkeypatch.setattr(lifecycle, "_manager_call", change_before_transition)
+    await execute(worker)
+    assert db.get_task(task["id"])["status"] == "in_review"
     assert await worker.store.claim_job(worker.worker_id, worker.config.lock_grace_seconds) is None

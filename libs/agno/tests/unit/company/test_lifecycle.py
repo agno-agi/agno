@@ -60,3 +60,11 @@ def test_only_system_assessment_can_record_nonterminal_project_outcome():
         fields = project_transition_fields(project, "active", "Needs input", "alice")
     assert fields["status"] == "active"
     assert AUTHORIZATION_KEY not in fields["transitions"][-1]
+
+
+@pytest.mark.parametrize("value", [0, -1, 11, True, "3", None])
+def test_revision_budget_rejects_unbounded_or_invalid_values(value):
+    from agno.company.config import CompanyConfig
+
+    with pytest.raises(ValueError, match="max_task_attempts"):
+        CompanyConfig(max_task_attempts=value)

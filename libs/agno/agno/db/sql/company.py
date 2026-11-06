@@ -53,6 +53,15 @@ def require_project(
         raise ValueError("Project is missing or archived")
     if row._mapping["product_id"] != product_id:
         raise ValueError("Task and Project must belong to the same Product")
+    from agno.company.lifecycle import _decision
+
+    marker = (_decision.get() or {}).get("record") or {}
+    if marker.get("operation") in {"accept", "assessment"} and (
+        marker.get("project_id") != project_id
+        or marker.get("outcome") != row._mapping["outcome"]
+        or row._mapping["status"] != "active"
+    ):
+        raise ValueError("Delegated Project changed during the system decision")
     if (
         task_status is not None
         and task_status not in {"done", "cancelled"}

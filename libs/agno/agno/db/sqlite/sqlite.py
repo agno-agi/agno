@@ -8906,7 +8906,7 @@ class SqliteDb(BaseDb):
             if expected_transitions is not None and existing["transitions"] != expected_transitions:
                 return None
             fields: Dict[str, Any] = (
-                task_transition_fields(existing, "in_review", "Execution completed; human review required")
+                task_transition_fields(existing, "in_review", "Execution completed; outcome review required")
                 if result.get("status") == "COMPLETED"
                 else {"updated_at": int(time.time())}
             )
@@ -8975,8 +8975,8 @@ class SqliteDb(BaseDb):
         products = self._get_table(table_type="products", create_table_if_not_found=True)
         projects = self._get_table(table_type="projects", create_table_if_not_found=True)
         with self.Session() as sess, sess.begin():
+            lock_child(sess, products, projects, table, task_id)
             if auto_accept is not None:
-                lock_child(sess, products, projects, table, task_id)
                 if expected_updated_at is _UNSET_UPDATED_AT or products is None:
                     raise ValueError("Automatic acceptance requires expected_updated_at and a Product")
                 prior = (
@@ -9002,8 +9002,6 @@ class SqliteDb(BaseDb):
             fields = task_transition_fields(existing, target, reason, accepted_by, executor_type, executor_id)
             if auto_accept is not None:
                 fields["transitions"][-1]["auto_accept"] = auto_accept
-            else:
-                lock_child(sess, products, projects, table, task_id)
             if existing["status"] in {"done", "cancelled"}:
                 # Reopened work must not land in a completed or cancelled Project.
                 require_project(sess, projects, existing["project_id"], existing["product_id"], target)

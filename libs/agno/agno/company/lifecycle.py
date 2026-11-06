@@ -106,6 +106,21 @@ async def _require(authority: Any, *permissions: tuple[str, str, Optional[str]])
             await authority.arequire(resource, action, resource_id)
 
 
+async def _live_identity(app: Any, identity: str) -> None:
+    """Saved policy grants do not override a subsequently disabled account."""
+    store = getattr(app.state, "user_store", None)
+    if store is None:
+        return
+    try:
+        disabled = await store.ais_disabled(identity)
+    except Exception as exc:
+        if getattr(app.state, "user_directory_fail_closed", False):
+            raise PermissionError("Delegation user directory is unavailable") from exc
+        disabled = False
+    if disabled:
+        raise PermissionError("Delegation author is disabled")
+
+
 def _identity(authority: Any, run_context: Any) -> str:
     identity = authority.context.principal_id if authority is not None else getattr(run_context, "user_id", None)
     if not identity:
@@ -202,6 +217,7 @@ class CompanyLifecycleTools(Toolkit):
             ("products", "write", None),
             ("projects", "write", None),
             ("tasks", "write", None),
+            ("tasks", "read", None),
             ("wiki", "read", None),
             (executor_type + "s", "run", executor_id),
         )
@@ -369,6 +385,7 @@ class CompanyLifecycleTools(Toolkit):
         await _require(
             authority,
             ("tasks", "write", None),
+            ("tasks", "read", None),
             ("projects", "write", None),
             ("wiki", "read", None),
             (executor_type + "s", "run", executor_id),
@@ -435,6 +452,7 @@ async def _advance_task(os: Any, app: Any, task: Dict[str, Any]) -> Optional[Dic
     if os.authorization and os.authorization_config is not None and authority is None:
         raise PermissionError("Delegation has no saved authorizing identity")
     identity = delegation["authorizing_identity"]
+    await _live_identity(app, identity)
     if authority is not None and authority.context.principal_id != identity:
         raise PermissionError("Delegation identity changed")
     await _require(
@@ -495,6 +513,8 @@ async def _advance_task(os: Any, app: Any, task: Dict[str, Any]) -> Optional[Dic
     target = "done" if assessment.decision == "done" else "ready" if assessment.decision == "revise" else "backlog"
     marker = {
         "operation": "assessment",
+        "project_id": project["id"],
+        "outcome": project["outcome"],
         "brief": task["brief"],
         "task_id": task["id"],
         "authorizing_identity": identity,
@@ -509,6 +529,7 @@ async def _advance_task(os: Any, app: Any, task: Dict[str, Any]) -> Optional[Dic
         ("projects", "write", None),
         (task["executor_type"] + "s", "run", task["executor_id"]),
     )
+    await _live_identity(app, identity)
     current = await _call(manager, "get_task", task["id"], user_id=identity)
     current_project = await _call(manager, "get_project", project["id"], user_id=identity)
     if current is None or current["transitions"] != task["transitions"] or current["brief"] != task["brief"]:
@@ -582,6 +603,7 @@ async def _complete_project(
     except Exception as exc:
         assessment = OutcomeAssessment(decision="failed", reason="Project outcome verification failed: " + str(exc))
     await _require(authority, ("projects", "write", None), ("tasks", "read", None))
+    await _live_identity(os._company_conversation_app, identity)
     marker = {
         "operation": "complete_project" if assessment.decision == "done" else "project_assessment",
         "assessed_tasks": signature,

@@ -6411,7 +6411,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             if expected_transitions is not None and existing["transitions"] != expected_transitions:
                 return None
             fields: Dict[str, Any] = (
-                task_transition_fields(existing, "in_review", "Execution completed; human review required")
+                task_transition_fields(existing, "in_review", "Execution completed; outcome review required")
                 if result.get("status") == "COMPLETED"
                 else {"updated_at": int(time.time())}
             )
@@ -6480,8 +6480,8 @@ class AsyncSqliteDb(AsyncBaseDb):
         products = await self._get_table(table_type="products", create_table_if_not_found=True)
         projects = await self._get_table(table_type="projects", create_table_if_not_found=True)
         async with self.async_session_factory() as sess, sess.begin():
+            await sess.run_sync(lock_child, products, projects, table, task_id)
             if auto_accept is not None:
-                await sess.run_sync(lock_child, products, projects, table, task_id)
                 if expected_updated_at is _UNSET_UPDATED_AT or products is None:
                     raise ValueError("Automatic acceptance requires expected_updated_at and a Product")
                 prior: Sequence[Optional[List[Dict[str, Any]]]] = (
@@ -6509,8 +6509,6 @@ class AsyncSqliteDb(AsyncBaseDb):
             fields = task_transition_fields(existing, target, reason, accepted_by, executor_type, executor_id)
             if auto_accept is not None:
                 fields["transitions"][-1]["auto_accept"] = auto_accept
-            else:
-                await sess.run_sync(lock_child, products, projects, table, task_id)
             if existing["status"] in {"done", "cancelled"}:
                 # Reopened work must not land in a completed or cancelled Project.
                 await sess.run_sync(require_project, projects, existing["project_id"], existing["product_id"], target)
