@@ -113,6 +113,31 @@ def test_unsupported_schema_is_a_422_with_the_reason(parser_client):
     assert "at properties/s: pattern" in response.json()["detail"]
 
 
+def test_a_schema_pydantic_cannot_build_is_a_422_not_a_500(parser_client):
+    schema = {"type": "object", "properties": {"Config": {"type": "string"}}}
+    response = parser_client.post("/parse", data={"output_schema": json.dumps(schema)})
+    assert response.status_code == 422
+    assert "output_schema" in response.json()["detail"]
+
+
+def test_a_recursive_definition_named_like_a_keyword_is_accepted(parser_client):
+    schema = {
+        "type": "object",
+        "properties": {"c": {"$ref": "#/$defs/class"}},
+        "$defs": {
+            "class": {"type": "object", "properties": {"k": {"type": "array", "items": {"$ref": "#/$defs/class"}}}}
+        },
+    }
+    response = parser_client.post("/parse", data={"output_schema": json.dumps(schema)})
+    assert response.status_code == 200
+
+
+def test_integer_enum_with_an_integral_float_is_accepted(parser_client):
+    schema = {"type": "object", "properties": {"a": {"type": "integer", "enum": [1.0]}}, "required": ["a"]}
+    response = parser_client.post("/parse", data={"output_schema": json.dumps(schema)})
+    assert response.status_code == 200
+
+
 def test_converted_schema_keeps_enum_and_description(parser_client):
     schema = {
         "type": "object",

@@ -155,3 +155,13 @@ no provider): `note-taker` stored `learning: True`, rehydrated through
 live pass.
 
 ---
+
+### inline_output_schema.py
+
+**Status:** PASS
+
+**Description:** Created a published Agent through `StudioTools.create_agent` with a plain JSON Schema, read it back with `get_component`, loaded it with `get_agent_by_id`, ran it on `gpt-5.6-luna`, then submitted a schema using `uniqueItems`.
+
+**Result:** The Agent loaded with a `Person` model and the run returned a `Person` instance with `nickname: None`, a field the text did not state. The `uniqueItems` schema was refused with `invalid_request` and the reason `at properties/tags: unsupported keyword(s): uniqueItems`.
+
+---
