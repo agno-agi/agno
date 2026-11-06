@@ -103,6 +103,9 @@ def task_transition_fields(
         from agno.run.authorization import AUTHORIZATION_KEY, authorization_snapshot
 
         fields["transitions"][-1][AUTHORIZATION_KEY] = authorization_snapshot()
+    from agno.company.lifecycle import _stamp_decision
+
+    _stamp_decision(existing, fields)
     return fields
 
 

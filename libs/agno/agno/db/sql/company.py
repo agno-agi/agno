@@ -53,6 +53,15 @@ def require_project(
         raise ValueError("Project is missing or archived")
     if row._mapping["product_id"] != product_id:
         raise ValueError("Task and Project must belong to the same Product")
+    from agno.company.lifecycle import _decision
+
+    marker = (_decision.get() or {}).get("record") or {}
+    if marker.get("operation") in {"accept", "assessment"} and (
+        marker.get("project_id") != project_id
+        or marker.get("outcome") != row._mapping["outcome"]
+        or row._mapping["status"] != "active"
+    ):
+        raise ValueError("Delegated Project changed during the system decision")
     if (
         task_status is not None
         and task_status not in {"done", "cancelled"}
@@ -87,6 +96,11 @@ def lock_child(sess: Any, products: Any, projects: Any, table: Any, record_id: s
 
 def open_project_tasks(tasks: Any, project_id: str) -> Any:
     """Visible non-terminal Tasks keep a Project from finishing or retiring; archived ones are hidden everywhere."""
+    from agno.company.lifecycle import _decision
+
+    marker = (_decision.get() or {}).get("record") or {}
+    if marker.get("operation") == "complete_project":
+        return select(tasks).where(tasks.c.project_id == project_id, tasks.c.deleted_at.is_(None))
     return select(tasks).where(
         tasks.c.project_id == project_id,
         tasks.c.deleted_at.is_(None),

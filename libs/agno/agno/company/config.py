@@ -21,10 +21,18 @@ class CompanyConfig:
     name: str = "Company"
     description: Optional[str] = None
 
+    max_task_attempts: int = 3
+
     def __post_init__(self) -> None:
         from agno.db.schemas.company import validate_company_details
 
         validate_company_details({"name": self.name, "description": self.description})
+        if (
+            isinstance(self.max_task_attempts, bool)
+            or not isinstance(self.max_task_attempts, int)
+            or not 1 <= self.max_task_attempts <= 10
+        ):
+            raise ValueError("max_task_attempts must be an integer between 1 and 10")
         if (
             isinstance(self.automation_history_retention_days, bool)
             or not isinstance(self.automation_history_retention_days, int)

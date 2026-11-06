@@ -971,3 +971,7 @@ Deployment requirements:
 Set `SANDBOX_IMAGE`, `SANDBOX_CHECKPOINTS`, `DATABASE_URL`, and `REDIS_URL` for your
 deployment, plus the selected harness's model API key. Running the example
 without `--config-only` makes a real model call and leaves its Task for review.
+
+### Automatic delegated lifecycle
+
+[14_managed_lifecycle](14_managed_lifecycle/README.md) exercises delegated Project/Task activation, acceptance, durable execution, evidence assessment, one revision and completion against PostgreSQL using offline models. The existing scheduler resumes the management loop after worker completion or restart; ordinary Company tools and Routines keep their narrower permissions.

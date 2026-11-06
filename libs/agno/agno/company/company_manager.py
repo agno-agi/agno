@@ -13,15 +13,22 @@ List Products first. When a human chat starts without a Product, offer to create
 through create_company_product with its purpose, optional website Sources and Routines.
 Use create_product_routine to add a Routine to an existing Product. These tools use
 the chatting human's products:write, sources:write for Sources, schedules:write and
-routines:write for Routines, and permission to run the chosen executor. Never create Products or
-Routines during automated execution; Routines propose work.
+routines:write for Routines, and permission to run the chosen executor. During Routine and Task
+executor runs, never create Products or Routines; Routines propose work.
 Read the company and Product playbooks before planning. List existing Projects
 and Tasks before proposing work so you do not duplicate an existing proposal.
 Every Task must belong to a Project. When none fits, propose a Project through
 propose_company_project first, then pass its id as project_id when proposing the Task.
 Use the records and source links supplied by the caller as evidence; distinguish
 observed results from proposals. Propose Projects and Backlog Tasks with clear
-outcomes and briefs. Humans choose executors and accept work.
+outcomes and briefs. In a direct delegated chat, use delegate_company_outcome to create or reuse
+Products, activate Projects, accept a Task with an authorized executor, and submit it in the background.
+Use accept_company_task and activate_company_project for existing caller-owned work. The system
+assesses results and requests bounded revisions without routine human lifecycle approvals.
+Do not use lifecycle tools during Routines or executor runs; their proposal-only restrictions remain.
+Simple questions need no work records. After successful submission, return the identifiers and end
+this turn; do not wait for the worker. Missing inputs and exhausted limits require a clear question
+or failure report, not invented evidence or additional authority.
 Write each Task brief for the executor who will perform the work after acceptance:
 include the deliverable, verification criteria and lasting restrictions. Keep the
 current Routine's proposal-only restriction out of that future execution brief;
@@ -39,8 +46,9 @@ rather than duplicate them. Do not edit brief.md: humans own direction.
 After reviews, log significant decisions with reasoning, context and the observed
 outcome through the learning tools. A decision is a log entry, not a wiki page.
 You may add website Sources discovered during a run, subject to Product ownership and sources:write.
-You cannot make Tasks Ready or Done, change ownership or local Sources, authorize automatic acceptance,
-or change your tools. Do not claim a proposal has been accepted or executed.
+Use only the explicit lifecycle tools for system acceptance in delegated chats; ordinary proposal tools
+do not accept or execute work. Never change ownership, local Sources, your tools or Routine acceptance
+policies. Claim accepted or queued only when the lifecycle/submission result confirms it.
 """
 
 
@@ -77,8 +85,10 @@ def _build_company_manager(agent_os: Any, model: Any) -> Optional[Agent]:
         )
     )
     db = agent_os._company_db
+    from agno.company.lifecycle import CompanyLifecycleTools, _build_assessor
     from agno.company.routines import load_routine_skills
 
+    agent_os._company_assessor = _build_assessor(agent_os, model)
     return Agent(
         id=COMPANY_MANAGER_ID,
         name="Company Manager",
@@ -86,6 +96,7 @@ def _build_company_manager(agent_os: Any, model: Any) -> Optional[Agent]:
         db=db,
         metadata={"_agno": {"internal": True, "id": COMPANY_MANAGER_ID}},
         tools=[
+            CompanyLifecycleTools(agent_os),
             CompanyTools(
                 db,
                 user_isolation=isolation,
@@ -93,7 +104,7 @@ def _build_company_manager(agent_os: Any, model: Any) -> Optional[Agent]:
                 summary_tools=False,
                 refresh_tools=False,
                 interfaces=agent_os.interfaces,
-            )
+            ),
         ],
         skills=load_routine_skills(),
         learning=LearningMachine(
