@@ -711,6 +711,17 @@ def test_slack_project_assessment_delivered_after_task_done(lifecycle_system, da
             and "Which release" in post["text"]
             for post in posts
         ), posts
+        # A later accepted deliverable needs its own Project assessment. A
+        # same-outcome assessment of older Task evidence cannot retire receipt.
+        from agno.os.interfaces.slack.project_delivery import _collect_projects
+
+        database.update_task(task["id"], brief="Updated deliverable requiring fresh assessment")
+        row = client.portal.call(delivery._store._get, _identity(delivery._scope, "delegate"))
+        row["data"]["notifications"] = {}
+        pending = client.portal.call(
+            _collect_projects, delivery, client.app, row, [{"task_id": task["id"], "status": "done"}]
+        )
+        assert pending and not row["data"]["notifications"]
 
 
 def test_removed_channel_never_receives_delayed_content(system):

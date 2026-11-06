@@ -8,6 +8,7 @@ from urllib.parse import quote
 
 async def _collect_projects(delivery: Any, app: Any, row: Dict[str, Any], tasks: List[Dict[str, Any]]) -> bool:
     from agno.company.execution import _call
+    from agno.company.lifecycle import _project_evidence_key
 
     authority = await delivery._authority(app, row["data"]["user"], row["principal"])
     try:
@@ -30,6 +31,18 @@ async def _collect_projects(delivery: Any, app: Any, row: Dict[str, Any], tasks:
         assessed = marker.get("operation") in {"project_assessment", "complete_project"} and marker.get(
             "outcome"
         ) == project.get("outcome")
+        if assessed:
+            current_tasks = []
+            page = 1
+            while True:
+                batch, total = await _call(
+                    delivery._os._company_db, "get_tasks", project_id=project_id, limit=100, page=page
+                )
+                current_tasks.extend(batch)
+                if page * 100 >= total:
+                    break
+                page += 1
+            assessed = marker.get("assessed_tasks") == _project_evidence_key(current_tasks)
         if project["status"] not in {"done", "cancelled"} and not assessed:
             pending = True
             continue
