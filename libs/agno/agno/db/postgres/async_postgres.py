@@ -258,6 +258,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 "type": "async_postgres",
                 "db_url": self.db_url,
                 "db_schema": self.db_schema,
+                "sandbox_table": self.sandbox_table_name,
             }
         )
         return data
@@ -290,6 +291,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             approvals_table=data.get("approvals_table"),
             auth_tokens_table=data.get("auth_tokens_table"),
             service_accounts_table=data.get("service_accounts_table"),
+            sandbox_table=data.get("sandbox_table"),
         )
 
     async def close(self) -> None:
@@ -1053,26 +1055,20 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess:
                 async with sess.begin():
-                    # Backfill a monotonic run_index when the run arrives without one
-                    # (e.g. a background/continue save that couldn't resolve its position).
-                    # A NULL index has no position and breaks ORDER BY run_index. ON CONFLICT
-                    # preserves the existing index, so this only sets it on a genuine insert.
-                    if row.get("run_index") is None:
-                        # Serialize same-session backfills: under READ COMMITTED two
-                        # concurrent max-reads can both see the same MAX and land
-                        # duplicate indexes. The advisory lock is transaction-scoped
-                        # (released at COMMIT/ROLLBACK) and keyed on session_id, so
-                        # only same-session backfilling inserts queue behind it.
+                    # A new run always lands after the session's existing rows.
+                    # The advisory lock serializes same-session inserts around MAX+1.
+                    await sess.execute(
+                        text("SELECT pg_advisory_xact_lock(hashtext('agno_run_index'), hashtext(:sid))"),
+                        {"sid": session_id},
+                    )
+                    current_max = (
                         await sess.execute(
-                            text("SELECT pg_advisory_xact_lock(hashtext('agno_run_index'), hashtext(:sid))"),
-                            {"sid": session_id},
+                            select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
                         )
-                        current_max = (
-                            await sess.execute(
-                                select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
-                            )
-                        ).scalar()
-                        row["run_index"] = (current_max + 1) if current_max is not None else 0
+                    ).scalar()
+                    next_index = (current_max + 1) if current_max is not None else 0
+                    provided_index = row.get("run_index")
+                    row["run_index"] = next_index if provided_index is None else max(provided_index, next_index)
 
                     stmt = postgresql.insert(runs_table).values(**row)
                     stmt = stmt.on_conflict_do_update(
@@ -1181,35 +1177,34 @@ class AsyncPostgresDb(AsyncBaseDb):
                 raise
             return [] if deserialize else ([], 0)
 
-    async def _ascrub_run_ids_from_legacy_blob(self, run_ids: List[str]) -> None:
-        """Async variant of the legacy-blob scrub. See postgres.py for rationale."""
-        if not run_ids:
-            return
-        try:
-            sessions_table = await self._get_table(table_type="sessions")
-            if sessions_table is None or "runs" not in sessions_table.c:
-                return
-            stmt = text(
-                f"""
-                UPDATE {sessions_table.name}
-                SET runs = COALESCE(
-                    (SELECT jsonb_agg(elem)
-                     FROM jsonb_array_elements(runs) elem
-                     WHERE elem->>'run_id' <> ALL(:ids)),
-                    '[]'::jsonb
-                )
-                WHERE runs IS NOT NULL
-                  AND jsonb_typeof(runs) = 'array'
-                  AND EXISTS (
-                      SELECT 1 FROM jsonb_array_elements(runs) elem
-                      WHERE elem->>'run_id' = ANY(:ids)
-                  )
-                """
+    async def _ascrub_run_ids_from_legacy_blob(self, run_ids: List[str], sess: Any, sessions_table: Any) -> bool:
+        """Async variant of the legacy-blob scrub. Runs inside the caller's transaction.
+
+        Returns True if any legacy blob held one of ``run_ids``.
+        """
+        if not run_ids or sessions_table is None or "runs" not in sessions_table.c:
+            return False
+        # Quote through the dialect so mixed-case schema or table names resolve; run_ids are bound params.
+        table_ref = sess.get_bind().dialect.identifier_preparer.format_table(sessions_table)
+        stmt = text(
+            f"""
+            UPDATE {table_ref}
+            SET runs = COALESCE(
+                (SELECT jsonb_agg(elem)
+                 FROM jsonb_array_elements(runs) elem
+                 WHERE elem->>'run_id' <> ALL(:ids)),
+                '[]'::jsonb
             )
-            async with self.async_session_factory() as sess, sess.begin():
-                await sess.execute(stmt, {"ids": list(run_ids)})
-        except Exception:
-            log_debug("legacy-runs scrub failed; the primary delete still succeeded", exc_info=True)
+            WHERE runs IS NOT NULL
+              AND jsonb_typeof(runs) = 'array'
+              AND EXISTS (
+                  SELECT 1 FROM jsonb_array_elements(runs) elem
+                  WHERE elem->>'run_id' = ANY(:ids)
+              )
+            """
+        )
+        result = await sess.execute(stmt, {"ids": list(run_ids)})
+        return (result.rowcount or 0) > 0
 
     async def delete_run(self, run_id: str) -> bool:
         """Delete a single run from the runs table.
@@ -1218,19 +1213,18 @@ class AsyncPostgresDb(AsyncBaseDb):
             run_id (str): The ID of the run to delete.
 
         Returns:
-            bool: True if the run was deleted, False otherwise.
+            bool: True if the run was removed from the runs table or a legacy blob, False otherwise.
         """
         try:
             table = await self._get_table(table_type="runs")
-            if table is None:
-                return False
-
+            sessions_table = await self._get_table(table_type="sessions")
             async with self.async_session_factory() as sess, sess.begin():
-                result = await sess.execute(table.delete().where(table.c.run_id == run_id))
-                deleted = result.rowcount > 0  # type: ignore
-
-            await self._ascrub_run_ids_from_legacy_blob([run_id])
-            return deleted
+                deleted = False
+                if table is not None:
+                    result = await sess.execute(table.delete().where(table.c.run_id == run_id))
+                    deleted = result.rowcount > 0  # type: ignore
+                scrubbed = await self._ascrub_run_ids_from_legacy_blob([run_id], sess, sessions_table)
+            return deleted or scrubbed
 
         except Exception as e:
             if is_foreign_key_violation(e):
@@ -1249,14 +1243,12 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="runs")
-            if table is None:
-                return
-
+            sessions_table = await self._get_table(table_type="sessions")
             async with self.async_session_factory() as sess, sess.begin():
-                result = await sess.execute(table.delete().where(table.c.run_id.in_(run_ids)))
-
-            await self._ascrub_run_ids_from_legacy_blob(list(run_ids))
-            log_debug(f"Successfully deleted {result.rowcount} runs")  # type: ignore
+                if table is not None:
+                    result = await sess.execute(table.delete().where(table.c.run_id.in_(run_ids)))
+                    log_debug(f"Successfully deleted {result.rowcount} runs")  # type: ignore
+                await self._ascrub_run_ids_from_legacy_blob(list(run_ids), sess, sessions_table)
 
         except Exception as e:
             if is_foreign_key_violation(e):

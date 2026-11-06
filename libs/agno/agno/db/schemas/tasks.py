@@ -45,6 +45,29 @@ def validate_task_fields(fields: Dict[str, Any]) -> None:
         raise ValueError("project_id must be a non-empty string or None")
 
 
+def task_transition_blocker(task: Dict[str, Any], target: str, run_holding: bool = False) -> Optional[str]:
+    """Name the error a move to target raises, or None when the Task allows it."""
+    attempted = any("attempt" in entry for entry in task.get("transitions") or [])
+    if target == "in_progress":
+        if task["status"] not in {"ready", "in_progress", "in_review"} or not task.get("executor_id"):
+            return "Only accepted work can be started"
+        if task.get("executor_type") not in {"agent", "team", "workflow"}:
+            return "Select a registered agent, team or workflow executor"
+        if task["status"] == "in_review" and not attempted:
+            return "A revision requires a previous Task attempt"
+        return None
+    if target not in TASK_TRANSITIONS.get(task["status"], set()):
+        return f"Invalid task transition from {task['status']} to {target}"
+    # An executing or paused run holds the Task in progress until it is cancelled.
+    if run_holding:
+        return f"Cancel the run with POST /company/runs/{task['job_id']}/cancel to leave In progress"
+    # Review and completion reached from anywhere but the step before them need an earlier attempt.
+    previous = {"in_review": "in_progress", "done": "in_review"}
+    if target in previous and task["status"] != previous[target] and not attempted:
+        return ("Review" if target == "in_review" else "Completion") + " requires a previous Task attempt"
+    return None
+
+
 def task_transition_fields(
     existing: Dict[str, Any],
     target: str,
@@ -58,14 +81,10 @@ def task_transition_fields(
         raise ValueError("A transition requires a non-empty reason")
     if target not in TASK_TRANSITIONS.get(existing["status"], set()):
         raise ValueError(f"Invalid task transition from {existing['status']} to {target}")
-    # Review and completion reached from anywhere but the step before them need an earlier attempt.
-    previous = {"in_review": "in_progress", "done": "in_review"}
-    if (
-        target in previous
-        and existing["status"] != previous[target]
-        and not any("attempt" in entry for entry in existing.get("transitions") or [])
-    ):
-        raise ValueError(("Review" if target == "in_review" else "Completion") + " requires a previous Task attempt")
+    # In progress is entered only by starting a run, which applies its own rules.
+    blocker = None if target == "in_progress" else task_transition_blocker(existing, target)
+    if blocker is not None:
+        raise ValueError(blocker)
     now = int(time.time())
     fields: Dict[str, Any] = {"status": target, "updated_at": now}
     if target == "ready":
@@ -131,6 +150,11 @@ def public_task(task: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
+def task_next_attempt(task: Dict[str, Any]) -> int:
+    """A new run takes the attempt after the highest one recorded on the Task."""
+    return max((entry["attempt"] for entry in task.get("transitions") or [] if "attempt" in entry), default=0) + 1
+
+
 def task_run_id(task_id: str, attempt: int) -> str:
     """The same Task attempt always names the same ordinary queued run."""
     from uuid import NAMESPACE_URL, uuid5
@@ -150,15 +174,11 @@ def task_run_fields(
 
     if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 1:
         raise ValueError("attempt must be a positive integer")
-    if existing["status"] not in {"ready", "in_progress", "in_review"} or not existing.get("executor_id"):
-        raise ValueError("Only accepted work can be started")
-    if existing.get("executor_type") not in {"agent", "team", "workflow"}:
-        raise ValueError("Select a registered agent, team or workflow executor")
+    blocker = task_transition_blocker(existing, "in_progress")
+    if blocker is not None:
+        raise ValueError(blocker)
     history = existing.get("transitions") or []
-    attempts = [entry["attempt"] for entry in history if "attempt" in entry]
-    if existing["status"] == "in_review" and not attempts:
-        raise ValueError("A revision requires a previous Task attempt")
-    if attempt != max(attempts, default=0) + 1:
+    if attempt != task_next_attempt(existing):
         raise ValueError("Start the next Task attempt, or retry the original attempt")
     now = int(time.time())
     return {
