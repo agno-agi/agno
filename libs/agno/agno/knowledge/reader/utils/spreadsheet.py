@@ -89,7 +89,12 @@ def excel_rows_to_documents(
     workbook_name: str,
     sheets: Iterable[Tuple[str, int, Iterable[Sequence[Any]]]],
 ) -> List[Document]:
-    """Convert Excel sheet rows to Documents (one per sheet)."""
+    """Convert Excel sheet rows to Documents (one per sheet).
+
+    Materializes each sheet into a single document. Prefer
+    :func:`excel_rows_to_row_documents` when using row-based chunking so
+    large workbooks do not require a full sheet-sized string in memory.
+    """
     documents = []
     for sheet_name, sheet_index, rows in sheets:
         lines = []
@@ -110,5 +115,82 @@ def excel_rows_to_documents(
                 content="\n".join(lines),
             )
         )
+
+    return documents
+
+
+def excel_rows_to_row_documents(
+    *,
+    workbook_name: str,
+    sheets: Iterable[Tuple[str, int, Iterable[Sequence[Any]]]],
+    skip_header: bool = False,
+    clean_rows: bool = True,
+) -> List[Document]:
+    """Stream Excel sheet rows into one Document per non-empty row.
+
+    Mirrors :class:`~agno.knowledge.chunking.row.RowChunking` output
+    (``row_number`` metadata, content cleaning, header skip) without
+    building a full sheet-level string first.
+    """
+    from agno.knowledge.chunking.row import RowChunking
+
+    documents: List[Document] = []
+    row_chunking = RowChunking(skip_header=skip_header, clean_rows=clean_rows)
+
+    for sheet_name, sheet_index, rows in sheets:
+        sheet_id = str(uuid4())
+        parent = Document(
+            name=workbook_name,
+            id=sheet_id,
+            meta_data={"sheet_name": sheet_name, "sheet_index": sheet_index},
+            content="",
+        )
+
+        # Logical index among non-empty CSV lines (matches RowChunking on joined content)
+        non_empty_line_index = 0
+        header_skipped = False
+        sheet_had_rows = False
+
+        for row in rows:
+            line = row_to_csv_line(row)
+            if not line:
+                continue
+
+            sheet_had_rows = True
+
+            if skip_header and not header_skipped:
+                header_skipped = True
+                continue
+
+            if clean_rows:
+                chunk_content = " ".join(line.split())
+            else:
+                chunk_content = line.strip()
+
+            # Keep numbering parity with RowChunking: index advances for every
+            # non-empty source line after header skip, even if cleaning empties it.
+            if skip_header:
+                row_number = 2 + non_empty_line_index
+            else:
+                row_number = 1 + non_empty_line_index
+            non_empty_line_index += 1
+
+            if not chunk_content:
+                continue
+
+            meta_data = parent.meta_data.copy()
+            meta_data["row_number"] = row_number
+            chunk_id = row_chunking._generate_chunk_id(parent, row_number, chunk_content, prefix="row")
+            documents.append(
+                Document(
+                    id=chunk_id,
+                    name=workbook_name,
+                    meta_data=meta_data,
+                    content=chunk_content,
+                )
+            )
+
+        if not sheet_had_rows:
+            log_debug(f"Sheet '{sheet_name}' is empty, skipping")
 
     return documents
