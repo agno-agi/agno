@@ -6,7 +6,7 @@ from agno.db.schemas.authz import AUTHZ_TABLE_SCHEMAS
 from agno.db.schemas.mcp_oauth import MCP_OAUTH_TABLE_SCHEMAS
 
 try:
-    from sqlalchemy.types import JSON, BigInteger, Boolean, Date, String
+    from sqlalchemy.types import JSON, BigInteger, Boolean, Date, String, Text
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
@@ -254,6 +254,74 @@ LEARNINGS_TABLE_SCHEMA = {
 }
 
 
+SOURCES_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True},
+    "product_id": {"type": String, "nullable": False, "index": True},
+    "reference": {"type": Text, "nullable": False},
+    "type": {"type": String, "nullable": False},
+    "credential_ref": {"type": String, "nullable": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
+    "config": {"type": JSON, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "deleted_at": {"type": BigInteger, "nullable": True},
+}
+
+PRODUCTS_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True},
+    "name": {"type": String, "nullable": False, "index": True},
+    "purpose": {"type": Text, "nullable": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
+    "metadata": {"type": JSON, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "deleted_at": {"type": BigInteger, "nullable": True},
+}
+
+TASKS_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True},
+    "product_id": {"type": String, "nullable": False, "index": True},
+    "project_id": {"type": String, "nullable": True, "index": True},
+    "title": {"type": String, "nullable": False, "index": True},
+    "brief": {"type": Text, "nullable": True},
+    "status": {"type": String, "nullable": False, "index": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
+    "executor_type": {"type": String, "nullable": True},
+    "executor_id": {"type": String, "nullable": True},
+    "accepted_by": {"type": String, "nullable": True},
+    "accepted_at": {"type": BigInteger, "nullable": True},
+    "session_id": {"type": String, "nullable": True, "index": True},
+    "job_id": {"type": String, "nullable": True, "index": True},
+    "evidence": {"type": JSON, "nullable": True},
+    "result": {"type": JSON, "nullable": True},
+    "origin": {"type": String, "nullable": True},
+    "routine_id": {"type": String, "nullable": True},
+    "dedupe_key": {"type": String, "nullable": True},
+    "transitions": {"type": JSON, "nullable": True},
+    "metadata": {"type": JSON, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "deleted_at": {"type": BigInteger, "nullable": True},
+    "_unique_constraints": [
+        {"name": "uq_company_task_evidence", "columns": ["product_id", "dedupe_key"]},
+    ],
+}
+
+PROJECTS_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True},
+    "name": {"type": String, "nullable": False, "index": True},
+    "outcome": {"type": Text, "nullable": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
+    "transitions": {"type": JSON, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "deleted_at": {"type": BigInteger, "nullable": True},
+    "product_id": {"type": String, "nullable": False, "index": True},
+    "status": {"type": String, "nullable": False, "index": True},
+    "target_date": {"type": BigInteger, "nullable": True},
+}
+
+
 SCHEDULE_TABLE_SCHEMA = {
     "id": {"type": String, "primary_key": True, "nullable": False},
     "name": {"type": String, "nullable": False, "index": True},
@@ -420,6 +488,48 @@ TOOL_RESULTS_TABLE_SCHEMA = {
 }
 
 
+TRANSCRIPTS_TABLE_SCHEMA = {
+    "framework": {"type": String, "primary_key": True, "nullable": False},
+    "project_key": {"type": String, "primary_key": True, "nullable": False},
+    "session_id": {"type": String, "primary_key": True, "nullable": False},
+    # Empty for the main transcript, so the unique constraint below also covers it.
+    "subpath": {"type": String, "primary_key": True, "nullable": False},
+    "position": {"type": BigInteger, "primary_key": True, "nullable": False},
+    "entry_uuid": {"type": String, "nullable": True},
+    "entry": {"type": String, "nullable": False},
+    "agno_session_id": {"type": String, "nullable": False, "index": True},
+    "created_at": {"type": BigInteger, "nullable": False},
+    "_unique_constraints": [
+        {"name": "uq_entry_uuid", "columns": ["framework", "project_key", "session_id", "subpath", "entry_uuid"]},
+    ],
+}
+
+
+COMPACTIONS_TABLE_SCHEMA = {
+    "compaction_id": {"type": String, "primary_key": True, "nullable": False},
+    "session_id": {"type": String, "nullable": False},
+    # The run that produced this fold. A record is an immutable fact about one
+    # run, so resuming that run resolves the fold it actually saw.
+    "run_id": {"type": String, "nullable": True},
+    "user_id": {"type": String, "nullable": True},
+    # Anchors are message ids, never indexes: history is rebuilt from stored runs
+    # each run, so a position means something different every time.
+    "first_kept_message_id": {"type": String, "nullable": True},
+    "summary": {"type": String, "nullable": True},
+    # The folded transcript, verbatim. Null when the backend or the caller opted
+    # out: the summary still stands, only recoverability is lost.
+    "archived_messages": {"type": String, "nullable": True},
+    "messages_compacted": {"type": BigInteger, "nullable": True},
+    "tokens_before": {"type": BigInteger, "nullable": True},
+    "tokens_after": {"type": BigInteger, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False},
+    "__composite_indexes__": [
+        # Resolving the fold in force, and session cleanup.
+        {"name": "compactions_session_created_at", "columns": ["session_id", "created_at"]},
+    ],
+}
+
+
 def get_table_schema_definition(
     table_type: str,
     traces_table_name: str = "agno_traces",
@@ -461,7 +571,13 @@ def get_table_schema_definition(
         "component_links": COMPONENT_LINKS_TABLE_SCHEMA,
         "learnings": LEARNINGS_TABLE_SCHEMA,
         "schedules": SCHEDULE_TABLE_SCHEMA,
+        "products": PRODUCTS_TABLE_SCHEMA,
+        "sources": SOURCES_TABLE_SCHEMA,
+        "projects": PROJECTS_TABLE_SCHEMA,
+        "tasks": TASKS_TABLE_SCHEMA,
         "tool_results": TOOL_RESULTS_TABLE_SCHEMA,
+        "compactions": COMPACTIONS_TABLE_SCHEMA,
+        "transcripts": TRANSCRIPTS_TABLE_SCHEMA,
         "approvals": APPROVAL_TABLE_SCHEMA,
         "auth_tokens": AUTH_TOKEN_TABLE_SCHEMA,
         "service_accounts": SERVICE_ACCOUNT_TABLE_SCHEMA,

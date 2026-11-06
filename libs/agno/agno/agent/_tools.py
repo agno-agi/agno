@@ -236,6 +236,16 @@ def get_tools(
         _raise_if_async_tools_in_list(resolved_tools)
         agent_tools.extend(resolved_tools)
 
+    # Read-only search over history this session compacted away. Scoped to
+    # this session's archive namespace, so one session can never read another's.
+    from agno.agent._messages import agent_compaction
+
+    compaction = agent_compaction(agent)
+    if compaction is not None and compaction.search_compacted_messages:
+        archive_tools = compaction.tools_for(session.session_id, agent.db)
+        if archive_tools:
+            agent_tools.extend(archive_tools)
+
     _append_filesystem_tools(agent, agent_tools)
 
     # Add tools for accessing memory
@@ -261,7 +271,11 @@ def get_tools(
         )
 
     if agent.enable_agentic_memory:
-        agent_tools.append(_default_tools.get_update_user_memory_function(agent, user_id=user_id, async_mode=False))
+        agent_tools.append(
+            _default_tools.get_update_user_memory_function(
+                agent, user_id=user_id, run_response=run_response, async_mode=False
+            )
+        )
 
     # Read-back tools for offloaded results
     if agent._result_store is not None:
@@ -277,6 +291,7 @@ def get_tools(
             session_id=session.session_id if session else None,
             agent_id=agent.id,
             run_context=run_context,
+            run_metrics=run_response.metrics,
         )
         agent_tools.extend(learning_tools)
 
@@ -373,6 +388,16 @@ async def aget_tools(
             # Add the tool (MCP tools that passed checks, or any non-MCP tool)
             agent_tools.append(tool)
 
+    # Read-only search over history this session compacted away. Scoped to
+    # this session's archive namespace, so one session can never read another's.
+    from agno.agent._messages import agent_compaction
+
+    compaction = agent_compaction(agent)
+    if compaction is not None and compaction.search_compacted_messages:
+        archive_tools = compaction.tools_for(session.session_id, agent.db)
+        if archive_tools:
+            agent_tools.extend(archive_tools)
+
     _append_filesystem_tools(agent, agent_tools)
 
     # Add tools for accessing memory
@@ -398,7 +423,11 @@ async def aget_tools(
         )
 
     if agent.enable_agentic_memory:
-        agent_tools.append(_default_tools.get_update_user_memory_function(agent, user_id=user_id, async_mode=True))
+        agent_tools.append(
+            _default_tools.get_update_user_memory_function(
+                agent, user_id=user_id, run_response=run_response, async_mode=True
+            )
+        )
 
     # Read-back tools for offloaded results
     if agent._result_store is not None:
@@ -414,6 +443,7 @@ async def aget_tools(
             session_id=session.session_id if session else None,
             agent_id=agent.id,
             run_context=run_context,
+            run_metrics=run_response.metrics,
         )
         agent_tools.extend(learning_tools)
 

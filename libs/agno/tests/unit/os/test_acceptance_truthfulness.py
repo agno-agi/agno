@@ -158,15 +158,24 @@ class TestDurabilityBypassIsLoud:
         client = TestClient(app, raise_server_exceptions=False)
         return SimpleNamespace(app=app, store=store, client=client)
 
-    def test_factory_backed_submission_warns(self, factory_harness, caplog):
+    def test_factory_backed_submission_rides_the_queue(self, factory_harness, caplog, monkeypatch):
+        """Factories used to drop to the non-durable path; now the ticket
+        carries the request context and the worker invokes the factory again,
+        so there is nothing to warn about."""
+
+        async def ok_prepare(component, component_type, run_id, session_id, user_id, input):
+            return None
+
+        monkeypatch.setattr("agno.os.job_queue.aprepare_queued_run", ok_prepare)
         with caplog.at_level("WARNING"):
-            factory_harness.client.post(
+            resp = factory_harness.client.post(
                 "/agents/fx-agent/runs", data={"message": "hi", "stream": "false", "background": "true"}
             )
-        assert any("bypasses the durable queue" in r.message for r in caplog.records), (
-            "a factory-backed background submission silently lost durability - it must warn"
-        )
-        assert len(factory_harness.store._jobs) == 0, "the bypass must not have enqueued anything"
+        assert resp.status_code == 202, resp.text
+        assert not any("bypasses the durable queue" in r.message for r in caplog.records)
+        assert len(factory_harness.store._jobs) == 1, "a factory-backed submission must ride the durable queue"
+        job = next(iter(factory_harness.store._jobs.values()))
+        assert job["payload"]["scope"]["source"] == "factory"
 
     def test_durable_path_does_not_warn(self, harness, monkeypatch):
         """No false alarms: a queueable registry submission rides the queue

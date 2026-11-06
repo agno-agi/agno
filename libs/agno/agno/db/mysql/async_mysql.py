@@ -2,6 +2,7 @@ import json
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import cast as typing_cast
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -660,33 +661,24 @@ class AsyncMySQLDb(AsyncBaseDb):
             async with self.async_session_factory() as sess:
                 try:
                     async with sess.begin():
-                        # Backfill a monotonic run_index when the run arrives without one
-                        # (e.g. a background/continue save that couldn't resolve its position).
-                        # A NULL index has no position and breaks ORDER BY run_index. ON DUPLICATE KEY
-                        # preserves the existing index, so this only sets it on a genuine insert.
-                        if row.get("run_index") is None:
-                            # Serialize same-session backfills: two concurrent
-                            # max-reads can both see the same MAX and land
-                            # duplicate indexes. GET_LOCK is connection-scoped
-                            # and survives COMMIT, so it is released in the
-                            # finally below - AFTER the row is durable.
-                            backfill_lock = run_index_lock_name(session_id)
-                            acquired = (
-                                await sess.execute(text("SELECT GET_LOCK(:name, 5)"), {"name": backfill_lock})
-                            ).scalar()
-                            if not acquired:
-                                log_warning(
-                                    f"run_index backfill lock timed out for session {session_id}; "
-                                    "proceeding unserialized"
-                                )
-                            current_max = (
-                                await sess.execute(
-                                    select(func.max(runs_table.c.run_index)).where(
-                                        runs_table.c.session_id == session_id
-                                    )
-                                )
-                            ).scalar()
-                            row["run_index"] = (current_max + 1) if current_max is not None else 0
+                        # A new run always lands after the session's existing rows.
+                        # The lock serializes same-session inserts around MAX+1.
+                        backfill_lock = run_index_lock_name(session_id)
+                        acquired = (
+                            await sess.execute(text("SELECT GET_LOCK(:name, 5)"), {"name": backfill_lock})
+                        ).scalar()
+                        if not acquired:
+                            log_warning(
+                                f"run_index backfill lock timed out for session {session_id}; proceeding unserialized"
+                            )
+                        current_max = (
+                            await sess.execute(
+                                select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
+                            )
+                        ).scalar()
+                        next_index = (current_max + 1) if current_max is not None else 0
+                        provided_index = row.get("run_index")
+                        row["run_index"] = next_index if provided_index is None else max(provided_index, next_index)
 
                         stmt = mysql.insert(runs_table).values(**row)  # type: ignore
                         stmt = stmt.on_duplicate_key_update(
@@ -791,52 +783,50 @@ class AsyncMySQLDb(AsyncBaseDb):
             log_error(f"Exception reading from runs table: {str(e)}")
             return [] if deserialize else ([], 0)
 
-    async def _ascrub_run_ids_from_legacy_blob(self, run_ids: List[str]) -> None:
-        """Async variant of the legacy-blob scrub. See mysql.py for rationale."""
-        if not run_ids:
-            return
-        try:
-            import json as _json
+    async def _ascrub_run_ids_from_legacy_blob(self, run_ids: List[str], sess: Any, sessions_table: Any) -> bool:
+        """Async variant of the legacy-blob scrub. Runs inside the caller's transaction.
 
-            sessions_table = await self._get_table(table_type="sessions")
-            if sessions_table is None or "runs" not in sessions_table.c:
-                return
-            wanted = set(run_ids)
-            async with self.async_session_factory() as sess, sess.begin():
-                result = await sess.execute(
-                    select(sessions_table.c.session_id, sessions_table.c.runs).where(sessions_table.c.runs.isnot(None))
-                )
-                rows = result.fetchall()
-                for sid, runs_raw in rows:
-                    if isinstance(runs_raw, str):
-                        try:
-                            runs_list = _json.loads(runs_raw)
-                        except (_json.JSONDecodeError, TypeError):
-                            continue
-                    else:
-                        runs_list = runs_raw
-                    if not isinstance(runs_list, list):
-                        continue
-                    kept = [r for r in runs_list if not (isinstance(r, dict) and r.get("run_id") in wanted)]
-                    if len(kept) == len(runs_list):
-                        continue
-                    await sess.execute(
-                        sessions_table.update().where(sessions_table.c.session_id == sid).values(runs=_json.dumps(kept))
-                    )
-        except Exception:
-            log_debug("legacy-runs scrub failed; the primary delete still succeeded", exc_info=True)
+        Returns True if any legacy blob held one of ``run_ids``.
+        """
+        if not run_ids or sessions_table is None or "runs" not in sessions_table.c:
+            return False
+        wanted = set(run_ids)
+        scrubbed = False
+        result = await sess.execute(
+            select(sessions_table.c.session_id, sessions_table.c.runs).where(sessions_table.c.runs.isnot(None))
+        )
+        rows = result.fetchall()
+        for sid, runs_raw in rows:
+            if isinstance(runs_raw, str):
+                try:
+                    runs_list = json.loads(runs_raw)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+            else:
+                runs_list = runs_raw
+            if not isinstance(runs_list, list):
+                continue
+            kept = [r for r in runs_list if not (isinstance(r, dict) and r.get("run_id") in wanted)]
+            if len(kept) == len(runs_list):
+                continue
+            await sess.execute(
+                sessions_table.update().where(sessions_table.c.session_id == sid).values(runs=json.dumps(kept))
+            )
+            scrubbed = True
+        return scrubbed
 
     async def delete_run(self, run_id: str) -> bool:
         """Delete a single run from the runs table."""
         try:
             table = await self._get_table(table_type="runs")
-            if table is None:
-                return False
+            sessions_table = await self._get_table(table_type="sessions")
             async with self.async_session_factory() as sess, sess.begin():
-                result = await sess.execute(table.delete().where(table.c.run_id == run_id))
-                deleted = result.rowcount > 0  # type: ignore
-            await self._ascrub_run_ids_from_legacy_blob([run_id])
-            return deleted
+                deleted = False
+                if table is not None:
+                    result = await sess.execute(table.delete().where(table.c.run_id == run_id))
+                    deleted = result.rowcount > 0  # type: ignore
+                scrubbed = await self._ascrub_run_ids_from_legacy_blob([run_id], sess, sessions_table)
+            return deleted or scrubbed
         except Exception as e:
             log_error(f"Error deleting run: {str(e)}")
             raise e
@@ -845,12 +835,12 @@ class AsyncMySQLDb(AsyncBaseDb):
         """Delete all given runs from the runs table."""
         try:
             table = await self._get_table(table_type="runs")
-            if table is None:
-                return
+            sessions_table = await self._get_table(table_type="sessions")
             async with self.async_session_factory() as sess, sess.begin():
-                result = await sess.execute(table.delete().where(table.c.run_id.in_(run_ids)))
-            await self._ascrub_run_ids_from_legacy_blob(list(run_ids))
-            log_debug(f"Successfully deleted {result.rowcount} runs")  # type: ignore
+                if table is not None:
+                    result = await sess.execute(table.delete().where(table.c.run_id.in_(run_ids)))
+                    log_debug(f"Successfully deleted {result.rowcount} runs")  # type: ignore
+                await self._ascrub_run_ids_from_legacy_blob(list(run_ids), sess, sessions_table)
         except Exception as e:
             log_error(f"Error deleting runs: {str(e)}")
             raise e
@@ -1042,6 +1032,7 @@ class AsyncMySQLDb(AsyncBaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """
         Get all sessions in the given table. Can filter by user_id and entity_id.
@@ -1066,6 +1057,9 @@ class AsyncMySQLDb(AsyncBaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        from agno.db.session_filters import normalize_session_filter, session_filter_to_sqlalchemy
+
+        filter_expr = normalize_session_filter(filter_expr)
         validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="sessions")
@@ -1075,6 +1069,10 @@ class AsyncMySQLDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
+
+                if filter_expr is not None:
+                    # Binary collation keeps string comparisons case-sensitive, matching other SQL backends.
+                    stmt = stmt.where(session_filter_to_sqlalchemy(filter_expr, table, collation="utf8mb4_bin"))
 
                 # Filtering
                 if user_id is not None:
@@ -2094,7 +2092,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                     runs_result = await sess.execute(runs_stmt)
                     runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
                     for session_id, model, model_provider in runs_result.fetchall():
-                        runs_by_session.setdefault(session_id, []).append(
+                        runs_by_session.setdefault(typing_cast(str, session_id), []).append(
                             {"model": model, "model_provider": model_provider}
                         )
 

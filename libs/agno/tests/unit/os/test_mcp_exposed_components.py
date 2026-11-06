@@ -695,17 +695,20 @@ def test_id_string_in_tools_raises_type_error():
 
 def test_exposed_id_colliding_with_fastmcp_derived_name_raises():
     """The collision registry must hold the names FastMCP actually registered, not a
-    re-derivation: a functools.partial has no __name__ and registers as 'partial'."""
+    re-derivation: a functools.partial has no __name__ and FastMCP's naming varies by version."""
     import functools
+
+    from fastmcp.tools import Tool
 
     def base_tool(x: str, y: str) -> str:
         """Combine two strings."""
         return x + y
 
     partial_tool = functools.partial(base_tool, y="fixed")
-    agent = _agent(id="partial", name="Partial Agent")
+    registered_name = Tool.from_function(partial_tool).name
+    agent = _agent(id=registered_name, name="Partial Agent")
     os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent, partial_tool]))
-    with pytest.raises(ValueError, match='custom tool "partial"'):
+    with pytest.raises(ValueError, match=f'custom tool "{registered_name}"'):
         build_mcp_server(os)
 
 

@@ -82,7 +82,8 @@ class SpiderTools(Toolkit):
     def _search(self, query: str, max_results: Optional[int] = None) -> str:
         app = ExternalSpider()
         try:
-            options = {"fetch_page_content": False, "num": self.max_results or 5, **self.optional_params}
+            num_results = self.max_results if self.max_results is not None else 5
+            options = {"fetch_page_content": False, "num": num_results, **self.optional_params}
             # Applied after the optional_params spread so an explicit call argument always wins.
             if max_results is not None:
                 options["num"] = max_results

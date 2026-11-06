@@ -105,10 +105,7 @@ async def test_team_tool_background_stream_continue(shared_db):
 @pytest.mark.asyncio
 async def test_team_background_stream_continue_keeps_prior_history(shared_db):
     """Excluding the continued run must not drop genuinely earlier team turns from history."""
-    team = _make_team_tool_team(
-        shared_db,
-        additional_context="IMPORTANT: Always address the user by their name in every response.",
-    )
+    team = _make_team_tool_team(shared_db, store_history_messages=True)
     session_id = "team-bg-stream-history"
 
     first = await _start_background_stream(team, "Hi, my name is Alice.", session_id)
@@ -120,5 +117,6 @@ async def test_team_background_stream_continue_keeps_prior_history(shared_db):
     completed = await _continue_background_stream(team, paused)
     assert completed.status == RunStatus.completed, f"continue ended {completed.status}: {completed.content}"
 
-    # The name only reaches the continued request through history from the first run
-    assert "alice" in (completed.content or "").lower(), f"prior history missing: {completed.content}"
+    # Check the history sent to the model, not whether the model repeats the name in its reply
+    history = [m.content for m in completed.messages or [] if m.from_history]
+    assert "Hi, my name is Alice." in history, f"prior history missing: {history}"

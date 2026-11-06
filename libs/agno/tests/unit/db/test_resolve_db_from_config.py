@@ -16,8 +16,11 @@ that have needed follow-up fixes on PR #7508:
 from unittest.mock import Mock
 
 from sqlalchemy import create_engine
+from sqlalchemy.ext.asyncio import create_async_engine
 
+from agno.db.postgres.async_postgres import AsyncPostgresDb
 from agno.db.postgres.postgres import PostgresDb
+from agno.db.sqlite.async_sqlite import AsyncSqliteDb
 from agno.db.sqlite.sqlite import SqliteDb
 from agno.db.utils import (
     DB_TABLE_NAME_KEYS,
@@ -166,6 +169,58 @@ class TestResolveDbFromConfigPostgres:
         assert redict["db_url"] == os_db.db_url
         assert redict["db_schema"] == os_db.db_schema
         assert redict["session_table"] == "custom_pg_sessions"
+
+
+class TestResolveDbFromConfigAsync:
+    def test_async_postgres_clone_shares_engine_and_applies_overrides(self):
+        # No postgres in unit tests: an async sqlite engine stands in, as the sync test does.
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        os_db = AsyncPostgresDb(
+            id="async-pg",
+            db_url="postgresql+asyncpg://user:pass@host/db",
+            db_engine=engine,
+            db_schema="ai",
+            create_schema=False,
+        )
+        registry = _FakeRegistry(os_db)
+
+        data = dict(os_db.to_dict())
+        data["session_table"] = "custom_sessions"
+        data["sandbox_table"] = "custom_bindings"
+
+        clone = resolve_db_from_config(data, registry=registry)
+
+        assert clone is not os_db
+        assert isinstance(clone, AsyncPostgresDb)
+        assert clone.db_engine is os_db.db_engine
+        assert clone.id == os_db.id
+        assert clone.db_url == os_db.db_url
+        assert clone.db_schema == os_db.db_schema
+        assert clone.create_schema is False
+        assert clone.session_table_name == "custom_sessions"
+        assert clone.sandbox_table_name == "custom_bindings"
+        assert clone.to_dict()["session_table"] == "custom_sessions"
+
+    def test_async_sqlite_clone_shares_engine_and_applies_overrides(self, tmp_path):
+        os_db = AsyncSqliteDb(id="async-sqlite", db_file=str(tmp_path / "os.db"))
+        registry = _FakeRegistry(os_db)
+
+        data = dict(os_db.to_dict())
+        data["memory_table"] = "custom_memories"
+
+        clone = resolve_db_from_config(data, registry=registry)
+
+        assert clone is not os_db
+        assert isinstance(clone, AsyncSqliteDb)
+        assert clone.db_engine is os_db.db_engine
+        assert clone.db_file == os_db.db_file
+        assert clone.memory_table_name == "custom_memories"
+        assert clone.session_table_name == os_db.session_table_name
+
+    def test_async_db_without_overrides_returns_registered_instance(self, tmp_path):
+        os_db = AsyncSqliteDb(id="async-sqlite", db_file=str(tmp_path / "os.db"))
+
+        assert resolve_db_from_config(dict(os_db.to_dict()), registry=_FakeRegistry(os_db)) is os_db
 
 
 class TestResolveDbFromConfigNonSqlBackend:
