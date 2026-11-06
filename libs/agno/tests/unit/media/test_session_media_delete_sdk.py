@@ -303,3 +303,66 @@ def test_asyncio_is_importable_without_the_agentos_layer():
 
 
 assert asyncio  # imported for the async tests above
+
+
+_COLLIDING_SESSION_IDS = [
+    ("s" * 120 + "-first", "s" * 120 + "-second"),
+    ("customer/first", "customer_first"),
+    ("客户甲", "客户乙"),
+]
+
+
+@pytest.mark.parametrize("first_id,second_id", _COLLIDING_SESSION_IDS)
+def test_deleting_one_session_keeps_another_sessions_media(tmp_path, first_id, second_id):
+    """Caller-supplied session IDs must retain distinct media ownership after key sanitization."""
+    storage = LocalMediaStorage(base_path=str(tmp_path / "media"))
+    agent = _agent(str(tmp_path), storage)
+    keys = []
+    for index, session_id in enumerate((first_id, second_id)):
+        run = _offloaded_run(storage, session_id)
+        run.run_id = f"run-{index}"
+        _persist(agent, AgentSession(session_id=session_id, agent_id="a", runs=[run]), run)
+        keys.append(run.images[0].media_reference.storage_key)
+
+    agent.delete_session(session_id=first_id, delete_media=True)
+
+    assert agent.db.get_session(session_id=first_id) is None
+    assert agent.db.get_session(session_id=second_id) is not None
+    assert storage.download(keys[1]) == b"BYTES"
+    assert keys[0] != keys[1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("first_id,second_id", _COLLIDING_SESSION_IDS)
+async def test_async_deleting_one_session_keeps_another_sessions_media(tmp_path, first_id, second_id):
+    """Async offload and the public delete API must preserve the same ownership boundary."""
+    from agno.utils.media_offload import aoffload_run_media
+
+    storage = AsyncLocalMediaStorage(base_path=str(tmp_path / "media"))
+    agent = _agent(str(tmp_path), storage)
+    keys = []
+    for index, session_id in enumerate((first_id, second_id)):
+        run = RunOutput(
+            run_id=f"run-{index}", agent_id="a", images=[Image(id="i1", content=b"BYTES", mime_type="image/png")]
+        )
+        await aoffload_run_media(run, storage, session_id)
+        _persist(agent, AgentSession(session_id=session_id, agent_id="a", runs=[run]), run)
+        keys.append(run.images[0].media_reference.storage_key)
+
+    await agent.adelete_session(session_id=first_id, delete_media=True)
+
+    assert agent.db.get_session(session_id=first_id) is None
+    assert agent.db.get_session(session_id=second_id) is not None
+    assert await storage.download(keys[1]) == b"BYTES"
+    assert keys[0] != keys[1]
+
+
+def test_repeated_media_in_the_same_session_reuses_the_storage_key(tmp_path):
+    """Hashing session identity must keep stable keys for repeated persistence."""
+    storage = LocalMediaStorage(base_path=str(tmp_path))
+    first = _offloaded_run(storage, "customer/first")
+    second = _offloaded_run(storage, "customer/first")
+
+    first_key = first.images[0].media_reference.storage_key
+    assert first_key == second.images[0].media_reference.storage_key
+    assert storage.download(first_key) == b"BYTES"
