@@ -1,6 +1,6 @@
 """Serve an AgentOS with an OS manager.
 
-Open the AgentOS UI, select OS Manager and ask it to run diagnostics.
+Open the AgentOS UI, select Super Agent and ask it to run diagnostics.
 This example needs only a model and a database. See manager_builds_agents.py
 to add calculator tools and workflow functions to the build palette. The manager
 model alone is enough to build basic agents. Platform Manager can consult Agno

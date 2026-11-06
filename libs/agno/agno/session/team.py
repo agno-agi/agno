@@ -153,6 +153,7 @@ class TeamSession:
         Returns:
             A list of Messages belonging to the session.
         """
+        from agno.registry._reserved import _manager_ids_match
 
         def _should_skip_message(
             message: Message, skip_roles: Optional[List[str]] = None, skip_history_messages: bool = True
@@ -181,7 +182,11 @@ class TeamSession:
 
         # Filter by team_id and member_ids
         if team_id:
-            session_runs = [run for run in session_runs if hasattr(run, "team_id") and run.team_id == team_id]  # type: ignore
+            session_runs = [
+                run
+                for run in session_runs
+                if hasattr(run, "team_id") and _manager_ids_match(run.team_id, team_id, "teams")
+            ]  # type: ignore
         if member_ids:
             filtered_runs = []
             seen_run_ids: set[str] = set()
@@ -195,11 +200,15 @@ class TeamSession:
                 filtered_runs.append(run)
 
             for run in session_runs:
-                if hasattr(run, "agent_id") and run.agent_id in member_ids:  # type: ignore
+                if hasattr(run, "agent_id") and any(
+                    _manager_ids_match(run.agent_id, member_id, "agents") for member_id in member_ids
+                ):  # type: ignore
                     _add_if_unseen(run)
                 elif hasattr(run, "member_responses"):
                     for member_run in run.member_responses:
-                        if hasattr(member_run, "agent_id") and member_run.agent_id in member_ids:  # type: ignore
+                        if hasattr(member_run, "agent_id") and any(
+                            _manager_ids_match(member_run.agent_id, member_id, "agents") for member_id in member_ids
+                        ):  # type: ignore
                             _add_if_unseen(member_run)
             session_runs = filtered_runs
 
@@ -317,6 +326,8 @@ class TeamSession:
             team_id: If provided, filter runs to this specific team.
             num_runs: Number of recent runs to include. If None, returns all available history.
         """
+        from agno.registry._reserved import _manager_ids_match
+
         if not self.runs:
             return []
 
@@ -327,7 +338,8 @@ class TeamSession:
             completed_runs = [
                 run
                 for run in self.runs
-                if run.status == RunStatus.completed and getattr(run, "team_id", None) == team_id
+                if run.status == RunStatus.completed
+                and _manager_ids_match(getattr(run, "team_id", None), team_id, "teams")
             ]
         else:
             completed_runs = [

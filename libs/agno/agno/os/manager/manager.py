@@ -167,6 +167,9 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         raise ValueError("The manager needs AgentOS(db=...): its conversations, builds and diagnostics live there")
     if isinstance(db, AsyncBaseDb) or not isinstance(db, BaseDb):
         raise ValueError("The manager needs a synchronous OS database; the Studio tools write the component catalog")
+    from agno.registry._reserved import _raise_if_manager_catalog_collision
+
+    _raise_if_manager_catalog_collision(db)
     registry = agent_os.registry
     if registry is None:
         raise ValueError("The manager needs the OS registry to be set before it is built")

@@ -358,6 +358,7 @@ class WorkflowSession:
         Returns:
             A list of messages from the given team runs.
         """
+        from agno.registry._reserved import _manager_ids_match
 
         def _should_skip_message(
             message: Message, skip_roles: Optional[List[str]] = None, skip_history_messages: bool = True
@@ -376,7 +377,7 @@ class WorkflowSession:
         # Filter for top-level runs (main team runs or agent runs when sharing session)
         session_runs = runs
         if skip_member_messages:
-            session_runs = [run for run in runs if run.team_id == team_id]
+            session_runs = [run for run in runs if _manager_ids_match(run.team_id, team_id, "teams")]
 
         # Filter runs by status
         if skip_statuses:
@@ -470,6 +471,8 @@ class WorkflowSession:
         Returns:
             A list of messages from the session.
         """
+        from agno.registry._reserved import _manager_ids_match
+
         if agent_id and team_id:
             raise ValueError("agent_id and team_id cannot be used together")
 
@@ -481,7 +484,9 @@ class WorkflowSession:
             for run in self.runs:
                 if run.step_executor_runs:
                     for executor_run in run.step_executor_runs:
-                        if isinstance(executor_run, RunOutput) and executor_run.agent_id == agent_id:
+                        if isinstance(executor_run, RunOutput) and _manager_ids_match(
+                            executor_run.agent_id, agent_id, "agents"
+                        ):
                             agent_runs.append(executor_run)
             return self.get_messages_from_agent_runs(
                 runs=agent_runs,
@@ -497,7 +502,9 @@ class WorkflowSession:
             for run in self.runs:
                 if run.step_executor_runs:
                     for executor_run in run.step_executor_runs:
-                        if isinstance(executor_run, TeamRunOutput) and executor_run.team_id == team_id:
+                        if isinstance(executor_run, TeamRunOutput) and _manager_ids_match(
+                            executor_run.team_id, team_id, "teams"
+                        ):
                             team_runs.append(executor_run)
             return self.get_messages_from_team_runs(
                 team_id=team_id,

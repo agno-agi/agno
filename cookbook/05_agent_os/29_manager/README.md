@@ -1,6 +1,6 @@
-# OS Manager
+# Super Agent
 
-OS Manager is a team you talk to through AgentOS. It can check activity, run
+Super Agent is a team you talk to through AgentOS. It can check activity, run
 diagnostics, run existing components and ask its members to build new ones.
 Start with a model and a database:
 
@@ -39,7 +39,7 @@ To inspect the roster without a model call or API key:
 .venvs/demo/bin/python cookbook/05_agent_os/29_manager/manager_discovery.py
 ```
 
-OS Manager's `list_agents`, `list_teams`, and `list_workflows` tools use each
+Super Agent's `list_agents`, `list_teams`, and `list_workflows` tools use each
 component's description, falling back to `config.manifest[id].description` when
 it is missing or empty. This also works with a YAML config file. Manifest text
 stays discovery metadata and does not change the component's system prompt.
@@ -52,17 +52,17 @@ export OPENAI_API_KEY=...
 .venvs/demo/bin/python cookbook/05_agent_os/29_manager/basic_manager.py
 ```
 
-Connect the AgentOS UI to `http://localhost:7777` and select the **OS Manager**
+Connect the AgentOS UI to `http://localhost:7777` and select the **Super Agent**
 team. Stop the server before starting another example on the same port.
 Conversations use the configured model and incur provider charges.
 
-| File | Ask OS Manager | What to expect |
+| File | Ask Super Agent | What to expect |
 |---|---|---|
 | `basic_manager.py` | “Run diagnostics and explain any issues.” | A report from Platform Manager, including the authorization warning. The manager model is available for basic builds; no additional tools are declared. |
 | `manager_user_access.py` | As Alice, ask “Run math-helper: what is 6 * 7?” Then ask to publish a new agent. | The permitted run succeeds; publishing is refused. Configure `JWT_VERIFICATION_KEY` and a JWT with `sub=alice`, `aud=manager-access-demo`. |
 | `manager_builds_agents.py` | “Create a calculator agent named Budget Helper.” Then: “Run Budget Helper: what is 15% of 240?” | Platform Builder publishes the agent. The second request runs it and should return 36. |
 | `manager_source.py` | “Read basic_manager.py, then check the Agno docs for how to add knowledge.” | Platform Manager reads the configured root and consults the docs MCP server; no notebook or memory setup is needed. |
-| `manager_source.py` | “How does learning work?” | OS Manager can search docs directly and answer the concept question without a deployment audit. |
+| `manager_source.py` | “How does learning work?” | Super Agent can search docs directly and answer the concept question without a deployment audit. |
 | `manager_source.py` | “What is Agno?” or “Can you tell me about learning machines?” | A brief explanation grounded in the Agno documentation, with links. An explicitly general machine-learning question retains its broader meaning. |
 | `check_manager_permissions.py` | Run it directly; no chat or model key needed. | Seven HTTP checks confirm discovery, session access, rejected audiences, and denied publication. |
 | `manager_with_resources.py` | “Save a note in project.md: the demo is on Friday.” Then: “Read project.md.” | The shared notebook stores and retrieves the note. |
@@ -103,7 +103,7 @@ cannot override that role. Production tokens should come from your identity prov
 
 ## Run Claude and Codex engineers
 
-Register external agents in `AgentOS(agents=[...])` to let OS Manager discover
+Register external agents in `AgentOS(agents=[...])` to let Super Agent discover
 and run them by name or ID. For example:
 
 ```python
@@ -139,9 +139,9 @@ persisted team/workflow members.
 | Setting | Default | Effect |
 |---|---|---|
 | `model` | First registry model | Shared by the manager and both members; also available for builds. |
-| `name` | `OS Manager` | Display name only; the ID and member composition are fixed. |
+| `name` | `Super Agent` | Display name only; the ID and member composition are fixed. |
 | `root` | `None` | Platform Manager's read-only source directory or constrained workspace provider. |
-| `access_docs` | `True` | Gives OS Manager and Platform Manager access to Agno docs through one shared connection. Connection failures are nonfatal; set `False` for offline deployments. |
+| `access_docs` | `True` | Gives Super Agent and Platform Manager access to Agno docs through one shared connection. Connection failures are nonfatal; set `False` for offline deployments. |
 | `tools`, `knowledge`, `learning` | Empty / `None` | Extra resources for the lead team; not automatically available for builds. |
 | `instructions` | `None` | Appends instructions to the lead team's existing prompt. |
 | `required_env` | Empty | Names whose presence diagnostics checks; values are never returned. |
@@ -195,7 +195,7 @@ resources through AgentOS registry discovery. Manager components are excluded.
 
 ## The team and its members
 
-The default team name is **OS Manager**, with id `os-manager-internal`. Set
+The default team name is **Super Agent**, with id `super-agent`. Set
 `OSManager(name=...)` to change the display name. The ID and two-member
 composition are fixed. Its members are:
 
@@ -203,15 +203,15 @@ composition are fixed. Its members are:
 - **Platform Manager** (`platform-manager-internal`): checks activity, runs diagnostics,
   reads source when `root` is set, and queries Agno documentation by default.
 
-Only OS Manager is exposed as a standalone target in config, discovery, REST and MCP.
+Only Super Agent is exposed as a standalone target in config, discovery, REST and MCP.
 Platform Builder and Platform Manager appear as nested members in `/teams` and
-`/teams/os-manager-internal`, so the team graph shows its composition. Built-in members,
+`/teams/super-agent`, so the team graph shows its composition. Built-in members,
 including Product Manager, list their model and tools but not their instructions. They remain
 excluded from the application registry, `/config` agent list and `/agents`, and
 their standalone agent routes return 422 with an explanation that the component
-ID is reserved. OS Manager delegates to them; their child runs and tool results remain
+ID is reserved. Super Agent delegates to them; their child runs and tool results remain
 available inside its session for replay and diagnostics. Schedule the manager
-team, not either specialist. Ordinary run grants, including `teams:os-manager-internal:run`, let a user talk to the manager. Access
+team, not either specialist. Ordinary run grants, including `teams:super-agent:run`, let a user talk to the manager. Access
 to the manager does not grant its tools additional permissions:
 
 - Running another component requires its agent, team or workflow `run` permission.
@@ -229,7 +229,7 @@ to the manager does not grant its tools additional permissions:
 Operation checks apply during manager execution and to work it delegates.
 Existing agents using StudioTools or other platform toolkits retain their existing
 run-permission behavior when called directly, whether the manager is omitted,
-disabled, or enabled alongside them. Calling that same agent through OS Manager
+disabled, or enabled alongside them. Calling that same agent through Super Agent
 keeps the manager caller's operation checks active. Shared toolkits are not mutated.
 
 These decisions use the configured authorization provider, including managed
@@ -277,17 +277,17 @@ Manager and are not added to the build palette.
 The public team response exposes its built-in identity through existing metadata:
 
 ```json
-{"metadata": {"_agno": {"internal": true, "id": "os-manager-internal"}}}
+{"metadata": {"_agno": {"internal": true, "id": "super-agent"}}}
 ```
 
 Internal member runs carry their own reserved ID in the same place. This is a UI marker,
 not an authorization grant. Ordinary application metadata is unchanged.
 
 Clients that previously called a specialist directly should use
-`POST /teams/os-manager-internal/runs` or MCP `run_team` with that team ID.
+`POST /teams/super-agent/runs` or MCP `run_team` with that team ID.
 Existing direct-specialist schedules can be disabled or deleted. Unmanaged
-schedules can be repointed to OS Manager. Studio-managed schedules have immutable
-targets: create a replacement targeting OS Manager, then delete the old schedule.
+schedules can be repointed to Super Agent. Studio-managed schedules have immutable
+targets: create a replacement targeting Super Agent, then delete the old schedule.
 Changing only their endpoint causes execution to fail and disables the schedule.
 Creating or re-enabling a direct-specialist schedule returns HTTP 409. Old catalog rows do not
 restore specialist endpoints. Obsolete specialist manifest entries are omitted.
@@ -306,7 +306,7 @@ user memory separate. It does not configure a knowledge base.
 
 ## Large tool results
 
-OS Manager and its members offload tool results by default on SQLite and
+Super Agent and its members offload tool results by default on SQLite and
 PostgreSQL. Results above 16,000 characters are stored in the database; the
 model receives a preview and can read or search the full result. Small results
 stay inline. Other database adapters warn and leave offloading disabled.
@@ -365,3 +365,14 @@ Changing a schedule's timing or description through the REST API preserves its
 saved execution identity. Changing its endpoint, method or payload requires the
 editor to have permission to run the target and saves that editor's authority.
 To refresh captured token-scope grants, update the payload as an authorized caller.
+
+
+The public manager IDs are `super-agent`, `company-manager`, `platform-builder`
+and `platform-manager`. The former `*-internal` IDs remain aliases for 3.2;
+`OSManager(...)` remains the configuration API. Private specialists are still
+available only through manager delegation. Persisted SQLite/PostgreSQL sessions,
+queued runs, and managed-role policies accept either spelling. New runs use the
+public IDs. Custom authorization providers must map the aliases consistently in
+their own policy store. If a custom catalog component already uses a public
+manager ID, rename or migrate it and its sessions and grants before enabling the
+managers; startup refuses to silently replace it.

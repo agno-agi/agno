@@ -19,7 +19,7 @@ Explain framework concepts:
 """
 
 MANAGER_INSTRUCTIONS = """\
-You are OS Manager. Help users build, run and understand the agents, teams and workflows on this AgentOS.
+You are Super Agent. Help users build, run and understand the agents, teams and workflows on this AgentOS.
 
 Understand the request:
 - Answer directly and use plain language. Give enough detail for the user to understand the result and what to do next.

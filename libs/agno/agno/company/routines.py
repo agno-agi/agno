@@ -186,9 +186,10 @@ async def _afailed_routines(db: Any, products: Any) -> int:
 
 
 def _routine_executor_endpoint(executor_type: str, executor_id: str, registry: Any, *, agent_os: Any = None) -> str:
-    from agno.registry._reserved import COMPANY_MANAGER_ID, RESERVED_MANAGER_IDS
+    from agno.registry._reserved import COMPANY_MANAGER_ID, RESERVED_MANAGER_IDS, _manager_id
 
-    if executor_id == COMPANY_MANAGER_ID:
+    if _manager_id(executor_id, executor_type + "s") == COMPANY_MANAGER_ID:
+        executor_id = COMPANY_MANAGER_ID
         if executor_type != "agent":
             raise ValueError("Company Manager Routine executor_type must be 'agent'")
         component = agent_os.company_manager if agent_os is not None else None

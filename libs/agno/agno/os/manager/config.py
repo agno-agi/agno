@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 
 from agno.registry._reserved import MANAGER_TEAM_ID
 
-MANAGER_TEAM_NAME = "OS Manager"
+MANAGER_TEAM_NAME = "Super Agent"
 
 
 @dataclass

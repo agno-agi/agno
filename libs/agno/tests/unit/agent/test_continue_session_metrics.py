@@ -7,10 +7,10 @@ import pytest
 
 from agno.agent.agent import Agent
 from agno.db.sqlite import SqliteDb
+from agno.metrics import RunMetrics
 from agno.models.base import Model
 from agno.models.message import MessageMetrics
 from agno.models.response import ModelResponse
-from agno.metrics import RunMetrics
 from agno.run.agent import RunCompletedEvent, RunOutput, RunPausedEvent
 from agno.run.base import RunStatus
 from agno.session import AgentSession

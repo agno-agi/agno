@@ -797,3 +797,11 @@ The README example was not run against live models or harness processes; no
 provider calls were made.
 
 ---
+
+### Manager identity compatibility — 2026-11-06
+
+**Status:** PASS
+
+**Description:** Canonical IDs and legacy URL/grant compatibility; persisted legacy permissions, history, pagination and paused specialist continuation; private specialists and explicit catalog collisions.
+
+**Result:** 355 manager/scope/idempotency tests and 126 run authorization tests passed. PostgreSQL sync/async legacy session pagination and managed-grant revocation passed against a dedicated local database. `manager_discovery.py` passed without model calls. Repository format and validation passed in an isolated current development environment. The preexisting shared environment failed baseline mypy with 189 dependency/type errors; it was not modified. Live model/provider calls were not exercised.
