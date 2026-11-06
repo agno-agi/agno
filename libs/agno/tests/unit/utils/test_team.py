@@ -138,7 +138,7 @@ def test_get_member_id():
 
 def test_find_member_by_id_matches_persisted_agent_id():
     from agno.run.agent import RunOutput
-    from agno.team._tools import _find_member_by_id
+    from agno.team._tools import _find_member_by_id, _find_member_route_by_id
 
     # A member run is persisted with agent_id = member.id verbatim, so a member with a
     # snake_case id must be found by its persisted agent_id (otherwise _scrub_member_responses
@@ -153,6 +153,13 @@ def test_find_member_by_id_matches_persisted_agent_id():
     nested_member = Agent(name="Refund Specialist", id="refund_specialist")
     sub_team = Team(name="Finance", id="finance_team", members=[nested_member])
     root = Team(name="Company", members=[sub_team])
-    nested_result = root._find_member_by_id(RunOutput(agent_id=nested_member.id).agent_id)
+    nested_result = _find_member_by_id(root, RunOutput(agent_id=nested_member.id).agent_id)
     assert nested_result is not None
     assert nested_result[1] is nested_member
+
+    # Route should return the top-level sub_team for nested members
+    route_result = _find_member_route_by_id(root, "refund_specialist")
+    assert route_result is not None
+    assert route_result[0] == 0
+    assert route_result[1] is sub_team
+
