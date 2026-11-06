@@ -6,6 +6,13 @@ from typing import Any, Dict, Optional, Union
 from agno.media import Audio, File, Image, Video
 from agno.utils.log import log_warning
 
+# Ceiling on the body downloaded from a media URL. Remote media is
+# attacker-influenced input, so without a ceiling a single URL can force an
+# arbitrarily large body into memory (and then a ~1.33x base64 copy of it).
+# 20 MB is the Gemini inline-data request ceiling, so every payload the API
+# would have accepted still goes through unchanged.
+MAX_MEDIA_DOWNLOAD_BYTES = 20 * 1024 * 1024
+
 # Common format -> MIME type mappings shared across Gemini model classes
 FORMAT_TO_MIME: Dict[str, str] = {
     "png": "image/png",
@@ -51,13 +58,55 @@ def get_mime_type(media: Union[Image, Audio, Video, File], default: str) -> str:
     return default
 
 
+def _download_media(url: str, max_bytes: int) -> bytes:
+    """Download ``url``, refusing any body larger than ``max_bytes``.
+
+    The response is streamed and the running byte count is checked as it arrives, so an
+    oversized body is abandoned mid-flight instead of being buffered in full. A declared
+    Content-Length over the limit short-circuits before any body is read; the running
+    count still covers responses that omit it, understate it, or inflate on decompression.
+    """
+    import httpx
+
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; agno/1.0)"}
+    with httpx.Client(follow_redirects=True) as client:
+        with client.stream("GET", url, headers=headers) as response:
+            response.raise_for_status()
+
+            declared = response.headers.get("Content-Length")
+            if declared is not None:
+                try:
+                    declared_bytes = int(declared)
+                except ValueError:
+                    declared_bytes = -1
+                if declared_bytes > max_bytes:
+                    raise ValueError(f"declared size {declared_bytes} bytes exceeds the {max_bytes} byte limit")
+
+            chunks = []
+            downloaded = 0
+            for chunk in response.iter_bytes():
+                downloaded += len(chunk)
+                if downloaded > max_bytes:
+                    raise ValueError(f"body exceeds the {max_bytes} byte limit")
+                chunks.append(chunk)
+
+    return b"".join(chunks)
+
+
 def media_to_content_item(
-    media: Union[Image, Audio, Video, File], content_type: str, default_mime: str
+    media: Union[Image, Audio, Video, File],
+    content_type: str,
+    default_mime: str,
+    max_bytes: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
     """Convert an Agno media object to a content item dict for the Interactions API.
 
     Supports four content sources: URL/URI, raw bytes, filepath, and external GeminiFile.
     Returns a dict like {"type": "image", "data": base64_str, "mime_type": "image/jpeg"}.
+
+    ``max_bytes`` caps the body downloaded from an HTTP media URL, defaulting to
+    :data:`MAX_MEDIA_DOWNLOAD_BYTES`. An oversized URL is treated like any other failed
+    download: a warning is logged and the URL is passed through as a URI.
     """
     mime_type = get_mime_type(media, default_mime)
     item: Dict[str, Any] = {"type": content_type, "mime_type": mime_type}
@@ -71,12 +120,8 @@ def media_to_content_item(
             return item
         # For regular HTTP URLs, download and base64 encode
         try:
-            import httpx
-
-            headers = {"User-Agent": "Mozilla/5.0 (compatible; agno/1.0)"}
-            response = httpx.get(url, follow_redirects=True, headers=headers)
-            response.raise_for_status()
-            item["data"] = base64.b64encode(response.content).decode("utf-8")
+            limit = MAX_MEDIA_DOWNLOAD_BYTES if max_bytes is None else max_bytes
+            item["data"] = base64.b64encode(_download_media(url, limit)).decode("utf-8")
             return item
         except Exception as e:
             log_warning(f"Failed to download {content_type} from URL {url}: {e}")
