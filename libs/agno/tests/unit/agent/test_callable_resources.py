@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
+import time
+from contextvars import ContextVar
 from typing import Any, Dict, Optional
 from unittest.mock import MagicMock
 
@@ -207,9 +211,51 @@ class TestAinvokeCallableFactory:
         assert result == [_dummy_tool]
 
     @pytest.mark.asyncio
+    async def test_sync_factory_does_not_block_event_loop_and_preserves_context(self):
+        started = threading.Event()
+        release = threading.Event()
+        marker: ContextVar[str] = ContextVar("marker", default="missing")
+
+        def factory():
+            assert marker.get() == "request-context"
+            started.set()
+            release.wait(timeout=1)
+            return [_dummy_tool]
+
+        agent = Agent(name="test")
+        rc = _make_run_context()
+        marker.set("request-context")
+        task = asyncio.create_task(ainvoke_callable_factory(factory, agent, rc))
+        try:
+            deadline = time.monotonic() + 0.5
+            while not started.is_set() and time.monotonic() < deadline:
+                await asyncio.sleep(0)
+            assert started.is_set()
+            before = time.monotonic()
+            await asyncio.sleep(0.01)
+            assert time.monotonic() - before < 0.2
+            assert not task.done()
+        finally:
+            release.set()
+        assert await task == [_dummy_tool]
+
+    @pytest.mark.asyncio
     async def test_async_factory_awaited(self):
         async def factory(agent):
             return [_dummy_tool]
+
+        agent = Agent(name="test")
+        rc = _make_run_context()
+        result = await ainvoke_callable_factory(factory, agent, rc)
+        assert result == [_dummy_tool]
+
+    @pytest.mark.asyncio
+    async def test_sync_factory_returned_awaitable_is_awaited(self):
+        async def resolve():
+            return [_dummy_tool]
+
+        def factory():
+            return resolve()
 
         agent = Agent(name="test")
         rc = _make_run_context()
@@ -459,6 +505,38 @@ class TestAresolveCallableTools:
         agent = Agent(name="test", tools=factory)
         rc = _make_run_context(user_id="u1")
         await aresolve_callable_tools(agent, rc)
+        assert rc.tools == [_dummy_tool]
+
+    @pytest.mark.asyncio
+    async def test_sync_cache_key_does_not_block_event_loop(self):
+        started = threading.Event()
+        release = threading.Event()
+
+        def cache_key(run_context):
+            started.set()
+            release.wait(timeout=1)
+            return run_context.user_id
+
+        agent = Agent(
+            name="test",
+            tools=lambda: [_dummy_tool],
+            callable_tools_cache_key=cache_key,
+        )
+        rc = _make_run_context(user_id="u1")
+        task = asyncio.create_task(aresolve_callable_tools(agent, rc))
+        try:
+            deadline = time.monotonic() + 0.5
+            while not started.is_set() and time.monotonic() < deadline:
+                await asyncio.sleep(0)
+            assert started.is_set()
+            before = time.monotonic()
+            await asyncio.sleep(0.01)
+            assert time.monotonic() - before < 0.2
+            assert not task.done()
+        finally:
+            release.set()
+
+        await task
         assert rc.tools == [_dummy_tool]
 
 
