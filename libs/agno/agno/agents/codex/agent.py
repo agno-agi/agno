@@ -261,6 +261,13 @@ class CodexAgent(BaseExternalAgent):
     _supports_output_schema: ClassVar[bool] = True
     _sdk_name: ClassVar[str] = "codex"
     _sandbox_runtime: ClassVar[Optional[str]] = "codex"
+    _storable: ClassVar[bool] = True
+    _unstorable_fields: ClassVar[Dict[str, str]] = {
+        "client_options": "native CodexConfig describes the host process; configure it on the serving AgentOS",
+        "codex_bin": "a host path; configure it on the serving AgentOS",
+        "env": "process credentials; set them in the serving environment",
+    }
+    _stored_as: ClassVar[Dict[str, str]] = {"thread_kwargs": "thread_options", "turn_kwargs": "turn_options"}
     # Key under which the Codex thread id is stored in the Agno session.
     _THREAD_KEY = "codex_thread_id"
 
