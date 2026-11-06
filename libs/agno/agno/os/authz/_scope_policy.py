@@ -63,7 +63,9 @@ def scope_to_resource_action(scope: str) -> Tuple[str, str]:
     if len(parts) == 2:
         resource, action = f"{parts[0]}/*", parts[1]
     elif len(parts) == 3:
-        resource, action = f"{parts[0]}/{parts[1]}", parts[2]
+        from agno.registry._reserved import _manager_id
+
+        resource, action = f"{parts[0]}/{_manager_id(parts[1], parts[0])}", parts[2]
     else:
         raise ValueError(f"Unrecognised scope: {scope!r}")
     # Reject an action wildcard. ``*`` in the matcher means "all actions", but the
@@ -115,6 +117,14 @@ def resource_matches(pattern: str, request: str) -> bool:
     """
     if pattern == "*":
         return True
+    from agno.registry._reserved import _manager_id
+
+    pattern_type, _, pattern_id = pattern.partition("/")
+    request_type, _, request_id = request.partition("/")
+    if pattern_id:
+        pattern = f"{pattern_type}/{_manager_id(pattern_id, pattern_type)}"
+    if request_id:
+        request = f"{request_type}/{_manager_id(request_id, request_type)}"
     if pattern == request:
         return True
     if pattern.endswith("/*"):

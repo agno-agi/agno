@@ -1636,17 +1636,19 @@ class AsyncSqliteDb(AsyncBaseDb):
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
                 if component_id is not None:
+                    from agno.registry._reserved import _manager_id_variants
+
                     if session_type == SessionType.AGENT:
-                        stmt = stmt.where(table.c.agent_id == component_id)
+                        stmt = stmt.where(table.c.agent_id.in_(_manager_id_variants(component_id, "agents")))
                     elif session_type == SessionType.TEAM:
-                        stmt = stmt.where(table.c.team_id == component_id)
+                        stmt = stmt.where(table.c.team_id.in_(_manager_id_variants(component_id, "teams")))
                     elif session_type == SessionType.WORKFLOW:
-                        stmt = stmt.where(table.c.workflow_id == component_id)
+                        stmt = stmt.where(table.c.workflow_id.in_(_manager_id_variants(component_id, "workflows")))
                     elif session_type is None:
                         stmt = stmt.where(
-                            (table.c.agent_id == component_id)
-                            | (table.c.team_id == component_id)
-                            | (table.c.workflow_id == component_id)
+                            (table.c.agent_id.in_(_manager_id_variants(component_id, "agents")))
+                            | (table.c.team_id.in_(_manager_id_variants(component_id, "teams")))
+                            | (table.c.workflow_id.in_(_manager_id_variants(component_id, "workflows")))
                         )
                 if start_timestamp is not None:
                     stmt = stmt.where(table.c.created_at >= start_timestamp)

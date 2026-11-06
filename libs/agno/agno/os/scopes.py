@@ -155,7 +155,9 @@ def parse_scope(scope: str, admin_scope: Optional[str] = None) -> ParsedScope:
 
     # Per-resource scope: resource:<resource-id>:action (3 parts)
     if len(parts) == 3:
-        resource_id = parts[1]
+        from agno.registry._reserved import _manager_id
+
+        resource_id = _manager_id(parts[1], parts[0])
         is_wildcard_resource = resource_id == "*"
         resource = LEGACY_RESOURCE_ALIASES.get(parts[0], parts[0])
 
@@ -252,7 +254,9 @@ def matches_scope(
         if not user_scope.resource_id:
             return True
         # User has specific resource access - must match
-        return user_scope.resource_id == resource_id
+        from agno.registry._reserved import _manager_id
+
+        return user_scope.resource_id == _manager_id(resource_id, user_scope.resource)
 
     # Required scope is global (no resource_id), user scope matches if:
     # - User has global scope (no resource_id), OR

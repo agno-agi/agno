@@ -133,7 +133,12 @@ def code_defined_probe(
     by_type: Dict[str, Optional[Sequence[Any]]] = {"agent": agents, "team": teams, "workflow": workflows}
 
     def probe(target_type: str, target_id: str) -> bool:
-        return any(getattr(entry, "id", None) == target_id for entry in by_type.get(target_type) or [])
+        from agno.registry._reserved import _manager_ids_match
+
+        return any(
+            _manager_ids_match(getattr(entry, "id", None), target_id, target_type + "s")
+            for entry in by_type.get(target_type) or []
+        )
 
     return probe
 

@@ -484,6 +484,9 @@ class StudioRunnerTools(Toolkit):
     def _find_agent_by_exact_id(
         self, agent_id: str, for_dispatch: bool = False, actor: Optional[str] = None
     ) -> Optional[Union["Agent", BaseExternalAgent]]:
+        from agno.registry._reserved import _manager_id
+
+        agent_id = _manager_id(agent_id, "agents") or agent_id
         for a in self._iter_agents(for_dispatch=for_dispatch):
             if getattr(a, "id", None) == agent_id:
                 return a
@@ -515,6 +518,9 @@ class StudioRunnerTools(Toolkit):
     def _find_team_by_exact_id(
         self, team_id: str, for_dispatch: bool = False, actor: Optional[str] = None
     ) -> Optional["Team"]:
+        from agno.registry._reserved import _manager_id
+
+        team_id = _manager_id(team_id, "teams") or team_id
         for t in self._iter_teams(for_dispatch=for_dispatch):
             if getattr(t, "id", None) == team_id:
                 return t

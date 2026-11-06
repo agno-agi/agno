@@ -34,10 +34,10 @@ def main() -> None:
 
     with TestClient(app) as client:
         alice = token_headers("alice")
-        manager_path = "/teams/os-manager-internal"
+        manager_path = "/teams/super-agent"
         checks = [
             (
-                "Alice can discover OS Manager",
+                "Alice can discover Super Agent",
                 client.get(manager_path, headers=alice),
                 200,
             ),
@@ -52,7 +52,7 @@ def main() -> None:
                 200,
             ),
             (
-                "An unassigned user cannot discover OS Manager",
+                "An unassigned user cannot discover Super Agent",
                 client.get(manager_path, headers=token_headers("bob")),
                 403,
             ),

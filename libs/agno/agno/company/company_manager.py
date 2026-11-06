@@ -61,6 +61,13 @@ def _company_manager_manifest() -> Any:
 def _build_company_manager(agent_os: Any, model: Any) -> Optional[Agent]:
     if agent_os._company_db is None or model is None:
         return None
+    from agno.db.base import AsyncBaseDb
+    from agno.registry._reserved import _raise_if_manager_catalog_collision
+
+    if not isinstance(agent_os._company_db, AsyncBaseDb):
+        _raise_if_manager_catalog_collision(agent_os._company_db)
+    if agent_os.db is not None and agent_os.db is not agent_os._company_db and not isinstance(agent_os.db, AsyncBaseDb):
+        _raise_if_manager_catalog_collision(agent_os.db)
     isolation = bool(
         agent_os.user_isolation
         or (

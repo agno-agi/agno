@@ -25,7 +25,7 @@ from agno.media import File as FileMedia
 from agno.models.message import Message
 from agno.os.config import AgentOSConfig
 from agno.registry import Registry, ToolSource
-from agno.registry._reserved import RESERVED_MANAGER_IDS, _reserved_manager_id_message
+from agno.registry._reserved import RESERVED_MANAGER_IDS, _manager_id, _reserved_manager_id_message
 from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunStatus
@@ -1664,6 +1664,8 @@ def get_agent_by_id(
     """
     if agent_id is None:
         return None
+    requested_id = agent_id
+    agent_id = _manager_id(agent_id, "agents") or agent_id
 
     # Try to get the agent from the list of agents
     if agents:
@@ -1688,7 +1690,7 @@ def get_agent_by_id(
     # AgentOS may serve framework-owned agents, but reserved IDs must never
     # fall back to user-created or legacy catalog components.
     if agent_id in RESERVED_MANAGER_IDS:
-        raise AgnoHTTPException(ComponentRehydrationError(_reserved_manager_id_message(agent_id)))
+        raise AgnoHTTPException(ComponentRehydrationError(_reserved_manager_id_message(requested_id)))
 
     # Try to get the agent from the database
     if db and isinstance(db, BaseDb):
@@ -1730,6 +1732,8 @@ async def get_agent_by_id_async(
     """Async variant of get_agent_by_id that supports async factories."""
     if agent_id is None:
         return None
+    requested_id = agent_id
+    agent_id = _manager_id(agent_id, "agents") or agent_id
 
     if agents:
         for agent in agents:
@@ -1754,7 +1758,7 @@ async def get_agent_by_id_async(
     # AgentOS may serve framework-owned agents, but reserved IDs must never
     # fall back to user-created or legacy catalog components.
     if agent_id in RESERVED_MANAGER_IDS:
-        raise AgnoHTTPException(ComponentRehydrationError(_reserved_manager_id_message(agent_id)))
+        raise AgnoHTTPException(ComponentRehydrationError(_reserved_manager_id_message(requested_id)))
 
     if db and isinstance(db, BaseDb):
         from agno.agent.agent import get_agent_by_id as get_agent_by_id_db
@@ -1818,6 +1822,8 @@ def get_team_by_id(
     """
     if team_id is None:
         return None
+    requested_id = team_id
+    team_id = _manager_id(team_id, "teams") or team_id
 
     if teams:
         for team in teams:
@@ -1834,7 +1840,7 @@ def get_team_by_id(
                 return team
 
     if team_id in RESERVED_MANAGER_IDS:
-        raise AgnoHTTPException(ComponentRehydrationError(_reserved_manager_id_message(team_id)))
+        raise AgnoHTTPException(ComponentRehydrationError(_reserved_manager_id_message(requested_id)))
 
     if db and isinstance(db, BaseDb):
         from agno.team.team import get_team_by_id as get_team_by_id_db
@@ -1875,6 +1881,8 @@ async def get_team_by_id_async(
     """Async variant of get_team_by_id that supports async factories."""
     if team_id is None:
         return None
+    requested_id = team_id
+    team_id = _manager_id(team_id, "teams") or team_id
 
     if teams:
         for team in teams:
@@ -1891,7 +1899,7 @@ async def get_team_by_id_async(
                 return team
 
     if team_id in RESERVED_MANAGER_IDS:
-        raise AgnoHTTPException(ComponentRehydrationError(_reserved_manager_id_message(team_id)))
+        raise AgnoHTTPException(ComponentRehydrationError(_reserved_manager_id_message(requested_id)))
 
     if db and isinstance(db, BaseDb):
         from agno.team.team import get_team_by_id as get_team_by_id_db

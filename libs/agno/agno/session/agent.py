@@ -162,6 +162,7 @@ class AgentSession:
         Returns:
             A list of Messages belonging to the session.
         """
+        from agno.registry._reserved import _manager_ids_match
 
         def _should_skip_message(
             message: Message, skip_roles: Optional[List[str]] = None, skip_history_messages: bool = True
@@ -187,9 +188,13 @@ class AgentSession:
 
         # Filter by agent_id and team_id
         if agent_id:
-            runs = [run for run in runs if hasattr(run, "agent_id") and run.agent_id == agent_id]  # type: ignore
+            runs = [
+                run for run in runs if hasattr(run, "agent_id") and _manager_ids_match(run.agent_id, agent_id, "agents")
+            ]  # type: ignore
         if team_id:
-            runs = [run for run in runs if hasattr(run, "team_id") and run.team_id == team_id]  # type: ignore
+            runs = [
+                run for run in runs if hasattr(run, "team_id") and _manager_ids_match(run.team_id, team_id, "teams")
+            ]  # type: ignore
 
         # Skip any messages that might be part of members of teams (for session re-use)
         runs = [run for run in runs if run.parent_run_id is None]  # type: ignore
