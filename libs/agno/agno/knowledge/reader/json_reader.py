@@ -64,7 +64,10 @@ class JSONReader(Reader):
                 stream_name = getattr(path, "name", None)
                 json_name = name or (stream_name.split(".")[0] if isinstance(stream_name, str) else "json_file")
                 path.seek(0)
-                json_contents = json.load(path)
+                content = path.read()
+                if self.encoding and isinstance(content, bytes):
+                    content = content.decode(self.encoding)
+                json_contents = json.loads(content)
             else:
                 raise ValueError("Unsupported file type. Must be Path or file-like object.")
 
