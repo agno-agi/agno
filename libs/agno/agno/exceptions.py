@@ -125,6 +125,8 @@ class SessionNotSavedError(AgnoError):
 
     def __init__(self, session_id: str):
         super().__init__(f"Session {session_id!r} was not saved. Check session ownership and database logs.")
+        self.type = "session_not_saved"
+        self.error_id = "session_not_saved"
         self.session_id = session_id
 
 

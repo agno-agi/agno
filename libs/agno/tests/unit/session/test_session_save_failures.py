@@ -239,7 +239,7 @@ async def test_background_stream_reports_failed_session_save(rejected_run, conti
 
     async def collect_events():
         return [
-            json.loads(line.removeprefix("data:"))["event"]
+            json.loads(line.removeprefix("data:"))
             async for chunk in chunks
             for line in chunk.splitlines()
             if line.startswith("data:")
@@ -250,9 +250,9 @@ async def test_background_stream_reports_failed_session_save(rejected_run, conti
     assert executed == ["called"]
     assert len(calls) == 2
     expected_error = "RunError" if isinstance(entity, Agent) else "TeamRunError"
-    assert [event for event in events if event in ("RunError", "TeamRunError")] == [expected_error]
-    assert "RunCompleted" not in events
-    assert "TeamRunCompleted" not in events
+    errors = [event for event in events if event["event"] in ("RunError", "TeamRunError")]
+    assert [(event["event"], event["error_type"]) for event in errors] == [(expected_error, "session_not_saved")]
+    assert not any(event["event"] in ("RunCompleted", "TeamRunCompleted") for event in events)
 
 
 @pytest.mark.asyncio
