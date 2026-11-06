@@ -4,7 +4,7 @@ from typing import Any, Optional, Sequence, TypeVar, Union, cast
 from surrealdb import BlockingHttpSurrealConnection, BlockingWsSurrealConnection, Surreal
 
 from agno.utils.log import logger
-from agno.utils.surrealdb import run_query
+from agno.utils.surrealdb import is_missing_table_error, is_missing_table_result, run_query
 
 RecordType = TypeVar("RecordType")
 
@@ -25,10 +25,11 @@ def _query_aux(
 ) -> Any:
     try:
         response = run_query(client, query, vars)
-    except Exception:
+    except Exception as e:
         msg = f"!! Query execution error: {query} with {vars}"
-        logger.exception(msg)
-        raise RuntimeError(msg)
+        if not is_missing_table_error(e):
+            logger.exception(msg)
+        raise RuntimeError(msg) from e
     return response
 
 
@@ -39,7 +40,7 @@ def query(
     record_type: type[RecordType],
 ) -> Sequence[RecordType]:
     response = _query_aux(client, query, vars)
-    if response is None:
+    if response is None or is_missing_table_result(response):
         return []
     if isinstance(response, list):
         if dataclasses.is_dataclass(record_type) and hasattr(record_type, "from_dict"):

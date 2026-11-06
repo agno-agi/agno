@@ -2,7 +2,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from agno.utils.surrealdb import arun_query, run_delete, run_query
+from agno.utils.surrealdb import (
+    arun_query,
+    ignore_missing_table,
+    is_missing_table_error,
+    is_missing_table_result,
+    run_delete,
+    run_query,
+)
 
 
 class SyncBuilder:
@@ -96,3 +103,45 @@ def test_run_delete_executes_a_lazy_builder():
 
     assert run_delete(client, "table") == {"id": 1}
     assert builder.calls == 1
+
+
+MISSING_TABLE = "The table 'agno_runs' does not exist"
+
+
+def _wrapped(message: str, cause: Exception) -> RuntimeError:
+    error = RuntimeError(message)
+    error.__cause__ = cause
+    return error
+
+
+def test_is_missing_table_error_reads_the_root_cause():
+    assert is_missing_table_error(Exception(MISSING_TABLE))
+    assert is_missing_table_error(_wrapped("!! Query execution error", Exception(MISSING_TABLE)))
+
+
+def test_is_missing_table_error_ignores_query_text_in_a_wrapper():
+    error = _wrapped(f"!! Query execution error: content {MISSING_TABLE}", Exception("IAM error"))
+
+    assert not is_missing_table_error(error)
+
+
+def test_ignore_missing_table_swallows_only_missing_tables():
+    with ignore_missing_table():
+        raise Exception(MISSING_TABLE)
+
+    with pytest.raises(Exception, match="IAM error"):
+        with ignore_missing_table():
+            raise Exception("IAM error")
+
+
+def test_is_missing_table_result_only_matches_the_error_string():
+    assert is_missing_table_result(MISSING_TABLE)
+    assert not is_missing_table_result("IAM error")
+    assert not is_missing_table_result([MISSING_TABLE])
+
+
+def test_run_delete_drops_a_returned_missing_table_error():
+    client = MagicMock()
+    client.delete.return_value = MISSING_TABLE
+
+    assert run_delete(client, "agno_runs:r1") is None

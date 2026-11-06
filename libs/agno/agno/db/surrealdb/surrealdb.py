@@ -59,7 +59,7 @@ from agno.run.workflow import WorkflowRunOutput
 from agno.session import Session
 from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
-from agno.utils.surrealdb import run_delete, run_query
+from agno.utils.surrealdb import ignore_missing_table, run_delete, run_query
 
 try:
     from surrealdb import BlockingHttpSurrealConnection, BlockingWsSurrealConnection, RecordID
@@ -273,29 +273,29 @@ class SurrealDb(BaseDb):
         by ``NOT IN $skip``.
         """
         runs_table = self._get_table("runs", create_table_if_not_found=False)
-        if not self.table_exists(runs_table):
-            return []
-        if limit is not None:
+        with ignore_missing_table():
+            if limit is not None:
+                rows_raw = self._query(
+                    f"SELECT *, run_index ?? 0 AS _ri, created_at ?? 0 AS _ca FROM {runs_table} "
+                    "WHERE session_id = $sid "
+                    "AND parent_run_id IS NONE AND (status IS NONE OR status NOT IN $skip) "
+                    "ORDER BY _ri DESC, _ca DESC LIMIT $lim",
+                    {"sid": session_id, "skip": HISTORY_SKIP_STATUSES, "lim": limit},
+                    dict,
+                )
+                rows = [desurrealize_run_row(r) for r in rows_raw]
+                run_data = [r["run_data"] for r in rows if "run_data" in r]
+                run_data.reverse()
+                return run_data
             rows_raw = self._query(
                 f"SELECT *, run_index ?? 0 AS _ri, created_at ?? 0 AS _ca FROM {runs_table} "
-                "WHERE session_id = $sid "
-                "AND parent_run_id IS NONE AND (status IS NONE OR status NOT IN $skip) "
-                "ORDER BY _ri DESC, _ca DESC LIMIT $lim",
-                {"sid": session_id, "skip": HISTORY_SKIP_STATUSES, "lim": limit},
+                "WHERE session_id = $sid ORDER BY _ri ASC, _ca ASC",
+                {"sid": session_id},
                 dict,
             )
             rows = [desurrealize_run_row(r) for r in rows_raw]
-            run_data = [r["run_data"] for r in rows if "run_data" in r]
-            run_data.reverse()
-            return run_data
-        rows_raw = self._query(
-            f"SELECT *, run_index ?? 0 AS _ri, created_at ?? 0 AS _ca FROM {runs_table} "
-            "WHERE session_id = $sid ORDER BY _ri ASC, _ca ASC",
-            {"sid": session_id},
-            dict,
-        )
-        rows = [desurrealize_run_row(r) for r in rows_raw]
-        return [r["run_data"] for r in rows if "run_data" in r]
+            return [r["run_data"] for r in rows if "run_data" in r]
+        return []
 
     def _get_sessions_runs(self, session_ids: List[str]) -> Optional[Dict[str, List[Dict[str, Any]]]]:
         """Run dicts for several sessions in one read, used by the search fallback."""
@@ -368,13 +368,13 @@ class SurrealDb(BaseDb):
 
     def _delete_session_runs(self, session_id: str) -> int:
         runs_table = self._get_table("runs", create_table_if_not_found=False)
-        if not self.table_exists(runs_table):
-            return 0
-        result = run_query(
-            self.client,
-            f"DELETE FROM {runs_table} WHERE session_id = $sid RETURN BEFORE",
-            {"sid": session_id},
-        )
+        result = None
+        with ignore_missing_table():
+            result = run_query(
+                self.client,
+                f"DELETE FROM {runs_table} WHERE session_id = $sid RETURN BEFORE",
+                {"sid": session_id},
+            )
         if isinstance(result, list):
             return len(result)
         return 0
@@ -406,13 +406,13 @@ class SurrealDb(BaseDb):
         self, run_id: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]]]:
         runs_table = self._get_table("runs", create_table_if_not_found=False)
-        if not self.table_exists(runs_table):
-            return None
-        raw = self._query_one(
-            "SELECT * FROM ONLY $record",
-            {"record": RecordID(runs_table, run_id)},
-            dict,
-        )
+        raw = None
+        with ignore_missing_table():
+            raw = self._query_one(
+                "SELECT * FROM ONLY $record",
+                {"record": RecordID(runs_table, run_id)},
+                dict,
+            )
         if raw is None:
             return None
         row = desurrealize_run_row(raw)
@@ -435,8 +435,6 @@ class SurrealDb(BaseDb):
         deserialize: Optional[bool] = True,
     ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
         runs_table = self._get_table("runs", create_table_if_not_found=False)
-        if not self.table_exists(runs_table):
-            return [] if deserialize else ([], 0)
 
         where = WhereClause()
         if session_id is not None:
@@ -454,8 +452,6 @@ class SurrealDb(BaseDb):
             where = where.and_("status", status_value)
 
         where_clause, where_vars = where.build()
-        total_count = self._count(runs_table, where_clause, where_vars)
-
         order_clause = order_limit_start(sort_by or "run_index", sort_order or "asc", limit, page)
         query = dedent(f"""
             SELECT *
@@ -463,12 +459,15 @@ class SurrealDb(BaseDb):
             {where_clause}
             {order_clause}
         """)
-        rows_raw = self._query(query, where_vars, dict)
-        rows = [desurrealize_run_row(r) for r in rows_raw]
+        with ignore_missing_table():
+            total_count = self._count(runs_table, where_clause, where_vars)
+            rows_raw = self._query(query, where_vars, dict)
+            rows = [desurrealize_run_row(r) for r in rows_raw]
 
-        if not deserialize:
-            return list(rows), total_count
-        return [deserialize_run(r.get("run_type"), r["run_data"]) for r in rows]
+            if not deserialize:
+                return list(rows), total_count
+            return [deserialize_run(r.get("run_type"), r["run_data"]) for r in rows]
+        return [] if deserialize else ([], 0)
 
     def _scrub_run_ids_from_legacy_blob(self, run_ids: List[str]) -> None:
         """Remove ``run_ids`` from every session record's legacy ``runs`` array.
@@ -495,7 +494,7 @@ class SurrealDb(BaseDb):
     def delete_run(self, run_id: str) -> bool:
         runs_table = self._get_table("runs", create_table_if_not_found=False)
         res = None
-        if self.table_exists(runs_table):
+        with ignore_missing_table():
             res = run_delete(self.client, RecordID(runs_table, run_id))
         self._scrub_run_ids_from_legacy_blob([run_id])
         return bool(res)
@@ -504,9 +503,9 @@ class SurrealDb(BaseDb):
         if not run_ids:
             return
         runs_table = self._get_table("runs", create_table_if_not_found=False)
-        if self.table_exists(runs_table):
-            records = [RecordID(runs_table, rid) for rid in run_ids]
-            params: Dict[str, Any] = {"records": records}
+        records = [RecordID(runs_table, rid) for rid in run_ids]
+        params: Dict[str, Any] = {"records": records}
+        with ignore_missing_table():
             run_query(
                 self.client,
                 f"DELETE FROM {runs_table} WHERE id IN $records",
@@ -1888,15 +1887,17 @@ class SurrealDb(BaseDb):
     def _count_spans(self, spans_table: str, trace_id: str) -> Tuple[int, int]:
         """Return a trace's total and error span counts."""
         count_query = f"SELECT count() as total FROM {spans_table} WHERE trace_id = $trace_id GROUP ALL"
-        count_result = self._query_one(count_query, {"trace_id": trace_id}, dict)
         error_query = (
             f"SELECT count() as total FROM {spans_table} WHERE trace_id = $trace_id AND status_code = 'ERROR' GROUP ALL"
         )
-        error_result = self._query_one(error_query, {"trace_id": trace_id}, dict)
-        return (
-            count_result.get("total", 0) if count_result else 0,
-            error_result.get("total", 0) if error_result else 0,
-        )
+        with ignore_missing_table():
+            count_result = self._query_one(count_query, {"trace_id": trace_id}, dict)
+            error_result = self._query_one(error_query, {"trace_id": trace_id}, dict)
+            return (
+                count_result.get("total", 0) if count_result else 0,
+                error_result.get("total", 0) if error_result else 0,
+            )
+        return 0, 0
 
     def get_trace(
         self,
@@ -1942,10 +1943,7 @@ class SurrealDb(BaseDb):
             id_obj = trace_data.get("id")
             trace_id_val = trace_data.get("trace_id") or (id_obj.id if id_obj is not None else None)
             if trace_id_val:
-                has_spans = self.table_exists(spans_table)
-                trace_data["total_spans"], trace_data["error_count"] = (
-                    self._count_spans(spans_table, trace_id_val) if has_spans else (0, 0)
-                )
+                trace_data["total_spans"], trace_data["error_count"] = self._count_spans(spans_table, trace_id_val)
 
             # Deserialize
             return self._deserialize_trace(trace_data)
@@ -2026,15 +2024,12 @@ class SurrealDb(BaseDb):
             traces_raw = self._query(query, where_vars, dict)
 
             # Add total_spans and error_count to each trace
-            has_spans = self.table_exists(spans_table)
             result_traces = []
             for trace_data in traces_raw:
                 id_obj = trace_data.get("id")
                 trace_id_val = trace_data.get("trace_id") or (id_obj.id if id_obj is not None else None)
                 if trace_id_val:
-                    trace_data["total_spans"], trace_data["error_count"] = (
-                        self._count_spans(spans_table, trace_id_val) if has_spans else (0, 0)
-                    )
+                    trace_data["total_spans"], trace_data["error_count"] = self._count_spans(spans_table, trace_id_val)
 
                 result_traces.append(self._deserialize_trace(trace_data))
 

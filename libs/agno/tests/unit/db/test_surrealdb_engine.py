@@ -1,6 +1,7 @@
 """SurrealDb storage against a real in-process engine, so SDK behavior changes cannot hide behind mocks."""
 
 from datetime import datetime, timezone
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
@@ -201,3 +202,87 @@ def test_trace_reads_count_stored_spans(db: SurrealDb):
     assert trace is not None
     assert (trace.total_spans, trace.error_count) == (2, 1)
     assert [(t.total_spans, t.error_count) for t in traces] == [(2, 1)]
+
+
+def _define_full_access_tables(db: SurrealDb) -> None:
+    for table_type in ("runs", "traces", "spans"):
+        table = db._get_table(table_type, create_table_if_not_found=False)
+        run_query(db.client, f"DEFINE TABLE {table} SCHEMALESS PERMISSIONS FULL")
+
+
+def _sign_in_as_record_user(db: SurrealDb) -> None:
+    run_query(
+        db.client,
+        "DEFINE ACCESS account ON DATABASE TYPE RECORD "
+        "SIGNUP (CREATE person SET name = $name) SIGNIN (SELECT * FROM person WHERE name = $name) "
+        "DURATION FOR TOKEN 1h, FOR SESSION 1h",
+    )
+    run_query(db.client, "DEFINE TABLE person SCHEMALESS PERMISSIONS FULL")
+    db.client.signup({"namespace": "test", "database": db._db_db, "access": "account", "variables": {"name": "ada"}})
+
+
+def test_record_users_read_and_delete_stored_rows(db: SurrealDb):
+    _define_full_access_tables(db)
+    for index, run_id in enumerate(("r1", "r2", "r3", "r4")):
+        run = RunOutput(run_id=run_id, session_id="s1", agent_id="a1", content="hi")
+        db.upsert_run(run, session_id="s1", run_index=index)
+    db.upsert_trace(_trace())
+    db.create_span(_span("ok", "OK"))
+    _sign_in_as_record_user(db)
+
+    run = db.get_run("r1")
+    trace = db.get_trace("t1")
+    traces, total = db.get_traces()
+
+    assert run is not None
+    assert run.run_id == "r1"
+    assert [r.run_id for r in db.get_runs(session_id="s1")] == ["r1", "r2", "r3", "r4"]
+    assert len(db._get_session_runs_data("s1")) == 4
+    assert trace is not None
+    assert trace.total_spans == 1
+    assert (total, [t.total_spans for t in traces]) == (1, [1])
+    assert db.delete_run("r1") is True
+    db.delete_runs(["r2"])
+    assert db._delete_session_runs("s1") == 2
+    assert db.get_runs(session_id="s1") == []
+
+
+def test_record_users_treat_missing_tables_as_empty(db: SurrealDb):
+    _sign_in_as_record_user(db)
+
+    assert db.get_run("r1") is None
+    assert db.get_runs() == []
+    assert db.get_runs(deserialize=False) == ([], 0)
+    assert db._get_session_runs_data("s1") == []
+    assert db.delete_run("r1") is False
+    db.delete_runs(["r1"])
+    assert db._delete_session_runs("s1") == 0
+
+
+def test_delete_session_runs_tolerates_a_missing_runs_table(db: SurrealDb):
+    assert db._delete_session_runs("s1") == 0
+    assert db._get_session_runs_data("s1") == []
+
+
+def test_run_reads_surface_errors_other_than_a_missing_table():
+    client = MagicMock()
+    client.query.side_effect = Exception("IAM error: Not enough permissions to perform this action")
+    db = SurrealDb(client, "mem://", {}, "test", "db")
+
+    with pytest.raises(RuntimeError):
+        db.get_run("r1")
+    with pytest.raises(RuntimeError):
+        db.get_runs()
+    with pytest.raises(Exception, match="Not enough permissions"):
+        db.delete_runs(["r1"])
+
+
+def test_run_reads_tolerate_a_missing_table_error_returned_as_a_string():
+    client = MagicMock()
+    client.query.return_value = "The table 'agno_runs' does not exist"
+    client.delete.return_value = "The table 'agno_runs' does not exist"
+    db = SurrealDb(client, "mem://", {}, "test", "db")
+
+    assert db.get_runs() == []
+    assert db._get_session_runs_data("s1") == []
+    assert db.delete_run("r1") is False
