@@ -26,7 +26,9 @@ import fnmatch
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Set, Tuple
+
+from agno.utils.log import log_debug, log_warning
 
 # Legacy resource name aliases — keep tokens issued before a rename working.
 # Keys are the legacy resource names, values are the current names.
@@ -757,6 +759,154 @@ def check_route_scopes(
         required_scopes=required_scopes,
         accessible_resource_ids=accessible_resource_ids,
     )
+
+
+DENIES_CLAIM = "denies"
+
+
+# Claim keys issuers use for granted scopes. When a token has denies, each of these
+# present in a claims copy is rewritten, so the copy never shows a denied grant.
+SCOPE_CLAIM_KEYS = ("scopes", "scope", "scp", "permissions")
+# OAuth issuers write these as one space-delimited string.
+_SPACE_DELIMITED_SCOPE_CLAIMS = ("scope", "scp")
+
+
+def _default_known_scopes() -> FrozenSet[str]:
+    """Every scope the default route mappings require, Company routes included."""
+    return frozenset(s for required in get_default_scope_mappings(company=True).values() for s in required)
+
+
+def has_denies(denies: Any) -> bool:
+    """Whether a raw ``denies`` claim value changes a token's scopes under :func:`apply_scope_denies`."""
+    return denies is not None and denies != []
+
+
+def restrict_scope_claims(claims: Dict[str, Any], scopes: List[str], scopes_claim: str = "scopes") -> Dict[str, Any]:
+    """
+    Copy of a token's claims whose scope claims carry ``scopes``, the list
+    :func:`apply_scope_denies` returned for the token.
+
+    ``scopes_claim`` is always written. Every other key in :data:`SCOPE_CLAIM_KEYS` is
+    rewritten when present. Returns ``claims`` itself when the token has no denies.
+    """
+    if not has_denies(claims.get(DENIES_CLAIM)):
+        return claims
+    restricted = dict(claims)
+    for key in dict.fromkeys((scopes_claim, *SCOPE_CLAIM_KEYS)):
+        if key != scopes_claim and key not in claims:
+            continue
+        if key in _SPACE_DELIMITED_SCOPE_CLAIMS and isinstance(claims.get(key), str):
+            restricted[key] = " ".join(scopes)
+        else:
+            restricted[key] = list(scopes)
+    return restricted
+
+
+def apply_scope_denies(
+    scopes: List[str],
+    denies: Any,
+    admin_scope: Optional[str] = None,
+    known_scopes: Optional[Iterable[str]] = None,
+) -> List[str]:
+    """
+    Remove every grant a token's ``denies`` claim names from its allow scopes.
+
+    Deny-overrides inside one token: the returned list grants no ``(resource, action)``
+    that any deny names. Applying it once where the JWT is decoded means every
+    consumer of the token's scopes (route gates, resource checks, listings, MCP,
+    WebSocket, factories, service-account minting) sees the restricted list.
+
+    Matching follows the managed-roles convention in
+    :mod:`agno.os.authz._scope_policy`: ``agents:read`` and ``agents:*:read`` cover
+    every agent, and ``agents:x:read`` covers only agent ``x``. An allow is dropped
+    when it overlaps a deny with the same action in either direction, so a per-id
+    deny also drops the broader allow that covers it ("all agents except x" cannot
+    be written as scopes). Over-denying is the chosen failure mode.
+
+    Admin: a deny equal to the admin scope removes the admin scope. Any other deny
+    replaces the admin scope with ``known_scopes`` (default: every scope in
+    :func:`get_default_scope_mappings`) before filtering, so the caller is no
+    longer an admin anywhere.
+
+    Args:
+        scopes: Allow scopes from the token.
+        denies: Raw ``denies`` claim value. None or empty means no change.
+        admin_scope: Configured admin scope (default ``agent_os:admin``).
+        known_scopes: Scopes an admin scope expands to when a deny applies.
+
+    Returns:
+        The allow scopes with denied grants removed. Returns [] (no grants) when the
+        claim or any deny in it is malformed.
+
+    Examples:
+        >>> apply_scope_denies(["agents:read", "agents:run"], ["agents:run"])
+        ['agents:read']
+        >>> apply_scope_denies(["agents:*:run"], ["agents:x:run"])
+        []
+    """
+    if not has_denies(denies):
+        return scopes
+    if isinstance(denies, str):
+        denies = [denies]
+    if not isinstance(denies, list) or not all(isinstance(d, str) for d in denies):
+        # The token is signed, so a malformed claim is an issuer fault worth surfacing.
+        log_warning("JWT denies claim is not a list of strings; granting no scopes")
+        return []
+
+    from agno.os.authz._scope_policy import resource_matches, scope_to_resource_action
+
+    configured_admin = admin_scope or AgentOSScope.ADMIN.value
+    # Some checks pass no admin_scope and so honour the default spelling even when a
+    # custom admin scope is configured. Both spellings are therefore removed from a
+    # token with denies; only the configured one is expanded below.
+    admin_scopes = {AgentOSScope.ADMIN.value, configured_admin}
+    denied_pairs: List[Tuple[str, str]] = []
+    admin_denied = False
+    for deny in denies:
+        if deny in admin_scopes:
+            admin_denied = True
+            continue
+        try:
+            denied_pairs.append(scope_to_resource_action(deny))
+        except ValueError:
+            log_warning(f"JWT denies claim has an unrecognised scope {deny[:100]!r}; granting no scopes")
+            return []
+
+    effective: List[str] = []
+    for scope in scopes:
+        if not isinstance(scope, str):
+            continue
+        if scope in admin_scopes:
+            if scope != configured_admin or admin_denied:
+                continue
+            if not denied_pairs:
+                effective.append(scope)
+                continue
+            expansion = _default_known_scopes() if known_scopes is None else known_scopes
+            effective.extend(sorted(s for s in expansion if s not in admin_scopes))
+        else:
+            effective.append(scope)
+
+    result: List[str] = []
+    for scope in dict.fromkeys(effective):
+        try:
+            resource, action = scope_to_resource_action(scope)
+        except ValueError:
+            # An allow the policy parser rejects can still match under parse_scope
+            # (e.g. "agents::run" reads as a global grant), so it cannot be checked
+            # against the denies. Drop it rather than let it through.
+            log_debug(f"Dropping unparseable scope {scope[:100]!r} from a token with denies")
+            continue
+        overlaps = any(
+            action == denied_action
+            and (resource_matches(denied_resource, resource) or resource_matches(resource, denied_resource))
+            for denied_resource, denied_action in denied_pairs
+        )
+        if overlaps:
+            log_debug(f"Dropping scope {scope[:100]!r}: overlaps a denied scope")
+            continue
+        result.append(scope)
+    return result
 
 
 def get_scope_value(scope: AgentOSScope) -> str:
