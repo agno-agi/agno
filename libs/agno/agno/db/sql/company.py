@@ -378,3 +378,51 @@ def update_product_row(
             fields = {**fields, "metadata": {**fields["metadata"], "routine_ids": routine_ids}}
     result = sess.execute(stmt.values(**fields, updated_at=int(time.time())).returning(products)).fetchone()
     return dict(result._mapping) if result else None
+
+
+def validate_company_details(fields: Dict[str, Any]) -> None:
+    """Only human-owned descriptive fields can be changed."""
+    if fields.keys() - {"name", "description"}:
+        raise ValueError("Only company name and description can be changed")
+    if "name" in fields and (
+        not isinstance(fields["name"], str) or not fields["name"].strip() or len(fields["name"]) > 255
+    ):
+        raise ValueError("Company name must contain 1 to 255 characters")
+    description = fields.get("description")
+    if description is not None and (not isinstance(description, str) or len(description) > 20000):
+        raise ValueError("Company description must contain at most 20000 characters")
+
+
+def initialize_company_details(sess: Any, table: Any, name: str, description: Optional[str]) -> Dict[str, Any]:
+    """Insert once under concurrent startup; a deployment never overwrites UI edits."""
+    validate_company_details({"name": name, "description": description})
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+    insert = pg_insert if sess.bind.dialect.name == "postgresql" else sqlite_insert
+    now = int(time.time())
+    sess.execute(
+        insert(table)
+        .values(id="company", name=name, description=description, created_at=now, updated_at=now)
+        .on_conflict_do_nothing(index_elements=[table.c.id])
+    )
+    return dict(sess.execute(select(table).where(table.c.id == "company")).one()._mapping)
+
+
+def update_company_details(
+    sess: Any, table: Any, expected_updated_at: int, fields: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
+    """Reject stale edits atomically, including two edits made within one second."""
+    validate_company_details(fields)
+    if not fields:
+        row = sess.execute(
+            select(table).where(table.c.id == "company", table.c.updated_at == expected_updated_at)
+        ).first()
+    else:
+        row = sess.execute(
+            table.update()
+            .where(table.c.id == "company", table.c.updated_at == expected_updated_at)
+            .values(**fields, updated_at=max(int(time.time()), expected_updated_at + 1))
+            .returning(table)
+        ).first()
+    return dict(row._mapping) if row is not None else None

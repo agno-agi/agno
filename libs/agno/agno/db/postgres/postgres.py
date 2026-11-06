@@ -750,6 +750,13 @@ class PostgresDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
 
+        if table_type == "company":
+            return self._get_or_create_table(
+                table_name=self.company_table_name,
+                table_type="company",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+
         if table_type == "products":
             return self._get_or_create_table(
                 table_name=self.products_table_name,
@@ -9331,6 +9338,32 @@ class PostgresDb(BaseDb):
         with self.Session() as sess, sess.begin():
             result = sess.execute(stmt.values(deleted_at=None, updated_at=int(time.time())).returning(table)).fetchone()
             return dict(result._mapping) if result else None
+
+    # --- Company details ---
+
+    def get_company(self) -> Optional[Dict[str, Any]]:
+        table = self._get_table(table_type="company")
+        if table is None:
+            return None
+        with self.Session() as sess:
+            row = sess.execute(select(table).where(table.c.id == "company")).first()
+            return dict(row._mapping) if row is not None else None
+
+    def initialize_company(self, name: str = "Company", description: Optional[str] = None) -> Dict[str, Any]:
+        from agno.db.sql.company import initialize_company_details
+
+        table = self._get_table(table_type="company", create_table_if_not_found=True)
+        with self.Session() as sess, sess.begin():
+            return initialize_company_details(sess, table, name, description)
+
+    def update_company(self, expected_updated_at: int, **fields: Any) -> Optional[Dict[str, Any]]:
+        from agno.db.sql.company import update_company_details
+
+        table = self._get_table(table_type="company")
+        if table is None:
+            return None
+        with self.Session() as sess, sess.begin():
+            return update_company_details(sess, table, expected_updated_at, fields)
 
     # --- Products ---
 

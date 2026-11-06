@@ -2113,8 +2113,11 @@ def test_manager_limits_cover_company_members_without_changing_application_agent
     assert len(os.manager.members) == 3
     assert all(member.tool_call_limit == limits.get("member_tool_call_limit", 24) for member in os.manager.members)
     assert application_agent.tool_call_limit is None
-    assert "Application context" in os.manager.instructions
-    assert all("Application context" not in member.instructions for member in os.manager.members)
+    assert "Application context" in os.manager.instructions()
+    assert all(
+        "Application context" not in (member.instructions() if callable(member.instructions) else member.instructions)
+        for member in os.manager.members
+    )
     os.resync(os.get_app())
     assert all(member.tool_call_limit == config.member_tool_call_limit for member in os.manager.members)
     assert application_agent.tool_call_limit is None
@@ -2247,10 +2250,11 @@ def test_explanation_guidance_reaches_only_documentation_roles(db):
     os = AgentOS(
         db=db, manager=OSManager(model=OfflineModel()), company=CompanyConfig(model=OfflineModel()), telemetry=False
     )
-    assert EXPLANATION_INSTRUCTIONS in os.manager.instructions
+    assert EXPLANATION_INSTRUCTIONS in os.manager.instructions()
     assert EXPLANATION_INSTRUCTIONS in manager_member(os, OPERATOR_ID).instructions
     for member_id in (BUILDER_ID, COMPANY_MANAGER_ID):
         instructions = manager_member(os, member_id).instructions
+        instructions = instructions() if callable(instructions) else instructions
         assert FOCUSED_EXECUTION_INSTRUCTIONS in instructions
         assert EXPLANATION_INSTRUCTIONS not in instructions
 
@@ -2268,11 +2272,11 @@ def test_standalone_company_manager_keeps_its_existing_execution_policy(db, with
     )
     # Direct chat and Routines run the served instance; only the manager's member is bounded.
     assert os.company_manager.tool_call_limit is None
-    assert FOCUSED_EXECUTION_INSTRUCTIONS not in os.company_manager.instructions
+    assert FOCUSED_EXECUTION_INSTRUCTIONS not in os.company_manager.instructions()
     if with_manager:
         member = manager_member(os, COMPANY_MANAGER_ID)
         assert member is not os.company_manager
-        assert member.tool_call_limit == 7 and FOCUSED_EXECUTION_INSTRUCTIONS in member.instructions
+        assert member.tool_call_limit == 7 and FOCUSED_EXECUTION_INSTRUCTIONS in member.instructions()
         os.resync(os.get_app())
         assert os.company_manager.tool_call_limit is None and member.tool_call_limit == 7
 
