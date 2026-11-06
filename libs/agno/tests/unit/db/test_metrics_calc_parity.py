@@ -1,6 +1,6 @@
-"""Parity tests for ``calculate_date_metrics`` across every backend.
+"""Parity tests for ``calculate_date_metrics`` across the backends that still keep agno_metrics.
 
-Each adapter ships its own copy of the helper, and every copy must bucket by
+Each of these adapters ships its own copy of the helper, and every copy must bucket by
 ``user_id`` identically. SQLite is the reference: ``STRICT`` backends match it
 field for field once the ephemeral id/timestamp fields are stripped, while
 ``LOOSE`` backends ship their own id/date/timestamp shapes, so only the per-user
@@ -16,7 +16,6 @@ import pytest
 from agno.db.sqlite.utils import calculate_date_metrics as sqlite_calc
 
 STRICT = [
-    "agno.db.postgres.utils",
     "agno.db.mysql.utils",
     "agno.db.singlestore.utils",
     "agno.db.mongo.utils",

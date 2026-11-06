@@ -787,10 +787,12 @@ class RunSchema(BaseModel):
         None, description="If this run was forked from another run, the source run's ID"
     )
     forked_from_message_index: Optional[int] = Field(
-        None, description="If this run was forked, the message index at which the source was truncated"
+        None,
+        description="If this run was forked, the message index at which the source was truncated; for a run copied by a session branch and continued, the index where the continued work starts",
     )
     forked_from_session_id: Optional[str] = Field(
-        None, description="If this run was created via session branch, the source session's ID"
+        None,
+        description="If this run was created via session branch, the source session's ID; cleared once the copied run is continued in this session",
     )
     regenerated_from: Optional[str] = Field(
         None, description="If this run was produced via regenerate=true, the source run's ID"
@@ -935,10 +937,12 @@ class TeamRunSchema(BaseModel):
         None, description="If this team run was forked from another run, the source run's ID"
     )
     forked_from_message_index: Optional[int] = Field(
-        None, description="If this team run was forked, the message index at which the source was truncated"
+        None,
+        description="If this team run was forked, the message index at which the source was truncated; for a run copied by a session branch and continued, the index where the continued work starts",
     )
     forked_from_session_id: Optional[str] = Field(
-        None, description="If this team run was created via session branch, the source session's ID"
+        None,
+        description="If this team run was created via session branch, the source session's ID; cleared once the copied run is continued in this session",
     )
     regenerated_from: Optional[str] = Field(
         None, description="If this team run was produced via regenerate=true, the source run's ID"

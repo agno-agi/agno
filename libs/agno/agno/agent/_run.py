@@ -3001,6 +3001,9 @@ def _truncate_run_to_checkpoint(run_response: RunOutput, message_index: int) -> 
 
     # Update the checkpoint marker to the new truncation index
     run_response.last_checkpoint_at_message_index = message_index
+    # A fork cut before the messages it copied keeps only copied messages, so the work continued from here is its own
+    if run_response.forked_from_message_index is not None and run_response.forked_from_message_index > message_index:
+        run_response.forked_from_message_index = message_index
 
 
 def _fork_run(run_response: RunOutput, message_index: int) -> RunOutput:
@@ -3026,11 +3029,16 @@ def _fork_run(run_response: RunOutput, message_index: int) -> RunOutput:
     # Snap to a pair-safe boundary so fork metadata matches the truncation that
     # _truncate_run_to_checkpoint will actually perform.
     message_index = safe_truncation_index(run_response.messages or [], message_index)
+    # A negative index, or one past the last message, truncates nothing, so the fork copies every message
+    if message_index < 0 or message_index > len(run_response.messages or []):
+        message_index = len(run_response.messages or [])
 
     forked = copy.deepcopy(run_response)
     forked.run_id = str(uuid4())
     forked.forked_from_run_id = run_response.run_id
     forked.forked_from_message_index = message_index
+    # A new run of this session, counted here: only runs copied from the session it was forked from are counted there
+    forked.forked_from_session_id = None
     # Reset lineage-irrelevant accumulators so the fork reports its own work,
     # not the parent's. Without this, token counts and durations double-count,
     # and (with store_events=True) the fork's events list would be the parent's
@@ -3055,7 +3063,9 @@ def _apply_continue_modifiers(
     """Apply ``fork`` and/or ``message_index`` to a loaded run_response.
 
     Returns the resulting RunOutput — the same instance when only truncating,
-    a new instance when forking. Called from continue_run_dispatch /
+    a new instance when forking. A run copied into a forked session and continued
+    in place has its copied lineage and metrics reset, so only its new work is
+    counted. Called from continue_run_dispatch /
     acontinue_run_dispatch after a run is loaded and before validation, so the
     rest of the dispatch operates on the modified state.
     """
@@ -3064,6 +3074,13 @@ def _apply_continue_modifiers(
         return _fork_run(run_response, idx)
     if message_index is not None:
         _truncate_run_to_checkpoint(run_response, message_index)
+    # A run copied into a forked session is counted in the session it was made in, so only the work continued
+    # here is counted: its own metrics, and its messages from this point on
+    if run_response.forked_from_session_id:
+        run_response.forked_from_session_id = None
+        run_response.forked_from_message_index = len(run_response.messages or [])
+        run_response.metrics = RunMetrics()
+        run_response.metrics.start_timer()
     return run_response
 
 
@@ -6484,6 +6501,8 @@ def _build_forked_session(source_session: AgentSession, new_user_id: Optional[st
 
     new_session_data = copy.deepcopy(source_session.session_data) or {}
     new_session_data["forked_from_session_id"] = source_session.session_id
+    # A compaction's usage stays counted in the session it was made in, like the runs this session copied
+    new_session_data.pop("compaction_metrics", None)
 
     return AgentSession(
         session_id=new_session_id,
