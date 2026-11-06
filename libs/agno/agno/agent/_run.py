@@ -4134,6 +4134,8 @@ def _continue_run_stream(
                     agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
                 )
                 yield run_error
+                if yield_run_output:
+                    yield run_response
                 break
             except KeyboardInterrupt:
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
@@ -4186,6 +4188,8 @@ def _continue_run_stream(
                 )
 
                 yield run_error
+                if yield_run_output:
+                    yield run_response
     finally:
         # Always disconnect connectable tools
         disconnect_connectable_tools(agent)
@@ -5737,6 +5741,8 @@ async def _acontinue_run_stream(
 
                 # Yield the error event
                 yield run_error
+                if yield_run_output:
+                    yield run_response
                 break
             except (KeyboardInterrupt, asyncio.CancelledError, GeneratorExit) as cancel_exc:
                 if run_response is None:
@@ -5826,6 +5832,8 @@ async def _acontinue_run_stream(
 
                 # Yield the error event
                 yield run_error
+                if yield_run_output:
+                    yield run_response
     finally:
         # Always disconnect connectable tools
         disconnect_connectable_tools(agent)
