@@ -764,8 +764,10 @@ class AgentOS:
             from agno.os.manager.prompts import COMPANY_DISPATCH_INSTRUCTIONS
             from agno.tools.company_conversation import CompanyConversationTools
 
-            self._manager.team.tools = [*(self._manager.team.tools or []), CompanyConversationTools(self)]
-            self._manager.team.instructions = [*(self._manager.team.instructions or []), COMPANY_DISPATCH_INSTRUCTIONS]
+            assert isinstance(self._manager.team.tools, list)
+            assert isinstance(self._manager.team.instructions, list)
+            self._manager.team.tools.append(CompanyConversationTools(self))
+            self._manager.team.instructions.append(COMPANY_DISPATCH_INSTRUCTIONS)
         if self._company_db is not None:
             from agno.company.details import _company_instructions
 

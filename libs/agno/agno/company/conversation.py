@@ -14,6 +14,9 @@ from agno.run.authorization import AUTHORIZATION_HEADER, current_authorization
 # Trusted service context, never reconstructed from caller-supplied metadata.
 _conversation_run_id: ContextVar[Optional[str]] = ContextVar("company_conversation_run_id", default=None)
 _conversation_origin: ContextVar[Optional[Dict[str, Any]]] = ContextVar("company_conversation_origin", default=None)
+_conversation_task_submission: ContextVar[Optional[str]] = ContextVar(
+    "company_conversation_task_submission", default=None
+)
 _conversation_submission: ContextVar[bool] = ContextVar("company_conversation_submission", default=False)
 
 
@@ -108,13 +111,17 @@ async def asubmit_company_task(
     }
     if task.get("session_id") == origin["session_id"]:
         raise ValueError("Task worker session must differ from the conversation session")
-    with _conversation_scope(origin):
-        receipt = await _request(
-            agent_os,
-            f"/company/tasks/{quote(task_id, safe='')}/runs",
-            run_context,
-            body={"attempt": attempt} if attempt is not None else {},
-        )
+    transport = _conversation_task_submission.set(task_id)
+    try:
+        with _conversation_scope(origin):
+            receipt = await _request(
+                agent_os,
+                f"/company/tasks/{quote(task_id, safe='')}/runs",
+                run_context,
+                body={"attempt": attempt} if attempt is not None else {},
+            )
+    finally:
+        _conversation_task_submission.reset(transport)
     return {"task_id": task_id, **receipt}
 
 
@@ -152,6 +159,8 @@ async def aget_conversation_tasks(
                         "task_id": task["id"],
                         "title": task["title"],
                         "status": task["status"],
+                        "updated_at": task.get("updated_at"),
+                        "reason": (task.get("transitions") or [{}])[-1].get("reason"),
                         "run_id": task.get("job_id"),
                         "session_id": task.get("session_id"),
                         "result": task.get("result"),
