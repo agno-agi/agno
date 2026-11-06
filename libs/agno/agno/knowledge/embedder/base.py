@@ -1,4 +1,6 @@
+import asyncio
 from dataclasses import dataclass
+from os import getenv
 from typing import Any, Dict, List, NoReturn, Optional, Tuple
 
 from agno.exceptions import EmbeddingError
@@ -65,26 +67,50 @@ async def aembed_texts_individually(
     embedder: "Embedder",
     texts: List[str],
 ) -> Tuple[List[List[float]], List[Optional[Dict]]]:
-    """Embed each text on its own, keeping successes and reporting failures once.
+    """Embed texts with bounded concurrency, preserving input order and collecting failures.
+
+    ``EMBEDDER_FALLBACK_CONCURRENCY`` controls simultaneous calls (default 5, minimum 1).
 
     A batch call cannot say which text it choked on, so this per-text pass is the only
     place that knows. Aborting on the first failure would discard every chunk that did
     embed and lose that information, so failures are collected and raised together.
     """
-    embeddings: List[List[float]] = []
-    usages: List[Optional[Dict]] = []
-    failures: List[Tuple[int, EmbeddingError]] = []
+    # This limits simultaneous requests, not requests per minute. Set it to 1 for
+    # providers that need a serial fallback. Invalid settings use the default.
+    try:
+        concurrency = max(1, int(getenv("EMBEDDER_FALLBACK_CONCURRENCY", "5")))
+    except ValueError:
+        concurrency = 5
 
-    for index, text in enumerate(texts):
-        try:
-            embedding, usage = await embedder.async_get_embedding_and_usage(text)
-        except EmbeddingError as e:
-            failures.append((index, e))
-            embedding, usage = [], None
-        embeddings.append(embedding)
-        usages.append(usage)
+    embeddings: List[List[float]] = [[] for _ in texts]
+    usages: List[Optional[Dict]] = [None for _ in texts]
+    failures: List[Tuple[int, EmbeddingError]] = []
+    pending = iter(enumerate(texts))
+
+    async def worker() -> None:
+        # Advancing the iterator has no await, so each input belongs to one worker.
+        for index, text in pending:
+            try:
+                embedding, usage = await embedder.async_get_embedding_and_usage(text)
+            except EmbeddingError as e:
+                failures.append((index, e))
+                continue
+            embeddings[index] = embedding
+            usages[index] = usage
+
+    workers = [asyncio.create_task(worker()) for _ in range(min(concurrency, len(texts)))]
+    try:
+        await asyncio.gather(*workers)
+    finally:
+        # gather propagates unexpected errors without cancelling its other children.
+        # Settle every worker before returning or propagating cancellation/errors.
+        for task in workers:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*workers, return_exceptions=True)
 
     if failures:
+        failures.sort(key=lambda failure: failure[0])
         first = failures[0][1]
         positions = ", ".join(str(i) for i, _ in failures[:5])
         more = "" if len(failures) <= 5 else f" (and {len(failures) - 5} more)"
