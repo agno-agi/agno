@@ -2288,3 +2288,136 @@ async def test_retain_session_transport_captures_the_session_id():
     await transport._capture_session_id(response)
 
     assert transport.get_session_id() == "abc123"
+
+
+# ---------------------------------------------------------------------------
+# Server instructions loaded during the handshake
+# ---------------------------------------------------------------------------
+
+
+def test_load_server_instructions_defaults_to_true():
+    tools = MCPTools(url="http://localhost:8080/mcp")
+    assert tools.load_server_instructions is True
+    assert tools.instructions is None
+    assert tools.add_instructions is False
+
+
+@pytest.mark.asyncio
+async def test_initialize_loads_server_instructions_from_a_fastmcp_client():
+    """A fastmcp Client exposes the negotiated instructions after its own handshake."""
+    from fastmcp import Client
+
+    tools = MCPTools(url="http://localhost:8080/mcp")
+    session = MagicMock(spec=Client)
+    session.instructions = "Always call list_items before create_item."
+    tools.session = session
+
+    with patch.object(MCPTools, "build_tools", new=AsyncMock()):
+        await tools.initialize()
+
+    assert tools.instructions == "Always call list_items before create_item."
+    assert tools.add_instructions is True
+
+
+@pytest.mark.asyncio
+async def test_initialize_loads_server_instructions_from_a_caller_supplied_session():
+    """A ClientSession stores the InitializeResult instructions once initialize() returns."""
+    tools = MCPTools(url="http://localhost:8080/mcp")
+    session = AsyncMock()
+    session.instructions = "Dates are UTC."
+    tools.session = session
+
+    with patch.object(MCPTools, "build_tools", new=AsyncMock()):
+        await tools.initialize()
+
+    session.initialize.assert_awaited_once()
+    assert tools.instructions == "Dates are UTC."
+    assert tools.add_instructions is True
+
+
+@pytest.mark.asyncio
+async def test_initialize_ignores_server_instructions_when_disabled():
+    from fastmcp import Client
+
+    tools = MCPTools(url="http://localhost:8080/mcp", load_server_instructions=False)
+    session = MagicMock(spec=Client)
+    session.instructions = "Should not be loaded."
+    tools.session = session
+
+    with patch.object(MCPTools, "build_tools", new=AsyncMock()):
+        await tools.initialize()
+
+    assert tools.instructions is None
+    assert tools.add_instructions is False
+
+
+@pytest.mark.asyncio
+async def test_initialize_keeps_explicit_instructions_over_server_instructions():
+    """Instructions passed to the constructor win over whatever the server sends."""
+    from fastmcp import Client
+
+    tools = MCPTools(url="http://localhost:8080/mcp", instructions="Mine.", add_instructions=True)
+    session = MagicMock(spec=Client)
+    session.instructions = "Server's."
+    tools.session = session
+
+    with patch.object(MCPTools, "build_tools", new=AsyncMock()):
+        await tools.initialize()
+
+    assert tools.instructions == "Mine."
+    assert tools.add_instructions is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("server_instructions", [None, "", "   \n"])
+async def test_initialize_skips_missing_or_blank_server_instructions(server_instructions):
+    from fastmcp import Client
+
+    tools = MCPTools(url="http://localhost:8080/mcp")
+    session = MagicMock(spec=Client)
+    session.instructions = server_instructions
+    tools.session = session
+
+    with patch.object(MCPTools, "build_tools", new=AsyncMock()):
+        await tools.initialize()
+
+    assert tools.instructions is None
+    assert tools.add_instructions is False
+
+
+@pytest.mark.asyncio
+async def test_initialize_skips_non_string_server_instructions():
+    """A session that does not expose a string there (e.g. a bare mock) leaves instructions alone."""
+    tools = MCPTools(url="http://localhost:8080/mcp")
+    session = AsyncMock()  # ``session.instructions`` is an auto-created mock, not a str
+    tools.session = session
+
+    with patch.object(MCPTools, "build_tools", new=AsyncMock()):
+        await tools.initialize()
+
+    assert tools.instructions is None
+    assert tools.add_instructions is False
+
+
+@pytest.mark.asyncio
+async def test_server_instructions_reach_the_agent_system_prompt():
+    """Once loaded, server instructions flow through parse_tools like any toolkit's instructions."""
+    from fastmcp import Client
+
+    from agno.agent import Agent
+    from agno.agent._tools import parse_tools
+
+    tools = MCPTools(url="http://localhost:8080/mcp")
+    session = MagicMock(spec=Client)
+    session.instructions = "Call lookup_station before get_forecast."
+    tools.session = session
+
+    with patch.object(MCPTools, "build_tools", new=AsyncMock()):
+        await tools.initialize()
+
+    model = MagicMock()
+    model.supports_native_structured_outputs = False
+    agent = Agent(tools=[tools])
+    parse_tools(agent=agent, tools=agent.tools, model=model)
+
+    assert agent._tool_instructions == ["Call lookup_station before get_forecast."]
