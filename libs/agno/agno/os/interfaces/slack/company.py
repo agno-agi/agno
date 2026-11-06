@@ -261,30 +261,35 @@ class SlackCompany:
         active = False
         if data.get("kind") == "continue":
             return complete
+        from agno.company.conversation import aget_conversation_tasks
+        from agno.run import RunContext
+
+        authority = await self._authority(app, data["user"], row["principal"])
         try:
-            payload = await self._request(
-                app,
-                row,
-                "GET",
-                f"/company/conversations/{row['session_id']}/tasks",
-                params={"origin_run_id": data["run_id"]},
+            payload = await aget_conversation_tasks(
+                self._os,
+                RunContext(
+                    run_id=data["run_id"],
+                    session_id=row["session_id"],
+                    user_id=row["principal"],
+                    authorization=authority,
+                ),
+                origin_run_id=data["run_id"],
             )
-        except HTTPException as exc:
-            if exc.status_code != 403:
-                raise
+        except PermissionError:
             return complete
         tasks = payload if isinstance(payload, list) else payload.get("tasks", payload.get("data", []))
         for task in tasks:
             status = task["status"]
             active = active or status not in {"done", "cancelled"}
             if status in {"done", "cancelled", "in_review", "backlog"}:
-                key = "task:" + task["id"] + ":" + str(task.get("updated_at"))
-                detail = task.get("result") or (task.get("transitions") or [{}])[-1].get("reason") or status
+                key = "task:" + task["task_id"] + ":" + str(task.get("updated_at"))
+                detail = task.get("result") or task.get("reason") or status
                 link = (
                     self.agent_os_url
                     + ("&" if "?" in self.agent_os_url else "?")
                     + "task="
-                    + quote(task["id"], safe="")
+                    + quote(task["task_id"], safe="")
                 )
                 self._intent(row, key, f"Task {task['title']}: {status}\n{detail}\n{link}")
         return complete and not active
@@ -301,14 +306,23 @@ class SlackCompany:
             if key != "failure":
                 await self._authority(app, data["user"], row["principal"])
             await self._store._save(row)
-            if notification["id"] and notification["text"].startswith("Task "):
-                await self._request(
-                    app,
-                    row,
-                    "GET",
-                    f"/company/conversations/{row['session_id']}/tasks",
-                    params={"origin_run_id": data["run_id"]},
+            if key.startswith("task:"):
+                from agno.company.conversation import aget_conversation_tasks
+                from agno.run import RunContext
+
+                authority = await self._authority(app, data["user"], row["principal"])
+                visible = await aget_conversation_tasks(
+                    self._os,
+                    RunContext(
+                        run_id=data["run_id"],
+                        session_id=row["session_id"],
+                        user_id=row["principal"],
+                        authorization=authority,
+                    ),
+                    origin_run_id=data["run_id"],
                 )
+                if not any(task["task_id"] == key.split(":")[1] for task in visible):
+                    raise PermissionError("Task is no longer visible to the originating participant")
             text = str(notification["text"]).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             if self._stream_client is not None and not notification.get("blocks") and key != "receipt":
                 from agno.os.interfaces.slack.helpers import open_chat_stream

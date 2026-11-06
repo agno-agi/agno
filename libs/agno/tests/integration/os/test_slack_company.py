@@ -212,3 +212,82 @@ def test_signed_identity_duplicate_intake_and_eventual_delivery(system):
     assert client.post("/slack/events", content=content, headers=signed_headers).status_code == 200
     second = client.portal.call(delivery._store._get, _identity(delivery._scope, "E2"))
     assert second["session_id"] != row["session_id"]
+
+
+def test_revoked_access_and_bot_echo_do_not_deliver_private_results(system):
+    client, os, delivery, posts, outage, auth, model = system
+    bot = event("bot")
+    bot["event"]["bot_id"] = "BOTHER"
+    body, headers = signed(bot)
+    assert client.post("/slack/events", content=body, headers=headers).status_code == 200
+    assert model.calls == 0
+    outage["active"] = True
+    body, headers = signed(event("revoke"))
+    assert client.post("/slack/events", content=body, headers=headers).status_code == 200
+    receipt_id = _identity(delivery._scope, "revoke")
+    auth.set_role_scopes("member", [])
+    outage["active"] = False
+    force_delivery(client, delivery, receipt_id)
+    force_delivery(client, delivery, receipt_id)
+    assert not any("Offline response" in post["text"] for post in posts)
+    assert any("current platform access" in post["text"] for post in posts)
+
+
+def test_receipt_dedup_survives_queue_retention(system):
+    client, os, delivery, posts, outage, auth, model = system
+    body, headers = signed(event("retention"))
+    assert client.post("/slack/events", content=body, headers=headers).status_code == 200
+    receipt_id = _identity(delivery._scope, "retention")
+    row = client.portal.call(delivery._store._get, receipt_id)
+    for _ in range(200):
+        run = os.manager.db.get_run(row["data"]["run_id"])
+        if run is not None and str(getattr(run.status, "value", run.status)).upper() == "COMPLETED":
+            break
+        time.sleep(0.01)
+    assert model.calls == 1
+    # Crash window: execution committed but the receipt did not advance. Its
+    # stable run id must still fence a replay after the queue row is removed.
+    row["data"]["state"] = "received"
+
+    def rewind(conn):
+        conn.execute(
+            delivery._store.table.update()
+            .where(delivery._store.table.c.id == receipt_id)
+            .values(data=row["data"], next_at=0, lease_until=0)
+        )
+
+    client.portal.call(delivery._store._call, rewind)
+    queue = client.app.state.queue_worker
+    client.portal.call(queue.store.cleanup_jobs, -1)
+    force_delivery(client, delivery, receipt_id)
+    assert model.calls == 1
+
+
+def test_streaming_delivery_uses_existing_slack_transport(system):
+    client, os, delivery, posts, outage, auth, model = system
+    streams = []
+
+    class Stream:
+        async def append(self, **kwargs):
+            streams.append(kwargs["markdown_text"])
+
+        async def stop(self):
+            return {"ok": True, "ts": "stream"}
+
+    class Client:
+        async def chat_stream(self, **kwargs):
+            assert kwargs["recipient_user_id"] == "U1" and kwargs["recipient_team_id"] == "T1"
+            return Stream()
+
+    delivery._stream_client = Client()
+    body, headers = signed(event("stream"))
+    assert client.post("/slack/events", content=body, headers=headers).status_code == 200
+    receipt_id = _identity(delivery._scope, "stream")
+    row = client.portal.call(delivery._store._get, receipt_id)
+    for _ in range(200):
+        run = os.manager.db.get_run(row["data"]["run_id"])
+        if run is not None and str(getattr(run.status, "value", run.status)).upper() == "COMPLETED":
+            break
+        time.sleep(0.01)
+    force_delivery(client, delivery, receipt_id)
+    assert streams == ["Offline response"]
