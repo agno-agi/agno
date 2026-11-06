@@ -46,7 +46,7 @@ class AntigravityTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         base_url: str = DEFAULT_BASE_URL,
-        agent: str = "antigravity-preview-05-2026",
+        agent: str = "antigravity-preview-09-2026",
         default_sources: Optional[List[Dict[str, Any]]] = None,
         persistent: bool = True,
         timeout: int = 600,
