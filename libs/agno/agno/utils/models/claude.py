@@ -827,28 +827,6 @@ def format_messages(
     return merged_messages, " ".join(system_messages)
 
 
-_TYPE_KEYWORDS = ("type", "anyOf", "oneOf", "allOf", "$ref", "enum", "const")
-
-
-def find_untyped_schema_node(schema: Dict[str, Any], path: str = "") -> Optional[str]:
-    """Path of the first schema node with no type, which Anthropic refuses and cannot express otherwise."""
-    if not any(keyword in schema for keyword in _TYPE_KEYWORDS):
-        return path
-    for key, value in schema.items():
-        children: List[Any] = []
-        if key in ("properties", "$defs", "definitions") and isinstance(value, dict):
-            children = [(f"{path}/{key}/{name}", child) for name, child in value.items()]
-        elif key == "items":
-            children = [(f"{path}/items", value)]
-        elif key in ("anyOf", "allOf", "oneOf") and isinstance(value, list):
-            children = [(f"{path}/{key}/{index}", child) for index, child in enumerate(value)]
-        for child_path, child in children:
-            found = find_untyped_schema_node(child, child_path) if isinstance(child, dict) else None
-            if found is not None:
-                return found
-    return None
-
-
 def _ensure_additional_properties_false(schema: Dict[str, Any]) -> Dict[str, Any]:
     """Recursively ensure all object schemas have additionalProperties: false.
 
@@ -865,7 +843,7 @@ def _ensure_additional_properties_false(schema: Dict[str, Any]) -> Dict[str, Any
         result["additionalProperties"] = False
 
     for key, value in result.items():
-        if key in ("properties", "$defs", "definitions") and isinstance(value, dict):
+        if key == "properties" and isinstance(value, dict):
             result[key] = {k: _ensure_additional_properties_false(v) for k, v in value.items()}
         elif key == "items" and isinstance(value, dict):
             result[key] = _ensure_additional_properties_false(value)

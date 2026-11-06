@@ -139,20 +139,6 @@ def source_json_schema(model: Any) -> Optional[Dict[str, Any]]:
     return source if isinstance(source, dict) else None
 
 
-def stores_non_strict(model: Any) -> bool:
-    """True for a model built from a stored response format that sets strict to false."""
-    inline = unwrap_json_schema_response_format(source_json_schema(model))
-    return inline is not None and inline.strict is False
-
-
-def non_strict_response_format(response_format: Any) -> Any:
-    """The stored format of a model that stores strict false, sent as written; else response_format."""
-    if not stores_non_strict(response_format):
-        return response_format
-    inline = unwrap_json_schema_response_format(source_json_schema(response_format))
-    return json_schema_response_format(inline.schema, name=inline.name, strict=False)  # type: ignore[union-attr]
-
-
 def serialize_output_schema(output_schema: Any) -> Any:
     """The stored form of an agent or team output_schema.
 

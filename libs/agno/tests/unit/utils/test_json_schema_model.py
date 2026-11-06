@@ -3,14 +3,11 @@
 import json
 import re
 import warnings
-from typing import Any, Optional
 
 import pytest
 from pydantic import BaseModel, ValidationError
 
 from agno.agent import Agent
-from agno.models.anthropic import Claude
-from agno.models.openai import OpenAIChat, OpenAIResponses
 from agno.run.agent import RunOutput
 from agno.team import Team
 from agno.utils.models.json_schema_model import (
@@ -888,81 +885,3 @@ def test_a_strict_load_keeps_a_schema_the_converter_refuses(schema):
     assert Agent.from_dict(Agent(id="a", output_schema=stored).to_dict(), strict=True).output_schema == stored
     team = Team(id="t", members=[], output_schema=stored)
     assert Team.from_dict(team.to_dict(), strict=True).output_schema == stored
-
-
-STRICTLESS = {"type": "object", "properties": {"a": {"type": "string"}, "b": {"type": "string"}}, "required": ["a"]}
-
-
-def _loaded_schema(strict):
-    stored = json_schema_response_format(STRICTLESS, name="S", strict=strict)
-    return Agent.from_dict({"id": "x", "output_schema": stored}).output_schema
-
-
-def test_a_stored_strict_false_reaches_openai_responses_as_written():
-    params = OpenAIResponses(id="gpt-5.6-luna").get_request_params(response_format=_loaded_schema(False))
-    sent = params["text"]["format"]
-    assert (sent["name"], sent["strict"], sent["schema"]) == ("S", False, STRICTLESS)
-
-
-def test_a_stored_strict_false_reaches_openai_chat_as_written():
-    params = OpenAIChat(id="gpt-5.6-luna").get_request_params(response_format=_loaded_schema(False))
-    sent = params["response_format"]["json_schema"]
-    assert (sent["name"], sent["strict"], sent["schema"]) == ("S", False, STRICTLESS)
-
-
-@pytest.mark.parametrize("strict", [True, None])
-def test_only_a_stored_strict_false_leaves_the_pydantic_path(strict):
-    sent = OpenAIResponses(id="gpt-5.6-luna").get_request_params(response_format=_loaded_schema(strict))["text"][
-        "format"
-    ]
-    assert sent["strict"] is True
-    assert set(sent["schema"]["required"]) == {"a", "b"}
-
-
-def test_a_stored_strict_false_still_parses_as_a_model():
-    assert _loaded_schema(False).model_validate({"a": "x"}).a == "x"
-
-
-def test_claude_falls_back_on_a_mixed_enum():
-    model = json_schema_to_model(
-        {
-            "type": "object",
-            "properties": {
-                "a": {"enum": [1, "x"]},
-                "n": {"type": "object", "properties": {"x": {"type": "string"}}},
-            },
-            "required": ["a"],
-        }
-    )
-    schema = Claude()._build_output_format(model)["schema"]
-    assert schema["additionalProperties"] is False
-    assert schema["$defs"]["N"]["additionalProperties"] is False
-    assert schema["properties"]["a"]["enum"] == [1, "x"]
-
-
-@pytest.mark.parametrize(
-    "properties, path",
-    [
-        ({"a": {}}, "properties/a"),
-        ({"a": {"type": "array", "items": {}}}, "properties/a/items"),
-        ({"a": {"type": "object", "properties": {"b": {}}}}, "$defs/A/properties/b"),
-    ],
-    ids=["property", "array-items", "nested-object"],
-)
-def test_claude_refuses_an_untyped_node_and_names_it(properties, path):
-    model = json_schema_to_model({"type": "object", "properties": properties, "required": ["a"]})
-    with pytest.raises(ValueError, match=re.escape(path)):
-        Claude()._build_output_format(model)
-
-
-def test_claude_refuses_an_optional_any_field():
-    class Loose(BaseModel):
-        a: Optional[Any] = None
-
-    with pytest.raises(ValueError, match="properties/a"):
-        Claude()._build_output_format(Loose)
-
-
-def test_claude_keeps_a_fully_typed_schema_on_the_sdk_path():
-    model = json_schema_to_model({"type": "object", "properties": {"a": {"type": "string"}}, "required": ["a"]})
-    assert Claude()._build_output_format(model)["schema"]["properties"]["a"]["type"] == "string"

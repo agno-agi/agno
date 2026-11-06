@@ -17,10 +17,8 @@ from agno.tools.function import Function
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.claude import (
     MCPServerConfiguration,
-    _ensure_additional_properties_false,
     _validate_cache_ttl_order,
     build_system_blocks,
-    find_untyped_schema_node,
     format_messages,
     format_tools_for_model,
     resolve_http_client,
@@ -316,6 +314,24 @@ class Claude(Model):
                 if beta not in self.betas:
                     self.betas.append(beta)
 
+    def _ensure_additional_properties_false(self, schema: Dict[str, Any]) -> None:
+        """
+        Recursively ensure all object types have additionalProperties: false.
+        """
+        if isinstance(schema, dict):
+            if schema.get("type") == "object":
+                schema["additionalProperties"] = False
+
+            # Recursively process nested schemas
+            for key, value in schema.items():
+                if key in ["properties", "items", "allOf", "anyOf", "oneOf"]:
+                    if isinstance(value, dict):
+                        self._ensure_additional_properties_false(value)
+                    elif isinstance(value, list):
+                        for item in value:
+                            if isinstance(item, dict):
+                                self._ensure_additional_properties_false(item)
+
     def _build_output_format(self, response_format: Optional[Union[Dict, Type[BaseModel]]]) -> Optional[Dict[str, Any]]:
         """
         Build Anthropic output_format parameter from response_format.
@@ -339,15 +355,15 @@ class Claude(Model):
                 from anthropic import transform_schema
 
                 schema = transform_schema(response_format.model_json_schema())
-            except (ImportError, AttributeError, ValueError):
-                # transform_schema raises ValueError on a node with no type, such as a mixed enum or an Any field
-                schema = _ensure_additional_properties_false(response_format.model_json_schema())
-                untyped = find_untyped_schema_node(schema)
-                if untyped is not None:
-                    raise ValueError(
-                        f"Claude needs a type on every output schema field, but {untyped.lstrip('/')} has none. "
-                        "Declare its type, or use a model that accepts untyped values."
-                    )
+            except (ImportError, AttributeError):
+                # Fallback to direct schema conversion
+                schema = response_format.model_json_schema()
+                # Ensure additionalProperties is False
+                if isinstance(schema, dict):
+                    if "additionalProperties" not in schema:
+                        schema["additionalProperties"] = False
+                    # Recursively ensure all object types have additionalProperties: false
+                    self._ensure_additional_properties_false(schema)
 
             return {"type": "json_schema", "schema": schema}
 

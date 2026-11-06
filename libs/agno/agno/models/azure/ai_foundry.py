@@ -14,7 +14,6 @@ from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error
 from agno.utils.models.ai_foundry import format_message
-from agno.utils.models.json_schema_model import stores_non_strict
 
 try:
     from azure.ai.inference import ChatCompletionsClient
@@ -118,7 +117,7 @@ class AzureAIFoundry(Model):
                         name=response_format.__name__,
                         schema=response_format.model_json_schema(),  # type: ignore
                         description=response_format.__doc__,
-                        strict=self.strict_output and not stores_non_strict(response_format),
+                        strict=self.strict_output,
                     ),
                 )
 
