@@ -2017,7 +2017,7 @@ class TestCoverageFields:
     def test_edit_round_trips_a_loaded_inline_schema_unchanged(self, studio_refs, db):
         wrapped = {
             "type": "json_schema",
-            "json_schema": {"name": "Weather", "schema": self.INLINE_SCHEMA, "strict": True},
+            "json_schema": {"name": "Weather", "schema": self.INLINE_SCHEMA},
         }
         _data(
             studio_refs.create_agent(
@@ -2086,26 +2086,41 @@ class TestCoverageFields:
         stored = db.get_config(component_id="inline", version=1)["config"]["output_schema"]
         assert stored == {"type": "json_schema", "json_schema": {"name": "Weather", "schema": self.INLINE_SCHEMA}}
 
-    def test_wrapped_inline_schema_keeps_strict(self, studio_refs, db):
+    @pytest.mark.parametrize("strict", [True, False, "false"], ids=["true", "false", "non-bool"])
+    @pytest.mark.parametrize("shape", ["nested", "flat"])
+    def test_wrapped_inline_schema_with_strict_is_refused(self, studio_refs, db, strict, shape):
+        if shape == "nested":
+            wrapped = {
+                "type": "json_schema",
+                "json_schema": {"name": "Weather", "schema": self.INLINE_SCHEMA, "strict": strict},
+            }
+        else:
+            wrapped = {"type": "json_schema", "name": "Weather", "schema": self.INLINE_SCHEMA, "strict": strict}
+        error = _error(
+            studio_refs.create_agent(name="bad", instructions="i", model_id="gpt-5.4", output_schema=wrapped)
+        )
+        assert error["code"] == "invalid_request"
+        assert "strict_output" in error["message"]
+        assert db.get_config(component_id="bad", version=1) is None
+
+    def test_edit_with_strict_is_refused_and_keeps_the_stored_schema(self, studio_refs, db):
+        _data(
+            studio_refs.create_agent(
+                name="kept", instructions="i", model_id="gpt-5.4", output_schema=self.INLINE_SCHEMA
+            )
+        )
+        stored = db.get_config(component_id="kept", version=1)["config"]["output_schema"]
         wrapped = {
             "type": "json_schema",
-            "json_schema": {"name": "Weather", "schema": self.INLINE_SCHEMA, "strict": True},
+            "json_schema": {"name": "Weather", "schema": self.INLINE_SCHEMA, "strict": False},
         }
-        _data(studio_refs.create_agent(name="strict", instructions="i", model_id="gpt-5.4", output_schema=wrapped))
-        stored = db.get_config(component_id="strict", version=1)["config"]["output_schema"]
-        assert stored == wrapped
+        assert _error(studio_refs.edit_agent("kept", output_schema=wrapped))["code"] == "invalid_request"
+        assert db.get_config(component_id="kept", version=1)["config"]["output_schema"] == stored
+        assert db.get_config(component_id="kept", version=2) is None
 
-    @pytest.mark.parametrize(
-        "wrapper",
-        [
-            {"strict": True},
-            {"name": "Untitled"},
-        ],
-        ids=["strict", "name-without-title"],
-    )
-    def test_read_edit_round_trip_keeps_the_stored_format(self, studio_refs, db, wrapper):
+    def test_read_edit_round_trip_keeps_the_stored_format(self, studio_refs, db):
         schema = {k: v for k, v in self.INLINE_SCHEMA.items() if k != "title"}
-        wrapped = {"type": "json_schema", "json_schema": {"name": "Weather", "schema": schema, **wrapper}}
+        wrapped = {"type": "json_schema", "json_schema": {"name": "Untitled", "schema": schema}}
         _data(studio_refs.create_agent(name="kept", instructions="i", model_id="gpt-5.4", output_schema=wrapped))
         stored = db.get_config(component_id="kept", version=1)["config"]["output_schema"]
 
