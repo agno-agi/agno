@@ -152,6 +152,24 @@ def test_recorded_name_skips_flag_values(command, recorded_name):
     assert MCPTools(command=command).recorded_name == recorded_name
 
 
+def test_recorded_name_drops_url_path():
+    """A key passed as a URL path segment must never leak into the name tool calls record."""
+    url = "https://mcp.zapier.com/api/mcp/s/sk_secret123/mcp"
+    url_tools = MCPTools(url=url)
+    params_tools = MCPTools(server_params=StreamableHTTPClientParams(url=url), transport="streamable-http")
+    command_tools = MCPTools(command=f"uvx mcp-proxy {url}")
+    for tools in (url_tools, params_tools):
+        assert tools.name == "mcp_mcp_zapier_com_api_mcp_s_sk_secret123_mcp"
+        assert tools.recorded_name == "mcp_mcp_zapier_com"
+    assert command_tools.recorded_name == "mcp_uvx_mcp_proxy"
+
+
+def test_recorded_name_keeps_only_server_executable():
+    """A server run as its own executable records its name only: its first argument can be a key."""
+    tools = MCPTools(server_params=StdioServerParameters(command="acme-mcp-server", args=["sk_secret123"]))
+    assert tools.recorded_name == "mcp_acme_mcp_server"
+
+
 def test_recorded_name_keeps_explicit_name():
     """A name given to the toolkit is recorded as it is."""
     tools = MCPTools(command="npx -y @acme/server-a --token ghp_secret123", name="github")

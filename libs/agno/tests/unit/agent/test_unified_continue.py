@@ -736,6 +736,13 @@ class TestTruncateHelper:
         assert run.tools == [], "All tools dropped when no messages survive"
         assert run.last_checkpoint_at_message_index == 0
 
+    def test_truncate_before_a_fork_point_lowers_it(self):
+        """A fork cut before the messages it copied keeps only copied messages, so its calls from there are its own."""
+        run = self._build_run_with_tools()
+        run.forked_from_message_index = 5
+        _truncate_run_to_checkpoint(run, 3)
+        assert run.forked_from_message_index == 3
+
     def test_truncate_filters_requirements(self):
         pending_tool = ToolExecution(tool_call_id="tc-late", tool_name="z", tool_args={})
         run = RunOutput(

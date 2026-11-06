@@ -142,13 +142,20 @@ def _os_metrics_location(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> tuple[Opti
         if url.get_backend_name() == "sqlite":
             named = bool(url.database) and url.query.get("mode") != "memory" and ":memory:" not in url.database
         else:
-            # A unix socket is named in the query (host for PostgreSQL, unix_socket for MySQL) instead of the URL's host
-            host = url.host or url.query.get("host") or url.query.get("unix_socket")
+            # The driver takes the server from the query before the URL: a unix socket (host for PostgreSQL,
+            # unix_socket for MySQL), a port and a database name
+            host = url.query.get("host") or url.query.get("unix_socket") or url.host
             # A PostgreSQL schema lives inside a database, while a MySQL schema is the database itself
             named = bool(host) and (bool(url.database) or url.get_backend_name() != "postgresql")
         if named:
-            # The driver is left out, so a sync and an async adapter on one database share a location
-            address = url.set(drivername=url.get_backend_name()).render_as_string(hide_password=True)
+            # The driver, the login and the connection options are left out, and a default port is written out, so
+            # every adapter on one database shares a location
+            backend_name = url.get_backend_name()
+            if backend_name == "sqlite":
+                address = f"sqlite:///{url.database}"
+            else:
+                port = url.query.get("port") or url.port or {"postgresql": 5432, "mysql": 3306}.get(backend_name)
+                address = f"{backend_name}://{host}:{port}/{url.query.get('dbname') or url.database}"
     elif isinstance(connection_kwargs, dict):
         # A client on a unix socket names its path instead of a host and port, and a Sentinel client names neither
         if connection_kwargs.get("path"):
