@@ -35,7 +35,7 @@ class SQLTools(Toolkit):
         _engine: Optional[Engine] = db_engine
         if _engine is None and db_url is not None:
             _engine = create_engine(db_url)
-        elif user and password and host and port and dialect:
+        elif _engine is None and user and password and host and port and dialect:
             _engine = create_engine(
                 URL.create(
                     drivername=dialect,
