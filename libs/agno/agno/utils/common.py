@@ -12,9 +12,12 @@ def isinstanceany(obj: Any, class_list: List[Type]) -> bool:
 
 def is_empty(val: Any) -> bool:
     """Returns True if val is None or empty"""
-    if val is None or len(val) == 0 or val == "":
+    if val is None or val == "":
         return True
-    return False
+    try:
+        return len(val) == 0
+    except TypeError:
+        return False
 
 
 def get_image_str(repo: str, tag: str) -> str:
