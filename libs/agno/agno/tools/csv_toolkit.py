@@ -30,6 +30,18 @@ class CsvTools(Toolkit):
                     self.csvs.append(_csv)
                 else:
                     raise ValueError(f"Invalid csv file: {_csv}")
+
+        # Tools address a file by its stem, so two files with the same stem in
+        # different directories are indistinguishable: the first one would answer
+        # every call and the other would be unreachable. Fail instead of quietly
+        # reading the wrong file.
+        stems = [_csv.stem for _csv in self.csvs]
+        duplicated = sorted({stem for stem in stems if stems.count(stem) > 1})
+        if duplicated:
+            raise ValueError(
+                f"Duplicate csv file name(s): {', '.join(duplicated)}. "
+                "CSV tools address files by name without the extension, so each name must be unique."
+            )
         self.row_limit = row_limit
         self.duckdb_connection: Optional[Any] = duckdb_connection
         self.duckdb_kwargs: Optional[Dict[str, Any]] = duckdb_kwargs
