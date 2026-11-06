@@ -17,6 +17,7 @@ from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
 from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.models.openai import drop_fixed_sampling_params, has_fixed_sampling_params
 from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
 from agno.utils.reasoning import extract_thinking_content
 
@@ -264,9 +265,16 @@ class OpenAIChat(Model):
         if self.request_params:
             request_params.update(self.request_params)
 
+        if self._has_fixed_sampling_params():
+            drop_fixed_sampling_params(request_params)
+
         if request_params:
             log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
         return request_params
+
+    def _has_fixed_sampling_params(self) -> bool:
+        """Return True if the model only accepts the default sampling values (o-series, gpt-5 family)."""
+        return has_fixed_sampling_params(self.id)
 
     def to_dict(self) -> Dict[str, Any]:
         """
