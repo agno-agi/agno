@@ -68,3 +68,41 @@ def test_revision_budget_rejects_unbounded_or_invalid_values(value):
 
     with pytest.raises(ValueError, match="max_task_attempts"):
         CompanyConfig(max_task_attempts=value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("new_acceptance", [None, {}, {"operation": "accept", "task_id": "t"}])
+async def test_worker_input_uses_revision_only_from_current_acceptance(new_acceptance):
+    import json
+    from unittest.mock import Mock
+
+    from agno.company.execution import _task_input
+
+    manager = Mock()
+    manager.list_wiki.return_value = ([], 0)
+    row = task()
+    row["brief"] = "Produce the new report only"
+    row["transitions"] = [
+        {
+            "target": "ready",
+            "system_decision": {
+                "operation": "assessment",
+                "decision": "revise",
+                "next_instruction": "Publish the old report",
+            },
+        }
+    ]
+    if new_acceptance is not None:
+        row["transitions"].extend(
+            [
+                {"target": "backlog"},
+                {"target": "ready", "system_decision": new_acceptance},
+            ]
+        )
+    row["transitions"].append({"target": "in_progress", "attempt": 2})
+    payload = json.loads(await _task_input(manager, row, accepted_execution=True))
+    assert payload["brief"] == row["brief"]
+    if new_acceptance is None:
+        assert payload["revision"] == "Publish the old report"
+    else:
+        assert "revision" not in payload

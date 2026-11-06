@@ -561,10 +561,14 @@ async def _task_input(manager: Any, task: Dict[str, Any], *, accepted_execution:
             page += 1
     payload = {"brief": task.get("brief"), "wiki": pages, "evidence": task.get("evidence") or []}
     for transition in reversed(task.get("transitions") or []):
+        if transition.get("target") != "ready":
+            continue
         assessment = transition.get("system_decision") or {}
         if assessment.get("operation") == "assessment" and assessment.get("decision") == "revise":
             payload["revision"] = assessment.get("next_instruction")
-            break
+        # Each acceptance defines a new mandate. Earlier revisions cannot steer
+        # a later manually accepted or newly delegated execution.
+        break
     # Only the authorized execution route supplies this flag; a Task dictionary
     # or its brief alone does not establish acceptance.
     if accepted_execution:
