@@ -9352,7 +9352,17 @@ class PostgresDb(BaseDb):
     def initialize_company(self, name: str = "Company", description: Optional[str] = None) -> Dict[str, Any]:
         from agno.db.sql.company import initialize_company_details
 
-        table = self._get_table(table_type="company", create_table_if_not_found=True)
+        try:
+            table = self._get_table(table_type="company", create_table_if_not_found=True)
+        except Exception as exc:
+            from agno.db.sql.company import company_table_creation_race
+
+            if not company_table_creation_race(exc) or not self.table_exists(self.company_table_name):
+                raise
+            self._invalidate_table_cache(self.company_table_name)
+            table = self._get_table(table_type="company")
+        if table is None:
+            raise RuntimeError("Company details table is unavailable after provisioning")
         with self.Session() as sess, sess.begin():
             return initialize_company_details(sess, table, name, description)
 

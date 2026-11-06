@@ -3,6 +3,7 @@
 import time
 
 import jwt
+import pytest
 from fastapi.testclient import TestClient
 
 from agno.db.sqlite import SqliteDb
@@ -149,4 +150,37 @@ def test_next_manager_runs_use_saved_details_without_products(tmp_path):
         )
         assert updated.status_code == 200, updated.text
         assert updated.json()["content"] == "new description"
+    db.close()
+
+
+def test_company_config_preserves_positional_products():
+    from agno.company import Product
+
+    products = [Product(name="Existing")]
+    config = CompanyConfig(None, None, products)
+    assert config.products is products
+    assert config.name == "Company"
+    assert config.description is None
+
+
+@pytest.mark.asyncio
+async def test_async_context_uses_async_authority_with_sync_company_storage(tmp_path):
+    from types import SimpleNamespace
+
+    from agno.company.details import _company_instructions
+    from agno.utils.agent import aexecute_instructions, execute_instructions
+
+    class AsyncAuthority:
+        def require(self, *args):
+            raise RuntimeError("Async authority requires arequire")
+
+        async def arequire(self, resource, action):
+            assert (resource, action) == ("company", "read")
+
+    db = SqliteDb(db_file=str(tmp_path / "mixed.db"))
+    db.initialize_company("Mixed", "Async-authorized context")
+    instructions = _company_instructions(db, ["Base"])
+    context = SimpleNamespace(authorization=AsyncAuthority())
+    assert "Async-authorized context" in (await aexecute_instructions(instructions, run_context=context))[-1]
+    assert "Async-authorized context" in execute_instructions(instructions)[-1]
     db.close()

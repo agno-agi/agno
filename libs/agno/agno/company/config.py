@@ -14,15 +14,15 @@ class CompanyConfig:
 
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
     model: Optional[Model] = None
-    name: str = "Company"
-    description: Optional[str] = None
     products: List["Product"] = field(default_factory=list)
     acceptance_checks: Dict[str, Callable[[Dict[str, Any], Any], Any]] = field(default_factory=dict)
     automation_history_retention_days: int = 30
     cron_expr: str = "0 * * * *"
+    name: str = "Company"
+    description: Optional[str] = None
 
     def __post_init__(self) -> None:
-        from agno.db.sql.company import validate_company_details
+        from agno.db.schemas.company import validate_company_details
 
         validate_company_details({"name": self.name, "description": self.description})
         if (

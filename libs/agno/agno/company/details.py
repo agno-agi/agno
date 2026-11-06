@@ -1,5 +1,6 @@
 """Fresh company context for manager runs; identity remains human-owned."""
 
+import asyncio
 import json
 from typing import Any, Callable, List
 
@@ -17,28 +18,37 @@ def _context(base: List[str], record: Any) -> List[str]:
     ]
 
 
-def _company_instructions(db: Any, base: List[str]) -> Callable:
-    """Read at each run, after checking the same permission as the details API."""
-    if isinstance(db, AsyncBaseDb):
+class _CompanyInstructions:
+    def __init__(self, db: Any, base: List[str]):
+        self.db = db
+        self.base = base
 
-        async def async_instructions(run_context: Any = None) -> List[str]:
-            authority = current_authorization() or getattr(run_context, "authorization", None)
-            if authority is not None:
-                try:
-                    await authority.arequire("company", "read")
-                except PermissionError:
-                    return list(base)
-            return _context(base, await db.get_company())
-
-        return async_instructions
-
-    def instructions(run_context: Any = None) -> List[str]:
+    def __call__(self, run_context: Any = None) -> List[str]:
         authority = current_authorization() or getattr(run_context, "authorization", None)
         if authority is not None:
             try:
                 authority.require("company", "read")
             except PermissionError:
-                return list(base)
-        return _context(base, db.get_company())
+                return list(self.base)
+        if isinstance(self.db, AsyncBaseDb):
+            raise RuntimeError("An asynchronous Company database requires arun()")
+        return _context(self.base, self.db.get_company())
 
-    return instructions
+    async def __acall__(self, run_context: Any = None) -> List[str]:
+        authority = current_authorization() or getattr(run_context, "authorization", None)
+        if authority is not None:
+            try:
+                await authority.arequire("company", "read")
+            except PermissionError:
+                return list(self.base)
+        row = (
+            await self.db.get_company()
+            if isinstance(self.db, AsyncBaseDb)
+            else await asyncio.to_thread(self.db.get_company)
+        )
+        return _context(self.base, row)
+
+
+def _company_instructions(db: Any, base: List[str]) -> Callable:
+    """Read on each run using the caller's synchronous or asynchronous authority."""
+    return _CompanyInstructions(db, base)

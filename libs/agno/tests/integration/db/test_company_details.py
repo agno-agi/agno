@@ -67,6 +67,7 @@ async def test_dynamic_context_is_fresh_and_authorized(db):
     from types import SimpleNamespace
 
     from agno.company.details import _company_instructions
+    from agno.utils.agent import aexecute_instructions
 
     class Deny:
         def require(self, *args):
@@ -77,7 +78,37 @@ async def test_dynamic_context_is_fresh_and_authorized(db):
 
     initial = await call(db.initialize_company, "First", "First description")
     instructions = _company_instructions(db, ["Base"])
-    assert "First description" in (await call(instructions))[-1]
+    assert "First description" in (await aexecute_instructions(instructions))[-1]
     await call(db.update_company, initial["updated_at"], description="Next run description")
-    assert "Next run description" in (await call(instructions))[-1]
-    assert await call(instructions, SimpleNamespace(authorization=Deny())) == ["Base"]
+    assert "Next run description" in (await aexecute_instructions(instructions))[-1]
+    assert await aexecute_instructions(instructions, run_context=SimpleNamespace(authorization=Deny())) == ["Base"]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_cold_initialization_and_edits(db):
+    import asyncio
+
+    # Independent adapter instances represent independent starting replicas.
+    replicas = [type(db).from_dict(db.to_dict()) for _ in range(4)]
+
+    async def invoke(replica, method, *args, **kwargs):
+        fn = getattr(replica, method)
+        if isinstance(replica, AsyncBaseDb):
+            return await fn(*args, **kwargs)
+        return await asyncio.to_thread(fn, *args, **kwargs)
+
+    try:
+        rows = await asyncio.gather(*(invoke(replica, "initialize_company", "Initial") for replica in replicas))
+        assert all(row == rows[0] for row in rows)
+        edits = await asyncio.gather(
+            *(
+                invoke(replica, "update_company", rows[0]["updated_at"], name="Winner " + str(index))
+                for index, replica in enumerate(replicas)
+            )
+        )
+        assert sum(row is not None for row in edits) == 1
+        winner = next(row for row in edits if row is not None)
+        assert await call(db.get_company) == winner
+    finally:
+        for replica in replicas:
+            await call(replica.close)

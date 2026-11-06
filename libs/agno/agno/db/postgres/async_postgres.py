@@ -6603,7 +6603,17 @@ class AsyncPostgresDb(AsyncBaseDb):
     async def initialize_company(self, name: str = "Company", description: Optional[str] = None) -> Dict[str, Any]:
         from agno.db.sql.company import initialize_company_details
 
-        table = await self._get_table(table_type="company", create_table_if_not_found=True)
+        try:
+            table = await self._get_table(table_type="company", create_table_if_not_found=True)
+        except Exception as exc:
+            from agno.db.sql.company import company_table_creation_race
+
+            if not company_table_creation_race(exc) or not await self.table_exists(self.company_table_name):
+                raise
+            self._invalidate_table_cache(self.company_table_name)
+            table = await self._get_table(table_type="company")
+        if table is None:
+            raise RuntimeError("Company details table is unavailable after provisioning")
         async with self.async_session_factory() as sess, sess.begin():
             return await sess.run_sync(lambda sync: initialize_company_details(sync, table, name, description))
 

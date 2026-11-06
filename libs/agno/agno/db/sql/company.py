@@ -11,6 +11,8 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy import func, literal, or_, select, union_all
 
+from agno.db.schemas.company import validate_company_details
+
 
 def active_parents(stmt: Any, table: Any, products: Any, projects: Any = None) -> Any:
     """Hide children of archived parents before counting or paging."""
@@ -380,19 +382,6 @@ def update_product_row(
     return dict(result._mapping) if result else None
 
 
-def validate_company_details(fields: Dict[str, Any]) -> None:
-    """Only human-owned descriptive fields can be changed."""
-    if fields.keys() - {"name", "description"}:
-        raise ValueError("Only company name and description can be changed")
-    if "name" in fields and (
-        not isinstance(fields["name"], str) or not fields["name"].strip() or len(fields["name"]) > 255
-    ):
-        raise ValueError("Company name must contain 1 to 255 characters")
-    description = fields.get("description")
-    if description is not None and (not isinstance(description, str) or len(description) > 20000):
-        raise ValueError("Company description must contain at most 20000 characters")
-
-
 def initialize_company_details(sess: Any, table: Any, name: str, description: Optional[str]) -> Dict[str, Any]:
     """Insert once under concurrent startup; a deployment never overwrites UI edits."""
     validate_company_details({"name": name, "description": description})
@@ -426,3 +415,12 @@ def update_company_details(
             .returning(table)
         ).first()
     return dict(row._mapping) if row is not None else None
+
+
+def company_table_creation_race(error: Exception) -> bool:
+    """Recognize only concurrent first-time DDL; the caller verifies the winner's table."""
+    from sqlalchemy.exc import OperationalError
+
+    cause = getattr(error, "orig", error)
+    sqlstate = getattr(cause, "sqlstate", getattr(cause, "pgcode", None))
+    return sqlstate in ("42P07", "23505") or (isinstance(error, OperationalError) and "already exists" in str(cause))
