@@ -239,6 +239,56 @@ def _build_fastmcp_client(
     return Client(fastmcp_transport, timeout=client_timeout, mode=protocol_mode)
 
 
+def _stdio_server_params(command: str, env: Optional[dict[str, str]] = None) -> StdioServerParameters:
+    """Validate a stdio command and pair it with the default environment plus ``env``."""
+    parts = prepare_command(command)
+    merged_env = {**get_default_environment(), **(env or {})}
+    return StdioServerParameters(command=parts[0], args=parts[1:], env=merged_env)
+
+
+def create_mcp_client(
+    command: Optional[str] = None,
+    *,
+    url: Optional[str] = None,
+    transport: Optional[Literal["stdio", "sse", "streamable-http"]] = None,
+    server_params: Optional[Union[StdioServerParameters, SSEClientParams, StreamableHTTPClientParams]] = None,
+    env: Optional[dict[str, str]] = None,
+    headers: Optional[dict[str, Any]] = None,
+    timeout_seconds: float = 10,
+    protocol_mode: Literal["legacy", "auto"] = "legacy",
+) -> Any:
+    """Build an unconnected ``fastmcp.Client`` for one MCP server.
+
+    For code that needs an MCP connection without the tool registry MCPTools builds.
+    ``async with`` the client to connect; its ``session`` exposes the raw request API.
+    """
+    if transport is None:
+        if isinstance(server_params, SSEClientParams):
+            transport = "sse"
+        elif url is not None or isinstance(server_params, StreamableHTTPClientParams):
+            transport = "streamable-http"
+        else:
+            transport = "stdio"
+
+    if transport == "stdio":
+        if headers:
+            raise ValueError("headers are only supported with the 'sse' and 'streamable-http' transports")
+        if server_params is None:
+            if command is None:
+                raise ValueError("One of 'command' or 'server_params' is required for the stdio transport")
+            server_params = _stdio_server_params(command, env)
+        return _build_fastmcp_client(transport, {}, server_params, timeout_seconds, protocol_mode)
+
+    params = asdict(server_params) if server_params is not None else {}  # type: ignore[arg-type]
+    if params.get("url") is None:
+        params["url"] = url
+    if not params["url"]:
+        raise ValueError(f"One of 'url' or 'server_params' is required for the {transport} transport")
+    if headers:
+        params["headers"] = {**(params.get("headers") or {}), **headers}
+    return _build_fastmcp_client(transport, params, None, timeout_seconds, protocol_mode)
+
+
 class MCPTools(Toolkit):
     """
     A toolkit for integrating Model Context Protocol (MCP) servers with Agno agents.
@@ -408,20 +458,8 @@ class MCPTools(Toolkit):
         )
         self.url = url
 
-        # Merge provided env with system env
-        if env is not None:
-            env = {
-                **get_default_environment(),
-                **env,
-            }
-        else:
-            env = get_default_environment()
-
         if command is not None and transport not in ["sse", "streamable-http"]:
-            parts = prepare_command(command)
-            cmd = parts[0]
-            arguments = parts[1:] if len(parts) > 1 else []
-            self.server_params = StdioServerParameters(command=cmd, args=arguments, env=env)
+            self.server_params = _stdio_server_params(command, env)
 
         self._client = client
 
