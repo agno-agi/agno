@@ -5,7 +5,7 @@ import time
 from typing import Any, Callable, Dict, Optional
 from uuid import uuid4
 
-from sqlalchemy import JSON, BigInteger, Column, MetaData, String, Table, select, text
+from sqlalchemy import JSON, BigInteger, Column, MetaData, String, Table, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 
@@ -162,7 +162,11 @@ class _SlackStore:
                 .where(
                     self.table.c.scope == self.scope,
                     self.table.c.principal == principal,
-                    self.table.c.data["run_id"].as_string() == run_id,
+                    self.table.c.data["kind"].as_string().is_(None),
+                    or_(
+                        self.table.c.data["run_id"].as_string() == run_id,
+                        self.table.c.data["worker_runs"][run_id].as_string().is_not(None),
+                    ),
                     self.table.c.data["channel"].as_string() == channel,
                     self.table.c.data["thread"].as_string() == thread,
                 )

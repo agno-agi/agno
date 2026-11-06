@@ -299,3 +299,5 @@ request, model inference, or outbound message.
 | Workspace search reports no action token | The run did not start from a Slack Assistant thread |
 | HITL buttons do nothing | Interactivity is disabled or its request URL is wrong |
 | Webhook returns 403 | The app's signing secret does not match the interface |
+
+For delegated Company outcomes with PostgreSQL receipts and background work, see [CompanyOS in Slack](../30_company/15_slack_company/README.md).

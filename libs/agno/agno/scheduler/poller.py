@@ -36,6 +36,7 @@ class SchedulePoller:
         self.stop_timeout = stop_timeout
         self._task: Optional[asyncio.Task] = None  # type: ignore[type-arg]
         self._running = False
+        self._notification_task: Optional[asyncio.Task] = None  # type: ignore[type-arg]
         self._in_flight: Set[asyncio.Task] = set()  # type: ignore[type-arg]
 
     async def start(self) -> None:
@@ -116,6 +117,20 @@ class SchedulePoller:
             except Exception as exc:
                 log_error(f"Error claiming schedule: {exc}")
                 break
+
+        # Notification receipts have their own durable leases. Drain them on
+        # this existing poller cadence, independent of a Company's cron interval.
+        notify = getattr(self.executor, "_poll_notifications", None)
+        if asyncio.iscoroutinefunction(notify) and (self._notification_task is None or self._notification_task.done()):
+            self._notification_task = asyncio.create_task(self._notify_safe(notify))
+            self._in_flight.add(self._notification_task)
+            self._notification_task.add_done_callback(self._in_flight.discard)
+
+    async def _notify_safe(self, notify: Any) -> None:
+        try:
+            await notify()
+        except Exception as exc:
+            log_error(f"Notification delivery poll failed: {exc}")
 
     async def _execute_safe(self, schedule: Union[Schedule, Dict[str, Any]]) -> None:
         """Execute a schedule, catching all errors."""

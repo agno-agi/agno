@@ -975,3 +975,5 @@ without `--config-only` makes a real model call and leaves its Task for review.
 ### Automatic delegated lifecycle
 
 [14_managed_lifecycle](14_managed_lifecycle/README.md) exercises delegated Project/Task activation, acceptance, durable execution, evidence assessment, one revision and completion against PostgreSQL using offline models. The existing scheduler resumes the management loop after worker completion or restart; ordinary Company tools and Routines keep their narrower permissions.
+
+- [Slack Company conversations](15_slack_company/README.md): signed per-user intake, durable result delivery, tool approvals and Task cancellation.

@@ -303,8 +303,9 @@ def test_streaming_delivery_uses_existing_slack_transport(system):
 
 
 def test_tool_confirmation_is_bound_to_original_participant(system):
-    from agno.tools import tool
     from urllib.parse import urlencode
+
+    from agno.tools import tool
 
     client, os, delivery, posts, outage, auth, model = system
     calls = []
@@ -391,7 +392,14 @@ def test_same_second_task_transitions_have_distinct_delivery_intents(system, mon
     assert client.post("/slack/events", content=body, headers=headers).status_code == 200
     receipt_id = _identity(delivery._scope, "transitions")
     row = client.portal.call(delivery._store._get, receipt_id)
-    task = {"task_id": "task-1", "title": "Verified artifact", "status": "in_review", "updated_at": 100, "run_id": "attempt-1", "result": "first output"}
+    task = {
+        "task_id": "task-1",
+        "title": "Verified artifact",
+        "status": "in_review",
+        "updated_at": 100,
+        "run_id": "attempt-1",
+        "result": "first output",
+    }
     reader = AsyncMock(return_value=[task])
     monkeypatch.setattr("agno.company.conversation.aget_conversation_tasks", reader)
     client.portal.call(delivery._collect, client.app, row)
@@ -403,3 +411,335 @@ def test_same_second_task_transitions_have_distinct_delivery_intents(system, mon
     assert len(intents) == 3
     assert any("Verified revision" in item["text"] for item in intents)
     assert any("assessing the evidence" in item["text"] for item in intents)
+
+
+@pytest.fixture
+def lifecycle_system(database, monkeypatch, tmp_path):
+    from threading import Event
+
+    from slack_sdk import WebClient
+
+    from agno.agent import Agent
+    from tests.integration.db.test_company_lifecycle import SCOPES
+    from tests.integration.db.test_company_lifecycle import OfflineModel as LifecycleModel
+
+    posts, outage = [], {"active": False}
+    gate, started = Event(), Event()
+    monkeypatch.setattr(WebClient, "auth_test", lambda self: {"ok": True, "team_id": "T1", "user_id": "UBOT"})
+
+    def post(self, **kwargs):
+        if outage["active"]:
+            raise RuntimeError("offline delivery outage")
+        posts.append(kwargs)
+        return {"ok": True, "ts": str(len(posts))}
+
+    monkeypatch.setattr(WebClient, "chat_postMessage", post)
+
+    class Coordinator(LifecycleModel):
+        def invoke(self, messages, **kwargs):
+            last_user = max(i for i, message in enumerate(messages) if message.role == "user")
+            prompt = str(messages[last_user].content)
+            results = [message.content for message in messages[last_user + 1 :] if message.role == "tool"]
+            if results:
+                return ModelResponse(content=str(results[-1]), role="assistant", response_usage=MessageMetrics())
+            if "delegate" in prompt or "status" in prompt:
+                name = "delegate_task_to_member" if "delegate" in prompt else "get_submitted_tasks"
+                args = {"member_id": "company-manager", "task": "delegate"} if "delegate" in prompt else {}
+                return ModelResponse(
+                    role="assistant",
+                    tool_calls=[
+                        {
+                            "id": "coordinator-tool",
+                            "type": "function",
+                            "function": {"name": name, "arguments": json.dumps(args)},
+                        }
+                    ],
+                    response_usage=MessageMetrics(),
+                )
+            return ModelResponse(content="Unrelated answer", role="assistant", response_usage=MessageMetrics())
+
+    class Company(LifecycleModel):
+        def invoke(self, messages, **kwargs):
+            messages = [message.model_copy() for message in messages]
+            for message in reversed(messages):
+                if message.role == "user":
+                    message.content = "delegate"
+                    break
+            return super().invoke(messages, **kwargs)
+
+    class Worker(LifecycleModel):
+        async def ainvoke(self, *args, **kwargs):
+            started.set()
+            while not gate.is_set():
+                await asyncio.sleep(0.01)
+            return self.invoke(*args, **kwargs)
+
+    worker_model, assessor = Worker("worker"), LifecycleModel("assessor")
+
+    def write_and_verify_artifact(version: int) -> str:
+        """Write fixture artifact and independently read bytes and hash."""
+        path = tmp_path / ("artifact-" + str(version) + ".txt")
+        path.write_text("version=" + str(version))
+        return json.dumps(
+            {
+                "artifact": str(path),
+                "content": path.read_text(),
+                "verified_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
+        )
+
+    auth = Authorization(db=database, verification_keys=["offline-slack-jwt-key-at-least-32-bytes"], algorithm="HS256")
+    auth.define_role(
+        "member", SCOPES + ["teams:super-agent:run", "teams:super-agent:read", "sessions:read", "agents:writer:read"]
+    ).assign("alice", "member").assign("bob", "member")
+
+    def build():
+        delivery = SlackCompany("T1", "A1", "UBOT", {"U1": "alice", "U2": "bob"}, ("C1",), "https://os.example/company")
+        host = AgentOS(
+            id="slack-lifecycle",
+            db=database,
+            manager=OSManager(model=Coordinator(), access_docs=False),
+            agents=[
+                Agent(id="writer", db=database, model=worker_model, tools=[write_and_verify_artifact], telemetry=False)
+            ],
+            company=CompanyConfig(model=Company()),
+            authorization=auth,
+            user_isolation=True,
+            queue=QueueConfig(durable=True, poll_interval=0.01),
+            scheduler=True,
+            scheduler_poll_interval=3600,
+            interfaces=[Slack(company=delivery, token="offline-token", signing_secret=SECRET, streaming=False)],
+            telemetry=False,
+        )
+        host._company_assessor.model = assessor
+        return host, delivery
+
+    yield build, posts, outage, gate, started, worker_model, assessor, auth
+    gate.set()
+
+
+def wait_for(predicate):
+    for _ in range(400):
+        value = predicate()
+        if value:
+            return value
+        time.sleep(0.01)
+    raise AssertionError("Fixture condition did not complete")
+
+
+def test_slack_lifecycle_revision_responsive_chat_and_restart_delivery(lifecycle_system, database):
+    build, posts, outage, gate, started, worker_model, assessor, auth = lifecycle_system
+    host, delivery = build()
+    with TestClient(host.get_app()) as client:
+        body, headers = signed(event("delegate", message="<@UBOT> delegate"))
+        assert client.post("/slack/events", content=body, headers=headers).status_code == 200
+        assert client.post("/slack/events", content=body, headers=headers).status_code == 200
+        assert started.wait(4)
+        task = database.get_tasks()[0][0]
+        original_session = task["session_id"]
+        assert task["status"] == "in_progress" and task["accepted_by"] == "alice"
+        for key, message in (("status", "status"), ("unrelated", "what is two plus two?")):
+            body, headers = signed(event(key, message=message))
+            assert client.post("/slack/events", content=body, headers=headers).status_code == 200
+            receipt_id = _identity(delivery._scope, key)
+            row = client.portal.call(delivery._store._get, receipt_id)
+            wait_for(
+                lambda: (run := host.manager.db.get_run(row["data"]["run_id"])) and run.status.value == "COMPLETED"
+            )
+            force_delivery(client, delivery, receipt_id)
+        assert any("in_progress" in post["text"] for post in posts)
+        assert any("Unrelated answer" in post["text"] for post in posts)
+        assert not gate.is_set() and database.get_task(task["id"])["status"] == "in_progress"
+        outage["active"] = True
+        gate.set()
+        finished = wait_for(
+            lambda: (current := database.get_task(task["id"])) and current["status"] == "done" and current
+        )
+        assert finished["session_id"] == original_session and worker_model.attempts == 2
+        wait_for(lambda: database.get_project(task["project_id"])["status"] == "done")
+        force_delivery(client, delivery, _identity(delivery._scope, "delegate"))
+
+        # Make the persisted retry due before shutdown; the reconstructed app's
+        # existing scheduler poller must deliver it without a new user request.
+        def retry_due(conn):
+            conn.execute(delivery._store.table.update().values(next_at=0))
+
+        client.portal.call(delivery._store._call, retry_due)
+    # A new AgentOS, interface, queue worker and scheduler use only the shared DB.
+    host, delivery = build()
+    outage["active"] = False
+    with TestClient(host.get_app()) as client:
+        wait_for(
+            lambda: any("Task Deliver artifact: done" in post["text"] and "?task=" in post["text"] for post in posts)
+        )
+        body, headers = signed(event("delegate", message="<@UBOT> delegate"))
+        assert client.post("/slack/events", content=body, headers=headers).status_code == 200
+        assert database.get_tasks()[1] == 1 and worker_model.attempts == 2
+
+
+@pytest.mark.parametrize("stage", ["running", "review", "ready"])
+def test_slack_cancellation_withdraws_task_mandate(lifecycle_system, database, stage, monkeypatch):
+    build, posts, outage, gate, started, worker_model, assessor, auth = lifecycle_system
+    host, delivery = build()
+    with TestClient(host.get_app()) as client:
+        body, headers = signed(event("delegate", message="delegate"))
+        assert client.post("/slack/events", content=body, headers=headers).status_code == 200
+        assert started.wait(4)
+        task = database.get_tasks()[0][0]
+        if stage != "running":
+            # Hold management after worker completion to exercise cancellation
+            # at the existing reconciliation boundaries without model timing.
+            from unittest.mock import AsyncMock
+
+            monkeypatch.setattr("agno.company.lifecycle._advance_task", AsyncMock(return_value=False))
+            gate.set()
+            wait_for(lambda: database.get_task(task["id"])["status"] == "in_review")
+            if stage == "ready":
+                database.transition_task(
+                    task["id"],
+                    "ready",
+                    "Accepted revision",
+                    accepted_by="alice",
+                    executor_type="agent",
+                    executor_id="writer",
+                )
+        body, headers = signed(event("cancel", message="cancel " + task["id"]))
+        assert client.post("/slack/events", content=body, headers=headers).status_code == 200
+        gate.set()
+        receipt = _identity(delivery._scope, "cancel")
+        for _ in range(40):
+            force_delivery(client, delivery, receipt)
+            if database.get_task(task["id"])["status"] == "cancelled":
+                break
+            time.sleep(0.02)
+        assert database.get_task(task["id"])["status"] == "cancelled"
+        force_delivery(client, delivery, receipt)
+        assert any("is cancelled" in post["text"] for post in posts)
+        client.portal.call(client.app.state.scheduler_executor._tick)
+        assert database.get_task(task["id"])["status"] == "cancelled"
+
+
+@pytest.mark.parametrize(
+    "mode, expected",
+    [
+        ("question", "artifact needs"),
+        ("bad_evidence", "verification failed"),
+        ("always_revise", "revision limit exhausted"),
+    ],
+)
+def test_slack_delivers_missing_inputs_and_bounded_failures(lifecycle_system, database, mode, expected):
+    build, posts, outage, gate, started, worker_model, assessor, auth = lifecycle_system
+    setattr(assessor, mode, True)
+    host, delivery = build()
+    with TestClient(host.get_app()) as client:
+        gate.set()
+        body, headers = signed(event(mode, message="delegate"))
+        assert client.post("/slack/events", content=body, headers=headers).status_code == 200
+
+        def finished():
+            tasks, _ = database.get_tasks()
+            return tasks and tasks[0]["status"] == "backlog" and tasks[0].get("result") and tasks[0]
+
+        task = wait_for(finished)
+        receipt_id = _identity(delivery._scope, mode)
+        force_delivery(client, delivery, receipt_id)
+        assert any(
+            expected in post["text"] and post["channel"] == "C1" and post["thread_ts"] == "1.000" for post in posts
+        ), posts
+        attempts = worker_model.attempts
+        client.portal.call(client.app.state.scheduler_executor._tick)
+        assert worker_model.attempts == attempts <= 3
+        assert database.get_project(task["project_id"])["status"] != "done"
+
+
+def test_slack_cancel_missing_input_task(lifecycle_system, database):
+    build, posts, outage, gate, started, worker_model, assessor, auth = lifecycle_system
+    assessor.question = True
+    host, delivery = build()
+    with TestClient(host.get_app()) as client:
+        gate.set()
+        body, headers = signed(event("delegate", message="delegate"))
+        assert client.post("/slack/events", content=body, headers=headers).status_code == 200
+        task = wait_for(
+            lambda: (
+                (tasks := database.get_tasks()[0])
+                and tasks[0]["status"] == "backlog"
+                and tasks[0].get("result")
+                and tasks[0]
+            )
+        )
+        assert task["executor_type"] is None
+        body, headers = signed(event("cancel", message="cancel " + task["id"]))
+        assert client.post("/slack/events", content=body, headers=headers).status_code == 200
+        assert database.get_task(task["id"])["status"] == "cancelled"
+        assert any("is cancelled" in post["text"] for post in posts)
+
+
+@pytest.mark.parametrize("decision", ["failed", "question"])
+def test_slack_project_assessment_delivered_after_task_done(lifecycle_system, database, monkeypatch, decision):
+    from agno.company import lifecycle
+
+    original = lifecycle._assess
+
+    async def assess(host, identity, prompt, evidence):
+        if prompt["kind"] == "project":
+            return lifecycle.OutcomeAssessment(
+                decision=decision,
+                reason="Project needs final context",
+                next_instruction="Which release should we target?",
+            )
+        return await original(host, identity, prompt, evidence)
+
+    monkeypatch.setattr(lifecycle, "_assess", assess)
+    build, posts, outage, gate, started, worker_model, assessor, auth = lifecycle_system
+    host, delivery = build()
+    with TestClient(host.get_app()) as client:
+        gate.set()
+        body, headers = signed(event("delegate", message="delegate"))
+        assert client.post("/slack/events", content=body, headers=headers).status_code == 200
+        task = wait_for(lambda: (tasks := database.get_tasks()[0]) and tasks[0]["status"] == "done" and tasks[0])
+        wait_for(
+            lambda: (
+                database.get_project(task["project_id"])["transitions"][-1].get("system_decision", {}).get("decision")
+                == decision
+            )
+        )
+        force_delivery(client, delivery, _identity(delivery._scope, "delegate"))
+        assert any(
+            "Project needs final context" in post["text"]
+            and decision in post["text"]
+            and "Which release" in post["text"]
+            for post in posts
+        ), posts
+
+
+def test_removed_channel_never_receives_delayed_content(system):
+    client, os, delivery, posts, outage, auth, model = system
+    outage["active"] = True
+    body, headers = signed(event("removed-channel"))
+    assert client.post("/slack/events", content=body, headers=headers).status_code == 200
+    delivery.channels = ("C2",)
+    outage["active"] = False
+    receipt_id = _identity(delivery._scope, "removed-channel")
+    force_delivery(client, delivery, receipt_id)
+    assert posts == []
+    row = client.portal.call(delivery._store._get, receipt_id)
+    assert row["data"]["state"] == "withdrawn" and row["data"]["notifications"] == {}
+
+
+@pytest.mark.parametrize("mention_first", [True, False])
+def test_dual_slack_event_types_do_not_duplicate_execution(system, mention_first):
+    client, os, delivery, posts, outage, auth, model = system
+    body, headers = signed(event("seed"))
+    assert client.post("/slack/events", content=body, headers=headers).status_code == 200
+    wait_for(lambda: model.calls == 1)
+    mention = event("mention", message="<@UBOT> do this once")
+    duplicate = event("message", message="<@UBOT> do this once")
+    duplicate["event"]["type"] = "message"
+    for payload in [mention, duplicate] if mention_first else [duplicate, mention]:
+        body, headers = signed(payload)
+        assert client.post("/slack/events", content=body, headers=headers).status_code == 200
+    receipt = client.portal.call(delivery._store._get, _identity(delivery._scope, "mention"))
+    wait_for(lambda: (run := os.manager.db.get_run(receipt["data"]["run_id"])) and run.status.value == "COMPLETED")
+    assert model.calls == 2
+    assert client.portal.call(delivery._store._get, _identity(delivery._scope, "message")) is None

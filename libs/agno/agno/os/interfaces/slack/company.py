@@ -12,8 +12,8 @@ from uuid import NAMESPACE_URL, uuid5
 
 from fastapi import HTTPException
 
-
 _slack_cancel: ContextVar[Optional[tuple[str, str]]] = ContextVar("slack_company_cancel", default=None)
+
 
 def _identity(*parts: str) -> str:
     return str(uuid5(NAMESPACE_URL, json.dumps(parts)))
@@ -55,6 +55,10 @@ class SlackCompany:
     def _bind(self, os: Any, prefix: str) -> None:
         from agno.os.interfaces.slack.store import _SlackStore
 
+        if not os.user_isolation:
+            raise ValueError(
+                "SlackCompany requires user_isolation=True for participant-owned conversations and approvals"
+            )
         if os.company is None or os.manager is None or os._authz_role_store is None or not os.authorization:
             raise ValueError("SlackCompany requires CompanyOS, Super Agent and managed platform authorization")
         if os.queue is None or not os.queue.durable or not os._scheduler_enabled:
@@ -72,7 +76,15 @@ class SlackCompany:
         ):
             raise ValueError("SlackCompany requires the PostgreSQL durable queue")
         self._os = os
-        self._scope = _identity(str(os.id), prefix, self.workspace_id, self.app_id)
+        self._scope = _identity(
+            str(os.id),
+            prefix,
+            self.workspace_id,
+            self.app_id,
+            str(db.id),
+            str(db.db_schema),
+            str(db.session_table_name),
+        )
         self._store = _SlackStore(db, self._scope)
 
     async def _initialize(self) -> None:
@@ -133,6 +145,10 @@ class SlackCompany:
             or event.get("user") == self.bot_user_id
             or event.get("type") not in {"message", "app_mention"}
         ):
+            return
+        # Slack can emit both subscribed event types for the same mentioned
+        # message, with distinct event IDs. Only app_mention owns that intake.
+        if event.get("type") == "message" and "<@" + self.bot_user_id + ">" in str(event.get("text", "")):
             return
         user, channel, thread = self._envelope(data)
         await self._initialize()
@@ -203,34 +219,65 @@ class SlackCompany:
         data = row["data"]
         if data.get("kind") == "cancel":
             task = await self._task(app, row, data["task_id"], write=True)
-            if task.get("job_id") and task["status"] not in {"done", "cancelled"}:
-                path = f"/company/runs/{quote(task['job_id'], safe='')}/cancel"
-                token = _slack_cancel.set((path, row["principal"]))
+            if task["status"] != "cancelled":
+                if task.get("job_id") and task["status"] == "in_progress":
+                    path = f"/company/runs/{quote(task['job_id'], safe='')}/cancel"
+                    cancel_token = _slack_cancel.set((path, row["principal"]))
+                    try:
+                        await self._request(app, row, "POST", path)
+                    finally:
+                        _slack_cancel.reset(cancel_token)
+                path = f"/company/tasks/{quote(task['id'], safe='')}/transitions"
+                cancel_token = _slack_cancel.set((path, row["principal"]))
                 try:
-                    await self._request(app, row, "POST", path)
+                    await self._request(
+                        app,
+                        row,
+                        "POST",
+                        path,
+                        json={"target": "cancelled", "reason": "Cancelled by the originating Slack participant"},
+                    )
+                except HTTPException as exc:
+                    if exc.status_code == 409:
+                        # A live worker still owns the Task. The durable receipt
+                        # retries after cancellation settles; never claim success yet.
+                        raise HTTPException(503, "Waiting for Task cancellation to settle") from exc
+                    raise
                 finally:
-                    _slack_cancel.reset(token)
+                    _slack_cancel.reset(cancel_token)
             data["state"] = "submitted"
-            self._intent(row, "cancel", "Cancellation processed for Task " + task["id"] + ".")
+            self._intent(row, "cancel", "Task " + task["id"] + " is cancelled.")
             return
         if data.get("kind") == "continue":
             # The continue route validates persisted requirements and the queue
             # owns recovery. A terminal run is never restarted by a delivery retry.
-            current = await _call(self._os.manager.db, "get_run", run_id=data["run_id"])
-            status = getattr(current, "status", None)
+            mapping = data.get("worker")
+            form = {"stream": "false", "background": "true"}
+            if mapping:
+                from agno.os.interfaces.slack.worker_hitl import _worker_run
+
+                current = await _worker_run(self, app, row, mapping, write=True)
+                status = current.get("status")
+                path = f"/{mapping['executor_type']}s/{quote(mapping['executor_id'], safe='')}/runs/{quote(data['run_id'], safe='')}/continue"
+                form["session_id"] = mapping["session_id"]
+                if mapping["executor_type"] == "agent":
+                    form["tools"] = json.dumps([req["tool_execution"] for req in data["requirements"]])
+                else:
+                    form["requirements"] = json.dumps(data["requirements"])
+            else:
+                current = await _call(self._os.manager.db, "get_run", run_id=data["run_id"])
+                status = getattr(current, "status", None)
+                path = f"/teams/super-agent/runs/{data['run_id']}/continue"
+                form.update(session_id=row["session_id"], requirements=json.dumps(data["requirements"]))
             if str(getattr(status, "value", status)).upper() == "PAUSED":
-                await self._request(
-                    app,
-                    row,
-                    "POST",
-                    f"/teams/super-agent/runs/{data['run_id']}/continue",
-                    data={
-                        "session_id": row["session_id"],
-                        "requirements": json.dumps(data["requirements"]),
-                        "stream": "false",
-                        "background": "true",
-                    },
-                )
+                try:
+                    await self._request(app, row, "POST", path, data=form)
+                except HTTPException as exc:
+                    if exc.status_code == 409 and "Run is settling between execution legs; retry in a moment" in str(
+                        exc.detail
+                    ):
+                        raise HTTPException(503, "Waiting for the paused run to settle") from exc
+                    raise
             data["state"] = "submitted"
             return
         # A committed historical run also fences replay after queue retention.
@@ -260,7 +307,12 @@ class SlackCompany:
         authority = await self._authority(app, row["data"]["user"], row["principal"])
         tasks = await aget_conversation_tasks(
             self._os,
-            RunContext(run_id=row["data"]["run_id"], session_id=row["session_id"], user_id=row["principal"], authorization=authority),
+            RunContext(
+                run_id=row["data"]["run_id"],
+                session_id=row["session_id"],
+                user_id=row["principal"],
+                authorization=authority,
+            ),
         )
         if not any(task["task_id"] == task_id for task in tasks):
             raise PermissionError("Task does not belong to this participant's conversation")
@@ -269,7 +321,8 @@ class SlackCompany:
             raise PermissionError("Task is unavailable")
         if write:
             await authority.arequire("tasks", "write")
-            await authority.arequire(task["executor_type"] + "s", "run", task["executor_id"])
+            if task["status"] == "in_progress" and task.get("executor_type"):
+                await authority.arequire(task["executor_type"] + "s", "run", task["executor_id"])
         return task
 
     async def _collect(self, app: Any, row: Dict[str, Any]) -> bool:
@@ -330,15 +383,23 @@ class SlackCompany:
             return complete
         tasks = payload if isinstance(payload, list) else payload.get("tasks", payload.get("data", []))
         for task in tasks:
+            from agno.os.interfaces.slack.worker_hitl import _collect_worker_pause
+
+            await _collect_worker_pause(self, app, row, task)
             status = task["status"]
             active = active or status not in {"done", "cancelled"}
             if status in {"done", "cancelled", "in_review", "backlog"}:
-                key = "task:" + task["task_id"] + ":" + hashlib.sha256(
-                    json.dumps(task, sort_keys=True, default=str).encode()
-                ).hexdigest()
+                key = (
+                    "task:"
+                    + task["task_id"]
+                    + ":"
+                    + hashlib.sha256(json.dumps(task, sort_keys=True, default=str).encode()).hexdigest()
+                )
                 detail = (
                     "Work finished; CompanyOS is assessing the evidence."
                     if status == "in_review"
+                    else str(task.get("reason") or "") + "\n" + str(task.get("result") or "")
+                    if status == "done"
                     else task.get("reason") or task.get("result") or status
                 )
                 link = (
@@ -348,10 +409,15 @@ class SlackCompany:
                     + quote(task["task_id"], safe="")
                 )
                 self._intent(row, key, f"Task {task['title']}: {status}\n{detail}\n{link}")
+        from agno.os.interfaces.slack.project_delivery import _collect_projects
+
+        active = await _collect_projects(self, app, row, tasks) or active
         return complete and not active
 
     async def _deliver(self, app: Any, row: Dict[str, Any]) -> None:
         data = row["data"]
+        if data["channel"] not in self.channels:
+            raise PermissionError("Slack destination is no longer allowed")
         # The token must belong to the configured installation before any post.
         identity = await asyncio.to_thread(self._tools.client.auth_test)
         if identity.get("team_id") != self.workspace_id or identity.get("user_id") != self.bot_user_id:
@@ -362,6 +428,9 @@ class SlackCompany:
             if key != "failure":
                 await self._authority(app, data["user"], row["principal"])
             await self._store._save(row)
+            if key.startswith("project:"):
+                authority = await self._authority(app, data["user"], row["principal"])
+                await authority.arequire("projects", "read")
             if key.startswith("task:"):
                 from agno.company.conversation import aget_conversation_tasks
                 from agno.run import RunContext
@@ -379,6 +448,18 @@ class SlackCompany:
                 )
                 if not any(task["task_id"] == key.split(":")[1] for task in visible):
                     raise PermissionError("Task is no longer visible to the originating participant")
+            if notification.get("worker"):
+                from agno.os.interfaces.slack.worker_hitl import _worker_run
+
+                try:
+                    current = await _worker_run(self, app, row, notification["worker"])
+                    obsolete = str(current.get("status", "")).upper() != "PAUSED"
+                except PermissionError:
+                    obsolete = True
+                if obsolete:
+                    notification.update(sent=True, suppressed=True)
+                    await self._store._save(row)
+                    continue
             text = str(notification["text"]).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             if self._stream_client is not None and not notification.get("blocks") and key != "receipt":
                 from agno.os.interfaces.slack.helpers import open_chat_stream
@@ -411,6 +492,10 @@ class SlackCompany:
         if row is None:
             return False
         finished = False
+        if row["data"]["channel"] not in self.channels:
+            row["data"].update(state="withdrawn", notifications={}, error="Slack destination removed")
+            await self._store._save(row, release=True, delay=86400 * 365 * 100)
+            return True
         try:
             if row["data"]["state"] == "failed":
                 await self._deliver(app, row)
@@ -496,7 +581,16 @@ class SlackCompany:
         parent = await self._store._by_run(run_id, authority.context.principal_id, channel, thread)
         if parent is None:
             raise HTTPException(403, "This participant does not own this paused conversation")
-        run = await _call(self._os.manager.db, "get_run", run_id=run_id)
+        mapping = parent["data"].get("worker_runs", {}).get(run_id)
+        if mapping:
+            from agno.os.interfaces.slack.worker_hitl import _worker_run
+
+            try:
+                run = await _worker_run(self, request.app, parent, mapping, write=True)
+            except PermissionError as exc:
+                raise HTTPException(403, str(exc)) from exc
+        else:
+            run = await _call(self._os.manager.db, "get_run", run_id=run_id)
         value = run.to_dict() if hasattr(run, "to_dict") else run
         if not value or str(value.get("status", "")).upper() != "PAUSED":
             return
@@ -524,6 +618,8 @@ class SlackCompany:
             "notifications": {},
             "attempts": 0,
             "requirements": [req.to_dict() for req in requirements],
+            "run_id": run_id,
+            **({"worker": mapping} if mapping else {}),
         }
         await self._store._receive(key, parent["session_id"], parent["principal"], data)
         background_tasks.add_task(self._process, request.app, key)

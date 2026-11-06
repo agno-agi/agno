@@ -1490,6 +1490,7 @@ def get_team_router(
         # their scheduler identity. Use the same resolved owner for continuation
         # reads and writes as for the ownership gate above.
         from agno.os.middleware.user_scope import resolve_run_user_id
+
         user_id = resolve_run_user_id(request, user_id)
 
         # Version-stable continuation: a run started with an explicitly pinned
