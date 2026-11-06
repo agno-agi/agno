@@ -1,6 +1,6 @@
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Literal, Optional, Tuple, Union
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -332,35 +332,35 @@ class ValkeyDb(BaseDb):
             Exception: If any error occurs while getting the records.
         """
         try:
-            keys = get_all_keys_for_table(
-                valkey_client=self.valkey_client, prefix=self.db_prefix, table_type=table_type
-            )
-
-            if not keys:
-                return []
-
-            # Batch all GETs in a single pipeline round trip
-            pipeline = self._create_pipeline()
-            for key in keys:
-                pipeline.get(key)
-
-            results = self._exec_pipeline(pipeline)
-            if not results:
-                return []
-
-            records = []
-            for raw in results:
-                if raw is None or isinstance(raw, RequestError):
-                    continue
-                data_str: str = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw) if raw else ""
-                if data_str:
-                    records.append(deserialize_data(data_str))
-
-            return records
+            return list(self._iter_records(table_type))
 
         except Exception as e:
             log_error(f"Error getting all records for {table_type}: {str(e)}")
             return []
+
+    def _iter_records(self, table_type: str, batch_size: Optional[int] = None) -> Iterator[Dict[str, Any]]:
+        """Yield every record for a table type, pipelining batch_size GETs per round trip.
+
+        Args:
+            table_type (str): The type of table to get the records from.
+            batch_size (Optional[int]): GETs per pipeline. Defaults to all keys in one round trip.
+
+        Raises:
+            Exception: If any error occurs while getting the records.
+        """
+        keys = get_all_keys_for_table(valkey_client=self.valkey_client, prefix=self.db_prefix, table_type=table_type)
+        step = batch_size or len(keys)
+        for start in range(0, len(keys), step or 1):
+            pipeline = self._create_pipeline()
+            for key in keys[start : start + step]:
+                pipeline.get(key)
+
+            for raw in self._exec_pipeline(pipeline) or []:
+                if raw is None or isinstance(raw, RequestError):
+                    continue
+                data_str: str = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw) if raw else ""
+                if data_str:
+                    yield deserialize_data(data_str)
 
     def _schema_version_key(self, table_name: str) -> str:
         """Key holding the schema version stamp for the given table."""

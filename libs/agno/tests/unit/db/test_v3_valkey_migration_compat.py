@@ -315,6 +315,33 @@ def test_v3_migration_is_non_destructive():
     assert raw is not None and raw.get("runs") is not None
 
 
+def test_v3_migration_reads_sessions_one_batch_at_a_time():
+    """Session GETs go out in BATCH_SIZE pipelines, each copied before the next is read."""
+    from unittest.mock import patch
+
+    from agno.db.migrations.versions import v3_0_0
+
+    db = _new_db()
+    for i in range(5):
+        _insert_legacy_session(db, f"s{i}", [_make_run(f"r{i}", f"s{i}", "x").to_dict()])
+    exec_pipeline = db._exec_pipeline
+    pipelines: List[List[str]] = []
+
+    def record(pipeline):
+        pipelines.append([command[0] for command in pipeline.commands])
+        return exec_pipeline(pipeline)
+
+    db._exec_pipeline = record  # type: ignore[method-assign]
+
+    with patch.object(v3_0_0, "BATCH_SIZE", 2):
+        v3_0_0.up(db, table_type="sessions", table_name="agno_sessions")
+
+    reads = [ops for ops in pipelines if ops and set(ops) == {"get"}]
+    assert [len(ops) for ops in reads] == [2, 2, 1]
+    kinds = ["read" if set(ops) == {"get"} else "write" for ops in pipelines if ops]
+    assert kinds == ["read", "write", "write", "read", "write", "write", "read", "write"]
+
+
 def test_cleanup_refuses_when_legacy_runs_still_present():
     db = _new_db()
     _insert_legacy_session(db, "s7", [_make_run("r1", "s7", "x").to_dict()])

@@ -28,11 +28,13 @@ RUNS_PER_SESSION = 20
 
 # More than two migration batches, so cursors are observed while rows remain unread.
 SMALL_SESSIONS = 120
-# ~300 MB of runs JSON: far above one batch, well within a CI runner's memory.
-LARGE_SESSIONS = 1500
+# Streaming holds a few batches whatever the table size; buffering holds the whole table.
+# Comparing two sizes cancels the fixed cost of one batch, which is close to half of
+# any single payload small enough for CI.
+MEMORY_SMALL_SESSIONS = 500
+MEMORY_LARGE_SESSIONS = 2000
 RUN_BYTES = 10_000
-# Streaming costs a few batches of rows; buffering costs the whole table (>1x).
-MAX_GROWTH_FRACTION = 0.5
+MAX_GROWTH_PER_EXTRA_BYTE = 0.5
 
 
 def _server_reachable() -> bool:
@@ -55,15 +57,25 @@ def _postgres_server():
         pytest.skip(f"Postgres server not reachable at {DB_URL}")
 
 
+def _new_schema() -> str:
+    return f"v3_stream_{uuid.uuid4().hex[:8]}"
+
+
+def _drop_schema(name: str) -> None:
+    engine = create_engine(DB_URL)
+    try:
+        with engine.connect() as conn:
+            conn.execute(text(f'DROP SCHEMA IF EXISTS "{name}" CASCADE'))
+            conn.commit()
+    finally:
+        engine.dispose()
+
+
 @pytest.fixture
 def schema(_postgres_server):
-    name = f"v3_stream_{uuid.uuid4().hex[:8]}"
+    name = _new_schema()
     yield name
-    engine = create_engine(DB_URL)
-    with engine.connect() as conn:
-        conn.execute(text(f'DROP SCHEMA IF EXISTS "{name}" CASCADE'))
-        conn.commit()
-    engine.dispose()
+    _drop_schema(name)
 
 
 def _seed_legacy_sessions(schema: str, sessions: int, run_bytes: int = 1_000) -> int:
@@ -208,7 +220,7 @@ async def test_async_postgres_migration_reads_sessions_through_a_server_side_cur
 # Memory is bounded by the batch, not the table
 # ---------------------------------------------------------------------------
 
-# Peak RSS is a process-wide high-water mark, so the migration runs in a fresh process.
+# Peak RSS is a process-wide high-water mark, so each migration runs in a fresh process.
 _CHILD = """
 import asyncio, resource, sys
 
@@ -230,21 +242,32 @@ print(peak_bytes() - before)
 """
 
 
+def _migration_growth(mode: str, sessions: int) -> tuple:
+    """Seed a legacy table, migrate it in a fresh process, and return (payload bytes, peak growth bytes)."""
+    schema = _new_schema()
+    try:
+        payload = _seed_legacy_sessions(schema, sessions, run_bytes=RUN_BYTES)
+        done = subprocess.run(
+            [sys.executable, "-c", _CHILD, mode, DB_URL, schema, SESSIONS_TABLE],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        assert done.returncode == 0, done.stderr[-2000:]
+        assert _runs_copied(schema) == sessions * RUNS_PER_SESSION
+        return payload, int(done.stdout.strip().splitlines()[-1])
+    finally:
+        _drop_schema(schema)
+
+
 @pytest.mark.parametrize("mode", ["sync", "async"])
-def test_migration_memory_does_not_grow_with_the_legacy_table(schema, mode):
-    payload = _seed_legacy_sessions(schema, LARGE_SESSIONS, run_bytes=RUN_BYTES)
+def test_migration_memory_does_not_grow_with_the_legacy_table(_postgres_server, mode):
+    small_payload, small_growth = _migration_growth(mode, MEMORY_SMALL_SESSIONS)
+    large_payload, large_growth = _migration_growth(mode, MEMORY_LARGE_SESSIONS)
 
-    done = subprocess.run(
-        [sys.executable, "-c", _CHILD, mode, DB_URL, schema, SESSIONS_TABLE],
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
-
-    assert done.returncode == 0, done.stderr[-2000:]
-    growth = int(done.stdout.strip().splitlines()[-1])
-    assert _runs_copied(schema) == LARGE_SESSIONS * RUNS_PER_SESSION
-    assert growth < payload * MAX_GROWTH_FRACTION, (
-        f"{mode} migration grew peak memory by {growth / 1e6:.0f} MB while moving "
-        f"{payload / 1e6:.0f} MB of runs; the read is buffering the table instead of streaming it"
+    extra_payload = large_payload - small_payload
+    extra_growth = large_growth - small_growth
+    assert extra_growth < extra_payload * MAX_GROWTH_PER_EXTRA_BYTE, (
+        f"{mode} migration peak memory grew {extra_growth / 1e6:.0f} MB more for "
+        f"{extra_payload / 1e6:.0f} MB more runs; the read is buffering the table instead of streaming it"
     )

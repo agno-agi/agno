@@ -133,3 +133,34 @@ class TestMigrateDynamodbPropagates:
 
         assert _migrate_dynamodb(db, "sessions", "agno_sessions") is True
         assert client.put_item.call_count == 1
+
+
+class TestMigrateDynamodbPages:
+    """Each scan page is copied before the next one is read, so memory is bounded by one page."""
+
+    def _session_item(self, session_id: str) -> dict:
+        import json
+
+        run = {"run_id": f"r-{session_id}", "agent_id": "a1", "status": "COMPLETED"}
+        return {"session_id": {"S": session_id}, "user_id": {"S": "u1"}, "runs": {"S": json.dumps([run])}}
+
+    def test_runs_are_copied_page_by_page(self):
+        client = _make_client()
+        pages = [
+            {"Items": [self._session_item("s1"), self._session_item("s2")], "LastEvaluatedKey": {"k": 1}},
+            {"Items": [self._session_item("s3")], "LastEvaluatedKey": {"k": 2}},
+            {"Items": [self._session_item("s4")]},
+        ]
+        puts_before_each_scan = []
+
+        def scan(**kwargs):
+            puts_before_each_scan.append(client.put_item.call_count)
+            return pages[len(puts_before_each_scan) - 1]
+
+        client.scan.side_effect = scan
+        db = TestMigrateDynamodbPropagates()._make_db(client)
+
+        assert _migrate_dynamodb(db, "sessions", "agno_sessions") is True
+        assert puts_before_each_scan == [0, 2, 3]
+        assert client.put_item.call_count == 4
+        assert [c.kwargs.get("ExclusiveStartKey") for c in client.scan.call_args_list] == [None, {"k": 1}, {"k": 2}]
