@@ -724,6 +724,33 @@ async def test_stream_handles_unknown_event_type():
 
 
 @pytest.mark.asyncio
+async def test_stream_handles_run_output_payload_with_events_list():
+    """Verify stream parser supports RunOutput-shaped payloads with `events`."""
+    from agno.run.agent import RunCompletedEvent, RunStartedEvent
+
+    client = AgentOSClient(base_url="http://localhost:7777")
+
+    mock_lines = [
+        'data: {"run_id": "run-123", "events": [{"event": "RunStarted", "run_id": "run-123", "agent_id": "agent-1", "created_at": 1234567890}, {"event": "RunCompleted", "run_id": "run-123", "agent_id": "agent-1", "created_at": 1234567890}]}',
+    ]
+
+    async def async_generator():
+        for line in mock_lines:
+            yield line
+
+    with patch.object(client, "_astream_post_form_data") as mock_stream:
+        mock_stream.return_value = async_generator()
+
+        events = []
+        async for event in client.run_agent_stream("agent-123", "test"):
+            events.append(event)
+
+        assert len(events) == 2
+        assert isinstance(events[0], RunStartedEvent)
+        assert isinstance(events[1], RunCompletedEvent)
+
+
+@pytest.mark.asyncio
 async def test_stream_handles_empty_lines():
     """Verify empty lines and comments are skipped."""
     from agno.run.agent import RunCompletedEvent, RunStartedEvent
