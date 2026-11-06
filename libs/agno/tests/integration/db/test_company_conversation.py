@@ -105,6 +105,8 @@ async def system(request):
         if request.param
         else False
     )
+    if request.param == "managed":
+        auth.define_role("caller", ["agent_os:admin"]).assign("alice", "caller").assign("owner", "caller")
     agent_os = AgentOS(
         id="conversation-test",
         authorization=auth,
@@ -116,6 +118,7 @@ async def system(request):
         queue=queue_config,
         telemetry=False,
     )
+    agent_os._test_authorization = auth
     app = agent_os.get_app()
     components = {"writer": worker_agent, MANAGER_TEAM_ID: agent_os.manager}
     worker = QueueWorker(
@@ -267,3 +270,53 @@ async def test_restart_retains_associations_and_duplicate_submission(system):
     finally:
         replica.close()
     assert (await execute_one(worker))["status"] == "completed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("system", ["managed"], indirect=True)
+async def test_managed_caller_is_preserved_and_revocation_stops_worker(system):
+    client, db, worker, agent_os, components = system
+    task = await accepted(client)
+    receipt = await client.post("/company/conversations/managed/messages", json={"message": "submit:" + task["id"]})
+    assert receipt.status_code == 202, receipt.text
+    assert (await execute_one(worker))["status"] == "completed"
+    saved = db.get_task(task["id"])
+    assert saved["status"] == "in_progress", db.get_run(receipt.json()["run_id"], deserialize=False)
+    assert saved["transitions"][-1]["started_by"] == "alice"
+    agent_os._test_authorization.unassign("alice", "caller")
+    ran = []
+    original = components["writer"].model.ainvoke
+
+    async def record(*args, **kwargs):
+        ran.append(True)
+        return await original(*args, **kwargs)
+
+    components["writer"].model.ainvoke = record
+    assert (await execute_one(worker))["status"] == "failed"
+    assert ran == []
+
+
+@pytest.mark.asyncio
+async def test_committed_ticket_recovers_conversation_after_projection_failure(system, monkeypatch):
+    client, db, worker, _, _ = system
+    task = await accepted(client)
+    response = await client.post("/company/conversations/recover/messages", json={"message": "submit:" + task["id"]})
+    assert response.status_code == 202
+    with monkeypatch.context() as outage:
+
+        def unavailable(*args, **kwargs):
+            raise RuntimeError("Task projection temporarily unavailable")
+
+        outage.setattr(db, "start_task_run", unavailable)
+        await execute_one(worker)
+    assert db.get_task(task["id"])["status"] == "ready"
+    # A fresh queue worker restores origin from the committed ticket before reserving execution.
+    restarted = QueueWorker(
+        worker.store, worker.resolve_component, worker.config, authorization_app=worker.authorization_app
+    )
+    restarted._company_db = db
+    assert (await execute_one(restarted))["status"] == "completed"
+    task = db.get_task(task["id"])
+    assert task["status"] == "in_review"
+    start = next(event for event in task["transitions"] if event.get("company_conversation"))
+    assert start["company_conversation"]["run_id"] == response.json()["run_id"]
