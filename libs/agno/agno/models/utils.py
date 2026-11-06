@@ -28,6 +28,7 @@ _PROVIDERS: Dict[str, Tuple[str, str, str, str]] = {
     ),
     "cerebras": ("agno.models.cerebras", "Cerebras", "Cerebras", "cerebras"),
     "cerebras-openai": ("agno.models.cerebras", "CerebrasOpenAI", "CerebrasOpenAI", "cerebrasopenai"),
+    "cheaperinference": ("agno.models.cheaperinference", "CheaperInference", "CheaperInference", "cheaperinference"),
     "cohere": ("agno.models.cohere", "Cohere", "cohere", "cohere"),
     "cometapi": ("agno.models.cometapi", "CometAPI", "CometAPI", "openai"),
     "cloudflare": ("agno.models.cloudflare", "Cloudflare", "Cloudflare", "cloudflare"),
