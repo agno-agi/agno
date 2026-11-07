@@ -1180,6 +1180,9 @@ class AgentOS:
                 # Agent Cards declare how to authenticate when the OS requires a bearer token
                 if getattr(interface, "security_schemes", None) is None:
                     interface.security_schemes = self._get_a2a_security_schemes()  # type: ignore[attr-defined]
+            if interface.type == "slack" and getattr(interface, "company", None) is not None:
+                interface.company._bind(self, interface.prefix)  # type: ignore[attr-defined]
+                interface.team = self.manager
             interface_router = interface.get_router()
             if getattr(interface, "authenticates_own_requests", False):
                 self._public_interface_routes.extend(

@@ -734,6 +734,12 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
         outcomes.extend(await self._complete_projects())
         return outcomes
 
+    async def _poll_notifications(self):
+        for interface in self.agent_os.interfaces:
+            delivery = getattr(interface, "company", None) if interface.type == "slack" else None
+            if delivery is not None:
+                await delivery._tick(self.app)
+
     async def _complete_projects(self):
         from agno.company.manager import AsyncCompanyManager, CompanyManager
         from agno.company.refresh import _records

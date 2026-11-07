@@ -5,6 +5,7 @@ from fastapi.routing import APIRouter
 
 from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.base import BaseInterface
+from agno.os.interfaces.slack.company import SlackCompany
 from agno.os.interfaces.slack.router import attach_routes
 from agno.team import RemoteTeam, Team
 from agno.workflow import RemoteWorkflow, Workflow
@@ -42,7 +43,9 @@ class Slack(BaseInterface):
         markdown: bool = True,
         unfurl_links: bool = True,
         unfurl_media: bool = True,
+        company: Optional[SlackCompany] = None,
     ):
+        self.company = company
         self.agent = agent
         self.team = team
         self.workflow = workflow
@@ -65,7 +68,7 @@ class Slack(BaseInterface):
         self.unfurl_links = unfurl_links
         self.unfurl_media = unfurl_media
 
-        if not (self.agent or self.team or self.workflow):
+        if not (self.agent or self.team or self.workflow or self.company):
             raise ValueError("Slack requires an agent, team, or workflow")
 
     def get_router(self) -> APIRouter:
@@ -90,6 +93,7 @@ class Slack(BaseInterface):
             markdown=self.markdown,
             unfurl_links=self.unfurl_links,
             unfurl_media=self.unfurl_media,
+            company=self.company,
         )
 
         return self.router

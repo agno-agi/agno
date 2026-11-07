@@ -241,3 +241,26 @@ class TestPollerExecuteSafe:
         poller = SchedulePoller(db=mock_db, executor=executor)
         # Should not raise
         await poller._execute_safe({"id": "s1"})
+
+
+@pytest.mark.asyncio
+async def test_notification_poll_is_independent_and_single_flight(mock_db, mock_executor):
+    gate = asyncio.Event()
+
+    async def notify():
+        await gate.wait()
+
+    mock_executor._poll_notifications = AsyncMock(side_effect=notify)
+    poller = SchedulePoller(db=mock_db, executor=mock_executor)
+    poller._running = True
+    await poller._poll_once()
+    await asyncio.sleep(0)
+    await poller._poll_once()
+    assert mock_executor._poll_notifications.await_count == 1
+    assert mock_executor.execute.await_count == 0
+    gate.set()
+    await poller._notification_task
+    await poller._poll_once()
+    await asyncio.sleep(0)
+    assert mock_executor._poll_notifications.await_count == 2
+    await poller.stop()

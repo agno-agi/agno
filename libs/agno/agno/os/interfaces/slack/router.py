@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from ssl import SSLContext
-from typing import Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -59,6 +59,7 @@ def attach_routes(
     markdown: bool = True,
     unfurl_links: bool = True,
     unfurl_media: bool = True,
+    company: Optional[Any] = None,
 ) -> APIRouter:
     # Inner functions capture config via closure to keep each instance isolated
     entity = agent or team or workflow
@@ -106,6 +107,10 @@ def attach_routes(
         unfurl_media=unfurl_media,
         markdown=markdown,
     )
+    if company is not None:
+        company._tools = slack_tools
+        company._stream_client = hitl._client() if streaming else None
+
     event_handler = SlackEventHandler(
         slack_tools=slack_tools,
         ssl=ssl,
@@ -163,6 +168,12 @@ def attach_routes(
             log_warning(f"Ignoring Slack event with a non-JSON body: {str(e)}")
             return SlackEventResponse(status="ok")
 
+        if company is not None:
+            if data.get("type") == "url_verification":
+                return SlackChallengeResponse(challenge=data.get("challenge"))
+            await company._receive(data, request, background_tasks)
+            return SlackEventResponse(status="ok")
+
         # A retry is a duplicate only if the original delivery reached us, so dedupe on
         # event_id rather than dropping every retry. Marked on receipt, before dispatch:
         # a run that dies mid-flight forfeits its retry, as it did under the blanket drop.
@@ -214,6 +225,15 @@ def attach_routes(
             raise HTTPException(status_code=400, detail="Missing Slack headers")
         if not verify_slack_signature(body, timestamp, slack_signature, signing_secret=signing_secret):
             raise HTTPException(status_code=403, detail="Invalid signature")
+
+        if company is not None:
+            form = await request.form()
+            try:
+                payload = json.loads(str(form.get("payload", "")))
+            except (ValueError, TypeError):
+                raise HTTPException(400, "Malformed interaction payload")
+            await company._interact(payload, request, background_tasks)
+            return SlackEventResponse(status="ok")
 
         # Pre-ack retry drop — Slack retries after ~3s if we don't ack. We ACK
         # below; any retry arriving before that gets the same 200 response.

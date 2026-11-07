@@ -1466,8 +1466,9 @@ def get_agent_router(
         if await is_form_field_omitted(request, "replace_original"):
             replace_original = None
 
-        if hasattr(request.state, "user_id") and request.state.user_id is not None:
-            user_id = request.state.user_id
+        from agno.os.middleware.user_scope import resolve_run_user_id
+
+        user_id = resolve_run_user_id(request, user_id)
         if hasattr(request.state, "session_id") and request.state.session_id is not None:
             session_id = request.state.session_id
         if hasattr(request.state, "dependencies") and request.state.dependencies is not None:
