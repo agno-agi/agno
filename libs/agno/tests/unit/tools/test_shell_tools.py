@@ -78,3 +78,20 @@ def test_utils_shell_tail_ignores_trailing_newline():
 
     assert util_run_shell_command(_TWO_LINES, tail=1) == "second\n"
     assert util_run_shell_command(_TWO_LINES, tail=2) == "first\nsecond\n"
+
+
+# A form feed inside a line; str.splitlines would treat it as a line break.
+_FORM_FEED = [sys.executable, "-c", "print('x' + chr(12) + 'y'); print('last')"]
+
+
+def test_run_shell_command_tail_counts_only_newlines():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tools = ShellTools(base_dir=tmp_dir)
+        assert tools.run_shell_command(_FORM_FEED, tail=1) == "last\n"
+        assert tools.run_shell_command(_FORM_FEED, tail=2) == "x\fy\nlast\n"
+
+
+def test_utils_shell_tail_counts_only_newlines():
+    from agno.utils.shell import run_shell_command as util_run_shell_command
+
+    assert util_run_shell_command(_FORM_FEED, tail=2) == "x\fy\nlast\n"
