@@ -1149,9 +1149,6 @@ class RedisDb(BaseDb):
             memory_id (str): The ID of the memory to delete.
             user_id (Optional[str]): The ID of the user. If provided, verifies the memory belongs to this user before deleting.
 
-        Returns:
-            bool: True if the memory was deleted, False otherwise.
-
         Raises:
             Exception: If any error occurs while deleting the memory.
         """

@@ -1423,7 +1423,6 @@ class DynamoDb(BaseDb):
             user_id: The ID of the user to get the memories for.
             agent_id: The ID of the agent to get the memories for.
             team_id: The ID of the team to get the memories for.
-            workflow_id: The ID of the workflow to get the memories for.
             topics: The topics to filter the memories by.
             search_content: The content to search for in the memories.
             limit: The maximum number of memories to return.

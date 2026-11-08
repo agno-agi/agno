@@ -112,7 +112,6 @@ class GcsJsonDb(BaseDb):
             traces_table (Optional[str]): Name of the JSON file to store traces.
             spans_table (Optional[str]): Name of the JSON file to store spans.
             project (Optional[str]): GCP project ID. If None, uses default project.
-            location (Optional[str]): GCS bucket location. If None, uses default location.
             credentials (Optional[Any]): GCP credentials. If None, uses default credentials.
             id (Optional[str]): ID of the database.
         """
@@ -665,7 +664,6 @@ class GcsJsonDb(BaseDb):
             sort_by (Optional[str]): The field to sort the sessions by.
             sort_order (Optional[str]): The order to sort the sessions by.
             deserialize (Optional[bool]): Whether to deserialize the sessions.
-            create_table_if_not_found (Optional[bool]): Whether to create a file to track sessions if it doesn't exist.
 
         Returns:
             Union[List[AgentSession], List[TeamSession], List[WorkflowSession], Tuple[List[Dict[str, Any]], int]]:
