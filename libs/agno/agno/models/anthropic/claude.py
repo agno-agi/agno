@@ -314,6 +314,23 @@ class Claude(Model):
                 if beta not in self.betas:
                     self.betas.append(beta)
 
+    def _convert_const_to_enum(self, schema: Any) -> None:
+        """
+        Recursively replace JSON-schema ``const`` constraints with equivalent
+        single-value ``enum`` lists, preserving the declared type.
+
+        Pydantic renders ``Literal["invoice"]`` as ``{"const": "invoice"}``, but
+        Anthropic's structured output dialect has no ``const`` keyword.
+        """
+        if isinstance(schema, dict):
+            if "const" in schema and "enum" not in schema:
+                schema["enum"] = [schema.pop("const")]
+            for value in schema.values():
+                self._convert_const_to_enum(value)
+        elif isinstance(schema, list):
+            for item in schema:
+                self._convert_const_to_enum(item)
+
     def _ensure_additional_properties_false(self, schema: Dict[str, Any]) -> None:
         """
         Recursively ensure all object types have additionalProperties: false.
@@ -350,14 +367,18 @@ class Claude(Model):
 
         # Handle Pydantic BaseModel
         if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+            schema = response_format.model_json_schema()
+            # Anthropic's structured output dialect has no `const` keyword, and the
+            # SDK's transform_schema() demotes fixed values to descriptions, which
+            # silently widens Literal[...] fields. Express them as single-value
+            # enums so the declared constraint survives the transformation.
+            self._convert_const_to_enum(schema)
             try:
                 # Try to use Anthropic SDK's transform_schema helper if available
                 from anthropic import transform_schema
 
-                schema = transform_schema(response_format.model_json_schema())
+                schema = transform_schema(schema)
             except (ImportError, AttributeError):
-                # Fallback to direct schema conversion
-                schema = response_format.model_json_schema()
                 # Ensure additionalProperties is False
                 if isinstance(schema, dict):
                     if "additionalProperties" not in schema:
