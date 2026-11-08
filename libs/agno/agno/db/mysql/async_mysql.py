@@ -178,7 +178,6 @@ class AsyncMySQLDb(AsyncBaseDb):
         Args:
             table_name (str): Name of the table to create
             table_type (str): Type of table (used to get schema definition)
-            db_schema (str): Database schema name
 
         Returns:
             Table: SQLAlchemy Table object
@@ -1546,9 +1545,6 @@ class AsyncMySQLDb(AsyncBaseDb):
     # -- Memory methods --
     async def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None) -> None:
         """Delete a user memory from the database.
-
-        Returns:
-            bool: True if deletion was successful, False otherwise.
 
         Raises:
             Exception: If an error occurs during deletion.

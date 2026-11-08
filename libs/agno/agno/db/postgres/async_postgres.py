@@ -2096,9 +2096,6 @@ class AsyncPostgresDb(AsyncBaseDb):
     async def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None):
         """Delete a user memory from the database.
 
-        Returns:
-            bool: True if deletion was successful, False otherwise.
-
         Raises:
             Exception: If an error occurs during deletion.
         """
