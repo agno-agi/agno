@@ -1120,9 +1120,6 @@ class FirestoreDb(BaseDb):
             memory_id (str): The ID of the memory to delete.
             user_id (Optional[str]): The ID of the user (optional, for filtering).
 
-        Returns:
-            bool: True if the memory was deleted, False otherwise.
-
         Raises:
             Exception: If there is an error deleting the memory.
         """
