@@ -9,8 +9,12 @@ support (Gemini here) so the agent can hear the audio it generates across multi-
 conversations, instead of losing it after the first response.
 
 Models:
-- lightning_v3.1 (default): 12 languages, supports cloned voices
-- lightning_v3.1_pro: premium voice pool, 29 languages
+- lightning_v3.1_pro (default): premium voice pool, 31 languages; default voice "kaitlyn"
+- lightning_v3.1: legacy model, retires on 2026-11-30 at 18:30 UTC
+
+get_voices() lists the Pro catalog for both model options. Set model="lightning_v3.1_pro"
+and choose a Pro voice before the standard model and its catalog route retire.
+https://docs.smallest.ai/api-reference/deprecations/models
 
 Language defaults to "en". For other language codes, see the model cards:
 https://docs.smallest.ai/waves/model-cards/text-to-speech/lightning-v-3-1
@@ -34,8 +38,8 @@ audio_agent = Agent(
     model=Gemini(id="gemini-pro-latest"),
     tools=[
         SmallestTools(
-            voice_id="magnus",
-            model="lightning_v3.1",
+            voice_id="kaitlyn",
+            model="lightning_v3.1_pro",
         )
     ],
     description="You are an AI agent that can generate audio using the Smallest AI API.",
