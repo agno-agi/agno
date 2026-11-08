@@ -805,7 +805,6 @@ class MongoDb(BaseDb):
             sort_by (Optional[str]): The field to sort the sessions by.
             sort_order (Optional[str]): The order to sort the sessions by.
             deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
-            create_table_if_not_found (Optional[bool]): Whether to create the collection if it doesn't exist.
 
         Returns:
             Union[List[AgentSession], List[TeamSession], List[WorkflowSession], Tuple[List[Dict[str, Any]], int]]:
@@ -1391,7 +1390,6 @@ class MongoDb(BaseDb):
             sort_by (Optional[str]): The field to sort the memories by.
             sort_order (Optional[str]): The order to sort the memories by.
             deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
-            create_table_if_not_found: Whether to create the collection if it doesn't exist.
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: A tuple containing the memories and the total count.
@@ -2191,7 +2189,6 @@ class MongoDb(BaseDb):
             eval_type (Optional[List[EvalType]]): The type of eval to filter by.
             filter_type (Optional[EvalFilterType]): The type of filter to apply.
             deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
-            create_table_if_not_found (Optional[bool]): Whether to create the collection if it doesn't exist.
 
         Returns:
             Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:

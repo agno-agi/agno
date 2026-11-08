@@ -209,6 +209,15 @@ def _error_body(detail: str, exc: BaseException) -> Dict[str, Any]:
 
 
 @asynccontextmanager
+async def interface_lifespan(_, agent_os: "AgentOS"):
+    """Closes the interfaces that hold running work (e.g. A2A tasks) on shutdown."""
+    yield
+
+    for interface in agent_os.interfaces:
+        await interface.aclose()
+
+
+@asynccontextmanager
 async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
     """Initializes databases in the event loop and closes them on shutdown."""
     if agent_os.auto_provision_dbs:
@@ -554,6 +563,7 @@ class AgentOS:
         self._authz_role_store: Any = None
         self._authz_provider: Any = None
         self._authz_issuer: Optional[str] = None
+        self._auto_a2a_interface: Any = None
 
         # authorization= takes the switch or the object, never the low-level config: one spelling
         # for the deprecated type is enough, and it is the keyword that already exists.
@@ -1112,8 +1122,16 @@ class AgentOS:
         has_a2a_interface = False
         self._public_interface_routes: List[tuple[str, str]] = []
         for interface in self.interfaces:
-            if not has_a2a_interface and interface.__class__.__name__ == "A2A":
+            if interface.__class__.__name__ == "A2A":
                 has_a2a_interface = True
+                # The interface AgentOS created serves every entity, including the ones added since
+                if interface is self._auto_a2a_interface:
+                    interface.agents = self._get_a2a_agents()  # type: ignore[attr-defined]
+                    interface.teams = self._teams or None  # type: ignore[attr-defined]
+                    interface.workflows = self._workflows or None  # type: ignore[attr-defined]
+                # Agent Cards declare how to authenticate when the OS requires a bearer token
+                if getattr(interface, "security_schemes", None) is None:
+                    interface.security_schemes = self._get_a2a_security_schemes()  # type: ignore[attr-defined]
             interface_router = interface.get_router()
             if getattr(interface, "authenticates_own_requests", False):
                 self._public_interface_routes.extend(
@@ -1127,12 +1145,29 @@ class AgentOS:
             from agno.os.interfaces.a2a import A2A
 
             a2a_interface = A2A(
-                agents=self._agents or None,  # type: ignore[arg-type]
+                agents=self._get_a2a_agents(),  # type: ignore[arg-type]
                 teams=self._teams or None,  # type: ignore[arg-type]
                 workflows=self._workflows or None,  # type: ignore[arg-type]
+                security_schemes=self._get_a2a_security_schemes(),
             )
+            self._auto_a2a_interface = a2a_interface
             self.interfaces.append(a2a_interface)
             self._add_router(app, a2a_interface.get_router())
+
+    def _get_a2a_agents(self) -> Optional[List[Any]]:
+        """The agents the A2A interface serves: external agents (Claude, Codex, ...) next to the local agents."""
+        a2a_agents = [a for a in (self.agents or []) if isinstance(a, (Agent, BaseExternalAgent))]
+        return a2a_agents or None
+
+    def _get_a2a_security_schemes(self) -> Optional[Dict[str, Any]]:
+        """The security schemes A2A Agent Cards declare: bearer when the OS requires a token, else none."""
+        security_key = self.settings.os_security_key if self.settings else None
+        if not self.authorization and not security_key:
+            return None
+        from agno.os.interfaces.a2a.agent_card import build_bearer_security_schemes
+
+        # JWTs when authorization is on; the security key is an opaque token
+        return build_bearer_security_schemes(bearer_format="JWT" if self.authorization else None)
 
     def _raise_if_duplicate_ids(self) -> None:
         """Check for duplicate IDs within each entity type.
@@ -1208,12 +1243,10 @@ class AgentOS:
         Tables are created here only when the OS provisions databases; otherwise an existing
         table is validated and a missing one is left to the deployment, as the first run was.
         """
-        nested = [*self._sandboxed_team_members(), *self._sandboxed_workflow_agents()]
-        for entry in [*(self.agents or []), *(agent for agent, _ in nested)]:
-            if isinstance(entry, BaseExternalAgent) and entry.sandbox is not None and entry.db is not None:
-                from agno.sandbox import _harness
+        for entry in self._sandboxed_agents():
+            from agno.sandbox import _harness
 
-                await _harness.acheck_tables(entry, create=self.auto_provision_dbs)
+            await _harness.acheck_tables(entry, create=self.auto_provision_dbs)
 
     @staticmethod
     def _nearest_postgres(db: Any, inherited_db: Any) -> Any:
@@ -1301,6 +1334,15 @@ class AgentOS:
         for workflow in self._workflows or []:
             visit_workflow(workflow, None)
         return found
+
+    def _sandboxed_agents(self) -> List[Any]:
+        """Every sandboxed harness agent with a database: served, a team member or inside a workflow."""
+        nested = [*self._sandboxed_team_members(), *self._sandboxed_workflow_agents()]
+        return [
+            entry
+            for entry in [*(self.agents or []), *(agent for agent, _ in nested)]
+            if isinstance(entry, BaseExternalAgent) and entry.sandbox is not None and entry.db is not None
+        ]
 
     def _prepare_sandboxed_agent(self, agent: BaseExternalAgent, fallback_db: Any) -> None:
         """Give a sandboxed agent a database and fail at startup on what would fail its first turn.
@@ -1828,8 +1870,10 @@ class AgentOS:
             self.registry = Registry()
 
         try:
+            # External adapters are not in self._agents; the walk takes their sandboxes.
+            external_agents = [a for a in self.agents or [] if isinstance(a, BaseExternalAgent)]
             collect_components_from_os(
-                [a for a in self._agents if not self._owned_by_manager(a)],
+                [a for a in self._agents if not self._owned_by_manager(a)] + external_agents,
                 [t for t in self._teams if not self._owned_by_manager(t)],
                 self._workflows,
                 self.registry,
@@ -1939,6 +1983,9 @@ class AgentOS:
 
                 lifespans.append(partial(_company_lifespan, agent_os=self))
 
+            # The interface lifespan
+            lifespans.append(partial(interface_lifespan, agent_os=self))
+
             # The scheduler lifespan (after db so tables exist)
             if self._scheduler_enabled and self.db is not None:
                 lifespans.append(partial(scheduler_lifespan, agent_os=self))
@@ -1992,6 +2039,9 @@ class AgentOS:
                 from agno.company.bootstrap import _company_lifespan
 
                 lifespans.append(partial(_company_lifespan, agent_os=self))
+
+            # The interface lifespan
+            lifespans.append(partial(interface_lifespan, agent_os=self))  # type: ignore
 
             # The scheduler lifespan (after db so tables exist)
             if self._scheduler_enabled and self.db is not None:

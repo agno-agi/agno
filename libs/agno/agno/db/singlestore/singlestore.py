@@ -46,7 +46,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import TEXT, ForeignKey, Index, UniqueConstraint, and_, cast, func, or_, select, update
+    from sqlalchemy import TEXT, ForeignKey, Index, UniqueConstraint, and_, cast, func, literal, or_, select, update
     from sqlalchemy.dialects import mysql
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
@@ -728,23 +728,18 @@ class SingleStoreDb(BaseDb):
             )
 
             with self.Session() as sess, sess.begin():
-                # Backfill a monotonic run_index when the run arrives without one
-                # (e.g. a background/continue save that couldn't resolve its position).
-                # A NULL index has no position and breaks ORDER BY run_index. ON DUPLICATE KEY
-                # preserves the existing index, so this only sets it on a genuine insert.
-                if row.get("run_index") is None:
-                    # Single-statement backfill: SingleStore has no user-level
-                    # locks (no GET_LOCK), so the MAX is computed inside the
-                    # INSERT via a materialized derived table (the MySQL
-                    # dialect rejects a direct same-table subquery). This
-                    # closes the two-statement read-then-insert window; truly
-                    # simultaneous same-session first-saves can still read the
-                    # same MAX under snapshot isolation - best effort without
-                    # engine support.
-                    prior_runs = select(runs_table.c.run_index).where(runs_table.c.session_id == session_id).subquery()
-                    row["run_index"] = select(func.coalesce(func.max(prior_runs.c.run_index) + 1, 0)).scalar_subquery()
-
-                stmt = mysql.insert(runs_table).values(**row)  # type: ignore
+                # SingleStore rejects subqueries in the VALUES list of an upsert.
+                # Read the session's maximum in the INSERT's SELECT instead.
+                prior_runs = runs_table.alias("prior_runs")
+                next_index = func.coalesce(func.max(prior_runs.c.run_index) + 1, 0)
+                provided_index = row["run_index"]
+                index = next_index if provided_index is None else func.greatest(provided_index, next_index)
+                values = [
+                    index if name == "run_index" else literal(value, type_=runs_table.c[name].type)
+                    for name, value in row.items()
+                ]
+                source = select(*values).select_from(prior_runs).where(prior_runs.c.session_id == session_id)
+                stmt = mysql.insert(runs_table).from_select(list(row), source)  # type: ignore
                 stmt = stmt.on_duplicate_key_update(
                     status=stmt.inserted.status,
                     run_data=stmt.inserted.run_data,
@@ -838,70 +833,87 @@ class SingleStoreDb(BaseDb):
             log_error(f"Exception reading from runs table: {str(e)}")
             raise e
 
-    def _scrub_run_ids_from_legacy_blob(self, run_ids: List[str]) -> None:
+    def _scrub_run_ids_from_legacy_blob(self, run_ids: List[str], sess: Any, sessions_table: Any) -> bool:
         """Remove ``run_ids`` from every session row's legacy ``runs`` JSON column.
 
-        Partial-migration state: v3 migration copied runs into the ``agno_runs``
-        table but preserved the legacy embedded blob as a backup. Deleting a run
-        row alone leaves the blob intact and ``merge_runs_table_with_legacy_blob``
-        resurrects it on the next read. Skip cleanly on a fully-migrated DB
-        (no ``runs`` column). Best-effort.
-        """
-        if not run_ids:
-            return
-        try:
-            import json as _json
+        Partial-migration state: the v3 migration copied runs into the runs table
+        but kept the legacy blob as a backup, and ``merge_runs_table_with_legacy_blob``
+        still reads it. Runs inside the caller's transaction so the row delete and
+        the scrub commit together or not at all; a fully migrated DB (no ``runs``
+        column) is a no-op. ``sessions_table`` is resolved by the caller before
+        the transaction opens, because ``_get_table`` uses the same scoped session.
 
-            sessions_table = self._get_table(table_type="sessions")
-            if sessions_table is None or "runs" not in sessions_table.c:
-                return
-            wanted = set(run_ids)
-            with self.Session() as sess, sess.begin():
-                rows = sess.execute(
-                    select(sessions_table.c.session_id, sessions_table.c.runs).where(sessions_table.c.runs.isnot(None))
-                ).fetchall()
-                for sid, runs_raw in rows:
-                    if isinstance(runs_raw, str):
-                        try:
-                            runs_list = _json.loads(runs_raw)
-                        except (_json.JSONDecodeError, TypeError):
-                            continue
-                    else:
-                        runs_list = runs_raw
-                    if not isinstance(runs_list, list):
-                        continue
-                    kept = [r for r in runs_list if not (isinstance(r, dict) and r.get("run_id") in wanted)]
-                    if len(kept) == len(runs_list):
-                        continue
-                    sess.execute(
-                        sessions_table.update().where(sessions_table.c.session_id == sid).values(runs=_json.dumps(kept))
-                    )
-        except Exception:
-            log_debug("legacy-runs scrub failed; the primary delete still succeeded", exc_info=True)
+        Returns True if any legacy blob held one of ``run_ids``.
+        """
+        if not run_ids or sessions_table is None or "runs" not in sessions_table.c:
+            return False
+        wanted = set(run_ids)
+        scrubbed = False
+        rows = sess.execute(
+            select(sessions_table.c.session_id, sessions_table.c.runs).where(sessions_table.c.runs.isnot(None))
+        ).fetchall()
+        for sid, runs_raw in rows:
+            if isinstance(runs_raw, str):
+                try:
+                    runs_list = json.loads(runs_raw)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+            else:
+                runs_list = runs_raw
+            if not isinstance(runs_list, list):
+                continue
+            kept = [r for r in runs_list if not (isinstance(r, dict) and r.get("run_id") in wanted)]
+            if len(kept) == len(runs_list):
+                continue
+            sess.execute(
+                sessions_table.update().where(sessions_table.c.session_id == sid).values(runs=json.dumps(kept))
+            )
+            scrubbed = True
+        return scrubbed
 
     def delete_run(self, run_id: str) -> bool:
+        """Delete a single run from the runs table.
+
+        Also scrubs it from the legacy ``runs`` blob in the same transaction, so a
+        partially migrated session cannot resurrect it on the next read.
+
+        Args:
+            run_id (str): The ID of the run to delete.
+
+        Returns:
+            bool: True if the run was removed from the runs table or a legacy blob, False otherwise.
+        """
         try:
             table = self._get_table(table_type="runs")
-            if table is None:
-                return False
+            sessions_table = self._get_table(table_type="sessions")
             with self.Session() as sess, sess.begin():
-                result = sess.execute(table.delete().where(table.c.run_id == run_id))
-                deleted = result.rowcount > 0
-            self._scrub_run_ids_from_legacy_blob([run_id])
-            return deleted
+                deleted = False
+                if table is not None:
+                    result = sess.execute(table.delete().where(table.c.run_id == run_id))
+                    deleted = result.rowcount > 0
+                scrubbed = self._scrub_run_ids_from_legacy_blob([run_id], sess, sessions_table)
+            return deleted or scrubbed
         except Exception as e:
             log_error(f"Error deleting run: {str(e)}")
             raise e
 
     def delete_runs(self, run_ids: List[str]) -> None:
+        """Delete all given runs from the runs table.
+
+        Also scrubs them from the legacy ``runs`` blob in the same transaction, so a
+        partially migrated session cannot resurrect them on the next read.
+
+        Args:
+            run_ids (List[str]): The IDs of the runs to delete.
+        """
         try:
             table = self._get_table(table_type="runs")
-            if table is None:
-                return
+            sessions_table = self._get_table(table_type="sessions")
             with self.Session() as sess, sess.begin():
-                result = sess.execute(table.delete().where(table.c.run_id.in_(run_ids)))
-            self._scrub_run_ids_from_legacy_blob(list(run_ids))
-            log_debug(f"Successfully deleted {result.rowcount} runs")
+                if table is not None:
+                    result = sess.execute(table.delete().where(table.c.run_id.in_(run_ids)))
+                    log_debug(f"Successfully deleted {result.rowcount} runs")
+                self._scrub_run_ids_from_legacy_blob(list(run_ids), sess, sessions_table)
         except Exception as e:
             log_error(f"Error deleting runs: {str(e)}")
             raise e
@@ -1107,7 +1119,6 @@ class SingleStoreDb(BaseDb):
             sort_by (Optional[str]): The field to sort by. Defaults to None.
             sort_order (Optional[str]): The sort order. Defaults to None.
             deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
-            create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:
             Union[List[Session], Tuple[List[Dict], int]]:
@@ -2610,7 +2621,6 @@ class SingleStoreDb(BaseDb):
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
             deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
-            create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:
             Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
