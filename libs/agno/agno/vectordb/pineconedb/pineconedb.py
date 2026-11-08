@@ -525,7 +525,6 @@ class PineconeDb(VectorDb):
             namespace (Optional[str], optional): The namespace to search in. Defaults to None.
             include_values (Optional[bool], optional): Whether to include vectors in the results.
                 Defaults to None, which follows the return_vectors setting on the instance.
-            include_metadata (Optional[bool], optional): Whether to include metadata in the search results. Defaults to None.
             user_id (Optional[str], optional): Scope results to this user plus shared chunks.
                 Defaults to None, which applies no scope.
 

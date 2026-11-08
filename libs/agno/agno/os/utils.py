@@ -336,7 +336,7 @@ def format_sse_event(event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRu
     """Parse JSON data into SSE-compliant format.
 
     Args:
-        event_dict: Dictionary containing the event data
+        event: The run, team or workflow output event to render as an SSE payload
 
     Returns:
         SSE-formatted response:

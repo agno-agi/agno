@@ -1197,8 +1197,6 @@ class Knowledge(RemoteKnowledge):
 
         Args:
             user_id: Owner scope forwarded to ``vector_db.search()``. ``None`` searches everything.
-            model: Model offered to ``query_transformer`` when it needs one and has none of
-                its own. Ignored when no transform is configured.
         """
         if self.page_store is not None:
             if filters:
