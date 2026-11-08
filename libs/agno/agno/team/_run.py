@@ -7030,6 +7030,9 @@ def _truncate_team_run_to_checkpoint(run_response: "TeamRunOutput", message_inde
         ]
 
     run_response.last_checkpoint_at_message_index = message_index
+    # A fork cut before the messages it copied keeps only copied messages, so the work continued from here is its own
+    if run_response.forked_from_message_index is not None and run_response.forked_from_message_index > message_index:
+        run_response.forked_from_message_index = message_index
 
 
 def _fork_team_run(run_response: "TeamRunOutput", message_index: int) -> "TeamRunOutput":

@@ -97,6 +97,7 @@ try:
         case,
         cast,
         func,
+        literal,
         null,
         or_,
         select,
@@ -831,22 +832,18 @@ class SingleStoreDb(BaseDb):
             )
 
             with self.Session() as sess, sess.begin():
-                # A new run always lands after the session's existing rows. Callers
-                # pass the run's position in the in-memory ``session.runs`` list, and
-                # after runs were deleted from the front of that list the position
-                # collides with, or sorts before, rows that still exist. ON DUPLICATE KEY
-                # preserves the existing index, so this only affects a genuine insert.
-                # Single-statement: SingleStore has no user-level locks (no GET_LOCK),
-                # so the MAX is computed inside the INSERT via a materialized derived
-                # table (the MySQL dialect rejects a direct same-table subquery). Truly
-                # simultaneous same-session inserts can still read the same MAX under
-                # snapshot isolation; best effort without engine support, as before.
-                prior_runs = select(runs_table.c.run_index).where(runs_table.c.session_id == session_id).subquery()
-                next_index = select(func.coalesce(func.max(prior_runs.c.run_index) + 1, 0)).scalar_subquery()
-                provided_index = row.get("run_index")
-                row["run_index"] = next_index if provided_index is None else func.greatest(provided_index, next_index)
-
-                stmt = mysql.insert(runs_table).values(**row)  # type: ignore
+                # SingleStore rejects subqueries in the VALUES list of an upsert.
+                # Read the session's maximum in the INSERT's SELECT instead.
+                prior_runs = runs_table.alias("prior_runs")
+                next_index = func.coalesce(func.max(prior_runs.c.run_index) + 1, 0)
+                provided_index = row["run_index"]
+                index = next_index if provided_index is None else func.greatest(provided_index, next_index)
+                values = [
+                    index if name == "run_index" else literal(value, type_=runs_table.c[name].type)
+                    for name, value in row.items()
+                ]
+                source = select(*values).select_from(prior_runs).where(prior_runs.c.session_id == session_id)
+                stmt = mysql.insert(runs_table).from_select(list(row), source)  # type: ignore
                 stmt = stmt.on_duplicate_key_update(
                     status=stmt.inserted.status,
                     run_data=stmt.inserted.run_data,

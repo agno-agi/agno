@@ -120,6 +120,19 @@ class TestTeamTruncate:
         assert len(r.messages) == 2
         assert r.messages[-1].content == "b"
 
+    def test_truncate_before_a_fork_point_lowers_it(self):
+        r = TeamRunOutput(
+            run_id="r1",
+            forked_from_message_index=3,
+            messages=[
+                Message(role="user", content="a"),
+                Message(role="assistant", content="b"),
+                Message(role="user", content="c"),
+            ],
+        )
+        team_run._truncate_team_run_to_checkpoint(r, message_index=2)
+        assert r.forked_from_message_index == 2
+
     def test_truncate_drops_tools_with_removed_references(self):
         r = TeamRunOutput(
             run_id="r1",

@@ -509,6 +509,45 @@ class TestDatabases:
         assert body["total_sessions"] == 6
         assert list(body["db_ids"]) == ["db-1", "db-3"]
 
+    def test_one_postgres_under_two_urls_is_read_once(self, settings):
+        """One PostgreSQL database reached with another login, the default port written out and an sslmode counts its
+        rows once."""
+        dbs = [
+            PostgresDb(db_url=db_url, id=db_id)
+            for db_id, db_url in [
+                ("db-1", "postgresql+psycopg://ai:ai@localhost/ai"),
+                ("db-2", "postgresql+psycopg://reader:secret@localhost:5432/ai?sslmode=require"),
+            ]
+        ]
+        for db in dbs:
+            db.get_component_metrics = MagicMock(side_effect=_totals(_today_row()))  # type: ignore[method-assign]
+            db.get_metrics_totals = MagicMock(side_effect=_window_totals(_today_row()))  # type: ignore[method-assign]
+            db.get_metrics_versions = MagicMock(return_value=_versions())  # type: ignore[method-assign]
+        client = _client(settings, *dbs)
+        with _scope(None):
+            body = client.get(f"/os/metrics/sessions?{_last(1)}").json()
+
+        assert body["total_sessions"] == 3
+        assert list(body["db_ids"]) == ["db-1"]
+
+    def test_two_postgres_clusters_on_one_socket_are_read_apart(self, settings):
+        """Two PostgreSQL clusters reached through one socket directory, on the ports the query names, count their
+        rows apart."""
+        dbs = [
+            PostgresDb(db_url=f"postgresql+psycopg://ai@/ai?host=/var/run/postgresql&port={port}", id=db_id)
+            for db_id, port in [("db-1", 5432), ("db-2", 5433)]
+        ]
+        for db in dbs:
+            db.get_component_metrics = MagicMock(side_effect=_totals(_today_row()))  # type: ignore[method-assign]
+            db.get_metrics_totals = MagicMock(side_effect=_window_totals(_today_row()))  # type: ignore[method-assign]
+            db.get_metrics_versions = MagicMock(return_value=_versions())  # type: ignore[method-assign]
+        client = _client(settings, *dbs)
+        with _scope(None):
+            body = client.get(f"/os/metrics/sessions?{_last(1)}").json()
+
+        assert body["total_sessions"] == 6
+        assert list(body["db_ids"]) == ["db-1", "db-2"]
+
     def test_remote_databases_with_one_id_on_two_agentoses_are_not_answered_by_one(self, settings):
         """Two remote AgentOSes that each have a database with the same id are refused, not answered by the first."""
         remote_dbs = [

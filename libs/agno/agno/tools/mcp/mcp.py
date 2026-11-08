@@ -316,11 +316,11 @@ class MCPTools(Toolkit):
 
         default_name = get_default_toolkit_name(url=url, command=command, server_params=server_params)
         super().__init__(name=name or default_name, **kwargs)
-        # A default name keeps the command's arguments, which can hold credentials, so
-        # tool calls record the same name without them (see recorded_name)
+        # A default name keeps the command's arguments and the URL's path, which can hold
+        # credentials, so tool calls record the same name without them (see recorded_name)
         self._default_name = default_name
         self._default_recorded_name = get_default_toolkit_name(
-            url=url, command=command, server_params=server_params, keep_command_args=False
+            url=url, command=command, server_params=server_params, recorded=True
         )
 
         if url is not None:
@@ -458,8 +458,8 @@ class MCPTools(Toolkit):
     def recorded_name(self) -> str:
         """The toolkit name each tool call records, sent in run events and kept in metrics.
 
-        The toolkit's own name, except a default one derived from a command: that is
-        recorded with the executable and the package or script it runs only.
+        The toolkit's own name, except a default one: that is recorded with a URL's host
+        only, or a command's executable and the package or script it runs only.
         """
         return self._default_recorded_name if self.name == self._default_name else self.name
 

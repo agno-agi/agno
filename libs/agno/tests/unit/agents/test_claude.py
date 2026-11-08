@@ -1038,6 +1038,21 @@ def test_parallel_tool_batch_has_one_checkpoint_and_forks_whole(fake_sdk, tmp_db
     assert sorted(t.tool_call_id for t in continuation.tools) == ["call-1", "call-2"]
 
 
+def test_continuing_in_place_before_the_fork_point_lowers_it(fake_sdk, tmp_db):
+    from agno.run.base import RunStatus
+
+    messages = [
+        _recorded("user", "u1", 0, "first"),
+        _recorded("assistant", "a1", 1, "reply one"),
+        _recorded("user", "u2", 2, "second"),
+        _recorded("assistant", "a2", 3, "reply two"),
+    ]
+    run = _recorded_run(messages, status=RunStatus.error)
+    run.forked_from_message_index = 4
+    _, _, continuation = ClaudeAgent(db=tmp_db)._build_continuation(run, continue_from=1, fork=False, input="next")
+    assert continuation.forked_from_message_index == 1, "the work continued after the cut is not counted as copied"
+
+
 @pytest.mark.asyncio
 async def test_finished_run_continues_in_the_background_as_a_fork(scripted, tmp_db):
     import asyncio
