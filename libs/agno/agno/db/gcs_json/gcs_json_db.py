@@ -73,7 +73,6 @@ class GcsJsonDb(BaseDb):
             traces_table (Optional[str]): Name of the JSON file to store traces.
             spans_table (Optional[str]): Name of the JSON file to store spans.
             project (Optional[str]): GCP project ID. If None, uses default project.
-            location (Optional[str]): GCS bucket location. If None, uses default location.
             credentials (Optional[Any]): GCP credentials. If None, uses default credentials.
             id (Optional[str]): ID of the database.
         """

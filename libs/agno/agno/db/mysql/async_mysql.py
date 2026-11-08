@@ -178,7 +178,6 @@ class AsyncMySQLDb(AsyncBaseDb):
         Args:
             table_name (str): Name of the table to create
             table_type (str): Type of table (used to get schema definition)
-            db_schema (str): Database schema name
 
         Returns:
             Table: SQLAlchemy Table object
