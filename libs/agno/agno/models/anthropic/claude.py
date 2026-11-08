@@ -6,6 +6,8 @@ from typing import Any, Callable, Dict, List, Literal, NoReturn, Optional, Type,
 
 import httpx
 from pydantic import BaseModel, ValidationError
+from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
+from pydantic_core import core_schema
 
 from agno.exceptions import ModelProviderError, ModelRateLimitError
 from agno.metrics import MessageMetrics
@@ -71,6 +73,19 @@ except ImportError as e:
     raise ImportError(
         "`anthropic` not installed or missing beta components. Please install with `pip install anthropic`"
     ) from e
+
+
+class _ClaudeJsonSchema(GenerateJsonSchema):
+    """Express singleton Literals as enums that Anthropic can enforce natively."""
+
+    def literal_schema(self, schema: core_schema.LiteralSchema) -> JsonSchemaValue:
+        json_schema = super().literal_schema(schema)
+        # The SDK moves unsupported `const` constraints into descriptions.
+        # Normalize at generation time so field names, defaults and examples
+        # containing a key named `const` are never mistaken for schemas.
+        if "const" in json_schema:
+            json_schema["enum"] = [json_schema.pop("const")]
+        return json_schema
 
 
 class SystemPromptBlock(BaseModel):
@@ -354,10 +369,10 @@ class Claude(Model):
                 # Try to use Anthropic SDK's transform_schema helper if available
                 from anthropic import transform_schema
 
-                schema = transform_schema(response_format.model_json_schema())
+                schema = transform_schema(response_format.model_json_schema(schema_generator=_ClaudeJsonSchema))
             except (ImportError, AttributeError):
                 # Fallback to direct schema conversion
-                schema = response_format.model_json_schema()
+                schema = response_format.model_json_schema(schema_generator=_ClaudeJsonSchema)
                 # Ensure additionalProperties is False
                 if isinstance(schema, dict):
                     if "additionalProperties" not in schema:
