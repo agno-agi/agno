@@ -399,32 +399,33 @@ class HuggingFace(Model):
         """
         tool_calls: List[Dict[str, Any]] = []
         for tool_call in tool_calls_data:
-            _tool_call = tool_call[0]
-            _index = _tool_call.index
-            _tool_call_id = _tool_call.id
-            _tool_call_type = _tool_call.type
-            _function_name = _tool_call.function.name if _tool_call.function else None
-            _function_arguments = _tool_call.function.arguments if _tool_call.function else None
+            delta_tool_calls = tool_call if isinstance(tool_call, list) else [tool_call]
+            for _tool_call in delta_tool_calls:
+                _index = _tool_call.index or 0
+                _tool_call_id = _tool_call.id
+                _tool_call_type = _tool_call.type
+                _function_name = _tool_call.function.name if _tool_call.function else None
+                _function_arguments = _tool_call.function.arguments if _tool_call.function else None
 
-            if len(tool_calls) <= _index:
-                tool_calls.extend([{} for _ in range(_index - len(tool_calls) + 1)])
-            tool_call_entry = tool_calls[_index]
-            if not tool_call_entry:
-                tool_call_entry["id"] = _tool_call_id
-                tool_call_entry["type"] = _tool_call_type
-                tool_call_entry["function"] = {
-                    "name": _function_name or "",
-                    "arguments": _function_arguments or "",
-                }
-            else:
-                if _function_name:
-                    tool_call_entry["function"]["name"] = _function_name
-                if _function_arguments:
-                    tool_call_entry["function"]["arguments"] += _function_arguments
-                if _tool_call_id:
+                if len(tool_calls) <= _index:
+                    tool_calls.extend([{} for _ in range(_index - len(tool_calls) + 1)])
+                tool_call_entry = tool_calls[_index]
+                if not tool_call_entry:
                     tool_call_entry["id"] = _tool_call_id
-                if _tool_call_type:
                     tool_call_entry["type"] = _tool_call_type
+                    tool_call_entry["function"] = {
+                        "name": _function_name or "",
+                        "arguments": _function_arguments or "",
+                    }
+                else:
+                    if _function_name:
+                        tool_call_entry["function"]["name"] = _function_name
+                    if _function_arguments:
+                        tool_call_entry["function"]["arguments"] += _function_arguments
+                    if _tool_call_id:
+                        tool_call_entry["id"] = _tool_call_id
+                    if _tool_call_type:
+                        tool_call_entry["type"] = _tool_call_type
         return tool_calls
 
     def _parse_provider_response(
@@ -479,7 +480,7 @@ class HuggingFace(Model):
             if response_delta_message.content is not None:
                 model_response.content = response_delta_message.content
             if response_delta_message.tool_calls is not None and len(response_delta_message.tool_calls) > 0:
-                model_response.tool_calls = [response_delta_message.tool_calls]  # type: ignore
+                model_response.tool_calls = response_delta_message.tool_calls  # type: ignore
         if response_delta.usage is not None:
             model_response.response_usage = self._get_metrics(response_delta)
 

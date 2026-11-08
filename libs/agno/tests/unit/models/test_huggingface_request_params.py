@@ -164,3 +164,121 @@ def test_every_documented_field_binds_against_the_sdk():
     client = model.get_client()
     for method in (client.chat.completions.create, model.get_async_client().chat.completions.create):
         inspect.signature(method).bind(model=model.id, messages=[], **request_params)
+
+
+# =============================================================================
+# Streaming tool calls: chunks carrying multiple tool calls must preserve all
+# =============================================================================
+
+
+def test_huggingface_stream_delta_and_parse_tool_calls_multiple_in_single_chunk():
+    from huggingface_hub import (
+        ChatCompletionOutputFunctionDefinition,
+        ChatCompletionStreamOutput,
+        ChatCompletionStreamOutputChoice,
+        ChatCompletionStreamOutputDelta,
+        ChatCompletionStreamOutputDeltaToolCall,
+    )
+
+    model = HuggingFace(id="meta-llama/Llama-3.1-8B-Instruct", api_key="test-key")
+
+    tc_0 = ChatCompletionStreamOutputDeltaToolCall(
+        index=0,
+        id="call_1",
+        type="function",
+        function=ChatCompletionOutputFunctionDefinition(
+            name="get_weather",
+            arguments='{"city": "Paris"}',
+        ),
+    )
+    tc_1 = ChatCompletionStreamOutputDeltaToolCall(
+        index=1,
+        id="call_2",
+        type="function",
+        function=ChatCompletionOutputFunctionDefinition(
+            name="get_time",
+            arguments='{"tz": "UTC"}',
+        ),
+    )
+    chunk = ChatCompletionStreamOutput(
+        id="chatcmpl-1",
+        choices=[
+            ChatCompletionStreamOutputChoice(
+                index=0,
+                delta=ChatCompletionStreamOutputDelta(
+                    role="assistant",
+                    tool_calls=[tc_0, tc_1],
+                ),
+            )
+        ],
+        created=0,
+        model="meta-llama/Llama-3.1-8B-Instruct",
+        system_fingerprint="",
+    )
+
+    delta_response = model._parse_provider_response_delta(chunk)
+    assert delta_response.tool_calls == [tc_0, tc_1]
+
+    streamed_tool_calls = []
+    streamed_tool_calls.extend(delta_response.tool_calls)
+    parsed = HuggingFace.parse_tool_calls(streamed_tool_calls)
+
+    assert parsed == [
+        {
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "get_weather", "arguments": '{"city": "Paris"}'},
+        },
+        {
+            "id": "call_2",
+            "type": "function",
+            "function": {"name": "get_time", "arguments": '{"tz": "UTC"}'},
+        },
+    ]
+
+
+def test_huggingface_parse_tool_calls_incremental_chunks_and_nested_lists():
+    from huggingface_hub import (
+        ChatCompletionOutputFunctionDefinition,
+        ChatCompletionStreamOutputDeltaToolCall,
+    )
+
+    tc_0_part_1 = ChatCompletionStreamOutputDeltaToolCall(
+        index=0,
+        id="call_1",
+        type="function",
+        function=ChatCompletionOutputFunctionDefinition(name="search", arguments='{"q": '),
+    )
+    tc_1_part_1 = ChatCompletionStreamOutputDeltaToolCall(
+        index=1,
+        id="call_2",
+        type="function",
+        function=ChatCompletionOutputFunctionDefinition(name="fetch", arguments='{"url": '),
+    )
+    tc_0_part_2 = ChatCompletionStreamOutputDeltaToolCall(
+        index=0,
+        id=None,
+        type="function",
+        function=ChatCompletionOutputFunctionDefinition(name=None, arguments='"agno"}'),
+    )
+    tc_1_part_2 = ChatCompletionStreamOutputDeltaToolCall(
+        index=1,
+        id=None,
+        type="function",
+        function=ChatCompletionOutputFunctionDefinition(name=None, arguments='"https://agno.com"}'),
+    )
+
+    parsed = HuggingFace.parse_tool_calls([[tc_0_part_1, tc_1_part_1], [tc_0_part_2, tc_1_part_2]])
+
+    assert parsed == [
+        {
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "search", "arguments": '{"q": "agno"}'},
+        },
+        {
+            "id": "call_2",
+            "type": "function",
+            "function": {"name": "fetch", "arguments": '{"url": "https://agno.com"}'},
+        },
+    ]
