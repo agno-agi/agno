@@ -736,3 +736,32 @@ async def test_arun_preserves_thread_bound_in_memory_sqlite_history(stream):
         assert db.get_session("s1").metadata == {"shared": "session", "session_only": "stored"}
     finally:
         db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_acontinue_run_defers_session_preload_until_awaited(tmp_path, monkeypatch, stream):
+    """acontinue_run must not read the session on the caller's loop before it is awaited."""
+    from agno.agent import _storage
+    from agno.db.sqlite import SqliteDb
+
+    db = SqliteDb(db_file=str(tmp_path / "session.db"))
+    _seed_session(db, "s1", "agent-1", {"shared": "session"})
+    reads = []
+    original_read = db.get_session
+
+    def counting_read(*args, **kwargs):
+        reads.append(kwargs.get("session_id"))
+        return original_read(*args, **kwargs)
+
+    monkeypatch.setattr(db, "get_session", counting_read)
+    agent = Agent(id="agent-1", model=MockModel(), db=db)
+    try:
+        response = agent.acontinue_run(run_id="missing", session_id="s1", stream=stream)
+        assert reads == [], "acontinue_run read the session synchronously before being awaited"
+        if stream:
+            await response.aclose()
+        else:
+            response.close()
+    finally:
+        db.close()

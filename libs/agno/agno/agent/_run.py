@@ -4303,7 +4303,42 @@ def _continue_run_stream(
         cleanup_run(run_response.run_id)  # type: ignore
 
 
-def acontinue_run_dispatch(  # type: ignore
+def acontinue_run_dispatch(
+    agent: Agent,
+    run_response: Optional[RunOutput] = None,
+    *,
+    stream: Optional[bool] = None,
+    background: bool = False,
+    **kwargs: Any,
+) -> Any:
+    """Return a lazy async continue run while keeping session preparation awaitable."""
+    if run_response is None and kwargs.get("run_id") is None:
+        raise ValueError("Either run_response or run_id must be provided.")
+    if background and not agent.db:
+        raise ValueError("Background execution requires a database to be configured on the agent for run persistence.")
+    stream = stream if stream is not None else bool(agent.stream)
+
+    async def run() -> RunOutput:
+        response = await _prepare_acontinue_run_dispatch(
+            agent, run_response, stream=False, background=background, **kwargs
+        )
+        return await cast(Coroutine[Any, Any, RunOutput], response)
+
+    async def run_stream() -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
+        response = cast(
+            AsyncGenerator[Union[RunOutputEvent, RunOutput], None],
+            await _prepare_acontinue_run_dispatch(agent, run_response, stream=True, background=background, **kwargs),
+        )
+        try:
+            async for event in response:
+                yield event
+        finally:
+            await response.aclose()
+
+    return run_stream() if stream else run()
+
+
+async def _prepare_acontinue_run_dispatch(  # type: ignore
     agent: Agent,
     run_response: Optional[RunOutput] = None,
     *,
@@ -4380,29 +4415,20 @@ def acontinue_run_dispatch(  # type: ignore
     # Initialize the Agent
     agent.initialize_agent(debug_mode=debug_mode)
 
-    # Pre-read the session so session-stored metadata is visible to
-    # resolve_run_options via session_metadata. Only possible with a sync DB:
-    # with an async DB the session is read inside _arun AFTER options are
-    # resolved, so session metadata does not reach this run's resolved options.
-    from agno.agent._init import has_async_db
+    # Load before resolving options for both synchronous and asynchronous DBs.
+    from copy import deepcopy
 
-    _session_state: Dict[str, Any] = {}
-    _pre_session: Optional[AgentSession] = None
-    _session_metadata: Optional[Dict[str, Any]] = None
-    if not has_async_db(agent):
-        from copy import deepcopy
+    from agno.agent._storage import aread_or_create_session, load_session_state, update_metadata
 
-        from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
-
-        _pre_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
-        # Snapshot BEFORE update_metadata merges agent.metadata into the session dict,
-        # so the session layer keeps the session's own values (agent < session < call-site).
-        _session_metadata = deepcopy(_pre_session.metadata)
-        update_metadata(agent, session=_pre_session)
-        _session_state = load_session_state(agent, session=_pre_session, session_state={})
+    _pre_session: Optional[AgentSession] = await aread_or_create_session(
+        agent, session_id=session_id, user_id=user_id
+    )
+    # Snapshot before merging agent defaults into the persisted metadata layer.
+    _session_metadata: Optional[Dict[str, Any]] = deepcopy(_pre_session.metadata)
+    update_metadata(agent, session=_pre_session)
+    _session_state: Dict[str, Any] = load_session_state(agent, session=_pre_session, session_state={})
 
     # Fall back to the owner the run paused with, so the resume retrieves under the same scope.
-    # With an async DB no session is read here, so a run_id-only resume has nothing to fall back to.
     if user_id is None:
         user_id = _resolve_continue_owner(run_response, run_id=run_id, session=_pre_session)
 
