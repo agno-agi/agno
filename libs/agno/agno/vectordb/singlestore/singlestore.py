@@ -208,7 +208,7 @@ class SingleStore(VectorDb):
         Validating if the document exists or not
 
         Args:
-            document (Document): Document to validate
+            content_hash (str): Content hash to look for in the scoped bucket
             user_id (Optional[str]): Scope the check to this owner's rows. None scopes to the
                 shared bucket (user_id IS NULL) alone, matching what _delete_by_content_hash clears.
         """

@@ -108,7 +108,7 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schem
 
     Args:
         table_name (str): Name of the table to validate
-        schema (str): Database schema name
+        db_schema (str): Database schema name
 
     Returns:
         bool: True if table has all expected columns, False if expected columns are missing
