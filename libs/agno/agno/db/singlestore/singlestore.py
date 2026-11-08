@@ -1602,9 +1602,6 @@ class SingleStoreDb(BaseDb):
             memory_id (str): The ID of the memory to delete.
             user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
 
-        Returns:
-            bool: True if deletion was successful, False otherwise.
-
         Raises:
             Exception: If an error occurs during deletion.
         """

@@ -2374,9 +2374,6 @@ class SqliteDb(BaseDb):
             memory_id (str): The ID of the memory to delete.
             user_id (Optional[str]): The user ID to filter by. Defaults to None.
 
-        Returns:
-            bool: True if deletion was successful, False otherwise.
-
         Raises:
             Exception: If an error occurs during deletion.
         """

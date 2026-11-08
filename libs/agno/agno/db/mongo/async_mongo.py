@@ -1436,9 +1436,6 @@ class AsyncMongoDb(AsyncBaseDb):
             memory_id (str): The ID of the memory to delete.
             user_id (Optional[str]): The ID of the user to verify ownership. If provided, only delete if the memory belongs to this user.
 
-        Returns:
-            bool: True if the memory was deleted, False otherwise.
-
         Raises:
             Exception: If there is an error deleting the memory.
         """
