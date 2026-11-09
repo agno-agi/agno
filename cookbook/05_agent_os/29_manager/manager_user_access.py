@@ -33,8 +33,8 @@ authorization = Authorization(
 authorization.define_role(
     "manager-user",
     [
-        "teams:super-agent:run",
-        "teams:super-agent:read",
+        "teams:super--agent:run",
+        "teams:super--agent:read",
         "agents:math-helper:run",
         "agents:math-helper:read",
         "config:read",
