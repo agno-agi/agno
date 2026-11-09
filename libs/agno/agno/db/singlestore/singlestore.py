@@ -48,7 +48,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import TEXT, ForeignKey, Index, UniqueConstraint, and_, cast, func, or_, select, update
+    from sqlalchemy import TEXT, ForeignKey, Index, UniqueConstraint, and_, cast, func, literal, or_, select, update
     from sqlalchemy.dialects import mysql
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
@@ -730,22 +730,18 @@ class SingleStoreDb(BaseDb):
             )
 
             with self.Session() as sess, sess.begin():
-                # A new run always lands after the session's existing rows. Callers
-                # pass the run's position in the in-memory ``session.runs`` list, and
-                # after runs were deleted from the front of that list the position
-                # collides with, or sorts before, rows that still exist. ON DUPLICATE KEY
-                # preserves the existing index, so this only affects a genuine insert.
-                # Single-statement: SingleStore has no user-level locks (no GET_LOCK),
-                # so the MAX is computed inside the INSERT via a materialized derived
-                # table (the MySQL dialect rejects a direct same-table subquery). Truly
-                # simultaneous same-session inserts can still read the same MAX under
-                # snapshot isolation; best effort without engine support, as before.
-                prior_runs = select(runs_table.c.run_index).where(runs_table.c.session_id == session_id).subquery()
-                next_index = select(func.coalesce(func.max(prior_runs.c.run_index) + 1, 0)).scalar_subquery()
-                provided_index = row.get("run_index")
-                row["run_index"] = next_index if provided_index is None else func.greatest(provided_index, next_index)
-
-                stmt = mysql.insert(runs_table).values(**row)  # type: ignore
+                # SingleStore rejects subqueries in the VALUES list of an upsert.
+                # Read the session's maximum in the INSERT's SELECT instead.
+                prior_runs = runs_table.alias("prior_runs")
+                next_index = func.coalesce(func.max(prior_runs.c.run_index) + 1, 0)
+                provided_index = row["run_index"]
+                index = next_index if provided_index is None else func.greatest(provided_index, next_index)
+                values = [
+                    index if name == "run_index" else literal(value, type_=runs_table.c[name].type)
+                    for name, value in row.items()
+                ]
+                source = select(*values).select_from(prior_runs).where(prior_runs.c.session_id == session_id)
+                stmt = mysql.insert(runs_table).from_select(list(row), source)  # type: ignore
                 stmt = stmt.on_duplicate_key_update(
                     status=stmt.inserted.status,
                     run_data=stmt.inserted.run_data,
@@ -1125,7 +1121,6 @@ class SingleStoreDb(BaseDb):
             sort_by (Optional[str]): The field to sort by. Defaults to None.
             sort_order (Optional[str]): The sort order. Defaults to None.
             deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
-            create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:
             Union[List[Session], Tuple[List[Dict], int]]:
@@ -1608,9 +1603,6 @@ class SingleStoreDb(BaseDb):
         Args:
             memory_id (str): The ID of the memory to delete.
             user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
-
-        Returns:
-            bool: True if deletion was successful, False otherwise.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -2640,7 +2632,6 @@ class SingleStoreDb(BaseDb):
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
             deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
-            create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:
             Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
