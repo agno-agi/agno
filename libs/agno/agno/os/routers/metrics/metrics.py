@@ -2106,6 +2106,14 @@ def attach_routes(
                         statuses[status_db_id]
                     ):
                         statuses[status_db_id] = outcome
+                    elif (
+                        outcome.status == "completed"
+                        and statuses[status_db_id].status == "completed"
+                        and statuses[status_db_id].finished_at is not None
+                        and (outcome.finished_at is None or outcome.finished_at < statuses[status_db_id].finished_at)
+                    ):
+                        # Keep the earliest completion within an id, as the response does across ids
+                        statuses[status_db_id] = outcome
 
             # A status of no database at all would read as a refresh of every database
             if not statuses:

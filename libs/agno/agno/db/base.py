@@ -357,14 +357,14 @@ class BaseDb(ABC):
         self.memory_table_name = memory_table or "agno_memories"
         self.metrics_table_name = metrics_table or "agno_metrics"
         # Named after a custom session table, so two databases sharing one schema never rebuild each other's metrics.
-        # On Postgres the name is cut to the 63 characters Postgres keeps, so it is the name the table is stored under
+        # On PostgreSQL a name over 63 bytes keeps its suffix and is shortened with a digest, so no two tables share it
         from agno.db.utils import bound_index_name
 
         if component_metrics_table:
             self.component_metrics_table_name = component_metrics_table
         elif session_table and session_table != "agno_sessions":
             self.component_metrics_table_name = bound_index_name(
-                type(self).__name__, f"{session_table}_component_metrics"
+                type(self).__name__, session_table, "_component_metrics"
             )
         else:
             self.component_metrics_table_name = "agno_component_metrics"
@@ -372,7 +372,7 @@ class BaseDb(ABC):
             self.aggregate_metrics_table_name = aggregate_metrics_table
         elif session_table and session_table != "agno_sessions":
             self.aggregate_metrics_table_name = bound_index_name(
-                type(self).__name__, f"{session_table}_aggregate_metrics"
+                type(self).__name__, session_table, "_aggregate_metrics"
             )
         else:
             self.aggregate_metrics_table_name = "agno_aggregate_metrics"
@@ -380,7 +380,7 @@ class BaseDb(ABC):
             self.metrics_refreshes_table_name = metrics_refreshes_table
         elif session_table and session_table != "agno_sessions":
             self.metrics_refreshes_table_name = bound_index_name(
-                type(self).__name__, f"{session_table}_metrics_refreshes"
+                type(self).__name__, session_table, "_metrics_refreshes"
             )
         else:
             self.metrics_refreshes_table_name = "agno_metrics_refreshes"
@@ -2863,14 +2863,14 @@ class AsyncBaseDb(ABC):
         self.memory_table_name = memory_table or "agno_memories"
         self.metrics_table_name = metrics_table or "agno_metrics"
         # Named after a custom session table, so two databases sharing one schema never rebuild each other's metrics.
-        # On Postgres the name is cut to the 63 characters Postgres keeps, so it is the name the table is stored under
+        # On PostgreSQL a name over 63 bytes keeps its suffix and is shortened with a digest, so no two tables share it
         from agno.db.utils import bound_index_name
 
         if component_metrics_table:
             self.component_metrics_table_name = component_metrics_table
         elif session_table and session_table != "agno_sessions":
             self.component_metrics_table_name = bound_index_name(
-                type(self).__name__, f"{session_table}_component_metrics"
+                type(self).__name__, session_table, "_component_metrics"
             )
         else:
             self.component_metrics_table_name = "agno_component_metrics"
@@ -2878,7 +2878,7 @@ class AsyncBaseDb(ABC):
             self.aggregate_metrics_table_name = aggregate_metrics_table
         elif session_table and session_table != "agno_sessions":
             self.aggregate_metrics_table_name = bound_index_name(
-                type(self).__name__, f"{session_table}_aggregate_metrics"
+                type(self).__name__, session_table, "_aggregate_metrics"
             )
         else:
             self.aggregate_metrics_table_name = "agno_aggregate_metrics"
@@ -2886,7 +2886,7 @@ class AsyncBaseDb(ABC):
             self.metrics_refreshes_table_name = metrics_refreshes_table
         elif session_table and session_table != "agno_sessions":
             self.metrics_refreshes_table_name = bound_index_name(
-                type(self).__name__, f"{session_table}_metrics_refreshes"
+                type(self).__name__, session_table, "_metrics_refreshes"
             )
         else:
             self.metrics_refreshes_table_name = "agno_metrics_refreshes"
