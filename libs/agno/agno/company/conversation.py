@@ -101,6 +101,8 @@ async def asubmit_company_task(
 
     session_id = _require_conversation(run_context)
     authority = _authority(run_context)
+    if authority is None and agent_os.authorization:
+        raise PermissionError("Verified caller authority is required")
     if isinstance(authority, (_ExecutorAuthorization, _RoutineAuthorization)):
         raise PermissionError("Task workers and Routines cannot submit conversation work")
     if authority is not None:

@@ -17,3 +17,14 @@
 **Description:** Twenty actual API/PostgreSQL scenarios cover managed-role authorization, permission denial/revocation, one revision, exhausted limits, fabricated evidence references, missing input, fresh-scheduler recovery, cancellation during assessment, duplicate intake, responsive status while a worker is running, same-second scope changes, disabled principals and fail-closed user-directory outages. Thirteen unit checks cover trusted provenance, manual override, stale histories/briefs, Project assessment authority and revision instructions ending at the latest acceptance boundary.
 
 **Result:** 20 PostgreSQL integration tests and 13 unit tests passed; 168 existing Company execution/Routine tests also passed. Live provider quality, hosted deployment and multi-host fault injection were not exercised.
+
+
+### Double-hyphen manager IDs (2026-11-09)
+
+**Status:** PASS
+
+**Description:** Re-ran the offline PostgreSQL lifecycle cookbook through `/agents/company--manager/runs`, preserving the existing receipt-reuse behavior and original legacy aliases.
+
+**Result:** One checked revision completed the same Task/session and Project without lifecycle approvals. The lifecycle regression suite passed with double-hyphen IDs; unauthenticated receipt reuse is refused when authorization is enabled.
+
+---
