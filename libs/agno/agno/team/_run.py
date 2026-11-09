@@ -5770,6 +5770,8 @@ def _merge_tools_preserving_approval(
             for attr in ("approval_type", "approval_id"):
                 if getattr(updated, attr, None) is None and getattr(orig, attr, None) is not None:
                     setattr(updated, attr, getattr(orig, attr))
+            # The toolkit is the run's record of which toolkit owns the call, not a client decision
+            updated.toolkit = orig.toolkit
             merged.append(updated)
         else:
             merged.append(orig)

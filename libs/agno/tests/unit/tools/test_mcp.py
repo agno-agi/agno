@@ -143,7 +143,7 @@ def test_recorded_name_skips_runner_subcommand():
         ("docker run -i -e API_KEY --name srv mcp/github", "mcp_docker_mcp_github"),
         ("uv run --with mcp server.py --api-key sk-123", "mcp_uv_server_py"),
         ("uvx --from git+https://user:pat123@github.com/org/repo mcp-x", "mcp_uvx_mcp_x"),
-        ("npx -y -p @acme/helper @acme/server-a", "mcp_npx_acme_server_a"),
+        ("npx -y --_auth c2VjcmV0 @acme/server-a", "mcp_npx_acme_server_a"),
         ("python -X utf8 -m my_server --password hunter2", "mcp_python_my_server"),
     ],
 )

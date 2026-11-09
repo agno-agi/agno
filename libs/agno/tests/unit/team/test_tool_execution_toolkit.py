@@ -1,15 +1,16 @@
 """Unit tests for the toolkit a team run records on each tool execution."""
 
-from typing import Any, AsyncIterator, Iterator, List
+from typing import Any, AsyncIterator, Iterator, List, Optional
 
 import pytest
 
 from agno.agent.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.base import Model
-from agno.models.response import ModelResponse
+from agno.models.response import ModelResponse, ToolExecution
 from agno.run.base import RunStatus
-from agno.run.team import TeamRunEvent
+from agno.run.requirement import RunRequirement
+from agno.run.team import TeamRunEvent, TeamRunOutput
 from agno.team import Team
 from agno.tools.calculator import CalculatorTools
 from agno.tools.toolkit import Toolkit
@@ -93,6 +94,17 @@ def _confirmation_team(db_file: str) -> Team:
         db=SqliteDb(db_file=db_file),
         telemetry=False,
     )
+
+
+def _client_requirements(paused: TeamRunOutput, toolkit: Optional[str]) -> List[RunRequirement]:
+    """The requirements a client sends back: rebuilt from JSON with the given toolkit, as the continue route does."""
+    requirements = []
+    for requirement in paused.active_requirements:
+        tool = requirement.tool_execution.to_dict()
+        tool["confirmed"] = True
+        tool["toolkit"] = toolkit
+        requirements.append(RunRequirement(tool_execution=ToolExecution.from_dict(tool)))
+    return requirements
 
 
 def test_team_run_stores_the_toolkit_of_each_tool_execution(tmp_path):
@@ -194,3 +206,17 @@ async def test_team_confirmed_tool_keeps_its_toolkit_and_duration_async(tmp_path
         assert tools[0].toolkit == "files"
         assert tools[0].result == "3 files"
         assert tools[0].metrics is not None and tools[0].metrics.duration > 0
+
+
+def test_team_continued_tool_keeps_the_stored_toolkit(tmp_path):
+    """A continued team tool keeps the toolkit of the run's own copy, whatever toolkit the client's copy carries."""
+    team = _confirmation_team(str(tmp_path / "team.db"))
+
+    paused = team.run("count the files", session_id="s")
+    requirements = _client_requirements(paused, "forged")
+    # A run object without requirements takes the client's tool executions into its tools
+    paused.requirements = None
+    resumed = team.continue_run(run_response=paused, session_id="s", requirements=requirements)
+
+    assert resumed.status == RunStatus.completed
+    assert team.get_last_run_output(session_id="s").tools[0].toolkit == "files"

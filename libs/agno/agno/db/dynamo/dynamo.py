@@ -198,6 +198,8 @@ class DynamoDb(BaseDb):
             session = boto3.Session(**session_kwargs)
             self.client = session.client("dynamodb")
 
+        # Reads warn once that the deprecated metrics table is served until a first calculate_metrics has finished
+        self._deprecated_metrics_logged: bool = False
         # The days whose metrics a write could not reopen, retried by the next write
         self._metrics_days_not_reopened: Set[date] = set()
         # Whether a session holds legacy runs, None until a read of every session found out
@@ -3045,6 +3047,12 @@ class DynamoDb(BaseDb):
             if metrics_data:
                 latest_updated_at = max(metric.get("updated_at") or 0 for metric in metrics_data)
 
+            if metrics_data and not self._deprecated_metrics_logged:
+                self._deprecated_metrics_logged = True
+                log_warning(
+                    f"{self.metrics_table_name} is no longer updated and is served until a first build; "
+                    "call calculate_metrics() once to build the new metrics tables."
+                )
             return metrics_data, latest_updated_at
 
         except self.client.exceptions.ResourceNotFoundException:

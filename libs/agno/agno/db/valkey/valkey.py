@@ -228,6 +228,8 @@ class ValkeyDb(BaseDb):
         # Zero means never refreshed; get_metrics uses this to refresh lazily, at most once per minute.
         # stop_metrics_refresh_on_read sets it to infinity, so reads never calculate
         self._metrics_refreshed_at: float = 0.0
+        # Reads warn once that the deprecated metrics table is served until a first calculate_metrics has finished
+        self._deprecated_metrics_logged: bool = False
         # The days whose metrics a write could not reopen, retried by the next write
         self._metrics_days_not_reopened: Set[date] = set()
 
@@ -3018,6 +3020,13 @@ class ValkeyDb(BaseDb):
                 if row.get("user_id") == "":
                     row["user_id"] = None
                 cleaned.append(row)
+
+            if cleaned and not self._deprecated_metrics_logged:
+                self._deprecated_metrics_logged = True
+                log_warning(
+                    f"{self.metrics_table_name} is no longer updated and is served until a first build; "
+                    "call calculate_metrics() once to build the new metrics tables."
+                )
             return cleaned, latest_updated_at
 
         except Exception as e:

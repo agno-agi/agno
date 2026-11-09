@@ -140,6 +140,8 @@ class JsonDb(BaseDb):
         # Zero means never refreshed; get_metrics uses this to refresh lazily, at most once per minute.
         # stop_metrics_refresh_on_read sets it to infinity, so reads never calculate
         self._metrics_refreshed_at: float = 0.0
+        # Reads warn once that the deprecated metrics file is served until a first calculate_metrics has finished
+        self._deprecated_metrics_logged: bool = False
         # The days whose metrics a write could not reopen, retried by the next write
         self._metrics_days_not_reopened: Set[date] = set()
 
@@ -1970,6 +1972,12 @@ class JsonDb(BaseDb):
                 if updated_at and (latest_updated_at is None or updated_at > latest_updated_at):
                     latest_updated_at = updated_at
 
+            if filtered_metrics and not self._deprecated_metrics_logged:
+                self._deprecated_metrics_logged = True
+                log_warning(
+                    f"{self.metrics_table_name} is no longer updated and is served until a first build; "
+                    "call calculate_metrics() once to build the new metrics tables."
+                )
             return filtered_metrics, latest_updated_at
 
         except Exception as e:

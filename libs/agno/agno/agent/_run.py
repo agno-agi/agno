@@ -3291,6 +3291,10 @@ def _apply_requirement_tools(run_response: RunOutput, requirements: List[Any]) -
         # providers send none and a fallback like call_{i} is used), and a new call
         # sharing an executed call's id must still take its requirement.
         updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
+        # The toolkit is the run's record of which toolkit owns the call, not a client decision
+        for tool in run_response.tools:
+            if tool.result is None and tool.tool_call_id in updated_tools_map:
+                updated_tools_map[tool.tool_call_id].toolkit = tool.toolkit
         run_response.tools = [
             updated_tools_map.get(tool.tool_call_id, tool) if tool.result is None else tool
             for tool in run_response.tools

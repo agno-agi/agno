@@ -744,6 +744,43 @@ class TestRefresh:
         assert running["status"] == "running"
         assert running["finished_at"] is None
 
+    def test_databases_under_one_id_each_refresh(self, settings):
+        """Two databases under one id that keep their rows apart each start their own refresh."""
+        dbs = [_postgres_db("db-1", "one"), _postgres_db("db-1", "two")]
+        app = FastAPI()
+        with patch("agno.os.routers.metrics.metrics.get_authentication_dependency", return_value=lambda: True):
+            app.include_router(get_metrics_router(dbs={"db-1": dbs}, settings=settings, os_db=dbs[0]))
+        with _scope(None):
+            body = TestClient(app).post("/os/metrics/refresh").json()
+
+        assert body["db_ids"] == {"db-1": _started()}
+        dbs[0].calculate_metrics_dates.assert_called_once()
+        dbs[1].calculate_metrics_dates.assert_called_once()
+
+    @pytest.mark.parametrize("route", ["/metrics/refresh?background=true", "/os/metrics/refresh"])
+    def test_a_refresh_asked_while_one_runs_is_told_one_is_already_running(self, settings, route):
+        """A refresh this process started is running before the database claims its lock row, also after a rebuild
+        asked meanwhile finished, and the next one after it finished starts."""
+        db = _postgres_db("db-1")
+        client = _client(settings, db)
+        seen = []
+
+        def reenter(**kwargs):
+            # Fired while the first refresh is still in flight, before it claims the lock row
+            if db.calculate_metrics_dates.call_count == 1:  # type: ignore[attr-defined]
+                if route.startswith("/metrics/"):
+                    seen.append(client.post(f"{route}&rebuild_from={_today().isoformat()}").json())
+                seen.append(client.post(route).json())
+            return []
+
+        db.calculate_metrics_dates.side_effect = reenter  # type: ignore[attr-defined]
+        with _scope(None):
+            first = client.post(route).json()
+            after = client.post(route).json()
+
+        statuses = [answer.get("status") or answer["db_ids"]["db-1"]["status"] for answer in (first, *seen, after)]
+        assert statuses == ["started", *["already_running"] * len(seen), "started"]
+
 
 # =============================================================================
 # GET /os/metrics/users

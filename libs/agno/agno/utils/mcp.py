@@ -128,7 +128,7 @@ _UV_VALUE_FLAGS = frozenset(
     "--with --with-requirements --with-editable --from --python -p --index --index-url --default-index"
     " --extra-index-url --directory --project --env-file".split()
 )
-_NPM_VALUE_FLAGS = frozenset("-p --package --registry --cache --userconfig".split())
+_NPM_VALUE_FLAGS = frozenset("-p --package --registry --cache --userconfig --_auth --otp --key".split())
 _VALUE_FLAGS_BY_EXECUTABLE = {
     "docker": _DOCKER_VALUE_FLAGS,
     "uv": _UV_VALUE_FLAGS,

@@ -354,8 +354,8 @@ def attach_routes(
         for db in chain.from_iterable(dbs.values()):
             stop_metrics_refresh_on_read(db)
 
-    # Most recent refresh state per db id, doubling as the in-flight guard ('running'), for a database that
-    # keeps no refresh status of its own.
+    # Most recent refresh state per _refresh_key, doubling as the in-flight guard ('running'): the status of a database
+    # that keeps no refresh status of its own, and for one that does, a refresh started but not yet claimed.
     # Only mutated on the event loop (the sync calculation itself runs in the threadpool),
     # so no lock is needed. Per-process: each worker tracks the refreshes it started.
     refresh_states: dict[str, MetricsRefreshStatusResponse] = {}
@@ -513,6 +513,13 @@ def attach_routes(
             logger.exception("GET /metrics failed")
             raise HTTPException(status_code=500, detail=f"Error getting metrics: {str(e)}")
 
+    def _refresh_key(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> str:
+        """A database's key in refresh_states: where it keeps its rows if it has a lock row, as databases under one id
+        can each keep their own, else its id."""
+        if has_metrics_lock_row(db):
+            return str(_os_metrics_location(db))
+        return str(db.id)
+
     def _refresh_is_running(refresh_key: str) -> bool:
         state = refresh_states.get(refresh_key)
         return state is not None and state.status == "running"
@@ -543,8 +550,9 @@ def attach_routes(
         user_id: Optional[str],
         rebuild_from: Optional[date],
         headers: Optional[dict],
+        record_outcome: bool = True,
     ) -> None:
-        refresh_key = str(db.id)
+        refresh_key = _refresh_key(db)
         try:
             if isinstance(db, RemoteDb):
                 await db.refresh_metrics(
@@ -561,10 +569,10 @@ def attach_routes(
                 await run_in_threadpool(get_metrics_calculation(db, rebuild_from=rebuild_from))
         except Exception as e:
             logger.error(f"Metrics refresh failed: {e}")
-            if not has_metrics_lock_row(db):
+            if record_outcome:
                 _record_refresh_outcome(refresh_key, error=database_error_message(e))
         else:
-            if not has_metrics_lock_row(db):
+            if record_outcome:
                 _record_refresh_outcome(refresh_key)
 
     @router.post(
@@ -665,13 +673,15 @@ def attach_routes(
             # A remote database keeps its own state, so it is left to guard itself
             if isinstance(db, RemoteDb):
                 if background:
-                    background_tasks.add_task(_do_refresh, db, db_id, table, effective_user_id, rebuild_from, headers)
+                    background_tasks.add_task(
+                        _do_refresh, db, db_id, table, effective_user_id, rebuild_from, headers, record_outcome=False
+                    )
                     return MetricsRefreshResponse(status="started", message="Metrics refresh started in background")
                 return await db.refresh_metrics(
                     db_id=db_id, table=table, user_id=effective_user_id, rebuild_from=rebuild_from, headers=headers
                 )
 
-            refresh_key = str(db.id)
+            refresh_key = _refresh_key(db)
             has_lock_row = has_metrics_lock_row(db)
             if rebuild_from is not None and not has_lock_row:
                 raise HTTPException(status_code=503, detail="rebuild_from not supported by the configured database")
@@ -681,14 +691,25 @@ def attach_routes(
             # A database with a lock row lets one refresh run at a time for every process, and claims it when the
             # refresh starts; without one, the same guard holds for this process
             if has_lock_row:
-                if background and (await _get_refresh_status(db)).status == "running":
+                if background and (
+                    (await _get_refresh_status(db)).status == "running" or _refresh_is_running(refresh_key)
+                ):
                     # A rebuild still reopens its days, through a calculation that then finds the refresh held, so
-                    # the next refresh rebuilds them
+                    # the next refresh rebuilds them; the refresh that holds it records the outcome
                     if rebuild_from is not None:
                         background_tasks.add_task(
-                            _do_refresh, db, db_id, table, effective_user_id, rebuild_from, headers
+                            _do_refresh,
+                            db,
+                            db_id,
+                            table,
+                            effective_user_id,
+                            rebuild_from,
+                            headers,
+                            record_outcome=False,
                         )
                     return _already_running_response()
+                if background:
+                    _mark_refresh_running(refresh_key)
             else:
                 if _refresh_is_running(refresh_key):
                     return _already_running_response()
@@ -1995,7 +2016,12 @@ def attach_routes(
                     else:
                         refresh = outcome
                         if refresh.status == "started" and not isinstance(db, RemoteDb):
-                            refresh_dbs.append(db)
+                            refresh_key = _refresh_key(db)
+                            if _refresh_is_running(refresh_key):
+                                refresh = _already_running_response()
+                            else:
+                                _mark_refresh_running(refresh_key)
+                                refresh_dbs.append(db)
                     # A failure of any database under an id is reported over the others under it
                     if refresh_db_id not in refreshes or refresh.status == "failed":
                         refreshes[refresh_db_id] = refresh
