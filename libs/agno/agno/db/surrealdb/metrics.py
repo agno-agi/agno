@@ -1,6 +1,6 @@
 from datetime import date, datetime, timezone
 from textwrap import dedent
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from surrealdb import BlockingHttpSurrealConnection, BlockingWsSurrealConnection, RecordID
 
@@ -191,7 +191,8 @@ def get_all_runs_for_component_metrics_calculation(
     start_timestamp: datetime,
     end_timestamp: datetime,
     session_ids: Optional[Sequence[str]] = None,
-) -> List[Dict[str, Any]]:
+    should_stop: Optional[Callable[[], bool]] = None,
+) -> Optional[List[Dict[str, Any]]]:
     """Get the runs created in the given time range, with only what component metrics count.
 
     Args:
@@ -199,24 +200,50 @@ def get_all_runs_for_component_metrics_calculation(
         start_timestamp (datetime): The start of the range, included.
         end_timestamp (datetime): The end of the range, not included.
         session_ids (Optional[Sequence[str]]): Only the runs of these sessions, when given.
+        should_stop (Optional[Callable[[], bool]]): Checked after each page; return None when stopped.
 
     Returns:
-        List[Dict[str, Any]]: The runs, with the run_data calculate_date_component_metrics reads. Of the messages it
-            reads only each request's duration and the role, from_history and tool_call_id that tell the run's own
-            requests and tool calls apart, of the tool calls only what tool_metrics counts, and of the runs nested
-            inside a run the same.
+        Optional[List[Dict[str, Any]]]: None when stopped; otherwise the runs, with the run_data the rollup reads.
+            Of the messages it reads only each request's duration and the role, from_history and tool_call_id that
+            tell the run's own requests and tool calls apart, of the tool calls only what tool_metrics counts, and of
+            the runs nested inside a run the same.
     """
-    # A run copied into a forked session repeats a run counted in the session it was made in
-    query = dedent(f"""
-        SELECT
-            run_id, session_id, run_type, agent_id, team_id, workflow_id, user_id, parent_run_id, status,
-            run_data.{{{_METRICS_RUN_DATA_FIELDS}, {_metrics_nested_runs_fields()}}} AS run_data
-        FROM {table}
-        WHERE created_at >= $start AND created_at < $end AND !run_data.forked_from_session_id
-        {"AND session_id IN $session_ids" if session_ids is not None else ""}
-    """)
-    variables: Dict[str, Any] = {"start": start_timestamp, "end": end_timestamp, "session_ids": session_ids}
-    return list(utils.query(client, query, variables, dict))
+    # Continue after the last record key so a large day is read in bounded pages.
+    # Select a bounded page of ids before projecting nested runs: sorting projected runs first
+    # makes SurrealDB 2.x evaluate the projection for the whole day even with LIMIT.
+    runs: List[Dict[str, Any]] = []
+    last_id: Any = None
+    while True:
+        bounds = "$last>.." if last_id is not None else ".."
+        query = dedent(f"""
+            SELECT
+                id, run_id, session_id, run_type, agent_id, team_id, workflow_id, user_id, parent_run_id, status,
+                run_data.{{{_METRICS_RUN_DATA_FIELDS}, {_metrics_nested_runs_fields()}}} AS run_data
+            FROM (
+                SELECT VALUE id FROM type::thing($table, {bounds})
+                WHERE created_at >= $start AND created_at < $end AND !run_data.forked_from_session_id
+                {"AND session_id IN $session_ids" if session_ids is not None else ""}
+                LIMIT {METRICS_BATCH_SIZE}
+            ) ORDER BY id ASC
+        """)
+        variables: Dict[str, Any] = {
+            "table": table,
+            "last": last_id,
+            "start": start_timestamp,
+            "end": end_timestamp,
+            "session_ids": session_ids,
+        }
+        batch = list(utils.query(client, query, variables, dict))
+        if should_stop is not None and should_stop():
+            return None
+        if not batch:
+            return runs
+        last_id = batch[-1]["id"].id
+        for run in batch:
+            run.pop("id", None)
+        runs.extend(batch)
+        if len(batch) < METRICS_BATCH_SIZE:
+            return runs
 
 
 def bulk_upsert_metrics_rows(

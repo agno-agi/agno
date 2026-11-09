@@ -4122,7 +4122,8 @@ class SqliteDb(BaseDb):
         with self.Session() as sess, sess.begin():
             # One snapshot for every query of the read, so a rebuild committing between them is never half seen.
             # SQLite gives a SELECT on its own a snapshot of its own, so the read transaction is begun explicitly
-            sess.execute(text("BEGIN"))
+            if not sess.connection().connection.driver_connection.in_transaction:
+                sess.execute(text("BEGIN"))
             if full_months:
                 # Only a completed month's row stands for its days; an open one, reopened by a day rebuilt since
                 # or not yet built, is read from its days

@@ -69,7 +69,7 @@ def get_all_keys_for_table(redis_client: Union[Redis, RedisCluster], prefix: str
         List[str]: A list of all relevant keys for the given table type.
     """
     pattern = f"{prefix}:{table_type}:*"
-    all_keys = redis_client.scan_iter(match=pattern)
+    all_keys = redis_client.scan_iter(match=pattern, count=1000)
     relevant_keys = []
 
     # Helper namespaces, matched by prefix so a record id that merely contains one

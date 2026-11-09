@@ -1819,9 +1819,12 @@ class SurrealDb(BaseDb):
         )
         runs: List[Dict[str, Any]] = []
         if runs_table is not None:
-            runs = get_all_runs_for_component_metrics_calculation(
-                self.client, runs_table, start_timestamp, end_timestamp
+            day_runs = get_all_runs_for_component_metrics_calculation(
+                self.client, runs_table, start_timestamp, end_timestamp, should_stop=should_stop
             )
+            if day_runs is None:
+                return False
+            runs = day_runs
             # Checked once the runs are read too, so a stop never waits for the rest of a large day
             if should_stop is not None and should_stop():
                 return False
@@ -1857,7 +1860,10 @@ class SurrealDb(BaseDb):
                     start_timestamp - timedelta(days=1),
                     start_timestamp,
                     team_session_ids,
+                    should_stop=should_stop,
                 )
+                if team_runs is None:
+                    return False
                 parent_runs.extend(team_runs)
                 parent_run_ids.extend(run["parent_run_id"] for run in team_runs if run.get("parent_run_id"))
 
@@ -1996,8 +2002,8 @@ class SurrealDb(BaseDb):
         without reading back the metrics of those days.
 
         Args:
-            should_stop (Optional[Callable[[], bool]]): Checked before each day and month, and once a day's runs are
-                read. Once it returns True, the calculation releases the refresh and stops; the next one continues
+            should_stop (Optional[Callable[[], bool]]): Checked before each day and month, and between pages of a day's
+                runs. Once it returns True, the calculation releases the refresh and stops; the next one continues
                 from the first day still open.
             rebuild_from (Optional[date]): Also rebuild every day from this date to today.
 

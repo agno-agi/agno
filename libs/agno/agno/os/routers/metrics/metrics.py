@@ -154,7 +154,11 @@ def _os_metrics_location(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> tuple[Opti
             if backend_name == "sqlite":
                 address = f"sqlite:///{url.database}"
             else:
-                port = url.query.get("port") or url.port or {"postgresql": 5432, "mysql": 3306}.get(backend_name)
+                port = (
+                    url.query.get("port")
+                    or url.port
+                    or {"postgresql": 5432, "mysql": 3306, "singlestoredb": 3306}.get(backend_name)
+                )
                 address = f"{backend_name}://{host}:{port}/{url.query.get('dbname') or url.database}"
     elif isinstance(connection_kwargs, dict):
         # A client on a unix socket names its path instead of a host and port, and a Sentinel client names neither

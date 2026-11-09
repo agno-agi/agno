@@ -3906,7 +3906,13 @@ class AsyncSqliteDb(AsyncBaseDb):
         async with self.async_session_factory() as sess, sess.begin():
             # One snapshot for every query of the read, so a rebuild committing between them is never half seen.
             # SQLite gives a SELECT on its own a snapshot of its own, so the read transaction is begun explicitly
-            await sess.execute(text("BEGIN"))
+            connection = await sess.connection()
+            raw = await connection.get_raw_connection()
+            driver = raw.driver_connection
+            if driver is None:
+                raise RuntimeError("SQLite driver connection is unavailable")
+            if not driver.in_transaction:
+                await sess.execute(text("BEGIN"))
             if full_months:
                 # Only a completed month's row stands for its days; an open one, reopened by a day rebuilt since
                 # or not yet built, is read from its days

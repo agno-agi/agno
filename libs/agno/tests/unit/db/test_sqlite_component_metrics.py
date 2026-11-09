@@ -2,12 +2,14 @@
 
 import asyncio
 import json
+import sys
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 import pytest
 from sqlalchemy import create_engine, select, text, update
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from agno.db.sqlite import AsyncSqliteDb, SqliteDb
 from agno.db.utils import METRICS_LOCK_SECONDS, METRICS_REFRESH_ID, METRICS_STOPPED_ERROR
@@ -313,6 +315,21 @@ def test_get_component_metrics(sqlite_db):
     ]
 
 
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="sqlite3 autocommit requires Python 3.12")
+def test_get_metrics_totals_with_driver_transaction(sqlite_db):
+    """Ensure aggregate totals can be read when the driver already opened a transaction"""
+    sqlite_db.calculate_metrics()
+    engine = create_engine(sqlite_db.db_engine.url, connect_args={"autocommit": False})
+    db = SqliteDb(db_engine=engine)
+    db.stop_metrics_refresh_on_read()
+    try:
+        totals, latest_updated_at = db.get_metrics_totals(_utc_date(2), _utc_date(2))
+        assert (totals["sessions_count"], totals["root_runs_count"], totals["total_tokens"]) == (2, 3, 465)
+        assert latest_updated_at is not None
+    finally:
+        engine.dispose()
+
+
 def test_calculate_metrics_rebuilds_a_reopened_day(sqlite_db):
     """Ensure a run saved on a completed day reopens the day, and the next calculation counts it"""
     sqlite_db.calculate_metrics()
@@ -456,6 +473,22 @@ async def test_async_get_component_metrics_and_totals(async_sqlite_db):
     totals, _ = await async_sqlite_db.get_metrics_totals(_utc_date(80), _utc_date(0))
     assert (totals["sessions_count"], totals["root_runs_count"], totals["total_tokens"]) == (3, 4, 495)
     assert totals["model_metrics"] == [{"model_id": "gpt-5", "model_provider": "OpenAI", "count": 4, "cost": None}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="sqlite3 autocommit requires Python 3.12")
+async def test_async_get_metrics_totals_with_driver_transaction(async_sqlite_db):
+    """Ensure aggregate totals can be read when the async driver already opened a transaction"""
+    await async_sqlite_db.calculate_metrics()
+    engine = create_async_engine(async_sqlite_db.db_engine.url, connect_args={"autocommit": False})
+    db = AsyncSqliteDb(db_engine=engine)
+    db.stop_metrics_refresh_on_read()
+    try:
+        totals, latest_updated_at = await db.get_metrics_totals(_utc_date(2), _utc_date(2))
+        assert (totals["sessions_count"], totals["root_runs_count"], totals["total_tokens"]) == (2, 3, 465)
+        assert latest_updated_at is not None
+    finally:
+        await engine.dispose()
 
 
 @pytest.mark.asyncio
