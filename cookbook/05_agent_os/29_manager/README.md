@@ -195,7 +195,7 @@ resources through AgentOS registry discovery. Manager components are excluded.
 
 ## The team and its members
 
-The default team name is **Super Agent**, with id `super-agent`. Set
+The default team name is **Super Agent**, with id `super--agent`. Set
 `OSManager(name=...)` to change the display name. The ID and two-member
 composition are fixed. Its members are:
 
@@ -205,13 +205,13 @@ composition are fixed. Its members are:
 
 Only Super Agent is exposed as a standalone target in config, discovery, REST and MCP.
 Platform Builder and Platform Manager appear as nested members in `/teams` and
-`/teams/super-agent`, so the team graph shows its composition. Built-in members,
+`/teams/super--agent`, so the team graph shows its composition. Built-in members,
 including Product Manager, list their model and tools but not their instructions. They remain
 excluded from the application registry, `/config` agent list and `/agents`, and
 their standalone agent routes return 422 with an explanation that the component
 ID is reserved. Super Agent delegates to them; their child runs and tool results remain
 available inside its session for replay and diagnostics. Schedule the manager
-team, not either specialist. Ordinary run grants, including `teams:super-agent:run`, let a user talk to the manager. Access
+team, not either specialist. Ordinary run grants, including `teams:super--agent:run`, let a user talk to the manager. Access
 to the manager does not grant its tools additional permissions:
 
 - Running another component requires its agent, team or workflow `run` permission.
@@ -277,14 +277,14 @@ Manager and are not added to the build palette.
 The public team response exposes its built-in identity through existing metadata:
 
 ```json
-{"metadata": {"_agno": {"internal": true, "id": "super-agent"}}}
+{"metadata": {"_agno": {"internal": true, "id": "super--agent"}}}
 ```
 
 Internal member runs carry their own reserved ID in the same place. This is a UI marker,
 not an authorization grant. Ordinary application metadata is unchanged.
 
 Clients that previously called a specialist directly should use
-`POST /teams/super-agent/runs` or MCP `run_team` with that team ID.
+`POST /teams/super--agent/runs` or MCP `run_team` with that team ID.
 Existing direct-specialist schedules can be disabled or deleted. Unmanaged
 schedules can be repointed to Super Agent. Studio-managed schedules have immutable
 targets: create a replacement targeting Super Agent, then delete the old schedule.
@@ -367,8 +367,8 @@ editor to have permission to run the target and saves that editor's authority.
 To refresh captured token-scope grants, update the payload as an authorized caller.
 
 
-The public manager IDs are `super-agent`, `company-manager`, `platform-builder`
-and `platform-manager`. The former `*-internal` IDs remain aliases for 3.2;
+The public manager IDs are `super--agent`, `company--manager`, `platform--builder`
+and `platform--manager`. The former `*-internal` IDs remain aliases for 3.2;
 `OSManager(...)` remains the configuration API. Private specialists are still
 available only through manager delegation. Persisted SQLite/PostgreSQL sessions,
 queued runs, and managed-role policies accept either spelling. New runs use the
@@ -376,3 +376,5 @@ public IDs. Custom authorization providers must map the aliases consistently in
 their own policy store. If a custom catalog component already uses a public
 manager ID, rename or migrate it and its sessions and grants before enabling the
 managers; startup refuses to silently replace it.
+
+The double hyphen identifies these internal components. Single-hyphen IDs such as `super-agent`, `company-manager`, `platform-builder`, and `platform-manager` are available for user agents and teams; they are neither reserved nor manager aliases.

@@ -805,3 +805,13 @@ provider calls were made.
 **Description:** Canonical IDs and legacy URL/grant compatibility; persisted legacy permissions, history, pagination and paused specialist continuation; private specialists and explicit catalog collisions.
 
 **Result:** 355 manager/scope/idempotency tests and 126 run authorization tests passed. PostgreSQL sync/async legacy session pagination and managed-grant revocation passed against a dedicated local database. `manager_discovery.py` passed without model calls. Repository format and validation passed in an isolated current development environment. The preexisting shared environment failed baseline mypy with 189 dependency/type errors; it was not modified. Live model/provider calls were not exercised.
+
+### Internal manager ID separator (2026-11-09)
+
+**Status:** PASS
+
+**Description:** Built-ins now use `super--agent`, `company--manager`, `platform--builder`, and `platform--manager`. Single-hyphen names remain available to user components; original `*-internal` aliases still resolve to the built-ins.
+
+**Result:** 436 manager/run-authorization cases and 14 focused ownership/grant/deny regressions passed. User-owned IDs coexist with the built-ins, preserve their own session history, and neither grant nor deny access to internal managers. Full formatting and validation passed. No model calls were made.
+
+---
