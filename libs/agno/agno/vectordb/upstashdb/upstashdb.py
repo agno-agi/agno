@@ -74,7 +74,7 @@ class UpstashVectorDb(VectorDb):
         dimension (Optional[int], optional): The dimension of the embeddings. Defaults to None.
         embedder (Optional[Embedder], optional): The embedder to use. If None, uses Upstash hosted embedding models.
         namespace (Optional[str], optional): The namespace to use. Defaults to DEFAULT_NAMESPACE.
-        reranker (Optional[Reranker], optional): The reranker to use. Defaults to None.
+        reranker (Optional[Reranker], optional): The reranker to use. Defaults to None. Deprecated: pass the reranker to Knowledge instead.
         name (Optional[str], optional): The name of the vector database. Defaults to None.
         description (Optional[str], optional): The description of the vector database. Defaults to None.
         **kwargs: Additional keyword arguments.
@@ -482,6 +482,7 @@ class UpstashVectorDb(VectorDb):
                         content=result.data,
                         id=result.id,
                         meta_data=result.metadata or {},
+                        embedder=self.embedder,
                         embedding=result.vector,
                     )
                 )

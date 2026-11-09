@@ -9,7 +9,9 @@ statically, on any interpreter:
   parse pinned to feature_version 3.9;
 - field(kw_only=...) / dataclass(slots=...) - runtime TypeError on 3.9;
 - PEP 604 unions (X | None) in files WITHOUT `from __future__ import
-  annotations` - evaluated at import time on 3.9, TypeError.
+  annotations` - evaluated at import time on 3.9, TypeError;
+- contextlib.aclosing (added in 3.10) - ImportError on 3.9 when the importing
+  line runs.
 
 Plus round-trips for BaseRunOutputEvent.event_index, which is deliberately a
 plain class attribute instead of a field(kw_only=True) for exactly this
@@ -72,6 +74,18 @@ class TestPy39Syntax:
         assert not offenders, (
             f"PEP 604 unions without `from __future__ import annotations` (import-time TypeError on 3.9): {offenders}"
         )
+
+    def test_no_contextlib_aclosing(self):
+        """contextlib.aclosing parses on 3.9 and raises ImportError only when the
+        importing line runs - inside a function body that is the first call,
+        not import. Close async generators with try/finally and aclose()."""
+        offenders = []
+        for path in _source_files():
+            src = re.sub(r"#.*", "", path.read_text())
+            src = re.sub(r'"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\'', "", src)
+            if re.search(r"\baclosing\b", src):
+                offenders.append(str(path))
+        assert not offenders, f"contextlib.aclosing is 3.10+: {offenders}"
 
 
 class TestEventIndexRoundTrip:

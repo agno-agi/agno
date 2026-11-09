@@ -27,20 +27,19 @@ class Neo4jTools(Toolkit):
     ):
         """
         Initialize the Neo4jTools toolkit.
-        Connection parameters (uri/user/password or host/port) can be provided.
+        Connection parameters (uri/user/password) can be provided.
         If not provided, falls back to NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD env vars.
 
         Args:
             uri (Optional[str]): The Neo4j URI.
             user (Optional[str]): The Neo4j username.
             password (Optional[str]): The Neo4j password.
-            host (Optional[str]): The Neo4j host.
-            port (Optional[int]): The Neo4j port.
             database (Optional[str]): The Neo4j database.
-            list_labels (bool): Whether to list node labels.
-            list_relationships (bool): Whether to list relationship types.
-            get_schema (bool): Whether to get the schema.
-            run_cypher (bool): Whether to run Cypher queries.
+            enable_list_labels (bool): Whether to list node labels.
+            enable_list_relationships (bool): Whether to list relationship types.
+            enable_get_schema (bool): Whether to get the schema.
+            enable_run_cypher (bool): Whether to run Cypher queries.
+            all (bool): Enable all tools. Overrides individual flags when True. Default is False.
             **kwargs: Additional keyword arguments.
         """
         # Determine the connection URI and credentials

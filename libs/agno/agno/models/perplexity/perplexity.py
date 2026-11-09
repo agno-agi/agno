@@ -203,4 +203,9 @@ class Perplexity(OpenAILike):
             metrics.reasoning_tokens = completion_tokens_details.reasoning_tokens or 0
 
         metrics.audio_total_tokens = metrics.audio_input_tokens + metrics.audio_output_tokens
+
+        # Perplexity sends the cost as a breakdown dict, with the request total under total_cost
+        cost = getattr(response_usage, "cost", None)
+        if isinstance(cost, dict):
+            metrics.cost = cost.get("total_cost")
         return metrics

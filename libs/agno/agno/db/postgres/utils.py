@@ -23,6 +23,12 @@ except ImportError:
 
 
 # -- DB util methods --
+def is_foreign_key_violation(error: Exception) -> bool:
+    """Whether a database error is PostgreSQL's foreign_key_violation (SQLSTATE 23503)."""
+    cause = getattr(error, "orig", error)
+    return getattr(cause, "sqlstate", getattr(cause, "pgcode", None)) == "23503"
+
+
 def apply_sorting(stmt, table: Table, sort_by: Optional[str] = None, sort_order: Optional[str] = None):
     """Apply sorting to the given SQLAlchemy statement.
 
@@ -131,7 +137,7 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schem
 
     Args:
         table_name (str): Name of the table to validate
-        schema (str): Database schema name
+        db_schema (str): Database schema name
 
     Returns:
         bool: True if table has all expected columns, False if expected columns are missing
@@ -166,7 +172,7 @@ async def ais_valid_table(db_engine: AsyncEngine, table_name: str, table_type: s
 
     Args:
         table_name (str): Name of the table to validate
-        schema (str): Database schema name
+        db_schema (str): Database schema name
 
     Returns:
         bool: True if table has all expected columns, False if expected columns are missing

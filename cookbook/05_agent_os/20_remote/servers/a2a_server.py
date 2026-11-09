@@ -1,6 +1,6 @@
 """
-Serve an Agno Agent through the A2A REST interface
-==================================================
+Serve an Agno Agent through the A2A interface
+=============================================
 
 This server is the first-party A2A peer used by RemoteAgent. AgentOS retains
 its normal health and config routes while exposing the Agent under `/a2a`.
@@ -32,7 +32,7 @@ db = SqliteDb(
 a2a_assistant = Agent(
     id="a2a-assistant",
     name="A2A Assistant",
-    description="An Agno Agent served through the standard A2A REST surface.",
+    description="An Agno Agent served through the standard A2A interface.",
     model=OpenAIResponses(id="gpt-5.5"),
     instructions=[
         "Answer requests received over A2A.",

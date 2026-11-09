@@ -624,6 +624,7 @@ class CouchbaseSearch(VectorDb):
                     id=doc_id,
                     name=value["name"],
                     content=value["content"],
+                    embedder=self.embedder,
                     meta_data=value["meta_data"],
                     embedding=value["embedding"],
                     content_id=value.get("content_id"),
@@ -1413,6 +1414,7 @@ class CouchbaseSearch(VectorDb):
                             id=doc_id,
                             name=value.get("name"),
                             content=value.get("content", ""),
+                            embedder=self.embedder,
                             meta_data=value.get("meta_data", {}),
                             embedding=value.get("embedding", []),
                         )
