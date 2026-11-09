@@ -814,4 +814,12 @@ provider calls were made.
 
 **Result:** 436 manager/run-authorization cases and 14 focused ownership/grant/deny regressions passed. User-owned IDs coexist with the built-ins, preserve their own session history, and neither grant nor deny access to internal managers. Full formatting and validation passed. No model calls were made.
 
+### Manager alias review fixes (2026-11-09)
+
+**Status:** PASS
+
+**Description:** The built-in FGA provider and PublicSurface treat former manager IDs as the current ones, new Routines and policy writes store current IDs, schedule endpoint checks accept either spelling, and each database is checked once for catalog collisions.
+
+**Result:** `manager_discovery.py` and `check_manager_permissions.py` passed without model calls. Manager, authorization, FGA, public config and Routine tests passed, and new Postgres alias tests passed against local pgvector. No model calls were made.
+
 ---

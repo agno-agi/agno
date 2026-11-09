@@ -40,7 +40,7 @@ def _manager_member_refusal(endpoint: str) -> Optional[str]:
     path = posixpath.normpath(unquote(urlsplit(endpoint).path))
     parts = path.strip("/").split("/")
     if len(parts) >= 2 and parts[0] in ("agents", "teams", "workflows") and parts[1] in RESERVED_MEMBER_IDS:
-        return "Manager specialists are internal. Schedule OS Manager instead."
+        return "Manager specialists are internal. Schedule Super Agent instead."
     return None
 
 
@@ -136,7 +136,7 @@ def code_defined_probe(
         from agno.registry._reserved import _manager_ids_match
 
         return any(
-            _manager_ids_match(getattr(entry, "id", None), target_id, target_type + "s")
+            _manager_ids_match(getattr(entry, "id", None), target_id, target_type)
             for entry in by_type.get(target_type) or []
         )
 

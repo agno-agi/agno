@@ -294,10 +294,8 @@ restore specialist endpoints. Obsolete specialist manifest entries are omitted.
 Stored rows remain available for deliberate administrative cleanup.
 Ordinary application agents and teams keep their existing routes.
 
-This unreleased API replaces `ManagerConfig` with `OSManager`, `workspace` with
-`root`, `docs` with `access_docs` (now enabled by default), and the earlier manager
-IDs with the fixed IDs above. Update client IDs and permission grants accordingly. Existing sessions under earlier IDs are not
-migrated automatically. Run access, component discovery (`teams:read` or
+`OSManager` replaces `ManagerConfig`, `root` replaces `workspace`, and `access_docs`
+(now enabled by default) replaces `docs`. Run access, component discovery (`teams:read` or
 `agents:read`), and session access (`sessions:read` plus ownership restrictions)
 remain separate permissions.
 
@@ -368,12 +366,16 @@ To refresh captured token-scope grants, update the payload as an authorized call
 
 
 The public manager IDs are `super--agent`, `company--manager`, `platform--builder`
-and `platform--manager`. The former `*-internal` IDs remain aliases for 3.2;
+and `platform--manager`. The former `*-internal` IDs remain aliases;
 `OSManager(...)` remains the configuration API. Private specialists are still
 available only through manager delegation. Persisted SQLite/PostgreSQL sessions,
-queued runs, and managed-role policies accept either spelling. New runs use the
-public IDs. Custom authorization providers must map the aliases consistently in
-their own policy store. If a custom catalog component already uses a public
+queued runs, schedules and managed-role policies accept either spelling. New runs,
+Routines and policy writes use the public IDs; stored rows keep the spelling they
+were saved with. Session lists on other database adapters, and trace, memory and
+advanced session-search filters, match only the stored spelling. The built-in FGA
+provider treats a tuple on either spelling as a grant, so revoke both. Other custom
+authorization providers must map the aliases consistently in their own policy
+store. If a custom catalog component already uses a public
 manager ID, rename or migrate it and its sessions and grants before enabling the
 managers; startup refuses to silently replace it.
 

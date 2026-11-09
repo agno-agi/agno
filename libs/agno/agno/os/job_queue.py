@@ -275,7 +275,7 @@ def ensure_duplicate_matches_component(
     existing_pin = ((existing.get("payload") or {}).get("scope") or {}).get("pinned")
     if (
         existing.get("component_type") == component_type
-        and _manager_ids_match(existing.get("component_id"), component_id, component_type + "s")
+        and _manager_ids_match(existing.get("component_id"), component_id, component_type)
         and existing_pin == version
     ):
         return
@@ -2665,9 +2665,7 @@ async def araise_if_ticket_owns_continue(
         return
     if component_type is not None and job.get("component_type") != component_type:
         return
-    if component_id is not None and not _manager_ids_match(
-        job.get("component_id"), component_id, component_type + "s" if component_type else None
-    ):
+    if component_id is not None and not _manager_ids_match(job.get("component_id"), component_id, component_type):
         return
     status = job.get("status")
     if status == "paused":
@@ -2753,9 +2751,7 @@ async def acontinue_via_queue(
             f"ticket ({job.get('component_type')}/{job.get('component_id')}); durable path declined"
         )
         return None
-    if component_id is not None and not _manager_ids_match(
-        job.get("component_id"), component_id, component_type + "s" if component_type else None
-    ):
+    if component_id is not None and not _manager_ids_match(job.get("component_id"), component_id, component_type):
         log_warning(
             f"Continue for run {run_id} via {component_type}/{component_id} does not match its "
             f"ticket ({job.get('component_type')}/{job.get('component_id')}); durable path declined"
@@ -3201,9 +3197,7 @@ async def aticket_poll_fallback(
         return None
     if job.get("component_type") != component_type:
         return None
-    if component_id is not None and not _manager_ids_match(
-        job.get("component_id"), component_id, component_type + "s" if component_type else None
-    ):
+    if component_id is not None and not _manager_ids_match(job.get("component_id"), component_id, component_type):
         return None
     if job.get("session_id") != session_id:
         return None

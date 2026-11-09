@@ -332,3 +332,27 @@ def test_selected_agents_and_teams_share_run_and_cancel_limits(engine):
         response = client.post(f"/teams/same/runs/{run_id}/cancel")
         assert response.status_code in (200, 404), response.text
         assert client.post(f"/agents/same/runs/{run_id}/cancel").status_code == 429
+
+
+def test_internal_request_reaches_a_manager_through_its_former_id(engine):
+    from agno.os.manager import OSManager
+    from tests.unit.os.test_manager import OfflineModel
+
+    db = PostgresDb(db_engine=engine)
+    visible = Agent(id="docs-agent", name="Docs")
+    agent_os = AgentOS(
+        id="test-public-manager",
+        db=db,
+        agents=[visible],
+        manager=OSManager(model=OfflineModel(), access_docs=False),
+        public=PublicSurface(agents=[visible], namespace=f"manager-{uuid4().hex}"),
+        internal_service_token="shared-internal-token",
+        telemetry=False,
+        auto_provision_dbs=False,
+    )
+    with TestClient(agent_os.get_app()) as client:
+        headers = {"Authorization": "Bearer shared-internal-token"}
+        data = {"message": "hello", "stream": "false", "user_id": "alice"}
+        for team_id in ("super--agent", "os-manager-internal"):
+            assert client.post(f"/teams/{team_id}/runs", headers=headers, data=data).status_code == 200
+        assert client.post("/teams/os-manager-internal/runs", data=data).status_code == 404

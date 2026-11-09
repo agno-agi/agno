@@ -6,6 +6,7 @@ from typing import Any
 from starlette.routing import Match
 
 from agno.os.config import MCP_SERVER_TOOLS_PATH
+from agno.registry._reserved import _manager_id
 
 RUN_ROUTE = re.compile(r"^/(agents|teams|workflows)/([^/]+)/runs(?:/([^/]+)(/cancel)?)?$")
 
@@ -58,6 +59,6 @@ class PublicRoutePolicy:
         kind, component_id, run_id, cancellation = match.groups()
         return (
             kind in ("agents", "teams")
-            and component_id in self.selected[kind]
+            and _manager_id(component_id, kind) in self.selected[kind]
             and (run_id is None or cancellation is not None)
         )

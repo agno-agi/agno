@@ -115,7 +115,11 @@ def set_role_policies(engine: Engine, table: Any, role: str, rows: List[Tuple[st
 
 
 def upsert_policy(engine: Engine, table: Any, *, role: str, resource: str, action: str, effect: str) -> None:
-    """Add a grant, or flip the effect of the existing one for this (role, resource, action)."""
+    """Add a grant, or flip the effect of the existing one for this (role, resource, action).
+
+    A manager's former ID is stored under its current one, replacing any row under either spelling.
+    """
+    resource = _current_policy_resource(resource)
     with engine.begin() as conn:
         conn.execute(
             delete(table).where(
@@ -626,6 +630,7 @@ async def aset_role_policies(engine: "AsyncEngine", table: Any, role: str, rows:
 async def aupsert_policy(
     engine: "AsyncEngine", table: Any, *, role: str, resource: str, action: str, effect: str
 ) -> None:
+    resource = _current_policy_resource(resource)
     async with engine.begin() as conn:
         await conn.execute(
             delete(table).where(
@@ -916,3 +921,11 @@ def _policy_resource_variants(resource: str) -> tuple[str, ...]:
     if not sep:
         return (resource,)
     return tuple(f"{family}/{value}" for value in _manager_id_variants(component_id, family))
+
+
+def _current_policy_resource(resource: str) -> str:
+    """Spell a single resource policy with a manager's current ID."""
+    from agno.registry._reserved import _manager_id
+
+    family, sep, component_id = resource.partition("/")
+    return f"{family}/{_manager_id(component_id, family)}" if sep else resource

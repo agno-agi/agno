@@ -52,7 +52,7 @@ class RoutineResponse(ScheduleResponse):
     def public_manager_id(self) -> "RoutineResponse":
         # A Routine stored under a former manager ID reports the current one, so clients match their executor lists.
         if self.target_type and self.target_id:
-            self.target_id = _manager_id(self.target_id, self.target_type + "s")
+            self.target_id = _manager_id(self.target_id, self.target_type)
         return self
 
 

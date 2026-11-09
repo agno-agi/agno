@@ -224,25 +224,6 @@ async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
         agent_os._initialize_sync_databases()
         await agent_os._initialize_async_databases()
     await agent_os._acheck_sandbox_tables()
-    if agent_os._company_manager is not None:
-        from agno.company.execution import _call
-        from agno.registry._reserved import MANAGER_ID_ALIASES
-
-        checked = set()
-        for db in (agent_os.db, agent_os._company_db):
-            if not isinstance(db, AsyncBaseDb) or id(db) in checked:
-                continue
-            checked.add(id(db))
-            for component_id in MANAGER_ID_ALIASES.values():
-                try:
-                    row = await _call(db, "get_component", component_id, include_deleted=True)
-                except NotImplementedError:
-                    break
-                if row is not None:
-                    raise ValueError(
-                        f"Stored component ID {component_id!r} is now reserved. Rename or migrate this custom "
-                        "component and its sessions and permissions before enabling managers."
-                    )
 
     yield
 
@@ -704,6 +685,7 @@ class AgentOS:
         from agno.os.manager import OSManager
         from agno.os.manager.manager import _build_manager
 
+        self._manager_catalog_checked: Set[int] = set()
         self._company_manager: Optional[Agent] = None
         self.company_manager_unavailable_reason: Optional[str] = None
         if self.company is not None:

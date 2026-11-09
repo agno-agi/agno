@@ -9,6 +9,8 @@
   resource route therefore admitted anyone, anonymous callers included.
 """
 
+import asyncio
+
 import pytest
 
 from agno.os.authz.fga import FGAAuthorizationProvider
@@ -114,3 +116,39 @@ def test_fga_single_action_route_is_unchanged():
     ctx = AuthorizationContext(principal_id="alice", resource_type="agents", resource_id="x", action="run")
     assert fga.authorize_route(ctx, ["agents:run"])
     assert not fga.authorize_route(AuthorizationContext(resource_type="config"), ["config:read"])
+
+
+# --------------------------------------------------------------------------- FGA manager aliases
+
+
+def _manager_context(resource_id, resource_type="teams", action="run"):
+    return AuthorizationContext(
+        principal_id="alice", resource_type=resource_type, resource_id=resource_id, action=action
+    )
+
+
+@pytest.mark.parametrize("granted", ["os-manager-internal", "super--agent"])
+@pytest.mark.parametrize("requested", ["os-manager-internal", "super--agent"])
+def test_fga_tuple_on_either_manager_spelling_grants_both_routes(granted, requested):
+    provider = FGAAuthorizationProvider(client=_Client({("user:alice", "run", f"teams:{granted}")}))
+    assert provider.check(_manager_context(requested))
+    assert asyncio.run(provider.acheck(_manager_context(requested)))
+
+
+def test_fga_manager_alias_stays_inside_its_family_and_spares_user_ids():
+    client = _Client({("user:alice", "run", "teams:os-manager-internal"), ("user:alice", "run", "agents:super-agent")})
+    provider = FGAAuthorizationProvider(client=client)
+    assert not provider.check(_manager_context("super--agent", "agents"))
+    assert not provider.check(_manager_context("super-agent"))
+    client.calls.clear()
+    assert provider.check(_manager_context("super-agent", "agents"))
+    assert len(client.calls) == 1  # Ordinary components stay one round trip.
+
+
+def test_fga_listing_reports_a_former_manager_id_as_the_current_one():
+    class Listing(_Client):
+        def list_objects(self, user, relation, object_type):
+            return ["teams:os-manager-internal", "teams:docs"]
+
+    provider = FGAAuthorizationProvider(client=Listing(set()))
+    assert provider.accessible_resource_ids(_manager_context(None)) == {"super--agent", "docs"}

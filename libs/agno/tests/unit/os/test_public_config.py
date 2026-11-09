@@ -29,3 +29,16 @@ def test_object_selection_identity_and_stable_namespace():
 def test_rate_limits_reject_invalid_values():
     with pytest.raises(ValueError):
         RateLimit(0, 1)
+
+
+def test_public_policy_selects_a_manager_by_its_former_id():
+    from types import SimpleNamespace
+
+    from agno.os.public._policy import PublicRoutePolicy
+
+    surface = PublicSurface(agents=[Agent(id="company--manager")], namespace="stable")
+    policy = PublicRoutePolicy(surface, SimpleNamespace(authorization=False))
+    for component_id in ("company--manager", "company-manager-internal"):
+        assert policy.allows_anonymous("POST", f"/agents/{component_id}/runs")
+    assert not policy.allows_anonymous("POST", "/teams/company-manager-internal/runs")
+    assert not policy.allows_anonymous("POST", "/agents/company-manager/runs")

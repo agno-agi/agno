@@ -9,7 +9,9 @@ OPERATOR_ID = "platform--manager"
 COMPANY_MANAGER_ID = "company--manager"
 # Company Manager's former ID stays reserved so a user component cannot claim it.
 LEGACY_PRODUCT_MANAGER_ID = "product-manager-internal"
-# Previous manager IDs remain compatibility aliases for the 3.2 transition.
+# Previous manager IDs remain compatibility aliases, and stored rows keep these spellings.
+# Removing an alias needs a data migration first: a stored deny that stops matching
+# leaves any wildcard allow in force, so that user gains access.
 # The old Product Manager spelling stays reserved, but is not revived as an alias.
 MANAGER_ID_ALIASES = {
     "os-manager-internal": MANAGER_TEAM_ID,
@@ -27,11 +29,14 @@ RESERVED_MANAGER_IDS = RESERVED_MEMBER_IDS | {
 
 
 def _manager_id(component_id: Optional[str], resource_type: Optional[str] = None) -> Optional[str]:
-    """Resolve a public manager alias without crossing component families."""
+    """Resolve a public manager alias without crossing component families.
+
+    resource_type names the family as a route ("agents") or a component type ("agent").
+    """
     resolved = MANAGER_ID_ALIASES.get(component_id, component_id) if component_id is not None else None
     if resource_type is not None:
-        expected = "teams" if resolved == MANAGER_TEAM_ID else "agents"
-        if resource_type != expected:
+        expected = "team" if resolved == MANAGER_TEAM_ID else "agent"
+        if resource_type.removesuffix("s") != expected:
             return component_id
     return resolved
 
@@ -81,3 +86,10 @@ def _raise_if_manager_catalog_collision(db: Any) -> None:
             raise ValueError(
                 f"Stored component ID {component_id!r} is now reserved. Rename or migrate this custom component and its sessions and permissions before enabling managers."
             )
+
+
+def _check_manager_catalog(agent_os: Any, db: Any) -> None:
+    """Check each database once per AgentOS; building the managers reaches this several times."""
+    if id(db) not in agent_os._manager_catalog_checked:
+        _raise_if_manager_catalog_collision(db)
+        agent_os._manager_catalog_checked.add(id(db))

@@ -155,7 +155,7 @@ def test_public_company_manager_routine_retains_manager_restrictions(db):
     )
     assert (
         _routine_executor_endpoint("agent", "company-manager-internal", os.registry, agent_os=os)
-        == "/agents/company-manager-internal/runs"
+        == "/agents/company--manager/runs"
     )
     for kind, target in [
         ("team", "os-manager-internal"),
@@ -2409,6 +2409,8 @@ def test_legacy_routine_endpoint_preserves_schedule_provenance(db):
     fields = _schedule_fields("product", routine, os.registry, agent_os=os)
     provenance = _routine_provenance(routine)
     assert match_run_endpoint(fields["endpoint"], provenance["target_type"], provenance["target_id"])
+    assert fields["endpoint"] == f"/agents/{COMPANY_MANAGER_ID}/runs"
+    assert provenance["target_id"] == COMPANY_MANAGER_ID
 
 
 @pytest.mark.parametrize("component_id", ["super-agent", "company-manager", "platform-builder", "platform-manager"])
@@ -2531,3 +2533,101 @@ def test_user_and_internal_id_denies_do_not_cross(db, async_mode, family, user_i
     db.set_authz_role_policies("member", [(f"{family}/*", "run", "allow"), (f"{family}/{user_id}", "run", "deny")])
     assert not check(user_id)
     assert check(internal_id) and check(alias)
+
+
+@pytest.mark.parametrize("family", ["agent", "agents"])
+def test_manager_id_accepts_a_component_type_or_a_route_family(family):
+    from agno.registry._reserved import _manager_id, _manager_id_variants
+
+    assert _manager_id("company-manager-internal", family) == COMPANY_MANAGER_ID
+    assert _manager_id("os-manager-internal", family) == "os-manager-internal"
+    assert set(_manager_id_variants(COMPANY_MANAGER_ID, family)) == {COMPANY_MANAGER_ID, "company-manager-internal"}
+
+
+def test_agent_session_history_includes_runs_under_a_former_id():
+    from agno.models.message import Message
+    from agno.run.agent import RunOutput
+    from agno.session.agent import AgentSession
+
+    old = RunOutput(
+        run_id="old-run", agent_id="company-manager-internal", messages=[Message(role="user", content="remember this")]
+    )
+    session = AgentSession(session_id="old-session", agent_id="company-manager-internal", runs=[old])
+    assert session.get_messages(agent_id=COMPANY_MANAGER_ID)[0].content == "remember this"
+    assert session.get_messages(agent_id="company-manager") == []
+
+
+def test_async_sqlite_session_list_includes_rows_under_a_former_id(tmp_path):
+    from agno.db.base import SessionType
+    from agno.db.sqlite import AsyncSqliteDb
+    from agno.session.team import TeamSession
+
+    async def scenario():
+        store = AsyncSqliteDb(db_file=str(tmp_path / "async.db"))
+        await store.upsert_session(TeamSession(session_id="old", team_id="os-manager-internal", user_id="alice"))
+        await store.upsert_session(TeamSession(session_id="new", team_id=MANAGER_TEAM_ID, user_id="alice"))
+        await store.upsert_session(TeamSession(session_id="user", team_id="super-agent", user_id="alice"))
+        for spelling in (MANAGER_TEAM_ID, "os-manager-internal"):
+            _, total = await store.get_sessions(session_type=SessionType.TEAM, component_id=spelling, deserialize=False)
+            assert total == 2
+        _, total = await store.get_sessions(
+            session_type=SessionType.TEAM, component_id="super-agent", deserialize=False
+        )
+        assert total == 1
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("async_mode", [False, True])
+def test_policy_write_through_a_former_id_stores_the_current_one(db, async_mode):
+    from agno.db.sql import authz as authz_sql
+    from agno.db.sqlite import AsyncSqliteDb
+
+    writer = AsyncSqliteDb(db_file=db.db_file) if async_mode else db
+    write = dict(role="legacy", resource="teams/os-manager-internal", action="run", effect="allow")
+    db.set_authz_role_policies("legacy", [("teams/os-manager-internal", "run", "deny")])
+    if async_mode:
+        asyncio.run(writer.upsert_authz_policy(**write))
+    else:
+        writer.upsert_authz_policy(**write)
+    assert db.get_authz_role_policies("legacy") == [("teams/super--agent", "run", "allow")]
+    assert authz_sql._current_policy_resource("teams/docs") == "teams/docs"
+    assert authz_sql._current_policy_resource("agents/os-manager-internal") == "agents/os-manager-internal"
+
+
+@pytest.mark.parametrize(
+    "endpoint,target_type,target_id,expected",
+    [
+        ("/teams/super--agent/runs", "team", "os-manager-internal", True),
+        ("/teams/os-manager-internal/runs/", "team", "super--agent", True),
+        ("/agents/company--manager/runs", "agent", "company-manager-internal", True),
+        ("/agents/os-manager-internal/runs", "agent", "super--agent", False),
+        ("/teams/super-agent/runs", "team", "super--agent", False),
+        ("/agents/docs/runs", "agent", "other", False),
+    ],
+)
+def test_schedule_endpoint_match_treats_a_former_manager_id_as_the_same_target(
+    endpoint, target_type, target_id, expected
+):
+    from agno.db.schemas.scheduler import match_run_endpoint
+
+    assert match_run_endpoint(endpoint, target_type, target_id) is expected
+
+
+def test_manager_catalog_is_checked_once_per_database(tmp_path):
+    from agno.os import CompanyConfig
+
+    calls = []
+
+    class CountingDb(SqliteDb):
+        def get_component(self, component_id, *args, **kwargs):
+            calls.append(component_id)
+            return super().get_component(component_id, *args, **kwargs)
+
+    AgentOS(
+        db=CountingDb(db_file=str(tmp_path / "os.db")),
+        manager=OSManager(model=OfflineModel(), access_docs=False),
+        company=CompanyConfig(model=OfflineModel()),
+        telemetry=False,
+    )
+    assert sorted(calls) == sorted({MANAGER_TEAM_ID, COMPANY_MANAGER_ID, BUILDER_ID, OPERATOR_ID})

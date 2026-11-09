@@ -7,6 +7,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 from agno.company.declarations import Product
 from agno.company.execution import _call
+from agno.company.manager import _routine_provenance
 from agno.company.routines import _declared_schedule_fields
 from agno.db.utils import is_unique_violation
 from agno.scheduler import ScheduleManager
@@ -109,11 +110,7 @@ async def arehydrate_product(
                     user_id=routine_owner,
                     if_exists="skip",
                     enabled_on_create=routine.enabled,
-                    provenance={
-                        "managed_by": "company",
-                        "target_type": routine.executor_type,
-                        "target_id": routine.executor_id,
-                    },
+                    provenance=_routine_provenance(routine),
                 )
             except Exception as exc:
                 if not is_unique_violation(exc):
