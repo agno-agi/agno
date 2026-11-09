@@ -32,9 +32,9 @@ authorization = Authorization(
 authorization.define_role(
     "company-delegator",
     [
-        "teams:super-agent:run",
-        "teams:super-agent:read",
-        "agents:company-manager:run",
+        "teams:super--agent:run",
+        "teams:super--agent:read",
+        "agents:company--manager:run",
         "products:read",
         "products:write",
         "projects:read",

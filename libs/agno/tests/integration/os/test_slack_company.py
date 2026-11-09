@@ -145,7 +145,7 @@ def system(database, monkeypatch):
     monkeypatch.setattr(WebClient, "chat_postMessage", post)
     auth = Authorization(db=database, verification_keys=["offline-slack-jwt-key-at-least-32-bytes"], algorithm="HS256")
     auth.define_role(
-        "member", ["teams:super-agent:run", "teams:super-agent:read", "sessions:read", "tasks:read", "company:read"]
+        "member", ["teams:super--agent:run", "teams:super--agent:read", "sessions:read", "tasks:read", "company:read"]
     ).assign("alice", "member").assign("bob", "member")
     model = OfflineModel()
     delivery = SlackCompany("T1", "A1", "UBOT", {"U1": "alice", "U2": "bob"}, ("C1",), "https://os.example/company")
@@ -444,7 +444,7 @@ def lifecycle_system(database, monkeypatch, tmp_path):
                 return ModelResponse(content=str(results[-1]), role="assistant", response_usage=MessageMetrics())
             if "delegate" in prompt or "status" in prompt:
                 name = "delegate_task_to_member" if "delegate" in prompt else "get_submitted_tasks"
-                args = {"member_id": "company-manager", "task": "delegate"} if "delegate" in prompt else {}
+                args = {"member_id": "company--manager", "task": "delegate"} if "delegate" in prompt else {}
                 return ModelResponse(
                     role="assistant",
                     tool_calls=[
@@ -490,7 +490,7 @@ def lifecycle_system(database, monkeypatch, tmp_path):
 
     auth = Authorization(db=database, verification_keys=["offline-slack-jwt-key-at-least-32-bytes"], algorithm="HS256")
     auth.define_role(
-        "member", SCOPES + ["teams:super-agent:run", "teams:super-agent:read", "sessions:read", "agents:writer:read"]
+        "member", SCOPES + ["teams:super--agent:run", "teams:super--agent:read", "sessions:read", "agents:writer:read"]
     ).assign("alice", "member").assign("bob", "member")
 
     def build():
@@ -754,3 +754,15 @@ def test_dual_slack_event_types_do_not_duplicate_execution(system, mention_first
     wait_for(lambda: (run := os.manager.db.get_run(receipt["data"]["run_id"])) and run.status.value == "COMPLETED")
     assert model.calls == 2
     assert client.portal.call(delivery._store._get, _identity(delivery._scope, "message")) is None
+
+
+def test_user_super_agent_grant_cannot_enter_internal_slack(system):
+    client, os, delivery, posts, outage, auth, model = system
+    auth.set_role_scopes(
+        "member", ["teams:super-agent:run", "teams:super-agent:read", "sessions:read", "tasks:read", "company:read"]
+    )
+    body, headers = signed(event("user-id-only"))
+    response = client.post("/slack/events", content=body, headers=headers)
+    assert response.status_code == 403
+    assert model.calls == 0 and posts == []
+    assert client.portal.call(delivery._store._get, _identity(delivery._scope, "user-id-only")) is None

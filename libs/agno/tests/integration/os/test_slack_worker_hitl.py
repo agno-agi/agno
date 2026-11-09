@@ -45,8 +45,8 @@ def worker_system(database, monkeypatch, request):
     auth.define_role(
         "member",
         [
-            "teams:super-agent:run",
-            "teams:super-agent:read",
+            "teams:super--agent:run",
+            "teams:super--agent:read",
             "sessions:read",
             "tasks:read",
             "tasks:write",
@@ -262,7 +262,7 @@ def test_delayed_pause_arguments_recheck_executor_read(worker_system):
     pause = next(value for value in row["data"]["notifications"].values() if value.get("worker"))
     pause["sent"] = False
     auth.set_role_scopes(
-        "member", ["teams:super-agent:run", "teams:super-agent:read", "sessions:read", "tasks:read", "company:read"]
+        "member", ["teams:super--agent:run", "teams:super--agent:read", "sessions:read", "tasks:read", "company:read"]
     )
     before = len(posts)
     client.portal.call(delivery._deliver, client.app, row)

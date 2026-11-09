@@ -12,6 +12,8 @@ from uuid import NAMESPACE_URL, uuid5
 
 from fastapi import HTTPException
 
+from agno.registry._reserved import MANAGER_TEAM_ID
+
 _slack_cancel: ContextVar[Optional[tuple[str, str]]] = ContextVar("slack_company_cancel", default=None)
 
 
@@ -118,7 +120,7 @@ class SlackCompany:
             {"context": asdict(AuthorizationContext(principal_id=actor, claims={"sub": actor})), "enforce_tools": True},
         )
         assert isinstance(authority, RunAuthorization)
-        await authority.arequire("teams", "run", "super-agent")
+        await authority.arequire("teams", "run", MANAGER_TEAM_ID)
         return authority
 
     def _envelope(self, data: Dict[str, Any]) -> tuple[str, str, str]:
@@ -267,7 +269,7 @@ class SlackCompany:
             else:
                 current = await _call(self._os.manager.db, "get_run", run_id=data["run_id"])
                 status = getattr(current, "status", None)
-                path = f"/teams/super-agent/runs/{data['run_id']}/continue"
+                path = f"/teams/{MANAGER_TEAM_ID}/runs/{data['run_id']}/continue"
                 form.update(session_id=row["session_id"], requirements=json.dumps(data["requirements"]))
             if str(getattr(status, "value", status)).upper() == "PAUSED":
                 try:
