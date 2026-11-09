@@ -1606,11 +1606,17 @@ class Gemini(Model):
         """
         metrics = MessageMetrics()
 
-        metrics.input_tokens = response_usage.prompt_token_count or 0
-        metrics.output_tokens = response_usage.candidates_token_count or 0
+        # Gemini reports thinking tokens and tool-use prompt tokens separately from
+        # prompt/candidate tokens, but bills them as output and input respectively.
+        thoughts_tokens = response_usage.thoughts_token_count or 0
+        tool_use_prompt_tokens = response_usage.tool_use_prompt_token_count or 0
+
+        metrics.input_tokens = (response_usage.prompt_token_count or 0) + tool_use_prompt_tokens
+        metrics.output_tokens = (response_usage.candidates_token_count or 0) + thoughts_tokens
         if response_usage.thoughts_token_count is not None:
-            metrics.reasoning_tokens = response_usage.thoughts_token_count or 0
-        metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
+            metrics.reasoning_tokens = thoughts_tokens
+        # Prefer the provider's own total when present; otherwise fall back to the sum.
+        metrics.total_tokens = response_usage.total_token_count or (metrics.input_tokens + metrics.output_tokens)
 
         metrics.cache_read_tokens = response_usage.cached_content_token_count or 0
 

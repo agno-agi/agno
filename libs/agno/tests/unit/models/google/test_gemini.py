@@ -919,3 +919,143 @@ def test_explicit_field_still_overrides_generation_config():
 
     assert config.temperature == 0.9
     assert config.top_k == 5
+
+
+def _usage(**kwargs):
+    from google.genai.types import GenerateContentResponseUsageMetadata
+
+    return GenerateContentResponseUsageMetadata(**kwargs)
+
+
+def test_gemini_get_metrics_basic():
+    """Without thinking or tool-use tokens the metrics are prompt/candidates/total as before."""
+    metrics = Gemini(id="gemini-2.5-flash")._get_metrics(
+        _usage(prompt_token_count=10, candidates_token_count=5, total_token_count=15)
+    )
+
+    assert metrics.input_tokens == 10
+    assert metrics.output_tokens == 5
+    assert metrics.total_tokens == 15
+    assert metrics.reasoning_tokens == 0
+
+
+def test_gemini_get_metrics_includes_thinking_tokens_in_output():
+    """Thinking tokens are billed as output, so they must be part of output_tokens and total_tokens."""
+    metrics = Gemini(id="gemini-2.5-flash")._get_metrics(
+        _usage(prompt_token_count=10, candidates_token_count=5, thoughts_token_count=40, total_token_count=55)
+    )
+
+    assert metrics.input_tokens == 10
+    assert metrics.output_tokens == 45
+    assert metrics.reasoning_tokens == 40
+    assert metrics.total_tokens == 55
+
+
+def test_gemini_get_metrics_includes_tool_use_prompt_tokens_in_input():
+    """Tool-use prompt tokens (built-in tools such as search) are input tokens."""
+    metrics = Gemini(id="gemini-2.5-flash")._get_metrics(
+        _usage(
+            prompt_token_count=10,
+            tool_use_prompt_token_count=30,
+            candidates_token_count=5,
+            total_token_count=45,
+        )
+    )
+
+    assert metrics.input_tokens == 40
+    assert metrics.output_tokens == 5
+    assert metrics.total_tokens == 45
+
+
+def test_gemini_get_metrics_thinking_and_tool_use_tokens():
+    metrics = Gemini(id="gemini-2.5-flash")._get_metrics(
+        _usage(
+            prompt_token_count=10,
+            tool_use_prompt_token_count=30,
+            candidates_token_count=5,
+            thoughts_token_count=40,
+            total_token_count=85,
+        )
+    )
+
+    assert metrics.input_tokens == 40
+    assert metrics.output_tokens == 45
+    assert metrics.reasoning_tokens == 40
+    assert metrics.total_tokens == 85
+
+
+def test_gemini_get_metrics_total_falls_back_to_sum_when_missing():
+    """If the provider omits total_token_count, total_tokens is input + output (incl. thinking/tool-use)."""
+    metrics = Gemini(id="gemini-2.5-flash")._get_metrics(
+        _usage(
+            prompt_token_count=10,
+            tool_use_prompt_token_count=30,
+            candidates_token_count=5,
+            thoughts_token_count=40,
+        )
+    )
+
+    assert metrics.total_tokens == 85
+
+
+def test_gemini_get_metrics_prefers_provider_total():
+    """The provider's total_token_count wins over the locally computed sum."""
+    metrics = Gemini(id="gemini-2.5-flash")._get_metrics(
+        _usage(prompt_token_count=10, candidates_token_count=5, total_token_count=20)
+    )
+
+    assert metrics.total_tokens == 20
+
+
+def test_gemini_get_metrics_all_none_fields():
+    metrics = Gemini(id="gemini-2.5-flash")._get_metrics(_usage())
+
+    assert metrics.input_tokens == 0
+    assert metrics.output_tokens == 0
+    assert metrics.total_tokens == 0
+    assert metrics.cache_read_tokens == 0
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_gemini_agent_run_metrics_include_thinking_and_tool_use_tokens(stream):
+    """Run-level metrics (streaming and non-streaming) use the corrected token counts."""
+    from google.genai import types
+
+    from agno.agent import Agent
+
+    def make_response():
+        return types.GenerateContentResponse(
+            candidates=[
+                types.Candidate(
+                    content=types.Content(role="model", parts=[types.Part(text="Hello!")]),
+                    finish_reason=types.FinishReason.STOP,
+                )
+            ],
+            usage_metadata=_usage(
+                prompt_token_count=10,
+                tool_use_prompt_token_count=30,
+                candidates_token_count=5,
+                thoughts_token_count=40,
+                total_token_count=85,
+            ),
+        )
+
+    client = MagicMock()
+    client.models.generate_content.return_value = make_response()
+    client.models.generate_content_stream.return_value = iter([make_response()])
+
+    model = Gemini(id="gemini-2.5-flash", api_key="test-key")
+    with patch.object(Gemini, "get_client", return_value=client):
+        agent = Agent(model=model, telemetry=False)
+        if stream:
+            run_output = None
+            for event in agent.run("hi", stream=True, yield_run_output=True):
+                run_output = event
+        else:
+            run_output = agent.run("hi")
+
+    metrics = run_output.metrics
+    assert metrics.input_tokens == 40
+    assert metrics.output_tokens == 45
+    assert metrics.reasoning_tokens == 40
+    assert metrics.total_tokens == 85
