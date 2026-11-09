@@ -638,6 +638,10 @@ async def test_leader_resubmit_after_delegated_task_finished_returns_receipt(sys
     assert receipt["already_submitted"] is True
     assert receipt["run_id"] == finished["job_id"]
     assert receipt["task_status"] == "done"
+    with pytest.raises(PermissionError, match="Verified caller authority"):
+        await asubmit_company_task(
+            host, task["id"], RunContext(run_id="unverified-repeat", session_id="conversation", user_id="alice")
+        )
     assert db.get_task(task["id"]) == finished
     assert await worker.store.claim_job(worker.worker_id, worker.config.lock_grace_seconds) is None
     assert worker_model.attempts == 2
