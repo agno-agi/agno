@@ -152,6 +152,10 @@ def rehydrate_product(
 
 @asynccontextmanager
 async def _company_lifespan(app: Any, agent_os: Any):
+    if agent_os._company_db is not None:
+        from agno.company.details import _seed_company
+
+        await _seed_company(agent_os)
     for declaration in agent_os.company.products:
         product = declaration if isinstance(declaration, Product) else Product.model_validate(declaration)
         await arehydrate_product(

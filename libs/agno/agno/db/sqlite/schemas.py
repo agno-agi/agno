@@ -11,6 +11,14 @@ except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
 
+COMPANY_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "name": {"type": String, "nullable": False},
+    "description": {"type": Text, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False},
+    "updated_at": {"type": BigInteger, "nullable": False},
+}
+
 SESSION_TABLE_SCHEMA = {
     "session_id": {"type": String, "primary_key": True, "nullable": False},
     "session_type": {"type": String, "nullable": False, "index": True},
@@ -571,6 +579,7 @@ def get_table_schema_definition(
         "component_links": COMPONENT_LINKS_TABLE_SCHEMA,
         "learnings": LEARNINGS_TABLE_SCHEMA,
         "schedules": SCHEDULE_TABLE_SCHEMA,
+        "company": COMPANY_TABLE_SCHEMA,
         "products": PRODUCTS_TABLE_SCHEMA,
         "sources": SOURCES_TABLE_SCHEMA,
         "projects": PROJECTS_TABLE_SCHEMA,
