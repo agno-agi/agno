@@ -1145,7 +1145,6 @@ async def executing(coordinator):
 
 
 async def test_a_cancel_from_another_replica_ends_the_turn_cancelled(system):
-
     coordinator, spec, root = system
     await run(coordinator, spec)
     task = asyncio.create_task(run(coordinator, spec, "second", config={"delay": 20, "steps": 20}))
@@ -1169,7 +1168,6 @@ async def test_a_cancel_from_another_replica_ends_the_turn_cancelled(system):
 
 
 async def test_a_stop_claimed_elsewhere_reads_as_cancelled_before_the_computer_is_removed(system):
-
     coordinator, spec, _ = system
     store = coordinator.store
     task = asyncio.create_task(run(coordinator, spec, config={"delay": 20, "steps": 20}))

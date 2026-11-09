@@ -358,7 +358,7 @@ def test_manager_true_uses_the_registry_model_and_serves_only_the_team(db, works
     assert [a.id for a in os.manager.members] == [BUILDER_ID, OPERATOR_ID]
     assert [t.id for t in os.teams] == [MANAGER_TEAM_ID]
     assert os.manager is not None and os.manager.name == MANAGER_TEAM_NAME == "Super Agent"
-    assert os.manager.id == MANAGER_TEAM_ID == "super-agent"
+    assert os.manager.id == MANAGER_TEAM_ID == "super--agent"
     assert os.manager.model is model and manager_member(os, BUILDER_ID).model is model
     assert not any("read_file" in getattr(t, "functions", {}) for t in manager_member(os, OPERATOR_ID).tools)
 
@@ -2296,20 +2296,20 @@ def test_persisted_legacy_policy_listing_and_revocation(db, async_mode):
         ],
     )
     if async_mode:
-        assert asyncio.run(engine.adenied_resource_ids("teams", "read", roles=["legacy"])) == {"super-agent"}
-        assert asyncio.run(engine.aaccessible_resource_ids("teams", "run", roles=["legacy"])) == {"super-agent"}
-        asyncio.run(engine.aremove_scope("legacy", "teams:super-agent:run"))
+        assert asyncio.run(engine.adenied_resource_ids("teams", "read", roles=["legacy"])) == {"super--agent"}
+        assert asyncio.run(engine.aaccessible_resource_ids("teams", "run", roles=["legacy"])) == {"super--agent"}
+        asyncio.run(engine.aremove_scope("legacy", "teams:super--agent:run"))
         assert not asyncio.run(engine.acheck_scope("teams:os-manager-internal:run", roles=["legacy"]))
     else:
-        assert engine.denied_resource_ids("teams", "read", roles=["legacy"]) == {"super-agent"}
-        assert engine.accessible_resource_ids("teams", "run", roles=["legacy"]) == {"super-agent"}
-        engine.remove_scope("legacy", "teams:super-agent:run")
+        assert engine.denied_resource_ids("teams", "read", roles=["legacy"]) == {"super--agent"}
+        assert engine.accessible_resource_ids("teams", "run", roles=["legacy"]) == {"super--agent"}
+        engine.remove_scope("legacy", "teams:super--agent:run")
         assert not engine.check_scope("teams:os-manager-internal:run", roles=["legacy"])
 
 
-@pytest.mark.parametrize("component_id", ["super-agent", "company-manager", "platform-builder", "platform-manager"])
+@pytest.mark.parametrize("component_id", ["super--agent", "company--manager", "platform--builder", "platform--manager"])
 def test_preexisting_public_catalog_collision_is_explicit(db, component_id):
-    _store_manager_test_component(db, "team" if component_id == "super-agent" else "agent", component_id)
+    _store_manager_test_component(db, "team" if component_id == "super--agent" else "agent", component_id)
     with pytest.raises(ValueError, match="Rename or migrate"):
         AgentOS(db=db, manager=OSManager(model=OfflineModel(), access_docs=False), telemetry=False)
 
@@ -2324,10 +2324,10 @@ def test_historical_manager_records_retain_history_and_pagination(db):
         run_id="old-run", team_id="os-manager-internal", messages=[Message(role="user", content="remember this")]
     )
     session = TeamSession(session_id="old-session", team_id="os-manager-internal", user_id="alice", runs=[old])
-    assert session.get_messages(team_id="super-agent")[0].content == "remember this"
+    assert session.get_messages(team_id="super--agent")[0].content == "remember this"
     db.upsert_session(session)
-    db.upsert_session(TeamSession(session_id="new-session", team_id="super-agent", user_id="alice"))
-    for spelling in ("super-agent", "os-manager-internal"):
+    db.upsert_session(TeamSession(session_id="new-session", team_id="super--agent", user_id="alice"))
+    for spelling in ("super--agent", "os-manager-internal"):
         rows, total = db.get_sessions(
             session_type=SessionType.TEAM, component_id=spelling, user_id="alice", limit=1, deserialize=False
         )
@@ -2368,7 +2368,7 @@ def test_paused_preupgrade_specialist_continues_after_restart(db):
         req["confirmation"] = True
         req["tool_execution"]["confirmed"] = True
     response = TestClient(new_os.get_app()).post(
-        f"/teams/super-agent/runs/{paused.run_id}/continue",
+        f"/teams/super--agent/runs/{paused.run_id}/continue",
         data={"session_id": paused.session_id, "requirements": json.dumps(requirements), "stream": "false"},
     )
     assert response.status_code == 200, response.text
@@ -2378,7 +2378,7 @@ def test_paused_preupgrade_specialist_continues_after_restart(db):
 def test_separate_company_database_checks_os_catalog_collision(db, tmp_path):
     from agno.company import CompanyConfig
 
-    _store_manager_test_component(db, "agent", "company-manager")
+    _store_manager_test_component(db, "agent", "company--manager")
     company_db = SqliteDb(db_file=str(tmp_path / "separate-company.db"))
     with pytest.raises(ValueError, match="Rename or migrate"):
         AgentOS(db=db, manager=False, company=CompanyConfig(db=company_db, model=OfflineModel()), telemetry=False)
@@ -2392,7 +2392,7 @@ def test_manager_without_component_catalog_still_constructs():
         manager=OSManager(model=OfflineModel(), access_docs=False, offload_tool_results=False),
         telemetry=False,
     )
-    assert os.manager.id == "super-agent"
+    assert os.manager.id == "super--agent"
 
 
 def test_legacy_routine_endpoint_preserves_schedule_provenance(db):
@@ -2413,3 +2413,125 @@ def test_legacy_routine_endpoint_preserves_schedule_provenance(db):
     fields = _schedule_fields("product", routine, os.registry, agent_os=os)
     provenance = _routine_provenance(routine)
     assert match_run_endpoint(fields["endpoint"], provenance["target_type"], provenance["target_id"])
+
+
+@pytest.mark.parametrize("component_id", ["super-agent", "company-manager", "platform-builder", "platform-manager"])
+def test_single_hyphen_names_are_user_owned(db, component_id):
+    from agno.os import CompanyConfig
+    from agno.registry._reserved import RESERVED_MANAGER_IDS, _manager_id, _manager_id_variants
+    from agno.team import Team
+    from agno.utils.team import get_member_id
+
+    custom_agent = Agent(id=component_id, model=OfflineModel())
+    custom_team = Team(id=component_id, members=[custom_agent], model=OfflineModel())
+    host = AgentOS(
+        db=db,
+        agents=[custom_agent],
+        teams=[custom_team],
+        manager=OSManager(model=OfflineModel(), access_docs=False),
+        company=CompanyConfig(model=OfflineModel()),
+    )
+    assert component_id not in RESERVED_MANAGER_IDS
+    assert host.registry.get_agent(component_id) is custom_agent
+    assert host.registry.get_team(component_id) is custom_team
+    assert get_member_id(custom_agent) == component_id
+    assert get_member_id(host.manager) == "super--agent"
+    for family in ("agents", "teams"):
+        assert _manager_id(component_id, family) == component_id
+        assert _manager_id_variants(component_id, family) == (component_id,)
+    _store_manager_test_component(db, "agent", component_id)
+    # Enabling built-ins cannot shadow a previously stored user component.
+    AgentOS(
+        db=db, manager=OSManager(model=OfflineModel(), access_docs=False), company=CompanyConfig(model=OfflineModel())
+    ).get_app()
+
+
+@pytest.mark.parametrize("managed", [False, True])
+def test_user_super_agent_grant_and_history_are_separate_from_builtin(db, managed):
+    import jwt
+
+    from agno.os import Authorization
+    from agno.team import Team
+
+    secret = "double-hyphen-test-key-at-least-32-characters"
+    user_team = Team(id="super-agent", db=db, members=[Agent(id="helper", model=OfflineModel())], model=OfflineModel())
+    auth = Authorization(verification_keys=[secret], algorithm="HS256", audience="ids")
+    scopes = ["teams:super-agent:run", "teams:super-agent:read", "sessions:read"]
+    if managed:
+        auth.define_role("user", scopes).assign("alice", "user")
+    host = AgentOS(
+        db=db,
+        teams=[user_team],
+        authorization=auth,
+        user_isolation=True,
+        manager=OSManager(model=OfflineModel(), access_docs=False),
+    )
+    client = TestClient(host.get_app())
+    token = jwt.encode(
+        {"sub": "alice", "aud": "ids", "exp": int(time.time()) + 300, "scopes": [] if managed else scopes},
+        secret,
+        algorithm="HS256",
+    )
+    headers = {"Authorization": "Bearer " + token}
+    response = client.post(
+        "/teams/super-agent/runs",
+        headers=headers,
+        data={"message": "hello", "stream": "false", "session_id": "custom-session"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["team_id"] == "super-agent"
+    for builtin in ("super--agent", "os-manager-internal"):
+        response = client.post(f"/teams/{builtin}/runs", headers=headers, data={"message": "hello", "stream": "false"})
+        assert response.status_code == 403, response.text
+    builtin_scopes = ["teams:super--agent:run", "teams:super--agent:read", "sessions:read"]
+    if managed:
+        auth.set_role_scopes("user", builtin_scopes)
+    else:
+        token = jwt.encode(
+            {"sub": "alice", "aud": "ids", "exp": int(time.time()) + 300, "scopes": builtin_scopes},
+            secret,
+            algorithm="HS256",
+        )
+        headers = {"Authorization": "Bearer " + token}
+    response = client.post(
+        "/teams/os-manager-internal/runs",
+        headers=headers,
+        data={"message": "hello", "stream": "false", "session_id": "builtin-session"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["team_id"] == "super--agent"
+    response = client.post("/teams/super-agent/runs", headers=headers, data={"message": "hello", "stream": "false"})
+    assert response.status_code == 403, response.text
+    sessions = client.get("/sessions", headers=headers, params={"type": "team", "component_id": "super--agent"})
+    assert [row["session_id"] for row in sessions.json()["data"]] == ["builtin-session"]
+
+
+@pytest.mark.parametrize("async_mode", [False, True])
+@pytest.mark.parametrize(
+    "family,user_id,internal_id,alias",
+    [
+        ("teams", "super-agent", "super--agent", "os-manager-internal"),
+        ("agents", "company-manager", "company--manager", "company-manager-internal"),
+        ("agents", "platform-builder", "platform--builder", "platform-builder-internal"),
+        ("agents", "platform-manager", "platform--manager", "platform-manager-internal"),
+    ],
+)
+def test_user_and_internal_id_denies_do_not_cross(db, async_mode, family, user_id, internal_id, alias):
+    from agno.os.authz.native_engine import NativePolicyEngine
+
+    engine = NativePolicyEngine(db=db)
+
+    def check(component):
+        scope = f"{family}:{component}:run"
+        return (
+            asyncio.run(engine.acheck_scope(scope, roles=["member"]))
+            if async_mode
+            else engine.check_scope(scope, roles=["member"])
+        )
+
+    db.set_authz_role_policies("member", [(f"{family}/*", "run", "allow"), (f"{family}/{alias}", "run", "deny")])
+    assert check(user_id)
+    assert not check(internal_id) and not check(alias)
+    db.set_authz_role_policies("member", [(f"{family}/*", "run", "allow"), (f"{family}/{user_id}", "run", "deny")])
+    assert not check(user_id)
+    assert check(internal_id) and check(alias)
