@@ -312,6 +312,19 @@ def test_unavailable_bootstrap_has_no_partial_product(tmp_path):
     db.close()
 
 
+async def test_api_reports_a_former_company_manager_id_as_the_current_one(tmp_path):
+    async with system(tmp_path) as s:
+        product = CompanyManager(s.db).create(name="Docs", user_id="alice")
+        row = await create_routine(s, product["id"], component_id="company-manager-internal")
+        # Stored as saved, so it still runs through the alias.
+        assert s.db.get_schedule(row["id"])["target_id"] == "company-manager-internal"
+        assert row["target_id"] == COMPANY_MANAGER_ID
+        response = await s.client.get("/company/routines/" + row["id"], headers=s.headers)
+        assert response.json()["target_id"] == COMPANY_MANAGER_ID
+        listed = await s.client.get("/company/routines", headers=s.headers, params={"product_id": product["id"]})
+        assert [item["target_id"] for item in listed.json()["data"]] == [COMPANY_MANAGER_ID]
+
+
 async def test_api_create_patch_resume_and_unavailable_manager(tmp_path):
     async with system(tmp_path, mode="member") as s:
         product = CompanyManager(s.db).create(name="Docs", user_id="alice")

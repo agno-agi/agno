@@ -9,7 +9,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agno.company.declarations import AutoAccept, Product, Routine, Source
 from agno.company.manager import AsyncCompanyManager, CompanyManager
@@ -21,6 +21,7 @@ from agno.os.middleware.user_scope import caller_is_admin, get_scoped_user_id, r
 from agno.os.routers.schedules.router import get_schedule_router
 from agno.os.routers.schedules.schema import ScheduleCreate, ScheduleResponse, ScheduleRunResponse, ScheduleUpdate
 from agno.os.schema import PaginatedResponse, PaginationInfo
+from agno.registry._reserved import _manager_id
 from agno.scheduler.cron import is_on_demand
 
 
@@ -46,6 +47,13 @@ class RoutineResponse(ScheduleResponse):
     schedule_type: Literal["scheduled", "on_demand"]
     last_run: Optional[RoutineLastRun] = None
     deleted_at: Optional[int] = None
+
+    @model_validator(mode="after")
+    def public_manager_id(self) -> "RoutineResponse":
+        # A Routine stored under a former manager ID reports the current one, so clients match their executor lists.
+        if self.target_type and self.target_id:
+            self.target_id = _manager_id(self.target_id, self.target_type + "s")
+        return self
 
 
 class RoutineUpdate(BaseModel):
