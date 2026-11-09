@@ -383,7 +383,10 @@ def update_product_row(
 
 
 def initialize_company_details(sess: Any, table: Any, name: str, description: Optional[str]) -> Dict[str, Any]:
-    """Insert once under concurrent startup; a deployment never overwrites UI edits."""
+    """Keep one row: configuration fills or updates it until a human edits it, then never overwrites.
+
+    An edit always moves updated_at past created_at, so equal timestamps mean never edited.
+    """
     validate_company_details({"name": name, "description": description})
     from sqlalchemy.dialects.postgresql import insert as pg_insert
     from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -394,6 +397,23 @@ def initialize_company_details(sess: Any, table: Any, name: str, description: Op
         insert(table)
         .values(id="company", name=name, description=description, created_at=now, updated_at=now)
         .on_conflict_do_nothing(index_elements=[table.c.id])
+    )
+    current = sess.execute(select(table).where(table.c.id == "company")).one()._mapping
+    if current["created_at"] != current["updated_at"] or (current["name"], current["description"]) == (
+        name,
+        description,
+    ):
+        return dict(current)
+    # Moves both timestamps: they stay equal, and a client holding the old version gets a conflict.
+    stamp = max(now, current["updated_at"] + 1)
+    sess.execute(
+        table.update()
+        .where(
+            table.c.id == "company",
+            table.c.created_at == current["created_at"],
+            table.c.updated_at == current["updated_at"],
+        )
+        .values(name=name, description=description, created_at=stamp, updated_at=stamp)
     )
     return dict(sess.execute(select(table).where(table.c.id == "company")).one()._mapping)
 
@@ -415,12 +435,3 @@ def update_company_details(
             .returning(table)
         ).first()
     return dict(row._mapping) if row is not None else None
-
-
-def company_table_creation_race(error: Exception) -> bool:
-    """Recognize only concurrent first-time DDL; the caller verifies the winner's table."""
-    from sqlalchemy.exc import OperationalError
-
-    cause = getattr(error, "orig", error)
-    sqlstate = getattr(cause, "sqlstate", getattr(cause, "pgcode", None))
-    return sqlstate in ("42P07", "23505") or (isinstance(error, OperationalError) and "already exists" in str(cause))

@@ -572,7 +572,7 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
                 "PUT /company/products/*/wiki/*": ["wiki:write"],
                 "GET /company/details": ["company:read"],
                 "GET /company/details/access": ["company:read"],
-                "PATCH /company/details": ["agent_os:admin"],
+                "PATCH /company/details": ["company:write"],
                 "GET /company/wiki": ["wiki:read"],
                 "GET /company/wiki/*": ["wiki:read"],
                 "PUT /company/wiki/*": ["wiki:write"],

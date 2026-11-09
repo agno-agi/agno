@@ -14,3 +14,6 @@ def validate_company_details(fields: Dict[str, Any]) -> None:
     description = fields.get("description")
     if description is not None and (not isinstance(description, str) or len(description) > 20000):
         raise ValueError("Company description must contain at most 20000 characters")
+    # PostgreSQL text cannot store NUL, so reject it on every adapter.
+    if "\x00" in str(fields.get("name") or "") or "\x00" in str(description or ""):
+        raise ValueError("Company details must not contain NUL characters")

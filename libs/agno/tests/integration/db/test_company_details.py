@@ -67,9 +67,13 @@ async def test_dynamic_context_is_fresh_and_authorized(db):
     from types import SimpleNamespace
 
     from agno.company.details import _company_instructions
+    from agno.run.authorization import RunAuthorization, authorization_scope
     from agno.utils.agent import aexecute_instructions
 
-    class Deny:
+    class Deny(RunAuthorization):
+        def __init__(self):
+            pass
+
         def require(self, *args):
             raise PermissionError("denied")
 
@@ -82,14 +86,22 @@ async def test_dynamic_context_is_fresh_and_authorized(db):
     await call(db.update_company, initial["updated_at"], description="Next run description")
     assert "Next run description" in (await aexecute_instructions(instructions))[-1]
     assert await aexecute_instructions(instructions, run_context=SimpleNamespace(authorization=Deny())) == ["Base"]
+    # An active request wins over a stale authority left on a resumed run's context.
+    with authorization_scope(lambda: None):
+        resumed = await aexecute_instructions(instructions, run_context=SimpleNamespace(authorization=Deny()))
+    assert "Next run description" in resumed[-1]
 
 
 @pytest.mark.asyncio
-async def test_concurrent_cold_initialization_and_edits(db):
+async def test_concurrent_cold_start_survives_and_recovers(db):
     import asyncio
+    from types import SimpleNamespace
+
+    from agno.company.details import _seed_company
 
     # Independent adapter instances represent independent starting replicas.
     replicas = [type(db).from_dict(db.to_dict()) for _ in range(4)]
+    config = SimpleNamespace(name="Initial", description=None)
 
     async def invoke(replica, method, *args, **kwargs):
         fn = getattr(replica, method)
@@ -98,7 +110,11 @@ async def test_concurrent_cold_initialization_and_edits(db):
         return await asyncio.to_thread(fn, *args, **kwargs)
 
     try:
-        rows = await asyncio.gather(*(invoke(replica, "initialize_company", "Initial") for replica in replicas))
+        # A replica that loses first-time table creation keeps starting, and its next attempt works.
+        await asyncio.gather(
+            *(_seed_company(SimpleNamespace(company=config, _company_db=replica)) for replica in replicas)
+        )
+        rows = [await invoke(replica, "initialize_company", "Initial") for replica in replicas]
         assert all(row == rows[0] for row in rows)
         edits = await asyncio.gather(
             *(
@@ -112,3 +128,36 @@ async def test_concurrent_cold_initialization_and_edits(db):
     finally:
         for replica in replicas:
             await call(replica.close)
+
+
+async def _company_rows(db):
+    statement = text(
+        f"SELECT COUNT(*) FROM {db.db_schema + '.' if hasattr(db, 'db_schema') else ''}{db.company_table_name}"
+    )
+    if isinstance(db, AsyncBaseDb):
+        async with db.db_engine.connect() as conn:
+            return (await conn.execute(statement)).scalar()
+    with db.db_engine.connect() as conn:
+        return conn.execute(statement).scalar()
+
+
+@pytest.mark.asyncio
+async def test_configuration_updates_the_one_row_until_someone_edits_it(db):
+    seeded = await call(db.initialize_company, "Company")
+    changed = await call(db.initialize_company, "Acme", "What Acme does")
+    assert (changed["name"], changed["description"]) == ("Acme", "What Acme does")
+    assert changed["created_at"] == changed["updated_at"] > seeded["updated_at"]
+    assert await _company_rows(db) == 1
+    # A client holding the earlier version must reload rather than overwrite.
+    assert await call(db.update_company, seeded["updated_at"], name="Stale") is None
+
+    edited = await call(db.update_company, changed["updated_at"], name="Human edit")
+    assert edited["updated_at"] > edited["created_at"]
+    assert await call(db.initialize_company, "Deployment", "Later config") == edited
+    assert await _company_rows(db) == 1
+
+
+@pytest.mark.asyncio
+async def test_unchanged_configuration_does_not_move_the_version(db):
+    seeded = await call(db.initialize_company, "Acme", "What Acme does")
+    assert await call(db.initialize_company, "Acme", "What Acme does") == seeded
