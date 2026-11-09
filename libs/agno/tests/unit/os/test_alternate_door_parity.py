@@ -75,7 +75,7 @@ class TestMcpContinueDoorSyncsStream:
             id = "a1"
 
             async def aget_run_output(self, run_id, session_id, user_id=None):
-                return SimpleNamespace(status=RunStatus.paused, execution_origin="inline")
+                return SimpleNamespace(status=RunStatus.paused)
 
             async def acontinue_run(self, **kwargs):
                 return SimpleNamespace(status=RunStatus.completed, run_id="r-mcp")
@@ -95,7 +95,7 @@ class TestMcpContinueDoorSyncsStream:
             id = "a1"
 
             async def aget_run_output(self, run_id, session_id, user_id=None):
-                return SimpleNamespace(status=RunStatus.paused, execution_origin="inline")
+                return SimpleNamespace(status=RunStatus.paused)
 
             async def acontinue_run(self, **kwargs):
                 return SimpleNamespace(status=RunStatus.completed, run_id="r-inline")

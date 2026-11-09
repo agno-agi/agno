@@ -7,6 +7,8 @@ the seams cannot diverge on them. Cancellation intent is deliberately NEVER
 cleared by the seam (see TestAcceptSideEffects).
 """
 
+from types import SimpleNamespace
+
 import pytest
 import pytest_asyncio
 
@@ -311,7 +313,7 @@ class TestSideEntranceGate:
             db = object()
 
             async def aget_run_output(self, run_id, session_id, user_id=None):
-                return RunOutput(status="PAUSED", execution_origin="inline")
+                return RunOutput(status="PAUSED")
 
             async def acontinue_run(self, **kwargs):
                 calls.append(kwargs)
@@ -1054,24 +1056,23 @@ async def test_failed_inline_continue_verifies_task_identity(error, status):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "enabled,status,attempt,origin,expected",
+    "enabled,status,attempt,expected",
     [
-        (True, "ERROR", 0, None, 409),
-        (True, "ERROR", 2, None, 409),
-        (True, "ERROR", None, None, 409),
-        (True, "ERROR", None, "inline", None),
-        (True, "ERROR", None, "queue", 409),
-        (True, "COMPLETED", 2, None, None),
-        (False, "ERROR", 2, None, 409),
-        (None, "ERROR", 2, None, 409),
-        (None, "ERROR", None, "queue", 409),
-        (True, "PENDING", 0, None, 409),
-        (True, "RUNNING", 1, None, 409),
-        (True, "PAUSED", 1, None, 409),
-        (True, "CANCELLED", 1, None, 409),
+        (True, "ERROR", 0, 409),
+        (True, "ERROR", 2, 409),
+        (True, "ERROR", None, None),
+        (True, "PAUSED", None, None),
+        (True, "COMPLETED", 2, None),
+        (False, "ERROR", 2, 409),
+        (None, "ERROR", 2, 409),
+        (None, "ERROR", None, None),
+        (True, "PENDING", 0, 409),
+        (True, "RUNNING", 1, 409),
+        (True, "PAUSED", 1, 409),
+        (True, "CANCELLED", 1, 409),
     ],
 )
-async def test_missing_ticket_checks_retained_queue_origin(enabled, status, attempt, origin, expected):
+async def test_missing_ticket_checks_retained_queue_attempt(enabled, status, attempt, expected):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
@@ -1083,7 +1084,6 @@ async def test_missing_ticket_checks_retained_queue_origin(enabled, status, atte
     worker = make_worker(InMemoryQueueStore())
     worker._task_execution_provider = SimpleNamespace(enabled=enabled) if enabled is not None else None
     run = RunOutput(status=status, queue_attempt=attempt)
-    run.execution_origin = origin
     component = SimpleNamespace(aget_run_output=AsyncMock(return_value=run))
     for _ in range(2):
         if expected:
@@ -1098,8 +1098,8 @@ async def test_missing_ticket_checks_retained_queue_origin(enabled, status, atte
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("origin,expected", [(None, 409), ("inline", None)])
-async def test_workerless_continuation_uses_stored_origin(origin, expected):
+@pytest.mark.parametrize("attempt,expected", [(2, 409), (None, None)])
+async def test_workerless_continuation_uses_stored_queue_attempt(attempt, expected):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
@@ -1109,8 +1109,7 @@ async def test_workerless_continuation_uses_stored_origin(origin, expected):
     from agno.run.agent import RunOutput
     from agno.run.concurrency import task_execution_scope
 
-    run = RunOutput(status="ERROR", queue_attempt=None)
-    run.execution_origin = origin
+    run = RunOutput(status="ERROR", queue_attempt=attempt)
     component = SimpleNamespace(aget_run_output=AsyncMock(return_value=run))
     with task_execution_scope(SimpleNamespace(enabled=True)):
         for _ in range(2):
@@ -1134,7 +1133,7 @@ async def test_workerless_noncompany_continuation_accepts_old_paused_run(compone
     from agno.os.job_queue import araise_if_ticket_owns_continue
     from agno.run.agent import RunOutput
 
-    run = RunOutput(status="PAUSED", execution_origin=None)
+    run = RunOutput(status="PAUSED")
     component = SimpleNamespace(aget_run_output=AsyncMock(return_value=run))
     await araise_if_ticket_owns_continue(
         None, "old-run", component_type=component_type, component=component, session_id="s1", user_id="owner"
@@ -1151,7 +1150,7 @@ async def test_ticketless_old_noncompany_approval_continues_with_queue_worker(co
     from agno.run.agent import RunOutput
 
     worker = make_worker(InMemoryQueueStore())
-    run = RunOutput(status="PAUSED", queue_attempt=None, execution_origin=None)
+    run = RunOutput(status="PAUSED", queue_attempt=None)
     component = SimpleNamespace(aget_run_output=AsyncMock(return_value=run))
     await araise_if_ticket_owns_continue(
         worker, "old-run", component_type=component_type, component=component, session_id="s1", user_id="owner"
@@ -1190,17 +1189,70 @@ async def test_missing_ticket_keeps_ordinary_workflow_approval_continuation():
     component.aget_run_output.assert_not_called()
 
 
-def test_execution_origin_scope_is_reset_after_queued_and_nested_runs():
-    from agno.run.concurrency import current_execution_origin, task_execution_scope
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize(
+    "parents,expected",
+    [
+        ({"parent": SimpleNamespace(queue_attempt=0, parent_run_id=None)}, 409),
+        ({"parent": SimpleNamespace(queue_attempt=None, parent_run_id=None)}, None),
+        (
+            {
+                "parent": SimpleNamespace(queue_attempt=None, parent_run_id="root"),
+                "root": SimpleNamespace(queue_attempt=2, parent_run_id=None),
+            },
+            409,
+        ),
+        ({}, 409),
+        ({"parent": SimpleNamespace(queue_attempt=None, parent_run_id="parent")}, 409),
+    ],
+    ids=["queued-parent", "inline-parent", "queued-grandparent", "missing-parent", "parent-cycle"],
+)
+async def test_nested_run_follows_its_parent(parents, expected, use_async):
+    from unittest.mock import AsyncMock
 
-    for _ in range(2):
-        assert current_execution_origin() == "inline"
-        with task_execution_scope(None, queued=True):
-            assert current_execution_origin() == "queue"
-            with task_execution_scope(None):
-                assert current_execution_origin() == "inline"
-            assert current_execution_origin() == "queue"
-        assert current_execution_origin() == "inline"
+    from fastapi import HTTPException
+
+    from agno.os.job_queue import araise_if_ticket_owns_continue
+    from agno.run.agent import RunOutput
+
+    class SyncDb:
+        def get_run(self, run_id):
+            return parents.get(run_id)
+
+    class AsyncDb:
+        async def get_run(self, run_id):
+            return parents.get(run_id)
+
+    run = RunOutput(status="PAUSED", parent_run_id="parent")
+    component = SimpleNamespace(aget_run_output=AsyncMock(return_value=run), db=AsyncDb() if use_async else SyncDb())
+    worker = make_worker(InMemoryQueueStore())
+    if expected is None:
+        await araise_if_ticket_owns_continue(worker, "member", component=component, session_id="s1", user_id="owner")
+    else:
+        with pytest.raises(HTTPException) as exc:
+            await araise_if_ticket_owns_continue(
+                worker, "member", component=component, session_id="s1", user_id="owner"
+            )
+        assert exc.value.status_code == expected
+
+
+@pytest.mark.asyncio
+async def test_nested_run_without_a_database_is_refused():
+    from unittest.mock import AsyncMock
+
+    from fastapi import HTTPException
+
+    from agno.os.job_queue import araise_if_ticket_owns_continue
+    from agno.run.agent import RunOutput
+
+    run = RunOutput(status="PAUSED", parent_run_id="parent")
+    component = SimpleNamespace(aget_run_output=AsyncMock(return_value=run), db=None)
+    with pytest.raises(HTTPException) as exc:
+        await araise_if_ticket_owns_continue(
+            make_worker(InMemoryQueueStore()), "member", component=component, session_id="s1", user_id="owner"
+        )
+    assert exc.value.status_code == 409
 
 
 @pytest.mark.asyncio

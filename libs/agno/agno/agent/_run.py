@@ -26,7 +26,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
-from agno.run.concurrency import current_execution_origin, guard_task_execution
+from agno.run.concurrency import guard_task_execution
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
@@ -1461,7 +1461,6 @@ def run_dispatch(
     # Create a new run_response for this attempt
     run_response = RunOutput(
         run_id=run_id,
-        execution_origin=current_execution_origin(),
         session_id=session_id,
         agent_id=agent.id,
         user_id=user_id,
@@ -2859,7 +2858,6 @@ def arun_dispatch(  # type: ignore
     # Create a new run_response for this attempt
     run_response = RunOutput(
         run_id=run_id,
-        execution_origin=current_execution_origin(),
         session_id=session_id,
         agent_id=agent.id,
         user_id=user_id,
@@ -3042,7 +3040,6 @@ def _fork_run(run_response: RunOutput, message_index: int) -> RunOutput:
     forked = copy.deepcopy(run_response)
     forked.run_id = str(uuid4())
     forked.queue_attempt = None
-    forked.execution_origin = "inline"
     forked.forked_from_run_id = run_response.run_id
     forked.forked_from_message_index = message_index
     # Reset lineage-irrelevant accumulators so the fork reports its own work,
@@ -6500,7 +6497,6 @@ def _build_forked_session(source_session: AgentSession, new_user_id: Optional[st
     for run in forked_runs:
         run.run_id = str(uuid4())
         run.queue_attempt = None
-        run.execution_origin = "inline"
         run.session_id = new_session_id
         if not run.forked_from_session_id:
             run.forked_from_session_id = source_session.session_id

@@ -4421,7 +4421,6 @@ async def test_failed_run_continuation_checks_original_task(
     before_run = await _call(db, "get_run", run_id, deserialize=False)
     assert before_run["status"] == "ERROR"
     assert (await component.aget_run_output(run_id, task["session_id"])).queue_attempt is not None
-    assert (await component.aget_run_output(run_id, task["session_id"])).execution_origin == "queue"
     before_job = await worker.store.get_job(run_id)
     from agno.db.schemas.jobs import QUEUE_ACCEPTANCE_TASK_IDS
 
@@ -4488,8 +4487,7 @@ async def test_failed_run_continuation_checks_original_task(
 
 
 @pytest.mark.parametrize("kind,id", [("agent", "writer"), ("team", "editors")])
-@pytest.mark.parametrize("historical", [False, True])
-async def test_ordinary_failed_run_recovers_without_queue_ticket(system, monkeypatch, kind, id, historical):
+async def test_ordinary_failed_run_recovers_without_queue_ticket(system, monkeypatch, kind, id):
     from agno.company.execution import _call
 
     client, db, worker, os, components = system
@@ -4518,23 +4516,107 @@ async def test_ordinary_failed_run_recovers_without_queue_ticket(system, monkeyp
     assert await worker.store.get_job(run_id, strict=True) is None
     stored = await components[id].aget_run_output(run_id, session_id)
     assert stored.queue_attempt is None
-    assert stored.execution_origin == "inline"
 
     failing = False
-    if historical:
-        stored.execution_origin = None
-        await _call(db, "upsert_run", stored, session_id=session_id)
-        assert (await components[id].aget_run_output(run_id, session_id)).execution_origin is None
-        before = await _call(db, "get_run", run_id, deserialize=False)
-        for _ in range(2):
-            refused = await client.post(
-                route + f"/{run_id}/continue", data={"session_id": session_id, "stream": "false"}
-            )
-            assert refused.status_code == 409, refused.text
-            assert await _call(db, "get_run", run_id, deserialize=False) == before
-        return
     for _ in range(2):
         recovered = await client.post(route + f"/{run_id}/continue", data={"session_id": session_id, "stream": "false"})
         assert recovered.status_code == 200, recovered.text
         assert recovered.json()["status"] == "COMPLETED"
         assert (recovered.json()["run_id"] == run_id) == (_ == 0)
+
+
+class _ToolCallModel(OfflineModel):
+    """Call one tool on the first turn, then answer."""
+
+    def __init__(self, name, arguments="{}"):
+        super().__init__()
+        self.tool_name, self.tool_arguments, self.called = name, arguments, False
+
+    def invoke(self, *args, **kwargs):
+        if self.called:
+            return super().invoke(*args, **kwargs)
+        self.called = True
+        function = {"name": self.tool_name, "arguments": self.tool_arguments}
+        return ModelResponse(
+            role="assistant",
+            content="",
+            tool_calls=[{"id": "call-1", "type": "function", "function": function}],
+            response_usage=MessageMetrics(),
+        )
+
+
+def _confirmed_tools(run):
+    return json.dumps([{**tool_call.to_dict(), "confirmed": True} for tool_call in run.tools or []])
+
+
+async def test_queued_team_member_cannot_continue_outside_its_team(system):
+    from agno.company.execution import _call
+    from agno.tools import tool
+
+    executed = []
+
+    @tool(requires_confirmation=True)
+    def approve_action() -> str:
+        """Require approval before performing the action."""
+        executed.append(True)
+        return "done"
+
+    client, db, worker, os, components = system
+    await _call(db, "_create_all_tables")
+    worker._task_execution_provider = os._task_execution_provider
+    member, team = components["writer"], components["editors"]
+    member.model, member.tools = _ToolCallModel("approve_action"), [approve_action]
+    team.members = [member]
+    team.model = _ToolCallModel("delegate_task_to_member", '{"member_id": "writer", "task": "Do it"}')
+    session_id = str(uuid4())
+    response = await client.post(
+        "/teams/editors/runs", data={"message": "Go", "session_id": session_id, "stream": "false", "background": "true"}
+    )
+    assert response.status_code == 202, response.text
+    team_run_id = response.json()["run_id"]
+    assert (await execute(worker))["status"] == "paused"
+    # The member's own row has no ticket or marker; only its parent records the queue.
+    member_run = (await team.aget_run_output(team_run_id, session_id)).member_responses[0]
+    assert member_run.queue_attempt is None and member_run.parent_run_id == team_run_id
+    for _ in range(2):
+        refused = await client.post(
+            f"/agents/writer/runs/{member_run.run_id}/continue",
+            data={"session_id": session_id, "stream": "false", "tools": _confirmed_tools(member_run)},
+        )
+        assert refused.status_code == 409, refused.text
+    assert executed == []
+    assert (await worker.store.get_job(team_run_id))["status"] == "paused"
+
+
+async def test_inline_approval_continues_on_a_company_os(system):
+    from agno.company.execution import _call
+    from agno.tools import tool
+
+    executed = []
+
+    @tool(requires_confirmation=True)
+    def approve_action() -> str:
+        """Require approval before performing the action."""
+        executed.append(True)
+        return "done"
+
+    client, db, worker, os, components = system
+    await _call(db, "_create_all_tables")
+    await _call(worker.store._store, "_get_table", table_type="jobs", create_table_if_not_found=True)
+    worker._task_execution_provider = os._task_execution_provider
+    agent = components["writer"]
+    agent.model, agent.tools = _ToolCallModel("approve_action"), [approve_action]
+    session_id = str(uuid4())
+    response = await client.post(
+        "/agents/writer/runs", data={"message": "Go", "session_id": session_id, "stream": "false"}
+    )
+    assert response.status_code == 200 and response.json()["status"] == "PAUSED", response.text
+    run_id = response.json()["run_id"]
+    stored = await agent.aget_run_output(run_id, session_id)
+    assert stored.queue_attempt is None
+    resumed = await client.post(
+        f"/agents/writer/runs/{run_id}/continue",
+        data={"session_id": session_id, "stream": "false", "tools": _confirmed_tools(stored)},
+    )
+    assert resumed.status_code == 200, resumed.text
+    assert executed == [True]

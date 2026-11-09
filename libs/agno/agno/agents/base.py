@@ -55,7 +55,6 @@ from agno.run.agent import (
 )
 from agno.run.base import METRICS_FINAL_STATUSES, RunStatus
 from agno.run.concurrency import (
-    current_execution_origin,
     current_task_execution_provider,
     guard_task_execution,
     retain_task_execution,
@@ -1582,7 +1581,6 @@ class BaseExternalAgent:
             status=RunStatus.pending,
             # 0 marks a durable queue ticket's row before any claim; in-process rows stay None.
             queue_attempt=0 if queued else None,
-            execution_origin="queue" if queued else "inline",
         )
         session = await _aappend_pending_run(
             self, session_id, run.to_dict(), user_id, lambda: self.aread_or_create_session(session_id, user_id)
@@ -1958,7 +1956,6 @@ class BaseExternalAgent:
             agent_name=self.name,
             session_id=session_id,
             user_id=user_id,
-            execution_origin=current_execution_origin(),
             model=model_id,
             model_provider=model_provider,
             input=(

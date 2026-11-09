@@ -2708,13 +2708,15 @@ async def araise_if_ticket_owns_continue(
     must still verify their original Task identity before resuming. A run
     that already completed instead starts a new follow-up. After ticket
     cleanup, a retained queue-attempt marker prevents an unverifiable
-    Company retry; ordinary nonqueued continuations remain eligible.
+    Company retry; ordinary nonqueued continuations remain eligible. A team
+    member's run has no ticket or marker of its own, so it follows its
+    parent: continuing it directly would race the parent's ticket.
 
     Raises 409 (use the durable door / continuation in progress) or 503
     (ticket lookup failed - FAIL CLOSED: executing while unable to verify
     ownership is exactly the race this gate exists to prevent). No queue
-    worker configured means no tickets can exist, but stored run origin still
-    needs verification.
+    worker configured means no tickets can exist, but a stored queue-attempt
+    marker still needs verification.
     """
     from fastapi import HTTPException
 
@@ -2750,11 +2752,8 @@ async def araise_if_ticket_owns_continue(
                 run = await component.aget_run_output(run_id, session_id, user_id=user_id)
                 if run is None:
                     raise HTTPException(status_code=404, detail="Run not found")
-                origin = getattr(run, "execution_origin", None)
                 if run.status != "COMPLETED" and (
-                    getattr(run, "queue_attempt", None) is not None
-                    or origin == "queue"
-                    or (company_provider is not None and origin != "inline")
+                    getattr(run, "queue_attempt", None) is not None or await _aparent_ran_on_queue(component, run)
                 ):
                     raise HTTPException(
                         status_code=409,
@@ -2799,6 +2798,28 @@ async def araise_if_ticket_owns_continue(
                 if getattr(run, "status", None) == "COMPLETED":
                     return
             await _prepare_queue_fallback(queue_worker, job)
+
+
+async def _aparent_ran_on_queue(component: Any, run: Any) -> bool:
+    """Whether a nested run belongs to a queued parent, or its parent chain cannot be verified.
+
+    Only the top-level run has a ticket and a queue-attempt marker; a team member's run has neither.
+    """
+    db = getattr(component, "db", None)
+    seen = set()
+    parent_id = getattr(run, "parent_run_id", None)
+    while parent_id:
+        if db is None or parent_id in seen:
+            return True
+        seen.add(parent_id)
+        if inspect.iscoroutinefunction(db.get_run):
+            parent = await db.get_run(parent_id)
+        else:
+            parent = await asyncio.to_thread(db.get_run, parent_id)
+        if parent is None or getattr(parent, "queue_attempt", None) is not None:
+            return True
+        parent_id = getattr(parent, "parent_run_id", None)
+    return False
 
 
 @contextlib.contextmanager
@@ -3113,7 +3134,6 @@ async def aprepare_queued_run(
             status=RunStatus.pending,
             # 0 marks a durable queue ticket's row before any claim; in-process rows stay None.
             queue_attempt=0,
-            execution_origin="queue",
         )
 
         async def load_agent_session() -> Any:
@@ -3151,7 +3171,6 @@ async def aprepare_queued_run(
             input=TeamRunInput(input_content=input),
             status=RunStatus.pending,
             queue_attempt=0,
-            execution_origin="queue",
         )
 
         async def load_team_session() -> Any:
