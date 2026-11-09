@@ -57,6 +57,10 @@ This example shows how to choose which MCP protocol era `MCPTools` negotiates. T
 
 This example connects to Magic Hour's hosted MCP server to create images and videos. It shows bearer authentication, long-running render handling, reuse of project IDs after timeouts, and exact output URL retrieval.
 
+14. Datacircle Agent (`datacircle.py`)
+
+This example connects to Datacircle's hosted MCP server, which needs no API key. It lists the GTM APIs Datacircle benchmarks and searches their plans by API, provider or price.
+
 ## Getting Started
 
 ### Prerequisites
@@ -88,6 +92,7 @@ python structured_content.py
 python emem.py
 python peer_cash.py
 python magic_hour.py
+python datacircle.py
 ```
 
 ## How It Works

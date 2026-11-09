@@ -1,5 +1,15 @@
 # Test Log
 
+### datacircle.py
+
+**Status:** PASS
+
+**Description:** Connects to Datacircle's production Streamable HTTP MCP endpoint through Agno's `MCPTools` with no authentication and discovers its read-only tools.
+
+**Result:** MCP initialization completed and Agno discovered both tools, `list_apis` and `search_plans`. The example passes Python compilation, Ruff formatting, and Ruff lint checks.
+
+---
+
 ### magic_hour.py
 
 **Status:** PASS
