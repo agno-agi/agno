@@ -93,11 +93,15 @@ async def test_dynamic_context_is_fresh_and_authorized(db):
 
 
 @pytest.mark.asyncio
-async def test_concurrent_cold_initialization_and_edits(db):
+async def test_concurrent_cold_start_survives_and_recovers(db):
     import asyncio
+    from types import SimpleNamespace
+
+    from agno.company.details import _seed_company
 
     # Independent adapter instances represent independent starting replicas.
     replicas = [type(db).from_dict(db.to_dict()) for _ in range(4)]
+    config = SimpleNamespace(name="Initial", description=None)
 
     async def invoke(replica, method, *args, **kwargs):
         fn = getattr(replica, method)
@@ -106,7 +110,11 @@ async def test_concurrent_cold_initialization_and_edits(db):
         return await asyncio.to_thread(fn, *args, **kwargs)
 
     try:
-        rows = await asyncio.gather(*(invoke(replica, "initialize_company", "Initial") for replica in replicas))
+        # A replica that loses first-time table creation keeps starting, and its next attempt works.
+        await asyncio.gather(
+            *(_seed_company(SimpleNamespace(company=config, _company_db=replica)) for replica in replicas)
+        )
+        rows = [await invoke(replica, "initialize_company", "Initial") for replica in replicas]
         assert all(row == rows[0] for row in rows)
         edits = await asyncio.gather(
             *(
@@ -153,35 +161,3 @@ async def test_configuration_updates_the_one_row_until_someone_edits_it(db):
 async def test_unchanged_configuration_does_not_move_the_version(db):
     seeded = await call(db.initialize_company, "Acme", "What Acme does")
     assert await call(db.initialize_company, "Acme", "What Acme does") == seeded
-
-
-@pytest.mark.asyncio
-async def test_any_table_recovers_when_another_replica_creates_it_first(db):
-    import asyncio
-
-    replicas = [type(db).from_dict(db.to_dict()) for _ in range(4)]
-
-    async def create(replica):
-        if isinstance(replica, AsyncBaseDb):
-            return await replica._get_table(table_type="sources", create_table_if_not_found=True)
-        return await asyncio.to_thread(replica._get_table, table_type="sources", create_table_if_not_found=True)
-
-    try:
-        tables = await asyncio.gather(*(create(replica) for replica in replicas))
-        assert all(table is not None and table.name == db.sources_table_name for table in tables)
-    finally:
-        for replica in replicas:
-            await call(replica.close)
-
-
-@pytest.mark.asyncio
-async def test_non_race_table_errors_still_raise(db, monkeypatch):
-    def fail(*args, **kwargs):
-        raise RuntimeError("disk full")
-
-    async def afail(*args, **kwargs):
-        fail()
-
-    monkeypatch.setattr(db, "_create_table", afail if isinstance(db, AsyncBaseDb) else fail)
-    with pytest.raises(RuntimeError, match="disk full"):
-        await call(db._get_table, table_type="sources", create_table_if_not_found=True)

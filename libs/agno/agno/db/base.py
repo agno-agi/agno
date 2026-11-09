@@ -420,20 +420,9 @@ class BaseDb(ABC):
             cached = self._table_cache.get(table_type, table_name)
             if cached is not None:
                 return cached
-            try:
-                return self._resolve_table(
-                    table_name=table_name, table_type=table_type, create_table_if_not_found=create_table_if_not_found
-                )
-            except Exception as exc:
-                from agno.db.utils import is_table_creation_race
-
-                # Another replica created this table first: load the winner's table.
-                if not create_table_if_not_found or not is_table_creation_race(exc):
-                    raise
-                if not self.table_exists(table_name):
-                    raise
-                self._invalidate_table_cache(table_name)
-                return self._resolve_table(table_name=table_name, table_type=table_type)
+            return self._resolve_table(
+                table_name=table_name, table_type=table_type, create_table_if_not_found=create_table_if_not_found
+            )
 
     def _resolve_table(
         self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False
@@ -2904,20 +2893,9 @@ class AsyncBaseDb(ABC):
             cached = self._table_cache.get(table_type, table_name)
             if cached is not None:
                 return cached
-            try:
-                return await self._resolve_table(
-                    table_name=table_name, table_type=table_type, create_table_if_not_found=create_table_if_not_found
-                )
-            except Exception as exc:
-                from agno.db.utils import is_table_creation_race
-
-                # Another replica created this table first: load the winner's table.
-                if not create_table_if_not_found or not is_table_creation_race(exc):
-                    raise
-                if not await self.table_exists(table_name):
-                    raise
-                self._invalidate_table_cache(table_name)
-                return await self._resolve_table(table_name=table_name, table_type=table_type)
+            return await self._resolve_table(
+                table_name=table_name, table_type=table_type, create_table_if_not_found=create_table_if_not_found
+            )
 
     async def _resolve_table(
         self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False

@@ -258,6 +258,18 @@ def test_startup_applies_configuration_without_products(tmp_path):
     db.close()
 
 
+def test_startup_and_managers_survive_a_failed_seed(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "seed.db"))
+
+    def unavailable(*args, **kwargs):
+        raise RuntimeError("database down")
+
+    db.initialize_company = unavailable
+    with TestClient(_company_os(db).get_app(), raise_server_exceptions=False) as client:
+        _assert_managers_answer(client)
+    db.close()
+
+
 def test_adapter_without_company_details_keeps_managers_working():
     from agno.db.in_memory import InMemoryDb
 
