@@ -45,8 +45,9 @@ async def db(request, tmp_path):
 async def test_singleton_preserves_edits_and_rejects_stale_writes(db):
     assert await call(db.get_company) is None
     initial = await call(db.initialize_company, "Original")
-    assert set(initial) == {"id", "name", "description", "created_at", "updated_at"}
+    assert set(initial) == {"id", "name", "description", "metadata", "created_at", "updated_at"}
     assert initial["description"] is None
+    assert initial["metadata"] is None
     edited = await call(db.update_company, initial["updated_at"], name="Human edit", description="We make tools")
     assert edited["updated_at"] > initial["updated_at"]
     assert await call(db.update_company, initial["updated_at"], name="Stale") is None
@@ -161,3 +162,31 @@ async def test_configuration_updates_the_one_row_until_someone_edits_it(db):
 async def test_unchanged_configuration_does_not_move_the_version(db):
     seeded = await call(db.initialize_company, "Acme", "What Acme does")
     assert await call(db.initialize_company, "Acme", "What Acme does") == seeded
+
+
+async def _set_metadata(db, value: str) -> None:
+    table = (
+        f'"{db.db_schema}"."{db.company_table_name}"'
+        if "postgres" in type(db).__name__.lower()
+        else db.company_table_name
+    )
+    statement = text(f"UPDATE {table} SET metadata = '{value}' WHERE id = 'company'")
+    if isinstance(db, AsyncBaseDb):
+        async with db.db_engine.begin() as conn:
+            await conn.execute(statement)
+    else:
+        with db.db_engine.begin() as conn:
+            conn.execute(statement)
+
+
+@pytest.mark.asyncio
+async def test_metadata_is_not_human_editable_and_survives_reseed_and_edits(db):
+    initial = await call(db.initialize_company, "Original")
+    with pytest.raises(ValueError):
+        await call(db.update_company, initial["updated_at"], metadata={"plan": "pro"})
+    await _set_metadata(db, '{"plan": "pro"}')
+    reseeded = await call(db.initialize_company, "Renamed in config")
+    assert reseeded["name"] == "Renamed in config"
+    assert reseeded["metadata"] == {"plan": "pro"}
+    edited = await call(db.update_company, reseeded["updated_at"], description="Human edit")
+    assert edited["metadata"] == {"plan": "pro"}

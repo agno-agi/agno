@@ -15,6 +15,8 @@ COMPANY_TABLE_SCHEMA = {
     "id": {"type": String, "primary_key": True, "nullable": False},
     "name": {"type": String, "nullable": False},
     "description": {"type": Text, "nullable": True},
+    # Framework- or application-owned; PATCH /company/details cannot write it.
+    "metadata": {"type": JSON, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False},
     "updated_at": {"type": BigInteger, "nullable": False},
 }
