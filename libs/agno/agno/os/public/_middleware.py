@@ -22,7 +22,6 @@ from agno.os.auth import require_verified_public_workflow, verify_internal_servi
 from agno.os.middleware.cors import OriginPolicy
 from agno.os.public import _client_id
 from agno.os.public._policy import RUN_ROUTE, PublicRoutePolicy
-from agno.registry._reserved import _manager_id
 from agno.utils.bounded import BoundedWorkers
 from agno.utils.log import log_warning
 
@@ -370,8 +369,6 @@ class PublicMiddleware:
             component_kind = component_id = run_id = cancellation = ""
             if match:
                 component_kind, component_id, run_id, cancellation = match.groups()
-                # Registered and selected components carry current IDs; stored schedules may use a former one.
-                component_id = _manager_id(component_id, component_kind) or component_id
             if internal and match and component_id in self.registered[component_kind]:
                 # Verification, not bearer-header presence, grants scheduler schemas and quota bypass.
                 await self.app(scope, receive, send)

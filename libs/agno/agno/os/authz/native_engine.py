@@ -457,9 +457,7 @@ class NativePolicyEngine(PolicyEngine):
             if resource in ("*", f"{resource_type}/*", resource_type):
                 return {"*"}
             if resource.startswith(prefix):
-                from agno.registry._reserved import _manager_id
-
-                ids.add(_manager_id(resource[len(prefix) :], resource_type) or resource[len(prefix) :])
+                ids.add(resource[len(prefix) :])
         return ids
 
     def denied_resource_ids(
@@ -495,9 +493,7 @@ class NativePolicyEngine(PolicyEngine):
             if resource in ("*", f"{resource_type}/*", resource_type):
                 return {"*"}
             if resource.startswith(prefix):
-                from agno.registry._reserved import _manager_id
-
-                ids.add(_manager_id(resource[len(prefix) :], resource_type) or resource[len(prefix) :])
+                ids.add(resource[len(prefix) :])
         return ids
 
     # =====================================================================
@@ -743,9 +739,7 @@ class NativePolicyEngine(PolicyEngine):
             if resource in ("*", f"{resource_type}/*", resource_type):
                 return {"*"}
             if resource.startswith(prefix):
-                from agno.registry._reserved import _manager_id
-
-                ids.add(_manager_id(resource[len(prefix) :], resource_type) or resource[len(prefix) :])
+                ids.add(resource[len(prefix) :])
         return ids
 
     async def adenied_resource_ids(
@@ -771,7 +765,5 @@ class NativePolicyEngine(PolicyEngine):
             if resource in ("*", f"{resource_type}/*", resource_type):
                 return {"*"}
             if resource.startswith(prefix):
-                from agno.registry._reserved import _manager_id
-
-                ids.add(_manager_id(resource[len(prefix) :], resource_type) or resource[len(prefix) :])
+                ids.add(resource[len(prefix) :])
         return ids

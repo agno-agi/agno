@@ -61,19 +61,8 @@ def match_run_endpoint(endpoint: str, target_type: str, target_id: str) -> bool:
 
     Tolerates the trailing slash ``RUN_ENDPOINT_RE`` accepts, so a schedule
     stored as ``/agents/x/runs/`` is still recognised as targeting agent ``x``.
-    A manager's former ID addresses the same component as its current one.
     """
-    stripped = endpoint.rstrip("/")
-    if stripped == build_run_endpoint(target_type, target_id):
-        return True
-    from agno.registry._reserved import _manager_ids_match
-
-    target = RUN_ENDPOINT_RE.fullmatch(stripped)
-    return (
-        target is not None
-        and target.group(1) == f"{target_type}s"
-        and _manager_ids_match(target.group(2), target_id, target_type)
-    )
+    return endpoint.rstrip("/") == build_run_endpoint(target_type, target_id)
 
 
 # Marker for builder-managed schedules; generic surfaces may filter on it.

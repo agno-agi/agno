@@ -42,7 +42,6 @@ from agno.models.base import Model
 from agno.models.fallback import acall_model_with_fallback, call_model_with_fallback
 from agno.models.message import Message
 from agno.models.response import ModelResponse, ToolExecution
-from agno.registry._reserved import _manager_ids_match
 from agno.run import CancellationStage, RunContext, RunStatus
 from agno.run.agent import (
     RunCancelledEvent as AgentRunCancelledEvent,
@@ -6158,7 +6157,7 @@ def _reclaim_own_requirements(
     for req in requirements:
         member_run_id = getattr(req, "member_run_id", None)
         if (
-            _manager_ids_match(getattr(req, "member_agent_id", None), own_id)
+            getattr(req, "member_agent_id", None) == own_id
             and member_run_id is not None
             and member_run_id == continuing_run_id
         ):
@@ -6259,10 +6258,7 @@ def _resolve_member_run_output_for_continue(
                 and member_run_output.run_id != run_response.run_id
                 and (
                     member_run_output.run_id == member_run_id
-                    or (
-                        member_run_output.team_id is not None
-                        and _manager_ids_match(member_run_output.team_id, get_member_id(member), "teams")
-                    )
+                    or (member_run_output.team_id is not None and member_run_output.team_id == get_member_id(member))
                 )
             )
         else:
@@ -6356,11 +6352,7 @@ def _group_requirements_for_continue(
         elif isinstance(target, RunOutput):
             owner_id = target.agent_id
         if owner_id is not None:
-            owners = [
-                m
-                for m in get_resolved_members(team, run_context) or []
-                if _manager_ids_match(get_member_id(m), owner_id)
-            ]
+            owners = [m for m in get_resolved_members(team, run_context) or [] if get_member_id(m) == owner_id]
             if len(owners) == 1:
                 member = owners[0]
             elif not owners:

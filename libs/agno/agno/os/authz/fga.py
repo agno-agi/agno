@@ -129,23 +129,14 @@ class FGAAuthorizationProvider(AuthorizationProvider):
         if not ctx.resource_id:
             return False
         relation = self._relation(ctx.action)
-
-        def allowed(obj: str) -> bool:
-            # Memoized for this request: the route gate and the per-resource gate ask the
-            # identical question, and here each ask is a network round trip to the
-            # relationship engine. The scope dies with the request, so this never trades
-            # away freshness -- the next request re-reads.
-            return memoize(
-                ("fga.check", id(self._client), user, relation, obj),
-                lambda: bool(self._client.check(user, relation, obj)),
-            )
-
-        # Tuples written before a manager was renamed keep its former ID, and either
-        # spelling reaches the same manager, so a tuple on either one grants access.
-        from agno.registry._reserved import _manager_id_variants
-
-        variants = _manager_id_variants(ctx.resource_id, ctx.resource_type)
-        return any(allowed(f"{ctx.resource_type}:{variant}") for variant in variants)
+        obj = f"{ctx.resource_type}:{ctx.resource_id}"
+        # Memoized for this request: the route gate and the per-resource gate ask the
+        # identical question, and here each ask is a network round trip to the
+        # relationship engine. The scope dies with the request, so this never trades
+        # away freshness -- the next request re-reads.
+        return memoize(
+            ("fga.check", id(self._client), user, relation, obj), lambda: bool(self._client.check(user, relation, obj))
+        )
 
     def accessible_resource_ids(self, ctx: AuthorizationContext) -> Set[str]:
         if not ctx.resource_type:
@@ -169,15 +160,8 @@ class FGAAuthorizationProvider(AuthorizationProvider):
         )
         prefix = f"{ctx.resource_type}:"
         # FGA returns concrete objects (never a wildcard), so we return concrete
-        # ids — list endpoints get exactly the set the user is related to. Listings
-        # compare against current component IDs, so report a manager's former ID as its current one.
-        from agno.registry._reserved import _manager_id
-
-        return {
-            _manager_id(o[len(prefix) :], ctx.resource_type) or o[len(prefix) :]
-            for o in objects
-            if o.startswith(prefix)
-        }
+        # ids — list endpoints get exactly the set the user is related to.
+        return {o[len(prefix) :] for o in objects if o.startswith(prefix)}
 
     def authorize_route(self, ctx: AuthorizationContext, required_scopes: List[str]) -> bool:
         # Per-resource routes: decide relationally. Everything else (non-resource

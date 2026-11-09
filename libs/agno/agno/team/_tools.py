@@ -26,7 +26,6 @@ from agno.agent import Agent
 from agno.media import Audio, File, Image, Video
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.registry._reserved import _manager_ids_match
 from agno.run import RunContext
 from agno.run.agent import RunOutput
 from agno.run.team import (
@@ -599,7 +598,7 @@ def _find_member_by_id(
     # First check direct members
     for i, member in enumerate(resolved_members):
         url_safe_member_id = get_member_id(member)
-        if _manager_ids_match(url_safe_member_id, member_id):
+        if url_safe_member_id == member_id:
             return i, member
 
         # If this member is a team, search its members recursively
@@ -637,7 +636,7 @@ def _find_member_route_by_id(
         return None
     for i, member in enumerate(resolved_members):
         url_safe_member_id = get_member_id(member)
-        if _manager_ids_match(url_safe_member_id, member_id):
+        if url_safe_member_id == member_id:
             return i, member
 
         if isinstance(member, Team):

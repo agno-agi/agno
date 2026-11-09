@@ -1,6 +1,6 @@
 """Framework-owned component IDs, reserved even when their feature is disabled."""
 
-from typing import Any, Optional
+from typing import Any
 
 # Double hyphens distinguish built-ins; single-hyphen names are user-owned.
 MANAGER_TEAM_ID = "super--agent"
@@ -9,11 +9,10 @@ OPERATOR_ID = "platform--manager"
 COMPANY_MANAGER_ID = "company--manager"
 # Company Manager's former ID stays reserved so a user component cannot claim it.
 LEGACY_PRODUCT_MANAGER_ID = "product-manager-internal"
-# Previous manager IDs remain compatibility aliases, and stored rows keep these spellings.
-# Removing an alias needs a data migration first: a stored deny that stops matching
-# leaves any wildcard allow in force, so that user gains access.
-# The old Product Manager spelling stays reserved, but is not revived as an alias.
-MANAGER_ID_ALIASES = {
+# IDs used before 3.2. They stay reserved so a user component cannot inherit their grants or
+# history, and no longer resolve. Stored rows keep these spellings: a stored deny on one stops
+# matching, which is why startup refuses managed-role policies that still use them.
+FORMER_MANAGER_IDS = {
     "os-manager-internal": MANAGER_TEAM_ID,
     "platform-builder-internal": BUILDER_ID,
     "platform-manager-internal": OPERATOR_ID,
@@ -24,25 +23,8 @@ RESERVED_MANAGER_IDS = RESERVED_MEMBER_IDS | {
     MANAGER_TEAM_ID,
     COMPANY_MANAGER_ID,
     LEGACY_PRODUCT_MANAGER_ID,
-    *MANAGER_ID_ALIASES,
+    *FORMER_MANAGER_IDS,
 }
-
-
-def _manager_id(component_id: Optional[str], resource_type: Optional[str] = None) -> Optional[str]:
-    """Resolve a public manager alias without crossing component families.
-
-    resource_type names the family as a route ("agents") or a component type ("agent").
-    """
-    resolved = MANAGER_ID_ALIASES.get(component_id, component_id) if component_id is not None else None
-    if resource_type is not None:
-        expected = "team" if resolved == MANAGER_TEAM_ID else "agent"
-        if resource_type.removesuffix("s") != expected:
-            return component_id
-    return resolved
-
-
-def _manager_ids_match(left: Optional[str], right: Optional[str], resource_type: Optional[str] = None) -> bool:
-    return _manager_id(left, resource_type) == _manager_id(right, resource_type)
 
 
 def is_framework_owned(component: Any) -> bool:
@@ -54,30 +36,15 @@ def is_framework_owned(component: Any) -> bool:
 
 
 def _reserved_manager_id_message(component_id: str) -> str:
+    current = FORMER_MANAGER_IDS.get(component_id)
+    if current is not None:
+        return f"Manager ID '{component_id}' was renamed to '{current}' in Agno 3.2. Use the new ID."
     return f"Component ID '{component_id}' is reserved. Please choose a different ID for your component."
-
-
-def _manager_id_variants(component_id: str, resource_type: str) -> tuple[str, ...]:
-    """Storage IDs for one manager, without rewriting historical records."""
-    canonical = _manager_id(component_id, resource_type)
-    return tuple(
-        dict.fromkeys(
-            [
-                component_id,
-                *[
-                    alias
-                    for alias, target in MANAGER_ID_ALIASES.items()
-                    if target == canonical and _manager_id(alias, resource_type) == canonical
-                ],
-                *([canonical] if canonical else []),
-            ]
-        )
-    )
 
 
 def _raise_if_manager_catalog_collision(db: Any) -> None:
     """Refuse to shadow a custom component that predates the public manager IDs."""
-    for component_id in MANAGER_ID_ALIASES.values():
+    for component_id in FORMER_MANAGER_IDS.values():
         try:
             row = db.get_component(component_id, include_deleted=True)
         except NotImplementedError:

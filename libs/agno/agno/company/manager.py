@@ -18,10 +18,7 @@ def _validate_agent_source(type: str, executor_type: str, executor_id: Optional[
 
 
 def _routine_provenance(routine: Any) -> Dict[str, str]:
-    from agno.registry._reserved import _manager_id
-
-    target_id = _manager_id(routine.executor_id, routine.executor_type)
-    return {"managed_by": "company", "target_type": routine.executor_type, "target_id": target_id}
+    return {"managed_by": "company", "target_type": routine.executor_type, "target_id": routine.executor_id}
 
 
 def _without_routine_links(fields: Dict[str, Any]) -> Dict[str, Any]:

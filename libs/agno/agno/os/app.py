@@ -224,6 +224,8 @@ async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
         agent_os._initialize_sync_databases()
         await agent_os._initialize_async_databases()
     await agent_os._acheck_sandbox_tables()
+    if agent_os._authz_role_store is not None:
+        await agent_os._authz_role_store._araise_if_former_manager_policies()
 
     yield
 
@@ -807,7 +809,7 @@ class AgentOS:
     def _apply_manager_manifest(self) -> None:
         """Set default UI descriptions and prompts without replacing application settings."""
         from agno.os.config import AgentOSConfig
-        from agno.registry._reserved import COMPANY_MANAGER_ID, RESERVED_MEMBER_IDS, _manager_id
+        from agno.registry._reserved import COMPANY_MANAGER_ID, RESERVED_MEMBER_IDS
 
         defaults = self._manager.manifest() if self._manager is not None else {}
         # Company Manager is served with or without OS Manager, so it always gets its own chat card.
@@ -820,10 +822,6 @@ class AgentOS:
         if self.config is None:
             self.config = AgentOSConfig()
         manifest = {key: value for key, value in (self.config.manifest or {}).items() if key not in RESERVED_MEMBER_IDS}
-        for alias in list(manifest):
-            resolved = _manager_id(alias)
-            if resolved != alias and resolved in defaults:
-                manifest.setdefault(resolved, manifest.pop(alias))
         for component_id, entry in defaults.items():
             manifest.setdefault(component_id, entry)
         self.config.manifest = manifest

@@ -186,9 +186,9 @@ async def _afailed_routines(db: Any, products: Any) -> int:
 
 
 def _routine_executor_endpoint(executor_type: str, executor_id: str, registry: Any, *, agent_os: Any = None) -> str:
-    from agno.registry._reserved import COMPANY_MANAGER_ID, RESERVED_MANAGER_IDS, _manager_id
+    from agno.registry._reserved import COMPANY_MANAGER_ID, RESERVED_MANAGER_IDS
 
-    if _manager_id(executor_id, executor_type) == COMPANY_MANAGER_ID:
+    if executor_id == COMPANY_MANAGER_ID:
         if executor_type != "agent":
             raise ValueError("Company Manager Routine executor_type must be 'agent'")
         component = agent_os.company_manager if agent_os is not None else None
@@ -203,7 +203,7 @@ def _routine_executor_endpoint(executor_type: str, executor_id: str, registry: A
         if component is None:
             raise ValueError("Routine executor is missing from the registry")
     _validate_executor_tools(component)
-    endpoint = f"/{executor_type}s/{_manager_id(executor_id, executor_type)}/runs"
+    endpoint = f"/{executor_type}s/{executor_id}/runs"
     if RUN_ENDPOINT_RE.fullmatch(endpoint) is None:
         raise ValueError("Invalid Routine executor id")
     return endpoint
