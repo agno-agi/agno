@@ -136,6 +136,20 @@ def apply_pagination(
     return query_args
 
 
+def session_write_allowed(stored_owner_by_id: Dict[str, Any], session_id: Any, user_id: Any) -> bool:
+    """Whether ``user_id`` may overwrite the stored session ``session_id``.
+
+    ``upsert_session()`` refuses to update a stored session owned by a
+    different ``user_id``; the bulk path replaces whole documents, so without
+    the same check a batch carrying another user's ``session_id`` would
+    reassign the row and overwrite its data. A row that is absent or unowned
+    (``user_id`` null) stays claimable, matching the single-row filter and the
+    ``user_id IS NULL`` arm the SQL adapters use.
+    """
+    stored_owner = stored_owner_by_id.get(session_id)
+    return stored_owner is None or stored_owner == user_id
+
+
 # -- Metrics util methods --
 def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[dict]:
     """Calculate metrics for the given single date, one record per user.
