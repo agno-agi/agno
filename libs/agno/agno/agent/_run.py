@@ -4420,9 +4420,7 @@ async def _prepare_acontinue_run_dispatch(  # type: ignore
 
     from agno.agent._storage import aread_or_create_session, load_session_state, update_metadata
 
-    _pre_session: Optional[AgentSession] = await aread_or_create_session(
-        agent, session_id=session_id, user_id=user_id
-    )
+    _pre_session: AgentSession = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
     # Snapshot before merging agent defaults into the persisted metadata layer.
     _session_metadata: Optional[Dict[str, Any]] = deepcopy(_pre_session.metadata)
     update_metadata(agent, session=_pre_session)

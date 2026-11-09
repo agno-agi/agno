@@ -742,7 +742,6 @@ async def test_arun_preserves_thread_bound_in_memory_sqlite_history(stream):
 @pytest.mark.parametrize("stream", [False, True])
 async def test_acontinue_run_defers_session_preload_until_awaited(tmp_path, monkeypatch, stream):
     """acontinue_run must not read the session on the caller's loop before it is awaited."""
-    from agno.agent import _storage
     from agno.db.sqlite import SqliteDb
 
     db = SqliteDb(db_file=str(tmp_path / "session.db"))
@@ -765,3 +764,100 @@ async def test_acontinue_run_defers_session_preload_until_awaited(tmp_path, monk
             response.close()
     finally:
         db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_acontinue_run_awaits_custom_session_reader(tmp_path, monkeypatch, stream):
+    """Continuation reads use the application's async storage scheduling boundary."""
+    import asyncio
+    import threading
+
+    from agno.agent import _storage
+    from agno.db.base import SessionType
+    from agno.db.sqlite import SqliteDb
+    from agno.run.agent import RunOutput
+
+    db = SqliteDb(db_file=str(tmp_path / "session.db"))
+    agent = Agent(model=MockModel(), db=db)
+    try:
+        output = await agent.arun("hi", session_id="s1")
+        original_read = db.get_session
+        read_threads = []
+        loop_thread = threading.get_ident()
+
+        def recording_read(*args, **kwargs):
+            read_threads.append(threading.get_ident())
+            return original_read(*args, **kwargs)
+
+        async def custom_read(agent, session_id, session_type=SessionType.AGENT, user_id=None, runs_limit=None):
+            return await asyncio.to_thread(
+                db.get_session,
+                session_id=session_id,
+                session_type=session_type,
+                user_id=user_id,
+                runs_limit=runs_limit,
+            )
+
+        monkeypatch.setattr(db, "get_session", recording_read)
+        monkeypatch.setattr(_storage, "aread_session", custom_read)
+        for _ in range(2):
+            read_threads.clear()
+            response = agent.acontinue_run(
+                run_id=output.run_id, session_id="s1", input="again", stream=stream, yield_run_output=True
+            )
+            early_reads = read_threads.copy()
+            if stream:
+                outputs = [chunk async for chunk in response if isinstance(chunk, RunOutput)]
+                output = outputs[-1]
+            else:
+                output = await response
+            assert early_reads == []
+            assert output.content == "ok"
+            assert read_threads
+            assert loop_thread not in read_threads
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("shared_override", [None, "call"])
+async def test_acontinue_run_async_db_session_metadata_precedence(tmp_path, stream, shared_override):
+    """Continuation resolves agent, session, and call metadata before executing."""
+    from agno.db.sqlite import AsyncSqliteDb
+    from agno.run import RunContext
+    from agno.run.agent import RunOutput
+
+    db = AsyncSqliteDb(db_file=str(tmp_path / "session.db"))
+    agent = Agent(model=MockModel(), db=db, metadata={"shared": "agent", "agent_only": "default"})
+    try:
+        output = await agent.arun("hi", session_id="s1", user_id="alice")
+        session = await db.get_session("s1")
+        session.metadata = {"shared": "session", "session_only": "stored"}
+        await db.upsert_session(session)
+        for _ in range(2):
+            context = RunContext(run_id=output.run_id, session_id="s1")
+            response = agent.acontinue_run(
+                run_id=output.run_id,
+                session_id="s1",
+                input="again",
+                run_context=context,
+                metadata={"shared": shared_override} if shared_override is not None else None,
+                stream=stream,
+                yield_run_output=True,
+            )
+            if stream:
+                outputs = [chunk async for chunk in response if isinstance(chunk, RunOutput)]
+                output = outputs[-1]
+            else:
+                output = await response
+            assert context.metadata == {
+                "shared": shared_override or "session",
+                "agent_only": "default",
+                "session_only": "stored",
+            }
+            assert context.user_id == "alice"
+            assert output.content == "ok"
+    finally:
+        await db.close()
