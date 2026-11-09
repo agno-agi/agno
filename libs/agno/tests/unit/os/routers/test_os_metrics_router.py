@@ -622,6 +622,24 @@ class TestDatabases:
 
 
 class TestRefresh:
+    def test_same_id_status_keeps_the_oldest_completed_database(self, settings):
+        dbs = [
+            _postgres_db("db-1", "one", _refresh_status("completed", finished_at=UPDATED_AT)),
+            _postgres_db("db-1", "two", _refresh_status("completed", finished_at=UPDATED_AT - 60)),
+        ]
+        app = FastAPI()
+        with patch("agno.os.routers.metrics.metrics.get_authentication_dependency", return_value=lambda: True):
+            app.include_router(get_metrics_router(dbs={"db-1": dbs}, settings=settings, os_db=dbs[0]))
+        with _scope(None):
+            response = TestClient(app).get("/os/metrics/refresh/status")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "completed"
+        assert body["finished_at"] == "2027-01-15T07:59:00Z"
+        assert body["db_ids"]["db-1"]["finished_at"] == "2027-01-15T07:59:00Z"
+        assert body["skipped_db_ids"] == {}
+
     def test_refresh_starts_every_database_in_the_background(self, settings):
         dbs = [_postgres_db("db-1", "one"), _postgres_db("db-2", "two")]
         client = _client(settings, *dbs)

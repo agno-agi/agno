@@ -607,16 +607,20 @@ MIGRATABLE_TABLE_TYPES = frozenset(
 )
 
 
-def bound_index_name(db_type: str, index_name: str) -> str:
+def bound_index_name(db_type: str, name: str, suffix: str = "") -> str:
     """The index or table name as the server stores it, safe to bind in the existence check.
 
-    Postgres folds identifiers longer than 63 bytes down to 63, so a constructed key name
-    past the limit is stored truncated. psycopg truncates the over-long parameter the same
-    way on the cast to ``name``, but asyncpg's binary protocol refuses it outright.
+    Postgres folds identifiers longer than 63 bytes down to 63, and asyncpg's binary protocol
+    refuses an over-long parameter outright. A longer name keeps its suffix and is shortened
+    with a digest, so two long names that share a prefix stay apart.
     """
-    if db_type in ("PostgresDb", "AsyncPostgresDb"):
-        return index_name[:63]
-    return index_name
+    if db_type not in ("PostgresDb", "AsyncPostgresDb") or len((name + suffix).encode()) <= 63:
+        return name + suffix
+    import hashlib
+
+    digest = "_" + hashlib.sha256(name.encode()).hexdigest()[:8]
+    prefix = name.encode()[: 63 - len(suffix.encode()) - len(digest)].decode(errors="ignore")
+    return prefix + digest + suffix
 
 
 def table_schema_mismatch_error(table_ref: str, table_type: Optional[str] = None) -> SchemaMismatchError:
