@@ -238,7 +238,7 @@ async def test_submission_authorization_and_conversation_isolation(system):
     assert denied.status_code == 403
     # Permission to converse is not permission to run a worker or read its Task.
     receipt = await client.post(
-        path + "/messages", json={"message": "submit:" + task["id"]}, headers=headers(scopes=["teams:super-agent:run"])
+        path + "/messages", json={"message": "submit:" + task["id"]}, headers=headers(scopes=["teams:super--agent:run"])
     )
     assert receipt.status_code == 202, receipt.text
     await execute_one(worker)

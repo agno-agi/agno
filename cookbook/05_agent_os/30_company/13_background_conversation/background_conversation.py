@@ -143,7 +143,7 @@ async def main():
         telemetry=False,
     )
     app = agent_os.get_app()
-    components = {"writer": writer, "super-agent": agent_os.manager}
+    components = {"writer": writer, "super--agent": agent_os.manager}
     # Drive durable claims explicitly so this deterministic example can hold a worker open.
     # A normal AgentOS server starts its configured queue worker in the application lifespan.
     worker = QueueWorker(

@@ -52,20 +52,20 @@ async def test_concurrent_associations_preserve_attempt_and_lifecycle(db):
 
 @pytest.mark.asyncio
 async def test_conversation_claim_never_reassigns_existing_owner(db):
-    first = await call(db.claim_company_conversation, "shared", "alice", "super-agent")
+    first = await call(db.claim_company_conversation, "shared", "alice", "super--agent")
     assert first["user_id"] == "alice"
     replicas = [type(db).from_dict(db.to_dict()) for _ in range(4)]
 
     async def claim(replica, owner):
         if isinstance(replica, AsyncBaseDb):
-            return await replica.claim_company_conversation("new", owner, "super-agent")
-        return await asyncio.to_thread(replica.claim_company_conversation, "new", owner, "super-agent")
+            return await replica.claim_company_conversation("new", owner, "super--agent")
+        return await asyncio.to_thread(replica.claim_company_conversation, "new", owner, "super--agent")
 
     try:
         rows = await asyncio.gather(*[claim(replica, "user-" + str(i)) for i, replica in enumerate(replicas)])
         assert len({row["user_id"] for row in rows}) == 1
         retained = await call(db.claim_company_conversation, "shared", "bob", "different-team")
-        assert retained["user_id"] == "alice" and retained["team_id"] == "super-agent"
+        assert retained["user_id"] == "alice" and retained["team_id"] == "super--agent"
     finally:
         for replica in replicas:
             await call(replica.close)

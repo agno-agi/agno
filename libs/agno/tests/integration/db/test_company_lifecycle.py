@@ -25,7 +25,7 @@ from agno.run import RunContext
 
 SECRET = "company-managed-lifecycle-test-secret-32-bytes"
 SCOPES = [
-    "agents:company-manager:run",
+    "agents:company--manager:run",
     "products:read",
     "products:write",
     "projects:read",
@@ -233,7 +233,13 @@ async def system(tmp_path):
 
 
 async def execute(worker):
+    # Follow the real poller's due-time behavior: enqueue and claim may use
+    # different clocks on opposite sides of an epoch-second boundary.
+    deadline = asyncio.get_running_loop().time() + 2
     job = await worker.store.claim_job(worker.worker_id, worker.config.lock_grace_seconds)
+    while job is None and asyncio.get_running_loop().time() < deadline:
+        await asyncio.sleep(0.01)
+        job = await worker.store.claim_job(worker.worker_id, worker.config.lock_grace_seconds)
     assert job is not None
     await worker._execute_claimed(job)
     return await worker.store.get_job(job["id"])
@@ -242,7 +248,7 @@ async def execute(worker):
 async def delegate(system):
     host, db, worker, executor, client, auth, assessor, worker_model = system
     response = await client.post(
-        "/agents/company-manager/runs",
+        "/agents/company--manager/runs",
         headers=headers(),
         data={"message": "delegate", "session_id": "conversation", "stream": "false"},
     )
@@ -262,7 +268,7 @@ async def test_delegate_revision_and_completion_without_human_approvals(system):
     host, db, worker, executor, client, auth, assessor, worker_model = system
     task = await delegate(system)
     reply = await client.post(
-        "/agents/company-manager/runs",
+        "/agents/company--manager/runs",
         headers=headers(),
         data={"message": "unrelated", "session_id": "conversation", "stream": "false"},
     )
@@ -394,11 +400,11 @@ async def test_cancellation_during_assessment_is_not_overwritten(system, monkeyp
 @pytest.mark.asyncio
 async def test_executor_permission_denial_creates_no_work(system):
     host, db, worker, executor, client, auth, assessor, worker_model = system
-    auth.define_role("conversation-only", ["agents:company-manager:run", "company:read"]).assign(
+    auth.define_role("conversation-only", ["agents:company--manager:run", "company:read"]).assign(
         "bob", "conversation-only"
     )
     response = await client.post(
-        "/agents/company-manager/runs",
+        "/agents/company--manager/runs",
         headers=headers("bob"),
         data={"message": "delegate", "session_id": "bob-conversation", "stream": "false"},
     )
@@ -459,7 +465,7 @@ async def test_status_and_unrelated_turns_while_worker_is_running(system):
         for message, expected in (("status", "in_progress"), ("unrelated", "Unrelated answer")):
             reply = await asyncio.wait_for(
                 client.post(
-                    "/agents/company-manager/runs",
+                    "/agents/company--manager/runs",
                     headers=headers(),
                     data={"message": message, "session_id": "conversation", "stream": "false"},
                 ),
@@ -595,3 +601,55 @@ async def test_transaction_rechecks_scope_after_final_application_read(system, m
     await execute(worker)
     assert db.get_task(task["id"])["status"] == "in_review"
     assert await worker.store.claim_job(worker.worker_id, worker.config.lock_grace_seconds) is None
+
+
+def leader_context(executor, task, session_id="conversation"):
+    from agno.company.lifecycle import _delegation
+    from agno.os.authz.run_context import restore_authorization
+    from agno.run.authorization import AUTHORIZATION_KEY
+
+    authority = restore_authorization(executor.app, _delegation(task)[AUTHORIZATION_KEY])
+    # The Super Agent leader shares the member's session and user but has its own run id.
+    return RunContext(run_id="leader-" + uuid4().hex, session_id=session_id, user_id="alice", authorization=authority)
+
+
+@pytest.mark.asyncio
+async def test_leader_resubmit_while_running_joins_delegated_run(system):
+    from agno.company.conversation import asubmit_company_task
+
+    host, db, worker, executor, client, auth, assessor, worker_model = system
+    task = await delegate(system)
+    receipt = await asubmit_company_task(host, task["id"], leader_context(executor, task))
+    assert receipt["run_id"] == task["job_id"]
+    assert db.get_task(task["id"])["job_id"] == task["job_id"]
+
+
+@pytest.mark.asyncio
+async def test_leader_resubmit_after_delegated_task_finished_returns_receipt(system):
+    from agno.company.conversation import asubmit_company_task
+
+    host, db, worker, executor, client, auth, assessor, worker_model = system
+    task = await delegate(system)
+    await execute(worker)
+    await execute(worker)
+    finished = db.get_task(task["id"])
+    assert finished["status"] == "done"
+    receipt = await asubmit_company_task(host, task["id"], leader_context(executor, task))
+    assert receipt["already_submitted"] is True
+    assert receipt["run_id"] == finished["job_id"]
+    assert receipt["task_status"] == "done"
+    assert db.get_task(task["id"]) == finished
+    assert await worker.store.claim_job(worker.worker_id, worker.config.lock_grace_seconds) is None
+    assert worker_model.attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_other_conversation_cannot_resubmit_finished_task(system):
+    from agno.company.conversation import asubmit_company_task
+
+    host, db, worker, executor, client, auth, assessor, worker_model = system
+    task = await delegate(system)
+    await execute(worker)
+    await execute(worker)
+    with pytest.raises(ValueError, match="Only accepted Tasks can be submitted"):
+        await asubmit_company_task(host, task["id"], leader_context(executor, task, session_id="other"))
