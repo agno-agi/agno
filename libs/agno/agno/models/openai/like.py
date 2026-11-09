@@ -19,6 +19,7 @@ class OpenAILike(OpenAIChat):
     id: str = "not-provided"
     name: str = "OpenAILike"
     api_key: Optional[str] = "not-provided"
+    collect_metrics_on_completion: bool = True
 
     default_role_map = {
         "system": "system",

@@ -1945,8 +1945,18 @@ class Model(ABC):
                 stream_data.response_metrics.start_timer()
             # Update Metrics with usage data from response
             usage = model_response_delta.response_usage
-            # Use in-place addition to preserve timer automatically
-            stream_data.response_metrics += usage
+            if getattr(self, "collect_metrics_on_completion", False):
+                stream_data.response_metrics = (
+                    MessageMetrics(
+                        timer=stream_data.response_metrics.timer,
+                        duration=stream_data.response_metrics.duration,
+                        time_to_first_token=stream_data.response_metrics.time_to_first_token,
+                    )
+                    + usage
+                )
+            else:
+                # Use in-place addition to preserve timer automatically
+                stream_data.response_metrics += usage
 
         # Update stream_data content
         if model_response_delta.content is not None:

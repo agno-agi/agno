@@ -797,7 +797,7 @@ class OpenAIChat(Model):
             return True
 
         if not response.choices:
-            return False
+            return True
 
         return response.choices[0].finish_reason is not None
 
