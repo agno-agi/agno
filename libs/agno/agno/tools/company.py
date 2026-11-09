@@ -17,6 +17,7 @@ from pydantic import BeforeValidator
 from agno.company.declarations import Product, Routine, Source
 from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.company.routines import _require_routine_product, _RoutineAuthorization
+from agno.company.sources import is_remote_git
 from agno.db.base import AsyncBaseDb
 from agno.run.authorization import current_authorization, requires_permission
 from agno.tools import Toolkit
@@ -27,9 +28,20 @@ def _empty_to_none(value: Any) -> Any:
     return None if value == "" else value
 
 
+def _public_source(source: Dict[str, Any]) -> Dict[str, Any]:
+    """Describe supported operations without exposing credentials or probing the Source."""
+    remote_git = is_remote_git(source)
+    return {
+        **{key: value for key, value in source.items() if key != "credential_ref"},
+        "readable": not remote_git,
+        "checkout_supported": remote_git,
+    }
+
+
 # Keep nullable schemas and normalize empty strings before Pydantic validation.
 _OptionalString = Annotated[Optional[str], BeforeValidator(_empty_to_none)]
 _OptionalInt = Annotated[Optional[int], BeforeValidator(_empty_to_none)]
+_OptionalBool = Annotated[Optional[bool], BeforeValidator(_empty_to_none)]
 _OptionalSourceConfig = Annotated[Optional[Dict[str, List[str]]], BeforeValidator(_empty_to_none)]
 
 
@@ -59,7 +71,7 @@ def _require_plain_proposal(run_context):
 
     if isinstance(_authority(run_context), _RoutineAuthorization):
         raise PermissionError(
-            "Routines must propose Tasks through intake_company_source with evidence and a dedupe key"
+            "Routines must propose Tasks through intake_product_source with evidence and a dedupe key"
         )
 
 
@@ -74,6 +86,25 @@ def _require_human_creation(run_context):
         )
     if (authority is not None and authority.service_account) or _identity(run_context) == INTERNAL_SCHEDULER_USER_ID:
         raise PermissionError("Only a calling human may create Company Products and Routines from chat")
+
+
+def _automated_edit_stage(row, run_context):
+    """Return "backlog" for automated callers, raising if the Task has left it; None for humans."""
+    from agno.company.execution import _automatic_task, _ExecutorAuthorization
+
+    if not (isinstance(_authority(run_context), _ExecutorAuthorization) or _automatic_task.get() is not None):
+        return None
+    if row["status"] != "backlog":
+        raise PermissionError("Automated runs may edit Task content only in Backlog")
+    return "backlog"
+
+
+def _require_edited(edited, stage):
+    if edited is None and stage is not None:
+        raise PermissionError(
+            "Task changed before the automated edit; automated runs edit Task content only in Backlog"
+        )
+    return edited
 
 
 def _chat_sources(sources, agent, team, run_context):
@@ -91,7 +122,7 @@ def _chat_sources(sources, agent, team, run_context):
         )
 
 
-def _routine_declaration(name, executor_type, executor_id, template, instructions, cron_expr, timezone):
+def _routine_declaration(name, executor_type, executor_id, template, instructions, cron_expr, timezone, enabled=True):
     return Routine.model_validate(
         dict(
             name=name,
@@ -101,6 +132,7 @@ def _routine_declaration(name, executor_type, executor_id, template, instruction
             instructions=_empty_to_none(instructions),
             cron_expr=_empty_to_none(cron_expr),
             timezone=_empty_to_none(timezone) or "UTC",
+            enabled=True if _empty_to_none(enabled) is None else enabled,
         )
     )
 
@@ -149,12 +181,12 @@ class CompanyTools(Toolkit):
         # Supplied by the learning machine, never by the model or an MCP argument.
         self._agent_id = agent_id
         names = [
-            "list_company_sources",
-            "add_company_source",
-            "read_company_source",
-            "intake_company_source",
+            "list_product_sources",
+            "add_product_source",
+            "read_product_source",
+            "intake_product_source",
             "create_company_product",
-            "create_company_routine",
+            "create_product_routine",
             "list_company_products",
             "get_company_product",
             "list_company_projects",
@@ -165,7 +197,7 @@ class CompanyTools(Toolkit):
             "edit_company_task",
             "list_company_wiki",
             "read_company_wiki",
-            "update_company_status",
+            "update_product_status",
         ]
         if decision_tools:
             names += ["log_company_decision", "search_company_decisions"]
@@ -312,7 +344,7 @@ class CompanyTools(Toolkit):
         schedule_ids: List[str] = []
         try:
             for source in product.sources:
-                row = self.add_company_source(
+                row = self.add_product_source(
                     product_id,
                     source.reference,
                     config=source.config,
@@ -329,7 +361,7 @@ class CompanyTools(Toolkit):
         return _public_json(manager.get(product_id))
 
     @requires_permission()
-    def create_company_routine(
+    def create_product_routine(
         self,
         product_id: str,
         name: str,
@@ -339,6 +371,7 @@ class CompanyTools(Toolkit):
         instructions: _OptionalString = None,
         cron_expr: _OptionalString = None,
         timezone: _OptionalString = "UTC",
+        enabled: _OptionalBool = True,
         _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Create a Routine for the calling human; automated runs cannot create Routines.
@@ -348,12 +381,15 @@ class CompanyTools(Toolkit):
             instructions: Custom instructions; null uses the selected template.
             cron_expr: Cron expression; null creates an on-demand Routine.
             timezone: Schedule timezone; null uses UTC.
+            enabled: Whether the new Routine starts enabled; null uses true. False requires a human to resume it.
         """
         _require_human_creation(_agno_run_context)
         _permission("products", "write", _agno_run_context)
         _permission("schedules", "write", _agno_run_context)
         _permission("routines", "write", _agno_run_context)
-        routine = _routine_declaration(name, executor_type, executor_id, template, instructions, cron_expr, timezone)
+        routine = _routine_declaration(
+            name, executor_type, executor_id, template, instructions, cron_expr, timezone, enabled
+        )
         return _public_json(
             self._sync().create_routine(
                 product_id=product_id,
@@ -410,7 +446,7 @@ class CompanyTools(Toolkit):
         schedule_ids: List[str] = []
         try:
             for source in product.sources:
-                row = await self.aadd_company_source(
+                row = await self.aadd_product_source(
                     product_id,
                     source.reference,
                     config=source.config,
@@ -429,7 +465,7 @@ class CompanyTools(Toolkit):
         return _public_json(await manager.get(product_id))
 
     @requires_permission()
-    async def acreate_company_routine(
+    async def acreate_product_routine(
         self,
         product_id: str,
         name: str,
@@ -439,6 +475,7 @@ class CompanyTools(Toolkit):
         instructions: _OptionalString = None,
         cron_expr: _OptionalString = None,
         timezone: _OptionalString = "UTC",
+        enabled: _OptionalBool = True,
         _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Create a Routine for the calling human; automated runs cannot create Routines.
@@ -448,12 +485,15 @@ class CompanyTools(Toolkit):
             instructions: Custom instructions; null uses the selected template.
             cron_expr: Cron expression; null creates an on-demand Routine.
             timezone: Schedule timezone; null uses UTC.
+            enabled: Whether the new Routine starts enabled; null uses true. False requires a human to resume it.
         """
         _require_human_creation(_agno_run_context)
         await _apermission("products", "write", _agno_run_context)
         await _apermission("schedules", "write", _agno_run_context)
         await _apermission("routines", "write", _agno_run_context)
-        routine = _routine_declaration(name, executor_type, executor_id, template, instructions, cron_expr, timezone)
+        routine = _routine_declaration(
+            name, executor_type, executor_id, template, instructions, cron_expr, timezone, enabled
+        )
         # A synchronous database runs the manager in a worker thread, where only a plain check can run.
         check = (
             self._aroutine_check(routine, _agno_run_context)
@@ -626,7 +666,7 @@ class CompanyTools(Toolkit):
 
     @requires_permission()
     def edit_company_task(self, task_id: str, title: str, brief: str, _agno_run_context: Optional[Any] = None) -> str:
-        """Edit the title and brief of Backlog work; never change lifecycle or ownership."""
+        """Edit a Task's title and brief; automated runs only in Backlog. Never changes lifecycle, executor or ownership."""
         _permission("tasks", "write", _agno_run_context)
         manager = self._sync()
         row = manager.get_task(task_id)
@@ -634,7 +674,9 @@ class CompanyTools(Toolkit):
             raise LookupError("Task not found")
         self._scoped_user(_agno_run_context)
         _require_routine_product(row["product_id"])
-        return _public_json(manager.update_task(task_id, user_id=None, title=title, brief=brief))
+        stage = _automated_edit_stage(row, _agno_run_context)
+        edited = manager.update_task(task_id, user_id=None, expected_status=stage, title=title, brief=brief)
+        return _public_json(_require_edited(edited, stage))
 
     @requires_permission()
     def list_company_wiki(
@@ -674,7 +716,7 @@ class CompanyTools(Toolkit):
         return _public_json(asdict(self._sync().read_wiki(product_id, path)))
 
     @requires_permission()
-    def update_company_status(
+    def update_product_status(
         self, product_id: str, content: str, expected_version: int, _agno_run_context: Optional[Any] = None
     ) -> str:
         """Update status.md after reading it; supply the version read to prevent lost edits."""
@@ -920,7 +962,7 @@ class CompanyTools(Toolkit):
     async def aedit_company_task(
         self, task_id: str, title: str, brief: str, _agno_run_context: Optional[Any] = None
     ) -> str:
-        """Edit the title and brief of Backlog work; never change lifecycle or ownership."""
+        """Edit a Task's title and brief; automated runs only in Backlog. Never changes lifecycle, executor or ownership."""
         await _apermission("tasks", "write", _agno_run_context)
         manager = self._async()
         row = await manager.get_task(task_id)
@@ -928,7 +970,9 @@ class CompanyTools(Toolkit):
             raise LookupError("Task not found")
         self._scoped_user(_agno_run_context)
         _require_routine_product(row["product_id"])
-        return _public_json(await manager.update_task(task_id, user_id=None, title=title, brief=brief))
+        stage = _automated_edit_stage(row, _agno_run_context)
+        edited = await manager.update_task(task_id, user_id=None, expected_status=stage, title=title, brief=brief)
+        return _public_json(_require_edited(edited, stage))
 
     @requires_permission()
     async def alist_company_wiki(
@@ -968,7 +1012,7 @@ class CompanyTools(Toolkit):
         return _public_json(asdict(await self._async().read_wiki(product_id, path)))
 
     @requires_permission()
-    async def aupdate_company_status(
+    async def aupdate_product_status(
         self, product_id: str, content: str, expected_version: int, _agno_run_context: Optional[Any] = None
     ) -> str:
         """Update status.md after reading it; supply the version read to prevent lost edits."""
@@ -1059,7 +1103,7 @@ class CompanyTools(Toolkit):
         return run_context.run_id
 
     @requires_permission()
-    def add_company_source(
+    def add_product_source(
         self,
         product_id: str,
         reference: str,
@@ -1091,10 +1135,15 @@ class CompanyTools(Toolkit):
         return json.dumps({key: value for key, value in row.items() if key != "credential_ref"}, default=str)
 
     @requires_permission()
-    def list_company_sources(
+    def list_product_sources(
         self, product_id: str, limit: _OptionalInt = 20, page: _OptionalInt = 1, _agno_run_context: Optional[Any] = None
     ) -> str:
-        """List the readers configured for a Product.
+        """List Product Sources and their supported operations.
+
+        readable means read_product_source and intake_product_source support this
+        Source: websites, Markdown and local Git paths. checkout_supported marks
+        Git URLs used for sandbox checkout and publication; they cannot be read.
+        These flags describe capabilities, not current availability or authorization.
 
         Args:
             limit: Maximum results per page; null uses 20.
@@ -1107,13 +1156,13 @@ class CompanyTools(Toolkit):
         _permission("sources", "read", _agno_run_context)
         rows, total = self._sync().list_sources(product_id=product_id, limit=limit, page=page)
         return _page(
-            ([{key: value for key, value in row.items() if key != "credential_ref"} for row in rows], total),
+            ([_public_source(row) for row in rows], total),
             limit,
             page,
         )
 
     @requires_permission()
-    def read_company_source(
+    def read_product_source(
         self,
         source_id: str,
         path: _OptionalString = None,
@@ -1125,6 +1174,10 @@ class CompanyTools(Toolkit):
         _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Discover Source files, then read selected content within a bounded response.
+
+        Select a Source marked readable by list_product_sources. Git URL Sources
+        support sandbox checkout/publication only; use a local repository Source
+        to read code.
 
         Omit path for a content-free index; pattern filters filenames with a glob.
         Page with offset/limit (1..100) and next_offset. Pass a returned path to
@@ -1158,7 +1211,7 @@ class CompanyTools(Toolkit):
         )
 
     @requires_permission()
-    def intake_company_source(
+    def intake_product_source(
         self,
         source_id: str,
         title: str,
@@ -1250,7 +1303,7 @@ class CompanyTools(Toolkit):
         )
 
     @requires_permission()
-    async def aadd_company_source(
+    async def aadd_product_source(
         self,
         product_id: str,
         reference: str,
@@ -1282,10 +1335,15 @@ class CompanyTools(Toolkit):
         return json.dumps({key: value for key, value in row.items() if key != "credential_ref"}, default=str)
 
     @requires_permission()
-    async def alist_company_sources(
+    async def alist_product_sources(
         self, product_id: str, limit: _OptionalInt = 20, page: _OptionalInt = 1, _agno_run_context: Optional[Any] = None
     ) -> str:
-        """List the readers configured for a Product.
+        """List Product Sources and their supported operations.
+
+        readable means read_product_source and intake_product_source support this
+        Source: websites, Markdown and local Git paths. checkout_supported marks
+        Git URLs used for sandbox checkout and publication; they cannot be read.
+        These flags describe capabilities, not current availability or authorization.
 
         Args:
             limit: Maximum results per page; null uses 20.
@@ -1298,13 +1356,13 @@ class CompanyTools(Toolkit):
         await _apermission("sources", "read", _agno_run_context)
         rows, total = await self._async().list_sources(product_id=product_id, limit=limit, page=page)
         return _page(
-            ([{key: value for key, value in row.items() if key != "credential_ref"} for row in rows], total),
+            ([_public_source(row) for row in rows], total),
             limit,
             page,
         )
 
     @requires_permission()
-    async def aread_company_source(
+    async def aread_product_source(
         self,
         source_id: str,
         path: _OptionalString = None,
@@ -1316,6 +1374,10 @@ class CompanyTools(Toolkit):
         _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Discover Source files, then read selected content within a bounded response.
+
+        Select a Source marked readable by list_product_sources. Git URL Sources
+        support sandbox checkout/publication only; use a local repository Source
+        to read code.
 
         Omit path for a content-free index; pattern filters filenames with a glob.
         Page with offset/limit (1..100) and next_offset. Pass a returned path to
@@ -1351,7 +1413,7 @@ class CompanyTools(Toolkit):
         )
 
     @requires_permission()
-    async def aintake_company_source(
+    async def aintake_product_source(
         self,
         source_id: str,
         title: str,

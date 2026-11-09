@@ -111,6 +111,7 @@ from agno.run.base import RunStatus
 from agno.utils.log import log_debug, log_error, log_warning
 
 if TYPE_CHECKING:
+    from agno.agents.base import BaseExternalAgent
     from agno.os.app import AgentOS
 
 
@@ -493,7 +494,7 @@ async def agent_resumable_continue_response_streamer(
 
 
 async def _resume_stream_generator(
-    agent: Union[Agent, RemoteAgent],
+    agent: Union[Agent, RemoteAgent, "BaseExternalAgent"],
     run_id: str,
     last_event_index: Optional[int],
     session_id: Optional[str],
@@ -504,7 +505,7 @@ async def _resume_stream_generator(
     Three reconnection paths:
     1. Run still active (in buffer): replay missed events + subscribe for live events via Queue
     2. Run completed (in buffer): replay all events since last_event_index
-    3. Not in buffer: fall back to database replay
+    3. Not in buffer, or executed elsewhere: fall back to database replay
     """
     event_stream = get_event_stream()
     try:
@@ -517,8 +518,12 @@ async def _resume_stream_generator(
         yield sse_error_frame(f"event stream unavailable: {str(e)[:200]}")
         return
 
-    if buffer_status is None:
-        # PATH 3: Not in buffer -- fall back to database
+    from agno.os.utils import run_stream_served_here
+
+    # A replica-local stream never advances a run another replica's worker executes.
+    elsewhere = buffer_status in (RunStatus.pending, RunStatus.running) and not await run_stream_served_here(run_id)
+    if buffer_status is None or elsewhere:
+        # PATH 3: Not in buffer, or executed elsewhere -- fall back to database
         if session_id and not isinstance(agent, RemoteAgent):
             try:
                 run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)
@@ -535,8 +540,16 @@ async def _resume_stream_generator(
             elif run_output:
                 from agno.os.utils import no_stored_events_replay_meta
 
-                yield f"event: replay\ndata: {json.dumps(no_stored_events_replay_meta(run_output, run_id))}\n\n"
+                meta = no_stored_events_replay_meta(run_output, run_id, elsewhere=elsewhere)
+                yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
                 return
+
+        # Executed on another replica, whose events only the database can replay
+        if elsewhere and not session_id:
+            yield sse_error_frame(
+                f"Run {run_id} executes on another replica; pass session_id to replay it from the database"
+            )
+            return
 
         # Run not found anywhere
         error = {"event": "error", "error": f"Run {run_id} not found in buffer or database"}
@@ -605,44 +618,29 @@ async def _resume_stream_generator(
 
     log_debug(f"SSE client subscribed to agent run {run_id} (last_event_index: {last_event_index})")
 
-    # Pump the tail through a queue so we can heartbeat on idle without
-    # cancelling the tail generator (cancelling its __anext__ would kill it).
-    tail_queue: asyncio.Queue = asyncio.Queue()
+    # queued_run_tail_streamer also ends on a settled ticket or a claim by another replica.
+    async for frame in queued_run_tail_streamer(run_id, last_replayed_index, keepalive=": heartbeat\n\n"):
+        yield frame
 
-    async def _pump_tail() -> None:
-        try:
-            async for tail_item in event_stream.tail(run_id, last_event_index=last_replayed_index):
-                await tail_queue.put(tail_item)
-        except Exception as e:
-            # A tail that DIES must not look like a tail that FINISHED: emit an
-            # error frame so the client can distinguish and reconnect
-            log_error(f"Resume tail failed for run {run_id}: {e}")
-            with contextlib.suppress(Exception):
-                await tail_queue.put((-1, sse_error_frame(f"stream tail failed: {str(e)[:200]}")))
-        finally:
-            await tail_queue.put(None)
 
-    pump_task = asyncio.create_task(_pump_tail())
-    try:
-        while True:
-            try:
-                item = await asyncio.wait_for(tail_queue.get(), timeout=30.0)
-            except asyncio.TimeoutError:
-                # Tail is idle (queued or silent run) - keep the connection alive
-                yield ": heartbeat\n\n"
-                continue
-            if item is None:
-                # Tail finished: run reached a terminal state
-                break
-            _ev_index, sse_data = item
-            yield sse_data
-    finally:
-        pump_task.cancel()
-        # Suppress everything, not just CancelledError: an exception re-raised
-        # here reaches the ASGI layer on a response whose headers are already
-        # sent (the pump has already surfaced it as an error frame)
-        with contextlib.suppress(BaseException):
-            await pump_task
+def _external_agent_response(agent: Any, is_component: bool = False) -> AgentResponse:
+    """The listing entry for an external framework adapter, code-registered or stored."""
+    agent_db = getattr(agent, "db", None)
+    session_table = agent_db.session_table_name if agent_db and hasattr(agent_db, "session_table_name") else None
+    sessions = {"session_table": session_table} if session_table else None
+    summary = AgentSummaryResponse.from_agent(agent)
+    return AgentResponse(
+        id=agent.id,
+        name=agent.name,
+        description=getattr(agent, "description", None),
+        db_id=agent_db.id if agent_db else None,
+        sessions=sessions,
+        metadata=summary.metadata or {"sdk": "external"},
+        sandboxed=summary.sandboxed,
+        is_component=is_component,
+        current_version=getattr(agent, "_version", None) if is_component else None,
+        stage=getattr(agent, "_stage", None) if is_component else None,
+    )
 
 
 def get_agent_router(
@@ -878,6 +876,8 @@ def get_agent_router(
         if isinstance(agent, BaseExternalAgent) and agent.sandbox is not None:
             from agno.os.routers.agents.sandbox import sandbox_run_response
 
+            if getattr(agent, "_uses_native_hitl", False):
+                background = True
             return await sandbox_run_response(
                 agent,
                 getattr(request.app.state, "queue_worker", None),
@@ -888,11 +888,16 @@ def get_agent_router(
                 kwargs=kwargs,
                 stream=stream,
                 background=background,
+                scope=resolve_queue_scope(agent_id, os.agents, os.db, scoped_user_id, version),
                 version=version,
                 images=base64_images,
                 files=input_files,
                 unsupported_media=bool(base64_audios or base64_videos),
             )
+
+        # A native permission request waits for its confirmation longer than a browser connection lives.
+        if getattr(agent, "_uses_native_hitl", False):
+            background = True
 
         # Background execution
         if background:
@@ -1593,6 +1598,80 @@ def get_agent_router(
         # core supports. Teams are equally ungated; workflows still refuse
         # non-paused continues because their core requires PAUSED.
 
+        # A native permission request is answered here: the live native execution, still waiting for it,
+        # receives the chat's confirm or reject. Never requeue its turn.
+        from agno.agents.base import BaseExternalAgent
+
+        native_agent = agent if isinstance(agent, BaseExternalAgent) and agent._uses_native_hitl else None
+        native_run = None
+        if native_agent is not None:
+            native_run = await native_agent.aget_run_output(run_id, session_id=session_id, user_id=user_id)
+        from agno.agents._hitl import awaiting_decision, live_native_run
+
+        # A finished run keeps its HITL history and continues like any other run.
+        if native_agent is not None and live_native_run(native_run):
+            from agno.agents._hitl import read_run, submit_decisions, tail_stored
+            from agno.models.response import ToolExecution
+            from agno.os.event_streams import get_event_stream
+            from agno.os.utils import amark_continue_stream_running
+
+            if fork or regenerate or input is not None or continue_from != "end" or additional_instructions:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Continuing a native request only delivers its decision",
+                )
+            assert session_id
+            event_stream = get_event_stream()
+            # The live stream is shared only when this replica's event stream knows the run, which a
+            # Redis-backed stream always does; otherwise the continuation follows the stored run.
+            tracked = await event_stream.get_run_status(run_id) is not None
+            cursor = (await event_stream.get_event_count(run_id)) - 1 if tracked else -1
+            # Reopen only a stream that is paused on an unanswered request, before the decision lands, so the
+            # events it releases reach this client. A continuation that will be refused never touches it.
+            reopened = tracked and awaiting_decision(native_run)
+            if reopened:
+                await amark_continue_stream_running(
+                    run_id, component=native_agent, session_id=session_id, user_id=user_id
+                )
+            try:
+                parsed_tools = [ToolExecution.from_dict(t) for t in tools_data or []]
+                submitted = await submit_decisions(native_agent, run_id, session_id, user_id, parsed_tools)
+            except Exception as error:
+                if reopened:
+                    # The stream follows whichever continuation won: park it again only if the run is still
+                    # paused, which is also the safe reading when the run cannot be read.
+                    current = None
+                    with contextlib.suppress(Exception):
+                        current = await read_run(native_agent, run_id, session_id, user_id)
+                    if current is None or current.status == RunStatus.paused:
+                        with contextlib.suppress(Exception):
+                            await event_stream.complete_run(run_id, RunStatus.paused)
+                if isinstance(error, (ValueError, TypeError, KeyError)):
+                    raise HTTPException(status_code=409, detail=str(error))
+                raise
+            if stream:
+                if not tracked:
+
+                    async def stored_native_events():
+                        from agno.agents._hitl import hitl_state
+                        from agno.run.agent import RunOutput
+
+                        answered = set(hitl_state(submitted).get("decisions") or {})
+                        async for event in tail_stored(
+                            native_agent, run_id, session_id, user_id, len(submitted.events or []), answered
+                        ):
+                            if not isinstance(event, RunOutput):
+                                yield f"event: {event.event}\ndata: {event.to_json()}\n\n"
+
+                    return StreamingResponse(stored_native_events(), media_type="text/event-stream")
+                return StreamingResponse(
+                    _resume_stream_generator(native_agent, run_id, cursor, session_id, user_id),
+                    media_type="text/event-stream",
+                )
+            return JSONResponse(
+                status_code=202, content={"run_id": run_id, "session_id": session_id, "status": "RUNNING"}
+            )
+
         # Convert tools dict to RunRequirement and ToolExecution objects if provided
         requirements = None
         updated_tools = None
@@ -2097,22 +2176,7 @@ def get_agent_router(
                     agents.append(await agent.get_agent_config())
                 else:
                     # External framework adapter: build a minimal response
-                    agent_db = getattr(agent, "db", None)
-                    session_table = (
-                        agent_db.session_table_name if agent_db and hasattr(agent_db, "session_table_name") else None
-                    )
-                    sessions = {"session_table": session_table} if session_table else None
-                    agents.append(
-                        AgentResponse(
-                            id=agent.id,
-                            name=agent.name,
-                            description=getattr(agent, "description", None),
-                            db_id=agent_db.id if agent_db else None,
-                            sessions=sessions,
-                            metadata=AgentSummaryResponse.from_agent(agent).metadata or {"sdk": "external"},
-                            sandboxed=AgentSummaryResponse.from_agent(agent).sandboxed,
-                        )
-                    )
+                    agents.append(_external_agent_response(agent))
 
         if os.db and isinstance(os.db, BaseDb):
             from agno.agent.agent import get_agents
@@ -2133,7 +2197,10 @@ def get_agent_router(
                 if getattr(request.state, "authorization_enabled", False):
                     db_agents = await afilter_resources_by_access(request, db_agents, "agents")
                 for db_agent in db_agents:
-                    agent_response = await AgentResponse.from_agent(agent=db_agent, is_component=True)
+                    if isinstance(db_agent, Agent):
+                        agent_response = await AgentResponse.from_agent(agent=db_agent, is_component=True)
+                    else:
+                        agent_response = _external_agent_response(db_agent, is_component=True)
                     agents.append(agent_response)
 
         return agents

@@ -76,6 +76,11 @@ def create(client, user):
     project = client.post(
         "/company/projects", json={"product_id": parent, "name": "Release"}, headers=headers(user, ["projects:write"])
     ).json()
+    client.post(
+        "/company/projects/" + project["id"] + "/transitions",
+        json={"target": "active", "reason": "Approved"},
+        headers=headers(user, ["projects:write"]),
+    )
     response = client.post(
         "/company/tasks", json={"title": user, "product_id": parent, "project_id": project["id"]}, headers=headers(user)
     )
@@ -97,7 +102,7 @@ def test_isolation_off_allows_scoped_readers_and_writers(make_client):
     assert c.post(path + "/restore", headers=headers("bob")).status_code == 200
 
 
-def test_isolation_on_shares_reads_and_edits_but_scopes_deletion(make_client):
+def test_isolation_on_shares_reads_edits_and_deletion(make_client):
     c = make_client(True)
     a = create(c, "alice")
     own = {create(c, "bob") for _ in range(3)}
@@ -111,22 +116,16 @@ def test_isolation_on_shares_reads_and_edits_but_scopes_deletion(make_client):
     path = "/company/tasks/" + a
     before = c.get(path, headers=headers("alice")).json()
     assert c.get(path, headers=headers("bob")).json() == before
-    for method, suffix, body in [
-        ("delete", "", None),
-        ("post", "/restore", None),
-    ]:
-        response = c.request(method, path + suffix, json=body, headers=headers("bob"))
-        assert response.status_code == 403, response.text
-    assert c.get(path, headers=headers("alice")).json() == before
     edited = c.patch(path, json={"title": "Collaborative work"}, headers=headers("bob", ["tasks:write"]))
     assert edited.status_code == 200, edited.text
     assert edited.json()["title"] == "Collaborative work"
     assert edited.json()["user_id"] == "alice"
-    assert c.delete(path, headers=headers("alice")).status_code == 204
+    # Archive and restore need the scope, not ownership; the creator stays recorded.
+    assert c.delete(path, headers=headers("bob")).status_code == 204
     assert c.get(path + "?include_deleted=true", headers=headers("bob")).status_code == 200
-    assert c.post(path + "/restore", headers=headers("bob")).status_code == 403
     assert c.get("/company/tasks?include_deleted=true", headers=headers("bob")).json()["meta"]["total_count"] == 4
-    assert c.post(path + "/restore", headers=headers("alice")).status_code == 200
+    assert c.post(path + "/restore", headers=headers("bob")).status_code == 200
+    assert c.get(path, headers=headers("alice")).json()["user_id"] == "alice"
 
 
 def test_admin_bypass_and_creator_attribution(make_client):
@@ -140,6 +139,8 @@ def test_admin_bypass_and_creator_attribution(make_client):
     assert c.post(path + "/restore", headers=admin).status_code == 200
     parent = c.post("/company/products", json={"name": "Admin product"}, headers=admin).json()["id"]
     project = c.post("/company/projects", json={"name": "Admin project", "product_id": parent}, headers=admin).json()
+    approval = {"target": "active", "reason": "Approved"}
+    c.post("/company/projects/" + project["id"] + "/transitions", json=approval, headers=admin)
     response = c.post(
         "/company/tasks", json={"title": "Admin work", "product_id": parent, "project_id": project["id"]}, headers=admin
     )
@@ -175,6 +176,7 @@ def test_service_account_scopes_on_company_routes(tmp_path, authorization):
     manager = CompanyManager(db)
     product = manager.create(name="Shared product", user_id="alice")
     project = manager.create_project(product_id=product["id"], name="Release", user_id="alice")
+    manager.transition_project(project_id=project["id"], target="active", reason="Approved")
     shared = manager.create_task(
         product_id=product["id"], title="Shared work", project_id=project["id"], user_id="alice"
     )
@@ -367,6 +369,9 @@ async def test_run_target_permission_with_async_managed_roles(tmp_path, resource
                     "/company/projects", json={"product_id": product.json()["id"], "name": "Release"}, headers=auth
                 )
                 assert project.status_code == 201, project.text
+                approval = {"target": "active", "reason": "Approved"}
+                path = "/company/projects/" + project.json()["id"] + "/transitions"
+                await client.post(path, json=approval, headers=auth)
                 task = await client.post(
                     "/company/tasks",
                     json={"product_id": product.json()["id"], "project_id": project.json()["id"], "title": "Work"},
@@ -415,7 +420,10 @@ def test_collaborators_return_or_cancel_accepted_tasks(make_client, start, targe
             continue
         advanced = c.post(path + "/transitions", json={"target": next_state, "reason": "Progress"}, headers=writer)
         assert advanced.status_code == 200, advanced.text
-    assert c.patch(path, json={"brief": "Changed"}, headers=writer).status_code == 409
+    assert c.patch(path, json={"executor_id": "other"}, headers=writer).status_code == 409
+    content = c.patch(path, json={"brief": "Changed"}, headers=writer)
+    assert content.status_code == 200, content.text
+    assert content.json()["user_id"] == "alice" and content.json()["status"] == start
     changed = c.post(path + "/transitions", json={"target": target, "reason": "Team decision"}, headers=writer)
     assert changed.status_code == 200, changed.text
     record = changed.json()
@@ -430,7 +438,7 @@ def test_collaborators_return_or_cancel_accepted_tasks(make_client, start, targe
     else:
         assert (
             c.post(path + "/transitions", json={"target": "backlog", "reason": "Reopen"}, headers=writer).status_code
-            == 409
+            == 200
         )
 
 

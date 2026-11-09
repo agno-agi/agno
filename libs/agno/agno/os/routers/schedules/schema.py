@@ -170,7 +170,7 @@ class ScheduleStateResponse(BaseModel):
 class ScheduleRunResponse(BaseModel):
     id: str
     schedule_id: str
-    # Denormalised from the parent schedule when the run is recorded.
+    # Execution identity: the caller for manual Company runs, otherwise the schedule owner.
     user_id: Optional[str] = None
     attempt: int
     triggered_at: Optional[int] = None

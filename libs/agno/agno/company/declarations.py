@@ -54,6 +54,7 @@ class Routine(BaseModel):
     executor_id: str = Field(min_length=1)
     cron_expr: Optional[str] = None
     timezone: str = "UTC"
+    enabled: bool = Field(default=True, description="Initial enabled state; existing routines retain later edits.")
     instructions: Optional[str] = None
     auto_accept: Union[Literal[False], AutoAccept] = False
 

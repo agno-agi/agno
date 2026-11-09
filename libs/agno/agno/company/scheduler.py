@@ -4,7 +4,7 @@ from typing import Any, Dict
 
 from agno.company.execution import _call
 from agno.db.schemas.scheduler import Schedule
-from agno.scheduler.executor import ScheduleExecutor
+from agno.scheduler.executor import ScheduleExecutor, _preserve_updated_at
 
 
 class CompanyScheduleExecutor(ScheduleExecutor):
@@ -28,6 +28,7 @@ class CompanyScheduleExecutor(ScheduleExecutor):
                     schedule.id,
                     enabled=False,
                     disabled_reason="company_product_archived",
+                    **_preserve_updated_at(self.schedule_db, "update_schedule", schedule),
                 )
                 raise
         return await super()._call_endpoint(schedule)

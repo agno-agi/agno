@@ -2225,6 +2225,67 @@ def test_manual_compact_is_added_to_the_session_metrics(use_async):
     assert after["total_tokens"] == before + 740
 
 
+def test_manual_compact_leaves_a_latest_run_that_can_still_change():
+    """A failed latest run can still be continued in place, so the fold's usage goes on the latest completed run
+    instead, never on one whose continue would drop it."""
+    from agno.agent import Agent
+    from agno.db.base import SessionType
+    from agno.run.base import RunStatus
+
+    db = _db()
+    agent = Agent(
+        model=_RecordingModel.build(),
+        db=db,
+        session_id="s",
+        add_history_to_context=True,
+        compaction=Compaction(compact_at_tokens=None, uncompacted_runs=1, min_fold_ratio=0, model=_MeteredSummarizer()),
+    )
+    for i in range(4):
+        agent.run(f"question number {i}")
+    stored = db.get_session(session_id="s", session_type=SessionType.AGENT)
+    latest, completed = stored.runs[-1], stored.runs[-2]
+    latest.status = RunStatus.error
+    db.upsert_run(run=latest, session_id="s", run_index=3)
+
+    result = agent.compact(session_id="s")
+
+    runs = db.get_session(session_id="s", session_type=SessionType.AGENT).runs
+    assert result.compacted
+    assert (runs[-1].status, runs[-1].metrics.total_tokens) == (RunStatus.error, latest.metrics.total_tokens)
+    assert runs[-2].metrics.total_tokens == completed.metrics.total_tokens + 740
+
+
+def test_manual_compact_with_no_finished_run_stays_in_the_session_metrics():
+    """With no completed or cancelled run to carry it, the fold's usage is kept in the session's compaction metrics,
+    so the session's metrics keep it when a run is saved again."""
+    from agno.agent import Agent
+    from agno.db.base import SessionType
+    from agno.run.base import RunStatus
+
+    db = _db()
+    agent = Agent(
+        model=_RecordingModel.build(),
+        db=db,
+        session_id="s",
+        add_history_to_context=True,
+        compaction=Compaction(compact_at_tokens=None, uncompacted_runs=1, min_fold_ratio=0, model=_MeteredSummarizer()),
+    )
+    for i in range(4):
+        agent.run(f"question number {i}")
+    for index, run in enumerate(db.get_session(session_id="s", session_type=SessionType.AGENT).runs):
+        run.status = RunStatus.running
+        db.upsert_run(run=run, session_id="s", run_index=index)
+
+    result = agent.compact(session_id="s")
+    agent.run("question number 4")
+
+    stored = db.get_session(session_id="s", session_type=SessionType.AGENT)
+    assert result.compacted
+    assert stored.session_data["session_metrics"]["total_tokens"] == (
+        sum(run.metrics.total_tokens for run in stored.runs) + 740
+    )
+
+
 def test_a_declined_manual_compact_reports_no_usage():
     """No summarizer call was made, so there is nothing to report."""
     from agno.agent import Agent

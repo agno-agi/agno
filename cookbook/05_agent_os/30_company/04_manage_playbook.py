@@ -2,7 +2,7 @@
 
 Prerequisites: Install agno, sqlalchemy and aiosqlite.
 Run: .venv/bin/python cookbook/05_agent_os/30_company/04_manage_playbook.py
-Try: Write with an old version or another owner; the edit must be refused.
+Try: Write with an old version; the edit must be refused.
 """
 
 import asyncio

@@ -3,10 +3,11 @@ import json
 import textwrap
 import uuid
 from typing import Any, Dict, List, Optional, Union, cast
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from agno.tools.google.auth import google_authenticate
 from agno.tools.google.base import GoogleToolkit
-from agno.utils.log import log_debug, log_error
+from agno.utils.log import log_debug, log_error, log_warning
 
 try:
     from google.oauth2.credentials import Credentials
@@ -36,6 +37,12 @@ CALENDAR_INSTRUCTIONS = textwrap.dedent("""\
 
 
 authenticate = google_authenticate("calendar")
+
+
+def _to_local_date(value: str, tz: datetime.tzinfo) -> datetime.date:
+    """Return the calendar day `value` falls on in `tz`; a value without an offset is already local."""
+    parsed = datetime.datetime.fromisoformat(value)
+    return (parsed.astimezone(tz) if parsed.tzinfo else parsed).date()
 
 
 class GoogleCalendarTools(GoogleToolkit):
@@ -535,6 +542,8 @@ class GoogleCalendarTools(GoogleToolkit):
         """
         Find available time slots within a date range based on your calendar.
         Checks existing events against working hours to find free windows.
+        Dates, working hours and the returned slots are in your Google Calendar timezone, or UTC if that
+        timezone cannot be loaded; the result's "timezone" field names the one used.
 
         Args:
             start_date (str): Start date in ISO format (YYYY-MM-DD)
@@ -545,13 +554,6 @@ class GoogleCalendarTools(GoogleToolkit):
             str: JSON string containing available time slots or error message
         """
         try:
-            start_dt = datetime.datetime.fromisoformat(start_date)
-            end_dt = datetime.datetime.fromisoformat(end_date)
-            if start_dt.tzinfo is None:
-                start_dt = start_dt.replace(tzinfo=datetime.timezone.utc)
-            if end_dt.tzinfo is None:
-                end_dt = end_dt.replace(tzinfo=datetime.timezone.utc)
-
             working_hours_json = self._get_working_hours()
             working_hours_data = json.loads(working_hours_json)
 
@@ -569,7 +571,23 @@ class GoogleCalendarTools(GoogleToolkit):
                 locale = "en"
                 log_debug("Using default working hours: 9:00-17:00")
 
-            events_json = self.fetch_all_events(start_date=start_date, end_date=end_date)
+            user_tz: datetime.tzinfo
+            try:
+                user_tz = ZoneInfo(tz)
+            except (ZoneInfoNotFoundError, ValueError):
+                log_warning(f"Could not load timezone '{tz}' from calendar settings, using UTC")
+                user_tz, tz = datetime.timezone.utc, "UTC"
+
+            start_day = _to_local_date(start_date, user_tz)
+            end_day = _to_local_date(end_date, user_tz)
+            work_start = datetime.time(working_hours_start)
+            work_end = datetime.time(working_hours_end)
+
+            # A bare end date becomes 00:00 and timeMax is exclusive, so query the scanned window instead
+            events_json = self.fetch_all_events(
+                start_date=datetime.datetime.combine(start_day, work_start, tzinfo=user_tz).isoformat(),
+                end_date=datetime.datetime.combine(end_day, work_end, tzinfo=user_tz).isoformat(),
+            )
             events_data = json.loads(events_json)
 
             if isinstance(events_data, dict) and "error" in events_data:
@@ -592,34 +610,35 @@ class GoogleCalendarTools(GoogleToolkit):
                         log_debug(f"Skipping invalid event: {err}")
 
             available_slots = []
-            current = start_dt.replace(hour=working_hours_start, minute=0, second=0, microsecond=0)
-            end_search = end_dt.replace(hour=working_hours_end, minute=0, second=0, microsecond=0)
+            utc = datetime.timezone.utc
 
-            while current <= end_search:
-                if current.weekday() >= 5:
-                    current = (current + datetime.timedelta(days=1)).replace(
-                        hour=working_hours_start, minute=0, second=0, microsecond=0
-                    )
-                    continue
+            day = start_day
+            while day <= end_day:
+                if day.weekday() < 5:
+                    # Step in UTC so a DST change inside the window cannot stretch or shrink a slot
+                    current = datetime.datetime.combine(day, work_start, tzinfo=user_tz).astimezone(utc)
+                    day_end = datetime.datetime.combine(day, work_end, tzinfo=user_tz).astimezone(utc)
 
-                slot_end = current + datetime.timedelta(minutes=duration_minutes)
+                    while current < day_end:
+                        slot_end = current + datetime.timedelta(minutes=duration_minutes)
 
-                is_available = True
-                for busy_start, busy_end in busy_periods:
-                    if not (slot_end <= busy_start or current >= busy_end):
-                        is_available = False
-                        break
+                        is_available = True
+                        for busy_start, busy_end in busy_periods:
+                            if not (slot_end <= busy_start or current >= busy_end):
+                                is_available = False
+                                break
 
-                working_day_end = current.replace(hour=working_hours_end, minute=0, second=0, microsecond=0)
-                if is_available and slot_end <= working_day_end:
-                    available_slots.append({"start": current.isoformat(), "end": slot_end.isoformat()})
+                        if is_available and slot_end <= day_end:
+                            available_slots.append(
+                                {
+                                    "start": current.astimezone(user_tz).isoformat(),
+                                    "end": slot_end.astimezone(user_tz).isoformat(),
+                                }
+                            )
 
-                current += datetime.timedelta(minutes=30)
+                        current += datetime.timedelta(minutes=30)
 
-                if current.hour >= working_hours_end:
-                    current = (current + datetime.timedelta(days=1)).replace(
-                        hour=working_hours_start, minute=0, second=0, microsecond=0
-                    )
+                day += datetime.timedelta(days=1)
 
             result = {
                 "available_slots": available_slots,

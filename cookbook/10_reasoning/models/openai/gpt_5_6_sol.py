@@ -1,12 +1,12 @@
 """
-O3 Mini
-=======
+GPT-5.6 Sol
+===========
 
 Demonstrates this reasoning cookbook example.
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 
 
 # ---------------------------------------------------------------------------
@@ -14,7 +14,7 @@ from agno.models.openai import OpenAIChat
 # ---------------------------------------------------------------------------
 def run_example() -> None:
     agent = Agent(
-        model=OpenAIChat(id="o3-mini"),
+        model=OpenAIResponses(id="gpt-5.6-sol"),
     )
     agent.print_response(
         "Solve the trolley problem. Evaluate multiple ethical frameworks. "

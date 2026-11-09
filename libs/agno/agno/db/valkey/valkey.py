@@ -493,9 +493,46 @@ class ValkeyDb(BaseDb):
         """Get raw run_data dicts for a session, ordered by run_index."""
         return [row["run_data"] for row in self._get_session_run_rows(session_id) if row.get("run_data") is not None]
 
+    def _get_sessions_runs(self, session_ids: List[str]) -> Optional[Dict[str, List[Dict[str, Any]]]]:
+        """Run dicts for several sessions in one read, used by the search fallback."""
+        return self._get_sessions_runs_data(session_ids)
+
     def _get_sessions_runs_data(self, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
-        """Get raw run_data dicts for several sessions, grouped by session_id."""
-        return {sid: self._get_session_runs_data(sid) for sid in session_ids}
+        """Get raw run_data dicts for several sessions, grouped by session_id, in two batched round trips."""
+        if not session_ids:
+            return {}
+        pipeline = self._create_pipeline()
+        for sid in session_ids:
+            pipeline.zrange(self._runs_by_session_index_key(sid), RangeByIndex(0, -1))
+        index_results = self._exec_pipeline(pipeline)
+        if index_results is None:
+            return {sid: self._get_session_runs_data(sid) for sid in session_ids}
+        run_ids_by_session: Dict[str, List[str]] = {}
+        for sid, members in zip(session_ids, index_results):
+            if members is None or isinstance(members, RequestError):
+                members = []
+            run_ids_by_session[sid] = [m.decode("utf-8") if isinstance(m, bytes) else str(m) for m in members]
+
+        all_run_ids = [rid for run_ids in run_ids_by_session.values() for rid in run_ids]
+        rows_by_id: Dict[str, Dict[str, Any]] = {}
+        if all_run_ids:
+            pipeline = self._create_pipeline()
+            for rid in all_run_ids:
+                pipeline.get(generate_valkey_key(prefix=self.db_prefix, table_type="runs", key_id=rid))
+            for rid, raw in zip(all_run_ids, self._exec_pipeline(pipeline) or []):
+                if raw is None or isinstance(raw, RequestError):
+                    continue
+                raw_str = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+                if raw_str:
+                    rows_by_id[rid] = deserialize_data(raw_str)
+
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
+        for sid, run_ids in run_ids_by_session.items():
+            rows = [rows_by_id[rid] for rid in run_ids if rid in rows_by_id]
+            # ZRANGE breaks equal run_index scores lexicographically by run_id; sort to match get_runs
+            rows.sort(key=lambda r: (r.get("run_index") or 0, r.get("created_at") or 0))
+            grouped[sid] = [row["run_data"] for row in rows if row.get("run_data") is not None]
+        return grouped
 
     def _delete_session_runs(self, session_id: str) -> int:
         """Delete every run row associated with a session (and the session's run index)."""
@@ -848,6 +885,7 @@ class ValkeyDb(BaseDb):
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
         create_index_if_not_found: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """Get all sessions matching the given filters.
 
@@ -910,10 +948,14 @@ class ValkeyDb(BaseDb):
             sorted_sessions = apply_sorting(records=filtered_sessions, sort_by=sort_by, sort_order=sort_order)
             sessions = apply_pagination(records=sorted_sessions, limit=limit, page=page)
 
-            # Attach runs from the runs keys, merged with any legacy `runs` blob
-            runs_by_session = self._get_sessions_runs_data([s["session_id"] for s in sessions])
-            for s in sessions:
-                s["runs"] = merge_runs_table_with_legacy_blob(runs_by_session.get(s["session_id"], []), s.get("runs"))
+            # Search scans skip the runs keys; the record's legacy runs field is kept for merging later.
+            if include_runs:
+                # Attach runs from the runs keys, merged with any legacy `runs` blob
+                runs_by_session = self._get_sessions_runs_data([s["session_id"] for s in sessions])
+                for s in sessions:
+                    s["runs"] = merge_runs_table_with_legacy_blob(
+                        runs_by_session.get(s["session_id"], []), s.get("runs")
+                    )
 
             if not deserialize:
                 return sessions, len(filtered_sessions)

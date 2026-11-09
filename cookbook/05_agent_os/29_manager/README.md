@@ -33,6 +33,18 @@ Expect a JSON report. A missing `OPENAI_API_KEY` produces FAIL because the examp
 lists it as required. Disabled authorization produces WARN. These results show
 what needs configuring; running the script itself does not require either.
 
+To inspect the roster without a model call or API key:
+
+```bash
+.venvs/demo/bin/python cookbook/05_agent_os/29_manager/manager_discovery.py
+```
+
+OS Manager's `list_agents`, `list_teams`, and `list_workflows` tools use each
+component's description, falling back to `config.manifest[id].description` when
+it is missing or empty. This also works with a YAML config file. Manifest text
+stays discovery metadata and does not change the component's system prompt.
+The example checks both sync and async listings.
+
 For a conversation, set your API key and start one of the serving examples:
 
 ```bash
@@ -88,6 +100,39 @@ Alice's managed role allows manager/math-helper discovery and runs, diagnostics,
 and reading her own sessions. It does not grant publishing, scheduling, source
 reads, or platform-wide operational reports. Even a signed JWT claiming admin
 cannot override that role. Production tokens should come from your identity provider.
+
+## Run Claude and Codex engineers
+
+Register external agents in `AgentOS(agents=[...])` to let OS Manager discover
+and run them by name or ID. For example:
+
+```python
+from pathlib import Path
+
+from agno.agents.claude import ClaudeAgent
+from agno.agents.codex import CodexAgent
+from agno.db.sqlite import SqliteDb
+from agno.models.openai import OpenAIResponses
+from agno.os import AgentOS, OSManager
+
+db = SqliteDb(db_file="tmp/engineers.db")
+claude = ClaudeAgent(id="claude-engineer", name="Claude Engineer", cwd=str(Path.cwd()), db=db)
+codex = CodexAgent(id="codex-engineer", name="Codex Engineer", cwd=str(Path.cwd()), db=db)
+agent_os = AgentOS(
+    db=db,
+    agents=[claude, codex],
+    manager=OSManager(model=OpenAIResponses(id="gpt-5.6-luna")),
+)
+agent_os.manager.print_response("List the available agents.")
+agent_os.manager.print_response("Ask Codex Engineer to explain this repository without changing files.")
+```
+
+Install and authenticate the corresponding harness SDKs before running an
+engineer. These calls spend model usage and execute in the configured workspace.
+The manager's sync and async run tools preserve the caller's identity and keep a
+separate continuing session for each engineer and user. Existing run permissions
+still apply. External agents are dispatch targets, not Studio edit targets or
+persisted team/workflow members.
 
 ## Manager settings
 

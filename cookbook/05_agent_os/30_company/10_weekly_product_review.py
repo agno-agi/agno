@@ -28,10 +28,10 @@ from agno.os import AgentOS, CompanyConfig, OSManager
 REVIEW = """Review this Product without accepting or executing work.
 Read the company and Product playbooks and current status. List existing Projects
 and Tasks before proposing anything. Inspect configured Sources with
-read_company_source, first discovering paths and then reading useful evidence.
+read_product_source, first discovering paths and then reading useful evidence.
 Propose work only when it addresses a concrete gap that existing work does not
 cover. Reuse a suitable Project; propose one only when necessary.
-Use intake_company_source with the Project id, observed evidence links and
+Use intake_product_source with the Project id, observed evidence links and
 content hashes, and a stable proposal_key for the underlying issue. Reuse the
 key on later reviews. Never use propose_company_task during a Routine.
 If nothing useful has changed, create no Tasks. Read status.md and use its current

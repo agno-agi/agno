@@ -1164,8 +1164,8 @@ class Model(ABC):
             model_response.extra.update(provider_response.extra)
         if provider_response.provider_data is not None:
             model_response.provider_data = provider_response.provider_data
-        if provider_response.response_usage is not None:
-            model_response.response_usage = provider_response.response_usage
+        # Set on every call, so a call without usage does not re-count the previous call's usage
+        model_response.response_usage = provider_response.response_usage
         # Providers (e.g. GeminiInteractions on the agent path) can produce
         # already-executed ToolExecution records server-side; carry them
         # through so run_response.tools / AgentOS UI sees the audit.
@@ -1234,8 +1234,8 @@ class Model(ABC):
             model_response.extra.update(provider_response.extra)
         if provider_response.provider_data is not None:
             model_response.provider_data = provider_response.provider_data
-        if provider_response.response_usage is not None:
-            model_response.response_usage = provider_response.response_usage
+        # Set on every call, so a call without usage does not re-count the previous call's usage
+        model_response.response_usage = provider_response.response_usage
         # Providers (e.g. GeminiInteractions on the agent path) can produce
         # already-executed ToolExecution records server-side; carry them
         # through so run_response.tools / AgentOS UI sees the audit.
@@ -1900,6 +1900,8 @@ class Model(ABC):
         if stream_data.response_role is not None:
             assistant_message.role = stream_data.response_role
         if stream_data.response_metrics is not None:
+            # The stream has ended, so stop the timer to set the duration of the request
+            stream_data.response_metrics.stop_timer()
             assistant_message.metrics = stream_data.response_metrics
         if stream_data.response_content:
             assistant_message.content = stream_data.response_content

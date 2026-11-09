@@ -789,6 +789,7 @@ class MongoDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """Get all sessions.
 
@@ -804,7 +805,6 @@ class MongoDb(BaseDb):
             sort_by (Optional[str]): The field to sort the sessions by.
             sort_order (Optional[str]): The order to sort the sessions by.
             deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
-            create_table_if_not_found (Optional[bool]): Whether to create the collection if it doesn't exist.
 
         Returns:
             Union[List[AgentSession], List[TeamSession], List[WorkflowSession], Tuple[List[Dict[str, Any]], int]]:
@@ -848,6 +848,14 @@ class MongoDb(BaseDb):
                     query["created_at"] = {"$lte": end_timestamp}
             if session_name is not None:
                 query["session_data.session_name"] = {"$regex": re.escape(session_name), "$options": "i"}
+
+            if filter_expr is not None:
+                from agno.db.session_filters import normalize_session_filter, session_filter_to_mongo
+
+                expression = normalize_session_filter(filter_expr)
+                if expression is not None:
+                    advanced = session_filter_to_mongo(expression)
+                    query = {"$and": [query, advanced]} if query else advanced
 
             # Get total count
             total_count = collection.count_documents(query)
@@ -1237,9 +1245,6 @@ class MongoDb(BaseDb):
             memory_id (str): The ID of the memory to delete.
             user_id (Optional[str]): The ID of the user to verify ownership. If provided, only delete if the memory belongs to this user.
 
-        Returns:
-            bool: True if the memory was deleted, False otherwise.
-
         Raises:
             Exception: If there is an error deleting the memory.
         """
@@ -1382,7 +1387,6 @@ class MongoDb(BaseDb):
             sort_by (Optional[str]): The field to sort the memories by.
             sort_order (Optional[str]): The order to sort the memories by.
             deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
-            create_table_if_not_found: Whether to create the collection if it doesn't exist.
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: A tuple containing the memories and the total count.
@@ -2182,7 +2186,6 @@ class MongoDb(BaseDb):
             eval_type (Optional[List[EvalType]]): The type of eval to filter by.
             filter_type (Optional[EvalFilterType]): The type of filter to apply.
             deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
-            create_table_if_not_found (Optional[bool]): Whether to create the collection if it doesn't exist.
 
         Returns:
             Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
@@ -3042,7 +3045,7 @@ class MongoDb(BaseDb):
             raise e
 
     def update_schedule(
-        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+        self, schedule_id: str, user_id: Optional[str] = None, *, preserve_updated_at: bool = False, **kwargs: Any
     ) -> Optional[Dict[str, Any]]:
         from agno.db.schemas.scheduler import validate_schedule_update
 
@@ -3056,7 +3059,8 @@ class MongoDb(BaseDb):
             if collection is None:
                 return None
 
-            kwargs["updated_at"] = int(time.time())
+            if not preserve_updated_at:
+                kwargs["updated_at"] = int(time.time())
             query: Dict[str, Any] = {"id": schedule_id}
             if user_id is not None:
                 query["user_id"] = user_id
@@ -3128,7 +3132,18 @@ class MongoDb(BaseDb):
                         {"endpoint": {"$in": [endpoint, endpoint + "/"]}},
                     ],
                 },
-                {"$set": {"enabled": False, "disabled_reason": reason, "updated_at": int(time.time())}},
+                [
+                    {
+                        "$set": {
+                            "enabled": False,
+                            "disabled_reason": {"$literal": reason},
+                            # An archive cascade is not a user edit, so a Company routine keeps its last-edit time.
+                            "updated_at": {
+                                "$cond": [{"$eq": ["$managed_by", "company"]}, "$updated_at", int(time.time())]
+                            },
+                        }
+                    }
+                ],
             )
             return int(result.modified_count or 0)
         except Exception as e:
@@ -3205,13 +3220,16 @@ class MongoDb(BaseDb):
         *,
         worker_id: Optional[str] = None,
         locked_at: Optional[int] = None,
+        preserve_updated_at: bool = False,
     ) -> bool:
         try:
             collection = self._get_collection(table_type="schedules")
             if collection is None:
                 return False
 
-            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None, "updated_at": int(time.time())}
+            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None}
+            if not preserve_updated_at:
+                updates["updated_at"] = int(time.time())
             updates["next_run_at"] = {
                 "$cond": [
                     {"$eq": ["$cron_expr", ""]},

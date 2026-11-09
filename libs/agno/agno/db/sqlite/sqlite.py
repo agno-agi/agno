@@ -1113,6 +1113,52 @@ class SqliteDb(BaseDb):
             result = sess.execute(statement)
             return result.scalar_one_or_none() is not None
 
+    def update_run_if_matches(
+        self,
+        run_id: str,
+        session_id: str,
+        expected: Dict[str, Any],
+        fields: Dict[str, Any],
+        user_id: Optional[str] = None,
+    ) -> bool:
+        """Apply ``fields`` to a stored run only while it still matches ``expected``, as one atomic step.
+
+        ``expected`` maps "status" and dotted paths into the run's data to the values they must hold. A
+        paused run is handed over to its continuation this way: a repeated or stale writer finds the run
+        changed and writes nothing. Returns whether the run was updated.
+        """
+        from sqlalchemy import update
+
+        from agno.db.sql.runs import apply_run_fields, run_matches
+
+        try:
+            table = self._get_table(table_type="runs")
+            if table is None:
+                return False
+            with self.Session() as sess, sess.begin():
+                # Take SQLite's write lock before reading, so the check and the write are one atomic step,
+                # even for another process using the same file.
+                sess.execute(update(table).where(table.c.run_id == run_id).values(run_id=table.c.run_id))
+                row = sess.execute(
+                    select(table.c.run_data, table.c.status)
+                    .where(table.c.run_id == run_id, table.c.session_id == session_id)
+                    .where((table.c.user_id == user_id) | table.c.user_id.is_(None))
+                ).fetchone()
+                if row is None or row[0] is None:
+                    return False
+                stored = json.loads(row[0]) if isinstance(row[0], str) else dict(row[0])
+                if not run_matches(stored, row[1], expected):
+                    return False
+                run, status = apply_run_fields(stored, fields)
+                values: Dict[str, Any] = {"run_data": run, "updated_at": int(time.time())}
+                if status is not None:
+                    values["status"] = status
+                sess.execute(update(table).where(table.c.run_id == run_id).values(**values))
+                return True
+        except Exception as e:
+            log_warning(f"Error conditionally updating run {run_id}: {e}")
+            raise
+
     def upsert_run(
         self,
         run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
@@ -1152,21 +1198,21 @@ class SqliteDb(BaseDb):
             )
 
             with self.Session() as sess, sess.begin():
-                # Backfill a monotonic run_index when the run arrives without one
-                # (e.g. a background/continue save that couldn't resolve its position).
-                # A NULL index has no position and breaks ORDER BY run_index.
-                if row.get("run_index") is None:
-                    # Computed INSIDE the insert statement: SQLite holds the
-                    # database write lock for the whole statement, so two
-                    # concurrent backfills cannot read the same MAX (the old
-                    # two-statement read-then-insert could - a busy-waiting
-                    # second writer landed a duplicate index after the first
-                    # committed). ON CONFLICT still preserves existing indexes.
-                    row["run_index"] = (
-                        select(func.coalesce(func.max(runs_table.c.run_index) + 1, 0))
-                        .where(runs_table.c.session_id == session_id)
-                        .scalar_subquery()
-                    )
+                # A new run always lands after the session's existing rows. Callers
+                # pass the run's position in the in-memory ``session.runs`` list, and
+                # after runs were deleted from the front of that list the position
+                # collides with, or sorts before, rows that still exist. ON CONFLICT
+                # preserves the existing index, so this only affects a genuine insert.
+                # Computed INSIDE the insert statement: SQLite holds the database
+                # write lock for the whole statement, so two concurrent inserts cannot
+                # read the same MAX.
+                next_index = (
+                    select(func.coalesce(func.max(runs_table.c.run_index) + 1, 0))
+                    .where(runs_table.c.session_id == session_id)
+                    .scalar_subquery()
+                )
+                provided_index = row.get("run_index")
+                row["run_index"] = next_index if provided_index is None else func.max(provided_index, next_index)
 
                 stmt = sqlite.insert(runs_table).values(**row)
                 stmt = stmt.on_conflict_do_update(
@@ -1273,71 +1319,66 @@ class SqliteDb(BaseDb):
             log_error(f"Exception reading from runs table: {str(e)}")
             raise e
 
-    def _scrub_run_ids_from_legacy_blob(self, run_ids: List[str]) -> None:
+    def _scrub_run_ids_from_legacy_blob(self, run_ids: List[str], sess: Any, sessions_table: Any) -> bool:
         """Remove ``run_ids`` from every session row's legacy ``runs`` JSON column.
 
-        Partial-migration state: v3 migration copied runs into the ``agno_runs``
-        table but preserved the legacy embedded blob as a backup. Deleting a run
-        row alone leaves the blob intact and ``merge_runs_table_with_legacy_blob``
-        resurrects it on the next read. Skip cleanly on a fully-migrated DB
-        (no ``runs`` column). Best-effort: a failure here must not roll back
-        the primary runs-table delete.
-        """
-        if not run_ids:
-            return
-        try:
-            import json as _json
+        Partial-migration state: the v3 migration copied runs into the runs table
+        but kept the legacy blob as a backup, and ``merge_runs_table_with_legacy_blob``
+        still reads it. Runs inside the caller's transaction so the row delete and
+        the scrub commit together or not at all; a fully migrated DB (no ``runs``
+        column) is a no-op. ``sessions_table`` is resolved by the caller before
+        the transaction opens, because ``_get_table`` uses the same scoped session.
 
-            sessions_table = self._get_table(table_type="sessions")
-            if sessions_table is None or "runs" not in sessions_table.c:
-                return
-            wanted = set(run_ids)
-            with self.Session() as sess, sess.begin():
-                rows = sess.execute(
-                    select(sessions_table.c.session_id, sessions_table.c.runs).where(sessions_table.c.runs.isnot(None))
-                ).fetchall()
-                for sid, runs_raw in rows:
-                    if isinstance(runs_raw, str):
-                        try:
-                            runs_list = _json.loads(runs_raw)
-                        except (_json.JSONDecodeError, TypeError):
-                            continue
-                    else:
-                        runs_list = runs_raw
-                    if not isinstance(runs_list, list):
-                        continue
-                    kept = [r for r in runs_list if not (isinstance(r, dict) and r.get("run_id") in wanted)]
-                    if len(kept) == len(runs_list):
-                        continue
-                    sess.execute(
-                        sessions_table.update().where(sessions_table.c.session_id == sid).values(runs=_json.dumps(kept))
-                    )
-        except Exception:
-            log_debug("legacy-runs scrub failed; the primary delete still succeeded", exc_info=True)
+        Returns True if any legacy blob held one of ``run_ids``.
+        """
+        if not run_ids or sessions_table is None or "runs" not in sessions_table.c:
+            return False
+        wanted = set(run_ids)
+        scrubbed = False
+        rows = sess.execute(
+            select(sessions_table.c.session_id, sessions_table.c.runs).where(sessions_table.c.runs.isnot(None))
+        ).fetchall()
+        for sid, runs_raw in rows:
+            if isinstance(runs_raw, str):
+                try:
+                    runs_list = json.loads(runs_raw)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+            else:
+                runs_list = runs_raw
+            if not isinstance(runs_list, list):
+                continue
+            kept = [r for r in runs_list if not (isinstance(r, dict) and r.get("run_id") in wanted)]
+            if len(kept) == len(runs_list):
+                continue
+            sess.execute(
+                sessions_table.update().where(sessions_table.c.session_id == sid).values(runs=json.dumps(kept))
+            )
+            scrubbed = True
+        return scrubbed
 
     def delete_run(self, run_id: str) -> bool:
         """Delete a single run from the runs table.
+
+        Also scrubs it from the legacy ``runs`` blob in the same transaction, so a
+        partially migrated session cannot resurrect it on the next read.
 
         Args:
             run_id (str): The ID of the run to delete.
 
         Returns:
-            bool: True if the run was deleted, False otherwise.
+            bool: True if the run was removed from the runs table or a legacy blob, False otherwise.
         """
         try:
             table = self._get_table(table_type="runs")
-            if table is None:
-                return False
-
+            sessions_table = self._get_table(table_type="sessions")
             with self.Session() as sess, sess.begin():
-                result = sess.execute(table.delete().where(table.c.run_id == run_id))
-                deleted = result.rowcount > 0
-
-            # Also scrub the legacy blob so the merge helper doesn't resurrect
-            # the deleted run on the next read (partial-migration state).
-            self._scrub_run_ids_from_legacy_blob([run_id])
-            return deleted
-
+                deleted = False
+                if table is not None:
+                    result = sess.execute(table.delete().where(table.c.run_id == run_id))
+                    deleted = result.rowcount > 0
+                scrubbed = self._scrub_run_ids_from_legacy_blob([run_id], sess, sessions_table)
+            return deleted or scrubbed
         except Exception as e:
             log_error(f"Error deleting run: {str(e)}")
             raise e
@@ -1345,20 +1386,20 @@ class SqliteDb(BaseDb):
     def delete_runs(self, run_ids: List[str]) -> None:
         """Delete all given runs from the runs table.
 
+        Also scrubs them from the legacy ``runs`` blob in the same transaction, so a
+        partially migrated session cannot resurrect them on the next read.
+
         Args:
             run_ids (List[str]): The IDs of the runs to delete.
         """
         try:
             table = self._get_table(table_type="runs")
-            if table is None:
-                return
-
+            sessions_table = self._get_table(table_type="sessions")
             with self.Session() as sess, sess.begin():
-                result = sess.execute(table.delete().where(table.c.run_id.in_(run_ids)))
-
-            self._scrub_run_ids_from_legacy_blob(list(run_ids))
-            log_debug(f"Successfully deleted {result.rowcount} runs")
-
+                if table is not None:
+                    result = sess.execute(table.delete().where(table.c.run_id.in_(run_ids)))
+                    log_debug(f"Successfully deleted {result.rowcount} runs")
+                self._scrub_run_ids_from_legacy_blob(list(run_ids), sess, sessions_table)
         except Exception as e:
             log_error(f"Error deleting runs: {str(e)}")
             raise e
@@ -1810,6 +1851,7 @@ class SqliteDb(BaseDb):
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
         include_runs: bool = True,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """
         Get all sessions in the given table. Can filter by user_id and entity_id.
@@ -1830,7 +1872,6 @@ class SqliteDb(BaseDb):
             sort_by (Optional[str]): The field to sort by. Defaults to None.
             sort_order (Optional[str]): The sort order. Defaults to None.
             deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
-            create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:
             List[Session]:
@@ -1840,6 +1881,9 @@ class SqliteDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        from agno.db.session_filters import normalize_session_filter, session_filter_to_sqlalchemy
+
+        filter_expr = normalize_session_filter(filter_expr)
         validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="sessions")
@@ -1849,6 +1893,9 @@ class SqliteDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
+
+                if filter_expr is not None:
+                    stmt = stmt.where(session_filter_to_sqlalchemy(filter_expr, table))
 
                 # Filtering
                 if user_id is not None:
@@ -2326,9 +2373,6 @@ class SqliteDb(BaseDb):
         Args:
             memory_id (str): The ID of the memory to delete.
             user_id (Optional[str]): The user ID to filter by. Defaults to None.
-
-        Returns:
-            bool: True if deletion was successful, False otherwise.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -3408,7 +3452,6 @@ class SqliteDb(BaseDb):
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
             deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
-            create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:
             Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
@@ -7008,7 +7051,7 @@ class SqliteDb(BaseDb):
             raise
 
     def update_schedule(
-        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+        self, schedule_id: str, user_id: Optional[str] = None, *, preserve_updated_at: bool = False, **kwargs: Any
     ) -> Optional[Dict[str, Any]]:
         from agno.db.schemas.scheduler import validate_schedule_update
 
@@ -7021,7 +7064,8 @@ class SqliteDb(BaseDb):
                 # A system-set disabled_reason describes why the row was off;
                 # turning it on retires the explanation.
                 kwargs.setdefault("disabled_reason", None)
-            kwargs["updated_at"] = int(time.time())
+            if not preserve_updated_at:
+                kwargs["updated_at"] = int(time.time())
             with self.Session() as sess, sess.begin():
                 stmt = table.update().where(table.c.id == schedule_id)
                 if user_id is not None:
@@ -7102,6 +7146,8 @@ class SqliteDb(BaseDb):
         The table is passed in because the caller may hold an open transaction
         on this scoped session; _get_table would try to begin a second one.
         """
+        from sqlalchemy import literal
+
         from agno.db.schemas.scheduler import build_run_endpoint
 
         endpoint = build_run_endpoint(target_type, target_id)
@@ -7126,7 +7172,15 @@ class SqliteDb(BaseDb):
                 ),
                 table.c.enabled.is_(True),
             )
-            .values(enabled=False, disabled_reason=reason, updated_at=int(time.time()))
+            # An archive cascade is not a user edit, so a Company routine keeps its last-edit time.
+            .values(
+                enabled=False,
+                disabled_reason=reason,
+                updated_at=case(
+                    (table.c.managed_by == "company", table.c.updated_at),
+                    else_=literal(int(time.time()), table.c.updated_at.type),
+                ),
+            )
         )
         return int(result.rowcount or 0)
 
@@ -7225,12 +7279,15 @@ class SqliteDb(BaseDb):
         *,
         worker_id: Optional[str] = None,
         locked_at: Optional[int] = None,
+        preserve_updated_at: bool = False,
     ) -> bool:
         try:
             table = self._get_table(table_type="schedules")
             if table is None:
                 return False
-            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None, "updated_at": int(time.time())}
+            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None}
+            if not preserve_updated_at:
+                updates["updated_at"] = int(time.time())
             # A cron may be cleared while this claim is running. Never re-arm
             # an on-demand schedule using the executor's older schedule snapshot.
             updates["next_run_at"] = case(
@@ -8461,7 +8518,7 @@ class SqliteDb(BaseDb):
         """Apply a lifecycle transition only if the observed state still matches."""
         from agno.db.schemas.projects import project_transition_fields
         from agno.db.schemas.tasks import _acceptance_count
-        from agno.db.sql.company import lock_child
+        from agno.db.sql.company import lock_child, open_project_tasks
 
         table = self._get_table(table_type="projects")
         if table is None:
@@ -8499,10 +8556,7 @@ class SqliteDb(BaseDb):
             existing = dict(row._mapping)
             open_tasks = []
             if tasks_table is not None:
-                open_query = select(tasks_table).where(
-                    tasks_table.c.project_id == project_id,
-                    tasks_table.c.status.not_in(["done", "cancelled"]),
-                )
+                open_query = open_project_tasks(tasks_table, project_id)
                 open_tasks = [dict(task._mapping) for task in sess.execute(open_query).fetchall()]
             fields = project_transition_fields(existing, target, reason, accepted_by, tasks=open_tasks)
             if auto_accept is not None:
@@ -8646,7 +8700,9 @@ class SqliteDb(BaseDb):
             rows = sess.execute(stmt).fetchall()
             return [dict(row._mapping) for row in rows], total
 
-    def update_task(self, task_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
+    def update_task(
+        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
         from agno.db.schemas.tasks import validate_task_fields
         from agno.db.sql.company import lock_child, require_project
 
@@ -8654,7 +8710,11 @@ class SqliteDb(BaseDb):
         table = self._get_table(table_type="tasks")
         if table is None:
             return None
-        stmt = table.update().where(table.c.id == task_id, table.c.deleted_at.is_(None), table.c.status == "backlog")
+        stmt = table.update().where(table.c.id == task_id, table.c.deleted_at.is_(None))
+        if set(fields) - {"title", "brief"}:
+            stmt = stmt.where(table.c.status == "backlog")
+        if expected_status is not None:
+            stmt = stmt.where(table.c.status == expected_status)
         if user_id is not None:
             stmt = stmt.where(table.c.user_id == user_id)
         products = self._get_table(table_type="products", create_table_if_not_found=True)
@@ -8701,7 +8761,7 @@ class SqliteDb(BaseDb):
         products = self._get_table(table_type="products", create_table_if_not_found=True)
         projects = self._get_table(table_type="projects", create_table_if_not_found=True)
         with self.Session() as sess, sess.begin():
-            lock_child(sess, products, projects, table, task_id)
+            lock_child(sess, products, projects, table, task_id, restoring=True)
             existing = sess.execute(select(table).where(table.c.id == task_id)).mappings().first()
             if existing is None:
                 return None
@@ -8835,7 +8895,7 @@ class SqliteDb(BaseDb):
     ) -> Optional[Dict[str, Any]]:
         """Apply a lifecycle transition only if the observed state still matches."""
         from agno.db.schemas.tasks import _acceptance_count, task_transition_fields
-        from agno.db.sql.company import lock_child
+        from agno.db.sql.company import lock_child, require_project
 
         table = self._get_table(table_type="tasks")
         if table is None:
@@ -8875,6 +8935,9 @@ class SqliteDb(BaseDb):
                 fields["transitions"][-1]["auto_accept"] = auto_accept
             else:
                 lock_child(sess, products, projects, table, task_id)
+            if existing["status"] in {"done", "cancelled"}:
+                # Reopened work must not land in a completed or cancelled Project.
+                require_project(sess, projects, existing["project_id"], existing["product_id"], target)
             update = table.update().where(
                 table.c.id == task_id,
                 table.c.deleted_at.is_(None),

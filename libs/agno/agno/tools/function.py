@@ -1017,9 +1017,16 @@ class UserInputField:
     value: Optional[Any] = None
 
     def to_dict(self) -> Dict[str, Any]:
+        if isinstance(self.field_type, type):
+            # Plain classes expose __name__ (e.g. "int").
+            serialized_field_type = self.field_type.__name__
+        else:
+            # PEP 604 unions (e.g. `int | None`) and typing special forms have no
+            # __name__; fall back to str() so serialization never crashes.
+            serialized_field_type = str(self.field_type)
         return {
             "name": self.name,
-            "field_type": str(self.field_type.__name__),
+            "field_type": serialized_field_type,
             "description": self.description,
             "value": self.value,
         }

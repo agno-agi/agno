@@ -45,6 +45,8 @@ pick a quick prompt, or send one of the prompts listed below.
 
 A single data analyst agent. Ask for trends, comparisons, or usage and it
 responds with a chart block plus one sentence of context before and after.
+The revenue quick prompt asks for the total as a headline value, which the
+chart card shows beside the title.
 
 ### agentos_chart_team.py
 
@@ -79,6 +81,9 @@ Try: "Chart token usage by day and the model mix."
 - Keep chart data compact. The toolkit rejects empty data, non-flat rows, and
   series keys that are missing or non-numeric, and returns a validation error
   the model can act on.
+- Pass `value` to show a preformatted headline figure beside the chart title,
+  such as a total or the latest value ("200M", "$22.3K", "94%"). The toolkit
+  tells the model to leave it out when no single number summarizes the chart.
 - Numbers passed as strings are coerced to numbers for series keys, so a model
   that stringifies values still produces a valid chart.
 - When a Team assembles member charts, instruct the leader to include the

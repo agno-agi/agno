@@ -3688,15 +3688,19 @@ def _continue_run(
 
     register_run(run_response.run_id)  # type: ignore
 
-    agent.model = cast(Model, agent.model)
+    # Resume the run metrics timer: the run's duration runs from its start to its end, the wait included
+    run_response.metrics = run_response.metrics or RunMetrics()
+    run_response.metrics.resume_timer(run_response.created_at)
 
-    # 1. Handle the updated tools
-    handle_tool_call_updates(agent, run_response=run_response, run_messages=run_messages, tools=tools)
+    agent.model = cast(Model, agent.model)
 
     try:
         num_attempts = agent.retries + 1
         for attempt in range(num_attempts):
             try:
+                # 1. Handle the updated tools
+                handle_tool_call_updates(agent, run_response=run_response, run_messages=run_messages, tools=tools)
+
                 # Check for cancellation before model call
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -3910,6 +3914,10 @@ def _continue_run_stream(
     from agno.agent._tools import handle_tool_call_updates_stream
 
     register_run(run_response.run_id)  # type: ignore
+
+    # Resume the run metrics timer: the run's duration runs from its start to its end, the wait included
+    run_response.metrics = run_response.metrics or RunMetrics()
+    run_response.metrics.resume_timer(run_response.created_at)
 
     # Set up retry logic
     num_attempts = agent.retries + 1
@@ -4932,6 +4940,10 @@ async def _acontinue_run(
                     run_response=run_response,
                 )
 
+                # Resume the run metrics timer: the run's duration runs from its start to its end, the wait included
+                run_response.metrics = run_response.metrics or RunMetrics()
+                run_response.metrics.resume_timer(run_response.created_at)
+
                 # Reset the run state
                 run_response.status = RunStatus.running
 
@@ -5450,6 +5462,10 @@ async def _acontinue_run_stream(
                     add_history_to_context=agent.add_history_to_context,
                     run_response=run_response,
                 )
+
+                # Resume the run metrics timer: the run's duration runs from its start to its end, the wait included
+                run_response.metrics = run_response.metrics or RunMetrics()
+                run_response.metrics.resume_timer(run_response.created_at)
 
                 # Reset the run state
                 run_response.status = RunStatus.running
@@ -6041,7 +6057,7 @@ def persist_run_in_session(
     run_index = resolve_run_index(session, storage_copy)
 
     # Calculate session metrics
-    update_session_metrics(agent, session=session, run_response=run_response)
+    update_session_metrics(agent, session=session)
 
     # Update session state before saving the session
     if run_context is not None and run_context.session_state is not None:
@@ -6079,7 +6095,7 @@ async def apersist_run_in_session(
 
     session.upsert_run(run=storage_copy)
     run_index = resolve_run_index(session, storage_copy)
-    update_session_metrics(agent, session=session, run_response=run_response)
+    update_session_metrics(agent, session=session)
 
     if run_context is not None and run_context.session_state is not None:
         if session.session_data is not None:

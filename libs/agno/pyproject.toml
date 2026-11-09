@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "3.1.8"
+version = "3.1.12"
 description = "The programming language for agentic software."
 requires-python = ">=3.9,<4"
 readme = "README.md"
@@ -221,7 +221,7 @@ pinecone = ["pinecone==5.4.2"]
 pylance = ["pylance"]
 qdrant = ["qdrant-client"]
 singlestore = ["sqlalchemy"]
-surrealdb = ["surrealdb>=1.0.4"]
+surrealdb = ["surrealdb>=1.0.4,<3"]
 upstash = ["upstash-vector"]
 weaviate = ["weaviate-client"]
 
@@ -253,7 +253,7 @@ pdf-ocr = ["rapidocr_onnxruntime"]
 agui = ["ag-ui-protocol>=0.1.15", "jsonpatch>=1.33"]
 
 # Dependencies for A2A integration
-a2a = ["a2a-sdk>=0.3.0,<1.0"]
+a2a = ["a2a-sdk[http-server]>=1.2.2,<2"]
 
 # Dependencies for Slack integration
 slack = ["slack_sdk>=3.40.0", "aiohttp>=3.7.3,<4"]
@@ -429,6 +429,7 @@ embedders = [
 # All libraries for testing
 tests = [
     "claude-agent-sdk>=0.2.148",
+    "openai-codex==0.163.0; python_version >= '3.10'",
   "agno[pages]",
     "agno[a2a]",
     "agno[slack]",

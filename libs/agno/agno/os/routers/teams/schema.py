@@ -284,6 +284,7 @@ class TeamResponse(BaseModel):
         if team.model and team.model.provider is not None:
             _team_model_data["provider"] = team.model.provider
 
+        from agno.agents.base import BaseExternalAgent
         from agno.registry._reserved import is_framework_owned
 
         members: List[Union[AgentResponse, TeamResponse]] = []
@@ -294,6 +295,8 @@ class TeamResponse(BaseModel):
                     # Built-in members can carry the server's source root in their instructions.
                     agent_response.system_message = None
                 members.append(agent_response)
+            elif isinstance(member, BaseExternalAgent):
+                members.append(AgentResponse.from_harness_agent(member))
             if isinstance(member, Team):
                 team_response = await TeamResponse.from_team(member)
                 members.append(team_response)

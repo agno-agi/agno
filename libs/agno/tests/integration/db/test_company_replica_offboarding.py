@@ -118,6 +118,8 @@ async def test_disabled_owner_blocks_new_work_but_allows_collaborator_cancel(
     ) as client:
         product = (await client.post("/company/products", json={"name": "Product"})).json()
         project = (await client.post("/company/projects", json={"product_id": product["id"], "name": "Project"})).json()
+        approval = {"target": "active", "reason": "Approved"}
+        await client.post("/company/projects/" + project["id"] + "/transitions", json=approval)
         task = (
             await client.post(
                 "/company/tasks",
@@ -206,7 +208,6 @@ async def test_refresh_with_mongo_history_continues_completion_proposals(system,
     client, db, _, _, _ = system
     task = await accepted(client)
     await _call(db, "transition_task", task["id"], "cancelled", "No work needed")
-    await _call(db, "transition_project", task["project_id"], "active", "Begin")
     schedule_db = (AsyncMongoDb if asynchronous else MongoDb)(db_url=url, db_name="company_refresh_" + uuid4().hex)
     manager = (AsyncCompanyManager if isinstance(db, AsyncBaseDb) else CompanyManager)(db, schedule_db=schedule_db)
     now = int(time.time())

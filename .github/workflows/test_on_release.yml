@@ -1093,7 +1093,7 @@ jobs:
           ./libs/agno/tests/integration/knowledge/test_youtube_knowledge.py \
           ./libs/agno/tests/integration/knowledge/filters/test_agentic_filtering.py
 
-  # Run A2A tests (isolated due to dependency conflicts)
+  # Run A2A tests
   test-a2a:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -1111,7 +1111,7 @@ jobs:
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - name: Setup environment for A2A tests (without conflicting deps)
+      - name: Setup environment for A2A tests
         working-directory: .
         run: |
           VIRTUAL_ENV=.venv uv venv --python 3.12
@@ -1121,16 +1121,12 @@ jobs:
           # ever run. Those editables install agno's full dependency set anyway.
           # One resolve for both: the local agnoctl satisfies agno's floor.
           VIRTUAL_ENV=.venv uv pip install -e ./libs/agnoctl -e ./libs/agno[dev,os,integration-tests,openai]
-          # TODO: a2a-sdk v1.0+ has breaking changes, update agno for it
-          VIRTUAL_ENV=.venv uv pip install "a2a-sdk>=0.3.0,<1.0"
       - name: Run A2A integration tests
         working-directory: .
         env:
           AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
-          # TODO: a2a-sdk v1.0+ has breaking changes, update agno for it
-          pip install "a2a-sdk>=0.3.0,<1.0"
           python -m pytest ./libs/agno/tests/integration/os/interfaces/test_a2a.py
 
   test-clean:
