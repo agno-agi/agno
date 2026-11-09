@@ -31,6 +31,7 @@ def _make_db_with_mock_bucket() -> tuple:
     bucket = MagicMock()
     db.bucket = bucket
     db.prefix = "test"
+    db.session_table_name = "agno_sessions"
     return db, bucket
 
 

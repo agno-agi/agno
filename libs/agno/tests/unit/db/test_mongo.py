@@ -1,6 +1,15 @@
+from datetime import date
 from unittest.mock import MagicMock, Mock, patch
 
+import pytest
+
+from agno.db.migrations.manager import MigrationManager
 from agno.db.mongo import MongoDb
+from agno.db.mongo.utils import (
+    build_component_metrics_legacy_runs_projection,
+    build_component_metrics_runs_projection,
+)
+from agno.db.utils import METRICS_REFRESH_ID
 
 
 def _db():
@@ -19,6 +28,22 @@ def test_get_collection_refetches_when_cached_none():
     second = db._get_collection("learnings", create_collection_if_not_found=True)
     assert second is sentinel
     assert db._get_or_create_collection.call_count == 2
+
+
+def test_created_sessions_collection_stores_latest_schema_version():
+    """A sessions collection the store creates stores the latest schema version, so metrics never read its legacy runs."""
+    db = _db()
+
+    with (
+        patch.object(db, "table_exists", return_value=False),
+        patch.object(db, "upsert_schema_version") as upsert_schema_version,
+        patch("agno.db.mongo.mongo.create_collection_indexes"),
+    ):
+        db._get_collection("sessions", create_collection_if_not_found=True)
+
+    upsert_schema_version.assert_called_once_with(
+        table_name=db.session_table_name, version=MigrationManager(db).latest_schema_version.public
+    )
 
 
 class TestSyncMongoLearnings:
@@ -119,3 +144,117 @@ def test_text_filters_match_literal_text():
     sessions_query, memories_query = [c.args[0] for c in coll.count_documents.call_args_list]
     assert sessions_query["session_data.session_name"] == {"$regex": r"v1\.2\(draft", "$options": "i"}
     assert memories_query["memory"] == {"$regex": r"v1\.2\(draft", "$options": "i"}
+
+
+def test_metrics_runs_projections_keep_session_id():
+    """A run and a legacy run keep their session, which names the session of each remote member run nested in them."""
+    assert build_component_metrics_runs_projection()["session_id"] == 1
+    assert build_component_metrics_legacy_runs_projection()["session_id"] == 1
+
+
+def test_metrics_runs_projection_keeps_what_tool_metrics_count():
+    """A run keeps of its tool calls only what tool_metrics counts, never their arguments or result, and of its
+    messages the tool call each answers, which a forked run's copied tool calls are found by."""
+    projection = build_component_metrics_runs_projection()
+    for field in [
+        "tools.toolkit",
+        "tools.tool_name",
+        "tools.tool_call_error",
+        "tools.requires_confirmation",
+        "tools.confirmed",
+        "tools.requires_user_input",
+        "tools.external_execution_required",
+        "tools.metrics.duration",
+        "tools.tool_call_id",
+        "messages.tool_call_id",
+    ]:
+        assert projection[f"run_data.{field}"] == 1
+    assert not any(field.startswith(("run_data.tools.tool_args", "run_data.tools.result")) for field in projection)
+
+
+def test_component_metrics_totals_read_tool_metrics():
+    """The totals of a day read back the tools each of its rows keeps as a list, and add them up."""
+    db = _db()
+    collection = Mock()
+    collection.find.return_value = [
+        {
+            "aggregation_period": "daily",
+            "date": "2026-10-01",
+            "updated_at": 1,
+            "tool_metrics": [
+                {
+                    "tool_name": "search",
+                    "toolkit": "web",
+                    "count": 1,
+                    "failed_count": 0,
+                    "total_ms": 200,
+                    "max_ms": 200,
+                    "buckets": {"le_200": 1},
+                }
+            ],
+        },
+        {
+            "aggregation_period": "daily",
+            "date": "2026-10-01",
+            "updated_at": 2,
+            "tool_metrics": [
+                {
+                    "tool_name": "search",
+                    "toolkit": "web",
+                    "count": 2,
+                    "failed_count": 1,
+                    "total_ms": 300,
+                    "max_ms": 250,
+                    "buckets": {"le_50": 1, "le_250": 1},
+                }
+            ],
+        },
+    ]
+
+    with patch.object(db, "_get_collection", return_value=collection):
+        totals, latest_updated_at = db.get_component_metrics(
+            date(2026, 10, 1), date(2026, 10, 1), user_id="", fields=["tool_metrics"]
+        )
+
+    assert collection.find.call_args.args[1]["tool_metrics"] == 1
+    assert totals[0]["tool_metrics"] == {
+        "web": {
+            "search": {
+                "count": 3,
+                "failed_count": 1,
+                "total_ms": 500,
+                "max_ms": 250,
+                "buckets": {"le_200": 1, "le_50": 1, "le_250": 1},
+            }
+        }
+    }
+    assert latest_updated_at == 2
+
+
+def test_metrics_rebuild_reopen_failure_marks_refresh_failed():
+    """A rebuild whose reopen fails shows the error in the refresh status, unless a process holds the refresh."""
+    db = _db()
+    refreshes_collection = Mock()
+
+    with (
+        patch.object(db, "_get_collection", side_effect=lambda table_type, **kwargs: refreshes_collection),
+        patch("agno.db.mongo.mongo.reopen_metrics_days_from", side_effect=Exception("reopen failed")),
+    ):
+        with pytest.raises(Exception, match="reopen failed"):
+            db.calculate_metrics_dates(rebuild_from=date(2026, 10, 1))
+
+    query, update = refreshes_collection.update_one.call_args.args
+    assert query == {"id": METRICS_REFRESH_ID, "locked_by": None}
+    assert update["$set"]["status"] == "failed"
+
+
+def test_get_metrics_returns_a_day_with_only_a_regenerated_run():
+    """A day whose only run is a regenerated one has its tokens but no count, and get_metrics still reads it."""
+    db = _db()
+    collection = Mock()
+    collection.find.return_value.sort.return_value = []
+
+    with patch.object(db, "_get_collection", return_value=collection):
+        db._get_aggregate_metrics_rows(date(2026, 10, 1), date(2026, 10, 1), "")
+
+    assert {"total_tokens": {"$gt": 0}} in collection.find.call_args.args[0]["$or"]
