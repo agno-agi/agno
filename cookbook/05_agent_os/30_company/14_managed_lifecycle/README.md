@@ -13,3 +13,11 @@ For deployment, configure `scheduler=True`, a durable PostgreSQL queue, and a re
 Only the framework Company Manager receives the explicit activation, acceptance and delegation tools. Ordinary Company tools and Routines retain their existing constraints. System decisions and the actual authorizing identity are recorded in transition history. The completed worker's persisted output and tool results are assessed against the requested outcome; successful run status alone does not complete work.
 
 Missing inputs, invalid verification and exhausted revisions return the Task to Backlog with a reason. Cancellation and revoked authority stop management. Existing Company scheduler reconciliation resumes after an interrupted completion. Defined dependent sequences belong in Workflows; these tools delegate independent Tasks. Channel-specific delivery is separate from lifecycle assessment.
+
+## Coordinator and Company Manager
+
+With both Super Agent and Company Manager enabled, Super Agent receives chief-of-staff guidance: clarify outcomes, reuse existing work and authorized executors, and return after background submission. Company Manager and the existing lifecycle services manage normal transitions automatically. Required human reviews, action approvals, platform permissions and Routine restrictions remain in force.
+
+Handoffs include the desired outcome, deliverable, verification criteria and lasting restrictions. Human decisions should include linked work, evidence, a recommendation and a clear question. Screenshots, demos, learning and review tools are used only when configured; these instructions do not install an Inbox, lead agents or capture tools. A completed artifact does not by itself demonstrate measured business impact.
+
+The offline example verifies lifecycle plumbing using deterministic models. It does not evaluate how a live model follows the coordinator guidance or learns preferences.

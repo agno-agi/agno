@@ -28,3 +28,14 @@
 **Result:** One checked revision completed the same Task/session and Project without lifecycle approvals. The lifecycle regression suite passed with double-hyphen IDs; unauthenticated receipt reuse is refused when authorization is enabled.
 
 ---
+
+
+### managed_lifecycle.py — chief-of-staff prompt update (2026-11-09)
+
+**Status:** PASS
+
+**Description:** Reran the offline PostgreSQL lifecycle example after updating CompanyOS coordinator and Company Manager instructions. Deterministic model fixtures exercised background dispatch, artifact verification, one revision and completion without human lifecycle approvals.
+
+**Result:** The same Task completed after two attempts and its Project completed. The 23 lifecycle integration tests also passed, including authorization denial, revocation, cancellation and receipt checks. This validates existing lifecycle behavior, not live-model adherence to the new guidance.
+
+---
