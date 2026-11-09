@@ -363,3 +363,24 @@ async def test_get_collection_refetches_when_cached_none():
 
     assert second is sentinel
     assert db._get_or_create_collection.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_text_filters_match_literal_text():
+    """session_name and search_content are user text, not regex patterns."""
+    db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
+
+    cursor = Mock()
+    cursor.sort.return_value = cursor
+    cursor.to_list = AsyncMock(return_value=[])
+    mock_collection = Mock()
+    mock_collection.find.return_value = cursor
+    mock_collection.count_documents = AsyncMock(return_value=0)
+
+    with patch.object(db, "_get_collection", AsyncMock(return_value=mock_collection)):
+        await db.get_sessions(session_name="v1.2(draft", deserialize=False)
+        await db.get_user_memories(search_content="v1.2(draft", deserialize=False)
+
+    sessions_query, memories_query = [c.args[0] for c in mock_collection.count_documents.call_args_list]
+    assert sessions_query["session_data.session_name"] == {"$regex": r"v1\.2\(draft", "$options": "i"}
+    assert memories_query["memory"] == {"$regex": r"v1\.2\(draft", "$options": "i"}

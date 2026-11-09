@@ -312,6 +312,13 @@ class FirestoreDb(BaseDb):
         )
         return [doc.to_dict().get("run_data") for doc in query.stream() if doc.exists]
 
+    def _get_sessions_runs(self, session_ids: List[str]) -> Optional[Dict[str, List[Dict[str, Any]]]]:
+        """Run dicts for several sessions in one read, used by the search fallback."""
+        runs_collection_ref = self._get_collection(table_type="runs", create_collection_if_not_found=False)
+        if runs_collection_ref is None:
+            return {}
+        return self._get_sessions_runs_docs(runs_collection_ref, session_ids)
+
     def _get_sessions_runs_docs(self, runs_collection_ref, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
         """Get the raw run_data dicts for several sessions, grouped by session_id.
 
@@ -751,6 +758,7 @@ class FirestoreDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """Get all sessions.
 
@@ -837,9 +845,10 @@ class FirestoreDb(BaseDb):
             else:
                 sessions_raw = all_sessions_raw
 
+            # Search scans skip the runs table; the record's legacy runs field is kept for merging later.
             # Attach runs from the runs collection, merged with any runs still
             # in the legacy `runs` field.
-            if runs_collection_ref is not None and sessions_raw:
+            if include_runs and runs_collection_ref is not None and sessions_raw:
                 runs_by_session = self._get_sessions_runs_docs(
                     runs_collection_ref, [s["session_id"] for s in sessions_raw]
                 )
@@ -1111,9 +1120,6 @@ class FirestoreDb(BaseDb):
             memory_id (str): The ID of the memory to delete.
             user_id (Optional[str]): The ID of the user (optional, for filtering).
 
-        Returns:
-            bool: True if the memory was deleted, False otherwise.
-
         Raises:
             Exception: If there is an error deleting the memory.
         """
@@ -1306,7 +1312,6 @@ class FirestoreDb(BaseDb):
             sort_by (Optional[str]): The field to sort the memories by.
             sort_order (Optional[str]): The order to sort the memories by.
             deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
-            create_table_if_not_found: Whether to create the index if it doesn't exist.
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: A tuple containing the memories and the total count.
@@ -2059,7 +2064,6 @@ class FirestoreDb(BaseDb):
             eval_type (Optional[List[EvalType]]): The type of eval to filter by.
             filter_type (Optional[EvalFilterType]): The type of filter to apply.
             deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
-            create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:
             Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:

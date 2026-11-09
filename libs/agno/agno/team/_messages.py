@@ -23,6 +23,7 @@ from typing import (
 )
 
 from pydantic import BaseModel
+from typing_extensions import TypeGuard
 
 from agno.media import Audio, File, Image, Video
 from agno.models.base import Model
@@ -941,6 +942,73 @@ def _get_formatted_session_state_for_system_message(team: "Team", session_state:
     return f"\n<session_state>\n{session_state}\n</session_state>\n\n"
 
 
+def _is_roleful_message_list(input_message: Any) -> TypeGuard[List[Union[Message, Dict[str, Any]]]]:
+    """A non-empty list of ``Message`` objects or role dicts, i.e. ready-made provider messages."""
+    return (
+        isinstance(input_message, list)
+        and len(input_message) > 0
+        and (
+            isinstance(input_message[0], Message) or (isinstance(input_message[0], dict) and "role" in input_message[0])
+        )
+    )
+
+
+def _append_input_messages(
+    team: "Team",
+    run_messages: RunMessages,
+    input_messages: List[Union[Message, Dict[str, Any]]],
+    images: Optional[Sequence[Image]] = None,
+    audio: Optional[Sequence[Audio]] = None,
+    videos: Optional[Sequence[Video]] = None,
+    files: Optional[Sequence[File]] = None,
+) -> None:
+    """Append roleful input to the run as-is, mirroring ``agent._messages.get_run_messages``."""
+    parsed: List[Message] = []
+    for _m in input_messages:
+        if isinstance(_m, Message):
+            parsed.append(_m)
+        elif isinstance(_m, dict):
+            try:
+                parsed.append(Message.model_validate(_m))
+            except Exception as e:
+                log_warning(f"Failed to validate message: {str(e)}")
+        else:
+            log_warning(f"Skipping unsupported input message type: {type(_m).__name__}")
+
+    if team.send_media_to_model and (images or audio or videos or files):
+        _attach_media_to_last_user_message(parsed, images=images, audio=audio, videos=videos, files=files)
+
+    if run_messages.extra_messages is None:
+        run_messages.extra_messages = []
+    run_messages.messages.extend(parsed)
+    run_messages.extra_messages.extend(parsed)
+    run_messages.run_input_messages = parsed
+
+
+def _attach_media_to_last_user_message(
+    messages: List[Message],
+    images: Optional[Sequence[Image]] = None,
+    audio: Optional[Sequence[Audio]] = None,
+    videos: Optional[Sequence[Video]] = None,
+    files: Optional[Sequence[File]] = None,
+) -> None:
+    # Copy the message so media never accumulates on a Message the caller reuses across runs.
+    for i in range(len(messages) - 1, -1, -1):
+        message = messages[i]
+        if message.role != "user":
+            continue
+        messages[i] = message.model_copy(
+            update={
+                "images": [*(message.images or []), *(images or [])] or None,
+                "audio": [*(message.audio or []), *(audio or [])] or None,
+                "videos": [*(message.videos or []), *(videos or [])] or None,
+                "files": [*(message.files or []), *(files or [])] or None,
+            }
+        )
+        return
+    log_warning("Input messages contain no user message; media passed to the run was not sent to the model")
+
+
 def _get_run_messages(
     team: "Team",
     *,
@@ -1051,24 +1119,32 @@ def _get_run_messages(
             run_messages.messages += history_copy
 
     # 5. Add user message to run_messages (message second as per Dirk's requirement)
-    # 5.1 Build user message if message is None, str or list
-    user_message = _get_user_message(
-        team,
-        run_response=run_response,
-        run_context=run_context,
-        input_message=input_message,
-        user_id=user_id,
-        audio=audio,
-        images=images,
-        videos=videos,
-        files=files,
-        add_dependencies_to_context=add_dependencies_to_context,
-        **kwargs,
-    )
-    # Add user message to run_messages
-    if user_message is not None:
-        run_messages.user_message = user_message
-        run_messages.messages.append(user_message)
+    if _is_roleful_message_list(input_message):
+        # 5.1 A list of Message/role dicts is provider input in its own right: keep
+        # every message and its role, as the Agent builder does, instead of
+        # flattening the list into one user string.
+        _append_input_messages(
+            team, run_messages, input_message, images=images, audio=audio, videos=videos, files=files
+        )
+    else:
+        # 5.2 Build user message if message is None, str or list
+        user_message = _get_user_message(
+            team,
+            run_response=run_response,
+            run_context=run_context,
+            input_message=input_message,
+            user_id=user_id,
+            audio=audio,
+            images=images,
+            videos=videos,
+            files=files,
+            add_dependencies_to_context=add_dependencies_to_context,
+            **kwargs,
+        )
+        # Add user message to run_messages
+        if user_message is not None:
+            run_messages.user_message = user_message
+            run_messages.messages.append(user_message)
 
     # Set messages on run_context so tool hooks can access the current message history
     run_context.messages = run_messages.messages
@@ -1185,24 +1261,32 @@ async def _aget_run_messages(
             run_messages.messages += history_copy
 
     # 5. Add user message to run_messages (message second as per Dirk's requirement)
-    # 5.1 Build user message if message is None, str or list
-    user_message = await _aget_user_message(
-        team,
-        run_response=run_response,
-        run_context=run_context,
-        input_message=input_message,
-        user_id=user_id,
-        audio=audio,
-        images=images,
-        videos=videos,
-        files=files,
-        add_dependencies_to_context=add_dependencies_to_context,
-        **kwargs,
-    )
-    # Add user message to run_messages
-    if user_message is not None:
-        run_messages.user_message = user_message
-        run_messages.messages.append(user_message)
+    if _is_roleful_message_list(input_message):
+        # 5.1 A list of Message/role dicts is provider input in its own right: keep
+        # every message and its role, as the Agent builder does, instead of
+        # flattening the list into one user string.
+        _append_input_messages(
+            team, run_messages, input_message, images=images, audio=audio, videos=videos, files=files
+        )
+    else:
+        # 5.2 Build user message if message is None, str or list
+        user_message = await _aget_user_message(
+            team,
+            run_response=run_response,
+            run_context=run_context,
+            input_message=input_message,
+            user_id=user_id,
+            audio=audio,
+            images=images,
+            videos=videos,
+            files=files,
+            add_dependencies_to_context=add_dependencies_to_context,
+            **kwargs,
+        )
+        # Add user message to run_messages
+        if user_message is not None:
+            run_messages.user_message = user_message
+            run_messages.messages.append(user_message)
 
     # Set messages on run_context so tool hooks can access the current message history
     run_context.messages = run_messages.messages
@@ -1251,7 +1335,7 @@ def _get_user_message(
                 # This is multimodal content (text + images/audio/video), preserve the structure
                 input_content = input_message
             elif len(input_message) > 0 and isinstance(input_message[0], Message):
-                # This is a list of Message objects, extract text content from them
+                # The delegation tool still uses this helper to pass team input to members.
                 input_content = get_text_from_message(input_message)
             elif all(isinstance(item, str) for item in input_message):
                 input_content = "\n".join([str(item) for item in input_message])
@@ -1309,6 +1393,7 @@ def _get_user_message(
                         query=user_msg_content,
                         filters=run_context.knowledge_filters,
                         run_context=run_context,
+                        run_response=run_response,
                         **kwargs,
                     )
                     if docs_from_knowledge is not None:
@@ -1467,6 +1552,7 @@ async def _aget_user_message(
                         query=user_msg_content,
                         filters=run_context.knowledge_filters,
                         run_context=run_context,
+                        run_response=run_response,
                         **kwargs,
                     )
                     if docs_from_knowledge is not None:

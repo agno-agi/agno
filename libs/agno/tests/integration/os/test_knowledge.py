@@ -743,11 +743,16 @@ def test_upload_large_file(test_app):
 
 
 def test_upload_without_file(test_app):
-    """Test uploading content without a file."""
+    """Test uploading text content without a file."""
     with patch("agno.os.routers.knowledge.knowledge.process_content"):
         response = test_app.post(
             "/knowledge/content",
-            data={"name": "Text Content", "description": "Content without file", "metadata": '{"type": "text"}'},
+            data={
+                "name": "Text Content",
+                "description": "Content without file",
+                "text_content": "Plain text body",
+                "metadata": '{"type": "text"}',
+            },
         )
 
         assert response.status_code == 202
@@ -761,7 +766,12 @@ def test_upload_with_special_characters(test_app):
         special_metadata = {"special_chars": "!@#$%^&*()", "unicode": "测试内容", "quotes": '{"nested": "value"}'}
 
         response = test_app.post(
-            "/knowledge/content", data={"name": "Special Content", "metadata": json.dumps(special_metadata)}
+            "/knowledge/content",
+            data={
+                "name": "Special Content",
+                "text_content": "Content with special metadata",
+                "metadata": json.dumps(special_metadata),
+            },
         )
 
         assert response.status_code == 202

@@ -16,6 +16,8 @@ the concurrency boundary deliberately is NOT.
 Skips per backend when its server is unreachable (PG at 5532, Redis at 6379).
 """
 
+import asyncio
+import contextlib
 import uuid
 
 import pytest
@@ -65,9 +67,8 @@ STORE_PARAMS = [
 ]
 
 
-@pytest_asyncio.fixture(params=STORE_PARAMS)
-async def store(request):
-    kind = request.param
+@contextlib.asynccontextmanager
+async def _open_store(kind: str):
     if kind == "in_memory":
         yield InMemoryQueueStore()
         return
@@ -90,18 +91,33 @@ async def store(request):
             client.delete(key)
         client.close()
         return
-    if kind == "pg":
-        from agno.db.postgres import AsyncPostgresDb
+    if kind in ("pg", "pg_sync"):
+        from agno.db.postgres import AsyncPostgresDb, PostgresDb
 
-        db = AsyncPostgresDb(db_url=PG_URL, job_table=f"parity_{uuid.uuid4().hex[:8]}")
-        yield db
-        import sqlalchemy
-
-        engine = sqlalchemy.create_engine(PG_URL)
-        with engine.begin() as conn:
-            conn.execute(sqlalchemy.text(f'DROP TABLE IF EXISTS {db.db_schema}."{db.job_table_name}"'))
-        engine.dispose()
+        table = f"parity_{uuid.uuid4().hex[:8]}"
+        db = (
+            AsyncPostgresDb(db_url=PG_URL, job_table=table)
+            if kind == "pg"
+            else PostgresDb(db_url=PG_URL, job_table=table)
+        )
+        yield db if kind == "pg" else _SyncStoreAdapter(db)
+        _drop_jobs_table(db)
         return
+
+
+def _drop_jobs_table(db) -> None:
+    import sqlalchemy
+
+    engine = sqlalchemy.create_engine(PG_URL)
+    with engine.begin() as conn:
+        conn.execute(sqlalchemy.text(f'DROP TABLE IF EXISTS {db.db_schema}."{db.job_table_name}"'))
+    engine.dispose()
+
+
+@pytest_asyncio.fixture(params=STORE_PARAMS)
+async def store(request):
+    async with _open_store(request.param) as opened:
+        yield opened
 
 
 def make_job(job_id: str = "r1", max_attempts: int = 1, **kwargs) -> dict:
@@ -405,6 +421,28 @@ class TestStrictLookupParity:
         assert await store.get_job("nope", strict=True) is None
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kind",
+    [
+        *STORE_PARAMS,
+        pytest.param(
+            "pg_sync", marks=pytest.mark.skipif(not _PG_AVAILABLE, reason="Postgres not available on localhost:5532")
+        ),
+    ],
+)
+@pytest.mark.parametrize("raise_on_error", [False, True])
+async def test_list_jobs_error_flag_preserves_results(kind, raise_on_error):
+    async with _open_store(kind) as store:
+        assert await store.list_jobs(raise_on_error=raise_on_error) == ([], 0)
+        await store.enqueue_job(make_job("listed", user_id="owner"))
+        jobs, total = await store.list_jobs(
+            status=["queued", "running"], user_id="owner", raise_on_error=raise_on_error
+        )
+        assert total == 1 and [job["id"] for job in jobs] == ["listed"]
+        assert await store.list_jobs(status="failed", raise_on_error=raise_on_error) == ([], 0)
+
+
 class TestSweepSettleParity:
     """settle_swept_job: the sweeper's ownership-keyed reconcile write.
     Same CAS shape (running + sweep-lock holder only), but the
@@ -463,3 +501,436 @@ class TestSyncPostgresContinueJobStamps:
             with engine.begin() as conn:
                 conn.execute(sqlalchemy.text(f'DROP TABLE IF EXISTS {db.db_schema}."{db.job_table_name}"'))
             engine.dispose()
+
+
+# -- Per-session order ---------------------------------------------------------
+# A ticket marked serialize_session runs only while no sibling in its session is
+# running or paused and no earlier-accepted sibling is still queued. Order is the
+# store-assigned payload["session_seq"], never created_at or the run id.
+
+SESSION_STORE_PARAMS = STORE_PARAMS + [
+    pytest.param(
+        "pg_sync",
+        id="pg_sync",
+        marks=pytest.mark.skipif(not _PG_AVAILABLE, reason="Postgres not available on localhost:5532"),
+    )
+]
+
+
+@pytest_asyncio.fixture(params=SESSION_STORE_PARAMS)
+async def session_store(request):
+    async with _open_store(request.param) as opened:
+        yield opened
+
+
+def make_turn(job_id: str, session_id: str = "s1", **kwargs) -> dict:
+    return make_job(job_id, session_id=session_id, payload={"input": job_id, "serialize_session": True}, **kwargs)
+
+
+class TestSessionOrderParity:
+    @pytest.mark.asyncio
+    async def test_waiting_turn_keeps_its_attempt_budget_while_other_sessions_progress(self, session_store):
+        await session_store.enqueue_job(make_turn("a", created_at=1))
+        await session_store.enqueue_job(make_turn("b", created_at=2))
+        assert (await session_store.claim_job("one"))["id"] == "a"
+        for _ in range(3):
+            assert await session_store.claim_job("two") is None
+        waiting = await session_store.get_job("b")
+        assert waiting["status"] == "queued" and waiting["attempt"] == 0
+        await session_store.enqueue_job(make_turn("c", session_id="s2", created_at=3))
+        assert (await session_store.claim_job("two"))["id"] == "c"
+        assert await session_store.complete_job("a", "one", 1, "completed")
+        released = await session_store.claim_job("two")
+        assert released["id"] == "b" and released["attempt"] == 1
+
+    @pytest.mark.asyncio
+    async def test_concurrent_claims_enter_only_one_turn_per_session(self, session_store):
+        for job_id in ("a", "b", "c", "d"):
+            await session_store.enqueue_job(make_turn(job_id, created_at=1))
+        claims = await asyncio.gather(*(session_store.claim_job(f"worker-{i}") for i in range(8)))
+        assert [claim["id"] for claim in claims if claim] == ["a"]
+        for job_id in ("b", "c", "d"):
+            assert (await session_store.get_job(job_id))["attempt"] == 0
+
+    @pytest.mark.asyncio
+    async def test_same_second_turns_run_in_acceptance_order(self, session_store):
+        # The later turn's id sorts first: only the store sequence keeps it behind
+        await session_store.enqueue_job(make_turn("z", created_at=1))
+        await session_store.enqueue_job(make_turn("a", created_at=1))
+        assert (await session_store.claim_job("one"))["id"] == "z"
+        assert await session_store.claim_job("two") is None
+        assert await session_store.complete_job("z", "one", 1, "completed")
+        assert (await session_store.claim_job("two"))["id"] == "a"
+
+    @pytest.mark.asyncio
+    async def test_acceptance_order_beats_a_backdated_created_at(self, session_store):
+        # created_at is the accepting replica's clock, and replicas skew
+        await session_store.enqueue_job(make_turn("first", created_at=1002))
+        await session_store.enqueue_job(make_turn("second", created_at=1000))
+        await session_store.enqueue_job(make_turn("third", created_at=1001))
+        order = []
+        for worker in ("w1", "w2", "w3"):
+            claimed = await session_store.claim_job(worker)
+            order.append(claimed["id"])
+            assert await session_store.complete_job(claimed["id"], worker, claimed["attempt"], "completed")
+        assert order == ["first", "second", "third"]
+
+    @pytest.mark.asyncio
+    async def test_paused_turn_holds_its_session_until_released(self, session_store):
+        await session_store.enqueue_job(make_turn("a", created_at=1))
+        head = await session_store.claim_job("w1")
+        assert await session_store.complete_job("a", "w1", head["attempt"], "paused")
+        await session_store.enqueue_job(make_turn("b", created_at=2))
+        assert await session_store.claim_job("w2") is None
+        assert await session_store.cancel_job("a")
+        assert (await session_store.claim_job("w2"))["id"] == "b"
+
+    @pytest.mark.asyncio
+    async def test_continued_turn_keeps_its_place(self, session_store):
+        await session_store.enqueue_job(make_turn("z", created_at=1))
+        head = await session_store.claim_job("w1")
+        assert await session_store.complete_job("z", "w1", head["attempt"], "paused")
+        await session_store.enqueue_job(make_turn("a", created_at=2))
+        assert (await session_store.continue_job("z", {"input": "approved"}))["outcome"] == "queued"
+        assert (await session_store.claim_job("w2"))["id"] == "z"
+        assert await session_store.claim_job("w3") is None
+
+    @pytest.mark.asyncio
+    async def test_requeued_turn_rejoins_behind_live_turns(self, session_store):
+        # Its id sorts first, so only a fresh sequence keeps the newer live turn ahead of it
+        await session_store.enqueue_job(make_turn("a", created_at=1))
+        assert (await session_store.claim_job("one"))["id"] == "a"
+        assert await session_store.complete_job("a", "one", 1, "failed")
+        await session_store.enqueue_job(make_turn("z", created_at=2))
+        assert await session_store.requeue_job("a")
+        assert (await session_store.claim_job("two"))["id"] == "z"
+        assert await session_store.claim_job("three") is None
+        assert await session_store.complete_job("z", "two", 1, "completed")
+        assert (await session_store.claim_job("three"))["id"] == "a"
+
+    @pytest.mark.asyncio
+    async def test_retry_backoff_holds_later_turns_without_spending_their_attempts(self, session_store):
+        await session_store.enqueue_job(make_turn("a", created_at=1, max_attempts=2))
+        await session_store.enqueue_job(make_turn("b", created_at=2))
+        assert (await session_store.claim_job("one"))["id"] == "a"
+        await session_store.retry_or_fail_job("a", "one", 1, "retryable failure", 60)
+        assert await session_store.claim_job("two") is None
+        assert (await session_store.get_job("b"))["attempt"] == 0
+
+    @pytest.mark.asyncio
+    async def test_cancelling_a_waiting_head_releases_the_next_turn(self, session_store):
+        await session_store.enqueue_job(make_turn("a", created_at=1))
+        await session_store.enqueue_job(make_turn("b", created_at=2))
+        assert await session_store.cancel_job("a")
+        claimed = await session_store.claim_job("two")
+        assert claimed["id"] == "b" and claimed["attempt"] == 1
+
+    @pytest.mark.asyncio
+    async def test_stale_head_is_reclaimed_before_the_next_turn(self, session_store):
+        await session_store.enqueue_job(make_turn("a", created_at=1, max_attempts=2))
+        await session_store.enqueue_job(make_turn("b", created_at=2))
+        assert (await session_store.claim_job("one"))["id"] == "a"
+        reclaimed = await session_store.claim_job("two", lock_grace_seconds=0)
+        assert reclaimed["id"] == "a" and reclaimed["attempt"] == 2
+        assert not await session_store.complete_job("a", "one", 1, "completed")
+        assert (await session_store.get_job("b"))["attempt"] == 0
+        assert await session_store.complete_job("a", "two", 2, "completed")
+        assert (await session_store.claim_job("three"))["id"] == "b"
+
+    @pytest.mark.asyncio
+    async def test_session_id_alone_identifies_the_session(self, session_store):
+        # Components writing to one session_id share its session row
+        await session_store.enqueue_job(make_turn("a", created_at=1, component_type="agent", component_id="a1"))
+        await session_store.enqueue_job(make_turn("b", created_at=2, component_type="team", component_id="t1"))
+        assert (await session_store.claim_job("one"))["id"] == "a"
+        assert await session_store.claim_job("two") is None
+
+    @pytest.mark.asyncio
+    async def test_unmarked_tickets_claim_concurrently(self, session_store):
+        await session_store.enqueue_job(make_job("r1", session_id="s1", created_at=1000))
+        await session_store.enqueue_job(make_job("r2", session_id="s1", created_at=1001))
+        first = await session_store.claim_job("w1")
+        second = await session_store.claim_job("w2")
+        assert {first["id"], second["id"]} == {"r1", "r2"}
+
+    @pytest.mark.asyncio
+    async def test_marker_must_be_a_boolean(self, session_store):
+        for job_id, created_at in (("a", 1), ("b", 2)):
+            turn = make_turn(job_id, created_at=created_at)
+            turn["payload"]["serialize_session"] = "true"
+            await session_store.enqueue_job(turn)
+        assert (await session_store.claim_job("one"))["id"] == "a"
+        assert (await session_store.claim_job("two"))["id"] == "b"
+
+    @pytest.mark.asyncio
+    async def test_enqueue_returns_the_callers_dict_with_its_sequence(self, session_store):
+        turn = make_turn("a", created_at=1)
+        for optional in ("error", "updated_at", "completed_at"):
+            turn.pop(optional)
+        first = (await session_store.enqueue_job(dict(turn)))["job"]
+        assert {k: v for k, v in first.items() if k != "payload"} == {k: v for k, v in turn.items() if k != "payload"}
+        assert first["payload"] == {**turn["payload"], "session_seq": 1}
+        second = (await session_store.enqueue_job(make_turn("b", created_at=1)))["job"]
+        assert second["payload"]["session_seq"] == 2
+        assert (await session_store.get_job("b"))["payload"]["session_seq"] == 2
+
+    @pytest.mark.asyncio
+    async def test_session_blocker_names_the_ticket_a_turn_waits_behind(self, session_store):
+        for job_id, created_at in (("a", 1), ("b", 2), ("c", 3)):
+            await session_store.enqueue_job(make_turn(job_id, created_at=created_at))
+        assert await session_store.session_blocker("a") is None
+        assert await session_store.session_blocker("c") == "a"
+        head = await session_store.claim_job("w1")
+        assert await session_store.session_blocker("b") == "a"
+        assert await session_store.complete_job("a", "w1", head["attempt"], "completed")
+        assert await session_store.session_blocker("b") is None
+        assert await session_store.session_blocker("c") == "b"
+        await session_store.enqueue_job(make_job("plain", session_id="s1", created_at=4))
+        assert await session_store.session_blocker("plain") is None
+
+
+@pytest.mark.skipif(not _PG_AVAILABLE, reason="Postgres not available on localhost:5532")
+class TestPostgresSessionLocking:
+    """Enqueue and claim of one session share a transaction-scoped advisory lock. An
+    insert is invisible to a concurrent claim until it commits, so ordering alone
+    cannot keep a not-yet-visible predecessor from being claimed beside its sibling."""
+
+    @staticmethod
+    def _held_session_lock(db, session_id: str):
+        """A connection holding the session's lock in an open transaction."""
+        import sqlalchemy
+
+        from agno.job_queue.session import session_claim_lock_key
+
+        table = db._get_table(table_type="jobs", create_table_if_not_found=True)
+        engine = sqlalchemy.create_engine(PG_URL)
+        conn = engine.connect()
+        txn = conn.begin()
+        key = session_claim_lock_key(table.fullname, {"session_id": session_id})
+        conn.execute(sqlalchemy.text("SELECT pg_advisory_xact_lock(:key)"), {"key": key})
+        return engine, conn, txn
+
+    @staticmethod
+    def _in_thread(fn):
+        import threading
+
+        done = threading.Event()
+        result: dict = {}
+
+        def target():
+            try:
+                result["value"] = fn()
+            except Exception as exc:  # pragma: no cover - surfaced by the assertion
+                result["error"] = exc
+            finally:
+                done.set()
+
+        threading.Thread(target=target, daemon=True).start()
+        return done, result
+
+    def test_enqueue_waits_for_an_in_flight_session_transaction(self):
+        from agno.db.postgres import PostgresDb
+
+        db = PostgresDb(db_url=PG_URL, job_table=f"parity_lockenq_{uuid.uuid4().hex[:8]}")
+        engine, conn, txn = self._held_session_lock(db, "s1")
+        try:
+            done, result = self._in_thread(lambda: db.enqueue_job(make_turn("b", created_at=1)))
+            assert not done.wait(0.6), "enqueue must wait while another transaction holds the session lock"
+            txn.commit()
+            assert done.wait(5) and "error" not in result and result["value"]["accepted"]
+        finally:
+            conn.close()
+            engine.dispose()
+            _drop_jobs_table(db)
+
+    def test_claim_declines_without_spending_an_attempt_while_the_session_is_locked(self):
+        from agno.db.postgres import PostgresDb
+
+        db = PostgresDb(db_url=PG_URL, job_table=f"parity_lockclaim_{uuid.uuid4().hex[:8]}")
+        try:
+            db.enqueue_job(make_turn("a", created_at=1))
+            engine, conn, txn = self._held_session_lock(db, "s1")
+            try:
+                assert db.claim_job("w1") is None
+                assert db.get_job("a")["attempt"] == 0
+            finally:
+                txn.commit()
+                conn.close()
+                engine.dispose()
+            assert db.claim_job("w1")["id"] == "a"
+        finally:
+            _drop_jobs_table(db)
+
+    def test_unmarked_claim_does_not_take_the_session_lock(self):
+        from agno.db.postgres import PostgresDb
+
+        db = PostgresDb(db_url=PG_URL, job_table=f"parity_lockoff_{uuid.uuid4().hex[:8]}")
+        try:
+            db.enqueue_job(make_job("r_a", session_id="s1", created_at=1000))
+            engine, conn, txn = self._held_session_lock(db, "s1")
+            try:
+                done, result = self._in_thread(lambda: db.claim_job("w1"))
+                assert done.wait(5) and result["value"] is not None and result["value"]["id"] == "r_a"
+            finally:
+                txn.rollback()
+                conn.close()
+                engine.dispose()
+        finally:
+            _drop_jobs_table(db)
+
+    @pytest.mark.asyncio
+    async def test_enqueue_during_a_claim_sorts_after_the_selected_ticket(self):
+        import threading
+
+        from sqlalchemy import event
+
+        from agno.db.postgres import PostgresDb
+
+        db = PostgresDb(db_url=PG_URL, job_table=f"parity_lockrace_{uuid.uuid4().hex[:8]}")
+        store = _SyncStoreAdapter(db)
+        selected = threading.Event()
+        release = threading.Event()
+        paused: list = []
+
+        def pause_after_select(conn, cursor, statement, parameters, context, executemany):
+            if "FOR UPDATE SKIP LOCKED" in statement and not paused:
+                paused.append(threading.get_ident())
+                selected.set()
+                assert release.wait(5), "test did not release the selected candidate"
+
+        try:
+            await store.enqueue_job(make_turn("z", created_at=1))
+            event.listen(db.db_engine, "after_cursor_execute", pause_after_select)
+            first_claim = asyncio.create_task(store.claim_job("first"))
+            try:
+                assert await asyncio.to_thread(selected.wait, 5)
+                await store.enqueue_job(make_turn("a", created_at=1))
+                assert await store.claim_job("second") is None
+            finally:
+                release.set()
+                first = await first_claim
+                event.remove(db.db_engine, "after_cursor_execute", pause_after_select)
+            assert first["id"] == "z"
+            assert (await store.get_job("a"))["attempt"] == 0
+        finally:
+            _drop_jobs_table(db)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("async_db", [False, True])
+    async def test_claims_under_a_stricter_engine_isolation_level(self, async_db):
+        from sqlalchemy import create_engine
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        from agno.db.postgres import AsyncPostgresDb, PostgresDb
+
+        table = f"parity_iso_{uuid.uuid4().hex[:8]}"
+        if async_db:
+            engine = create_async_engine(PG_URL, isolation_level="REPEATABLE READ")
+            db = AsyncPostgresDb(db_engine=engine, job_table=table)
+            store = db
+        else:
+            engine = create_engine(PG_URL, isolation_level="REPEATABLE READ")
+            db = PostgresDb(db_engine=engine, job_table=table)
+            store = _SyncStoreAdapter(db)
+        try:
+            await store.ensure_jobs_table()
+            await store.enqueue_job(make_turn("a", created_at=1))
+            await store.enqueue_job(make_turn("b", created_at=2))
+            assert (await store.claim_job("one"))["id"] == "a"
+            assert await store.claim_job("two") is None
+        finally:
+            _drop_jobs_table(db)
+            if async_db:
+                await engine.dispose()
+            else:
+                engine.dispose()
+
+
+@pytest.mark.skipif(not _FAKEREDIS, reason="fakeredis not installed")
+class TestRedisSessionEntry:
+    """A ticket enters its session index and takes its sequence in one WATCHed
+    transaction, so a stalled entry re-sequences behind one that overtook it."""
+
+    @staticmethod
+    def _db():
+        from agno.db.redis import RedisDb
+
+        return RedisDb(redis_client=fakeredis.FakeRedis(), db_prefix=f"parity_{uuid.uuid4().hex[:6]}")
+
+    def test_sequence_follows_publication_order_under_a_stalled_enqueue(self):
+        db = self._db()
+        real_pipeline = db.redis_client.pipeline
+        armed = {"stall": True}
+
+        def pipeline(*args, **kwargs):
+            pipe = real_pipeline(*args, **kwargs)
+            real_execute = pipe.execute
+
+            def execute(*eargs, **ekwargs):
+                if armed["stall"]:
+                    # A second enqueue to the session completes inside the first's window
+                    armed["stall"] = False
+                    db.enqueue_job(make_turn("fast", created_at=1))
+                return real_execute(*eargs, **ekwargs)
+
+            pipe.execute = execute
+            return pipe
+
+        db.redis_client.pipeline = pipeline
+        db.enqueue_job(make_turn("slow", created_at=1))
+        fast, slow = db.get_job("fast"), db.get_job("slow")
+        assert fast["payload"]["session_seq"] < slow["payload"]["session_seq"]
+        assert db.claim_job("w1")["id"] == "fast"
+
+    def test_a_waiting_backlog_loads_its_session_once_per_claim(self, monkeypatch):
+        """Twenty turns queued behind a paused head must not read the session line
+        twenty times: the scan keeps one advisory view per session and only the
+        ticket it actually claims re-reads under WATCH."""
+        from redis.client import Pipeline
+
+        db = self._db()
+        db.enqueue_job(make_turn("head", created_at=1))
+        head = db.claim_job("w1")
+        assert head["id"] == "head"
+        assert db.complete_job("head", "w1", head["attempt"], "paused")
+        # available_at orders the queued scan: the backlog is scanned before the free ticket.
+        for i in range(20):
+            db.enqueue_job(make_turn(f"wait{i}", created_at=2, available_at=1))
+        db.enqueue_job(make_turn("free", created_at=3, available_at=2, session_id="other"))
+        watched_reads: list = []
+        pipe_zrange = Pipeline.zrange
+
+        def counting_zrange(self, *args, **kwargs):
+            watched_reads.append(args[0])
+            return pipe_zrange(self, *args, **kwargs)
+
+        monkeypatch.setattr(Pipeline, "zrange", counting_zrange)
+        assert db.claim_job("w2")["id"] == "free"
+        assert len(watched_reads) == 1
+
+    @pytest.mark.parametrize("entry", ["enqueue", "requeue"])
+    def test_entry_outlasts_same_session_submit_contention(self, monkeypatch, entry):
+        from redis.client import Pipeline
+        from redis.exceptions import WatchError
+
+        db = self._db()
+        if entry == "requeue":
+            db.enqueue_job(make_turn("a", created_at=1))
+            assert db.claim_job("one")["id"] == "a"
+            assert db.complete_job("a", "one", 1, "failed")
+        execute = Pipeline.execute
+        lost: list = []
+
+        def lose_races(self, *args, **kwargs):
+            if len(lost) < 15:
+                lost.append(1)
+                self.reset()
+                raise WatchError("a same-session submit committed first")
+            return execute(self, *args, **kwargs)
+
+        monkeypatch.setattr(Pipeline, "execute", lose_races)
+        if entry == "enqueue":
+            assert db.enqueue_job(make_turn("a", created_at=1))["accepted"]
+        else:
+            assert db.requeue_job("a")
+        assert db.get_job("a")["payload"]["session_seq"] == 1

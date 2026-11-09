@@ -6,7 +6,7 @@ Demonstrates this reasoning cookbook example.
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.websearch import WebSearchTools
 
 
@@ -15,7 +15,7 @@ from agno.tools.websearch import WebSearchTools
 # ---------------------------------------------------------------------------
 def run_example() -> None:
     agent = Agent(
-        model=OpenAIChat(id="o3-mini", reasoning_effort="high"),
+        model=OpenAIResponses(id="gpt-5.6-sol", reasoning_effort="high"),
         tools=[WebSearchTools(enable_news=False)],
         instructions="Use tables to display data.",
         markdown=True,

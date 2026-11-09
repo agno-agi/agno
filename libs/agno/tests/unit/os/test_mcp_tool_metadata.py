@@ -453,7 +453,7 @@ _BUILTIN_HINTS = {
 
 async def test_every_builtin_tool_publishes_the_hints_it_claims():
     """The bar a listing review applies to a customer's tools, applied to our own."""
-    os = AgentOS(agents=[_agent()], mcp=MCPConfig())
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(default_tools=True))
 
     published = await _tools_by_name(os)
 
@@ -476,7 +476,7 @@ async def test_no_tool_this_server_owns_leaves_a_required_hint_unset():
     agent = _agent()
     os = AgentOS(
         agents=[agent],
-        mcp=MCPConfig(tools=[agent, agent.as_tool(name="ask_chief", description="Ask.")]),
+        mcp=MCPConfig(default_tools=True, tools=[agent, agent.as_tool(name="ask_chief", description="Ask.")]),
     )
 
     for name, entry in (await _tools_by_name(os)).items():

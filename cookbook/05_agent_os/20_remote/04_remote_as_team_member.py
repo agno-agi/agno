@@ -30,7 +30,6 @@ a2a_member = RemoteAgent(
     base_url="http://127.0.0.1:7781/a2a/agents/a2a-assistant",
     agent_id="a2a-assistant",
     protocol="a2a",
-    a2a_protocol="rest",
 )
 
 # ---------------------------------------------------------------------------
