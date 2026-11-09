@@ -9,7 +9,15 @@ import pytest
 
 pytest.importorskip("huggingface_hub")
 
-from huggingface_hub import AsyncInferenceClient, InferenceClient
+from huggingface_hub import (
+    AsyncInferenceClient,
+    ChatCompletionStreamOutput,
+    ChatCompletionStreamOutputChoice,
+    ChatCompletionStreamOutputDelta,
+    ChatCompletionStreamOutputDeltaToolCall,
+    ChatCompletionStreamOutputFunction,
+    InferenceClient,
+)
 
 from agno.models.huggingface import HuggingFace
 
@@ -167,118 +175,102 @@ def test_every_documented_field_binds_against_the_sdk():
 
 
 # =============================================================================
-# Streaming tool calls: chunks carrying multiple tool calls must preserve all
+# Streaming tool calls: every call in a chunk is kept, whichever way a provider
+# splits calls across chunks.
 # =============================================================================
 
 
-def test_huggingface_stream_delta_and_parse_tool_calls_multiple_in_single_chunk():
-    from huggingface_hub import (
-        ChatCompletionOutputFunctionDefinition,
-        ChatCompletionStreamOutput,
-        ChatCompletionStreamOutputChoice,
-        ChatCompletionStreamOutputDelta,
-        ChatCompletionStreamOutputDeltaToolCall,
+def _delta_tool_call(index, id=None, name=None, arguments=""):
+    # Providers send id and type only on the first piece of a call, as the SDK surfaces them here.
+    return ChatCompletionStreamOutputDeltaToolCall(
+        index=index,
+        id=id,
+        type="function" if id else None,
+        function=ChatCompletionStreamOutputFunction(name=name, arguments=arguments),
     )
 
+
+def _build_tool_calls(*chunks):
+    """Run tool call chunks through the same delta parsing and assembly a streaming run uses."""
     model = HuggingFace(id="meta-llama/Llama-3.1-8B-Instruct", api_key="test-key")
-
-    tc_0 = ChatCompletionStreamOutputDeltaToolCall(
-        index=0,
-        id="call_1",
-        type="function",
-        function=ChatCompletionOutputFunctionDefinition(
-            name="get_weather",
-            arguments='{"city": "Paris"}',
-        ),
-    )
-    tc_1 = ChatCompletionStreamOutputDeltaToolCall(
-        index=1,
-        id="call_2",
-        type="function",
-        function=ChatCompletionOutputFunctionDefinition(
-            name="get_time",
-            arguments='{"tz": "UTC"}',
-        ),
-    )
-    chunk = ChatCompletionStreamOutput(
-        id="chatcmpl-1",
-        choices=[
-            ChatCompletionStreamOutputChoice(
-                index=0,
-                delta=ChatCompletionStreamOutputDelta(
-                    role="assistant",
-                    tool_calls=[tc_0, tc_1],
-                ),
-            )
-        ],
-        created=0,
-        model="meta-llama/Llama-3.1-8B-Instruct",
-        system_fingerprint="",
-    )
-
-    delta_response = model._parse_provider_response_delta(chunk)
-    assert delta_response.tool_calls == [tc_0, tc_1]
-
     streamed_tool_calls = []
-    streamed_tool_calls.extend(delta_response.tool_calls)
-    parsed = HuggingFace.parse_tool_calls(streamed_tool_calls)
+    for tool_calls in chunks:
+        chunk = ChatCompletionStreamOutput(
+            id="chatcmpl-1",
+            choices=[
+                ChatCompletionStreamOutputChoice(
+                    index=0,
+                    delta=ChatCompletionStreamOutputDelta(role="assistant", tool_calls=tool_calls),
+                )
+            ],
+            created=0,
+            model=model.id,
+            system_fingerprint="",
+        )
+        streamed_tool_calls.extend(model._parse_provider_response_delta(chunk).tool_calls)
+    return model.parse_tool_calls(streamed_tool_calls)
+
+
+def _expected_tool_call(id, name, arguments):
+    return {"id": id, "type": "function", "function": {"name": name, "arguments": arguments}}
+
+
+def test_huggingface_stream_keeps_every_whole_call_in_one_chunk():
+    parsed = _build_tool_calls(
+        [
+            _delta_tool_call(0, "call_1", "get_weather", '{"city": "Paris"}'),
+            _delta_tool_call(1, "call_2", "get_time", '{"tz": "UTC"}'),
+        ]
+    )
 
     assert parsed == [
-        {
-            "id": "call_1",
-            "type": "function",
-            "function": {"name": "get_weather", "arguments": '{"city": "Paris"}'},
-        },
-        {
-            "id": "call_2",
-            "type": "function",
-            "function": {"name": "get_time", "arguments": '{"tz": "UTC"}'},
-        },
+        _expected_tool_call("call_1", "get_weather", '{"city": "Paris"}'),
+        _expected_tool_call("call_2", "get_time", '{"tz": "UTC"}'),
     ]
 
 
-def test_huggingface_parse_tool_calls_incremental_chunks_and_nested_lists():
-    from huggingface_hub import (
-        ChatCompletionOutputFunctionDefinition,
-        ChatCompletionStreamOutputDeltaToolCall,
+def test_huggingface_stream_joins_calls_split_across_shared_chunks():
+    parsed = _build_tool_calls(
+        [
+            _delta_tool_call(0, "call_1", "search", '{"q": '),
+            _delta_tool_call(1, "call_2", "fetch", '{"url": '),
+        ],
+        [
+            _delta_tool_call(0, arguments='"agno"}'),
+            _delta_tool_call(1, arguments='"https://agno.com"}'),
+        ],
     )
-
-    tc_0_part_1 = ChatCompletionStreamOutputDeltaToolCall(
-        index=0,
-        id="call_1",
-        type="function",
-        function=ChatCompletionOutputFunctionDefinition(name="search", arguments='{"q": '),
-    )
-    tc_1_part_1 = ChatCompletionStreamOutputDeltaToolCall(
-        index=1,
-        id="call_2",
-        type="function",
-        function=ChatCompletionOutputFunctionDefinition(name="fetch", arguments='{"url": '),
-    )
-    tc_0_part_2 = ChatCompletionStreamOutputDeltaToolCall(
-        index=0,
-        id=None,
-        type="function",
-        function=ChatCompletionOutputFunctionDefinition(name=None, arguments='"agno"}'),
-    )
-    tc_1_part_2 = ChatCompletionStreamOutputDeltaToolCall(
-        index=1,
-        id=None,
-        type="function",
-        function=ChatCompletionOutputFunctionDefinition(name=None, arguments='"https://agno.com"}'),
-    )
-
-    parsed = HuggingFace.parse_tool_calls([[tc_0_part_1, tc_1_part_1], [tc_0_part_2, tc_1_part_2]])
 
     assert parsed == [
-        {
-            "id": "call_1",
-            "type": "function",
-            "function": {"name": "search", "arguments": '{"q": "agno"}'},
-        },
-        {
-            "id": "call_2",
-            "type": "function",
-            "function": {"name": "fetch", "arguments": '{"url": "https://agno.com"}'},
-        },
+        _expected_tool_call("call_1", "search", '{"q": "agno"}'),
+        _expected_tool_call("call_2", "fetch", '{"url": "https://agno.com"}'),
     ]
+
+
+def test_huggingface_stream_keeps_a_call_starting_in_the_chunk_that_ends_the_previous_one():
+    # Keeping only the first entry of the middle chunk loses call_2's id, type and name, and the
+    # follow-up request is then rejected for carrying a tool call with type None.
+    parsed = _build_tool_calls(
+        [_delta_tool_call(0, "call_1", "get_weather", '{"city": ')],
+        [
+            _delta_tool_call(0, arguments='"Paris"}'),
+            _delta_tool_call(1, "call_2", "get_weather", '{"city": '),
+        ],
+        [_delta_tool_call(1, arguments='"Tokyo"}')],
+    )
+
+    assert parsed == [
+        _expected_tool_call("call_1", "get_weather", '{"city": "Paris"}'),
+        _expected_tool_call("call_2", "get_weather", '{"city": "Tokyo"}'),
+    ]
+
+
+def test_huggingface_parse_tool_calls_rejects_a_missing_index_instead_of_merging_calls():
+    # Treating a missing index as 0 would join separate calls into one with invalid JSON arguments.
+    with pytest.raises(TypeError):
+        HuggingFace.parse_tool_calls(
+            [
+                _delta_tool_call(None, "call_1", "get_weather", '{"city": "Paris"}'),
+                _delta_tool_call(None, "call_2", "get_weather", '{"city": "Tokyo"}'),
+            ]
+        )
