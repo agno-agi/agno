@@ -34,7 +34,7 @@ def main() -> None:
 
     with TestClient(app) as client:
         alice = token_headers("alice")
-        manager_path = "/teams/super-agent"
+        manager_path = "/teams/super--agent"
         checks = [
             (
                 "Alice can discover Super Agent",
