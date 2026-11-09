@@ -199,8 +199,8 @@ The default team name is **Super Agent**, with id `super--agent`. Set
 `OSManager(name=...)` to change the display name. The ID and two-member
 composition are fixed. Its members are:
 
-- **Platform Builder** (`platform-builder-internal`): creates components and schedules.
-- **Platform Manager** (`platform-manager-internal`): checks activity, runs diagnostics,
+- **Platform Builder** (`platform--builder`): creates components and schedules.
+- **Platform Manager** (`platform--manager`): checks activity, runs diagnostics,
   reads source when `root` is set, and queries Agno documentation by default.
 
 Only Super Agent is exposed as a standalone target in config, discovery, REST and MCP.
