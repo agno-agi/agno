@@ -67,9 +67,13 @@ async def test_dynamic_context_is_fresh_and_authorized(db):
     from types import SimpleNamespace
 
     from agno.company.details import _company_instructions
+    from agno.run.authorization import RunAuthorization, authorization_scope
     from agno.utils.agent import aexecute_instructions
 
-    class Deny:
+    class Deny(RunAuthorization):
+        def __init__(self):
+            pass
+
         def require(self, *args):
             raise PermissionError("denied")
 
@@ -82,6 +86,10 @@ async def test_dynamic_context_is_fresh_and_authorized(db):
     await call(db.update_company, initial["updated_at"], description="Next run description")
     assert "Next run description" in (await aexecute_instructions(instructions))[-1]
     assert await aexecute_instructions(instructions, run_context=SimpleNamespace(authorization=Deny())) == ["Base"]
+    # An active request wins over a stale authority left on a resumed run's context.
+    with authorization_scope(lambda: None):
+        resumed = await aexecute_instructions(instructions, run_context=SimpleNamespace(authorization=Deny()))
+    assert "Next run description" in resumed[-1]
 
 
 @pytest.mark.asyncio
@@ -112,3 +120,68 @@ async def test_concurrent_cold_initialization_and_edits(db):
     finally:
         for replica in replicas:
             await call(replica.close)
+
+
+async def _company_rows(db):
+    statement = text(
+        f"SELECT COUNT(*) FROM {db.db_schema + '.' if hasattr(db, 'db_schema') else ''}{db.company_table_name}"
+    )
+    if isinstance(db, AsyncBaseDb):
+        async with db.db_engine.connect() as conn:
+            return (await conn.execute(statement)).scalar()
+    with db.db_engine.connect() as conn:
+        return conn.execute(statement).scalar()
+
+
+@pytest.mark.asyncio
+async def test_configuration_updates_the_one_row_until_someone_edits_it(db):
+    seeded = await call(db.initialize_company, "Company")
+    changed = await call(db.initialize_company, "Acme", "What Acme does")
+    assert (changed["name"], changed["description"]) == ("Acme", "What Acme does")
+    assert changed["created_at"] == changed["updated_at"] > seeded["updated_at"]
+    assert await _company_rows(db) == 1
+    # A client holding the earlier version must reload rather than overwrite.
+    assert await call(db.update_company, seeded["updated_at"], name="Stale") is None
+
+    edited = await call(db.update_company, changed["updated_at"], name="Human edit")
+    assert edited["updated_at"] > edited["created_at"]
+    assert await call(db.initialize_company, "Deployment", "Later config") == edited
+    assert await _company_rows(db) == 1
+
+
+@pytest.mark.asyncio
+async def test_unchanged_configuration_does_not_move_the_version(db):
+    seeded = await call(db.initialize_company, "Acme", "What Acme does")
+    assert await call(db.initialize_company, "Acme", "What Acme does") == seeded
+
+
+@pytest.mark.asyncio
+async def test_any_table_recovers_when_another_replica_creates_it_first(db):
+    import asyncio
+
+    replicas = [type(db).from_dict(db.to_dict()) for _ in range(4)]
+
+    async def create(replica):
+        if isinstance(replica, AsyncBaseDb):
+            return await replica._get_table(table_type="sources", create_table_if_not_found=True)
+        return await asyncio.to_thread(replica._get_table, table_type="sources", create_table_if_not_found=True)
+
+    try:
+        tables = await asyncio.gather(*(create(replica) for replica in replicas))
+        assert all(table is not None and table.name == db.sources_table_name for table in tables)
+    finally:
+        for replica in replicas:
+            await call(replica.close)
+
+
+@pytest.mark.asyncio
+async def test_non_race_table_errors_still_raise(db, monkeypatch):
+    def fail(*args, **kwargs):
+        raise RuntimeError("disk full")
+
+    async def afail(*args, **kwargs):
+        fail()
+
+    monkeypatch.setattr(db, "_create_table", afail if isinstance(db, AsyncBaseDb) else fail)
+    with pytest.raises(RuntimeError, match="disk full"):
+        await call(db._get_table, table_type="sources", create_table_if_not_found=True)

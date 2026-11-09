@@ -62,6 +62,18 @@ ADAPTER_TABLE_NAME_KEYS: frozenset = frozenset({"sandbox_table"})
 TABLE_NAME_KEYS: frozenset = DB_TABLE_NAME_KEYS | ADAPTER_TABLE_NAME_KEYS
 
 
+def is_table_creation_race(exc: Exception) -> bool:
+    """Whether ``exc`` is a concurrent first-time CREATE TABLE losing to another writer.
+
+    Callers still verify the winner's table exists before relying on it.
+    """
+    from sqlalchemy.exc import OperationalError
+
+    cause = getattr(exc, "orig", exc)
+    sqlstate = getattr(cause, "sqlstate", getattr(cause, "pgcode", None))
+    return sqlstate in ("42P07", "23505") or (isinstance(exc, OperationalError) and "already exists" in str(cause))
+
+
 def is_unique_violation(exc: Exception) -> bool:
     """Whether ``exc`` is a DB unique-constraint / duplicate-key violation.
 
