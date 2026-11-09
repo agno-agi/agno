@@ -155,7 +155,7 @@ def test_manager_can_dispatch_only_an_authorized_target(tmp_path, allowed, ident
 def test_builder_publish_checks_component_write(tmp_path, allowed):
     builder_model = ScriptedModel("create_agent", {"name": "Alice calc", "instructions": "Calculate", "publish": True})
     os = make_os(tmp_path, ScriptedModel())
-    builder = next(member for member in os.manager.members if member.id == "platform-builder")
+    builder = next(member for member in os.manager.members if member.id == "platform--builder")
     builder.model = builder_model
     os.manager.model = ScriptedModel(
         "delegate_task_to_member", {"member_id": "platform-builder-internal", "task": "Build Alice calc"}
@@ -798,7 +798,7 @@ def test_shared_studio_tool_keeps_manager_checks_without_affecting_ordinary_agen
     from agno.tools.function import Function, FunctionCall
 
     os = make_os(tmp_path, ScriptedModel())
-    builder = next(member for member in os.manager.members if member.id == "platform-builder")
+    builder = next(member for member in os.manager.members if member.id == "platform--builder")
     studio = builder.tools[0]
     fn = Function.from_callable(studio.list_models)
     fn._agent = builder
@@ -826,7 +826,7 @@ async def test_queue_keeps_legacy_tools_compatible_and_manager_tools_protected(t
 
     os = make_os(tmp_path, ScriptedModel())
     worker = QueueWorker(SimpleNamespace(), lambda *args: None, QueueConfig(), authorization_app=os.get_app())
-    builder = next(member for member in os.manager.members if member.id == "platform-builder")
+    builder = next(member for member in os.manager.members if member.id == "platform--builder")
     manager_function = builder.tools[0].functions["list_models"].model_copy(deep=False)
     manager_function._agent = builder
     ordinary_studio = StudioTools(registry=os.registry, db=os.db)
@@ -955,7 +955,7 @@ def test_scheduled_runs_keep_ordinary_tools_compatible_but_protect_manager(tmp_p
         caller = authority([])
         caller.enforce_tools = snapshot_mode == "manager"
         request.headers[AUTHORIZATION_HEADER] = json.dumps(caller.snapshot())
-    builder = next(member for member in os.manager.members if member.id == "platform-builder")
+    builder = next(member for member in os.manager.members if member.id == "platform--builder")
     fn = builder.tools[0].functions["list_models"].model_copy(deep=False)
     fn._agent = builder
     with authorization_scope(lambda: request_authorization(request)):
@@ -980,7 +980,7 @@ async def test_mcp_preserves_ordinary_studio_access_and_enforces_manager_tools(t
     studio = StudioTools(registry=os.registry, db=os.db)
     legacy = Agent(id="legacy", model=ScriptedModel("list_models"), tools=[studio])
     os.agents.append(legacy)
-    builder = next(member for member in os.manager.members if member.id == "platform-builder")
+    builder = next(member for member in os.manager.members if member.id == "platform--builder")
     builder.model = ScriptedModel("list_models")
     os.manager.model = ScriptedModel("delegate_task_to_member", {"member_id": builder.id, "task": "List models"})
     app = os.get_app()
