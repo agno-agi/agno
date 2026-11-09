@@ -593,6 +593,22 @@ def test_delete_by_id(mock_pgvector, sample_documents):
         assert result is True
 
 
+def test_delete_by_id_returns_false_when_no_row_matches(mock_pgvector):
+    """Regression test for #11442: delete_by_id must return False when no row matches."""
+    session = mock_pgvector.Session.return_value.__enter__.return_value
+    session.execute.return_value.rowcount = 0
+
+    assert mock_pgvector.delete_by_id("nonexistent_id") is False
+
+
+def test_delete_by_id_returns_true_when_row_deleted(mock_pgvector):
+    """delete_by_id must return True when the DELETE matched a row."""
+    session = mock_pgvector.Session.return_value.__enter__.return_value
+    session.execute.return_value.rowcount = 1
+
+    assert mock_pgvector.delete_by_id("doc_1") is True
+
+
 def test_delete_by_name(mock_pgvector, sample_documents):
     """Test deleting documents by name"""
     # Mock insert and get_count
