@@ -202,7 +202,7 @@ def test_agent_streaming_with_schema(test_os_client: TestClient, test_agent: Age
 
 
 def test_agent_with_invalid_schema(test_os_client: TestClient, test_agent: Agent):
-    """Test agent run handles invalid output schema gracefully."""
+    """An unparseable output schema is rejected before executing the run."""
     response = test_os_client.post(
         f"/agents/{test_agent.id}/runs",
         data={
@@ -213,10 +213,8 @@ def test_agent_with_invalid_schema(test_os_client: TestClient, test_agent: Agent
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
 
-    assert response.status_code == 200
-    data = response.json()
-    assert "content" in data
-    assert isinstance(data["content"], str)
+    assert response.status_code == 422
+    assert "output_schema" in response.json()["detail"]
 
 
 def test_agent_with_array_of_objects(test_os_client: TestClient, test_agent: Agent):
@@ -498,7 +496,7 @@ def test_team_with_optional_fields(test_os_client: TestClient, test_team: Team):
 
 
 def test_team_with_invalid_schema(test_os_client: TestClient, test_team: Team):
-    """Test team run handles invalid output schema gracefully."""
+    """An unparseable output schema is rejected before executing the run."""
     response = test_os_client.post(
         f"/teams/{test_team.id}/runs",
         data={
@@ -509,10 +507,8 @@ def test_team_with_invalid_schema(test_os_client: TestClient, test_team: Team):
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
 
-    assert response.status_code == 200
-    data = response.json()
-    assert "content" in data
-    assert isinstance(data["content"], str)
+    assert response.status_code == 422
+    assert "output_schema" in response.json()["detail"]
 
 
 def test_team_with_array_of_objects(test_os_client: TestClient, test_team: Team):

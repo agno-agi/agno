@@ -2,7 +2,7 @@
 
 Describe key changes, mention related issues or motivation for the changes.
 
-(If applicable, issue number: #\_\_\_\_)
+(Required for external contributors: link the issue this PR resolves with `Fixes #<issue_number>`. The issue must have the `ready` label.)
 
 ## Type of change
 

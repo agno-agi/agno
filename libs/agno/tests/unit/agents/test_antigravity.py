@@ -402,6 +402,22 @@ def test_from_agent_directory_builds_sources_with_correct_targets():
     assert all(s["type"] == "inline" for s in agent.sources)
 
 
+def test_from_agent_directory_reads_non_ascii_files_as_utf8(cp1252_default_encoding):
+    with tempfile.TemporaryDirectory() as d:
+        agent_dir = Path(d)
+        (agent_dir / "agent.yaml").write_text(
+            "id: my-bot\nbase_agent: antigravity-preview-05-2026\ndescription: café bot\n", encoding="utf-8"
+        )
+        (agent_dir / "AGENTS.md").write_text("café instructions", encoding="utf-8")
+        (agent_dir / "workspace").mkdir()
+        (agent_dir / "workspace" / "about.txt").write_text("café content", encoding="utf-8")
+        agent = AntigravityAgent.from_agent_directory(d, api_key="dummy", register=False)
+
+    assert agent.custom_agent_description == "café bot"
+    assert agent.custom_agent_instructions == "café instructions"
+    assert agent.sources == [{"type": "inline", "content": "café content", "target": "/about.txt"}]
+
+
 def _symlink_or_skip(link: Path, target: Path) -> None:
     try:
         link.symlink_to(target)

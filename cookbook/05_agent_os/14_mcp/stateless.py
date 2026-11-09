@@ -2,12 +2,14 @@
 Serve AgentOS over MCP without session state
 ============================================
 
-``MCPConfig(stateless=True)`` gives every request its own transport and keeps
-nothing between requests, so any replica can answer any request and a
-multi-instance deployment needs no session affinity.
+``MCPConfig(default_tools=True, stateless=True)`` serves the default tools
+without transport sessions, including for legacy clients (2025-11-25 and earlier).
+Modern requests (2026-07-28) are always sessionless, regardless of this flag.
 
-The trade is whatever needs a retained session: server-initiated notifications
-and SSE resumability. Tool calls do not, so a tool server loses nothing.
+Legacy stateless mode loses server-to-client requests and SSE resumability.
+Request-scoped progress still works. Agno conversation history is independent;
+multiple workers still need shared application storage and run coordination.
+This SQLite example is for local development.
 
 Run: python cookbook/05_agent_os/14_mcp/stateless.py
 Connect an MCP client to http://localhost:7777/mcp; the responses carry no
@@ -31,7 +33,7 @@ db = SqliteDb(
 stateless_agent = Agent(
     id="stateless-agent",
     name="Stateless Agent",
-    model=OpenAIResponses(id="gpt-5.5"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
     db=db,
     instructions="Answer questions clearly and concisely.",
 )
@@ -41,9 +43,8 @@ agent_os = AgentOS(
     description="AgentOS exposed over MCP with no session between requests.",
     db=db,
     agents=[stateless_agent],
-    # Leave this off (the default) when the server has to push notifications to a
-    # client or resume an interrupted stream, since both need a retained session.
-    mcp=MCPConfig(stateless=True),
+    # Also disable transport sessions for clients using older protocol versions.
+    mcp=MCPConfig(default_tools=True, stateless=True),
 )
 app = agent_os.get_app()
 

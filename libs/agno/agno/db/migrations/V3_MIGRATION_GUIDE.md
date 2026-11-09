@@ -197,7 +197,7 @@ db.cleanup_legacy_runs_column()
 ```
 
 This refuses to drop the column if any session still has non-null legacy `runs`
-content (a sign that that session was not migrated). If you really want to force
+content (a sign that the session was not migrated). If you really want to force
 it anyway:
 
 ```python

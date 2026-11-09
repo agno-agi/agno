@@ -13,7 +13,7 @@ from agno.models.openai import OpenAIResponses
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=OpenAIResponses(id="o4-mini", service_tier="flex"),
+    model=OpenAIResponses(id="gpt-5.6-terra", service_tier="flex"),
     markdown=True,
 )
 

@@ -353,6 +353,7 @@ class GeminiInteractions(Model):
 
         The v2.x SDK uses a step_list format:
         - UserInputStep: {"type": "user_input", "content": [{"type": "text", "text": "..."}, ...]}
+        - ModelOutputStep: {"type": "model_output", "content": [{"type": "text", "text": "..."}]}
         - FunctionCallStep: {"type": "function_call", "id": "...", "name": "...", "arguments": {...}}
         - FunctionResultStep: {"type": "function_result", "call_id": "...", "result": "...", "name": "..."}
 
@@ -411,8 +412,12 @@ class GeminiInteractions(Model):
                 else:
                     log_warning("Skipping user message with no usable content (all media may have failed to load)")
 
-            # Assistant messages with tool calls become FunctionCallSteps
+            # Assistant text becomes a ModelOutputStep and tool calls become FunctionCallSteps.
+            # Without the text, an unchained request (store=False, or a compacted history) would
+            # show the model the user's turns but none of its own replies.
             elif message.role == "assistant":
+                if message.content and isinstance(message.content, str):
+                    steps.append({"type": "model_output", "content": [{"type": "text", "text": message.content}]})
                 if message.tool_calls:
                     for tool_call in message.tool_calls:
                         func = tool_call.get("function", {})

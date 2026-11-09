@@ -877,3 +877,45 @@ class TestFileSearchToolWiring:
             return  # No tools at all, which is the expected case
         file_search_tools = [t for t in config.tools if getattr(t, "file_search", None) is not None]
         assert len(file_search_tools) == 0
+
+
+def test_generation_config_dict_reaches_request_and_is_not_modified():
+    generation_config = {"temperature": 0.1, "top_k": 5, "max_output_tokens": 256, "seed": 7}
+    model = Gemini(api_key="test-key", generation_config=generation_config)
+
+    config = model.get_request_params()["config"]
+
+    assert config.temperature == 0.1
+    assert config.top_k == 5
+    assert config.max_output_tokens == 256
+    assert config.seed == 7
+    assert generation_config == {"temperature": 0.1, "top_k": 5, "max_output_tokens": 256, "seed": 7}
+
+
+def test_generation_config_object_reaches_request():
+    from google.genai.types import GenerateContentConfig
+
+    model = Gemini(api_key="test-key", generation_config=GenerateContentConfig(temperature=0.3, top_p=0.8))
+
+    config = model.get_request_params()["config"]
+
+    assert config.temperature == 0.3
+    assert config.top_p == 0.8
+
+
+def test_generative_model_kwargs_reach_request():
+    model = Gemini(api_key="test-key", generative_model_kwargs={"temperature": 0.2, "stop_sequences": ["END"]})
+
+    config = model.get_request_params()["config"]
+
+    assert config.temperature == 0.2
+    assert config.stop_sequences == ["END"]
+
+
+def test_explicit_field_still_overrides_generation_config():
+    model = Gemini(api_key="test-key", temperature=0.9, generation_config={"temperature": 0.1, "top_k": 5})
+
+    config = model.get_request_params()["config"]
+
+    assert config.temperature == 0.9
+    assert config.top_k == 5

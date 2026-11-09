@@ -68,7 +68,10 @@ class TestOutcomeMapping:
         await _pause(store)
         result = await acontinue_via_queue(make_worker(store), "r1", {"step_requirements": [{"step_id": "s"}]})
         assert result["outcome"] == "queued"
-        assert result["job"]["payload"]["continue"] == {"step_requirements": [{"step_id": "s"}]}
+        assert result["job"]["payload"]["continue"] == {
+            "step_requirements": [{"step_id": "s"}],
+            "_agno_authorization": None,  # Trusted direct-Python continuation.
+        }
 
     @pytest.mark.asyncio
     async def test_queued_after_continue_attaches(self):

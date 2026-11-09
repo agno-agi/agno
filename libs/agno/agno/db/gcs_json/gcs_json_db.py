@@ -73,7 +73,6 @@ class GcsJsonDb(BaseDb):
             traces_table (Optional[str]): Name of the JSON file to store traces.
             spans_table (Optional[str]): Name of the JSON file to store spans.
             project (Optional[str]): GCP project ID. If None, uses default project.
-            location (Optional[str]): GCS bucket location. If None, uses default location.
             credentials (Optional[Any]): GCP credentials. If None, uses default credentials.
             id (Optional[str]): ID of the database.
         """
@@ -207,6 +206,10 @@ class GcsJsonDb(BaseDb):
         rows = [r for r in all_runs if r.get("session_id") == session_id]
         rows.sort(key=lambda r: (r.get("run_index") or 0, r.get("created_at") or 0))
         return [r["run_data"] for r in rows if "run_data" in r]
+
+    def _get_sessions_runs(self, session_ids: List[str]) -> Optional[Dict[str, List[Dict[str, Any]]]]:
+        """Run dicts for several sessions in one read, used by the search fallback."""
+        return self._get_sessions_runs_data(session_ids)
 
     def _get_sessions_runs_data(self, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
         if not session_ids:
@@ -554,6 +557,7 @@ class GcsJsonDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """Get all sessions from the GCS JSON file with filtering and pagination.
 
@@ -569,7 +573,6 @@ class GcsJsonDb(BaseDb):
             sort_by (Optional[str]): The field to sort the sessions by.
             sort_order (Optional[str]): The order to sort the sessions by.
             deserialize (Optional[bool]): Whether to deserialize the sessions.
-            create_table_if_not_found (Optional[bool]): Whether to create a file to track sessions if it doesn't exist.
 
         Returns:
             Union[List[AgentSession], List[TeamSession], List[WorkflowSession], Tuple[List[Dict[str, Any]], int]]:
@@ -629,7 +632,8 @@ class GcsJsonDb(BaseDb):
                 filtered_sessions = filtered_sessions[start_idx : start_idx + limit]
 
             # Attach runs from the runs file, merged with any legacy `runs` field
-            if filtered_sessions:
+            # Search scans skip the runs table; the record's legacy runs field is kept for merging later.
+            if include_runs and filtered_sessions:
                 runs_by_session = self._get_sessions_runs_data([s["session_id"] for s in filtered_sessions])
                 for s in filtered_sessions:
                     runs_data = runs_by_session.get(s["session_id"], [])

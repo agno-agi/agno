@@ -883,8 +883,8 @@ class TestElasticsearchSearch:
         es_db_with_reranker._owner_field_exact = True
 
         seen = {}
-        mock_reranker.rerank.side_effect = (
-            lambda query, documents: seen.setdefault("thread", threading.get_ident()) and documents or documents
+        mock_reranker.rerank.side_effect = lambda query, documents: (
+            seen.setdefault("thread", threading.get_ident()) and documents or documents
         )
 
         await es_db_with_reranker.async_search("q", limit=4)
