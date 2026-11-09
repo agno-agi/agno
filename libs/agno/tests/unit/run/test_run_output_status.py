@@ -64,3 +64,24 @@ def test_workflow_stored_status_supports_value_readers():
     # AgentOS readers emit restored.status.value; a plain str would raise AttributeError.
     restored = WorkflowRunOutput.from_dict(WorkflowRunOutput(run_id="r1").to_dict())
     assert restored.status.value == "PENDING"
+
+
+def test_workflow_to_dict_input_is_json_serializable():
+    """A pydantic input schema must serialize to JSON-compatible values so
+    SqliteDb can persist the run payload (#11542): a Decimal field used to
+    stay a Decimal object and the upsert failed after the run completed."""
+    import json
+    from decimal import Decimal
+
+    from pydantic import BaseModel
+
+    class ReportInput(BaseModel):
+        amount: Decimal
+
+    run = WorkflowRunOutput(
+        run_id="r1",
+        status=RunStatus.completed,
+        input=ReportInput(amount=Decimal("12.50")),
+    )
+    serialized = run.to_dict()
+    assert json.loads(json.dumps(serialized))["input"] == {"amount": "12.50"}

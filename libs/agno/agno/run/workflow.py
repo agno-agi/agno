@@ -974,7 +974,7 @@ class WorkflowRunOutput:
 
         if self.input is not None:
             if isinstance(self.input, BaseModel):
-                _dict["input"] = self.input.model_dump(exclude_none=True)
+                _dict["input"] = self.input.model_dump(exclude_none=True, mode="json")
             else:
                 _dict["input"] = self.input
 
