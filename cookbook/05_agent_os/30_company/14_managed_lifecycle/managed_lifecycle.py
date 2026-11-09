@@ -216,7 +216,7 @@ async def main():
                 transport=ASGITransport(app=app), base_url="http://example"
             ) as client:
                 response = await client.post(
-                    "/agents/company-manager/runs",
+                    "/agents/company--manager/runs",
                     data={
                         "message": "delegate",
                         "session_id": "conversation",
@@ -228,7 +228,7 @@ async def main():
                 task = db.get_tasks()[0][0]
                 assert task["status"] == "in_progress"
                 reply = await client.post(
-                    "/agents/company-manager/runs",
+                    "/agents/company--manager/runs",
                     data={
                         "message": "unrelated",
                         "session_id": "conversation",
