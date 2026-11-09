@@ -11,7 +11,6 @@ import inspect
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Protocol, Sequence, Tuple, Union
 
 from agno.job_queue.config import QueueConfig, RedisCoordination
-from agno.registry._reserved import _manager_ids_match
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 if TYPE_CHECKING:
@@ -275,7 +274,7 @@ def ensure_duplicate_matches_component(
     existing_pin = ((existing.get("payload") or {}).get("scope") or {}).get("pinned")
     if (
         existing.get("component_type") == component_type
-        and _manager_ids_match(existing.get("component_id"), component_id, component_type + "s")
+        and existing.get("component_id") == component_id
         and existing_pin == version
     ):
         return
@@ -390,7 +389,7 @@ def component_is_queueable(
     if component is None:
         return False
     for candidate in registry or []:
-        if _manager_ids_match(getattr(candidate, "id", None), component_id):
+        if getattr(candidate, "id", None) == component_id:
             return True
     from agno.db.base import BaseDb
 
@@ -485,7 +484,7 @@ def resolve_queue_scope(
     the smaller the window for a publish to land between them.
     """
     for candidate in registry or []:
-        if not _manager_ids_match(getattr(candidate, "id", None), component_id):
+        if getattr(candidate, "id", None) != component_id:
             continue
         if _is_component_factory(candidate):
             return factory_queue_scope(state, context_user_id, session_id, factory_input, pinned=version)
@@ -2665,9 +2664,7 @@ async def araise_if_ticket_owns_continue(
         return
     if component_type is not None and job.get("component_type") != component_type:
         return
-    if component_id is not None and not _manager_ids_match(
-        job.get("component_id"), component_id, component_type + "s" if component_type else None
-    ):
+    if component_id is not None and job.get("component_id") != component_id:
         return
     status = job.get("status")
     if status == "paused":
@@ -2753,9 +2750,7 @@ async def acontinue_via_queue(
             f"ticket ({job.get('component_type')}/{job.get('component_id')}); durable path declined"
         )
         return None
-    if component_id is not None and not _manager_ids_match(
-        job.get("component_id"), component_id, component_type + "s" if component_type else None
-    ):
+    if component_id is not None and job.get("component_id") != component_id:
         log_warning(
             f"Continue for run {run_id} via {component_type}/{component_id} does not match its "
             f"ticket ({job.get('component_type')}/{job.get('component_id')}); durable path declined"
@@ -3201,9 +3196,7 @@ async def aticket_poll_fallback(
         return None
     if job.get("component_type") != component_type:
         return None
-    if component_id is not None and not _manager_ids_match(
-        job.get("component_id"), component_id, component_type + "s" if component_type else None
-    ):
+    if component_id is not None and job.get("component_id") != component_id:
         return None
     if job.get("session_id") != session_id:
         return None
@@ -3301,7 +3294,7 @@ async def queue_lifespan(app: Any, agent_os: Any):
         from_db = scope.get("source") == "db"
         from_factory = scope.get("source") == "factory"
         for candidate in [] if from_db else registry or []:
-            if not _manager_ids_match(getattr(candidate, "id", None), component_id):
+            if getattr(candidate, "id", None) != component_id:
                 continue
             is_factory = isinstance(candidate, (AgentFactory, TeamFactory, WorkflowFactory))
             if is_factory != from_factory:

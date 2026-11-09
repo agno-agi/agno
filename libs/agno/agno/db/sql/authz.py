@@ -85,6 +85,17 @@ def get_policies(engine: Engine, table: Any, roles: List[str]) -> List[Tuple[str
     return out
 
 
+def get_policies_for_resources(engine: Engine, table: Any, resources: List[str]) -> List[Tuple[str, str, str, str]]:
+    """All (role, resource, action, effect) rows on ``resources``, whichever role holds them."""
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(table.c.role, table.c.resource, table.c.action, table.c.effect).where(
+                table.c.resource.in_(resources)
+            )
+        )
+        return [(r[0], r[1], r[2], r[3]) for r in rows]
+
+
 def get_role_policies(engine: Engine, table: Any, role: str) -> List[Tuple[str, str, str]]:
     """One role's (resource, action, effect) rows."""
     with engine.connect() as conn:
@@ -117,13 +128,6 @@ def set_role_policies(engine: Engine, table: Any, role: str, rows: List[Tuple[st
 def upsert_policy(engine: Engine, table: Any, *, role: str, resource: str, action: str, effect: str) -> None:
     """Add a grant, or flip the effect of the existing one for this (role, resource, action)."""
     with engine.begin() as conn:
-        conn.execute(
-            delete(table).where(
-                table.c.role == role,
-                table.c.resource.in_([value for value in _policy_resource_variants(resource) if value != resource]),
-                table.c.action == action,
-            )
-        )
         _upsert(
             conn,
             table,
@@ -139,7 +143,7 @@ def delete_policy(
     """Delete a role's policy rows, optionally narrowed to one resource and action."""
     clause = [table.c.role == role]
     if resource is not None:
-        clause.append(table.c.resource.in_(_policy_resource_variants(resource)))
+        clause.append(table.c.resource == resource)
     if action is not None:
         clause.append(table.c.action == action)
     with engine.begin() as conn:
@@ -603,6 +607,18 @@ async def aget_policies(engine: "AsyncEngine", table: Any, roles: List[str]) -> 
     return out
 
 
+async def aget_policies_for_resources(
+    engine: "AsyncEngine", table: Any, resources: List[str]
+) -> List[Tuple[str, str, str, str]]:
+    async with engine.connect() as conn:
+        rows = await conn.execute(
+            select(table.c.role, table.c.resource, table.c.action, table.c.effect).where(
+                table.c.resource.in_(resources)
+            )
+        )
+        return [(r[0], r[1], r[2], r[3]) for r in rows]
+
+
 async def aget_role_policies(engine: "AsyncEngine", table: Any, role: str) -> List[Tuple[str, str, str]]:
     async with engine.connect() as conn:
         rows = await conn.execute(select(table.c.resource, table.c.action, table.c.effect).where(table.c.role == role))
@@ -627,13 +643,6 @@ async def aupsert_policy(
     engine: "AsyncEngine", table: Any, *, role: str, resource: str, action: str, effect: str
 ) -> None:
     async with engine.begin() as conn:
-        await conn.execute(
-            delete(table).where(
-                table.c.role == role,
-                table.c.resource.in_([value for value in _policy_resource_variants(resource) if value != resource]),
-                table.c.action == action,
-            )
-        )
         await _aupsert(
             conn,
             table,
@@ -648,7 +657,7 @@ async def adelete_policy(
 ) -> None:
     clause = [table.c.role == role]
     if resource is not None:
-        clause.append(table.c.resource.in_(_policy_resource_variants(resource)))
+        clause.append(table.c.resource == resource)
     if action is not None:
         clause.append(table.c.action == action)
     async with engine.begin() as conn:
@@ -906,13 +915,3 @@ async def acount_events(
     async with engine.connect() as conn:
         result = await conn.execute(stmt)
         return int(result.scalar() or 0)
-
-
-def _policy_resource_variants(resource: str) -> tuple[str, ...]:
-    """Include stored manager aliases when changing a single resource policy."""
-    from agno.registry._reserved import _manager_id_variants
-
-    family, sep, component_id = resource.partition("/")
-    if not sep:
-        return (resource,)
-    return tuple(f"{family}/{value}" for value in _manager_id_variants(component_id, family))

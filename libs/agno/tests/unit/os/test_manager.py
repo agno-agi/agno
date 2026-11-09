@@ -25,10 +25,11 @@ from agno.registry import Registry
 from agno.registry._reserved import (
     BUILDER_ID,
     COMPANY_MANAGER_ID,
+    FORMER_MANAGER_IDS,
     LEGACY_PRODUCT_MANAGER_ID,
-    MANAGER_ID_ALIASES,
     MANAGER_TEAM_ID,
     OPERATOR_ID,
+    _reserved_manager_id_message,
 )
 from agno.run import RunContext
 from agno.tools.agentos import AgentOSTools
@@ -36,111 +37,6 @@ from agno.tools.studio import StudioTools
 from agno.tools.studio_runner import StudioRunnerTools
 
 pytestmark = pytest.mark.usefixtures("unavailable_manager_docs")
-
-
-@pytest.mark.parametrize("managed", [False, True])
-@pytest.mark.parametrize("grant_alias", [False, True])
-@pytest.mark.parametrize(
-    "family,alias,stored",
-    [("teams", "os-manager-internal", MANAGER_TEAM_ID), ("agents", "company-manager-internal", COMPANY_MANAGER_ID)],
-)
-def test_public_manager_alias_preserves_authority_and_history(db, managed, grant_alias, family, alias, stored):
-    import jwt
-
-    from agno.os import Authorization, CompanyConfig
-
-    secret = "manager-alias-test-key-at-least-32-characters"
-    granted_id = alias if grant_alias else stored
-    scopes = [f"{family}:{granted_id}:run", f"{family}:{granted_id}:read", "sessions:read"]
-    auth = Authorization(verification_keys=[secret], algorithm="HS256", audience="alias-test")
-    if managed:
-        auth.define_role("caller", scopes).assign("alice", "caller")
-    os = AgentOS(
-        db=db,
-        telemetry=False,
-        user_isolation=True,
-        authorization=auth,
-        manager=OSManager(model=OfflineModel(), access_docs=False),
-        company=CompanyConfig(model=OfflineModel()),
-    )
-    token = jwt.encode(
-        {"sub": "alice", "aud": "alias-test", "exp": int(time.time()) + 300, "scopes": [] if managed else scopes},
-        secret,
-        algorithm="HS256",
-    )
-    client = TestClient(os.get_app())
-    headers = {"Authorization": f"Bearer {token}"}
-    session_id = "shared-manager-history"
-    for target in (stored, alias):
-        response = client.post(
-            f"/{family}/{target}/runs",
-            headers=headers,
-            data={"message": "hello", "stream": "false", "session_id": session_id},
-        )
-        assert response.status_code == 200, response.text
-        run = response.json()
-        assert run["team_id" if family == "teams" else "agent_id"] == stored
-        replay = client.get(
-            f"/{family}/{alias}/runs/{run['run_id']}", params={"session_id": session_id}, headers=headers
-        )
-        assert replay.status_code == 200, replay.text
-    sessions = client.get("/sessions", headers=headers, params={"type": family[:-1], "component_id": alias})
-    assert sessions.status_code == 200, sessions.text
-    assert [s["session_id"] for s in sessions.json()["data"]] == [session_id]
-    history = client.get(f"/sessions/{session_id}/runs", headers=headers)
-    assert len(history.json()) == 2
-    listing = client.get(f"/{family}", headers=headers)
-    assert [entry["id"] for entry in listing.json()] == [stored]
-    other = "company-manager-internal" if family == "teams" else "os-manager-internal"
-    other_family = "agents" if family == "teams" else "teams"
-    refused = client.post(
-        f"/{other_family}/{other}/runs", headers=headers, data={"message": "hello", "stream": "false"}
-    )
-    assert refused.status_code == 403, refused.text
-
-
-@pytest.mark.parametrize("denied_id", [MANAGER_TEAM_ID, "os-manager-internal"])
-def test_public_manager_alias_cannot_bypass_managed_deny(db, denied_id):
-    from agno.os import Authorization
-
-    auth = Authorization(db=db)
-    auth.set_role_scopes("caller", ["teams:run", {"scope": f"teams:{denied_id}:run", "effect": "deny"}])
-    engine = auth._store()._engine
-    assert engine.check_scope("teams:os-manager-internal:run", roles=["caller"]) is False
-    assert engine.check_scope(f"teams:{MANAGER_TEAM_ID}:run", roles=["caller"]) is False
-    assert engine.check_scope("teams:ordinary:run", roles=["caller"]) is True
-
-
-def test_public_manager_alias_queue_binding_and_schedule_probe(db):
-    from fastapi import HTTPException
-
-    from agno.os.job_queue import ensure_duplicate_matches_component, resolve_queue_scope
-    from agno.tools.scheduler import code_defined_probe
-
-    os = AgentOS(db=db, manager=OSManager(model=OfflineModel(), access_docs=False), telemetry=False)
-    scope = resolve_queue_scope("os-manager-internal", os.teams, db, "alice", None)
-    assert scope["source"] == "registry"
-    existing = {"component_type": "team", "component_id": MANAGER_TEAM_ID, "payload": {"scope": scope}}
-    ensure_duplicate_matches_component(existing, "team", "os-manager-internal")
-    for kind, target in [("team", "other"), ("agent", "os-manager-internal")]:
-        with pytest.raises(HTTPException):
-            ensure_duplicate_matches_component(existing, kind, target)
-    probe = code_defined_probe(teams=os.teams)
-    assert probe("team", "os-manager-internal") is True
-    assert probe("agent", "os-manager-internal") is False
-
-
-def test_public_manager_manifest_aliases_do_not_duplicate_cards(db):
-    config = AgentOSConfig(
-        manifest={
-            "os-manager-internal": Manifest(description="Our coordinator"),
-            "platform-builder-internal": Manifest(description="Private"),
-        }
-    )
-    os = AgentOS(db=db, manager=OSManager(model=OfflineModel(), access_docs=False), config=config, telemetry=False)
-    assert os.config.manifest[MANAGER_TEAM_ID].description == "Our coordinator"
-    assert "os-manager-internal" not in os.config.manifest
-    assert "platform-builder-internal" not in os.config.manifest
 
 
 def test_public_company_manager_routine_retains_manager_restrictions(db):
@@ -154,11 +50,15 @@ def test_public_company_manager_routine_retains_manager_restrictions(db):
         telemetry=False,
     )
     assert (
-        _routine_executor_endpoint("agent", "company-manager-internal", os.registry, agent_os=os)
-        == "/agents/company-manager-internal/runs"
+        _routine_executor_endpoint("agent", COMPANY_MANAGER_ID, os.registry, agent_os=os)
+        == "/agents/company--manager/runs"
     )
     for kind, target in [
+        ("team", MANAGER_TEAM_ID),
+        ("agent", BUILDER_ID),
+        ("agent", OPERATOR_ID),
         ("team", "os-manager-internal"),
+        ("agent", "company-manager-internal"),
         ("agent", "platform-builder-internal"),
         ("agent", "platform-manager-internal"),
     ]:
@@ -258,7 +158,7 @@ def test_manager_cannot_dispatch_for_a_caller_with_only_its_run_scope(db):
         {
             "sub": "alice",
             "aud": "manager-test",
-            "scopes": ["teams:os-manager-internal:run"],
+            "scopes": ["teams:super--agent:run"],
             "exp": int(time.time()) + 300,
         },
         secret,
@@ -268,9 +168,7 @@ def test_manager_cannot_dispatch_for_a_caller_with_only_its_run_scope(db):
     headers = {"Authorization": f"Bearer {token}"}
     denied = client.post("/agents/restricted/runs", headers=headers, data={"message": "test", "stream": "false"})
     assert denied.status_code == 403
-    response = client.post(
-        "/teams/os-manager-internal/runs", headers=headers, data={"message": "test", "stream": "false"}
-    )
+    response = client.post("/teams/super--agent/runs", headers=headers, data={"message": "test", "stream": "false"})
     assert response.status_code == 200, response.text
     assert "Permission required: agents:restricted:run" in response.text
     assert model.calls > 0
@@ -279,7 +177,7 @@ def test_manager_cannot_dispatch_for_a_caller_with_only_its_run_scope(db):
 
 @pytest.mark.parametrize("service_account", [False, True])
 @pytest.mark.parametrize("admin", [False, True])
-@pytest.mark.parametrize("path", ["/teams/os-manager-internal/runs", "/agents/platform-builder-internal/runs"])
+@pytest.mark.parametrize("path", ["/teams/super--agent/runs", "/agents/platform--builder/runs"])
 async def test_manager_mcp_accepts_ordinary_run_grants(db, monkeypatch, service_account, admin, path):
     from types import SimpleNamespace
 
@@ -462,7 +360,7 @@ def test_manager_discovery_uses_manifest_without_changing_agent_prompts(db, tmp_
         "  daily-brief:\n    description: Daily news and when it matters.\n"
         "  claude-engineer:\n    description: Review code with Claude.\n"
         "  codex-engineer:\n    description: Investigate bugs with Codex.\n"
-        "  company-manager-internal:\n    description: Plan company work.\n"
+        "  company--manager:\n    description: Plan company work.\n"
         "  explicit:\n    description: UI description.\n"
         "  manifest-only:\n    description: This must not create a runnable agent.\n"
     )
@@ -804,7 +702,7 @@ def test_operator_executes_diagnostics_in_both_run_modes(db, use_async):
 
 
 @pytest.mark.parametrize("use_async", [False, True])
-@pytest.mark.parametrize("target_id", [MANAGER_TEAM_ID, "os-manager-internal"])
+@pytest.mark.parametrize("target_id", [MANAGER_TEAM_ID])
 def test_manager_self_dispatch_terminates_after_one_nested_run(db, use_async, target_id):
     model = ToolCallingModel("run_team", {"team_id": target_id, "message": "Fresh context"})
     os = AgentOS(db=db, manager=OSManager(model=model), telemetry=False)
@@ -893,7 +791,7 @@ def test_manager_discovers_and_runs_external_agents(db, monkeypatch, agent_class
         agent._sessions_in_flight.clear()
     context.authorization = RunAuthorization(
         provider=ScopeAuthorizationProvider(),
-        context=AuthorizationContext(principal_id="alice", scopes=["teams:os-manager-internal:run"]),
+        context=AuthorizationContext(principal_id="alice", scopes=["teams:super--agent:run"]),
     )
     hidden = json.loads(asyncio.run(runner.alist_agents(context)) if use_async else runner.list_agents(context))
     assert hidden["agents"] == []
@@ -1018,7 +916,7 @@ def test_disabled_manager_needs_neither_a_model_nor_a_workspace(db, enabled):
         OPERATOR_ID,
         COMPANY_MANAGER_ID,
         LEGACY_PRODUCT_MANAGER_ID,
-        *MANAGER_ID_ALIASES,
+        *FORMER_MANAGER_IDS,
     }
 
 
@@ -1140,7 +1038,7 @@ def test_registry_exclusion_surface_is_public_and_read_only():
             OPERATOR_ID,
             COMPANY_MANAGER_ID,
             LEGACY_PRODUCT_MANAGER_ID,
-            *MANAGER_ID_ALIASES,
+            *FORMER_MANAGER_IDS,
         }
     )
     with pytest.raises(AttributeError):
@@ -1611,7 +1509,7 @@ def test_internal_members_delegate_and_keep_structured_reports(db, stream):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("target_id", [MANAGER_TEAM_ID, "os-manager-internal"])
+@pytest.mark.parametrize("target_id", [MANAGER_TEAM_ID])
 async def test_mcp_config_hides_specialists_but_manager_delegates(db, target_id):
     from fastmcp import Client
 
@@ -1732,9 +1630,7 @@ def test_catalog_cannot_restore_framework_manager_ids(db, kind, strict):
             for version in (None, 1):
                 with pytest.raises(ComponentRehydrationError) as exc:
                     loader(db=db, id=component_id, registry=registry, version=version, strict=strict)
-                assert str(exc.value) == (
-                    f"Component ID '{component_id}' is reserved. Please choose a different ID for your component."
-                )
+                assert str(exc.value) == _reserved_manager_id_message(component_id)
             assert loader(db=db, id="missing", registry=registry, strict=strict) is None
         assert db.get_component(component_id) is not None  # No implicit migration/deletion.
     _store_manager_test_component(db, kind, "ordinary")
@@ -1875,35 +1771,8 @@ async def test_queue_cannot_replay_standalone_manager_members(db):
                 )
 
 
-@pytest.mark.asyncio
-async def test_queue_resolves_public_manager_alias(db):
-    from types import SimpleNamespace
-
-    from agno.job_queue.config import QueueConfig
-    from agno.job_queue.store import InMemoryQueueStore
-    from agno.os.job_queue import get_active_queue_worker, queue_lifespan
-
-    # A replayed ticket must bind to the code-defined manager rather than the catalog.
-    os = AgentOS(db=db, manager=OSManager(model=OfflineModel(), access_docs=False), telemetry=False)
-    host = SimpleNamespace(
-        db=db,
-        registry=os.registry,
-        agents=os.agents,
-        teams=os.teams,
-        workflows=[],
-        queue=QueueConfig(durable=True, db=InMemoryQueueStore()),
-    )
-    async with queue_lifespan(SimpleNamespace(state=SimpleNamespace()), host):
-        worker = get_active_queue_worker()
-        for target in (MANAGER_TEAM_ID, "os-manager-internal"):
-            component = await worker._aresolve_job_component(
-                {"component_type": "team", "component_id": target, "payload": {"scope": {"source": "registry"}}}
-            )
-            assert component.id == MANAGER_TEAM_ID
-
-
 @pytest.mark.parametrize("stream", [False, True])
-@pytest.mark.parametrize("continue_id", [MANAGER_TEAM_ID, "os-manager-internal"])
+@pytest.mark.parametrize("continue_id", [MANAGER_TEAM_ID])
 def test_manager_member_confirmation_continues_through_manager(db, stream, continue_id):
     from agno.tools import tool
 
@@ -2041,7 +1910,7 @@ def test_reserved_ids_have_clear_rest_errors(db, tmp_path, kind, deployment):
     for component_id in RESERVED_MANAGER_IDS:
         if deployment == "catalog":
             _store_manager_test_component(db, kind, component_id)
-        if kind == "team" and component_id in (MANAGER_TEAM_ID, "os-manager-internal") and deployment == "manager":
+        if kind == "team" and component_id == MANAGER_TEAM_ID and deployment == "manager":
             assert client.get(f"/teams/{component_id}").status_code == 200
             continue
         path = f"/{kind}s/{component_id}"
@@ -2057,9 +1926,7 @@ def test_reserved_ids_have_clear_rest_errors(db, tmp_path, kind, deployment):
             responses.append(client.post(f"{path}/runs/missing/continue", data={"stream": "false"}))
         for response in responses:
             assert response.status_code == 422, response.text
-            assert response.json()["detail"] == (
-                f"Component ID '{component_id}' is reserved. Please choose a different ID for your component."
-            )
+            assert response.json()["detail"] == _reserved_manager_id_message(component_id)
     assert client.get(f"/{kind}s/missing").status_code == 404
     assert client.post("/agents/ordinary/runs", data={"message": "Hi", "stream": "false"}).status_code == 200
 
@@ -2281,98 +2148,11 @@ def test_standalone_company_manager_keeps_its_existing_execution_policy(db, with
         assert os.company_manager.tool_call_limit is None and member.tool_call_limit == 7
 
 
-@pytest.mark.parametrize("async_mode", [False, True])
-def test_persisted_legacy_policy_listing_and_revocation(db, async_mode):
-    from agno.os.authz.native_engine import NativePolicyEngine
-
-    engine = NativePolicyEngine(db=db)
-    # Bypass scope conversion to represent rows written before the rename.
-    db.set_authz_role_policies(
-        "legacy",
-        [
-            ("teams/*", "read", "allow"),
-            ("teams/os-manager-internal", "read", "deny"),
-            ("teams/os-manager-internal", "run", "allow"),
-        ],
-    )
-    if async_mode:
-        assert asyncio.run(engine.adenied_resource_ids("teams", "read", roles=["legacy"])) == {"super--agent"}
-        assert asyncio.run(engine.aaccessible_resource_ids("teams", "run", roles=["legacy"])) == {"super--agent"}
-        asyncio.run(engine.aremove_scope("legacy", "teams:super--agent:run"))
-        assert not asyncio.run(engine.acheck_scope("teams:os-manager-internal:run", roles=["legacy"]))
-    else:
-        assert engine.denied_resource_ids("teams", "read", roles=["legacy"]) == {"super--agent"}
-        assert engine.accessible_resource_ids("teams", "run", roles=["legacy"]) == {"super--agent"}
-        engine.remove_scope("legacy", "teams:super--agent:run")
-        assert not engine.check_scope("teams:os-manager-internal:run", roles=["legacy"])
-
-
 @pytest.mark.parametrize("component_id", ["super--agent", "company--manager", "platform--builder", "platform--manager"])
 def test_preexisting_public_catalog_collision_is_explicit(db, component_id):
     _store_manager_test_component(db, "team" if component_id == "super--agent" else "agent", component_id)
     with pytest.raises(ValueError, match="Rename or migrate"):
         AgentOS(db=db, manager=OSManager(model=OfflineModel(), access_docs=False), telemetry=False)
-
-
-def test_historical_manager_records_retain_history_and_pagination(db):
-    from agno.db.base import SessionType
-    from agno.models.message import Message
-    from agno.run.team import TeamRunOutput
-    from agno.session.team import TeamSession
-
-    old = TeamRunOutput(
-        run_id="old-run", team_id="os-manager-internal", messages=[Message(role="user", content="remember this")]
-    )
-    session = TeamSession(session_id="old-session", team_id="os-manager-internal", user_id="alice", runs=[old])
-    assert session.get_messages(team_id="super--agent")[0].content == "remember this"
-    db.upsert_session(session)
-    db.upsert_session(TeamSession(session_id="new-session", team_id="super--agent", user_id="alice"))
-    for spelling in ("super--agent", "os-manager-internal"):
-        rows, total = db.get_sessions(
-            session_type=SessionType.TEAM, component_id=spelling, user_id="alice", limit=1, deserialize=False
-        )
-        assert total == 2 and len(rows) == 1
-        assert (
-            db.get_sessions(session_type=SessionType.TEAM, component_id=spelling, user_id="bob", deserialize=False)[1]
-            == 0
-        )
-
-
-def test_paused_preupgrade_specialist_continues_after_restart(db):
-    from agno.tools import tool
-
-    calls = []
-
-    @tool(requires_confirmation=True)
-    def local_action() -> str:
-        """Perform the test action after confirmation."""
-        calls.append(True)
-        return "done"
-
-    old_os = AgentOS(db=db, manager=OSManager(model=OfflineModel(), access_docs=False), telemetry=False)
-    old_member = manager_member(old_os, OPERATOR_ID)
-    old_os.manager.id = "os-manager-internal"
-    old_member.id = "platform-manager-internal"
-    old_member.model = ManagerToolModel("local_action", {})
-    old_member.tools.append(local_action)
-    old_os.manager.model = ManagerToolModel("delegate_task_to_member", {"member_id": old_member.id, "task": "act"})
-    paused = old_os.manager.run("act", session_id="preupgrade-paused")
-    assert paused.status.value == "PAUSED" and not calls
-
-    new_os = AgentOS(db=db, manager=OSManager(model=OfflineModel(), access_docs=False), telemetry=False)
-    member = manager_member(new_os, OPERATOR_ID)
-    member.model = OfflineModel()
-    member.tools.append(local_action)
-    requirements = [req.to_dict() for req in paused.requirements]
-    for req in requirements:
-        req["confirmation"] = True
-        req["tool_execution"]["confirmed"] = True
-    response = TestClient(new_os.get_app()).post(
-        f"/teams/super--agent/runs/{paused.run_id}/continue",
-        data={"session_id": paused.session_id, "requirements": json.dumps(requirements), "stream": "false"},
-    )
-    assert response.status_code == 200, response.text
-    assert response.json()["status"] == "COMPLETED" and calls == [True], (response.json(), calls)
 
 
 def test_separate_company_database_checks_os_catalog_collision(db, tmp_path):
@@ -2395,30 +2175,10 @@ def test_manager_without_component_catalog_still_constructs():
     assert os.manager.id == "super--agent"
 
 
-def test_legacy_routine_endpoint_preserves_schedule_provenance(db):
-    from agno.company import CompanyConfig
-    from agno.company.declarations import Routine
-    from agno.company.manager import _routine_provenance
-    from agno.company.routines import _schedule_fields
-    from agno.db.schemas.scheduler import match_run_endpoint
-
-    os = AgentOS(db=db, company=CompanyConfig(model=OfflineModel()), telemetry=False)
-    routine = Routine(
-        name="legacy",
-        executor_type="agent",
-        executor_id="company-manager-internal",
-        instructions="inspect",
-        cron_expr="0 9 * * *",
-    )
-    fields = _schedule_fields("product", routine, os.registry, agent_os=os)
-    provenance = _routine_provenance(routine)
-    assert match_run_endpoint(fields["endpoint"], provenance["target_type"], provenance["target_id"])
-
-
 @pytest.mark.parametrize("component_id", ["super-agent", "company-manager", "platform-builder", "platform-manager"])
 def test_single_hyphen_names_are_user_owned(db, component_id):
     from agno.os import CompanyConfig
-    from agno.registry._reserved import RESERVED_MANAGER_IDS, _manager_id, _manager_id_variants
+    from agno.registry._reserved import RESERVED_MANAGER_IDS
     from agno.team import Team
     from agno.utils.team import get_member_id
 
@@ -2436,9 +2196,6 @@ def test_single_hyphen_names_are_user_owned(db, component_id):
     assert host.registry.get_team(component_id) is custom_team
     assert get_member_id(custom_agent) == component_id
     assert get_member_id(host.manager) == "super--agent"
-    for family in ("agents", "teams"):
-        assert _manager_id(component_id, family) == component_id
-        assert _manager_id_variants(component_id, family) == (component_id,)
     _store_manager_test_component(db, "agent", component_id)
     # Enabling built-ins cannot shadow a previously stored user component.
     AgentOS(
@@ -2494,7 +2251,7 @@ def test_user_super_agent_grant_and_history_are_separate_from_builtin(db, manage
         )
         headers = {"Authorization": "Bearer " + token}
     response = client.post(
-        "/teams/os-manager-internal/runs",
+        "/teams/super--agent/runs",
         headers=headers,
         data={"message": "hello", "stream": "false", "session_id": "builtin-session"},
     )
@@ -2508,15 +2265,15 @@ def test_user_super_agent_grant_and_history_are_separate_from_builtin(db, manage
 
 @pytest.mark.parametrize("async_mode", [False, True])
 @pytest.mark.parametrize(
-    "family,user_id,internal_id,alias",
+    "family,user_id,internal_id",
     [
-        ("teams", "super-agent", "super--agent", "os-manager-internal"),
-        ("agents", "company-manager", "company--manager", "company-manager-internal"),
-        ("agents", "platform-builder", "platform--builder", "platform-builder-internal"),
-        ("agents", "platform-manager", "platform--manager", "platform-manager-internal"),
+        ("teams", "super-agent", "super--agent"),
+        ("agents", "company-manager", "company--manager"),
+        ("agents", "platform-builder", "platform--builder"),
+        ("agents", "platform-manager", "platform--manager"),
     ],
 )
-def test_user_and_internal_id_denies_do_not_cross(db, async_mode, family, user_id, internal_id, alias):
+def test_user_and_internal_id_denies_do_not_cross(db, async_mode, family, user_id, internal_id):
     from agno.os.authz.native_engine import NativePolicyEngine
 
     engine = NativePolicyEngine(db=db)
@@ -2529,9 +2286,83 @@ def test_user_and_internal_id_denies_do_not_cross(db, async_mode, family, user_i
             else engine.check_scope(scope, roles=["member"])
         )
 
-    db.set_authz_role_policies("member", [(f"{family}/*", "run", "allow"), (f"{family}/{alias}", "run", "deny")])
+    db.set_authz_role_policies("member", [(f"{family}/*", "run", "allow"), (f"{family}/{internal_id}", "run", "deny")])
     assert check(user_id)
-    assert not check(internal_id) and not check(alias)
+    assert not check(internal_id)
     db.set_authz_role_policies("member", [(f"{family}/*", "run", "allow"), (f"{family}/{user_id}", "run", "deny")])
     assert not check(user_id)
-    assert check(internal_id) and check(alias)
+    assert check(internal_id)
+
+
+def test_manager_catalog_is_checked_once_per_database(tmp_path):
+    from agno.os import CompanyConfig
+
+    calls = []
+
+    class CountingDb(SqliteDb):
+        def get_component(self, component_id, *args, **kwargs):
+            calls.append(component_id)
+            return super().get_component(component_id, *args, **kwargs)
+
+    AgentOS(
+        db=CountingDb(db_file=str(tmp_path / "os.db")),
+        manager=OSManager(model=OfflineModel(), access_docs=False),
+        company=CompanyConfig(model=OfflineModel()),
+        telemetry=False,
+    )
+    assert sorted(calls) == sorted({MANAGER_TEAM_ID, COMPANY_MANAGER_ID, BUILDER_ID, OPERATOR_ID})
+
+
+@pytest.mark.parametrize(
+    "family,former,current",
+    [
+        ("teams", "os-manager-internal", MANAGER_TEAM_ID),
+        ("agents", "company-manager-internal", COMPANY_MANAGER_ID),
+    ],
+)
+def test_former_manager_ids_no_longer_resolve_and_name_the_new_id(db, family, former, current):
+    from agno.os import CompanyConfig
+
+    os = AgentOS(
+        db=db,
+        manager=OSManager(model=OfflineModel(), access_docs=False),
+        company=CompanyConfig(model=OfflineModel()),
+        telemetry=False,
+    )
+    client = TestClient(os.get_app())
+    response = client.get(f"/{family}/{former}")
+    assert response.status_code == 422 and f"renamed to '{current}'" in response.text
+    response = client.post(f"/{family}/{former}/runs", data={"message": "hello", "stream": "false"})
+    assert response.status_code == 422 and f"renamed to '{current}'" in response.text
+    assert client.get(f"/{family}/{current}").status_code == 200
+
+
+def test_grant_on_a_former_manager_id_does_not_authorize_the_new_one(db):
+    import jwt
+
+    from agno.os import Authorization
+
+    secret = "former-manager-id-test-key-at-least-32-characters"
+    auth = Authorization(verification_keys=[secret], algorithm="HS256", audience="former")
+    os = AgentOS(db=db, manager=OSManager(model=OfflineModel(), access_docs=False), authorization=auth, telemetry=False)
+    token = jwt.encode(
+        {"sub": "alice", "aud": "former", "exp": int(time.time()) + 300, "scopes": ["teams:os-manager-internal:run"]},
+        secret,
+        algorithm="HS256",
+    )
+    response = TestClient(os.get_app()).post(
+        f"/teams/{MANAGER_TEAM_ID}/runs",
+        headers={"Authorization": "Bearer " + token},
+        data={"message": "hello", "stream": "false"},
+    )
+    assert response.status_code == 403
+
+
+def test_sessions_stored_under_a_former_id_are_not_listed_under_the_new_one(db):
+    from agno.db.base import SessionType
+    from agno.session.team import TeamSession
+
+    db.upsert_session(TeamSession(session_id="old", team_id="os-manager-internal", user_id="alice"))
+    db.upsert_session(TeamSession(session_id="new", team_id=MANAGER_TEAM_ID, user_id="alice"))
+    rows = db.get_sessions(session_type=SessionType.TEAM, component_id=MANAGER_TEAM_ID)
+    assert [session.session_id for session in rows] == ["new"]

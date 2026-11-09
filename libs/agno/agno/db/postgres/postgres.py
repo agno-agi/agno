@@ -1946,19 +1946,17 @@ class PostgresDb(BaseDb):
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
                 if component_id is not None:
-                    from agno.registry._reserved import _manager_id_variants
-
                     if session_type == SessionType.AGENT:
-                        stmt = stmt.where(table.c.agent_id.in_(_manager_id_variants(component_id, "agents")))
+                        stmt = stmt.where(table.c.agent_id == component_id)
                     elif session_type == SessionType.TEAM:
-                        stmt = stmt.where(table.c.team_id.in_(_manager_id_variants(component_id, "teams")))
+                        stmt = stmt.where(table.c.team_id == component_id)
                     elif session_type == SessionType.WORKFLOW:
-                        stmt = stmt.where(table.c.workflow_id.in_(_manager_id_variants(component_id, "workflows")))
+                        stmt = stmt.where(table.c.workflow_id == component_id)
                     elif session_type is None:
                         stmt = stmt.where(
-                            (table.c.agent_id.in_(_manager_id_variants(component_id, "agents")))
-                            | (table.c.team_id.in_(_manager_id_variants(component_id, "teams")))
-                            | (table.c.workflow_id.in_(_manager_id_variants(component_id, "workflows")))
+                            (table.c.agent_id == component_id)
+                            | (table.c.team_id == component_id)
+                            | (table.c.workflow_id == component_id)
                         )
                 if start_timestamp is not None:
                     stmt = stmt.where(table.c.created_at >= start_timestamp)
@@ -8970,6 +8968,10 @@ class PostgresDb(BaseDb):
     def get_authz_policies(self, roles: List[str]) -> List[Tuple[str, str, str, str]]:
         table = self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
         return authz_sql.get_policies(self.db_engine, table, roles)
+
+    def get_authz_policies_for_resources(self, resources: List[str]) -> List[Tuple[str, str, str, str]]:
+        table = self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        return authz_sql.get_policies_for_resources(self.db_engine, table, resources)
 
     def get_authz_role_policies(self, role: str) -> List[Tuple[str, str, str]]:
         table = self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)

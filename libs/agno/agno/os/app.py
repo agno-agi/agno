@@ -224,25 +224,8 @@ async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
         agent_os._initialize_sync_databases()
         await agent_os._initialize_async_databases()
     await agent_os._acheck_sandbox_tables()
-    if agent_os._company_manager is not None:
-        from agno.company.execution import _call
-        from agno.registry._reserved import MANAGER_ID_ALIASES
-
-        checked = set()
-        for db in (agent_os.db, agent_os._company_db):
-            if not isinstance(db, AsyncBaseDb) or id(db) in checked:
-                continue
-            checked.add(id(db))
-            for component_id in MANAGER_ID_ALIASES.values():
-                try:
-                    row = await _call(db, "get_component", component_id, include_deleted=True)
-                except NotImplementedError:
-                    break
-                if row is not None:
-                    raise ValueError(
-                        f"Stored component ID {component_id!r} is now reserved. Rename or migrate this custom "
-                        "component and its sessions and permissions before enabling managers."
-                    )
+    if agent_os._authz_role_store is not None:
+        await agent_os._authz_role_store._araise_if_former_manager_policies()
 
     yield
 
@@ -704,6 +687,7 @@ class AgentOS:
         from agno.os.manager import OSManager
         from agno.os.manager.manager import _build_manager
 
+        self._manager_catalog_checked: Set[int] = set()
         self._company_manager: Optional[Agent] = None
         self.company_manager_unavailable_reason: Optional[str] = None
         if self.company is not None:
@@ -838,7 +822,7 @@ class AgentOS:
     def _apply_manager_manifest(self) -> None:
         """Set default UI descriptions and prompts without replacing application settings."""
         from agno.os.config import AgentOSConfig
-        from agno.registry._reserved import COMPANY_MANAGER_ID, RESERVED_MEMBER_IDS, _manager_id
+        from agno.registry._reserved import COMPANY_MANAGER_ID, RESERVED_MEMBER_IDS
 
         defaults = self._manager.manifest() if self._manager is not None else {}
         # Company Manager is served with or without OS Manager, so it always gets its own chat card.
@@ -851,10 +835,6 @@ class AgentOS:
         if self.config is None:
             self.config = AgentOSConfig()
         manifest = {key: value for key, value in (self.config.manifest or {}).items() if key not in RESERVED_MEMBER_IDS}
-        for alias in list(manifest):
-            resolved = _manager_id(alias)
-            if resolved != alias and resolved in defaults:
-                manifest.setdefault(resolved, manifest.pop(alias))
         for component_id, entry in defaults.items():
             manifest.setdefault(component_id, entry)
         self.config.manifest = manifest
