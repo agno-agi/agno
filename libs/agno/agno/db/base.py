@@ -2498,6 +2498,10 @@ class BaseDb(ABC):
         """All (role, resource, action, effect) rows whose role is in ``roles``."""
         raise NotImplementedError
 
+    def get_authz_policies_for_resources(self, resources: List[str]) -> List[Tuple[str, str, str, str]]:
+        """All (role, resource, action, effect) rows on ``resources``, whichever role holds them."""
+        raise NotImplementedError("Authorization is not supported by the configured database")
+
     def get_authz_role_policies(self, role: str) -> List[Tuple[str, str, str]]:
         """One role's (resource, action, effect) rows."""
         raise NotImplementedError
@@ -4486,6 +4490,10 @@ class AsyncBaseDb(ABC):
     async def get_authz_policies(self, roles: List[str]) -> List[Tuple[str, str, str, str]]:
         """All (role, resource, action, effect) rows whose role is in ``roles``."""
         raise NotImplementedError
+
+    async def get_authz_policies_for_resources(self, resources: List[str]) -> List[Tuple[str, str, str, str]]:
+        """All (role, resource, action, effect) rows on ``resources``, whichever role holds them."""
+        raise NotImplementedError("Authorization is not supported by the configured database")
 
     async def get_authz_role_policies(self, role: str) -> List[Tuple[str, str, str]]:
         """One role's (resource, action, effect) rows."""

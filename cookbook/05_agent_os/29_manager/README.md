@@ -294,10 +294,8 @@ restore specialist endpoints. Obsolete specialist manifest entries are omitted.
 Stored rows remain available for deliberate administrative cleanup.
 Ordinary application agents and teams keep their existing routes.
 
-This unreleased API replaces `ManagerConfig` with `OSManager`, `workspace` with
-`root`, `docs` with `access_docs` (now enabled by default), and the earlier manager
-IDs with the fixed IDs above. Update client IDs and permission grants accordingly. Existing sessions under earlier IDs are not
-migrated automatically. Run access, component discovery (`teams:read` or
+`OSManager` replaces `ManagerConfig`, `root` replaces `workspace`, and `access_docs`
+(now enabled by default) replaces `docs`. Run access, component discovery (`teams:read` or
 `agents:read`), and session access (`sessions:read` plus ownership restrictions)
 remain separate permissions.
 
@@ -367,14 +365,25 @@ editor to have permission to run the target and saves that editor's authority.
 To refresh captured token-scope grants, update the payload as an authorized caller.
 
 
-The public manager IDs are `super--agent`, `company--manager`, `platform--builder`
-and `platform--manager`. The former `*-internal` IDs remain aliases for 3.2;
-`OSManager(...)` remains the configuration API. Private specialists are still
-available only through manager delegation. Persisted SQLite/PostgreSQL sessions,
-queued runs, and managed-role policies accept either spelling. New runs use the
-public IDs. Custom authorization providers must map the aliases consistently in
-their own policy store. If a custom catalog component already uses a public
-manager ID, rename or migrate it and its sessions and grants before enabling the
-managers; startup refuses to silently replace it.
+The manager IDs are `super--agent`, `company--manager`, `platform--builder` and
+`platform--manager`. `OSManager(...)` remains the configuration API. Private specialists
+are still available only through manager delegation.
 
-The double hyphen identifies these internal components. Single-hyphen IDs such as `super-agent`, `company-manager`, `platform-builder`, and `platform-manager` are available for user agents and teams; they are neither reserved nor manager aliases.
+Agno 3.2 renamed these from `os-manager-internal`, `company-manager-internal`,
+`platform-builder-internal` and `platform-manager-internal`. The former IDs stay reserved
+and no longer resolve; requests that use them get an error naming the new ID. When upgrading:
+
+- **Managed-role policies:** startup refuses any stored policy that names a former ID,
+  because a stored deny that stopped matching could let a denied user through. Update those
+  policies to the new IDs, including roles declared in code.
+- **Token scopes, FGA tuples and API clients:** update them to the new IDs. Old grants no
+  longer match, so access is refused until you do.
+- **Schedules and Routines:** stored endpoints that use a former ID stop resolving, so
+  recreate or edit them.
+- **History:** sessions, runs, traces and memories keep the ID they were saved with, so
+  they don't appear under the new ID.
+
+If a custom catalog component already uses a manager ID, rename it before enabling the
+managers; startup refuses to replace it.
+
+The double hyphen identifies these internal components. Single-hyphen IDs such as `super-agent`, `company-manager`, `platform-builder`, and `platform-manager` are available for user agents and teams; they are not reserved.

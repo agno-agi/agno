@@ -10,9 +10,7 @@ from agno.db.postgres import PostgresDb
 
 def main() -> None:
     db = PostgresDb(
-        db_url=getenv(
-            "DATABASE_URL", "postgresql+psycopg://agno:agno@localhost:5532/agno"
-        )
+        db_url=getenv("DATABASE_URL", "postgresql+psycopg://ai:ai@localhost:5532/ai")
     )
     try:
         company = db.initialize_company("Example company")

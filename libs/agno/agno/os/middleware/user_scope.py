@@ -455,9 +455,7 @@ def run_matches_component(run, component_type: Optional[ComponentType], componen
     field = _component_field(component_type)
     if field is None:
         return True
-    from agno.registry._reserved import _manager_ids_match
-
-    return _manager_ids_match(getattr(run, field, None), component_id, component_type)
+    return getattr(run, field, None) == component_id
 
 
 def session_matches_component(session, component_type: Optional[ComponentType], component_id: Optional[str]) -> bool:
@@ -471,9 +469,7 @@ def session_matches_component(session, component_type: Optional[ComponentType], 
     field = _component_field(component_type)
     if field is None:
         return True
-    from agno.registry._reserved import _manager_ids_match
-
-    return _manager_ids_match(getattr(session, field, None), component_id, component_type)
+    return getattr(session, field, None) == component_id
 
 
 def assert_session_matches_component(

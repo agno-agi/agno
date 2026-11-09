@@ -284,11 +284,9 @@ def submit_conversation(agent_os: Any, message: str, run_context: Any, **kwargs:
 
 
 def _check_conversation_owner(session: Optional[Dict[str, Any]], identity: Optional[str]) -> None:
-    from agno.registry._reserved import _manager_id
-
     if session is None or session.get("user_id") != identity:
         raise PermissionError("Conversation belongs to another caller")
-    if session.get("session_type") != "team" or _manager_id(session.get("team_id")) != MANAGER_TEAM_ID:
+    if session.get("session_type") != "team" or session.get("team_id") != MANAGER_TEAM_ID:
         raise PermissionError("Session belongs to another component")
 
 

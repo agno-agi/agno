@@ -3,9 +3,10 @@
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agno.company.execution import _call
+from agno.db.schemas.company import validate_company_details
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id
 
@@ -21,16 +22,15 @@ class CompanyDetails(BaseModel):
 class CompanyDetailsUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    expected_updated_at: int = Field(ge=0)
-    name: Optional[str] = Field(default=None, min_length=1, max_length=255)
-    description: Optional[str] = Field(default=None, max_length=20000)
+    # Stored as a signed 64-bit integer.
+    expected_updated_at: int = Field(ge=0, le=2**63 - 1)
+    name: Optional[str] = None
+    description: Optional[str] = None
 
-    @field_validator("name")
-    @classmethod
-    def valid_name(cls, value: Optional[str]) -> str:
-        if value is None or not value.strip():
-            raise ValueError("Company name must not be blank")
-        return value
+    @model_validator(mode="after")
+    def valid_details(self) -> "CompanyDetailsUpdate":
+        validate_company_details(self.model_dump(exclude_unset=True, exclude={"expected_updated_at"}))
+        return self
 
 
 def get_company_details_router(agent_os: Any) -> APIRouter:
@@ -41,8 +41,8 @@ def get_company_details_router(agent_os: Any) -> APIRouter:
         if agent_os._company_db is None:
             raise HTTPException(503, "Company requires a database")
         try:
-            # Insert-only lazy initialization also supports applications without lifespan startup.
-            return await _call(
+            # Reads stay read-only once the row exists. Applications without lifespan startup seed it here.
+            return await _call(agent_os._company_db, "get_company") or await _call(
                 agent_os._company_db, "initialize_company", agent_os.company.name, agent_os.company.description
             )
         except NotImplementedError:
@@ -55,7 +55,7 @@ def get_company_details_router(agent_os: Any) -> APIRouter:
         authority = request_authorization(request)
         try:
             if authority is not None:
-                await authority.arequire("agent_os", "admin")
+                await authority.arequire("company", "write")
             return {"can_edit": True}
         except PermissionError:
             return {"can_edit": False}

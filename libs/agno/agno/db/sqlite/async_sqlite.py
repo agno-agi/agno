@@ -1643,19 +1643,17 @@ class AsyncSqliteDb(AsyncBaseDb):
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
                 if component_id is not None:
-                    from agno.registry._reserved import _manager_id_variants
-
                     if session_type == SessionType.AGENT:
-                        stmt = stmt.where(table.c.agent_id.in_(_manager_id_variants(component_id, "agents")))
+                        stmt = stmt.where(table.c.agent_id == component_id)
                     elif session_type == SessionType.TEAM:
-                        stmt = stmt.where(table.c.team_id.in_(_manager_id_variants(component_id, "teams")))
+                        stmt = stmt.where(table.c.team_id == component_id)
                     elif session_type == SessionType.WORKFLOW:
-                        stmt = stmt.where(table.c.workflow_id.in_(_manager_id_variants(component_id, "workflows")))
+                        stmt = stmt.where(table.c.workflow_id == component_id)
                     elif session_type is None:
                         stmt = stmt.where(
-                            (table.c.agent_id.in_(_manager_id_variants(component_id, "agents")))
-                            | (table.c.team_id.in_(_manager_id_variants(component_id, "teams")))
-                            | (table.c.workflow_id.in_(_manager_id_variants(component_id, "workflows")))
+                            (table.c.agent_id == component_id)
+                            | (table.c.team_id == component_id)
+                            | (table.c.workflow_id == component_id)
                         )
                 if start_timestamp is not None:
                     stmt = stmt.where(table.c.created_at >= start_timestamp)
@@ -2118,9 +2116,6 @@ class AsyncSqliteDb(AsyncBaseDb):
         Args:
             memory_id (str): The ID of the memory to delete.
             user_id (Optional[str]): The user ID to filter by. Defaults to None.
-
-        Returns:
-            bool: True if deletion was successful, False otherwise.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -3204,7 +3199,6 @@ class AsyncSqliteDb(AsyncBaseDb):
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
             deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
-            create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:
             Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
@@ -5386,6 +5380,10 @@ class AsyncSqliteDb(AsyncBaseDb):
         table = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
         return await authz_sql.aget_policies(self.db_engine, table, roles)
 
+    async def get_authz_policies_for_resources(self, resources: List[str]) -> List[Tuple[str, str, str, str]]:
+        table = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        return await authz_sql.aget_policies_for_resources(self.db_engine, table, resources)
+
     async def get_authz_role_policies(self, role: str) -> List[Tuple[str, str, str]]:
         table = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
         return await authz_sql.aget_role_policies(self.db_engine, table, role)
@@ -5773,15 +5771,7 @@ class AsyncSqliteDb(AsyncBaseDb):
     async def initialize_company(self, name: str = "Company", description: Optional[str] = None) -> Dict[str, Any]:
         from agno.db.sql.company import initialize_company_details
 
-        try:
-            table = await self._get_table(table_type="company", create_table_if_not_found=True)
-        except Exception as exc:
-            from agno.db.sql.company import company_table_creation_race
-
-            if not company_table_creation_race(exc) or not await self.table_exists(self.company_table_name):
-                raise
-            self._invalidate_table_cache(self.company_table_name)
-            table = await self._get_table(table_type="company")
+        table = await self._get_table(table_type="company", create_table_if_not_found=True)
         if table is None:
             raise RuntimeError("Company details table is unavailable after provisioning")
         async with self.async_session_factory() as sess, sess.begin():
