@@ -208,6 +208,37 @@ def test_run_content_event_includes_image():
     assert reconstructed.image.url == "https://example.com/a.png"
 
 
+def test_run_content_event_includes_citations():
+    """RunContentEvent must restore `citations` as a Citations object.
+
+    to_dict()/to_json() write the field as a plain dict
+    (`model_dump(exclude_none=True)`), but BaseRunOutputEvent.from_dict() had
+    no citations branch, so it stayed a dict and `restored.citations.urls`
+    raised AttributeError. RunOutput.from_dict() validates it, so the same
+    payload round-tripped fine on the run output and broke on the event.
+    """
+    from agno.models.message import Citations, UrlCitation
+    from agno.run.agent import RunContentEvent, run_output_event_from_dict
+
+    event = RunContentEvent(
+        content="hello",
+        citations=Citations(urls=[UrlCitation(url="https://example.com/a", title="A")]),
+    )
+
+    assert event.citations is not None
+
+    event_dict = event.to_dict()
+    assert event_dict["citations"]["urls"][0]["url"] == "https://example.com/a"
+
+    reconstructed = type(event).from_dict(event_dict)
+    assert isinstance(reconstructed.citations, Citations)
+    assert reconstructed.citations.urls[0].url == "https://example.com/a"
+
+    from_json = run_output_event_from_dict(json.loads(event.to_json()))
+    assert isinstance(from_json.citations, Citations)
+    assert from_json.citations.urls[0].title == "A"
+
+
 def test_agent_session_state_in_completed_event():
     """Test that RunCompletedEvent includes session_state field."""
     from agno.run.agent import RunOutput
