@@ -200,7 +200,7 @@ gcs = ["google-cloud-storage"]
 mysql = ["sqlalchemy[asyncio]", "pymysql", "asyncmy"]
 postgres = ["sqlalchemy[asyncio]", "psycopg[binary]"]
 pages = ["agno[postgres]", "agno[pgvector]", "dnspython>=2.6.1", "beautifulsoup4", "regex>=2024.5.15"]
-redis = ["redis>=4.5.4", "redisvl>=0.12.1"]  # >=4.5.4: safe cancellation of blocking commands (XREAD in event stream tail)
+redis = ["redis>=6.1.0", "redisvl>=0.12.1"]  # >=6.1.0: transactions on a Redis Cluster client (metrics lock), redis/redis-py#3611; also safe cancellation of blocking commands (XREAD in event stream tail)
 s3 = ["boto3", "aioboto3"]
 sql = ["sqlalchemy[asyncio]"]
 sqlite = ["sqlalchemy[asyncio]", "aiosqlite"]
