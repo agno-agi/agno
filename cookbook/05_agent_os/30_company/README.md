@@ -33,8 +33,8 @@ whoever created the Product. User isolation does not restrict Company records.
 
 ## Weekly Super Agent review
 
-`10_weekly_product_review.py` declares a Company Routine that names team
-`superagent`. It reads Sources and existing work, proposes only evidence-backed
+`10_weekly_product_review.py` declares a Company Routine with no executor, so
+it runs as Super Agent. Naming team `superagent` does the same. It reads Sources and existing work, proposes only evidence-backed
 Backlog Tasks, and updates status without accepting work. The Routine runs on
 `superagent-routines`, a restricted internal form of Super Agent: Company tools
 and the Routine skills only, no Platform Builder, no run or platform tools, and
@@ -42,7 +42,7 @@ proposal-only authority. It works with or without `manager=OSManager(...)`, but
 needs `CompanyConfig(model=...)` or a registry model. The stored schedule names
 the runner: endpoint `/agents/superagent-routines/runs`, target agent
 `superagent-routines`. The Routine API shows that endpoint next to the executor
-you chose, `target_type` `team` and `target_id` `superagent`. Run and session
+chosen, `target_type` `team` and `target_id` `superagent`. Run and session
 records carry `agent_id` `superagent-routines`. The runner is hidden from `GET /agents`,
 `GET /config`, MCP and A2A, and a person cannot chat with it. Super Agent itself
 refuses a run with Routine authority, and no other framework ID can run a Routine.

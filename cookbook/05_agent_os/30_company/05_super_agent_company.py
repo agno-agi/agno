@@ -61,12 +61,8 @@ if __name__ == "__main__":
                     purpose="Help people build reliable agents",
                     sources=[{"type": "website", "reference": "https://docs.agno.com"}],
                     routines=[
-                        {
-                            "name": "intake",
-                            "template": "intake",
-                            "executor_type": "team",
-                            "executor_id": "superagent",
-                        }
+                        # No executor is named, so the Routine runs as Super Agent.
+                        {"name": "intake", "template": "intake"}
                     ],
                     _agno_team=super_agent,
                     _agno_run_context=context,

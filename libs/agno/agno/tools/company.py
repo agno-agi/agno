@@ -486,8 +486,8 @@ class CompanyTools(Toolkit):
         self,
         product_id: str,
         name: str,
-        executor_type: str,
-        executor_id: str,
+        executor_type: _OptionalString = None,
+        executor_id: _OptionalString = None,
         template: _OptionalString = None,
         instructions: _OptionalString = None,
         cron_expr: _OptionalString = None,
@@ -498,8 +498,8 @@ class CompanyTools(Toolkit):
         """Create a Routine for the calling human; automated runs cannot create Routines.
 
         Args:
-            executor_type: Kind of component that runs it: agent, team or workflow.
-            executor_id: ID of the component that runs it. Use team "superagent" unless the person names another.
+            executor_type: agent, team or workflow. Null with a null executor_id runs it as Super Agent.
+            executor_id: ID of that component; null with a null executor_type.
             template: Optional intake, refresh or summary template; null requires instructions.
             instructions: Custom instructions; null uses the selected template.
             cron_expr: Cron expression; null creates an on-demand Routine.
@@ -591,8 +591,8 @@ class CompanyTools(Toolkit):
         self,
         product_id: str,
         name: str,
-        executor_type: str,
-        executor_id: str,
+        executor_type: _OptionalString = None,
+        executor_id: _OptionalString = None,
         template: _OptionalString = None,
         instructions: _OptionalString = None,
         cron_expr: _OptionalString = None,
@@ -603,8 +603,8 @@ class CompanyTools(Toolkit):
         """Create a Routine for the calling human; automated runs cannot create Routines.
 
         Args:
-            executor_type: Kind of component that runs it: agent, team or workflow.
-            executor_id: ID of the component that runs it. Use team "superagent" unless the person names another.
+            executor_type: agent, team or workflow. Null with a null executor_id runs it as Super Agent.
+            executor_id: ID of that component; null with a null executor_type.
             template: Optional intake, refresh or summary template; null requires instructions.
             instructions: Custom instructions; null uses the selected template.
             cron_expr: Cron expression; null creates an on-demand Routine.

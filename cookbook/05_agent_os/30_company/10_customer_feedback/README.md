@@ -64,7 +64,7 @@ reads the same `feedback/` folder.
    criteria, regression cases and open questions. Mark it **Done** only after
    you have reviewed it.
 
-The Routine names team `superagent` and runs on Super Agent's restricted Routine
+The Routine names no executor, so it runs as Super Agent, on Super Agent's restricted Routine
 runner, which can only propose work. Feedback Analyst executes accepted Tasks;
 the built-in managers cannot be selected as business Task executors.
 `auto_accept=False` keeps discovery from authorizing execution.

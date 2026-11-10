@@ -380,6 +380,101 @@ def test_declared_routine_with_a_missing_executor_names_what_is_wrong(tmp_path):
     assert "executor agent 'company-manager'" in message and "missing from the registry" in message
 
 
+# ----------------------------------------------------------------- a Routine with no executor runs as Super Agent
+
+
+def test_a_routine_with_no_executor_names_super_agent():
+    routine = Routine(name="weekly", instructions="Review.")
+    assert (routine.executor_type, routine.executor_id) == ("team", MANAGER_TEAM_ID)
+    nulls = Routine(name="weekly", instructions="Review.", executor_type=None, executor_id=None)
+    assert (nulls.executor_type, nulls.executor_id) == ("team", MANAGER_TEAM_ID)
+    named = Routine(name="weekly", instructions="Review.", executor_type="agent", executor_id="reader")
+    assert (named.executor_type, named.executor_id) == ("agent", "reader")
+
+
+@pytest.mark.parametrize("half", [{"executor_type": "agent"}, {"executor_id": "reader"}])
+def test_a_routine_needs_both_executor_fields_or_neither(half):
+    with pytest.raises(ValueError, match="Give executor_type and executor_id together"):
+        Routine(name="weekly", instructions="Review.", **half)
+
+
+def test_routine_api_defaults_the_executor_to_super_agent(tmp_path):
+    os = build(tmp_path)
+    with TestClient(os.get_app()) as client:
+        product = CompanyManager(os.db).create(name="Docs")
+        body = {"product_id": product["id"], "name": "weekly", "instructions": "Review."}
+        created = client.post("/company/routines", json=body)
+        assert created.status_code == 201, created.text
+        # The response shows the executor chosen and the address that runs.
+        assert (created.json()["target_type"], created.json()["target_id"]) == ("team", MANAGER_TEAM_ID)
+        assert created.json()["endpoint"] == RUNNER_ENDPOINT
+        half = client.post("/company/routines", json={**body, "name": "half", "executor_type": "team"})
+        assert half.status_code == 422 and "Give executor_type and executor_id together" in half.text
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_routine_tool_defaults_the_executor_to_super_agent(tmp_path, use_async):
+    os = build(tmp_path)
+    product = CompanyManager(os.db).create(name="Docs")
+    company = next(tool for tool in os.manager.tools if isinstance(tool, CompanyTools))
+    if use_async:
+        result = asyncio.run(company.acreate_product_routine(product["id"], "weekly", instructions="Review."))
+    else:
+        result = company.create_product_routine(product["id"], "weekly", instructions="Review.")
+    # The tool result shows the executor chosen. The stored row names the runner.
+    assert (json.loads(result)["target_type"], json.loads(result)["target_id"]) == ("team", MANAGER_TEAM_ID)
+    stored = os.db.get_schedule_by_name(product["id"] + ".weekly")
+    assert stored["endpoint"] == RUNNER_ENDPOINT and stored["target_id"] == ROUTINE_RUNNER_ID
+    call = company.acreate_product_routine if use_async else company.create_product_routine
+    with pytest.raises(ValueError, match="Give executor_type and executor_id together"):
+        half = call(product["id"], "half", executor_id="reader", instructions="Review.")
+        if use_async:
+            asyncio.run(half)
+
+
+@pytest.mark.parametrize("executor", [{}, {"executor_type": "team", "executor_id": MANAGER_TEAM_ID}])
+def test_declared_routine_fails_at_startup_when_the_runner_is_unavailable(tmp_path, executor):
+    # No model for Company, so there is no Routine runner. A defaulted executor fails like a named one.
+    product = Product(name="Docs", routines=[Routine(name="weekly", instructions="Review.", **executor)])
+    db = SqliteDb(db_file=str(tmp_path / "os.db"))
+    os = AgentOS(db=db, company=CompanyConfig(products=[product]), telemetry=False)
+    with pytest.raises(ValueError) as raised:
+        with TestClient(os.get_app()):
+            pass
+    message = str(raised.value)
+    assert "Product 'Docs'" in message and "Routine 'weekly'" in message
+    assert "executor team 'superagent'" in message and "Super Agent cannot run Routines" in message
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_created_routine_fails_the_same_with_or_without_a_named_executor(tmp_path, use_async):
+    db = SqliteDb(db_file=str(tmp_path / "os.db"))
+    os = AgentOS(db=db, company=CompanyConfig(), telemetry=False)
+    named = {"executor_type": "team", "executor_id": MANAGER_TEAM_ID}
+    with TestClient(os.get_app()) as client:
+        product = CompanyManager(db).create(name="Docs")
+        body = {"product_id": product["id"], "name": "weekly", "instructions": "Review."}
+        defaulted, explicit = (
+            client.post("/company/routines", json=body),
+            client.post("/company/routines", json={**body, **named}),
+        )
+    assert defaulted.status_code == explicit.status_code == 422
+    assert defaulted.json() == explicit.json() and "Super Agent cannot run Routines" in defaulted.text
+    company = CompanyTools(db)
+    errors = []
+    for executor in ({}, named):
+        with pytest.raises(ValueError, match="Super Agent cannot run Routines") as raised:
+            if use_async:
+                asyncio.run(
+                    company.acreate_product_routine(product["id"], "weekly", instructions="Review.", **executor)
+                )
+            else:
+                company.create_product_routine(product["id"], "weekly", instructions="Review.", **executor)
+        errors.append(str(raised.value))
+    assert errors[0] == errors[1]
+    assert db.get_schedules()[1] == 0
+
+
 def test_skill_files_are_the_packaged_three():
     import agno.company
 

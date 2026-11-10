@@ -467,3 +467,13 @@ SQLite and with `COMPANY_DB=postgres`, with no model calls.
 **Result:** All exited 0 and printed their success lines. The logged 409 responses are the refusals the examples check. `09_sandboxed_engineers.py` with an executor needs Docker sandboxes and live models and was not run. No model calls were made.
 
 ---
+
+### 05_super_agent_company.py, 10_weekly_product_review.py (default Routine executor)
+
+**Status:** PASS
+
+**Description:** The Routines in both files no longer name an executor. A Routine with no executor runs as team `superagent` on the restricted runner. Ran `05_super_agent_company.py`, and `10_weekly_product_review.py --check` with and without `--with-os-manager`.
+
+**Result:** All three ran and their assertions on the stored endpoint `/agents/superagent-routines/runs` and the shown executor (`team`, `superagent`) passed. No model calls were made.
+
+---
