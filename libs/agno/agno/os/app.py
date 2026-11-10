@@ -738,10 +738,19 @@ class AgentOS:
                 assert isinstance(self._manager.team.members, list)
                 self._manager.team.members.append(member)
                 assert isinstance(self._manager.team.instructions, list)
+                if self._company_db is not None:
+                    from agno.os.manager.company_tasks import CompanyTaskTools
+
+                    assert isinstance(self._manager.team.tools, list)
+                    self._manager.team.tools.append(CompanyTaskTools(self))
                 self._manager.team.instructions.append(
                     "Delegate Company Products, Projects, Tasks, Sources, Routines, playbook pages and decisions to "
-                    "Company Manager, including setup requests and questions about their status. Routines are "
-                    "Company schedules: ask Company Manager, not Platform Builder, to create them."
+                    "Company Manager, including setup requests. Routines are Company schedules: ask Company "
+                    "Manager, not Platform Builder, to create them. When a person asks to start a Task a person "
+                    "already accepted, call start_company_task by itself: the Task runs in its own session and the "
+                    "tool's reply is the receipt. For the state of a Task or its run, call get_company_task_status "
+                    "instead of waiting. Never accept, review or complete Tasks yourself, and never run a Task's "
+                    "executor directly with the run tools."
                 )
             self.agents = [*(self.agents or []), self._company_manager]
         if self._company_db is not None:

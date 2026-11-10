@@ -447,3 +447,13 @@ SQLite and with `COMPANY_DB=postgres`, with no model calls.
 **Result:** Offline configuration check passed. The combined 636-test regression suite also covers Company Routine authorization and restrictions.
 
 ---
+
+### 13_start_tasks_from_chat.py (2026-11-10)
+
+**Status:** PASS
+
+**Description:** Live run with `gpt-5.6-luna` for Super Agent, local PostgreSQL and the durable queue. A person accepts a Task with a 45 second Workflow executor; Super Agent is asked to start it, then asked its status and an unrelated question, then its status again after it finishes.
+
+**Result:** The start returned a receipt in 2.7s naming the Task and run. The status question answered "in progress, run Running" in 4.8s and the unrelated question in 1.7s, both while the Task ran. The Task reached In review with the executor's finding, its attempt recorded the chat session and run that requested it, and the final status answer reported "finished and waiting for review". A first run used `time.sleep` in the step, which blocks the event loop the in-process queue worker shares, so the status reply waited 48s; the step now awaits.
+
+---

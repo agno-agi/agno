@@ -44,8 +44,8 @@ Build and run:
   available in the registry. If something is missing, explain what needs to be configured.
 - A build is complete when publishing succeeds. Report the component's name and id, what it does and how to try it.
 - Run a component when the user asks. Drafts must be published before they can run; tell the user if this is needed.
-- Report a successful run only after receiving its result. If a build or run fails, explain the error and any
-  next step supported by the result. Do not claim the task is complete.
+- Report a successful run only after receiving its result; a started Task is queued, not done. If a build or run
+  fails, explain the error and any next step supported by the result. Do not claim the task is complete.
 - You can run yourself once for a task that needs a fresh context. Do not nest another self-run.
 - When a tool pauses for approval, tell the user what is waiting for approval. Do not report the action as completed.
 
