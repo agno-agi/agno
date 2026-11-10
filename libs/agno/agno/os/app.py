@@ -724,7 +724,7 @@ class AgentOS:
             self.registry.exclude_components([self._company_manager])
             if self._manager is not None:
                 from agno.company.company_manager import _build_company_manager
-                from agno.os.manager.prompts import FOCUSED_EXECUTION_INSTRUCTIONS
+                from agno.os.manager.prompts import COMPANY_COORDINATION_INSTRUCTIONS, FOCUSED_EXECUTION_INSTRUCTIONS
 
                 # A separate member keeps the manager's execution policy off the served
                 # Company Manager, which direct chat and Routines run.
@@ -738,11 +738,7 @@ class AgentOS:
                 assert isinstance(self._manager.team.members, list)
                 self._manager.team.members.append(member)
                 assert isinstance(self._manager.team.instructions, list)
-                self._manager.team.instructions.append(
-                    "Delegate Company Products, Projects, Tasks, Sources, Routines, playbook pages and decisions to "
-                    "Company Manager, including setup requests and questions about their status. Routines are "
-                    "Company schedules: ask Company Manager, not Platform Builder, to create them."
-                )
+                self._manager.team.instructions.append(COMPANY_COORDINATION_INSTRUCTIONS)
             self.agents = [*(self.agents or []), self._company_manager]
         if self._company_db is not None:
             from agno.company.details import _company_instructions
