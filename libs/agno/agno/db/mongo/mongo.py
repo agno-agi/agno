@@ -2476,7 +2476,7 @@ class MongoDb(BaseDb):
             or refreshes_collection is None
             or sessions_collection is None
         ):
-            log_info("No session data found. Won't calculate metrics.")
+            log_debug("No session data found. Won't calculate metrics.")
             return []
         runs_collection = self._get_collection(table_type="runs")
 
@@ -2587,7 +2587,7 @@ class MongoDb(BaseDb):
         )
 
         if not calculated_dates:
-            log_info("Metrics already calculated for all relevant dates.")
+            log_debug("Metrics already calculated for all relevant dates.")
             return []
 
         log_debug("Updated metrics calculations")
