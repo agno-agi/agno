@@ -103,6 +103,7 @@ try:
         null,
         or_,
         tuple_,
+        type_coerce,
         union,
         update,
     )
@@ -929,7 +930,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             if len(kept) == len(runs_list):
                 continue
             await sess.execute(
-                sessions_table.update().where(sessions_table.c.session_id == sid).values(runs=json.dumps(kept))
+                sessions_table.update().where(sessions_table.c.session_id == sid).values(runs=type_coerce(kept, JSON))
             )
             scrubbed = True
         return scrubbed

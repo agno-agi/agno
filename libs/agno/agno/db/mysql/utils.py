@@ -604,6 +604,25 @@ def _metrics_nested_run(path: Any, depth: Any, key: str, run_data: Any) -> Any:
     )
 
 
+def _metrics_legacy_runs_array(runs: Any) -> Any:
+    """Build the legacy runs column as a JSON array, or an empty one.
+
+    Deleting a run rewrote the column with the runs JSON-encoded a second time, so it can hold a JSON string whose
+    content is the array. It is decoded once, as merge_runs_table_with_legacy_blob does.
+    """
+    encoded = func.json_unquote(runs)
+    # Read from a JSON document: MariaDB has no CAST to JSON
+    decoded = func.json_extract(encoded, "$")
+    return case(
+        (func.json_type(runs) == "ARRAY", runs),
+        (
+            and_(func.json_type(runs) == "STRING", func.json_valid(encoded) == 1),
+            case((func.json_type(decoded) == "ARRAY", decoded), else_=func.json_array()),
+        ),
+        else_=func.json_array(),
+    )
+
+
 def build_component_metrics_legacy_runs_query(
     sessions_table: Table, runs_table: Optional[Table], start_timestamp: int, end_timestamp: int
 ) -> Optional[Any]:
@@ -625,7 +644,7 @@ def build_component_metrics_legacy_runs_query(
         return None
 
     # Extracted in the database instead of loading the column, as calculate_metrics does
-    legacy_run = func.json_table(sessions_table.c.runs, _METRICS_LEGACY_RUNS).table_valued(
+    legacy_run = func.json_table(_metrics_legacy_runs_array(sessions_table.c.runs), _METRICS_LEGACY_RUNS).table_valued(
         "run_id",
         "agent_id",
         "team_id",

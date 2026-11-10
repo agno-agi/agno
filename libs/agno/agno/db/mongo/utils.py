@@ -10,6 +10,7 @@ from agno.db.utils import (
     METRICS_BY_OWNER_FIELDS,
     METRICS_NESTED_RUN_KEYS,
     build_aggregate_metrics_row,
+    merge_runs_table_with_legacy_blob,
     metrics_day_ranges,
     metrics_rows_fields,
     serialize_metrics_row,
@@ -198,9 +199,9 @@ def build_component_metrics_runs_projection() -> Dict[str, int]:
     }
 
 
-def build_component_metrics_legacy_runs_projection() -> Dict[str, int]:
+def build_component_metrics_legacy_runs_projection() -> Dict[str, Any]:
     """Build the projection of a session with only what component metrics count of the runs of its legacy runs
-    field, and the runs nested inside them."""
+    field, and the runs nested inside them. A legacy runs field stored as a JSON string is read whole."""
     return {
         "_id": 0,
         "session_id": 1,
@@ -209,7 +210,49 @@ def build_component_metrics_legacy_runs_projection() -> Dict[str, int]:
         **{f"runs.{field}": 1 for field in _METRICS_LEGACY_RUN_FIELDS},
         **{f"runs.{field}": 1 for field in _METRICS_RUN_DATA_FIELDS},
         **{f"runs.{key}": 1 for key in METRICS_NESTED_RUN_KEYS},
+        # Runs stored as a JSON string, as before v2.1.1, have no fields to project, so the string is read whole
+        "runs_json": {"$cond": [{"$eq": [{"$type": "$runs"}, "string"]}, "$runs", None]},
     }
+
+
+def _project_component_metrics_fields(document: Dict[str, Any], fields: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep of a document only the given fields, as a find projection keeps them: a field holding documents keeps of
+    each only its own given fields, and drops whatever is not a document."""
+    projected: Dict[str, Any] = {}
+    for key, nested_fields in fields.items():
+        if key not in document:
+            continue
+        value = document[key]
+        if not nested_fields:
+            projected[key] = value
+        elif isinstance(value, dict):
+            projected[key] = _project_component_metrics_fields(value, nested_fields)
+        elif isinstance(value, list):
+            projected[key] = [
+                _project_component_metrics_fields(item, nested_fields) for item in value if isinstance(item, dict)
+            ]
+    return projected
+
+
+def build_component_metrics_legacy_runs(runs: Any) -> List[Dict[str, Any]]:
+    """Build the runs of a legacy runs field stored as a JSON string with only what
+    build_component_metrics_legacy_runs_projection keeps of the runs of one stored as an array."""
+    fields: Dict[str, Any] = {}
+    for path in (*_METRICS_LEGACY_RUN_FIELDS, *_METRICS_RUN_DATA_FIELDS, *METRICS_NESTED_RUN_KEYS):
+        nested_fields = fields
+        for key in path.split("."):
+            nested_fields = nested_fields.setdefault(key, {})
+    return [_project_component_metrics_fields(run, fields) for run in merge_runs_table_with_legacy_blob([], runs)]
+
+
+def build_component_metrics_legacy_session(session: Dict[str, Any]) -> Dict[str, Any]:
+    """Build a session read with build_component_metrics_legacy_runs_projection with only what the projection keeps
+    of its legacy runs, also when they are stored as a JSON string."""
+    runs_json = session.pop("runs_json", None)
+    if runs_json is not None:
+        # Read whole, so each run keeps only what the projection keeps of runs stored as an array
+        session["runs"] = build_component_metrics_legacy_runs(runs_json)
+    return session
 
 
 def _component_metrics_upserts(component_metrics_records: List[Dict[str, Any]]) -> List[UpdateOne]:

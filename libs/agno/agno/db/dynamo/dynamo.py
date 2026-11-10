@@ -20,6 +20,7 @@ from agno.db.dynamo.utils import (
     apply_sorting,
     batch_get_with_retry,
     batch_write_with_retry,
+    build_component_metrics_run,
     build_query_filter_expression,
     build_topic_filter_expression,
     component_metrics_record_id,
@@ -1944,7 +1945,8 @@ class DynamoDb(BaseDb):
         start_timestamp: int,
         end_timestamp: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        """Get the sessions or runs created in the given time range, with only the given attributes.
+        """Get the sessions or runs created in the given time range, with only the given attributes, each run reduced
+        with build_component_metrics_run before the next page is read.
 
         Args:
             table_name: The sessions or runs table.
@@ -1968,67 +1970,25 @@ class DynamoDb(BaseDb):
 
         records: List[Dict[str, Any]] = []
         for key_value in key_values:
-            items = query_all_items(
-                self.client,
-                {
-                    "TableName": table_name,
-                    "IndexName": index_name,
-                    "KeyConditionExpression": key_condition,
-                    "ExpressionAttributeNames": names,
-                    "ExpressionAttributeValues": {**values, ":key": {"S": key_value}},
-                    "ProjectionExpression": ", ".join(f"#{name}" for name in attributes),
-                },
-            )
-            records.extend(deserialize_from_dynamodb_item(item) for item in items)
+            query_kwargs: Dict[str, Any] = {
+                "TableName": table_name,
+                "IndexName": index_name,
+                "KeyConditionExpression": key_condition,
+                "ExpressionAttributeNames": names,
+                "ExpressionAttributeValues": {**values, ":key": {"S": key_value}},
+                "ProjectionExpression": ", ".join(f"#{name}" for name in attributes),
+            }
+            # A page at a time: run_data is stored as one string, read whole, so each run is reduced to what component
+            # metrics count before the next page is read
+            while True:
+                response = self.client.query(**query_kwargs)
+                for item in response.get("Items", []):
+                    record = deserialize_from_dynamodb_item(item)
+                    records.append(build_component_metrics_run(record) if "run_data" in record else record)
+                if "LastEvaluatedKey" not in response:
+                    break
+                query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
         return records
-
-    def _get_metrics_legacy_sessions(
-        self, table_name: str, start_timestamp: int, end_timestamp: int
-    ) -> List[Dict[str, Any]]:
-        """Get the sessions that keep runs in the legacy runs field and may hold a run of the given time range.
-
-        A session holds runs created after it started and before it was last written.
-
-        Args:
-            table_name: The sessions table.
-            start_timestamp: The start of the range, included.
-            end_timestamp: The end of the range, not included.
-
-        Returns:
-            List[Dict[str, Any]]: The sessions, with their id, user, creation time and legacy runs.
-        """
-        sessions: List[Dict[str, Any]] = []
-        for session_type in METRICS_COMPONENT_TYPES:
-            items = query_all_items(
-                self.client,
-                {
-                    "TableName": table_name,
-                    "IndexName": "session_type-created_at-index",
-                    "KeyConditionExpression": "#session_type = :session_type AND #created_at < :end_ts",
-                    "FilterExpression": "attribute_exists(#runs) AND "
-                    "(#updated_at >= :start_ts OR attribute_not_exists(#updated_at))",
-                    "ExpressionAttributeNames": {
-                        "#session_type": "session_type",
-                        "#created_at": "created_at",
-                        "#updated_at": "updated_at",
-                        "#session_id": "session_id",
-                        "#user_id": "user_id",
-                        "#runs": "runs",
-                    },
-                    "ExpressionAttributeValues": {
-                        ":session_type": {"S": session_type},
-                        ":start_ts": {"N": str(start_timestamp)},
-                        ":end_ts": {"N": str(end_timestamp)},
-                    },
-                    "ProjectionExpression": "#session_id, #user_id, #created_at, #updated_at, #runs",
-                },
-            )
-            sessions.extend(deserialize_from_dynamodb_item(item) for item in items)
-        return [
-            session
-            for session in sessions
-            if (session.get("updated_at") or session.get("created_at") or 0) >= start_timestamp
-        ]
 
     def _get_aggregate_metrics_items(
         self,
@@ -2323,28 +2283,63 @@ class DynamoDb(BaseDb):
             Tuple[Dict[date, List[Dict[str, Any]]], Dict[str, Dict[str, Any]]]: The legacy runs by the UTC day they
                 were created on, and by their id.
         """
-        legacy_runs = [
-            legacy_run
-            for legacy_run in get_metrics_legacy_runs(
-                self._get_metrics_legacy_sessions(sessions_table_name, start_timestamp, end_timestamp)
-            )
-            if start_timestamp <= (legacy_run["created_at"] or 0) < end_timestamp
-        ]
-        # The runs table wins on a run in both, as merge_runs_table_with_legacy_blob does
-        migrated_run_ids = {
-            run["run_id"]
-            for run in self._get_metrics_runs(
-                runs_table_name, [legacy_run["run_id"] for legacy_run in legacy_runs], ["run_id"]
-            )
-        }
         legacy_runs_by_day: Dict[date, List[Dict[str, Any]]] = {}
         legacy_runs_by_id: Dict[str, Dict[str, Any]] = {}
-        for legacy_run in legacy_runs:
-            if legacy_run["run_id"] in migrated_run_ids:
-                continue
-            legacy_run_day = datetime.fromtimestamp(legacy_run["created_at"], tz=timezone.utc).date()
-            legacy_runs_by_day.setdefault(legacy_run_day, []).append(legacy_run)
-            legacy_runs_by_id[legacy_run["run_id"]] = legacy_run
+        for session_type in METRICS_COMPONENT_TYPES:
+            # A session holds runs created after it started and before it was last written
+            query_kwargs: Dict[str, Any] = {
+                "TableName": sessions_table_name,
+                "IndexName": "session_type-created_at-index",
+                "KeyConditionExpression": "#session_type = :session_type AND #created_at < :end_ts",
+                "FilterExpression": "attribute_exists(#runs) AND "
+                "(#updated_at >= :start_ts OR attribute_not_exists(#updated_at))",
+                "ExpressionAttributeNames": {
+                    "#session_type": "session_type",
+                    "#created_at": "created_at",
+                    "#updated_at": "updated_at",
+                    "#session_id": "session_id",
+                    "#user_id": "user_id",
+                    "#runs": "runs",
+                },
+                "ExpressionAttributeValues": {
+                    ":session_type": {"S": session_type},
+                    ":start_ts": {"N": str(start_timestamp)},
+                    ":end_ts": {"N": str(end_timestamp)},
+                },
+                "ProjectionExpression": "#session_id, #user_id, #created_at, #updated_at, #runs",
+            }
+            # A page of sessions at a time: the legacy runs field is stored as one string, read whole, so the legacy
+            # runs of each page are reduced to what component metrics count, and checked against the runs table,
+            # before the next page is read
+            while True:
+                response = self.client.query(**query_kwargs)
+                sessions = [
+                    session
+                    for session in (deserialize_from_dynamodb_item(item) for item in response.get("Items", []))
+                    if (session.get("updated_at") or session.get("created_at") or 0) >= start_timestamp
+                ]
+                legacy_runs = [
+                    build_component_metrics_run(legacy_run)
+                    for legacy_run in get_metrics_legacy_runs(sessions)
+                    if start_timestamp <= (legacy_run["created_at"] or 0) < end_timestamp
+                ]
+                # The runs table wins on a run in both, as merge_runs_table_with_legacy_blob does
+                migrated_run_ids = {
+                    run["run_id"]
+                    for run in self._get_metrics_runs(
+                        runs_table_name, sorted({legacy_run["run_id"] for legacy_run in legacy_runs}), ["run_id"]
+                    )
+                }
+                for legacy_run in legacy_runs:
+                    # A run kept in two sessions, or read on an earlier page, is counted once
+                    if legacy_run["run_id"] in migrated_run_ids or legacy_run["run_id"] in legacy_runs_by_id:
+                        continue
+                    legacy_run_day = datetime.fromtimestamp(legacy_run["created_at"], tz=timezone.utc).date()
+                    legacy_runs_by_day.setdefault(legacy_run_day, []).append(legacy_run)
+                    legacy_runs_by_id[legacy_run["run_id"]] = legacy_run
+                if "LastEvaluatedKey" not in response:
+                    break
+                query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
         return legacy_runs_by_day, legacy_runs_by_id
 
     def _get_metrics_parent_runs(self, runs_table_name: str, parent_run_ids: List[str]) -> List[Dict[str, Any]]:

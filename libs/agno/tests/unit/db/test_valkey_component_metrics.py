@@ -112,6 +112,9 @@ class _FakeGlideClient:
     def get(self, key, buffer=None):
         return self.strings.get(key)
 
+    def strlen(self, key):
+        return len(self.strings.get(key, b""))
+
     def set(self, key, value, conditional_set=None, expiry=None, **kwargs):
         self.strings[key] = _encode(value)
         return "OK"
@@ -537,6 +540,28 @@ def test_calculate_metrics_matches_the_stored_sessions_and_runs(db):
     assert db.get_metrics(_utc_date(3), _utc_date(3), user_id="bob")[0][0]["agent_runs_count"] == 1
     totals, _ = db.get_metrics_totals(_utc_date(3), _utc_date(0), fields=["root_runs_count", "cache_read_tokens"])
     assert totals == {"root_runs_count": 7, "cache_read_tokens": 51}
+
+
+def test_calculate_metrics_reads_sessions_and_runs_in_batches_capped_by_size(db, monkeypatch):
+    """Ensure sessions and runs read in batches capped by their stored size, here one record per batch, are all
+    counted"""
+    _seed(db)
+    monkeypatch.setattr("agno.db.valkey.valkey.METRICS_BATCH_BYTES", 1)
+    monkeypatch.setattr("agno.db.valkey.valkey.VALKEY_BATCH_LIMIT", 2)
+    get_metrics_key_batches = db._get_metrics_key_batches
+    batches: List[List[Any]] = []
+
+    def recorded_batches(keys):
+        for batch in get_metrics_key_batches(keys):
+            batches.append(batch)
+            yield batch
+
+    monkeypatch.setattr(db, "_get_metrics_key_batches", recorded_batches)
+
+    db.calculate_metrics()
+
+    assert len(batches) > 1 and all(len(batch) == 1 for batch in batches)
+    assert _stored_counts(db) == _ground_truth(db)
 
 
 def test_calculate_metrics_rebuilds_a_reopened_day(db):

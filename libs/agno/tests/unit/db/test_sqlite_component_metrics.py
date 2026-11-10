@@ -245,6 +245,36 @@ def test_calculate_metrics_counts_runs_kept_in_the_legacy_runs_column(tmp_path):
     assert _numbers(_stored_rows(legacy_db)[(_utc_date(2), "carol", "agent", "agent-1")]) == (2, 2, 30)
 
 
+def test_calculate_metrics_counts_runs_kept_in_the_legacy_runs_column_as_a_json_string(tmp_path):
+    """Ensure a run kept in the legacy runs column as a JSON string, the way v2 stored it, counts like one kept as a
+    JSON array"""
+    db_file = str(tmp_path / "legacy.db")
+    db = SqliteDb(db_file=db_file)
+    day = _noon_utc(2)
+    array_session = _session("array_session", "carol", [_run("array_run", "carol", 10, 0, day)], day)
+    string_session = _session("string_session", "carol", [_run("string_run", "carol", 20, 0, day)], day)
+    db.upsert_session(array_session)
+    db.upsert_session(string_session)
+    with db.Session() as sess, sess.begin():
+        sess.execute(text("ALTER TABLE agno_sessions ADD COLUMN runs JSON"))
+        sess.execute(
+            text("UPDATE agno_sessions SET runs = :runs WHERE session_id = 'array_session'"),
+            {"runs": json.dumps([run.to_dict() for run in array_session.runs])},
+        )
+        sess.execute(
+            text("UPDATE agno_sessions SET runs = :runs WHERE session_id = 'string_session'"),
+            {"runs": json.dumps(json.dumps([run.to_dict() for run in string_session.runs]))},
+        )
+    # Not yet migrated to v3.0.0, so the legacy runs are read
+    db.upsert_schema_version(db.session_table_name, "2.5.0")
+
+    # A new instance, so the sessions table is read with its legacy column
+    legacy_db = SqliteDb(db_file=db_file)
+    legacy_db.calculate_metrics()
+
+    assert _numbers(_stored_rows(legacy_db)[(_utc_date(2), "carol", "agent", "agent-1")]) == (2, 2, 30)
+
+
 def test_calculate_metrics_counts_tool_calls(tmp_path):
     """Ensure each tool call counts in tool_metrics, and one a forked run copied or the user rejected does not"""
     db = SqliteDb(db_file=str(tmp_path / "tools.db"))

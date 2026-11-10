@@ -3,7 +3,7 @@ import time
 from datetime import date, datetime, timedelta, timezone
 from functools import partial
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Literal, Optional, Sequence, Set, Tuple, Union
 from uuid import uuid4
 
 from packaging import version as packaging_version
@@ -18,6 +18,7 @@ from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
     AGGREGATE_METRICS_COUNT_COLUMNS,
     COMPONENT_METRICS_KEY_COLUMNS,
+    METRICS_BATCH_BYTES,
     METRICS_LOCK_SECONDS,
     METRICS_REFRESH_ID,
     METRICS_STOPPED_ERROR,
@@ -2049,6 +2050,29 @@ class ValkeyDb(BaseDb):
         except Exception as e:
             log_debug(f"Error releasing metrics refresh: {e}")
 
+    def _get_metrics_key_batches(self, keys: List[str]) -> Iterator[List[str]]:
+        """Split the given keys of sessions or runs into the batches a metrics calculation reads at once.
+
+        Batches are capped by the stored size of their values, read with STRLEN, not by their count: a session still
+        holding legacy runs, or a run with a long output, can be megabytes, so a fixed number could not be held at
+        once. A value larger than the cap is read alone.
+        """
+        for batch_start in range(0, len(keys), VALKEY_BATCH_LIMIT):
+            batch_keys = keys[batch_start : batch_start + VALKEY_BATCH_LIMIT]
+            pipeline = self._create_pipeline()
+            for key in batch_keys:
+                pipeline.strlen(key)
+            batch: List[str] = []
+            batch_bytes = 0
+            for key, size in zip(batch_keys, (self._exec_pipeline(pipeline, raise_on_error=True) or [])):
+                if batch and batch_bytes + size > METRICS_BATCH_BYTES:
+                    yield batch
+                    batch, batch_bytes = [], 0
+                batch.append(key)
+                batch_bytes += size
+            if batch:
+                yield batch
+
     def _get_metrics_index_state(self, worker_id: str, force: bool = False) -> Optional[Dict[str, Any]]:
         """Get the state of the sorted sets that list the sessions and runs by created_at, indexing every session and
         run first when they were never indexed, when the v3 migration copied runs since, or when forced.
@@ -2077,10 +2101,9 @@ class ValkeyDb(BaseDb):
                 valkey_client=self.valkey_client, prefix=self.db_prefix, table_type=table_type
             )
             key_prefix = generate_valkey_key(prefix=self.db_prefix, table_type=table_type, key_id="")
-            for batch_start in range(0, len(keys), VALKEY_BATCH_LIMIT):
+            for batch_keys in self._get_metrics_key_batches(keys):
                 if not self._heartbeat_metrics_refresh(worker_id):
                     return None
-                batch_keys = keys[batch_start : batch_start + VALKEY_BATCH_LIMIT]
                 pipeline = self._create_pipeline()
                 for key in batch_keys:
                     pipeline.get(key)
@@ -2343,11 +2366,11 @@ class ValkeyDb(BaseDb):
         keys = get_all_keys_for_table(valkey_client=self.valkey_client, prefix=self.db_prefix, table_type="sessions")
         legacy_runs_by_day: Dict[date, List[Dict[str, Any]]] = {}
         legacy_runs_by_id: Dict[str, Dict[str, Any]] = {}
-        for batch_start in range(0, len(keys), VALKEY_BATCH_LIMIT):
+        for batch_keys in self._get_metrics_key_batches(keys):
             if not self._heartbeat_metrics_refresh(worker_id):
                 return None
             pipeline = self._create_pipeline()
-            for key in keys[batch_start : batch_start + VALKEY_BATCH_LIMIT]:
+            for key in batch_keys:
                 pipeline.get(key)
             legacy_runs: List[Dict[str, Any]] = []
             for data in self._exec_pipeline(pipeline, raise_on_error=True) or []:
@@ -2395,15 +2418,22 @@ class ValkeyDb(BaseDb):
                 ScoreBoundary(metrics_day_start(date_to_process + timedelta(days=1)), is_inclusive=False),
             ),
         )
+        keys = [
+            generate_valkey_key(
+                prefix=self.db_prefix,
+                table_type=table_type,
+                key_id=raw_record_id.decode("utf-8") if isinstance(raw_record_id, bytes) else str(raw_record_id),
+            )
+            for raw_record_id in record_ids
+        ]
         records: List[Dict[str, Any]] = []
-        for batch_start in range(0, len(record_ids), VALKEY_BATCH_LIMIT):
+        for batch_keys in self._get_metrics_key_batches(keys):
             # Checked between batches too, so a stop never waits for the whole of a large day
             if should_stop is not None and should_stop():
                 return None
             pipeline = self._create_pipeline()
-            for raw_record_id in record_ids[batch_start : batch_start + VALKEY_BATCH_LIMIT]:
-                record_id = raw_record_id.decode("utf-8") if isinstance(raw_record_id, bytes) else str(raw_record_id)
-                pipeline.get(generate_valkey_key(prefix=self.db_prefix, table_type=table_type, key_id=record_id))
+            for key in batch_keys:
+                pipeline.get(key)
             records.extend(
                 build_record(deserialize_data(data))
                 for data in (self._exec_pipeline(pipeline, raise_on_error=True) or [])
@@ -2420,14 +2450,21 @@ class ValkeyDb(BaseDb):
             generate_created_at_index_key(self.db_prefix, "runs"),
             RangeByScore(ScoreBoundary(end_timestamp - 86400), ScoreBoundary(end_timestamp, is_inclusive=False)),
         )
+        keys = [
+            generate_valkey_key(
+                prefix=self.db_prefix,
+                table_type="runs",
+                key_id=raw_run_id.decode("utf-8") if isinstance(raw_run_id, bytes) else str(raw_run_id),
+            )
+            for raw_run_id in run_ids
+        ]
         team_runs: List[Dict[str, Any]] = []
-        for batch_start in range(0, len(run_ids), VALKEY_BATCH_LIMIT):
+        for batch_keys in self._get_metrics_key_batches(keys):
             if should_stop is not None and should_stop():
                 return None
             pipeline = self._create_pipeline()
-            for raw_run_id in run_ids[batch_start : batch_start + VALKEY_BATCH_LIMIT]:
-                run_id = raw_run_id.decode("utf-8") if isinstance(raw_run_id, bytes) else str(raw_run_id)
-                pipeline.get(generate_valkey_key(prefix=self.db_prefix, table_type="runs", key_id=run_id))
+            for key in batch_keys:
+                pipeline.get(key)
             team_runs.extend(
                 build_component_metrics_run(run)
                 for run in (
@@ -2445,10 +2482,14 @@ class ValkeyDb(BaseDb):
         seen_run_ids: Set[str] = set()
         while parent_run_ids:
             seen_run_ids.update(parent_run_ids)
-            for batch_start in range(0, len(parent_run_ids), VALKEY_BATCH_LIMIT):
+            keys = [
+                generate_valkey_key(prefix=self.db_prefix, table_type="runs", key_id=run_id)
+                for run_id in parent_run_ids
+            ]
+            for batch_keys in self._get_metrics_key_batches(keys):
                 pipeline = self._create_pipeline()
-                for run_id in parent_run_ids[batch_start : batch_start + VALKEY_BATCH_LIMIT]:
-                    pipeline.get(generate_valkey_key(prefix=self.db_prefix, table_type="runs", key_id=run_id))
+                for key in batch_keys:
+                    pipeline.get(key)
                 parent_runs.extend(
                     build_component_metrics_run(deserialize_data(data))
                     for data in (self._exec_pipeline(pipeline, raise_on_error=True) or [])

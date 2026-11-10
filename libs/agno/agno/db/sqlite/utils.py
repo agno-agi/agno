@@ -567,6 +567,23 @@ def _metrics_nested_runs(run_data: Any, key: Any) -> Any:
     ).table_valued("key", "value", "type")
 
 
+def _metrics_legacy_runs_array(runs: Any) -> Any:
+    """Build the legacy runs column as a JSON array, or an empty one.
+
+    v2, and deleting a run before the migration, wrote the column with the runs JSON-encoded a second time, so it can
+    hold a JSON string whose content is the array. It is decoded once, as merge_runs_table_with_legacy_blob does.
+    """
+    decoded = func.json_extract(runs, "$")
+    return case(
+        (func.json_type(runs) == "array", runs),
+        (
+            and_(func.json_type(runs) == "text", func.json_valid(decoded) == 1),
+            case((func.json_type(decoded) == "array", decoded), else_=func.json_array()),
+        ),
+        else_=func.json_array(),
+    )
+
+
 def build_component_metrics_runs_query(table: Table, start_timestamp: int, end_timestamp: int) -> Any:
     """Build the query that reads the runs created in the given time range, with only what component metrics count.
 
@@ -698,13 +715,7 @@ def build_component_metrics_legacy_runs_table(
         return None
 
     # Extracted in the database instead of loading the column, as calculate_metrics does
-    legacy_runs = sessions_table.c.runs
-    legacy_run = func.json_each(
-        case(
-            (func.json_type(legacy_runs) == "array", legacy_runs),
-            else_=func.json_array(),
-        )
-    ).table_valued("value", "type")
+    legacy_run = func.json_each(_metrics_legacy_runs_array(sessions_table.c.runs)).table_valued("value", "type")
     # As text, the way the runs table stores it
     legacy_run_id = cast(func.json_extract(legacy_run.c.value, "$.run_id"), Text)
     # A legacy run is dated and typed the way the v3.0.0 migration writes it to the runs table
