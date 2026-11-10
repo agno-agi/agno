@@ -5,7 +5,7 @@ from typing_extensions import Literal
 from agno.cloud.aws.base import AwsResource
 from agno.cloud.aws.s3.api_client import AwsApiClient
 from agno.cloud.aws.s3.object import S3Object
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_error, log_warning
 
 
 class S3Bucket(AwsResource):
@@ -94,15 +94,15 @@ class S3Bucket(AwsResource):
                 Bucket=self.name,
                 **not_null_args,
             )
-            logger.debug(f"Response: {response}")
+            log_debug(f"Response: {response}")
             bucket_location = response.get("Location")
             if bucket_location is not None:
-                logger.debug(f"Bucket created: {bucket_location}")
+                log_debug(f"Bucket created: {bucket_location}")
                 self.active_resource = response
                 return True
         except Exception as e:
-            logger.error(f"{self.get_resource_type()} could not be created.")
-            logger.error(e)
+            log_error(f"{self.get_resource_type()} could not be created.: {str(e)}")
+            log_error(e)
         return False
 
     def post_create(self, aws_client: AwsApiClient) -> bool:
@@ -119,8 +119,8 @@ class S3Bucket(AwsResource):
                     },
                 )
             except Exception as e:
-                logger.error("Waiter failed.")
-                logger.error(e)
+                log_error(f"Waiter failed.: {str(e)}")
+                log_error(e)
         return True
 
     def _read(self, aws_client: AwsApiClient) -> Optional[Any]:
@@ -129,7 +129,7 @@ class S3Bucket(AwsResource):
         Args:
             aws_client: The AwsApiClient for the current cluster
         """
-        logger.debug(f"Reading {self.get_resource_type()}: {self.get_resource_name()}")
+        log_debug(f"Reading {self.get_resource_type()}: {self.get_resource_name()}")
 
         from botocore.exceptions import ClientError
 
@@ -138,18 +138,18 @@ class S3Bucket(AwsResource):
             bucket = service_resource.Bucket(name=self.name)
             bucket.load()
             creation_date = bucket.creation_date
-            logger.debug(f"Bucket creation_date: {creation_date}")
+            log_debug(f"Bucket creation_date: {creation_date}")
             if creation_date is not None:
-                logger.debug(f"Bucket found: {bucket.name}")
+                log_debug(f"Bucket found: {bucket.name}")
                 self.active_resource = {
                     "name": bucket.name,
                     "creation_date": creation_date,
                 }
         except ClientError as ce:
-            logger.debug(f"ClientError: {ce}")
+            log_debug(f"ClientError: {ce}")
         except Exception as e:
-            logger.error(f"Error reading {self.get_resource_type()}.")
-            logger.error(e)
+            log_error(f"Error reading {self.get_resource_type()}.: {str(e)}")
+            log_error(e)
         return self.active_resource
 
     def _delete(self, aws_client: AwsApiClient) -> bool:
@@ -164,12 +164,12 @@ class S3Bucket(AwsResource):
         self.active_resource = None
         try:
             response = service_client.delete_bucket(Bucket=self.name)
-            logger.debug(f"Response: {response}")
+            log_debug(f"Response: {response}")
             return True
         except Exception as e:
-            logger.error(f"{self.get_resource_type()} could not be deleted.")
-            logger.error("Please try again or delete resources manually.")
-            logger.error(e)
+            log_error(f"{self.get_resource_type()} could not be deleted.: {str(e)}")
+            log_error(f"Please try again or delete resources manually.: {str(e)}")
+            log_error(e)
         return False
 
     def get_objects(self, aws_client: Optional[AwsApiClient] = None, prefix: Optional[str] = None) -> List[Any]:
@@ -181,10 +181,10 @@ class S3Bucket(AwsResource):
         """
         bucket = self.get_resource(aws_client)
         if bucket is None:
-            logger.warning(f"Could not get bucket: {self.name}")
+            log_warning(f"Could not get bucket: {self.name}")
             return []
 
-        logger.debug(f"Getting objects for bucket: {bucket.name}")
+        log_debug(f"Getting objects for bucket: {bucket.name}")
         # Get all objects in bucket
         object_summaries = bucket.objects.all()
         all_objects: List[S3Object] = []

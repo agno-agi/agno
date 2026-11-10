@@ -2,7 +2,7 @@
 
 Describe key changes, mention related issues or motivation for the changes.
 
-(If applicable, issue number: #\_\_\_\_)
+(Required for external contributors: link the issue this PR resolves with `Fixes #<issue_number>`. The issue must have the `ready` label.)
 
 ## Type of change
 
@@ -24,6 +24,12 @@ Describe key changes, mention related issues or motivation for the changes.
 - [ ] Examples and guides: Relevant cookbook examples have been included or updated (if applicable)
 - [ ] Tested in clean environment
 - [ ] Tests added/updated (if applicable)
+
+### Duplicate and AI-Generated PR Check
+
+- [ ] I have searched existing [open pull requests](https://github.com/agno-agi/agno/pulls) and confirmed that no other PR already addresses this issue
+- [ ] If a similar PR exists, I have explained below why this PR is a better approach
+- [ ] Check if this PR was entirely AI-generated (by Copilot, Claude Code, Cursor, etc.)
 
 ---
 

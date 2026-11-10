@@ -1,8 +1,13 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
 
+from agno.exceptions import RunCancelledException
+from agno.media.storage.base import AsyncMediaStorage, MediaStorage
+from agno.registry import Registry
 from agno.run.agent import RunOutputEvent
+from agno.run.base import RunContext
+from agno.run.cancel import araise_if_cancelled, raise_if_cancelled
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import (
     StepsExecutionCompletedEvent,
@@ -12,7 +17,8 @@ from agno.run.workflow import (
 )
 from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, logger
-from agno.workflow.step import Step, StepInput, StepOutput, StepType
+from agno.workflow.step import Step, UnresolvableCallableError
+from agno.workflow.types import HumanReview, OnReject, StepInput, StepOutput, StepRequirement, StepType
 
 WorkflowSteps = List[
     Union[
@@ -25,13 +31,20 @@ WorkflowSteps = List[
         "Parallel",  # type: ignore # noqa: F821
         "Condition",  # type: ignore # noqa: F821
         "Router",  # type: ignore # noqa: F821
+        "Workflow",  # type: ignore # noqa: F821 - Nested workflow support
     ]
 ]
 
 
 @dataclass
 class Steps:
-    """A pipeline of steps that execute in order"""
+    """A pipeline of steps that execute in order.
+
+    HITL Mode:
+        Pauses before executing the steps pipeline and asks the user to confirm:
+        - User confirms -> execute all steps in the pipeline
+        - User rejects -> skip the entire pipeline
+    """
 
     # Steps to execute
     steps: WorkflowSteps
@@ -40,31 +53,144 @@ class Steps:
     name: Optional[str] = None
     description: Optional[str] = None
 
+    human_review: HumanReview = field(default_factory=HumanReview)
+
     def __init__(
-        self, name: Optional[str] = None, description: Optional[str] = None, steps: Optional[List[Any]] = None
-    ):  # Change to List[Any]
+        self,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        steps: Optional[List[Any]] = None,
+        human_review: Optional[HumanReview] = None,
+    ):
         self.name = name
         self.description = description
         self.steps = steps if steps else []
 
+        self.human_review = human_review or HumanReview()
+
+        from agno.workflow.types import validate_human_review_for_steps
+
+        validate_human_review_for_steps(self.human_review)
+
+    def to_dict(self) -> Dict[str, Any]:
+        result: Dict[str, Any] = {
+            "type": "Steps",
+            "name": self.name,
+            "description": self.description,
+            "steps": [step.to_dict() for step in self.steps if hasattr(step, "to_dict")],
+        }
+        if self.human_review:
+            result["human_review"] = self.human_review.to_dict()
+        return result
+
+    def create_step_requirement(
+        self,
+        step_index: int,
+        step_input: StepInput,
+    ) -> StepRequirement:
+        """Create a StepRequirement for HITL pause (confirmation).
+
+        Args:
+            step_index: Index of the steps pipeline in the workflow.
+            step_input: The prepared input for the steps.
+
+        Returns:
+            StepRequirement configured for this steps pipeline's HITL needs.
+        """
+        on_reject = self.human_review.on_reject
+        return StepRequirement(
+            step_id=str(uuid4()),
+            step_name=self.name or f"steps_{step_index + 1}",
+            step_index=step_index,
+            step_type="Steps",
+            requires_confirmation=self.human_review.requires_confirmation,
+            confirmation_message=self.human_review.confirmation_message
+            or f"Execute steps pipeline '{self.name or 'steps'}'?",
+            on_reject=on_reject.value if isinstance(on_reject, OnReject) else str(on_reject),
+            requires_user_input=False,
+            step_input=step_input,
+        )
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        registry: Optional["Registry"] = None,
+        db: Optional[Any] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+        strict: bool = False,
+        branch_suffix: str = "",
+    ) -> "Steps":
+        from agno.workflow.condition import Condition
+        from agno.workflow.loop import Loop
+        from agno.workflow.parallel import Parallel
+        from agno.workflow.router import Router
+
+        def deserialize_step(step_data: Dict[str, Any], suffix: Optional[str] = None) -> Any:
+            suffix = branch_suffix if suffix is None else suffix
+            step_type = step_data.get("type", "Step")
+            if step_type == "Loop":
+                return Loop.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
+            elif step_type == "Parallel":
+                return Parallel.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
+            elif step_type == "Steps":
+                return cls.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
+            elif step_type == "Condition":
+                return Condition.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
+            elif step_type == "Router":
+                return Router.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
+            else:
+                return Step.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
+
+        if data.get("human_review"):
+            human_review = HumanReview.from_dict(data["human_review"])
+        else:
+            from agno.workflow.utils.hitl import drop_legacy_hitl_keys
+
+            drop_legacy_hitl_keys(data, StepType.STEPS)
+            human_review = HumanReview()
+
+        return cls(
+            name=data.get("name"),
+            description=data.get("description"),
+            steps=[deserialize_step(step) for step in data.get("steps", [])],
+            human_review=human_review,
+        )
+
     def _prepare_steps(self):
         """Prepare the steps for execution - mirrors workflow logic"""
         from agno.agent.agent import Agent
+        from agno.agents.base import BaseExternalAgent
         from agno.team.team import Team
         from agno.workflow.condition import Condition
         from agno.workflow.loop import Loop
         from agno.workflow.parallel import Parallel
         from agno.workflow.router import Router
         from agno.workflow.step import Step
+        from agno.workflow.workflow import Workflow
 
         prepared_steps: WorkflowSteps = []
         for step in self.steps:
             if callable(step) and hasattr(step, "__name__"):
                 prepared_steps.append(Step(name=step.__name__, description="User-defined callable step", executor=step))
-            elif isinstance(step, Agent):
+            elif isinstance(step, (Agent, BaseExternalAgent)):
                 prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
             elif isinstance(step, Team):
                 prepared_steps.append(Step(name=step.name, description=step.description, team=step))
+            elif isinstance(step, Workflow):
+                prepared_steps.append(Step(name=step.name, description=step.description, workflow=step))
             elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
                 prepared_steps.append(step)
             else:
@@ -82,11 +208,13 @@ class Steps:
         current_images = step_input.images or []
         current_videos = step_input.videos or []
         current_audio = step_input.audio or []
+        current_files = step_input.files or []
 
         if isinstance(step_outputs, list):
             step_images = sum([out.images or [] for out in step_outputs], [])
             step_videos = sum([out.videos or [] for out in step_outputs], [])
             step_audio = sum([out.audio or [] for out in step_outputs], [])
+            step_files = sum([out.files or [] for out in step_outputs], [])
             # Use the last output's content for chaining
             previous_step_content = step_outputs[-1].content if step_outputs else None
         else:
@@ -94,6 +222,7 @@ class Steps:
             step_images = step_outputs.images or []
             step_videos = step_outputs.videos or []
             step_audio = step_outputs.audio or []
+            step_files = step_outputs.files or []
             previous_step_content = step_outputs.content
 
         updated_previous_step_outputs = {}
@@ -110,6 +239,7 @@ class Steps:
             images=current_images + step_images,
             videos=current_videos + step_videos,
             audio=current_audio + step_audio,
+            files=current_files + step_files,
         )
 
     def execute(
@@ -118,11 +248,16 @@ class Steps:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
     ) -> StepOutput:
         """Execute all steps in sequence and return the final result"""
         log_debug(f"Steps Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="-")
@@ -141,6 +276,8 @@ class Steps:
 
         try:
             for i, step in enumerate(self.steps):
+                if workflow_run_response and workflow_run_response.run_id:
+                    raise_if_cancelled(workflow_run_response.run_id)
                 step_name = getattr(step, "name", f"step_{i + 1}")
                 log_debug(f"Steps {self.name}: Executing step {i + 1}/{len(self.steps)} - {step_name}")
 
@@ -151,14 +288,31 @@ class Steps:
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
+                    run_context=run_context,
                     session_state=session_state,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
                 )
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition/Router steps)
                 if isinstance(step_output, list):
+                    # Check for executor HITL pause in list results
+                    if step_output and getattr(step_output[-1], "is_paused", False):
+                        all_results.extend(step_output)
+                        return StepOutput(
+                            step_name=self.name,
+                            step_id=steps_id,
+                            step_type=StepType.STEPS,
+                            content=f"Steps {self.name} paused at inner step",
+                            steps=all_results,
+                            is_paused=True,
+                        )
+
                     all_results.extend(step_output)
                     if step_output:
                         steps_step_outputs[step_name] = step_output[-1]
@@ -167,6 +321,18 @@ class Steps:
                             logger.info(f"Early termination requested by step {step_name}")
                             break
                 else:
+                    # Propagate executor HITL pause from inner step
+                    if getattr(step_output, "is_paused", False):
+                        all_results.append(step_output)
+                        return StepOutput(
+                            step_name=self.name,
+                            step_id=steps_id,
+                            step_type=StepType.STEPS,
+                            content=f"Steps {self.name} paused at inner step",
+                            steps=all_results,
+                            is_paused=True,
+                        )
+
                     all_results.append(step_output)
                     steps_step_outputs[step_name] = step_output
 
@@ -188,11 +354,18 @@ class Steps:
                 step_type=StepType.STEPS,
                 content=f"Steps {self.name} completed with {len(all_results)} results",
                 success=all(result.success for result in all_results) if all_results else True,
+                stop=any(result.stop for result in all_results) if all_results else False,
                 steps=all_results,
             )
 
+        except RunCancelledException:
+            raise
+        except UnresolvableCallableError:
+            # A placeholder for an unresolved reference can never succeed:
+            # converting it to a failed StepOutput would let the run complete.
+            raise
         except Exception as e:
-            logger.error(f"Steps execution failed: {e}")
+            logger.exception("Steps execution failed")
             return StepOutput(
                 step_name=self.name or "Steps",
                 content=f"Steps execution failed: {str(e)}",
@@ -204,18 +377,22 @@ class Steps:
         self,
         step_input: StepInput,
         workflow_run_response: WorkflowRunOutput,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_events: bool = False,
-        stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         parent_step_id: Optional[str] = None,
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Execute all steps in sequence with streaming support"""
         log_debug(f"Steps Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="-")
@@ -223,9 +400,6 @@ class Steps:
         steps_id = str(uuid4())
 
         self._prepare_steps()
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps
 
         if stream_events:
             # Yield steps execution started event
@@ -252,6 +426,8 @@ class Steps:
 
         try:
             for i, step in enumerate(self.steps):
+                if workflow_run_response and workflow_run_response.run_id:
+                    raise_if_cancelled(workflow_run_response.run_id)
                 step_name = getattr(step, "name", f"step_{i + 1}")
                 log_debug(f"Steps {self.name}: Executing step {i + 1}/{len(self.steps)} - {step_name}")
 
@@ -269,16 +445,21 @@ class Steps:
                     current_step_input,
                     session_id=session_id,
                     user_id=user_id,
+                    run_context=run_context,
                     session_state=session_state,
                     stream_events=stream_events,
                     stream_executor_events=stream_executor_events,
                     workflow_run_response=workflow_run_response,
                     step_index=child_step_index,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     parent_step_id=steps_id,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_step.append(event)
@@ -286,6 +467,18 @@ class Steps:
                     else:
                         # Yield other events (streaming content, step events, etc.)
                         yield event
+
+                # Propagate executor HITL pause from inner step
+                if step_outputs_for_step and getattr(step_outputs_for_step[-1], "is_paused", False):
+                    yield StepOutput(
+                        step_name=self.name,
+                        step_id=steps_id,
+                        step_type=StepType.STEPS,
+                        content=f"Steps {self.name} paused at inner step",
+                        steps=all_results,
+                        is_paused=True,
+                    )
+                    return
 
                 # Update step outputs tracking and prepare input for next step
                 if step_outputs_for_step:
@@ -335,11 +528,18 @@ class Steps:
                 step_type=StepType.STEPS,
                 content=f"Steps {self.name} completed with {len(all_results)} results",
                 success=all(result.success for result in all_results) if all_results else True,
+                stop=any(result.stop for result in all_results) if all_results else False,
                 steps=all_results,
             )
 
+        except RunCancelledException:
+            raise
+        except UnresolvableCallableError:
+            # A placeholder for an unresolved reference can never succeed:
+            # converting it to a failed StepOutput would let the run complete.
+            raise
         except Exception as e:
-            logger.error(f"Steps streaming failed: {e}")
+            logger.exception("Steps streaming failed")
             error_result = StepOutput(
                 step_name=self.name or "Steps",
                 content=f"Steps execution failed: {str(e)}",
@@ -354,11 +554,16 @@ class Steps:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
     ) -> StepOutput:
         """Execute all steps in sequence asynchronously and return the final result"""
         log_debug(f"Steps Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="-")
@@ -377,6 +582,8 @@ class Steps:
 
         try:
             for i, step in enumerate(self.steps):
+                if workflow_run_response and workflow_run_response.run_id:
+                    await araise_if_cancelled(workflow_run_response.run_id)
                 step_name = getattr(step, "name", f"step_{i + 1}")
                 log_debug(f"Steps {self.name}: Executing async step {i + 1}/{len(self.steps)} - {step_name}")
 
@@ -387,14 +594,31 @@ class Steps:
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
+                    run_context=run_context,
                     session_state=session_state,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
                 )
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition/Router steps)
                 if isinstance(step_output, list):
+                    # Check for executor HITL pause in list results
+                    if step_output and getattr(step_output[-1], "is_paused", False):
+                        all_results.extend(step_output)
+                        return StepOutput(
+                            step_name=self.name,
+                            step_id=steps_id,
+                            step_type=StepType.STEPS,
+                            content=f"Steps {self.name} paused at inner step",
+                            steps=all_results,
+                            is_paused=True,
+                        )
+
                     all_results.extend(step_output)
                     if step_output:
                         steps_step_outputs[step_name] = step_output[-1]
@@ -403,6 +627,18 @@ class Steps:
                             logger.info(f"Early termination requested by step {step_name}")
                             break
                 else:
+                    # Propagate executor HITL pause from inner step
+                    if getattr(step_output, "is_paused", False):
+                        all_results.append(step_output)
+                        return StepOutput(
+                            step_name=self.name,
+                            step_id=steps_id,
+                            step_type=StepType.STEPS,
+                            content=f"Steps {self.name} paused at inner step",
+                            steps=all_results,
+                            is_paused=True,
+                        )
+
                     all_results.append(step_output)
                     steps_step_outputs[step_name] = step_output
 
@@ -423,11 +659,18 @@ class Steps:
                 step_type=StepType.STEPS,
                 content=f"Steps {self.name} completed with {len(all_results)} results",
                 success=all(result.success for result in all_results) if all_results else True,
+                stop=any(result.stop for result in all_results) if all_results else False,
                 steps=all_results,
             )
 
+        except RunCancelledException:
+            raise
+        except UnresolvableCallableError:
+            # A placeholder for an unresolved reference can never succeed:
+            # converting it to a failed StepOutput would let the run complete.
+            raise
         except Exception as e:
-            logger.error(f"Async steps execution failed: {e}")
+            logger.exception("Async steps execution failed")
             return StepOutput(
                 step_name=self.name or "Steps",
                 content=f"Steps execution failed: {str(e)}",
@@ -439,18 +682,22 @@ class Steps:
         self,
         step_input: StepInput,
         workflow_run_response: WorkflowRunOutput,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_events: bool = False,
-        stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         parent_step_id: Optional[str] = None,
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Execute all steps in sequence with async streaming support"""
         log_debug(f"Steps Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="-")
@@ -458,9 +705,6 @@ class Steps:
         steps_id = str(uuid4())
 
         self._prepare_steps()
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps
 
         if stream_events:
             # Yield steps execution started event
@@ -487,6 +731,8 @@ class Steps:
 
         try:
             for i, step in enumerate(self.steps):
+                if workflow_run_response and workflow_run_response.run_id:
+                    await araise_if_cancelled(workflow_run_response.run_id)
                 step_name = getattr(step, "name", f"step_{i + 1}")
                 log_debug(f"Steps {self.name}: Executing async step {i + 1}/{len(self.steps)} - {step_name}")
 
@@ -504,16 +750,21 @@ class Steps:
                     current_step_input,
                     session_id=session_id,
                     user_id=user_id,
+                    run_context=run_context,
                     session_state=session_state,
                     stream_events=stream_events,
                     stream_executor_events=stream_executor_events,
                     workflow_run_response=workflow_run_response,
                     step_index=child_step_index,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     parent_step_id=steps_id,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_step.append(event)
@@ -521,6 +772,18 @@ class Steps:
                     else:
                         # Yield other events (streaming content, step events, etc.)
                         yield event
+
+                # Propagate executor HITL pause from inner step
+                if step_outputs_for_step and getattr(step_outputs_for_step[-1], "is_paused", False):
+                    yield StepOutput(
+                        step_name=self.name,
+                        step_id=steps_id,
+                        step_type=StepType.STEPS,
+                        content=f"Steps {self.name} paused at inner step",
+                        steps=all_results,
+                        is_paused=True,
+                    )
+                    return
 
                 # Update step outputs tracking and prepare input for next step
                 if step_outputs_for_step:
@@ -569,11 +832,18 @@ class Steps:
                 step_type=StepType.STEPS,
                 content=f"Steps {self.name} completed with {len(all_results)} results",
                 success=all(result.success for result in all_results) if all_results else True,
+                stop=any(result.stop for result in all_results) if all_results else False,
                 steps=all_results,
             )
 
+        except RunCancelledException:
+            raise
+        except UnresolvableCallableError:
+            # A placeholder for an unresolved reference can never succeed:
+            # converting it to a failed StepOutput would let the run complete.
+            raise
         except Exception as e:
-            logger.error(f"Async steps streaming failed: {e}")
+            logger.exception("Async steps streaming failed")
             error_result = StepOutput(
                 step_name=self.name or "Steps",
                 content=f"Steps execution failed: {str(e)}",

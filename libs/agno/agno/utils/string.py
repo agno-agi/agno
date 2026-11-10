@@ -2,12 +2,14 @@ import hashlib
 import json
 import re
 import uuid
-from typing import Optional, Type
+from typing import Any, Optional, Type, Union
 from uuid import uuid4
 
 from pydantic import BaseModel, ValidationError
 
-from agno.utils.log import logger
+from agno.utils.log import log_warning, logger
+
+POSTGRES_INVALID_CHARS_REGEX = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")
 
 
 def is_valid_uuid(uuid_str: str) -> bool:
@@ -64,20 +66,51 @@ def hash_string_sha256(input_string):
     return hex_digest
 
 
-def _extract_json_objects(text: str) -> list[str]:
-    objs: list[str] = []
-    brace_depth = 0
-    start_idx: Optional[int] = None
+def _scan_brace_spans(text: str, quotes_in_prose: bool) -> list[tuple[int, int]]:
+    """Return (start, end) spans of outermost balanced braces; unmatched braces are skipped."""
+    closed: list[tuple[int, int]] = []
+    stack: list[int] = []
+    in_string = False
+    escape = False
     for idx, ch in enumerate(text):
-        if ch == "{" and brace_depth == 0:
-            start_idx = idx
-        if ch == "{":
-            brace_depth += 1
-        elif ch == "}":
-            brace_depth -= 1
-            if brace_depth == 0 and start_idx is not None:
-                objs.append(text[start_idx : idx + 1])
-                start_idx = None
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = quotes_in_prose or bool(stack)
+        elif ch == "{":
+            stack.append(idx)
+        elif ch == "}" and stack:
+            closed.append((stack.pop(), idx + 1))
+    # Spans nest, so keep the outermost; an unclosed '{' then no longer hides the spans inside it
+    spans: list[tuple[int, int]] = []
+    last_end = -1
+    for start, end in sorted(closed):
+        if start >= last_end:
+            spans.append((start, end))
+            last_end = end
+    return spans
+
+
+def _extract_json_objects(text: str) -> list[str]:
+    # A quote in prose may open a quoted phrase or be a stray, so scan both ways and keep spans that decode
+    spans = set(_scan_brace_spans(text, quotes_in_prose=True)) | set(_scan_brace_spans(text, quotes_in_prose=False))
+    objs: list[str] = []
+    last_end = -1
+    for start, end in sorted(spans):
+        if start < last_end:
+            continue
+        candidate = text[start:end]
+        try:
+            json.loads(candidate)
+        except (json.JSONDecodeError, RecursionError):
+            continue
+        objs.append(candidate)
+        last_end = end
     return objs
 
 
@@ -87,7 +120,8 @@ def _clean_json_content(content: str) -> str:
     if "```json" in content:
         content = content.split("```json")[-1].strip()
         parts = content.split("```")
-        parts.pop(-1)
+        if len(parts) > 1:
+            parts.pop(-1)
         content = "".join(parts)
     elif "```" in content:
         content = content.split("```")[1].strip()
@@ -139,7 +173,10 @@ def _parse_individual_json(content: str, output_schema: Type[BaseModel]) -> Opti
                     field_value = candidate_obj[field_name]
                     # If field is a list, extend it; otherwise, use the latest value
                     if isinstance(field_value, list):
-                        if field_name not in merged_data:
+                        # An earlier fragment may have provided a non-list value for this field
+                        # (an LLM often emits a draft scalar before the real list). Extending
+                        # that value would raise, so start a fresh accumulator instead.
+                        if not isinstance(merged_data.get(field_name), list):
                             merged_data[field_name] = []
                         merged_data[field_name].extend(field_value)
                     else:
@@ -151,7 +188,7 @@ def _parse_individual_json(content: str, output_schema: Type[BaseModel]) -> Opti
     try:
         return output_schema.model_validate(merged_data)
     except ValidationError as e:
-        logger.warning("Validation failed on merged data: %s", e)
+        log_warning(f"Validation failed on merged data: {str(e)}")
         return None
 
 
@@ -167,19 +204,30 @@ def parse_response_model_str(content: str, output_schema: Type[BaseModel]) -> Op
         if reasoning_content:
             content = output_content
 
-    # Clean content first to simplify all parsing attempts
+    # First attempt: try parsing raw content directly (preserves valid JSON with code blocks in strings)
+    try:
+        structured_output = output_schema.model_validate_json(content)
+    except (ValidationError, json.JSONDecodeError):
+        try:
+            data = json.loads(content)
+            structured_output = output_schema.model_validate(data)
+        except (ValidationError, json.JSONDecodeError):
+            pass
+
+    if structured_output is not None:
+        return structured_output
+
+    # Second attempt: clean content and try again
     cleaned_content = _clean_json_content(content)
 
     try:
-        # First attempt: direct JSON validation on cleaned content
         structured_output = output_schema.model_validate_json(cleaned_content)
     except (ValidationError, json.JSONDecodeError):
         try:
-            # Second attempt: Parse as Python dict
             data = json.loads(cleaned_content)
             structured_output = output_schema.model_validate(data)
         except (ValidationError, json.JSONDecodeError) as e:
-            logger.warning(f"Failed to parse cleaned JSON: {e}")
+            log_warning(f"Failed to parse cleaned JSON: {str(e)}")
 
             # Third attempt: Extract individual JSON objects
             candidate_jsons = _extract_json_objects(cleaned_content)
@@ -201,6 +249,57 @@ def parse_response_model_str(content: str, output_schema: Type[BaseModel]) -> Op
     return structured_output
 
 
+def parse_response_dict_str(content: str) -> Optional[dict]:
+    """Parse dict from string content, extracting JSON if needed"""
+    from agno.utils.reasoning import extract_thinking_content
+
+    # Handle thinking content b/w <think> tags
+    if "</think>" in content:
+        reasoning_content, output_content = extract_thinking_content(content)
+        if reasoning_content:
+            content = output_content
+
+    # First attempt: try parsing raw content directly (preserves valid JSON with code blocks in strings)
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        pass
+
+    # Second attempt: clean content and try again
+    cleaned_content = _clean_json_content(content)
+
+    try:
+        return json.loads(cleaned_content)
+    except json.JSONDecodeError as e:
+        log_warning(f"Failed to parse cleaned JSON: {str(e)}")
+
+        # Second attempt: Extract individual JSON objects
+        candidate_jsons = _extract_json_objects(cleaned_content)
+
+        if len(candidate_jsons) == 1:
+            # Single JSON object - try to parse it directly
+            try:
+                return json.loads(candidate_jsons[0])
+            except json.JSONDecodeError:
+                pass
+
+        if len(candidate_jsons) > 1:
+            # Final attempt: Merge multiple JSON objects
+            merged_data: dict = {}
+            for candidate in candidate_jsons:
+                try:
+                    obj = json.loads(candidate)
+                    if isinstance(obj, dict):
+                        merged_data.update(obj)
+                except json.JSONDecodeError:
+                    continue
+            if merged_data:
+                return merged_data
+
+        logger.warning("All parsing attempts failed.")
+        return None
+
+
 def generate_id(seed: Optional[str] = None) -> str:
     """
     Generate a deterministic UUID5 based on a seed string.
@@ -220,7 +319,7 @@ def generate_id(seed: Optional[str] = None) -> str:
 def generate_id_from_name(name: Optional[str] = None) -> str:
     """
     Generate a deterministic ID from a name string.
-    If no name is provided, generate a random UUID4.
+    If no name is provided, generate a human-readable random ID.
 
     Args:
         name (str): The name string to generate the ID from.
@@ -228,4 +327,85 @@ def generate_id_from_name(name: Optional[str] = None) -> str:
     if name:
         return name.lower().replace(" ", "-").replace("_", "-")
     else:
-        return str(uuid4())
+        from agno.utils.names import generate_human_readable_id
+
+        return generate_human_readable_id()
+
+
+def generate_component_id_from_name(name: str) -> str:
+    """Strict single-segment component id: lowercase, non-alphanumerics fold to
+    one hyphen, edges stripped.
+
+    This is the Studio and REST mint (it has been Studio's since 2.8 as _slugify).
+    It never produces a value validate_component_id rejects, so a machine-
+    minted id is always a safe URL path segment. generate_id_from_name above
+    stays untouched: it is a persisted identity contract for code-defined
+    components, Toolkit ids, and everything keyed on them.
+    """
+    slug = "".join(c.lower() if c.isalnum() else "-" for c in name.strip())
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return slug.strip("-") or "component"
+
+
+def validate_component_id(component_id: str) -> Optional[str]:
+    """One shared rule for explicit component ids; returns the problem or None.
+
+    Ids appear as URL path segments (/components/{id}, /agents/{id}/runs) and
+    inside schedule endpoints, so whitespace, path and query metacharacters,
+    and control characters are refused. Unicode letters are allowed - the
+    strict mint keeps them too, so the two agree.
+    """
+    if not component_id:
+        return "component_id must not be empty"
+    if any(ch.isspace() for ch in component_id):
+        return "component_id must not contain whitespace"
+    forbidden = set("/\\?#%")
+    hit = next((ch for ch in component_id if ch in forbidden or ord(ch) < 32), None)
+    if hit is not None:
+        return f"component_id must not contain {hit!r}"
+    # "." and ".." are path segments, not names: a URL carrying one is
+    # normalised before it reaches a route, so the row would be unaddressable.
+    if component_id in (".", ".."):
+        return "component_id must not be a path segment"
+    return None
+
+
+def sanitize_postgres_string(value: Optional[str]) -> Optional[str]:
+    """Remove illegal chars from string values to prevent PostgreSQL encoding errors.
+
+    This function all chars illegal in Postgres UTF-8 text fields.
+    Useful to prevent CharacterNotInRepertoireError when storing strings.
+
+    Args:
+        value: The string value to sanitize.
+
+    Returns:
+        The sanitized string with illegal chars removed, or None if input was None.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return POSTGRES_INVALID_CHARS_REGEX.sub("", value)
+
+
+def sanitize_postgres_strings(data: Union[dict, list, str, Any]) -> Union[dict, list, str, Any]:
+    """Recursively sanitize all string values in a dictionary or JSON structure.
+
+    This function traverses dictionaries, lists, and nested structures to find
+    and sanitize all string values, removing null bytes that PostgreSQL cannot handle.
+
+    Args:
+        data: The data structure to sanitize (dict, list, str or any other type).
+
+    Returns:
+        The sanitized data structure with all strings cleaned of null bytes.
+    """
+    if isinstance(data, dict):
+        return {key: sanitize_postgres_strings(value) for key, value in data.items()}
+    elif isinstance(data, list):
+        return [sanitize_postgres_strings(item) for item in data]
+    elif isinstance(data, str):
+        return sanitize_postgres_string(data)
+    else:
+        return data

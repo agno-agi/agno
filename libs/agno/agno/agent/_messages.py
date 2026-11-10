@@ -1,0 +1,2810 @@
+"""System and user message construction helpers for Agent."""
+
+from __future__ import annotations
+
+import re
+import string
+from collections import ChainMap, Counter
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    Type,
+    Union,
+    cast,
+)
+
+from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from agno.agent.agent import Agent
+    from agno.compaction import Compaction
+
+from agno.agent._utils import convert_dependencies_to_string, convert_documents_to_string
+from agno.filters import FilterExpr
+from agno.media import Audio, File, Image, Video
+from agno.metrics import RunMetrics, SessionMetrics, merge_background_metrics
+from agno.models.message import Message, MessageReferences
+from agno.models.response import ModelResponse
+from agno.run import RunContext
+from agno.run.agent import RunOutput
+from agno.run.base import RunStatus
+from agno.run.messages import RunMessages
+from agno.session import AgentSession
+from agno.session._utils import continue_history_session, resolve_run_index
+from agno.tools.function import Function
+from agno.utils.agent import (
+    aexecute_instructions,
+    aexecute_system_message,
+    execute_instructions,
+    execute_system_message,
+)
+from agno.utils.common import is_typed_dict
+from agno.utils.knowledge import get_run_response_kwarg, get_user_id_kwarg
+from agno.utils.log import log_debug, log_info, log_warning
+from agno.utils.message import copy_history_message, filter_tool_calls, get_text_from_message, render_instructions
+from agno.utils.prompts import get_json_output_prompt, get_response_model_format_prompt
+from agno.utils.timer import Timer
+
+
+def agent_compaction(agent: "Agent") -> Optional["Compaction"]:
+    """The agent's Compaction, or None when compaction is off.
+
+    set_compaction turns compaction=True into a Compaction at init, so anything else left on the
+    field means compaction is off.
+    """
+    from agno.compaction import Compaction
+
+    return agent.compaction if isinstance(agent.compaction, Compaction) else None
+
+
+def _stored_compaction(agent: "Agent", session: AgentSession, up_to_run_id: Optional[str] = None) -> Optional[Any]:
+    """The compaction in force for this run.
+
+    Read from the record table rather than from a value on the session: records are immutable
+    facts about single runs, so two containers writing different runs never clobber one another,
+    and a resumed run can resolve the fold it actually saw.
+    """
+    from agno.compaction.types import CompactionRecord
+
+    compaction = agent_compaction(agent)
+    if compaction is None:
+        return None
+    archive = compaction.archive_for(session.session_id, agent.db)
+    if archive is None:
+        return None
+    row = archive.latest(up_to_run_id)
+    if not row:
+        return None
+    try:
+        return CompactionRecord.from_dict(row)
+    except Exception as e:  # noqa: BLE001
+        log_warning(f"Ignoring unreadable compaction record: {e}")
+        return None
+
+
+def _compaction_as_of(run_response: Optional[RunOutput]) -> Optional[str]:
+    """The run whose fold this run must inherit, if it is resuming one.
+
+    A fresh run returns None and takes the latest. A fork or regeneration returns the run it
+    branched from, so it rebuilds the context that run actually had rather than one summarizing
+    its own future.
+    """
+    if run_response is None:
+        return None
+    return getattr(run_response, "forked_from_run_id", None) or getattr(run_response, "regenerated_from", None)
+
+
+def _estimated_context_tokens(
+    agent: "Agent", messages: List[Message], tools: Optional[List[Any]] = None
+) -> Optional[int]:
+    """Local estimate for the model-bound context this compaction decision is about.
+
+    RunMetrics.input_tokens is billing telemetry. It accumulates every model call in a tool loop,
+    plus background and compaction model calls, so it can be much larger than any single request
+    the provider had to fit. ``compact_at_tokens`` is a context-size threshold, so use the current
+    message view instead.
+
+    Counted by the model or ``Compaction.token_counter`` when one is chosen, and locally otherwise.
+    """
+    from agno.compaction._tokens import count_request
+    from agno.utils.tokens import count_tokens
+
+    counted = count_request(_sync_counter(agent), messages, tools)
+    if counted is not None:
+        return counted
+    model_id = getattr(agent.model, "id", None) or "gpt-4o"
+    try:
+        return count_tokens(messages, tools=tools, model_id=model_id)
+    except Exception as e:  # noqa: BLE001 - token estimation must never fail a run
+        log_warning(f"Could not estimate tokens for compaction: {e}")
+        return None
+
+
+def _compaction_inputs(
+    agent: "Agent", messages: Optional[List[Message]] = None, tools: Optional[List[Any]] = None
+) -> Dict[str, Any]:
+    return {
+        "context_tokens": _estimated_context_tokens(agent, messages, tools) if messages is not None else None,
+        "model": agent.model,
+    }
+
+
+async def _acompaction_inputs(
+    agent: "Agent", messages: Optional[List[Message]] = None, tools: Optional[List[Any]] = None
+) -> Dict[str, Any]:
+    """``_compaction_inputs`` for async runs, counting without blocking the event loop."""
+    if messages is None:
+        return _compaction_inputs(agent, messages, tools)
+    counted = await _acount(agent, messages, tools)
+    return {
+        "context_tokens": counted if counted is not None else _estimated_context_tokens(agent, messages, tools),
+        "model": agent.model,
+    }
+
+
+def _sync_counter(agent: "Agent") -> Any:
+    """What counts a request in a sync run: the model's own count_tokens when use_model_token_count
+    is set, else the token_counter, else nothing - the local estimate."""
+    compaction = agent.compaction
+    if getattr(compaction, "use_model_token_count", False) and agent.model is not None:
+        return agent.model.count_tokens
+    return getattr(compaction, "token_counter", None)
+
+
+async def _acount(agent: "Agent", messages: List[Message], tools: Optional[List[Any]]) -> Optional[int]:
+    """A request's count in an async run, or None to use the local estimate.
+
+    The model's own count is awaited through acount_tokens. An async token_counter is awaited too;
+    a sync one is usually a network call, so it runs in a worker thread rather than blocking the
+    event loop.
+    """
+    from agno.compaction._tokens import acount_request
+
+    compaction = agent.compaction
+    if getattr(compaction, "use_model_token_count", False) and agent.model is not None:
+        try:
+            return int(await agent.model.acount_tokens(messages, tools))
+        except Exception as e:  # noqa: BLE001 - counting is never worth failing a run
+            log_warning(f"Compaction: the model's token count failed, using the local estimate instead: {e}")
+            return None
+    return await acount_request(getattr(compaction, "token_counter", None), messages, tools)
+
+
+def _request_tokens(agent: "Agent", messages: List[Message], tools: Optional[List[Any]]) -> int:
+    """A request's size for overflow recovery, counted the way the trigger counts it, so before and
+    after are comparable."""
+    from agno.compaction._tokens import count_request, estimate_tokens
+
+    counted = count_request(_sync_counter(agent), messages, tools)
+    return counted if counted is not None else estimate_tokens(messages, tools)
+
+
+async def _arequest_tokens(agent: "Agent", messages: List[Message], tools: Optional[List[Any]]) -> int:
+    """``_request_tokens`` for async runs."""
+    from agno.compaction._tokens import estimate_tokens
+
+    counted = await _acount(agent, messages, tools)
+    return counted if counted is not None else estimate_tokens(messages, tools)
+
+
+def _log_compaction(record: Any) -> None:
+    """Report what one fold achieved. Sizes were measured when the record was built."""
+    detail = f"Compacted {record.messages_compacted} messages"
+    if record.tokens_before and record.tokens_after:
+        saved = record.tokens_before - record.tokens_after
+        detail += f" ({record.tokens_before} -> {record.tokens_after} tokens, saved {saved})"
+    if record.archived:
+        detail += ", originals archived"
+    log_info(detail)
+
+
+def _compaction_events(run_response: Optional[RunOutput], record: Any, started: bool = False) -> List[Any]:
+    """The events one compaction raises, when there is a run to attach them to."""
+    if run_response is None:
+        return []
+    from agno.utils.events import create_compaction_completed_event, create_compaction_started_event
+
+    if started:
+        return [create_compaction_started_event(from_run_response=run_response)]
+    return [
+        create_compaction_completed_event(
+            from_run_response=run_response,
+            messages_compacted=record.messages_compacted,
+            tokens_before=record.tokens_before,
+            tokens_after=record.tokens_after,
+            archived=record.archived,
+        )
+    ]
+
+
+# Headroom over compact_at_tokens for the planner's own window. The planner must see enough
+# history to find a foldable span BEFORE the trigger fires, plus the tail it will keep; a window
+# sized exactly at the trigger would leave nothing in front of the tail to fold.
+_PLANNER_WINDOW_MAX_RUNS = 500
+
+
+def _compaction_history_runs(agent: "Agent") -> Optional[int]:
+    """How many runs the compaction planner may read, or None for no extra limit.
+
+    num_history_runs governs how much history a RUN replays and defaults to 3. Compaction folds
+    what sits in FRONT of the kept tail, so a 3-run window leaves it nothing to fold and it never
+    fires - and worse, an anchor outside that window cannot resolve, which drops the summary
+    silently along with the turns it replaced.
+
+    So the planner reads its own window. Bounded, not unlimited: capped so a long session costs
+    no more than a short one. Never narrower than num_history_runs, though.
+    """
+    if agent_compaction(agent) is None:
+        return agent.num_history_runs
+    return max(agent.num_history_runs or 0, _PLANNER_WINDOW_MAX_RUNS)
+
+
+def _history_for_run(
+    agent: "Agent", session: AgentSession, run_response: Optional[RunOutput], skip_role: Optional[str]
+) -> Tuple[List[Message], Any, Optional[Counter[str]]]:
+    """The history a run works from, the fold in force for it, and the ids of the messages a run
+    replays before the first fold - or None when it replays all of ``history``.
+
+    With a compact_at_tokens threshold, compaction owns the window: everything since the last fold
+    is replayed, so the trigger, the fold and its metrics measure what the model is sent. Without
+    one, num_history_runs and num_history_messages still bound the replay before the first fold,
+    since nothing else would stop it growing. The ids are counted - a fork copies its source run's
+    messages with the same ids, so one id can stand for more than one message.
+
+    Once a fold exists its anchor has to be in what is read, however old it is - the view replays
+    the summary and everything from the anchor onward, and an anchor that is not found drops the
+    summary along with the turns it replaced. What sits in front of it is already folded.
+    """
+
+    def fetch(last_n_runs: Optional[int], limit: Optional[int]) -> List[Message]:
+        return session.get_messages(
+            last_n_runs=last_n_runs,
+            limit=limit,
+            skip_roles=[skip_role] if skip_role else None,
+            agent_id=agent.id if agent.team_id is not None else None,
+        )
+
+    compaction = agent_compaction(agent)
+    if compaction is None:
+        return fetch(agent.num_history_runs, agent.num_history_messages), None, None
+
+    history = fetch(_compaction_history_runs(agent), None)
+    record = _stored_compaction(agent, session, _compaction_as_of(run_response))
+    anchor = record.first_kept_message_id if record is not None and record.summary else None
+    if anchor is not None and not any(m.id == anchor for m in history):
+        everything = fetch(None, None)
+        start = next((i for i, m in enumerate(everything) if m.id == anchor), None)
+        if start is not None:
+            history = everything[start:]
+
+    if compaction.compact_at_tokens is not None:
+        # A threshold is the limit, so compaction owns the window: everything since the last fold
+        # is replayed. Capping it at num_history_runs meant a threshold above a few turns never
+        # fired, older turns fell out unsummarized, and the fold measured a list never sent.
+        return history, record, None
+    # No threshold - compaction=True, or manual folds only - so nothing would stop the replay
+    # growing until the provider rejects a request. Keep num_history_runs until the first fold.
+    replay = fetch(agent.num_history_runs, agent.num_history_messages)
+    return history, record, Counter(m.id for m in replay if m.id is not None)
+
+
+def _replayed_view(
+    compaction: Any, history: List[Message], record: Any, replay_ids: Optional[Counter[str]]
+) -> List[Message]:
+    """What a run sends from ``history``.
+
+    Once a fold exists, the summary and everything from its anchor onward - the anchor has to be
+    replayed, or the summary is dropped along with the turns it replaced. Before that, the replay
+    window when there is one, else all of ``history``.
+    """
+    if record is not None and record.summary and record.first_kept_message_id:
+        if any(m.id == record.first_kept_message_id for m in history):
+            return compaction.apply_record(history, record)
+    if replay_ids is None:
+        return history
+    # The window is the newest runs, so match it from the end, each id as many times as the window
+    # holds it. A plain membership test would also let in a fork's source run from outside the
+    # window, since the fork's copies share its message ids, and send those turns twice.
+    remaining = Counter(replay_ids)
+    kept: List[Message] = []
+    for message in reversed(history):
+        if message.id is not None and remaining[message.id] > 0:
+            remaining[message.id] -= 1
+            kept.append(message)
+    kept.reverse()
+    return kept
+
+
+def _history_for_compaction(agent: "Agent", session: AgentSession) -> List[Message]:
+    """The history a manual compaction folds.
+
+    Deliberately not limited by ``num_history_runs`` or ``num_history_messages``: those govern how
+    much history a RUN replays, and applying them here would let them silently cap what compaction
+    can ever see - the same starvation the automatic path guards against.
+    """
+    skip_role = agent.system_message_role if agent.system_message_role not in ["user", "assistant", "tool"] else None
+    return session.get_messages(
+        skip_roles=[skip_role] if skip_role else None,
+        agent_id=agent.id if agent.team_id is not None else None,
+    )
+
+
+def _compaction_result(new_record: Any, metrics: Optional[RunMetrics] = None) -> Any:
+    from agno.compaction.types import CompactionResult, CompactionStatus
+
+    return CompactionResult(
+        status=CompactionStatus.COMPACTED,
+        message=(
+            f"Compacted {new_record.messages_compacted} messages "
+            f"({new_record.tokens_before} -> {new_record.tokens_after} tokens)."
+        ),
+        record=new_record,
+        metrics=metrics,
+    )
+
+
+def _last_sent(agent: "Agent", session: AgentSession, compaction: Any) -> List[Message]:
+    """The history the model was last sent, which is what a fold's "before" size measures.
+
+    A manual fold folds everything the planner reads, but without a threshold the model was only
+    sent the num_history_runs window - recording the planner's read would overstate what the fold
+    reclaimed from the context.
+    """
+    skip_role = agent.system_message_role if agent.system_message_role not in ["user", "assistant", "tool"] else None
+    history, record, replay_ids = _history_for_run(agent, session, None, skip_role)
+    return _replayed_view(compaction, history, record, replay_ids)
+
+
+def compact_now(agent: "Agent", session: AgentSession, history: List[Message]) -> Any:
+    """Fold ``history`` now, without waiting for the size trigger.
+
+    The explicit counterpart to the automatic path: same boundary, same guards, same archive.
+    Only ``compact_at_tokens`` is bypassed - a caller asking to compact has supplied the
+    judgement that threshold exists to make.
+
+    Every other guard still applies, and a decline is reported rather than raised. The ratio
+    guard in particular is not a preference: a summary costs a few hundred tokens whatever it
+    replaces, so folding a smaller span leaves the context BIGGER while spending a model call
+    and discarding the prompt-cache prefix. Declining is the correct outcome, and the returned
+    status says so in terms a UI can show.
+    """
+    from agno.compaction.types import CompactionResult, CompactionStatus
+
+    compaction = agent_compaction(agent)
+    if compaction is None:
+        return CompactionResult(status=CompactionStatus.NOT_ENABLED, message="Compaction is not enabled on this agent.")
+    if not history:
+        return CompactionResult(status=CompactionStatus.NO_HISTORY, message="This session has no stored history yet.")
+
+    record = _stored_compaction(agent, session)
+    boundary, status, reason = compaction.plan_with_reason(history, record)
+    if boundary is None:
+        return CompactionResult(status=status, message=reason)
+
+    log_info("Compacting conversation history")
+    # No run to add the summarizer's usage to, so it is collected here and returned.
+    run_metrics = RunMetrics()
+    new_record = compaction.compact(
+        history,
+        session_id=session.session_id,
+        db=agent.db,
+        user_id=session.user_id,
+        previous=record,
+        run_metrics=run_metrics,
+        sent_messages=_last_sent(agent, session, compaction),
+    )
+    metrics = run_metrics if run_metrics.details else None
+    if new_record is None:
+        return CompactionResult(
+            status=CompactionStatus.SUMMARY_FAILED,
+            message="The summarizer returned nothing, so history was left unchanged.",
+            metrics=metrics,
+        )
+    _log_compaction(new_record)
+    return _compaction_result(new_record, metrics)
+
+
+async def acompact_now(agent: "Agent", session: AgentSession, history: List[Message]) -> Any:
+    from agno.compaction.types import CompactionResult, CompactionStatus
+
+    compaction = agent_compaction(agent)
+    if compaction is None:
+        return CompactionResult(status=CompactionStatus.NOT_ENABLED, message="Compaction is not enabled on this agent.")
+    if not history:
+        return CompactionResult(status=CompactionStatus.NO_HISTORY, message="This session has no stored history yet.")
+
+    record = _stored_compaction(agent, session)
+    boundary, status, reason = compaction.plan_with_reason(history, record)
+    if boundary is None:
+        return CompactionResult(status=status, message=reason)
+
+    log_info("Compacting conversation history")
+    # No run to add the summarizer's usage to, so it is collected here and returned.
+    run_metrics = RunMetrics()
+    new_record = await compaction.acompact(
+        history,
+        session_id=session.session_id,
+        db=agent.db,
+        user_id=session.user_id,
+        previous=record,
+        run_metrics=run_metrics,
+        sent_messages=_last_sent(agent, session, compaction),
+    )
+    metrics = run_metrics if run_metrics.details else None
+    if new_record is None:
+        return CompactionResult(
+            status=CompactionStatus.SUMMARY_FAILED,
+            message="The summarizer returned nothing, so history was left unchanged.",
+            metrics=metrics,
+        )
+    _log_compaction(new_record)
+    return _compaction_result(new_record, metrics)
+
+
+def _add_to_session_and_latest_run(agent: "Agent", session: AgentSession, metrics: RunMetrics) -> Optional[RunOutput]:
+    """Add a manual compaction's usage to its latest completed or cancelled run, returned for saving, and to the
+    session's metrics.
+
+    A manual compaction has no run of its own, so that run carries its model call. With no such run, the usage is kept
+    in the session's compaction metrics, which the session's metrics add to its runs'.
+    """
+    from copy import copy as shallow_copy
+
+    from agno.agent._session import update_session_metrics
+
+    if session.session_data is None:
+        session.session_data = {}
+    runs = session.runs or []
+    # A run that can still change, failed and running runs included, would drop the usage when it is saved again
+    finished = [index for index, run in enumerate(runs) if run.status in (RunStatus.completed, RunStatus.cancelled)]
+    latest_run = None
+    if finished:
+        # Update a copy, never the loaded run: history run objects are shared between reads of the same session
+        latest_run = cast(RunOutput, shallow_copy(runs[finished[-1]]))
+        latest_run.metrics = RunMetrics.from_dict(latest_run.metrics.to_dict()) if latest_run.metrics else RunMetrics()
+        merge_background_metrics(latest_run.metrics, [metrics])
+        runs[finished[-1]] = latest_run
+    else:
+        compaction_metrics = SessionMetrics.from_dict(session.session_data.get("compaction_metrics") or {})
+        compaction_metrics.accumulate_from_run(metrics)
+        session.session_data["compaction_metrics"] = compaction_metrics.to_dict()
+
+    update_session_metrics(agent, session=session)
+    return latest_run
+
+
+def compact_session(agent: "Agent", session_id: Optional[str] = None, user_id: Optional[str] = None) -> Any:
+    from agno.agent import _session
+    from agno.compaction.types import CompactionResult, CompactionStatus
+
+    session = _session.get_session(agent, session_id=session_id, user_id=user_id)
+    if session is None or not isinstance(session, AgentSession):
+        return CompactionResult(status=CompactionStatus.NO_HISTORY, message="No such session.")
+    result = compact_now(agent, session, _history_for_compaction(agent, session))
+    if result.metrics is not None:
+        # Read the session again: a run may have finished while the summarizer ran
+        session = cast(
+            AgentSession, _session.get_session(agent, session_id=session.session_id, user_id=user_id) or session
+        )
+        latest_run = _add_to_session_and_latest_run(agent, session, result.metrics)
+        try:
+            _session.save_session(agent, session)
+            if latest_run is not None:
+                _session.save_run(
+                    agent,
+                    run=latest_run,
+                    session_id=session.session_id,
+                    user_id=session.user_id,
+                    run_index=resolve_run_index(session, latest_run),
+                )
+        except Exception as e:  # noqa: BLE001 - the fold is already stored; only the totals are lost
+            log_warning(f"Could not add the compaction's usage to the session metrics: {e}")
+    return result
+
+
+async def acompact_session(agent: "Agent", session_id: Optional[str] = None, user_id: Optional[str] = None) -> Any:
+    from agno.agent import _session
+    from agno.compaction.types import CompactionResult, CompactionStatus
+
+    session = await _session.aget_session(agent, session_id=session_id, user_id=user_id)
+    if session is None or not isinstance(session, AgentSession):
+        return CompactionResult(status=CompactionStatus.NO_HISTORY, message="No such session.")
+    result = await acompact_now(agent, session, _history_for_compaction(agent, session))
+    if result.metrics is not None:
+        # Read the session again: a run may have finished while the summarizer ran
+        session = cast(
+            AgentSession, await _session.aget_session(agent, session_id=session.session_id, user_id=user_id) or session
+        )
+        latest_run = _add_to_session_and_latest_run(agent, session, result.metrics)
+        try:
+            await _session.asave_session(agent, session)
+            if latest_run is not None:
+                await _session.asave_run(
+                    agent,
+                    run=latest_run,
+                    session_id=session.session_id,
+                    user_id=session.user_id,
+                    run_index=resolve_run_index(session, latest_run),
+                )
+        except Exception as e:  # noqa: BLE001 - the fold is already stored; only the totals are lost
+            log_warning(f"Could not add the compaction's usage to the session metrics: {e}")
+    return result
+
+
+def _plan_overflow_fold(agent: "Agent", run_messages: Any) -> Optional[Tuple[Any, Any, List[Message]]]:
+    """Where to cut after a context-window rejection: the Compaction, the variant that folds, and
+    the message list the model call holds. None when there is nothing to do or no safe cut.
+
+    Shared by the sync and async recovery, which differ only in how the summarizer is called.
+    """
+    from dataclasses import replace
+
+    from agno.compaction._cut import leading_system_count
+    from agno.compaction._tokens import estimate_tokens
+
+    compaction = agent_compaction(agent)
+    if compaction is None or not getattr(compaction, "on_context_overflow", False):
+        return None
+
+    messages = getattr(run_messages, "messages", None)
+    if not messages:
+        return None
+
+    lead = leading_system_count(messages)
+    # Keep the configured tail when it works. Only when folding in front of it reclaims too
+    # little to be worth retrying - an oversized turn sitting INSIDE the tail, which no cut in
+    # front of it can reach - is the tail given up, one run at a time. The request has already
+    # been rejected, so a smaller tail beats no answer, but the setting is still the default.
+    folder, chosen_keep = None, compaction.uncompacted_runs
+    # A token tail is sized, not counted, so there is no run count to give up - only a run-count
+    # tail is shrunk. Varying uncompacted_runs alongside uncompacted_tokens is not a valid config.
+    if compaction.uncompacted_tokens is not None:
+        tails: Sequence[Optional[int]] = [compaction.uncompacted_runs]
+    else:
+        tails = range(compaction.uncompacted_runs or 1, 0, -1)
+    for keep in tails:
+        if keep == compaction.uncompacted_runs:
+            candidate = compaction
+        else:
+            candidate = replace(compaction, uncompacted_runs=keep, stats=compaction.stats)
+        boundary = candidate.boundary_for(messages, min_index=lead, overhead_tokens=estimate_tokens(messages[:lead]))
+        if boundary is None or boundary <= lead:
+            continue
+        folder, chosen_keep = candidate, keep
+        # Stop as soon as the fold is large enough to be worth a summarizer call, rather than
+        # shrinking the tail further than the rejection requires.
+        if estimate_tokens(messages[lead:boundary]) >= estimate_tokens(messages[boundary:]):
+            break
+    if folder is not None and chosen_keep != compaction.uncompacted_runs:
+        log_info(
+            f"Compaction: keeping {chosen_keep} run(s) instead of {compaction.uncompacted_runs} - "
+            f"the request was rejected as too long, and the configured tail leaves too little "
+            f"in front of it to fold."
+        )
+    if folder is None:
+        log_warning(
+            "Compaction: the request exceeded the model's context window and there is no safe "
+            "cut left to make - the most recent turn alone is too large to send. Shorten what "
+            "it produces, or use a model with a larger context window."
+        )
+        return None
+    return compaction, folder, messages
+
+
+def _finish_overflow_fold(
+    messages: List[Message],
+    record: Any,
+    compacted: List[Message],
+    before: int,
+    after: int,
+    run_response: Optional[RunOutput],
+) -> bool:
+    """Apply a fold made after a rejection to the list the model call holds. True if it shrank."""
+    if after >= before:
+        # A summary has a floor cost, so a fold that reclaims nothing leaves the request no
+        # more sendable than it was. Retrying an identical payload just fails twice.
+        log_warning(
+            f"Compaction: folding after a context-window rejection did not shrink the request "
+            f"({before} -> {after} tokens), so it is not worth retrying."
+        )
+        return False
+
+    # Mutate the list in place rather than rebinding it. The caller has already passed this
+    # exact list object into the model call's kwargs, so a new list would leave the retry
+    # sending the payload that was just rejected.
+    messages[:] = compacted
+    if run_response is not None:
+        run_response.compaction = record
+    log_info(
+        f"Compaction: request exceeded the context window, folded {record.messages_compacted} "
+        f"messages ({before} -> {after} tokens) and retrying once."
+    )
+    return True
+
+
+def _overflow_fold_kwargs(
+    agent: "Agent", session: AgentSession, run_response: Optional[RunOutput], before: int, messages: List[Message]
+) -> Dict[str, Any]:
+    from agno.compaction._cut import leading_system_count
+    from agno.compaction._tokens import estimate_tokens
+
+    return dict(
+        session_id=session.session_id,
+        db=agent.db,
+        user_id=session.user_id,
+        previous=_stored_compaction(agent, session),
+        run_id=run_response.run_id if run_response is not None else None,
+        run_metrics=run_response.metrics if run_response is not None else None,
+        tokens_before=before,
+        # The leading system messages are part of the list being folded; counting them keeps the
+        # cut the same as the one the overflow planner chose.
+        overhead_tokens=estimate_tokens(messages[: leading_system_count(messages)]),
+    )
+
+
+def _recompact_after_overflow(
+    agent: "Agent",
+    session: AgentSession,
+    run_messages: Any,
+    run_response: Optional[RunOutput] = None,
+    tools: Optional[List[Any]] = None,
+) -> bool:
+    """Fold harder after the provider rejected a request as too long. True if the payload shrank.
+
+    Nobody can know a model's context window ahead of time - no provider exposes it, and the
+    same model id has different limits across deployments - so a threshold set in advance is
+    always a guess. The rejection is the one authoritative signal that the guess was wrong, and
+    this is the only path that can act on it.
+
+    Folds against the messages actually sent, so it reaches spans the run-start pass could not:
+    the current turn's input, and anything a tool loop appended since. The pair-safe boundary
+    still applies - an unsendable payload is no improvement on a too-long one - but the fold
+    ratio does not: the request has already failed, so a fold that merely helps beats the run
+    dying.
+    """
+    from dataclasses import replace
+
+    plan = _plan_overflow_fold(agent, run_messages)
+    if plan is None:
+        return False
+    compaction, folder, messages = plan
+    before = _request_tokens(agent, messages, tools)
+    # min_fold_ratio is the run-start question - is this fold worth paying for. Here the request
+    # has already been rejected, so any fold that shrinks it is worth making.
+    record = replace(folder, min_fold_ratio=0, stats=compaction.stats).compact(
+        messages, **_overflow_fold_kwargs(agent, session, run_response, before, messages)
+    )
+    if record is None:
+        return False
+    compacted = compaction.apply_record(messages, record)
+    after = _request_tokens(agent, compacted, tools)
+    return _finish_overflow_fold(messages, record, compacted, before, after, run_response)
+
+
+async def _arecompact_after_overflow(
+    agent: "Agent",
+    session: AgentSession,
+    run_messages: Any,
+    run_response: Optional[RunOutput] = None,
+    tools: Optional[List[Any]] = None,
+) -> bool:
+    """Async variant of :func:`_recompact_after_overflow`. The summarizer is awaited, so a recovery
+    on the async path does not block the event loop for the length of a model call."""
+    from dataclasses import replace
+
+    plan = _plan_overflow_fold(agent, run_messages)
+    if plan is None:
+        return False
+    compaction, folder, messages = plan
+    before = await _arequest_tokens(agent, messages, tools)
+    record = await replace(folder, min_fold_ratio=0, stats=compaction.stats).acompact(
+        messages, **_overflow_fold_kwargs(agent, session, run_response, before, messages)
+    )
+    if record is None:
+        return False
+    compacted = compaction.apply_record(messages, record)
+    after = await _arequest_tokens(agent, compacted, tools)
+    return _finish_overflow_fold(messages, record, compacted, before, after, run_response)
+
+
+def apply_compaction(
+    agent: "Agent",
+    session: AgentSession,
+    history: List[Message],
+    record: Any,
+    run_response: Optional[RunOutput] = None,
+    events: Optional[List[Any]] = None,
+    context_prefix: Optional[List[Message]] = None,
+    tools: Optional[List[Any]] = None,
+    replay_ids: Optional[Counter[str]] = None,
+) -> List[Message]:
+    """Replace the head of ``history`` with a summary once it grows too long.
+
+    Returns the list to send to the model. ``history`` itself is not mutated,
+    and what the session persists is never touched: compaction shortens the
+    request, not the record.
+    """
+    compaction = agent_compaction(agent)
+    if compaction is None or not history:
+        return history
+
+    # A stored compaction is replayed rather than recomputed, so the summary is
+    # paid for once and the prompt prefix stays stable between runs. The trigger
+    # measures this - what is actually sent - not the planner's wider read.
+    in_context = _replayed_view(compaction, history, record, replay_ids)
+
+    prefix = context_prefix or []
+    # Size is the only automatic trigger. Without a threshold nothing would read a count, so none
+    # is taken - whatever does the counting, and the model's own count is a network call.
+    if compaction.compact_at_tokens is None:
+        return in_context
+    inputs = _compaction_inputs(agent, prefix + in_context, tools)
+    if not compaction.should_compact(in_context, **inputs):
+        return in_context
+
+    # Announce only once the guards have passed. should_compact cannot see the
+    # pair-safe boundary or the size floor, so announcing on it alone reports
+    # compactions that then never happen.
+    # The system prompt and tools share the threshold with whatever the fold keeps.
+    from agno.compaction._tokens import estimate_tokens
+
+    overhead = estimate_tokens(prefix, tools) if (prefix or tools) else 0
+    if compaction.plan(history, record, overhead) is None:
+        return in_context
+
+    log_info("Auto-compacting conversation history")
+    if events is not None:
+        events.extend(_compaction_events(run_response, None, started=True))
+
+    # Compact against the FULL history, so the boundary the record stores is an
+    # absolute index into it. A boundary measured on the already-compacted list
+    # would advance by only one message per run, so the context would never
+    # actually shrink and every later run would compact again.
+    new_record = compaction.compact(
+        history,
+        session_id=session.session_id,
+        db=agent.db,
+        user_id=session.user_id,
+        previous=record,
+        run_metrics=run_response.metrics if run_response is not None else None,
+        tokens_before=inputs["context_tokens"],
+        run_id=run_response.run_id if run_response is not None else None,
+        context_prefix=prefix,
+        overhead_tokens=overhead,
+        # Once a fold exists the model is sent the summary and the anchor onward, not every turn the
+        # planner reads, so that is what "before" measures.
+        sent_messages=in_context,
+    )
+    if new_record is None:
+        return in_context
+
+    compacted = compaction.apply_record(history, new_record)
+    # Measure before storing, so the persisted record carries the real sizes.
+    _log_compaction(new_record)
+    # Surface it on the run, so `run.compaction` reports what happened here.
+    if run_response is not None:
+        run_response.compaction = new_record
+    if events is not None:
+        events.extend(_compaction_events(run_response, new_record))
+    return compacted
+
+
+async def aapply_compaction(
+    agent: "Agent",
+    session: AgentSession,
+    history: List[Message],
+    record: Any,
+    run_response: Optional[RunOutput] = None,
+    events: Optional[List[Any]] = None,
+    context_prefix: Optional[List[Message]] = None,
+    tools: Optional[List[Any]] = None,
+    replay_ids: Optional[Counter[str]] = None,
+) -> List[Message]:
+    compaction = agent_compaction(agent)
+    if compaction is None or not history:
+        return history
+
+    in_context = _replayed_view(compaction, history, record, replay_ids)
+
+    prefix = context_prefix or []
+    # Size is the only automatic trigger. Without a threshold nothing would read a count, so none
+    # is taken - whatever does the counting, and the model's own count is a network call.
+    if compaction.compact_at_tokens is None:
+        return in_context
+    inputs = await _acompaction_inputs(agent, prefix + in_context, tools)
+    if not compaction.should_compact(in_context, **inputs):
+        return in_context
+
+    # Announce only once the guards have passed. should_compact cannot see the
+    # pair-safe boundary or the size floor, so announcing on it alone reports
+    # compactions that then never happen.
+    # The system prompt and tools share the threshold with whatever the fold keeps.
+    from agno.compaction._tokens import estimate_tokens
+
+    overhead = estimate_tokens(prefix, tools) if (prefix or tools) else 0
+    if compaction.plan(history, record, overhead) is None:
+        return in_context
+
+    log_info("Auto-compacting conversation history")
+    if events is not None:
+        events.extend(_compaction_events(run_response, None, started=True))
+
+    # Compact against the FULL history so the stored boundary is absolute -
+    # see the sync path for why a relative boundary never shrinks the context.
+    new_record = await compaction.acompact(
+        history,
+        session_id=session.session_id,
+        db=agent.db,
+        user_id=session.user_id,
+        previous=record,
+        run_metrics=run_response.metrics if run_response is not None else None,
+        tokens_before=inputs["context_tokens"],
+        run_id=run_response.run_id if run_response is not None else None,
+        context_prefix=prefix,
+        overhead_tokens=overhead,
+        # Once a fold exists the model is sent the summary and the anchor onward, not every turn the
+        # planner reads, so that is what "before" measures.
+        sent_messages=in_context,
+    )
+    if new_record is None:
+        return in_context
+
+    compacted = compaction.apply_record(history, new_record)
+    # Measure before storing, so the persisted record carries the real sizes.
+    _log_compaction(new_record)
+    # Surface it on the run, so `run.compaction` reports what happened here.
+    if run_response is not None:
+        run_response.compaction = new_record
+    if events is not None:
+        events.extend(_compaction_events(run_response, new_record))
+    return compacted
+
+
+def _get_resolved_knowledge(agent: "Agent", run_context: Optional[RunContext] = None) -> Any:
+    """Get the resolved knowledge, preferring run_context over agent.knowledge."""
+    from agno.utils.callables import get_resolved_knowledge
+
+    return get_resolved_knowledge(agent, run_context)
+
+
+# ---------------------------------------------------------------------------
+# Message formatting
+# ---------------------------------------------------------------------------
+
+
+def format_message_with_state_variables(
+    agent: Agent,
+    message: Any,
+    run_context: Optional[RunContext] = None,
+) -> Any:
+    """Format a message with the session state variables from run_context."""
+    if not isinstance(message, str):
+        return message
+
+    # A message without "{" cannot contain a {var} placeholder, and without "$"
+    # Template.safe_substitute is an identity transform - skip the regex and
+    # template machinery entirely for the common plain-text case.
+    if "{" not in message and "$" not in message:
+        return message
+
+    # Extract values from run_context
+    session_state = run_context.session_state if run_context else None
+    dependencies = run_context.dependencies if run_context else None
+    metadata = run_context.metadata if run_context else None
+    user_id = run_context.user_id if run_context else None
+
+    # Should already be resolved and passed from run() method
+    format_variables = ChainMap(
+        session_state if session_state is not None else {},
+        dependencies or {},
+        metadata or {},
+        {"user_id": user_id} if user_id is not None else {},
+    )
+
+    converted_msg = message
+    for var_name in format_variables.keys():
+        # Only convert standalone {var_name} patterns, not nested ones
+        pattern = r"\{" + re.escape(var_name) + r"\}"
+        replacement = "${" + var_name + "}"
+        converted_msg = re.sub(pattern, replacement, converted_msg)
+
+    # Use Template to safely substitute variables
+    template = string.Template(converted_msg)
+    try:
+        result = template.safe_substitute(format_variables)
+        return result
+    except Exception as e:
+        log_warning(f"Template substitution failed: {str(e)}")
+        return message
+
+
+# ---------------------------------------------------------------------------
+# System message
+# ---------------------------------------------------------------------------
+
+
+def _learning_message_text(input: Any) -> Optional[str]:
+    """Flatten the run input to text for message-scoped learning recall.
+
+    Textual parts only: multimodal content parts contribute their "text"
+    values, and non-text parts are skipped rather than leaking Python reprs
+    into the recall terms.
+    """
+    if input is None:
+        return None
+    if isinstance(input, str):
+        return input or None
+    if isinstance(input, Message):
+        return _learning_message_text(input.content)
+    if isinstance(input, list):
+        parts = [_learning_message_text(item) for item in input]
+        return "\n".join(part for part in parts if part) or None
+    if isinstance(input, dict):
+        # A multimodal content part or a payload dict: keep its string values.
+        parts = [value for value in input.values() if isinstance(value, str)]
+        return "\n".join(part for part in parts if part) or None
+    if isinstance(input, BaseModel):
+        try:
+            return _learning_message_text(input.model_dump())
+        except Exception:
+            return None
+    return str(input)
+
+
+def get_system_message(
+    agent: Agent,
+    session: AgentSession,
+    run_context: Optional[RunContext] = None,
+    tools: Optional[List[Union[Function, dict]]] = None,
+    add_session_state_to_context: Optional[bool] = None,
+    input: Optional[Any] = None,
+) -> Optional[Message]:
+    """Return the system message for the Agent.
+
+    1. If the system_message is provided, use that.
+    2. If build_context is False, return None.
+    3. Build and return the default system message for the Agent.
+    """
+
+    # Extract values from run_context
+    from agno.agent._init import set_memory_manager
+
+    session_state = run_context.session_state if run_context else None
+    user_id = run_context.user_id if run_context else None
+
+    # Get output_schema from run_context
+    output_schema = run_context.output_schema if run_context else None
+
+    # 1. If the system_message is provided, use that.
+    if agent.system_message is not None:
+        if isinstance(agent.system_message, Message):
+            return agent.system_message
+
+        sys_message_content: str = ""
+        if isinstance(agent.system_message, str):
+            sys_message_content = agent.system_message
+        elif callable(agent.system_message):
+            sys_message_content = execute_system_message(
+                agent=agent, system_message=agent.system_message, session_state=session_state, run_context=run_context
+            )
+            if not isinstance(sys_message_content, str):
+                raise Exception("system_message must return a string")
+
+        if agent.resolve_in_context:
+            sys_message_content = format_message_with_state_variables(
+                agent,
+                sys_message_content,
+                run_context=run_context,
+            )
+
+        # type: ignore
+        return Message(role=agent.system_message_role, content=sys_message_content)
+
+    # 2. If build_context is False, return None.
+    if not agent.build_context:
+        return None
+
+    if agent.model is None:
+        raise Exception("model not set")
+
+    # 3. Build and return the default system message for the Agent.
+    # 3.1 Build the list of instructions for the system message
+    instructions: List[str] = []
+    if agent.instructions is not None:
+        _instructions = agent.instructions
+        if callable(agent.instructions):
+            _instructions = execute_instructions(
+                agent=agent, instructions=agent.instructions, session_state=session_state, run_context=run_context
+            )
+
+        if isinstance(_instructions, str):
+            instructions.append(_instructions)
+        elif isinstance(_instructions, list):
+            instructions.extend(_instructions)
+
+    # 3.1.1 Add instructions from the Model
+    _model_instructions = agent.model.get_instructions_for_model(tools)
+    if _model_instructions is not None:
+        instructions.extend(_model_instructions)
+
+    # 3.2 Build a list of additional information for the system message
+    additional_information: List[str] = []
+    # 3.2.1 Add instructions for using markdown
+    if agent.markdown and output_schema is None:
+        additional_information.append("Use markdown to format your answers.")
+    # 3.2.2 Add the current datetime
+    if agent.add_datetime_to_context:
+        from datetime import datetime
+
+        tz = None
+
+        if agent.timezone_identifier:
+            try:
+                from zoneinfo import ZoneInfo
+
+                tz = ZoneInfo(agent.timezone_identifier)
+            except Exception as e:
+                log_warning(f"Invalid timezone identifier: {str(e)}")
+
+        time = datetime.now(tz) if tz else datetime.now()
+
+        if agent.datetime_format:
+            formatted_time = time.strftime(agent.datetime_format)
+        else:
+            formatted_time = str(time)
+
+        additional_information.append(f"The current time is {formatted_time}.")
+
+    # 3.2.3 Add the current location
+    if agent.add_location_to_context:
+        from agno.utils.location import get_location
+
+        location = get_location()
+        if location:
+            location_str = ", ".join(
+                filter(
+                    None,
+                    [
+                        location.get("city"),
+                        location.get("region"),
+                        location.get("country"),
+                    ],
+                )
+            )
+            if location_str:
+                additional_information.append(f"Your approximate location is: {location_str}.")
+
+    # 3.2.4 Add agent name if provided
+    if agent.name is not None and agent.add_name_to_context:
+        additional_information.append(f"Your name is: {agent.name}.")
+    # Tell the model what a result envelope is and how to read the rest
+    if agent._result_store is not None:
+        from agno.offload.tools import OFFLOAD_INSTRUCTION
+
+        additional_information.append(OFFLOAD_INSTRUCTION)
+
+    # 3.3 Build the default system message for the Agent.
+    system_message_content: str = ""
+    # 3.3.1 First add the Agent description if provided
+    if agent.description is not None:
+        system_message_content += f"{agent.description}\n"
+    # 3.3.2 Then add the Agent role if provided
+    if agent.role is not None:
+        system_message_content += f"\n<your_role>\n{agent.role}\n</your_role>\n\n"
+    # 3.3.3 Then add instructions for the Agent
+    if len(instructions) > 0:
+        rendered = render_instructions(instructions)
+        if agent.use_instruction_tags:
+            system_message_content += f"<instructions>\n{rendered}\n</instructions>\n\n"
+        else:
+            system_message_content += rendered + "\n\n"
+    # 3.3.4 Add additional information
+    if len(additional_information) > 0:
+        system_message_content += "<additional_information>"
+        for _ai in additional_information:
+            system_message_content += f"\n- {_ai}"
+        system_message_content += "\n</additional_information>\n\n"
+    # 3.3.5 Then add instructions for the tools
+    if agent._tool_instructions is not None:
+        for _ti in agent._tool_instructions:
+            system_message_content += f"{_ti}\n"
+
+    # Format the system message with the session state variables
+    if agent.resolve_in_context:
+        system_message_content = format_message_with_state_variables(
+            agent,
+            system_message_content,
+            run_context=run_context,
+        )
+
+    # 3.3.7 Then add the expected output
+    if agent.expected_output is not None:
+        system_message_content += f"<expected_output>\n{agent.expected_output.strip()}\n</expected_output>\n\n"
+    # 3.3.8 Then add additional context
+    if agent.additional_context is not None:
+        system_message_content += f"{agent.additional_context}\n"
+    # 3.3.8.1 Then add skills to the system prompt
+    if agent.skills is not None:
+        skills_snippet = agent.skills.get_system_prompt_snippet()
+        if skills_snippet:
+            system_message_content += f"\n{skills_snippet}\n"
+    # 3.3.9 Then add memories to the system prompt
+    if agent.add_memories_to_context:
+        _memory_manager_not_set = False
+        if not user_id:
+            user_id = "default"
+        if agent.memory_manager is None:
+            set_memory_manager(agent)
+            _memory_manager_not_set = True
+
+        user_memories = agent.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
+
+        if user_memories and len(user_memories) > 0:
+            system_message_content += "You have access to user info and preferences from previous interactions that you can use to personalize your response:\n\n"
+            system_message_content += "<memories_from_previous_interactions>"
+            for _memory in user_memories:  # type: ignore
+                system_message_content += f"\n- {_memory.memory}"
+            system_message_content += "\n</memories_from_previous_interactions>\n\n"
+            system_message_content += (
+                "Note: this information is from previous interactions and may be updated in this conversation. "
+                "You should always prefer information from this conversation over the past memories.\n"
+            )
+        else:
+            system_message_content += (
+                "You have the capability to retain memories from previous interactions with the user, "
+                "but have not had any interactions with the user yet.\n"
+            )
+        if _memory_manager_not_set:
+            agent.memory_manager = None
+
+        if agent.enable_agentic_memory:
+            system_message_content += (
+                "\n<updating_user_memories>\n"
+                "- You have access to the `update_user_memory` tool that you can use to add new memories, update existing memories, delete memories, or clear all memories.\n"
+                "- If the user's message includes information that should be captured as a memory, use the `update_user_memory` tool to update your memory database.\n"
+                "- Memories should include details that could personalize ongoing interactions with the user.\n"
+                "- Use this tool to add new memories or update existing memories that you identify in the conversation.\n"
+                "- Use this tool if the user asks to update their memory, delete a memory, or clear all memories.\n"
+                "- If you use the `update_user_memory` tool, remember to pass on the response to the user.\n"
+                "</updating_user_memories>\n\n"
+            )
+
+    # 3.3.10 Then add a summary of the interaction to the system prompt
+    if agent.add_session_summary_to_context and session.summary is not None:
+        system_message_content += "Here is a brief summary of your previous interactions:\n\n"
+        system_message_content += "<summary_of_previous_interactions>\n"
+        system_message_content += session.summary.summary
+        system_message_content += "\n</summary_of_previous_interactions>\n\n"
+        system_message_content += (
+            "Note: this information is from previous interactions and may be outdated. "
+            "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
+        )
+
+    # 3.3.12 then add learnings to the system prompt: guidance (how to use the
+    # tools) plus data (what was recalled), concatenated here so the automatic
+    # door renders exactly what the manual door's instructions() + build_context()
+    # would.
+    if agent._learning is not None and agent.add_learnings_to_context:
+        learning_guidance = agent._learning._framework_instructions()
+        learning_context = agent._learning.build_context(
+            user_id=user_id,
+            session_id=session.session_id if session else None,
+            agent_id=agent.id,
+            message=_learning_message_text(input),
+            run_context=run_context,
+            metadata=run_context.metadata if run_context else None,
+            dependencies=run_context.dependencies if run_context else None,
+            session_state=session_state,
+        )
+        learning_block = "\n".join(part for part in (learning_guidance, learning_context) if part)
+        if learning_block:
+            system_message_content += learning_block + "\n"
+
+    # 3.3.13 then add search_knowledge instructions to the system prompt
+    _resolved_knowledge = _get_resolved_knowledge(agent, run_context)
+    if _resolved_knowledge is not None and agent.search_knowledge and agent.add_search_knowledge_instructions:
+        build_context_fn = getattr(_resolved_knowledge, "build_context", None)
+        if callable(build_context_fn):
+            # The filter keys rendered here come from stored content, so scope them like retrieval
+            build_context_kwargs: Dict[str, Any] = {"enable_agentic_filters": agent.enable_agentic_knowledge_filters}
+            build_context_kwargs.update(
+                get_user_id_kwarg(build_context_fn, run_context.user_id if run_context else agent.user_id)
+            )
+            knowledge_context = build_context_fn(**build_context_kwargs)
+            if knowledge_context is not None:
+                system_message_content += knowledge_context + "\n"
+
+    # 3.3.14 Add the system message from the Model
+    system_message_from_model = agent.model.get_system_message_for_model(tools)
+    if system_message_from_model is not None:
+        system_message_content += system_message_from_model
+
+    # 3.3.15 Add the JSON output prompt if output_schema is provided and the model does not support native structured outputs or JSON schema outputs
+    # or if use_json_mode is True
+    if (
+        output_schema is not None
+        and agent.parser_model is None
+        and not (
+            (agent.model.supports_native_structured_outputs or agent.model.supports_json_schema_outputs)
+            and (not agent.use_json_mode or agent.structured_outputs is True)
+        )
+    ):
+        system_message_content += f"{get_json_output_prompt(output_schema)}"  # type: ignore
+
+    # 3.3.16 Add the response model format prompt if output_schema is provided (Pydantic only)
+    if output_schema is not None and agent.parser_model is not None and not isinstance(output_schema, dict):
+        system_message_content += f"{get_response_model_format_prompt(output_schema)}"
+
+    # 3.3.17 Add the session state to the system message
+    if add_session_state_to_context and session_state is not None:
+        system_message_content += f"\n<session_state>\n{session_state}\n</session_state>\n\n"
+
+    # Return the system message
+    return (
+        Message(role=agent.system_message_role, content=system_message_content.strip())  # type: ignore
+        if system_message_content
+        else None
+    )
+
+
+async def aget_system_message(
+    agent: Agent,
+    session: AgentSession,
+    run_context: Optional[RunContext] = None,
+    tools: Optional[List[Union[Function, dict]]] = None,
+    add_session_state_to_context: Optional[bool] = None,
+    input: Optional[Any] = None,
+) -> Optional[Message]:
+    """Return the system message for the Agent.
+
+    1. If the system_message is provided, use that.
+    2. If build_context is False, return None.
+    3. Build and return the default system message for the Agent.
+    """
+
+    # Extract values from run_context
+    from agno.agent._init import has_async_db, set_memory_manager
+
+    session_state = run_context.session_state if run_context else None
+    user_id = run_context.user_id if run_context else None
+
+    # Get output_schema from run_context
+    output_schema = run_context.output_schema if run_context else None
+
+    # 1. If the system_message is provided, use that.
+    if agent.system_message is not None:
+        if isinstance(agent.system_message, Message):
+            return agent.system_message
+
+        sys_message_content: str = ""
+        if isinstance(agent.system_message, str):
+            sys_message_content = agent.system_message
+        elif callable(agent.system_message):
+            sys_message_content = await aexecute_system_message(
+                agent=agent, system_message=agent.system_message, session_state=session_state, run_context=run_context
+            )
+            if not isinstance(sys_message_content, str):
+                raise Exception("system_message must return a string")
+
+        # Format the system message with the session state variables
+        if agent.resolve_in_context:
+            sys_message_content = format_message_with_state_variables(
+                agent,
+                sys_message_content,
+                run_context=run_context,
+            )
+
+        # type: ignore
+        return Message(role=agent.system_message_role, content=sys_message_content)
+
+    # 2. If build_context is False, return None.
+    if not agent.build_context:
+        return None
+
+    if agent.model is None:
+        raise Exception("model not set")
+
+    # 3. Build and return the default system message for the Agent.
+    # 3.1 Build the list of instructions for the system message
+    instructions: List[str] = []
+    if agent.instructions is not None:
+        _instructions = agent.instructions
+        if callable(agent.instructions):
+            _instructions = await aexecute_instructions(
+                agent=agent, instructions=agent.instructions, session_state=session_state, run_context=run_context
+            )
+
+        if isinstance(_instructions, str):
+            instructions.append(_instructions)
+        elif isinstance(_instructions, list):
+            instructions.extend(_instructions)
+
+    # 3.1.1 Add instructions from the Model
+    _model_instructions = agent.model.get_instructions_for_model(tools)
+    if _model_instructions is not None:
+        instructions.extend(_model_instructions)
+
+    # 3.2 Build a list of additional information for the system message
+    additional_information: List[str] = []
+    # 3.2.1 Add instructions for using markdown
+    if agent.markdown and output_schema is None:
+        additional_information.append("Use markdown to format your answers.")
+    # 3.2.2 Add the current datetime
+    if agent.add_datetime_to_context:
+        from datetime import datetime
+
+        tz = None
+
+        if agent.timezone_identifier:
+            try:
+                from zoneinfo import ZoneInfo
+
+                tz = ZoneInfo(agent.timezone_identifier)
+            except Exception as e:
+                log_warning(f"Invalid timezone identifier: {str(e)}")
+
+        time = datetime.now(tz) if tz else datetime.now()
+
+        if agent.datetime_format:
+            formatted_time = time.strftime(agent.datetime_format)
+        else:
+            formatted_time = str(time)
+
+        additional_information.append(f"The current time is {formatted_time}.")
+
+    # 3.2.3 Add the current location
+    if agent.add_location_to_context:
+        from agno.utils.location import get_location
+
+        location = get_location()
+        if location:
+            location_str = ", ".join(
+                filter(
+                    None,
+                    [
+                        location.get("city"),
+                        location.get("region"),
+                        location.get("country"),
+                    ],
+                )
+            )
+            if location_str:
+                additional_information.append(f"Your approximate location is: {location_str}.")
+
+    # 3.2.4 Add agent name if provided
+    if agent.name is not None and agent.add_name_to_context:
+        additional_information.append(f"Your name is: {agent.name}.")
+    # Tell the model what a result envelope is and how to read the rest
+    if agent._result_store is not None:
+        from agno.offload.tools import OFFLOAD_INSTRUCTION
+
+        additional_information.append(OFFLOAD_INSTRUCTION)
+
+    # 3.3 Build the default system message for the Agent.
+    system_message_content: str = ""
+    # 3.3.1 First add the Agent description if provided
+    if agent.description is not None:
+        system_message_content += f"{agent.description}\n"
+    # 3.3.2 Then add the Agent role if provided
+    if agent.role is not None:
+        system_message_content += f"\n<your_role>\n{agent.role}\n</your_role>\n\n"
+    # 3.3.3 Then add instructions for the Agent
+    if len(instructions) > 0:
+        rendered = render_instructions(instructions)
+        if agent.use_instruction_tags:
+            system_message_content += f"<instructions>\n{rendered}\n</instructions>\n\n"
+        else:
+            system_message_content += rendered + "\n\n"
+    # 3.3.4 Add additional information
+    if len(additional_information) > 0:
+        system_message_content += "<additional_information>"
+        for _ai in additional_information:
+            system_message_content += f"\n- {_ai}"
+        system_message_content += "\n</additional_information>\n\n"
+    # 3.3.5 Then add instructions for the tools
+    if agent._tool_instructions is not None:
+        for _ti in agent._tool_instructions:
+            system_message_content += f"{_ti}\n"
+
+    # Format the system message with the session state variables
+    if agent.resolve_in_context:
+        system_message_content = format_message_with_state_variables(
+            agent,
+            system_message_content,
+            run_context=run_context,
+        )
+
+    # 3.3.7 Then add the expected output
+    if agent.expected_output is not None:
+        system_message_content += f"<expected_output>\n{agent.expected_output.strip()}\n</expected_output>\n\n"
+    # 3.3.8 Then add additional context
+    if agent.additional_context is not None:
+        system_message_content += f"{agent.additional_context}\n"
+    # 3.3.8.1 Then add skills to the system prompt
+    if agent.skills is not None:
+        skills_snippet = agent.skills.get_system_prompt_snippet()
+        if skills_snippet:
+            system_message_content += f"\n{skills_snippet}\n"
+    # 3.3.9 Then add memories to the system prompt
+    if agent.add_memories_to_context:
+        _memory_manager_not_set = False
+        if not user_id:
+            user_id = "default"
+        if agent.memory_manager is None:
+            set_memory_manager(agent)
+            _memory_manager_not_set = True
+
+        if has_async_db(agent):
+            user_memories = await agent.memory_manager.aget_user_memories(user_id=user_id)  # type: ignore
+        else:
+            user_memories = agent.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
+
+        if user_memories and len(user_memories) > 0:
+            system_message_content += "You have access to user info and preferences from previous interactions that you can use to personalize your response:\n\n"
+            system_message_content += "<memories_from_previous_interactions>"
+            for _memory in user_memories:  # type: ignore
+                system_message_content += f"\n- {_memory.memory}"
+            system_message_content += "\n</memories_from_previous_interactions>\n\n"
+            system_message_content += (
+                "Note: this information is from previous interactions and may be updated in this conversation. "
+                "You should always prefer information from this conversation over the past memories.\n"
+            )
+        else:
+            system_message_content += (
+                "You have the capability to retain memories from previous interactions with the user, "
+                "but have not had any interactions with the user yet.\n"
+            )
+        if _memory_manager_not_set:
+            agent.memory_manager = None
+
+        if agent.enable_agentic_memory:
+            system_message_content += (
+                "\n<updating_user_memories>\n"
+                "- You have access to the `update_user_memory` tool that you can use to add new memories, update existing memories, delete memories, or clear all memories.\n"
+                "- If the user's message includes information that should be captured as a memory, use the `update_user_memory` tool to update your memory database.\n"
+                "- Memories should include details that could personalize ongoing interactions with the user.\n"
+                "- Use this tool to add new memories or update existing memories that you identify in the conversation.\n"
+                "- Use this tool if the user asks to update their memory, delete a memory, or clear all memories.\n"
+                "- If you use the `update_user_memory` tool, remember to pass on the response to the user.\n"
+                "</updating_user_memories>\n\n"
+            )
+
+    # 3.3.10 Then add a summary of the interaction to the system prompt
+    if agent.add_session_summary_to_context and session.summary is not None:
+        system_message_content += "Here is a brief summary of your previous interactions:\n\n"
+        system_message_content += "<summary_of_previous_interactions>\n"
+        system_message_content += session.summary.summary
+        system_message_content += "\n</summary_of_previous_interactions>\n\n"
+        system_message_content += (
+            "Note: this information is from previous interactions and may be outdated. "
+            "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
+        )
+
+    # 3.3.12 then add learnings to the system prompt (see the sync twin)
+    if agent._learning is not None and agent.add_learnings_to_context:
+        learning_guidance = agent._learning._framework_instructions()
+        learning_context = await agent._learning.abuild_context(
+            user_id=user_id,
+            session_id=session.session_id if session else None,
+            agent_id=agent.id,
+            message=_learning_message_text(input),
+            run_context=run_context,
+            metadata=run_context.metadata if run_context else None,
+            dependencies=run_context.dependencies if run_context else None,
+            session_state=session_state,
+        )
+        learning_block = "\n".join(part for part in (learning_guidance, learning_context) if part)
+        if learning_block:
+            system_message_content += learning_block + "\n"
+
+    # 3.3.13 then add search_knowledge instructions to the system prompt
+    _resolved_knowledge = _get_resolved_knowledge(agent, run_context)
+    if _resolved_knowledge is not None and agent.search_knowledge and agent.add_search_knowledge_instructions:
+        # Prefer async version if available for async databases
+        abuild_context_fn = getattr(_resolved_knowledge, "abuild_context", None)
+        build_context_fn = getattr(_resolved_knowledge, "build_context", None)
+        scope_uid = run_context.user_id if run_context else agent.user_id
+        if callable(abuild_context_fn):
+            abuild_context_kwargs: Dict[str, Any] = {"enable_agentic_filters": agent.enable_agentic_knowledge_filters}
+            abuild_context_kwargs.update(get_user_id_kwarg(abuild_context_fn, scope_uid))
+            knowledge_context = await abuild_context_fn(**abuild_context_kwargs)
+            if knowledge_context is not None:
+                system_message_content += knowledge_context + "\n"
+        elif callable(build_context_fn):
+            build_context_kwargs: Dict[str, Any] = {"enable_agentic_filters": agent.enable_agentic_knowledge_filters}
+            build_context_kwargs.update(get_user_id_kwarg(build_context_fn, scope_uid))
+            knowledge_context = build_context_fn(**build_context_kwargs)
+            if knowledge_context is not None:
+                system_message_content += knowledge_context + "\n"
+
+    # 3.3.14 Add the system message from the Model
+    system_message_from_model = agent.model.get_system_message_for_model(tools)
+    if system_message_from_model is not None:
+        system_message_content += system_message_from_model
+
+    # 3.3.15 Add the JSON output prompt if output_schema is provided and the model does not support native structured outputs or JSON schema outputs
+    # or if use_json_mode is True
+    if (
+        output_schema is not None
+        and agent.parser_model is None
+        and not (
+            (agent.model.supports_native_structured_outputs or agent.model.supports_json_schema_outputs)
+            and (not agent.use_json_mode or agent.structured_outputs is True)
+        )
+    ):
+        system_message_content += f"{get_json_output_prompt(output_schema)}"  # type: ignore
+
+    # 3.3.16 Add the response model format prompt if output_schema is provided (Pydantic only)
+    if output_schema is not None and agent.parser_model is not None and not isinstance(output_schema, dict):
+        system_message_content += f"{get_response_model_format_prompt(output_schema)}"
+
+    # 3.3.17 Add the session state to the system message
+    if add_session_state_to_context and session_state is not None:
+        system_message_content += get_formatted_session_state_for_system_message(agent, session_state)
+
+    # Return the system message
+    return (
+        Message(role=agent.system_message_role, content=system_message_content.strip())  # type: ignore
+        if system_message_content
+        else None
+    )
+
+
+def get_formatted_session_state_for_system_message(agent: Agent, session_state: Dict[str, Any]) -> str:
+    return f"\n<session_state>\n{session_state}\n</session_state>\n\n"
+
+
+# ---------------------------------------------------------------------------
+# User message
+# ---------------------------------------------------------------------------
+
+
+def get_user_message(
+    agent: Agent,
+    *,
+    run_response: RunOutput,
+    run_context: Optional[RunContext] = None,
+    input: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
+    audio: Optional[Sequence[Audio]] = None,
+    images: Optional[Sequence[Image]] = None,
+    videos: Optional[Sequence[Video]] = None,
+    files: Optional[Sequence[File]] = None,
+    add_dependencies_to_context: Optional[bool] = None,
+    **kwargs: Any,
+) -> Optional[Message]:
+    """Return the user message for the Agent.
+
+    1. If the user_message is provided, use that.
+    2. If build_user_context is False or if the message is a list, return the message as is.
+    3. Build the default user message for the Agent
+    """
+    # Extract values from run_context
+    dependencies = run_context.dependencies if run_context else None
+    knowledge_filters = run_context.knowledge_filters if run_context else None
+    # Get references from the knowledge base to use in the user message
+    references = None
+
+    # 1. If build_user_context is False or message is a list, return the message as is.
+    if not agent.build_user_context:
+        return Message(
+            role=agent.user_message_role or "user",
+            content=input,  # type: ignore
+            images=None if not agent.send_media_to_model else images,
+            audio=None if not agent.send_media_to_model else audio,
+            videos=None if not agent.send_media_to_model else videos,
+            files=None if not agent.send_media_to_model else files,
+            **kwargs,
+        )
+    # 2. Build the user message for the Agent
+    elif input is None:
+        # If we have any media, return a message with empty content
+        if images is not None or audio is not None or videos is not None or files is not None:
+            return Message(
+                role=agent.user_message_role or "user",
+                content="",
+                images=None if not agent.send_media_to_model else images,
+                audio=None if not agent.send_media_to_model else audio,
+                videos=None if not agent.send_media_to_model else videos,
+                files=None if not agent.send_media_to_model else files,
+                **kwargs,
+            )
+        else:
+            # If the input is None, return None
+            return None
+
+    else:
+        # Handle list messages by converting to string
+        if isinstance(input, list):
+            # Convert list to string (join with newlines if all elements are strings)
+            if all(isinstance(item, str) for item in input):
+                message_content = "\n".join(input)  # type: ignore
+            else:
+                message_content = str(input)
+
+            return Message(
+                role=agent.user_message_role,
+                content=message_content,
+                images=None if not agent.send_media_to_model else images,
+                audio=None if not agent.send_media_to_model else audio,
+                videos=None if not agent.send_media_to_model else videos,
+                files=None if not agent.send_media_to_model else files,
+                **kwargs,
+            )
+
+        # If message is provided as a Message, use it directly
+        elif isinstance(input, Message):
+            return input
+        # If message is provided as a dict, try to validate it as a Message
+        elif isinstance(input, dict):
+            try:
+                return Message.model_validate(input)
+            except Exception as e:
+                log_warning(f"Failed to validate message: {str(e)}")
+                raise Exception(f"Failed to validate message: {e}")
+
+        # If message is provided as a BaseModel, convert it to a Message
+        elif isinstance(input, BaseModel):
+            try:
+                # Create a user message with the BaseModel content
+                content = input.model_dump_json(indent=2, exclude_none=True)
+                return Message(role=agent.user_message_role, content=content)
+            except Exception as e:
+                log_warning(f"Failed to convert BaseModel to message: {str(e)}")
+                raise Exception(f"Failed to convert BaseModel to message: {e}")
+        else:
+            user_msg_content = input
+            if agent.add_knowledge_to_context:
+                if isinstance(input, str):
+                    user_msg_content = input
+                elif callable(input):
+                    user_msg_content = input(agent=agent)
+                else:
+                    raise Exception("message must be a string or a callable when add_references is True")
+
+                try:
+                    retrieval_timer = Timer()
+                    retrieval_timer.start()
+                    docs_from_knowledge = get_relevant_docs_from_knowledge(
+                        agent,
+                        query=user_msg_content,
+                        filters=knowledge_filters,
+                        run_context=run_context,
+                        run_response=run_response,
+                        **kwargs,
+                    )
+                    if docs_from_knowledge is not None:
+                        references = MessageReferences(
+                            query=user_msg_content,
+                            references=docs_from_knowledge,
+                            time=round(retrieval_timer.elapsed, 4),
+                        )
+                        # Add the references to the run_response
+                        if run_response.references is None:
+                            run_response.references = []
+                        run_response.references.append(references)
+                    retrieval_timer.stop()
+                    log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+                except Exception as e:
+                    log_warning(f"Failed to get references: {str(e)}")
+
+            if agent.resolve_in_context:
+                user_msg_content = format_message_with_state_variables(
+                    agent,
+                    user_msg_content,
+                    run_context=run_context,
+                )
+
+            # Convert to string for concatenation operations
+            user_msg_content_str = get_text_from_message(user_msg_content) if user_msg_content is not None else ""
+
+            # 4.1 Add knowledge references to user message
+            if (
+                agent.add_knowledge_to_context
+                and references is not None
+                and references.references is not None
+                and len(references.references) > 0
+            ):
+                user_msg_content_str += "\n\nUse the following references from the knowledge base if it helps:\n"
+                user_msg_content_str += "<references>\n"
+                user_msg_content_str += convert_documents_to_string(agent, references.references) + "\n"
+                user_msg_content_str += "</references>"
+            # 4.2 Add context to user message
+            if add_dependencies_to_context and dependencies is not None:
+                user_msg_content_str += "\n\n<additional context>\n"
+                user_msg_content_str += convert_dependencies_to_string(agent, dependencies) + "\n"
+                user_msg_content_str += "</additional context>"
+
+            # Use the string version for the final content
+            user_msg_content = user_msg_content_str
+
+            # Return the user message
+            return Message(
+                role=agent.user_message_role,
+                content=user_msg_content,
+                audio=None if not agent.send_media_to_model else audio,
+                images=None if not agent.send_media_to_model else images,
+                videos=None if not agent.send_media_to_model else videos,
+                files=None if not agent.send_media_to_model else files,
+                **kwargs,
+            )
+
+
+async def aget_user_message(
+    agent: Agent,
+    *,
+    run_response: RunOutput,
+    run_context: Optional[RunContext] = None,
+    input: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
+    audio: Optional[Sequence[Audio]] = None,
+    images: Optional[Sequence[Image]] = None,
+    videos: Optional[Sequence[Video]] = None,
+    files: Optional[Sequence[File]] = None,
+    add_dependencies_to_context: Optional[bool] = None,
+    **kwargs: Any,
+) -> Optional[Message]:
+    """Return the user message for the Agent (async version).
+
+    1. If the user_message is provided, use that.
+    2. If build_user_context is False or if the message is a list, return the message as is.
+    3. Build the default user message for the Agent
+    """
+    # Extract values from run_context
+    dependencies = run_context.dependencies if run_context else None
+    knowledge_filters = run_context.knowledge_filters if run_context else None
+    # Get references from the knowledge base to use in the user message
+    references = None
+
+    # 1. If build_user_context is False or message is a list, return the message as is.
+    if not agent.build_user_context:
+        return Message(
+            role=agent.user_message_role or "user",
+            content=input,  # type: ignore
+            images=None if not agent.send_media_to_model else images,
+            audio=None if not agent.send_media_to_model else audio,
+            videos=None if not agent.send_media_to_model else videos,
+            files=None if not agent.send_media_to_model else files,
+            **kwargs,
+        )
+    # 2. Build the user message for the Agent
+    elif input is None:
+        # If we have any media, return a message with empty content
+        if images is not None or audio is not None or videos is not None or files is not None:
+            return Message(
+                role=agent.user_message_role or "user",
+                content="",
+                images=None if not agent.send_media_to_model else images,
+                audio=None if not agent.send_media_to_model else audio,
+                videos=None if not agent.send_media_to_model else videos,
+                files=None if not agent.send_media_to_model else files,
+                **kwargs,
+            )
+        else:
+            # If the input is None, return None
+            return None
+
+    else:
+        # Handle list messages by converting to string
+        if isinstance(input, list):
+            # Convert list to string (join with newlines if all elements are strings)
+            if all(isinstance(item, str) for item in input):
+                message_content = "\n".join(input)  # type: ignore
+            else:
+                message_content = str(input)
+
+            return Message(
+                role=agent.user_message_role,
+                content=message_content,
+                images=None if not agent.send_media_to_model else images,
+                audio=None if not agent.send_media_to_model else audio,
+                videos=None if not agent.send_media_to_model else videos,
+                files=None if not agent.send_media_to_model else files,
+                **kwargs,
+            )
+
+        # If message is provided as a Message, use it directly
+        elif isinstance(input, Message):
+            return input
+        # If message is provided as a dict, try to validate it as a Message
+        elif isinstance(input, dict):
+            try:
+                return Message.model_validate(input)
+            except Exception as e:
+                log_warning(f"Failed to validate message: {str(e)}")
+                raise Exception(f"Failed to validate message: {e}")
+
+        # If message is provided as a BaseModel, convert it to a Message
+        elif isinstance(input, BaseModel):
+            try:
+                # Create a user message with the BaseModel content
+                content = input.model_dump_json(indent=2, exclude_none=True)
+                return Message(role=agent.user_message_role, content=content)
+            except Exception as e:
+                log_warning(f"Failed to convert BaseModel to message: {str(e)}")
+                raise Exception(f"Failed to convert BaseModel to message: {e}")
+        else:
+            user_msg_content = input
+            if agent.add_knowledge_to_context:
+                if isinstance(input, str):
+                    user_msg_content = input
+                elif callable(input):
+                    user_msg_content = input(agent=agent)
+                else:
+                    raise Exception("message must be a string or a callable when add_references is True")
+
+                try:
+                    retrieval_timer = Timer()
+                    retrieval_timer.start()
+                    docs_from_knowledge = await aget_relevant_docs_from_knowledge(
+                        agent,
+                        query=user_msg_content,
+                        filters=knowledge_filters,
+                        run_context=run_context,
+                        run_response=run_response,
+                        **kwargs,
+                    )
+                    if docs_from_knowledge is not None:
+                        references = MessageReferences(
+                            query=user_msg_content,
+                            references=docs_from_knowledge,
+                            time=round(retrieval_timer.elapsed, 4),
+                        )
+                        # Add the references to the run_response
+                        if run_response.references is None:
+                            run_response.references = []
+                        run_response.references.append(references)
+                    retrieval_timer.stop()
+                    log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+                except Exception as e:
+                    log_warning(f"Failed to get references: {str(e)}")
+
+            if agent.resolve_in_context:
+                user_msg_content = format_message_with_state_variables(
+                    agent,
+                    user_msg_content,
+                    run_context=run_context,
+                )
+
+            # Convert to string for concatenation operations
+            user_msg_content_str = get_text_from_message(user_msg_content) if user_msg_content is not None else ""
+
+            # 4.1 Add knowledge references to user message
+            if (
+                agent.add_knowledge_to_context
+                and references is not None
+                and references.references is not None
+                and len(references.references) > 0
+            ):
+                user_msg_content_str += "\n\nUse the following references from the knowledge base if it helps:\n"
+                user_msg_content_str += "<references>\n"
+                user_msg_content_str += convert_documents_to_string(agent, references.references) + "\n"
+                user_msg_content_str += "</references>"
+            # 4.2 Add context to user message
+            if add_dependencies_to_context and dependencies is not None:
+                user_msg_content_str += "\n\n<additional context>\n"
+                user_msg_content_str += convert_dependencies_to_string(agent, dependencies) + "\n"
+                user_msg_content_str += "</additional context>"
+
+            # Use the string version for the final content
+            user_msg_content = user_msg_content_str
+
+            # Return the user message
+            return Message(
+                role=agent.user_message_role,
+                content=user_msg_content,
+                audio=None if not agent.send_media_to_model else audio,
+                images=None if not agent.send_media_to_model else images,
+                videos=None if not agent.send_media_to_model else videos,
+                files=None if not agent.send_media_to_model else files,
+                **kwargs,
+            )
+
+
+# ---------------------------------------------------------------------------
+# Run messages
+# ---------------------------------------------------------------------------
+
+
+def _resolve_media_storage(agent: Agent) -> Optional[Any]:
+    """The agent's own media storage, falling back to the team's.
+
+    A member reads its history out of the shared team session, whose rows were written through
+    the team's backend, so a member with no backend of its own cannot resolve those references.
+    """
+    return agent.media_storage or getattr(getattr(agent, "_team", None), "media_storage", None)
+
+
+def get_run_messages(
+    agent: Agent,
+    *,
+    run_response: RunOutput,
+    run_context: RunContext,
+    input: Union[str, List, Dict, Message, BaseModel, List[Message]],
+    session: AgentSession,
+    user_id: Optional[str] = None,
+    audio: Optional[Sequence[Audio]] = None,
+    images: Optional[Sequence[Image]] = None,
+    videos: Optional[Sequence[Video]] = None,
+    files: Optional[Sequence[File]] = None,
+    add_history_to_context: Optional[bool] = None,
+    add_dependencies_to_context: Optional[bool] = None,
+    add_session_state_to_context: Optional[bool] = None,
+    tools: Optional[List[Union[Function, dict]]] = None,
+    **kwargs: Any,
+) -> RunMessages:
+    """This function returns a RunMessages object with the following attributes:
+        - system_message: The system message for this run
+        - user_message: The user message for this run
+        - messages: List of messages to send to the model
+
+    To build the RunMessages object:
+    1. Add system message to run_messages
+    2. Add extra messages to run_messages if provided
+    3. Add history to run_messages
+    4. Add user message to run_messages (if input is single content)
+    5. Add input messages to run_messages if provided (if input is List[Message])
+
+    Returns:
+        RunMessages object with the following attributes:
+            - system_message: The system message for this run
+            - user_message: The user message for this run
+            - messages: List of all messages to send to the model
+
+    Typical usage:
+    run_messages = get_run_messages(
+        agent, input=input, session_id=session_id, user_id=user_id, audio=audio, images=images, videos=videos, files=files, **kwargs
+    )
+    """
+
+    # Initialize the RunMessages object (no media here - that's in RunInput now)
+    run_messages = RunMessages()
+
+    # 1. Add system message to run_messages
+    system_message = get_system_message(
+        agent,
+        session=session,
+        run_context=run_context,
+        tools=tools,
+        add_session_state_to_context=add_session_state_to_context,
+        input=input,
+    )
+    if system_message is not None:
+        run_messages.system_message = system_message
+        run_messages.messages.append(system_message)
+
+    # 2. Add extra messages to run_messages if provided
+    if agent.additional_input is not None:
+        messages_to_add_to_run_response: List[Message] = []
+        if run_messages.extra_messages is None:
+            run_messages.extra_messages = []
+
+        for _m in agent.additional_input:
+            if isinstance(_m, Message):
+                messages_to_add_to_run_response.append(_m)
+                run_messages.messages.append(_m)
+                run_messages.extra_messages.append(_m)
+            elif isinstance(_m, dict):
+                try:
+                    _m_parsed = Message.model_validate(_m)
+                    messages_to_add_to_run_response.append(_m_parsed)
+                    run_messages.messages.append(_m_parsed)
+                    run_messages.extra_messages.append(_m_parsed)
+                except Exception as e:
+                    log_warning(f"Failed to validate message: {str(e)}")
+        # Add the extra messages to the run_response
+        if len(messages_to_add_to_run_response) > 0:
+            log_debug(f"Adding {len(messages_to_add_to_run_response)} extra messages")
+            if run_response.additional_input is None:
+                run_response.additional_input = messages_to_add_to_run_response
+            else:
+                run_response.additional_input.extend(messages_to_add_to_run_response)
+
+    # 3. Add history to run_messages
+    if add_history_to_context:
+        # Only skip messages from history when system_message_role is NOT a standard conversation role.
+        # Standard conversation roles ("user", "assistant", "tool") should never be filtered
+        # to preserve conversation continuity.
+        skip_role = (
+            agent.system_message_role if agent.system_message_role not in ["user", "assistant", "tool"] else None
+        )
+
+        history, stored_record, replay_ids = _history_for_run(agent, session, run_response, skip_role)
+
+        if len(history) > 0:
+            history_copy = [copy_history_message(msg) for msg in history]
+
+            # Filter tool calls from history if limit is set (before adding to run_messages)
+            if agent.max_tool_calls_from_history is not None:
+                filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
+
+            # Replace the older part of the history with a summary once it has
+            # grown past the configured threshold.
+            history_copy = apply_compaction(
+                agent,
+                session,
+                history_copy,
+                stored_record,
+                run_response,
+                events=run_messages.events,
+                context_prefix=run_messages.messages,
+                tools=tools,
+                replay_ids=replay_ids,
+            )
+
+            log_debug(f"Adding {len(history_copy)} messages from history")
+
+            run_messages.messages += history_copy
+
+    # 4. Add user message to run_messages
+    user_message: Optional[Message] = None
+
+    # 4.1 Build user message if input is None, str or list and not a list of Message/dict objects
+    if (
+        input is None
+        or isinstance(input, str)
+        or (
+            isinstance(input, list)
+            and not (
+                len(input) > 0
+                and (isinstance(input[0], Message) or (isinstance(input[0], dict) and "role" in input[0]))
+            )
+        )
+    ):
+        user_message = get_user_message(
+            agent,
+            run_response=run_response,
+            run_context=run_context,
+            input=input,
+            audio=audio,
+            images=images,
+            videos=videos,
+            files=files,
+            add_dependencies_to_context=add_dependencies_to_context,
+            **kwargs,
+        )
+
+    # 4.2 If input is provided as a Message, use it directly
+    elif isinstance(input, Message):
+        user_message = input
+
+    # 4.3 If input is provided as a dict, try to validate it as a Message
+    elif isinstance(input, dict):
+        try:
+            if agent.input_schema and is_typed_dict(agent.input_schema):
+                import json
+
+                content = json.dumps(input, indent=2, ensure_ascii=False)
+                user_message = Message(role=agent.user_message_role, content=content)
+            else:
+                user_message = Message.model_validate(input)
+        except Exception as e:
+            log_warning(f"Failed to validate message: {str(e)}")
+
+    # 4.4 If input is provided as a BaseModel, convert it to a Message
+    elif isinstance(input, BaseModel):
+        try:
+            # Create a user message with the BaseModel content
+            content = input.model_dump_json(indent=2, exclude_none=True)
+            user_message = Message(role=agent.user_message_role, content=content)
+        except Exception as e:
+            log_warning(f"Failed to convert BaseModel to message: {str(e)}")
+
+    # 5. Add input messages to run_messages if provided (List[Message] or List[Dict])
+    if (
+        isinstance(input, list)
+        and len(input) > 0
+        and (isinstance(input[0], Message) or (isinstance(input[0], dict) and "role" in input[0]))
+    ):
+        for _m in input:
+            if isinstance(_m, Message):
+                run_messages.messages.append(_m)
+                if run_messages.extra_messages is None:
+                    run_messages.extra_messages = []
+                run_messages.extra_messages.append(_m)
+            elif isinstance(_m, dict):
+                try:
+                    msg = Message.model_validate(_m)
+                    run_messages.messages.append(msg)
+                    if run_messages.extra_messages is None:
+                        run_messages.extra_messages = []
+                    run_messages.extra_messages.append(msg)
+                except Exception as e:
+                    log_warning(f"Failed to validate message: {str(e)}")
+
+    # Add user message to run_messages
+    if user_message is not None:
+        run_messages.user_message = user_message
+        run_messages.messages.append(user_message)
+
+    # Read offloaded media back on every message headed for the model: a member's history arrives as input.
+    media_storage = _resolve_media_storage(agent)
+    if media_storage is not None:
+        from agno.utils.media_offload import refresh_messages_media
+
+        refresh_messages_media(run_messages.messages, media_storage)
+
+    # Set messages on run_context so tool hooks can access the current message history
+    run_context.messages = run_messages.messages
+
+    return run_messages
+
+
+async def aget_run_messages(
+    agent: Agent,
+    *,
+    run_response: RunOutput,
+    run_context: RunContext,
+    input: Union[str, List, Dict, Message, BaseModel, List[Message]],
+    session: AgentSession,
+    user_id: Optional[str] = None,
+    audio: Optional[Sequence[Audio]] = None,
+    images: Optional[Sequence[Image]] = None,
+    videos: Optional[Sequence[Video]] = None,
+    files: Optional[Sequence[File]] = None,
+    add_history_to_context: Optional[bool] = None,
+    add_dependencies_to_context: Optional[bool] = None,
+    add_session_state_to_context: Optional[bool] = None,
+    tools: Optional[List[Union[Function, dict]]] = None,
+    **kwargs: Any,
+) -> RunMessages:
+    """This function returns a RunMessages object with the following attributes:
+        - system_message: The system message for this run
+        - user_message: The user message for this run
+        - messages: List of messages to send to the model
+
+    To build the RunMessages object:
+    1. Add system message to run_messages
+    2. Add extra messages to run_messages if provided
+    3. Add history to run_messages
+    4. Add user message to run_messages (if input is single content)
+    5. Add input messages to run_messages if provided (if input is List[Message])
+
+    Returns:
+        RunMessages object with the following attributes:
+            - system_message: The system message for this run
+            - user_message: The user message for this run
+            - messages: List of all messages to send to the model
+
+    Typical usage:
+    run_messages = await aget_run_messages(
+        agent, input=input, session_id=session_id, user_id=user_id, audio=audio, images=images, videos=videos, files=files, **kwargs
+    )
+    """
+
+    # Initialize the RunMessages object (no media here - that's in RunInput now)
+    run_messages = RunMessages()
+
+    # 1. Add system message to run_messages
+    system_message = await aget_system_message(
+        agent,
+        session=session,
+        run_context=run_context,
+        tools=tools,
+        add_session_state_to_context=add_session_state_to_context,
+        input=input,
+    )
+    if system_message is not None:
+        run_messages.system_message = system_message
+        run_messages.messages.append(system_message)
+
+    # 2. Add extra messages to run_messages if provided
+    if agent.additional_input is not None:
+        messages_to_add_to_run_response: List[Message] = []
+        if run_messages.extra_messages is None:
+            run_messages.extra_messages = []
+
+        for _m in agent.additional_input:
+            if isinstance(_m, Message):
+                messages_to_add_to_run_response.append(_m)
+                run_messages.messages.append(_m)
+                run_messages.extra_messages.append(_m)
+            elif isinstance(_m, dict):
+                try:
+                    _m_parsed = Message.model_validate(_m)
+                    messages_to_add_to_run_response.append(_m_parsed)
+                    run_messages.messages.append(_m_parsed)
+                    run_messages.extra_messages.append(_m_parsed)
+                except Exception as e:
+                    log_warning(f"Failed to validate message: {str(e)}")
+        # Add the extra messages to the run_response
+        if len(messages_to_add_to_run_response) > 0:
+            log_debug(f"Adding {len(messages_to_add_to_run_response)} extra messages")
+            if run_response.additional_input is None:
+                run_response.additional_input = messages_to_add_to_run_response
+            else:
+                run_response.additional_input.extend(messages_to_add_to_run_response)
+
+    # 3. Add history to run_messages
+    if add_history_to_context:
+        # Only skip messages from history when system_message_role is NOT a standard conversation role.
+        # Standard conversation roles ("user", "assistant", "tool") should never be filtered
+        # to preserve conversation continuity.
+        skip_role = (
+            agent.system_message_role if agent.system_message_role not in ["user", "assistant", "tool"] else None
+        )
+
+        history, stored_record, replay_ids = _history_for_run(agent, session, run_response, skip_role)
+
+        if len(history) > 0:
+            history_copy = [copy_history_message(msg) for msg in history]
+
+            # Filter tool calls from history if limit is set (before adding to run_messages)
+            if agent.max_tool_calls_from_history is not None:
+                filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
+
+            # Replace the older part of the history with a summary once it has
+            # grown past the configured threshold.
+            history_copy = await aapply_compaction(
+                agent,
+                session,
+                history_copy,
+                stored_record,
+                run_response,
+                events=run_messages.events,
+                context_prefix=run_messages.messages,
+                tools=tools,
+                replay_ids=replay_ids,
+            )
+
+            log_debug(f"Adding {len(history_copy)} messages from history")
+
+            run_messages.messages += history_copy
+
+    # 4. Add user message to run_messages
+    user_message: Optional[Message] = None
+
+    # 4.1 Build user message if input is None, str or list and not a list of Message/dict objects
+    if (
+        input is None
+        or isinstance(input, str)
+        or (
+            isinstance(input, list)
+            and not (
+                len(input) > 0
+                and (isinstance(input[0], Message) or (isinstance(input[0], dict) and "role" in input[0]))
+            )
+        )
+    ):
+        user_message = await aget_user_message(
+            agent,
+            run_response=run_response,
+            run_context=run_context,
+            input=input,
+            audio=audio,
+            images=images,
+            videos=videos,
+            files=files,
+            add_dependencies_to_context=add_dependencies_to_context,
+            **kwargs,
+        )
+
+    # 4.2 If input is provided as a Message, use it directly
+    elif isinstance(input, Message):
+        user_message = input
+
+    # 4.3 If input is provided as a dict, try to validate it as a Message
+    elif isinstance(input, dict):
+        try:
+            if agent.input_schema and is_typed_dict(agent.input_schema):
+                import json
+
+                content = json.dumps(input, indent=2, ensure_ascii=False)
+                user_message = Message(role=agent.user_message_role, content=content)
+            else:
+                user_message = Message.model_validate(input)
+        except Exception as e:
+            log_warning(f"Failed to validate message: {str(e)}")
+
+    # 4.4 If input is provided as a BaseModel, convert it to a Message
+    elif isinstance(input, BaseModel):
+        try:
+            # Create a user message with the BaseModel content
+            content = input.model_dump_json(indent=2, exclude_none=True)
+            user_message = Message(role=agent.user_message_role, content=content)
+        except Exception as e:
+            log_warning(f"Failed to convert BaseModel to message: {str(e)}")
+
+    # 5. Add input messages to run_messages if provided (List[Message] or List[Dict])
+    if (
+        isinstance(input, list)
+        and len(input) > 0
+        and (isinstance(input[0], Message) or (isinstance(input[0], dict) and "role" in input[0]))
+    ):
+        for _m in input:
+            if isinstance(_m, Message):
+                run_messages.messages.append(_m)
+                if run_messages.extra_messages is None:
+                    run_messages.extra_messages = []
+                run_messages.extra_messages.append(_m)
+            elif isinstance(_m, dict):
+                try:
+                    msg = Message.model_validate(_m)
+                    run_messages.messages.append(msg)
+                    if run_messages.extra_messages is None:
+                        run_messages.extra_messages = []
+                    run_messages.extra_messages.append(msg)
+                except Exception as e:
+                    log_warning(f"Failed to validate message: {str(e)}")
+
+    # Add user message to run_messages
+    if user_message is not None:
+        run_messages.user_message = user_message
+        run_messages.messages.append(user_message)
+
+    # Read offloaded media back on every message headed for the model: a member's history arrives as input.
+    media_storage = _resolve_media_storage(agent)
+    if media_storage is not None:
+        from agno.utils.media_offload import arefresh_messages_media
+
+        await arefresh_messages_media(run_messages.messages, media_storage)
+
+    # Set messages on run_context so tool hooks can access the current message history
+    run_context.messages = run_messages.messages
+
+    return run_messages
+
+
+def _build_continue_run_messages(
+    agent: Agent,
+    input: List[Message],
+    session: Optional[AgentSession] = None,
+    add_history_to_context: Optional[bool] = None,
+    run_context: Optional[RunContext] = None,
+    run_response: Optional[RunOutput] = None,
+) -> RunMessages:
+    """This function returns a RunMessages object with the following attributes:
+        - system_message: The system message for this run
+        - user_message: The user message for this run
+        - messages: List of messages to send to the model
+
+    It continues from a previous run and completes a tool call that was paused.
+    """
+
+    # Initialize the RunMessages object
+    run_messages = RunMessages()
+
+    # Add history to run_messages (optional)
+    if add_history_to_context is None:
+        add_history_to_context = agent.add_history_to_context
+
+    # Extract most recent user message from messages as the original user message
+    user_message = None
+    for msg in reversed(input):
+        if msg.role == agent.user_message_role:
+            user_message = msg
+            break
+
+    # Extract system message from messages
+    system_message = None
+    for msg in input:
+        if msg.role == agent.system_message_role:
+            system_message = msg
+            break
+
+    run_messages.system_message = system_message
+    run_messages.user_message = user_message
+
+    # Skip re-fetching history if input already contains it (run_response path).
+    input_has_history = any(msg.from_history for msg in input)
+
+    # Build messages in the correct order:
+    # 1. System message first
+    # 2. History messages (from previous runs, only if not already in input)
+    # 3. Remaining input messages (current run's messages, excluding the system message)
+
+    # 1. Add the system message first
+    if system_message is not None:
+        run_messages.messages.append(system_message)
+
+    # 2. Add history messages if not already present in input
+    if add_history_to_context and session is not None and not input_has_history:
+        # Only skip messages from history when system_message_role is NOT a standard conversation role.
+        # Standard conversation roles ("user", "assistant", "tool") should never be filtered
+        # to preserve conversation continuity.
+        skip_role = (
+            agent.system_message_role if agent.system_message_role not in ["user", "assistant", "tool"] else None
+        )
+
+        history, stored_record, replay_ids = _history_for_run(
+            agent, continue_history_session(session, run_response), run_response, skip_role
+        )
+
+        if len(history) > 0:
+            history_copy = [copy_history_message(msg) for msg in history]
+
+            # Filter tool calls from history if limit is set (before adding to run_messages)
+            if agent.max_tool_calls_from_history is not None:
+                filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
+
+            # Replay the stored fold, as a fresh run does. No new fold is planned here: the run
+            # checked this same history before it paused, and its own messages are never folded.
+            if agent_compaction(agent) is not None:
+                history_copy = _replayed_view(agent.compaction, history_copy, stored_record, replay_ids)
+
+            log_debug(f"Adding {len(history_copy)} messages from history")
+            run_messages.messages += history_copy
+
+    # 3. Add the remaining input messages (skip the system message to avoid duplication)
+    for msg in input:
+        if msg is not system_message:
+            run_messages.messages.append(msg)
+
+    # Set messages on run_context so tool hooks can access the current message history
+    if run_context is not None:
+        run_context.messages = run_messages.messages
+
+    return run_messages
+
+
+def get_continue_run_messages(
+    agent: Agent,
+    input: List[Message],
+    session: Optional[AgentSession] = None,
+    add_history_to_context: Optional[bool] = None,
+    run_context: Optional[RunContext] = None,
+    run_response: Optional[RunOutput] = None,
+) -> RunMessages:
+    """Build the messages that resume a paused run, reading offloaded media back first.
+
+    The paused run's own messages come off the database carrying a reference and no bytes.
+    """
+    run_messages = _build_continue_run_messages(
+        agent, input, session, add_history_to_context, run_context, run_response
+    )
+    media_storage = _resolve_media_storage(agent)
+    if media_storage is not None:
+        from agno.utils.media_offload import refresh_messages_media
+
+        refresh_messages_media(run_messages.messages, media_storage)
+    return run_messages
+
+
+async def aget_continue_run_messages(
+    agent: Agent,
+    input: List[Message],
+    session: Optional[AgentSession] = None,
+    add_history_to_context: Optional[bool] = None,
+    run_context: Optional[RunContext] = None,
+    run_response: Optional[RunOutput] = None,
+) -> RunMessages:
+    """Async variant of :func:`get_continue_run_messages`."""
+    run_messages = _build_continue_run_messages(
+        agent, input, session, add_history_to_context, run_context, run_response
+    )
+    media_storage = _resolve_media_storage(agent)
+    if media_storage is not None:
+        from agno.utils.media_offload import arefresh_messages_media
+
+        await arefresh_messages_media(run_messages.messages, media_storage)
+    return run_messages
+
+
+# ---------------------------------------------------------------------------
+# Parser / output model messages
+# ---------------------------------------------------------------------------
+
+
+def get_messages_for_parser_model(
+    agent: Agent,
+    model_response: ModelResponse,
+    response_format: Optional[Union[Dict, Type[BaseModel]]],
+    run_context: Optional[RunContext] = None,
+) -> List[Message]:
+    """Get the messages for the parser model."""
+    # Get output_schema from run_context
+    output_schema = run_context.output_schema if run_context else None
+
+    system_content = (
+        agent.parser_model_prompt
+        if agent.parser_model_prompt is not None
+        else "You are tasked with creating a structured output from the provided user message."
+    )
+
+    if response_format == {"type": "json_object"} and output_schema is not None:
+        system_content += f"{get_json_output_prompt(output_schema)}"  # type: ignore
+
+    return [
+        Message(role="system", content=system_content),
+        Message(role="user", content=model_response.content),
+    ]
+
+
+def get_messages_for_parser_model_stream(
+    agent: Agent,
+    run_response: RunOutput,
+    response_format: Optional[Union[Dict, Type[BaseModel]]],
+    run_context: Optional[RunContext] = None,
+) -> List[Message]:
+    """Get the messages for the parser model."""
+    # Get output_schema from run_context
+    output_schema = run_context.output_schema if run_context else None
+
+    system_content = (
+        agent.parser_model_prompt
+        if agent.parser_model_prompt is not None
+        else "You are tasked with creating a structured output from the provided data."
+    )
+
+    if response_format == {"type": "json_object"} and output_schema is not None:
+        system_content += f"{get_json_output_prompt(output_schema)}"  # type: ignore
+
+    return [
+        Message(role="system", content=system_content),
+        Message(role="user", content=run_response.content),
+    ]
+
+
+def get_messages_for_output_model(agent: Agent, messages: List[Message]) -> List[Message]:
+    """Get the messages for the output model."""
+
+    if agent.output_model_prompt is not None:
+        system_message_exists = False
+        for message in messages:
+            if message.role == "system":
+                system_message_exists = True
+                message.content = agent.output_model_prompt
+                break
+        if not system_message_exists:
+            messages.insert(0, Message(role="system", content=agent.output_model_prompt))
+
+    # Remove the last assistant message from the messages list
+    messages.pop(-1)
+
+    return messages
+
+
+# ---------------------------------------------------------------------------
+# Knowledge retrieval
+# ---------------------------------------------------------------------------
+
+
+def get_relevant_docs_from_knowledge(
+    agent: Agent,
+    query: str,
+    num_documents: Optional[int] = None,
+    filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+    validate_filters: bool = False,
+    run_context: Optional[RunContext] = None,
+    run_response: Optional[RunOutput] = None,
+    **kwargs: Any,
+) -> Optional[List[Union[Dict[str, Any], str]]]:
+    """Get relevant docs from the knowledge base to answer a query.
+
+    Args:
+        agent: The Agent instance.
+        query (str): The query to search for.
+        num_documents (Optional[int]): Number of documents to return.
+        filters (Optional[Dict[str, Any]]): Filters to apply to the search.
+        validate_filters (bool): Whether to validate the filters against known valid filter keys.
+        run_context (Optional[RunContext]): Runtime context containing dependencies and other context.
+        run_response (Optional[RunOutput]): Run a query transformer's model call is billed to.
+        **kwargs: Additional keyword arguments.
+
+    Returns:
+        Optional[List[Dict[str, Any]]]: List of relevant document dicts.
+    """
+    from agno.knowledge.document import Document
+
+    # Extract dependencies from run_context if available
+    dependencies = run_context.dependencies if run_context else None
+
+    resolved_knowledge = _get_resolved_knowledge(agent, run_context)
+
+    if num_documents is None and resolved_knowledge is not None:
+        num_documents = getattr(resolved_knowledge, "max_results", None)
+
+    # Validate the filters against known valid filter keys
+    if resolved_knowledge is not None and filters is not None:
+        if validate_filters:
+            validate_kwargs: Dict[str, Any] = {}
+            validate_kwargs.update(
+                get_user_id_kwarg(
+                    resolved_knowledge.validate_filters, run_context.user_id if run_context else agent.user_id
+                )  # type: ignore
+            )
+            valid_filters, invalid_keys = resolved_knowledge.validate_filters(filters, **validate_kwargs)  # type: ignore
+
+            # Warn about invalid filter keys
+            if invalid_keys:
+                # type: ignore
+                log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
+
+                # Only use valid filters
+                filters = valid_filters
+                if not filters:
+                    log_warning("No valid filters remain after validation. Search will proceed without filters.")
+
+            if invalid_keys == [] and valid_filters == {}:
+                log_warning("No valid filters provided. Search will proceed without filters.")
+                filters = None
+
+    if agent.knowledge_retriever is not None and callable(agent.knowledge_retriever):
+        from inspect import signature
+
+        try:
+            sig = signature(agent.knowledge_retriever)
+            knowledge_retriever_kwargs: Dict[str, Any] = {}
+            if "agent" in sig.parameters:
+                knowledge_retriever_kwargs = {"agent": agent}
+            if "filters" in sig.parameters:
+                knowledge_retriever_kwargs["filters"] = filters
+            if "run_context" in sig.parameters:
+                knowledge_retriever_kwargs["run_context"] = run_context
+            elif "dependencies" in sig.parameters:
+                # Backward compatibility: support dependencies parameter
+                knowledge_retriever_kwargs["dependencies"] = dependencies
+            knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
+            # After the **kwargs merge so caller kwargs cannot override the run context owner
+            knowledge_retriever_kwargs.update(
+                get_user_id_kwarg(
+                    agent.knowledge_retriever,
+                    run_context.user_id if run_context else agent.user_id,
+                )
+            )
+            return agent.knowledge_retriever(**knowledge_retriever_kwargs)
+        except Exception as e:
+            log_warning(f"Knowledge retriever failed: {str(e)}")
+            raise e
+
+    # Use knowledge protocol's retrieve method
+    try:
+        if resolved_knowledge is None:
+            return None
+
+        # Use protocol retrieve() method if available
+        retrieve_fn = getattr(resolved_knowledge, "retrieve", None)
+        if not callable(retrieve_fn):
+            log_debug("Knowledge does not implement retrieve()")
+            return None
+
+        if num_documents is None:
+            num_documents = getattr(resolved_knowledge, "max_results", 10)
+
+        log_debug(f"Retrieving from knowledge base with filters: {filters}")
+        retrieve_kwargs: Dict[str, Any] = {
+            "query": query,
+            "max_results": num_documents,
+            "filters": filters,
+        }
+        retrieve_kwargs.update(get_user_id_kwarg(retrieve_fn, run_context.user_id if run_context else agent.user_id))
+        # Bills an LLM call a query transformer makes to this run.
+        retrieve_kwargs.update(get_run_response_kwarg(retrieve_fn, run_response))
+        relevant_docs: List[Document] = retrieve_fn(**retrieve_kwargs)
+
+        if not relevant_docs or len(relevant_docs) == 0:
+            log_debug("No relevant documents found for query")
+            return None
+
+        return [doc.to_dict() for doc in relevant_docs]
+    except Exception as e:
+        log_warning(f"Error retrieving from knowledge base: {str(e)}")
+        raise e
+
+
+async def aget_relevant_docs_from_knowledge(
+    agent: Agent,
+    query: str,
+    num_documents: Optional[int] = None,
+    filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+    validate_filters: bool = False,
+    run_context: Optional[RunContext] = None,
+    run_response: Optional[RunOutput] = None,
+    **kwargs: Any,
+) -> Optional[List[Union[Dict[str, Any], str]]]:
+    """Get relevant documents from knowledge base asynchronously."""
+    from agno.knowledge.document import Document
+
+    # Extract dependencies from run_context if available
+    dependencies = run_context.dependencies if run_context else None
+
+    resolved_knowledge = _get_resolved_knowledge(agent, run_context)
+
+    if num_documents is None and resolved_knowledge is not None:
+        num_documents = getattr(resolved_knowledge, "max_results", None)
+
+    # Validate the filters against known valid filter keys
+    if resolved_knowledge is not None and filters is not None:
+        if validate_filters:
+            avalidate_kwargs: Dict[str, Any] = {}
+            avalidate_kwargs.update(
+                get_user_id_kwarg(
+                    resolved_knowledge.avalidate_filters, run_context.user_id if run_context else agent.user_id
+                )  # type: ignore
+            )
+            valid_filters, invalid_keys = await resolved_knowledge.avalidate_filters(filters, **avalidate_kwargs)  # type: ignore
+
+            # Warn about invalid filter keys
+            if invalid_keys:  # type: ignore
+                log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
+
+                # Only use valid filters
+                filters = valid_filters
+                if not filters:
+                    log_warning("No valid filters remain after validation. Search will proceed without filters.")
+
+            if invalid_keys == [] and valid_filters == {}:
+                log_warning("No valid filters provided. Search will proceed without filters.")
+                filters = None
+
+    if agent.knowledge_retriever is not None and callable(agent.knowledge_retriever):
+        from inspect import isawaitable, signature
+
+        try:
+            sig = signature(agent.knowledge_retriever)
+            knowledge_retriever_kwargs: Dict[str, Any] = {}
+            if "agent" in sig.parameters:
+                knowledge_retriever_kwargs = {"agent": agent}
+            if "filters" in sig.parameters:
+                knowledge_retriever_kwargs["filters"] = filters
+            if "run_context" in sig.parameters:
+                knowledge_retriever_kwargs["run_context"] = run_context
+            elif "dependencies" in sig.parameters:
+                # Backward compatibility: support dependencies parameter
+                knowledge_retriever_kwargs["dependencies"] = dependencies
+            knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
+            # After the **kwargs merge so caller kwargs cannot override the run context owner
+            knowledge_retriever_kwargs.update(
+                get_user_id_kwarg(
+                    agent.knowledge_retriever,
+                    run_context.user_id if run_context else agent.user_id,
+                )
+            )
+            result = agent.knowledge_retriever(**knowledge_retriever_kwargs)
+
+            if isawaitable(result):
+                result = await result
+
+            return result
+        except Exception as e:
+            log_warning(f"Knowledge retriever failed: {str(e)}")
+            raise e
+
+    # Use knowledge protocol's retrieve method
+    try:
+        if resolved_knowledge is None:
+            return None
+
+        # Use protocol aretrieve() or retrieve() method if available
+        aretrieve_fn = getattr(resolved_knowledge, "aretrieve", None)
+        retrieve_fn = getattr(resolved_knowledge, "retrieve", None)
+
+        if not callable(aretrieve_fn) and not callable(retrieve_fn):
+            log_debug("Knowledge does not implement retrieve()")
+            return None
+
+        if num_documents is None:
+            num_documents = getattr(resolved_knowledge, "max_results", 10)
+
+        log_debug(f"Retrieving from knowledge base with filters: {filters}")
+
+        scope_user_id = run_context.user_id if run_context else agent.user_id
+        retrieve_kwargs: Dict[str, Any] = {
+            "query": query,
+            "max_results": num_documents,
+            "filters": filters,
+        }
+
+        # Bills an LLM call a query transformer makes to this run.
+        if callable(aretrieve_fn):
+            retrieve_kwargs.update(get_user_id_kwarg(aretrieve_fn, scope_user_id))
+            retrieve_kwargs.update(get_run_response_kwarg(aretrieve_fn, run_response))
+            relevant_docs: List[Document] = await aretrieve_fn(**retrieve_kwargs)
+        elif callable(retrieve_fn):
+            retrieve_kwargs.update(get_user_id_kwarg(retrieve_fn, scope_user_id))
+            retrieve_kwargs.update(get_run_response_kwarg(retrieve_fn, run_response))
+            relevant_docs = retrieve_fn(**retrieve_kwargs)
+        else:
+            return None
+
+        if not relevant_docs or len(relevant_docs) == 0:
+            log_debug("No relevant documents found for query")
+            return None
+
+        return [doc.to_dict() for doc in relevant_docs]
+    except Exception as e:
+        log_warning(f"Error retrieving from knowledge base: {str(e)}")
+        raise e

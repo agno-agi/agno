@@ -4,8 +4,8 @@ import pytest
 
 from agno.agent import Agent  # noqa
 from agno.models.aws import AwsBedrock
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 from agno.utils.log import log_info
 
@@ -75,7 +75,7 @@ def test_parallel_tool_calls():
 def test_multiple_tool_calls():
     agent = Agent(
         model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
-        tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
+        tools=[YFinanceTools(cache_results=True), WebSearchTools(cache_results=True)],
         markdown=True,
         telemetry=False,
     )
@@ -235,7 +235,7 @@ async def test_async_multiple_tool_calls():
     """Test async multiple different tool calls."""
     agent = Agent(
         model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
-        tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
+        tools=[YFinanceTools(cache_results=True), WebSearchTools(cache_results=True)],
         markdown=True,
         telemetry=False,
     )

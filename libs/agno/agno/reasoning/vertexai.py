@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import TYPE_CHECKING, AsyncIterator, Iterator, List, Optional, Tuple
 
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.utils.log import logger
+from agno.utils.log import log_warning
+
+if TYPE_CHECKING:
+    from agno.metrics import RunMetrics
 
 
 def is_vertexai_reasoning_model(reasoning_model: Model) -> bool:
@@ -18,15 +21,23 @@ def is_vertexai_reasoning_model(reasoning_model: Model) -> bool:
     return is_vertexai_provider and has_thinking
 
 
-def get_vertexai_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821
+def get_vertexai_reasoning(
+    reasoning_agent: "Agent",  # type: ignore[name-defined]  # noqa: F821
+    messages: List[Message],
+    run_metrics: Optional["RunMetrics"] = None,
+) -> Optional[Message]:
     """Get reasoning from a VertexAI Claude model."""
-    from agno.run.agent import RunOutput
-
     try:
-        reasoning_agent_response: RunOutput = reasoning_agent.run(input=messages)
+        reasoning_agent_response = reasoning_agent.run(input=messages)
     except Exception as e:
-        logger.warning(f"Reasoning error: {e}")
+        log_warning(f"Reasoning error: {str(e)}")
         return None
+
+    # Accumulate reasoning agent metrics into the parent run_metrics
+    if run_metrics is not None:
+        from agno.metrics import accumulate_eval_metrics
+
+        accumulate_eval_metrics(reasoning_agent_response.metrics, run_metrics, prefix="reasoning")
 
     reasoning_content: str = ""
     redacted_reasoning_content: Optional[str] = None
@@ -47,15 +58,23 @@ def get_vertexai_reasoning(reasoning_agent: "Agent", messages: List[Message]) ->
     )
 
 
-async def aget_vertexai_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821
+async def aget_vertexai_reasoning(
+    reasoning_agent: "Agent",  # type: ignore[name-defined]  # noqa: F821
+    messages: List[Message],
+    run_metrics: Optional["RunMetrics"] = None,
+) -> Optional[Message]:
     """Get reasoning from a VertexAI Claude model asynchronously."""
-    from agno.run.agent import RunOutput
-
     try:
-        reasoning_agent_response: RunOutput = await reasoning_agent.arun(input=messages)
+        reasoning_agent_response = await reasoning_agent.arun(input=messages)
     except Exception as e:
-        logger.warning(f"Reasoning error: {e}")
+        log_warning(f"Reasoning error: {str(e)}")
         return None
+
+    # Accumulate reasoning agent metrics into the parent run_metrics
+    if run_metrics is not None:
+        from agno.metrics import accumulate_eval_metrics
+
+        accumulate_eval_metrics(reasoning_agent_response.metrics, run_metrics, prefix="reasoning")
 
     reasoning_content: str = ""
     redacted_reasoning_content: Optional[str] = None
@@ -74,3 +93,87 @@ async def aget_vertexai_reasoning(reasoning_agent: "Agent", messages: List[Messa
         reasoning_content=reasoning_content,
         redacted_reasoning_content=redacted_reasoning_content,
     )
+
+
+def get_vertexai_reasoning_stream(
+    reasoning_agent: "Agent",  # type: ignore  # noqa: F821
+    messages: List[Message],
+) -> Iterator[Tuple[Optional[str], Optional[Message]]]:
+    """
+    Stream reasoning content from VertexAI Claude model.
+
+    Yields:
+        Tuple of (reasoning_content_delta, final_message)
+        - During streaming: (reasoning_content_delta, None)
+        - At the end: (None, final_message)
+    """
+    from agno.run.agent import RunEvent
+
+    reasoning_content: str = ""
+    redacted_reasoning_content: Optional[str] = None
+
+    try:
+        for event in reasoning_agent.run(input=messages, stream=True, stream_events=True):
+            if hasattr(event, "event"):
+                if event.event == RunEvent.run_content:
+                    # Stream reasoning content as it arrives
+                    if hasattr(event, "reasoning_content") and event.reasoning_content:
+                        reasoning_content += event.reasoning_content
+                        yield (event.reasoning_content, None)
+                elif event.event == RunEvent.run_completed:
+                    pass
+    except Exception as e:
+        log_warning(f"Reasoning error: {str(e)}")
+        return
+
+    # Yield final message
+    if reasoning_content:
+        final_message = Message(
+            role="assistant",
+            content=f"<thinking>\n{reasoning_content}\n</thinking>",
+            reasoning_content=reasoning_content,
+            redacted_reasoning_content=redacted_reasoning_content,
+        )
+        yield (None, final_message)
+
+
+async def aget_vertexai_reasoning_stream(
+    reasoning_agent: "Agent",  # type: ignore  # noqa: F821
+    messages: List[Message],
+) -> AsyncIterator[Tuple[Optional[str], Optional[Message]]]:
+    """
+    Stream reasoning content from VertexAI Claude model asynchronously.
+
+    Yields:
+        Tuple of (reasoning_content_delta, final_message)
+        - During streaming: (reasoning_content_delta, None)
+        - At the end: (None, final_message)
+    """
+    from agno.run.agent import RunEvent
+
+    reasoning_content: str = ""
+    redacted_reasoning_content: Optional[str] = None
+
+    try:
+        async for event in reasoning_agent.arun(input=messages, stream=True, stream_events=True):
+            if hasattr(event, "event"):
+                if event.event == RunEvent.run_content:
+                    # Stream reasoning content as it arrives
+                    if hasattr(event, "reasoning_content") and event.reasoning_content:
+                        reasoning_content += event.reasoning_content
+                        yield (event.reasoning_content, None)
+                elif event.event == RunEvent.run_completed:
+                    pass
+    except Exception as e:
+        log_warning(f"Reasoning error: {str(e)}")
+        return
+
+    # Yield final message
+    if reasoning_content:
+        final_message = Message(
+            role="assistant",
+            content=f"<thinking>\n{reasoning_content}\n</thinking>",
+            reasoning_content=reasoning_content,
+            redacted_reasoning_content=redacted_reasoning_content,
+        )
+        yield (None, final_message)

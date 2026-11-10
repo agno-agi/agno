@@ -52,8 +52,8 @@ def test_scrape_basic(mock_scrape_response):
         assert len(documents) == 1
         assert documents[0].name == "https://example.com"
         assert documents[0].id == "https://example.com_1"
-        # Content is joined with spaces instead of newlines
-        expected_content = "# Test Website This is test content from a scraped website."
+        # Repeated newlines collapse to a single newline
+        expected_content = "# Test Website\nThis is test content from a scraped website."
         assert documents[0].content == expected_content
 
         # Verify FirecrawlApp was called correctly
@@ -186,9 +186,9 @@ def test_crawl_basic(mock_crawl_response):
         assert len(documents) == 2
         # Base URL is used for name
         assert documents[0].name == "https://example.com"
-        # Content joined with spaces
-        assert documents[0].content == "# Page 1 This is content from page 1."
-        assert documents[1].content == "# Page 2 This is content from page 2."
+        # Repeated newlines collapse to a single newline
+        assert documents[0].content == "# Page 1\nThis is content from page 1."
+        assert documents[1].content == "# Page 2\nThis is content from page 2."
 
         # Verify FirecrawlApp was called correctly
         MockFirecrawlApp.assert_called_once_with(api_key=None)
@@ -261,7 +261,7 @@ def test_read_scrape_mode(mock_scrape_response):
         documents = reader.read("https://example.com")
 
         assert len(documents) == 1
-        expected_content = "# Test Website This is test content from a scraped website."
+        expected_content = "# Test Website\nThis is test content from a scraped website."
         assert documents[0].content == expected_content
 
         mock_app.scrape_url.assert_called_once()
@@ -414,3 +414,93 @@ async def test_async_read_invalid_mode():
 
     with pytest.raises(NotImplementedError):
         await reader.async_read("https://example.com")
+
+
+def test_firecrawl_reader_chunk_size_propagation():
+    """Test that chunk_size is propagated to default chunking strategy"""
+    from agno.knowledge.chunking.semantic import SemanticChunking
+
+    reader = FirecrawlReader(chunk_size=100, api_key="test")
+    assert reader.chunk_size == 100
+    assert reader.chunking_strategy.chunk_size == 100
+    assert isinstance(reader.chunking_strategy, SemanticChunking)
+
+
+def test_firecrawl_reader_default_chunk_size():
+    """Test default chunk_size is 5000"""
+    from agno.knowledge.chunking.semantic import SemanticChunking
+
+    reader = FirecrawlReader(api_key="test")
+    assert reader.chunk_size == 5000
+    assert reader.chunking_strategy.chunk_size == 5000
+    assert isinstance(reader.chunking_strategy, SemanticChunking)
+
+
+# ---------------------------------------------------------------------------
+# allowed_hosts (SSRF hardening)
+# ---------------------------------------------------------------------------
+
+
+def test_allowed_hosts_default_is_none():
+    """Default: no allowlist means all hosts allowed."""
+    reader = FirecrawlReader(api_key="test")
+    assert reader.allowed_hosts is None
+
+
+def test_allowed_hosts_lowercases_input():
+    reader = FirecrawlReader(api_key="test", allowed_hosts=["DOCS.AGNO.COM"])
+    assert reader.allowed_hosts == ["docs.agno.com"]
+
+
+def test_scrape_refuses_disallowed_host():
+    """scrape() must short-circuit before invoking FirecrawlApp when host is not allowed."""
+    reader = FirecrawlReader(api_key="test", allowed_hosts=["docs.agno.com"])
+    with patch("agno.knowledge.reader.firecrawl_reader.FirecrawlApp") as mock_app:
+        docs = reader.scrape("http://127.0.0.1:9999/admin")
+        assert docs == []
+        mock_app.assert_not_called()
+
+
+def test_crawl_refuses_disallowed_host():
+    """crawl() must short-circuit before invoking FirecrawlApp when host is not allowed."""
+    reader = FirecrawlReader(api_key="test", allowed_hosts=["docs.agno.com"])
+    with patch("agno.knowledge.reader.firecrawl_reader.FirecrawlApp") as mock_app:
+        docs = reader.crawl("http://169.254.169.254/latest/meta-data")
+        assert docs == []
+        mock_app.assert_not_called()
+
+
+def test_scrape_allows_listed_host():
+    """scrape() must proceed when host matches the allowlist."""
+    reader = FirecrawlReader(api_key="test", allowed_hosts=["docs.agno.com"])
+    with patch("agno.knowledge.reader.firecrawl_reader.FirecrawlApp") as mock_app:
+        mock_app.return_value.scrape_url.return_value = {"markdown": "ok"}
+        docs = reader.scrape("https://docs.agno.com/page")
+        assert len(docs) >= 1
+        mock_app.return_value.scrape_url.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_async_scrape_inherits_host_check():
+    """async_scrape delegates to scrape via asyncio.to_thread, so the gate covers it."""
+    reader = FirecrawlReader(api_key="test", allowed_hosts=["docs.agno.com"])
+    with patch("agno.knowledge.reader.firecrawl_reader.FirecrawlApp") as mock_app:
+        docs = await reader.async_scrape("http://127.0.0.1/admin")
+        assert docs == []
+        mock_app.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_async_crawl_inherits_host_check():
+    """async_crawl delegates to crawl via asyncio.to_thread, so the gate covers it."""
+    reader = FirecrawlReader(api_key="test", allowed_hosts=["docs.agno.com"])
+    with patch("agno.knowledge.reader.firecrawl_reader.FirecrawlApp") as mock_app:
+        docs = await reader.async_crawl("http://10.0.0.5/admin")
+        assert docs == []
+        mock_app.assert_not_called()
+
+
+def test_allowed_hosts_rejects_str_input():
+    """Passing a single string (instead of a list) must raise error."""
+    with pytest.raises(TypeError, match="must be a list"):
+        FirecrawlReader(api_key="test", allowed_hosts="docs.agno.com")

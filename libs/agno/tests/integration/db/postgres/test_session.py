@@ -14,6 +14,7 @@ from agno.run.team import TeamRunOutput
 from agno.session.agent import AgentSession
 from agno.session.summary import SessionSummary
 from agno.session.team import TeamSession
+from agno.session.workflow import WorkflowSession
 
 
 @pytest.fixture(autouse=True)
@@ -23,7 +24,7 @@ def cleanup_sessions(postgres_db_real: PostgresDb):
 
     with postgres_db_real.Session() as session:
         try:
-            sessions_table = postgres_db_real._get_table("sessions")
+            sessions_table = postgres_db_real._get_table("sessions", create_table_if_not_found=True)
             if sessions_table is not None:
                 session.execute(sessions_table.delete())
             session.commit()
@@ -81,7 +82,7 @@ def sample_team_session() -> TeamSession:
 
 
 def test_session_table_constraint_exists(postgres_db_real: PostgresDb):
-    """Ensure the session table has the expected unique constraint on session_id"""
+    """Ensure the session table has a primary key constraint on session_id"""
     with postgres_db_real.Session() as session:
         # Ensure table is created by calling _get_table with create_table_if_not_found=True
         table = postgres_db_real._get_table(table_type="sessions", create_table_if_not_found=True)
@@ -90,14 +91,13 @@ def test_session_table_constraint_exists(postgres_db_real: PostgresDb):
         result = session.execute(
             text(
                 "SELECT constraint_name FROM information_schema.table_constraints "
-                "WHERE table_schema = :schema AND table_name = :table AND constraint_type = 'UNIQUE'"
+                "WHERE table_schema = :schema AND table_name = :table AND constraint_type = 'PRIMARY KEY'"
             ),
             {"schema": postgres_db_real.db_schema, "table": postgres_db_real.session_table_name},
         )
         constraint_names = [row[0] for row in result.fetchall()]
-        expected_constraint = f"{postgres_db_real.session_table_name}_uq_session_id"
-        assert expected_constraint in constraint_names, (
-            f"Session table missing unique constraint {expected_constraint}. Found: {constraint_names}"
+        assert len(constraint_names) > 0, (
+            f"Session table missing PRIMARY KEY constraint. Found constraints: {constraint_names}"
         )
 
 
@@ -546,6 +546,79 @@ def test_delete_multiple_sessions(postgres_db_real: PostgresDb):
     assert remaining_sessions[0].session_id == "session_2"
 
 
+def test_delete_session_scoped_by_user_id(postgres_db_real: PostgresDb):
+    """Verify delete_session with user_id only deletes sessions owned by that user (IDOR protection)."""
+    alice_session = AgentSession(
+        session_id="shared_sess_1", agent_id="agent_1", user_id="alice", created_at=int(time.time())
+    )
+    bob_session = AgentSession(
+        session_id="shared_sess_2", agent_id="agent_1", user_id="bob", created_at=int(time.time())
+    )
+    postgres_db_real.upsert_session(alice_session)
+    postgres_db_real.upsert_session(bob_session)
+
+    # Bob tries to delete Alice's session
+    result = postgres_db_real.delete_session(session_id="shared_sess_1", user_id="bob")
+    assert result is False
+
+    # Alice's session still exists
+    assert postgres_db_real.get_session(session_id="shared_sess_1", session_type=SessionType.AGENT) is not None
+
+    # Alice can delete her own session
+    result = postgres_db_real.delete_session(session_id="shared_sess_1", user_id="alice")
+    assert result is True
+    assert postgres_db_real.get_session(session_id="shared_sess_1", session_type=SessionType.AGENT) is None
+
+
+def test_delete_sessions_scoped_by_user_id(postgres_db_real: PostgresDb):
+    """Verify bulk delete_sessions with user_id only deletes sessions owned by that user."""
+    alice_s1 = AgentSession(session_id="alice_s1", agent_id="agent_1", user_id="alice", created_at=int(time.time()))
+    alice_s2 = AgentSession(session_id="alice_s2", agent_id="agent_1", user_id="alice", created_at=int(time.time()))
+    bob_s1 = AgentSession(session_id="bob_s1", agent_id="agent_1", user_id="bob", created_at=int(time.time()))
+    postgres_db_real.upsert_session(alice_s1)
+    postgres_db_real.upsert_session(alice_s2)
+    postgres_db_real.upsert_session(bob_s1)
+
+    # Bob tries to bulk-delete all three session IDs, but scoped to his user_id
+    postgres_db_real.delete_sessions(session_ids=["alice_s1", "alice_s2", "bob_s1"], user_id="bob")
+
+    # Alice's sessions survive — Bob could only delete his own
+    assert postgres_db_real.get_session(session_id="alice_s1", session_type=SessionType.AGENT) is not None
+    assert postgres_db_real.get_session(session_id="alice_s2", session_type=SessionType.AGENT) is not None
+    # Bob's session is gone
+    assert postgres_db_real.get_session(session_id="bob_s1", session_type=SessionType.AGENT) is None
+
+
+def test_rename_session_scoped_by_user_id(postgres_db_real: PostgresDb):
+    """Verify rename_session with user_id only renames sessions owned by that user."""
+    alice_session = AgentSession(
+        session_id="rename_sess_1",
+        agent_id="agent_1",
+        user_id="alice",
+        session_data={"session_name": "Original Name"},
+        created_at=int(time.time()),
+    )
+    postgres_db_real.upsert_session(alice_session)
+
+    # Bob tries to rename Alice's session
+    result = postgres_db_real.rename_session(
+        session_id="rename_sess_1", session_type=SessionType.AGENT, session_name="Hacked", user_id="bob"
+    )
+    assert result is None
+
+    # Alice's session name is unchanged
+    session = postgres_db_real.get_session(session_id="rename_sess_1", session_type=SessionType.AGENT)
+    assert session is not None
+    assert session.session_data["session_name"] == "Original Name"
+
+    # Alice can rename her own session
+    result = postgres_db_real.rename_session(
+        session_id="rename_sess_1", session_type=SessionType.AGENT, session_name="New Name", user_id="alice"
+    )
+    assert result is not None
+    assert result.session_data["session_name"] == "New Name"
+
+
 def test_session_type_polymorphism(
     postgres_db_real: PostgresDb, sample_agent_session: AgentSession, sample_team_session: TeamSession
 ):
@@ -565,13 +638,15 @@ def test_session_type_polymorphism(
     team_result = postgres_db_real.get_session(session_id=sample_team_session.session_id, session_type=SessionType.TEAM)
     assert isinstance(team_result, TeamSession)
 
-    # Verify wrong session type returns None
+    # get_session queries by session_id only; session_type controls deserialization, not filtering.
+    # Passing a mismatched type still finds the session — it just deserializes it as the wrong class.
     wrong_type_result = postgres_db_real.get_session(
         session_id=sample_agent_session.session_id,
-        # Wrong session type!
         session_type=SessionType.TEAM,
     )
-    assert wrong_type_result is None
+    # Session is found (by session_id) but deserialized as TeamSession
+    assert wrong_type_result is not None
+    assert isinstance(wrong_type_result, TeamSession)
 
 
 def test_upsert_session_handles_all_agent_session_fields(postgres_db_real: PostgresDb):
@@ -877,3 +952,112 @@ def test_upsert_sessions_performance(postgres_db_real: PostgresDb):
     assert bulk_time < individual_time / 2, (
         f"Bulk upsert is not fast enough: {bulk_time:.3f}s vs {individual_time:.3f}s"
     )
+
+
+# ── session_type=None integration tests ──────────────────────────────────────
+
+
+def test_get_sessions_without_type_returns_all(
+    postgres_db_real: PostgresDb,
+    sample_agent_session: AgentSession,
+    sample_team_session: TeamSession,
+):
+    """get_sessions(session_type=None) returns agent, team, and workflow sessions together."""
+    workflow_session = WorkflowSession(
+        session_id="test_workflow_session_1",
+        workflow_id="test_workflow_1",
+        user_id="test_user_1",
+        session_data={"session_name": "Test Workflow Session"},
+        created_at=int(time.time()),
+        updated_at=int(time.time()),
+    )
+
+    postgres_db_real.upsert_session(sample_agent_session)
+    postgres_db_real.upsert_session(sample_team_session)
+    postgres_db_real.upsert_session(workflow_session)
+
+    # session_type=None should return all three
+    sessions_raw, total_count = postgres_db_real.get_sessions(session_type=None, deserialize=False)
+    assert total_count == 3
+    session_ids = {s["session_id"] for s in sessions_raw}
+    assert sample_agent_session.session_id in session_ids
+    assert sample_team_session.session_id in session_ids
+    assert workflow_session.session_id in session_ids
+
+    # Deserialized path should auto-detect correct types
+    sessions = postgres_db_real.get_sessions(session_type=None)
+    assert len(sessions) == 3
+    types = {type(s) for s in sessions}
+    assert AgentSession in types
+    assert TeamSession in types
+    assert WorkflowSession in types
+
+
+def test_get_sessions_without_type_with_component_id(
+    postgres_db_real: PostgresDb,
+    sample_agent_session: AgentSession,
+    sample_team_session: TeamSession,
+):
+    """get_sessions(session_type=None, component_id=X) uses OR across agent_id/team_id/workflow_id."""
+    postgres_db_real.upsert_session(sample_agent_session)
+    postgres_db_real.upsert_session(sample_team_session)
+
+    # Filter by agent component_id without specifying type
+    sessions_raw, total_count = postgres_db_real.get_sessions(
+        session_type=None, component_id="test_agent_1", deserialize=False
+    )
+    assert total_count == 1
+    assert sessions_raw[0]["session_id"] == sample_agent_session.session_id
+
+    # Filter by team component_id without specifying type
+    sessions_raw, total_count = postgres_db_real.get_sessions(
+        session_type=None, component_id="test_team_1", deserialize=False
+    )
+    assert total_count >= 1
+    team_ids = {s["session_id"] for s in sessions_raw}
+    assert sample_team_session.session_id in team_ids
+
+    # Filter by nonexistent component_id
+    sessions_raw, total_count = postgres_db_real.get_sessions(
+        session_type=None, component_id="nonexistent", deserialize=False
+    )
+    assert total_count == 0
+
+
+def test_get_session_without_type_auto_detects(
+    postgres_db_real: PostgresDb,
+    sample_agent_session: AgentSession,
+    sample_team_session: TeamSession,
+):
+    """get_session(session_type=None) auto-detects the correct session type for deserialization."""
+    postgres_db_real.upsert_session(sample_agent_session)
+    postgres_db_real.upsert_session(sample_team_session)
+
+    # Auto-detect agent session
+    result = postgres_db_real.get_session(session_id=sample_agent_session.session_id, session_type=None)
+    assert result is not None
+    assert isinstance(result, AgentSession)
+    assert result.session_id == sample_agent_session.session_id
+
+    # Auto-detect team session
+    result = postgres_db_real.get_session(session_id=sample_team_session.session_id, session_type=None)
+    assert result is not None
+    assert isinstance(result, TeamSession)
+    assert result.session_id == sample_team_session.session_id
+
+
+def test_rename_session_without_type(
+    postgres_db_real: PostgresDb,
+    sample_agent_session: AgentSession,
+):
+    """rename_session(session_type=None) works without specifying session type."""
+    postgres_db_real.upsert_session(sample_agent_session)
+
+    result = postgres_db_real.rename_session(
+        session_id=sample_agent_session.session_id,
+        session_type=None,
+        session_name="Renamed Session",
+    )
+    assert result is not None
+    assert isinstance(result, AgentSession)
+    assert result.session_data.get("session_name") == "Renamed Session"

@@ -5,6 +5,7 @@ import pytest
 
 from agno.knowledge.document import Document
 from agno.vectordb.pineconedb import PineconeDb
+from agno.vectordb.search import SearchType
 
 # Configuration for tests
 TEST_INDEX_NAME = f"test_index_{uuid.uuid4().hex[:8]}"
@@ -262,7 +263,7 @@ def test_search(mock_pinecone_db, mock_embedder):
 
     # Check that index.query was called with the right arguments
     mock_pinecone_db.index.query.assert_called_with(
-        vector=[0.1] * 1024, top_k=2, namespace=TEST_NAMESPACE, filter=None, include_values=None, include_metadata=True
+        vector=[0.1] * 1024, top_k=2, namespace=TEST_NAMESPACE, filter=None, include_values=False, include_metadata=True
     )
 
     # Check the results
@@ -292,6 +293,17 @@ def test_delete(mock_pinecone_db):
 def test_upsert_available(mock_pinecone_db):
     """Test upsert_available method."""
     assert mock_pinecone_db.upsert_available() is True
+
+
+def test_get_supported_search_types_vector_only(mock_pinecone_db):
+    """Test supported search types when hybrid search is disabled."""
+    assert mock_pinecone_db.get_supported_search_types() == [SearchType.vector]
+
+
+def test_get_supported_search_types_with_hybrid(mock_pinecone_db):
+    """Test supported search types when hybrid search is enabled."""
+    mock_pinecone_db.use_hybrid_search = True
+    assert mock_pinecone_db.get_supported_search_types() == [SearchType.vector, SearchType.hybrid]
 
 
 # Asynchronous Tests
@@ -399,7 +411,7 @@ async def test_async_search(mock_pinecone_db):
         results = await mock_pinecone_db.async_search(query)
 
         assert results == expected_results
-        mock_to_thread.assert_called_once_with(mock_pinecone_db.search, query, 5, None, None, None)
+        mock_to_thread.assert_called_once_with(mock_pinecone_db.search, query, 5, None, None, None, None)
 
 
 @pytest.mark.asyncio

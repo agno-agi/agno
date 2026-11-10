@@ -51,7 +51,7 @@ def test_searxng_search(searxng_instance):
         assert result_data["results"][0]["title"] == "Result 1"
         assert result_data["results"][1]["title"] == "Result 2"
 
-        mock_get.assert_called_once_with("http://localhost:53153/search?format=json&q=test%20query")
+        mock_get.assert_called_once_with("http://localhost:53153/search?format=json&q=test%20query", timeout=30)
 
 
 def test_searxng_search_with_engines(searxng_with_engines):
@@ -66,7 +66,7 @@ def test_searxng_search_with_engines(searxng_with_engines):
         searxng_with_engines.search_web("test query")
 
         expected_url = "http://localhost:53153/search?format=json&q=test%20query&engines=google,bing"
-        mock_get.assert_called_once_with(expected_url)
+        mock_get.assert_called_once_with(expected_url, timeout=30)
 
 
 def test_searxng_search_with_fixed_max_results(searxng_with_fixed_results):
@@ -87,6 +87,42 @@ def test_searxng_search_with_fixed_max_results(searxng_with_fixed_results):
         assert len(result_data["results"]) == 3
 
 
+def test_searxng_fixed_max_results_zero_is_honored():
+    """A fixed_max_results of 0 must truncate to an empty result set instead of falling back."""
+    searxng = Searxng(host="http://localhost:53153", fixed_max_results=0)
+    mock_response_payload = {
+        "results": [{"title": f"Result {i}", "url": f"http://example.com/{i}"} for i in range(1, 6)]
+    }
+
+    with patch("httpx.get") as mock_get:
+        mock_response = Mock()
+        mock_response.json.return_value = mock_response_payload
+        mock_get.return_value = mock_response
+
+        result = searxng.search_web("test query", max_results=10)
+        result_data = json.loads(result)
+
+        # Should respect fixed_max_results (0) instead of max_results (10)
+        assert result_data["results"] == []
+
+
+def test_searxng_explicit_max_results_zero_truncates_to_empty(searxng_instance):
+    """A zero max_results argument with no fixed value truncates the backend payload to empty."""
+    mock_response_payload = {
+        "results": [{"title": f"Result {i}", "url": f"http://example.com/{i}"} for i in range(1, 6)]
+    }
+
+    with patch("httpx.get") as mock_get:
+        mock_response = Mock()
+        mock_response.json.return_value = mock_response_payload
+        mock_get.return_value = mock_response
+
+        result = searxng_instance.search_web("test query", max_results=0)
+        result_data = json.loads(result)
+
+        assert result_data["results"] == []
+
+
 def test_searxng_image_search(searxng_instance):
     """Test the image_search method."""
     mock_response_payload = {"results": [{"title": "Image 1", "url": "http://example.com/img1"}]}
@@ -101,7 +137,7 @@ def test_searxng_image_search(searxng_instance):
         result = searxng_images.image_search("test image")
 
         expected_url = "http://localhost:53153/search?format=json&q=test%20image&categories=images"
-        mock_get.assert_called_once_with(expected_url)
+        mock_get.assert_called_once_with(expected_url, timeout=30)
 
         result_data = json.loads(result)
         assert result_data["results"][0]["title"] == "Image 1"
@@ -120,7 +156,7 @@ def test_searxng_news_search():
         searxng_news.news_search("breaking news")
 
         expected_url = "http://localhost:53153/search?format=json&q=breaking%20news&categories=news"
-        mock_get.assert_called_once_with(expected_url)
+        mock_get.assert_called_once_with(expected_url, timeout=30)
 
 
 def test_searxng_search_error_handling(searxng_instance):
@@ -145,7 +181,7 @@ def test_searxng_query_encoding(searxng_instance):
         searxng_instance.search_web("test query with spaces & symbols")
 
         expected_url = "http://localhost:53153/search?format=json&q=test%20query%20with%20spaces%20%26%20symbols"
-        mock_get.assert_called_once_with(expected_url)
+        mock_get.assert_called_once_with(expected_url, timeout=30)
 
 
 def test_searxng_initialization():
@@ -158,6 +194,27 @@ def test_searxng_initialization():
     assert (
         len(searxng.tools) == 8
     )  # All 8 tools: search, image_search, it_search, map_search, music_search, news_search, science_search, video_search
+
+
+def test_default_engines_not_shared_between_instances():
+    """The default `engines` must not be a shared mutable object across instances."""
+    first = Searxng(host="http://localhost:53153")
+    second = Searxng(host="http://localhost:53153")
+
+    assert first.engines is not second.engines
+    assert first.engines == []
+    assert second.engines == []
+
+
+def test_default_engines_isolated_under_mutation():
+    """Mutating one instance's engines must not affect another instance."""
+    first = Searxng(host="http://localhost:53153")
+    second = Searxng(host="http://localhost:53153")
+
+    first.engines.append("google")
+
+    assert first.engines == ["google"]
+    assert second.engines == []
 
 
 @pytest.mark.parametrize(
@@ -187,7 +244,7 @@ def test_category_searches(category, method_name):
         result = method("test query")
 
         expected_url = f"http://localhost:53153/search?format=json&q=test%20query&categories={category}"
-        mock_get.assert_called_once_with(expected_url)
+        mock_get.assert_called_once_with(expected_url, timeout=30)
 
         result_data = json.loads(result)
         assert result_data["results"][0]["title"] == "Test"

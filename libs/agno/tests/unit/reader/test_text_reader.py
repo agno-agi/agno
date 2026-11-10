@@ -1,5 +1,6 @@
 import asyncio
-from io import BytesIO
+from contextlib import ExitStack
+from io import BytesIO, StringIO
 from pathlib import Path
 from typing import List
 from unittest.mock import patch
@@ -37,6 +38,35 @@ def test_read_text_bytesio():
     assert len(documents) == 1
     assert documents[0].name == "test"
     assert documents[0].content == test_data
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("chunk", [False, True], ids=["whole", "chunked"])
+@pytest.mark.parametrize("stream_type", ["stringio", "text_file", "utf8_bytes", "latin1_bytes"])
+async def test_read_text_and_binary_streams(tmp_path, use_async, chunk, stream_type):
+    content = "Agent notes: café." if stream_type == "latin1_bytes" else "Agent notes: café 中文."
+    encoding = None if stream_type == "utf8_bytes" else "latin-1"
+
+    with ExitStack() as stack:
+        if stream_type == "text_file":
+            path = tmp_path / "notes.txt"
+            path.write_text(content, encoding="utf-8")
+            stream = stack.enter_context(path.open(encoding="utf-8"))
+        elif stream_type == "stringio":
+            stream = stack.enter_context(StringIO(content))
+        else:
+            stream = stack.enter_context(BytesIO(content.encode(encoding or "utf-8")))
+
+        # Reading must rewind the input; text streams are already decoded.
+        stream.read(3)
+        reader = TextReader(chunk=chunk, encoding=encoding)
+        documents = await reader.async_read(stream, name="notes") if use_async else reader.read(stream, name="notes")
+
+        assert len(documents) == 1
+        assert documents[0].content == content
+        assert documents[0].name == "notes"
+        assert not stream.closed
 
 
 def test_chunking():
@@ -217,14 +247,15 @@ async def test_async_unsupported_file_type():
 
 @pytest.mark.asyncio
 async def test_async_empty_text_file(tmp_path):
+    """Empty file produces no chunks (consistent with sync behavior)."""
     text_path = tmp_path / "empty.txt"
     text_path.write_text("")
 
     reader = TextReader()
     documents = await reader.async_read(text_path)
 
-    assert len(documents) == 1
-    assert documents[0].content == ""
+    # No chunks can be extracted from an empty file (matches sync behavior)
+    assert len(documents) == 0
 
 
 @pytest.mark.asyncio
@@ -336,3 +367,25 @@ async def test_async_parallel_chunking():
     finally:
         # Restore original processor
         reader._async_chunk_document = original_processor
+
+
+def test_text_reader_chunk_size_propagation():
+    """Test that chunk_size is propagated to default chunking strategy"""
+    from agno.knowledge.chunking.fixed import FixedSizeChunking
+    from agno.knowledge.reader.text_reader import TextReader
+
+    reader = TextReader(chunk_size=400)
+    assert reader.chunk_size == 400
+    assert reader.chunking_strategy.chunk_size == 400
+    assert isinstance(reader.chunking_strategy, FixedSizeChunking)
+
+
+def test_text_reader_default_chunk_size():
+    """Test default chunk_size is 5000"""
+    from agno.knowledge.chunking.fixed import FixedSizeChunking
+    from agno.knowledge.reader.text_reader import TextReader
+
+    reader = TextReader()
+    assert reader.chunk_size == 5000
+    assert reader.chunking_strategy.chunk_size == 5000
+    assert isinstance(reader.chunking_strategy, FixedSizeChunking)

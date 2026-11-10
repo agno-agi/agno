@@ -1,5 +1,10 @@
 name: Release Agno
 
+# Publishes projects whose pyproject version is not yet on PyPI, in dependency order.
+# - version unchanged on PyPI  -> job succeeds without publishing
+# - build or publish failure   -> job fails with error; dependents do not publish
+# - agno depends on agnoctl    -> agnoctl publishes first
+
 on:
   release:
     types: [published]
@@ -7,10 +12,17 @@ on:
 permissions:
   contents: read
 
-jobs:
-  build-release-agno:
-    runs-on: ubuntu-latest
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
+jobs:
+  release-agnoctl:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
 
@@ -19,39 +31,81 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
+      - name: Check whether this version is already on PyPI
+        id: version
         run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-venv
-          python -m pip install --upgrade pip build
+          python -m pip install --quiet --upgrade pip build
+          VERSION=$(python -c "import tomllib; print(tomllib.load(open('libs/agnoctl/pyproject.toml','rb'))['project']['version'])")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Copy README
-        run: |
-          cp README.md libs/agno/
+          if curl -fsS "https://pypi.org/pypi/agnoctl/$VERSION/json" > /dev/null 2>&1; then
+            echo "agnoctl $VERSION already on PyPI; skipping publish."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Build package
+        if: steps.version.outputs.publish == 'true'
         run: |
+          cd libs/agnoctl
+          python -m build
+
+      - name: Publish to PyPI
+        if: steps.version.outputs.publish == 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: libs/agnoctl/dist
+
+  release-agno:
+    needs: [release-agnoctl]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check whether this version is already on PyPI
+        id: version
+        run: |
+          python -m pip install --quiet --upgrade pip build
+          VERSION=$(python -c "import tomllib; print(tomllib.load(open('libs/agno/pyproject.toml','rb'))['project']['version'])")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          if curl -fsS "https://pypi.org/pypi/agno/$VERSION/json" > /dev/null 2>&1; then
+            echo "agno $VERSION already on PyPI; skipping publish."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build package
+        if: steps.version.outputs.publish == 'true'
+        run: |
+          cp README.md libs/agno/
           cd libs/agno
           python -m build
 
-      - name: Publish to TestPyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          user: __token__
-          password: ${{ secrets.TEST_PYPI_API_TOKEN }}
-          repository-url: https://test.pypi.org/legacy/
-          packages-dir: libs/agno/dist
-
       - name: Publish to PyPI
+        if: steps.version.outputs.publish == 'true'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          user: __token__
-          password: ${{ secrets.PYPI_API_TOKEN }}
           packages-dir: libs/agno/dist
 
-  build-release-agno-infra:
+  release-agno-infra:
+    needs: [release-agno]
     runs-on: ubuntu-latest
-
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
 
@@ -60,30 +114,28 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
+      - name: Check whether this version is already on PyPI
+        id: version
         run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-venv
-          python -m pip install --upgrade pip build
+          python -m pip install --quiet --upgrade pip build
+          VERSION=$(python -c "import tomllib; print(tomllib.load(open('libs/agno_infra/pyproject.toml','rb'))['project']['version'])")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          if curl -fsS "https://pypi.org/pypi/agno-infra/$VERSION/json" > /dev/null 2>&1; then
+            echo "agno-infra $VERSION already on PyPI; skipping publish."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Build package
+        if: steps.version.outputs.publish == 'true'
         run: |
           cd libs/agno_infra
           python -m build
 
-      - name: Publish to TestPyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        continue-on-error: true
-        with:
-          user: __token__
-          password: ${{ secrets.TEST_PYPI_API_TOKEN }}
-          repository-url: https://test.pypi.org/legacy/
-          packages-dir: libs/agno_infra/dist
-
       - name: Publish to PyPI
+        if: steps.version.outputs.publish == 'true'
         uses: pypa/gh-action-pypi-publish@release/v1
-        continue-on-error: true
         with:
-          user: __token__
-          password: ${{ secrets.PYPI_API_TOKEN }}
           packages-dir: libs/agno_infra/dist

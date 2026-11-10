@@ -23,7 +23,7 @@ class FixedSizeChunking(ChunkingStrategy):
         chunk_number = 1
         chunk_meta_data = document.meta_data
         start = 0
-        while start + self.overlap < content_length:
+        while start < content_length:
             end = min(start + self.chunk_size, content_length)
 
             # Ensure we're not splitting a word in half
@@ -38,11 +38,7 @@ class FixedSizeChunking(ChunkingStrategy):
             chunk = content[start:end]
             meta_data = chunk_meta_data.copy()
             meta_data["chunk"] = chunk_number
-            chunk_id = None
-            if document.id:
-                chunk_id = f"{document.id}_{chunk_number}"
-            elif document.name:
-                chunk_id = f"{document.name}_{chunk_number}"
+            chunk_id = self._generate_chunk_id(document, chunk_number, chunk)
             meta_data["chunk_size"] = len(chunk)
             chunked_documents.append(
                 Document(
@@ -53,5 +49,11 @@ class FixedSizeChunking(ChunkingStrategy):
                 )
             )
             chunk_number += 1
-            start = end - self.overlap
+            # Stop once a chunk reaches the end of the content
+            if end >= content_length:
+                break
+            # Ensure start always advances by at least 1 to prevent infinite loops
+            # when overlap is large relative to chunk_size
+            new_start = max(start + 1, end - self.overlap)
+            start = new_start
         return chunked_documents

@@ -1,5 +1,6 @@
+import asyncio
 from hashlib import md5
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 try:
     from qdrant_client import AsyncQdrantClient, QdrantClient  # noqa: F401
@@ -9,11 +10,12 @@ except ImportError:
         "The `qdrant-client` package is not installed. Please install it via `pip install qdrant-client`."
     )
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.vectordb.base import VectorDb
+from agno.vectordb.base import VectorDb, embed_before_replace, is_rate_limit_error
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
 
@@ -24,6 +26,10 @@ DEFAULT_SPARSE_MODEL = "Qdrant/bm25"
 
 class Qdrant(VectorDb):
     """Vector DB implementation powered by Qdrant - https://qdrant.tech/"""
+
+    # Tenant key in the payload, indexed with ``is_tenant=True``. Left empty when ``user_id`` is
+    # ``None`` — the shared bucket, which scoped searches read alongside the caller's own points.
+    USER_ID_KEY: str = "user_id"
 
     def __init__(
         self,
@@ -70,12 +76,16 @@ class Qdrant(VectorDb):
             timeout (Optional[float]): Request timeout (REST: default 5s, gRPC: unlimited).
             host (Optional[str]): Qdrant host (default: "localhost" if not specified).
             path (Optional[str]): Path for local persistence (QdrantLocal).
-            reranker (Optional[Reranker]): Optional reranker for result refinement.
+            reranker (Optional[Reranker]): Optional reranker for result refinement. Deprecated: pass the reranker to Knowledge instead.
             search_type (SearchType): Whether to use vector, keyword or hybrid search.
             dense_vector_name (str): Dense vector name.
             sparse_vector_name (str): Sparse vector name.
             hybrid_fusion_strategy (models.Fusion): Strategy for hybrid fusion.
             fastembed_kwargs (Optional[dict]): Keyword args for `fastembed.SparseTextEmbedding.__init__()`.
+                For offline/air-gapped environments, use:
+                - `local_files_only=True`: Prevents downloading models from the internet
+                - `cache_dir="/path/to/models"`: Specifies custom model cache location
+                Example for offline mode: `{"local_files_only": True, "cache_dir": "/app/models"}`
             **kwargs: Keyword args for `qdrant_client.QdrantClient.__init__()`.
         """
         # Validate required parameters
@@ -101,7 +111,7 @@ class Qdrant(VectorDb):
             from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
-            log_info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_debug("Embedder not provided, using OpenAIEmbedder as default.")
 
         self.embedder: Embedder = embedder
         self.dimensions: Optional[int] = self.embedder.dimensions
@@ -130,6 +140,9 @@ class Qdrant(VectorDb):
 
         # Reranker instance
         self.reranker: Optional[Reranker] = reranker
+
+        # Whether the tenant payload index has been ensured, once per instance
+        self._user_id_index_ensured: bool = False
 
         # Qdrant client kwargs
         self.kwargs = kwargs
@@ -227,6 +240,30 @@ class Qdrant(VectorDb):
                 if self.search_type in [SearchType.keyword, SearchType.hybrid]
                 else None,
             )
+        # Outside the exists() branch: collections created before v3 never got the tenant index
+        self._ensure_user_id_payload_index_sync()
+
+    def _ensure_user_id_payload_index_sync(self) -> None:
+        """Create the tenant-style payload index on ``user_id``.
+
+        Runs once per instance. The flag is set even when the attempt fails, so a server that
+        rejects the index costs one round-trip rather than one per write.
+        """
+        if self._user_id_index_ensured:
+            return
+        try:
+            self.client.create_payload_index(
+                collection_name=self.collection,
+                field_name=self.USER_ID_KEY,
+                field_schema=models.KeywordIndexParams(
+                    type=models.KeywordIndexType.KEYWORD,
+                    is_tenant=True,
+                ),
+            )
+        except Exception as e:
+            # Index may already exist on a re-created collection — that's fine.
+            log_debug(f"Skipping user_id payload index creation: {e}")
+        self._user_id_index_ensured = True
 
     async def async_create(self) -> None:
         """Create the collection asynchronously."""
@@ -257,33 +294,25 @@ class Qdrant(VectorDb):
                 if self.search_type in [SearchType.keyword, SearchType.hybrid]
                 else None,
             )
+        # See ``create`` — pre-v3 collections need the tenant index too.
+        await self._ensure_user_id_payload_index_async()
 
-    def doc_exists(self, document: Document) -> bool:
-        """
-        Validating if the document exists or not
-
-        Args:
-            document (Document): Document to validate
-        """
-        if self.client:
-            cleaned_content = document.content.replace("\x00", "\ufffd")
-            doc_id = md5(cleaned_content.encode()).hexdigest()
-            collection_points = self.client.retrieve(
+    async def _ensure_user_id_payload_index_async(self) -> None:
+        """Async counterpart to ``_ensure_user_id_payload_index_sync``."""
+        if self._user_id_index_ensured:
+            return
+        try:
+            await self.async_client.create_payload_index(
                 collection_name=self.collection,
-                ids=[doc_id],
+                field_name=self.USER_ID_KEY,
+                field_schema=models.KeywordIndexParams(
+                    type=models.KeywordIndexType.KEYWORD,
+                    is_tenant=True,
+                ),
             )
-            return len(collection_points) > 0
-        return False
-
-    async def async_doc_exists(self, document: Document) -> bool:
-        """Check if a document exists asynchronously."""
-        cleaned_content = document.content.replace("\x00", "\ufffd")
-        doc_id = md5(cleaned_content.encode()).hexdigest()
-        collection_points = await self.async_client.retrieve(
-            collection_name=self.collection,
-            ids=[doc_id],
-        )
-        return len(collection_points) > 0
+        except Exception as e:
+            log_debug(f"Skipping async user_id payload index creation: {e}")
+        self._user_id_index_ensured = True
 
     def name_exists(self, name: str) -> bool:
         """
@@ -327,12 +356,24 @@ class Qdrant(VectorDb):
             return len(scroll_result[0]) > 0
         return False
 
+    def _scoped_doc_id(self, base_id: str, content_hash: str, user_id: Optional[str]) -> str:
+        """Fold the owner into the deterministic point id so two owners get distinct ids for the same content.
+
+        ``base_id`` is digested with ``content_hash`` first to fix the '_' boundary: otherwise
+        ('doc_1', 'alice') and ('doc', '1_alice') collapse to one id. ``None`` keeps the base id.
+        """
+        doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+        if user_id is None:
+            return doc_id
+        return md5(f"{doc_id}_{user_id}".encode()).hexdigest()
+
     def insert(
         self,
         content_hash: str,
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
         batch_size: int = 10,
+        user_id: Optional[str] = None,
     ) -> None:
         """
         Insert documents into the database.
@@ -341,12 +382,17 @@ class Qdrant(VectorDb):
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
             batch_size (int): Batch size for inserting documents
+            user_id (Optional[str]): Owner of these chunks. ``None`` writes to the shared bucket
         """
+        # create() only runs for collections that don't exist, so pre-v3 ones are ensured here
+        self._ensure_user_id_payload_index_sync()
         log_debug(f"Inserting {len(documents)} documents")
         points = []
         for document in documents:
             cleaned_content = document.content.replace("\x00", "\ufffd")
-            doc_id = md5(cleaned_content.encode()).hexdigest()
+            # Include content_hash in ID to ensure uniqueness across different content hashes
+            base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+            doc_id = self._scoped_doc_id(base_id, content_hash, user_id)
 
             # TODO(v2.0.0): Remove conditional vector naming logic
             if self.use_named_vectors:
@@ -371,6 +417,7 @@ class Qdrant(VectorDb):
                     ).as_object()  # type: ignore
 
             # Create payload with document properties
+            # ``user_id`` is top-level, not inside meta_data, so the tenant index can prune on it
             payload = {
                 "name": document.name,
                 "meta_data": document.meta_data,
@@ -378,6 +425,7 @@ class Qdrant(VectorDb):
                 "usage": document.usage,
                 "content_id": document.content_id,
                 "content_hash": content_hash,
+                self.USER_ID_KEY: user_id,
             }
 
             # Add filters as metadata if provided
@@ -400,7 +448,11 @@ class Qdrant(VectorDb):
         log_debug(f"Upsert {len(points)} documents")
 
     async def async_insert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """
         Insert documents asynchronously.
@@ -408,7 +460,10 @@ class Qdrant(VectorDb):
         Args:
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
+            user_id (Optional[str]): Owner of these chunks. ``None`` writes to the shared bucket
         """
+        # See ``insert`` — pre-v3 collections get the tenant index from the write path
+        await self._ensure_user_id_payload_index_async()
         log_debug(f"Inserting {len(documents)} documents asynchronously")
 
         # Apply batch embedding when needed for vector or hybrid search
@@ -429,34 +484,35 @@ class Qdrant(VectorDb):
                                 doc.embedding = embeddings[j]
                                 doc.usage = usages[j] if j < len(usages) else None
                         except Exception as e:
-                            log_error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+                            log_error(f"Error assigning batch embedding to document '{doc.name}': {str(e)}")
 
                 except Exception as e:
-                    # Check if this is a rate limit error - don't fall back as it would make things worse
-                    error_str = str(e).lower()
-                    is_rate_limit = any(
-                        phrase in error_str
-                        for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
-                    )
+                    # A throttle must not fall back to per-item calls, which would throttle harder.
+                    is_rate_limit = is_rate_limit_error(e)
 
                     if is_rate_limit:
-                        log_error(f"Rate limit detected during batch embedding. {e}")
+                        log_error(f"Rate limit detected during batch embedding.: {str(e)}")
                         raise e
                     else:
-                        log_warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                        log_warning(
+                            f"Async batch embedding failed, falling back to individual embeddings: {e}",
+                        )
+
                         # Fall back to individual embedding
                         for doc in documents:
                             if self.search_type in [SearchType.vector, SearchType.hybrid]:
-                                doc.embed(embedder=self.embedder)
+                                await doc.async_embed(embedder=self.embedder)
             else:
                 # Use individual embedding
                 for doc in documents:
                     if self.search_type in [SearchType.vector, SearchType.hybrid]:
-                        doc.embed(embedder=self.embedder)
+                        await doc.async_embed(embedder=self.embedder)
 
         async def process_document(document):
             cleaned_content = document.content.replace("\x00", "\ufffd")
-            doc_id = md5(cleaned_content.encode()).hexdigest()
+            # Include content_hash in ID to ensure uniqueness across different content hashes
+            base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+            doc_id = self._scoped_doc_id(base_id, content_hash, user_id)
 
             if self.search_type == SearchType.vector:
                 # For vector search, maintain backward compatibility with unnamed vectors
@@ -472,9 +528,6 @@ class Qdrant(VectorDb):
                         iter(self.sparse_encoder.embed([document.content]))
                     ).as_object()  # type: ignore
 
-            if self.search_type in [SearchType.keyword, SearchType.hybrid]:
-                vector[self.sparse_vector_name] = next(iter(self.sparse_encoder.embed([document.content]))).as_object()
-
             # Create payload with document properties
             payload = {
                 "name": document.name,
@@ -483,6 +536,7 @@ class Qdrant(VectorDb):
                 "usage": document.usage,
                 "content_id": document.content_id,
                 "content_hash": content_hash,
+                self.USER_ID_KEY: user_id,
             }
 
             # Add filters as metadata if provided
@@ -508,27 +562,58 @@ class Qdrant(VectorDb):
             await self.async_client.upsert(collection_name=self.collection, wait=False, points=points)
         log_debug(f"Upserted {len(points)} documents asynchronously")
 
-    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """
         Upsert documents into the database.
 
         Args:
             documents (List[Document]): List of documents to upsert
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
+            user_id (Optional[str]): Owner of these chunks. ``None`` writes to the shared bucket
         """
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        embed_before_replace(documents, self.embedder)
         log_debug("Redirecting the request to insert")
-        if self.content_hash_exists(content_hash):
-            self._delete_by_content_hash(content_hash)
-        self.insert(content_hash=content_hash, documents=documents, filters=filters)
+        if self.content_hash_exists(content_hash, user_id=user_id):
+            self._delete_by_content_hash(content_hash, user_id=user_id)
+        self.insert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
 
     async def async_upsert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """Upsert documents asynchronously."""
         log_debug("Redirecting the async request to async_insert")
-        await self.async_insert(content_hash=content_hash, documents=documents, filters=filters)
+        # Same dedup pair as the sync path: without it a re-upsert into fewer chunks strands the surplus points
+        # Both hit the sync client; off the loop so a slow server cannot stall it.
+        if await asyncio.to_thread(self.content_hash_exists, content_hash, user_id):
+            await asyncio.to_thread(self._delete_by_content_hash, content_hash, user_id)
+        await self.async_insert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def _dense_vector(self, vector: Any) -> Optional[List[float]]:
+        """Named-vector searches return a mapping, so pull the dense vector out of it."""
+        if isinstance(vector, dict):
+            dense = vector.get(self.dense_vector_name)
+            return list(dense) if dense is not None else None
+        return vector
+
+    def search(
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
+    ) -> List[Document]:
         """
         Search for documents in the collection.
 
@@ -536,29 +621,46 @@ class Qdrant(VectorDb):
             query (str): Query to search for
             limit (int): Number of search results to return
             filters (Optional[Dict[str, Any]]): Filters to apply while searching
+            user_id (Optional[str]): Restrict results to this owner's chunks plus the shared
+                bucket. ``None`` applies no scope
         """
-        filters = self._format_filters(filters or {})  # type: ignore
+
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in Qdrant. No filters will be applied.")
+            filters = None
+
+        formatted_filters = self._format_filters(filters or {})  # type: ignore
+        scoped_filter = self._merge_filters(formatted_filters, self._user_scope_filter(user_id))
         if self.search_type == SearchType.vector:
-            results = self._run_vector_search_sync(query, limit, filters)
+            results = self._run_vector_search_sync(query, limit, formatted_filters=scoped_filter)  # type: ignore
         elif self.search_type == SearchType.keyword:
-            results = self._run_keyword_search_sync(query, limit, filters)
+            results = self._run_keyword_search_sync(query, limit, formatted_filters=scoped_filter)  # type: ignore
         elif self.search_type == SearchType.hybrid:
-            results = self._run_hybrid_search_sync(query, limit, filters)
+            results = self._run_hybrid_search_sync(query, limit, formatted_filters=scoped_filter)  # type: ignore
         else:
             raise ValueError(f"Unsupported search type: {self.search_type}")
 
         return self._build_search_results(results, query)
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
-        filters = self._format_filters(filters or {})  # type: ignore
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in Qdrant. No filters will be applied.")
+            filters = None
+
+        formatted_filters = self._format_filters(filters or {})  # type: ignore
+        scoped_filter = self._merge_filters(formatted_filters, self._user_scope_filter(user_id))
         if self.search_type == SearchType.vector:
-            results = await self._run_vector_search_async(query, limit, filters)
+            results = await self._run_vector_search_async(query, limit, formatted_filters=scoped_filter)  # type: ignore
         elif self.search_type == SearchType.keyword:
-            results = await self._run_keyword_search_async(query, limit, filters)
+            results = await self._run_keyword_search_async(query, limit, formatted_filters=scoped_filter)  # type: ignore
         elif self.search_type == SearchType.hybrid:
-            results = await self._run_hybrid_search_async(query, limit, filters)
+            results = await self._run_hybrid_search_async(query, limit, formatted_filters=scoped_filter)  # type: ignore
         else:
             raise ValueError(f"Unsupported search type: {self.search_type}")
 
@@ -568,7 +670,7 @@ class Qdrant(VectorDb):
         self,
         query: str,
         limit: int,
-        filters: Optional[Dict[str, Any]],
+        formatted_filters: Optional[models.Filter],
     ) -> List[models.ScoredPoint]:
         dense_embedding = self.embedder.get_embedding(query)
         sparse_embedding = next(iter(self.sparse_encoder.embed([query]))).as_object()
@@ -586,7 +688,7 @@ class Qdrant(VectorDb):
             with_vectors=True,
             with_payload=True,
             limit=limit,
-            query_filter=filters,
+            query_filter=formatted_filters,
         )
         return call.points
 
@@ -594,7 +696,7 @@ class Qdrant(VectorDb):
         self,
         query: str,
         limit: int,
-        filters: Optional[Dict[str, Any]],
+        formatted_filters: Optional[models.Filter],
     ) -> List[models.ScoredPoint]:
         dense_embedding = self.embedder.get_embedding(query)
 
@@ -606,7 +708,7 @@ class Qdrant(VectorDb):
                 with_vectors=True,
                 with_payload=True,
                 limit=limit,
-                query_filter=filters,
+                query_filter=formatted_filters,
                 using=self.dense_vector_name,
             )
         else:
@@ -617,7 +719,7 @@ class Qdrant(VectorDb):
                 with_vectors=True,
                 with_payload=True,
                 limit=limit,
-                query_filter=filters,
+                query_filter=formatted_filters,
             )
         return call.points
 
@@ -625,7 +727,7 @@ class Qdrant(VectorDb):
         self,
         query: str,
         limit: int,
-        filters: Optional[Dict[str, Any]],
+        formatted_filters: Optional[models.Filter],
     ) -> List[models.ScoredPoint]:
         sparse_embedding = next(iter(self.sparse_encoder.embed([query]))).as_object()
         call = self.client.query_points(
@@ -635,7 +737,7 @@ class Qdrant(VectorDb):
             with_payload=True,
             limit=limit,
             using=self.sparse_vector_name,
-            query_filter=filters,
+            query_filter=formatted_filters,
         )
         return call.points
 
@@ -643,9 +745,9 @@ class Qdrant(VectorDb):
         self,
         query: str,
         limit: int,
-        filters: Optional[Dict[str, Any]],
+        formatted_filters: Optional[models.Filter],
     ) -> List[models.ScoredPoint]:
-        dense_embedding = self.embedder.get_embedding(query)
+        dense_embedding = await self.embedder.async_get_embedding(query)
 
         # TODO(v2.0.0): Remove this conditional and always use named vectors
         if self.use_named_vectors:
@@ -655,7 +757,7 @@ class Qdrant(VectorDb):
                 with_vectors=True,
                 with_payload=True,
                 limit=limit,
-                query_filter=filters,
+                query_filter=formatted_filters,
                 using=self.dense_vector_name,
             )
         else:
@@ -666,7 +768,7 @@ class Qdrant(VectorDb):
                 with_vectors=True,
                 with_payload=True,
                 limit=limit,
-                query_filter=filters,
+                query_filter=formatted_filters,
             )
         return call.points
 
@@ -674,7 +776,7 @@ class Qdrant(VectorDb):
         self,
         query: str,
         limit: int,
-        filters: Optional[Dict[str, Any]],
+        formatted_filters: Optional[models.Filter],
     ) -> List[models.ScoredPoint]:
         sparse_embedding = next(iter(self.sparse_encoder.embed([query]))).as_object()
         call = await self.async_client.query_points(
@@ -684,7 +786,7 @@ class Qdrant(VectorDb):
             with_payload=True,
             limit=limit,
             using=self.sparse_vector_name,
-            query_filter=filters,
+            query_filter=formatted_filters,
         )
         return call.points
 
@@ -692,9 +794,9 @@ class Qdrant(VectorDb):
         self,
         query: str,
         limit: int,
-        filters: Optional[Dict[str, Any]],
+        formatted_filters: Optional[models.Filter],
     ) -> List[models.ScoredPoint]:
-        dense_embedding = self.embedder.get_embedding(query)
+        dense_embedding = await self.embedder.async_get_embedding(query)
         sparse_embedding = next(iter(self.sparse_encoder.embed([query]))).as_object()
         call = await self.async_client.query_points(
             collection_name=self.collection,
@@ -710,7 +812,7 @@ class Qdrant(VectorDb):
             with_vectors=True,
             with_payload=True,
             limit=limit,
-            query_filter=filters,
+            query_filter=formatted_filters,
         )
         return call.points
 
@@ -726,7 +828,7 @@ class Qdrant(VectorDb):
                     meta_data=result.payload["meta_data"],
                     content=result.payload["content"],
                     embedder=self.embedder,
-                    embedding=result.vector,  # type: ignore
+                    embedding=self._dense_vector(result.vector),
                     usage=result.payload.get("usage"),
                     content_id=result.payload.get("content_id"),
                 )
@@ -737,6 +839,35 @@ class Qdrant(VectorDb):
 
         log_info(f"Found {len(search_results)} documents")
         return search_results
+
+    def _user_scope_filter(self, user_id: Optional[str]) -> Optional[models.Filter]:
+        """Build the tenant scope predicate: this owner's points OR the shared bucket.
+
+        ``IsEmptyCondition`` matches a ``user_id`` that is null as well as one that is absent.
+        """
+        # Only ``None`` is unscoped — an empty string is an owner like any other
+        if user_id is None:
+            return None
+        return models.Filter(
+            should=[
+                models.FieldCondition(
+                    key=self.USER_ID_KEY,
+                    match=models.MatchValue(value=user_id),
+                ),
+                models.IsEmptyCondition(is_empty=models.PayloadField(key=self.USER_ID_KEY)),
+            ]
+        )
+
+    def _merge_filters(self, base: Optional[models.Filter], scope: Optional[models.Filter]) -> Optional[models.Filter]:
+        """Combine the metadata filter with the tenant scope.
+
+        The scope is OR-based, so it is nested rather than flattened into the metadata ``must`` list.
+        """
+        if scope is None:
+            return base
+        if base is None:
+            return scope
+        return models.Filter(must=[base, scope])
 
     def _format_filters(self, filters: Optional[Dict[str, Any]]) -> Optional[models.Filter]:
         if filters:
@@ -770,12 +901,16 @@ class Qdrant(VectorDb):
         if self.exists():
             log_debug(f"Deleting collection: {self.collection}")
             self.client.delete_collection(self.collection)
+            # A re-created collection needs the tenant index ensured again
+            self._user_id_index_ensured = False
 
     async def async_drop(self) -> None:
         """Drop the collection asynchronously."""
         if await self.async_exists():
             log_debug(f"Deleting collection asynchronously: {self.collection}")
             await self.async_client.delete_collection(self.collection)
+            # See ``drop``
+            self._user_id_index_ensured = False
 
     def exists(self) -> bool:
         """Check if the collection exists."""
@@ -860,7 +995,7 @@ class Qdrant(VectorDb):
                 return False
 
         except Exception as e:
-            log_warning(f"Error deleting points with name {name}: {e}")
+            log_warning(f"Error deleting points with name {name}: {str(e)}")
             return False
 
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
@@ -904,18 +1039,33 @@ class Qdrant(VectorDb):
                 return False
 
         except Exception as e:
-            log_warning(f"Error deleting points with metadata {metadata}: {e}")
+            log_warning(f"Error deleting points with metadata {metadata}: {str(e)}")
             return False
 
-    def delete_by_content_id(self, content_id: str) -> bool:
-        """Delete all points that have the specified content_id in their payload."""
-        try:
-            log_info(f"Attempting to delete all points with content_id: {content_id}")
+    def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
+        """Delete all points that have the specified content_id in their payload.
 
-            # Create a filter to find all points with the specified content_id
-            filter_condition = models.Filter(
-                must=[models.FieldCondition(key="content_id", match=models.MatchValue(value=content_id))]
-            )
+        Args:
+            content_id (str): The content id to delete.
+            user_id (Optional[str]): Delete only this owner's points, leaving other owners' points
+                under the same content_id in place. ``None`` deletes across every owner.
+
+        Returns:
+            bool: True if points were deleted successfully, False otherwise.
+        """
+        try:
+            log_info(f"Attempting to delete all points with content_id: {content_id} (user_id={user_id})")
+
+            must_conditions: List[Any] = [
+                models.FieldCondition(key="content_id", match=models.MatchValue(value=content_id))
+            ]
+            # Only ``None`` is unscoped — an empty string is an owner and still scopes
+            if user_id is not None:
+                must_conditions.append(
+                    models.FieldCondition(key=self.USER_ID_KEY, match=models.MatchValue(value=user_id))
+                )
+
+            filter_condition = models.Filter(must=must_conditions)
 
             # First, count how many points will be deleted
             count_result = self.client.count(collection_name=self.collection, count_filter=filter_condition, exact=True)
@@ -942,7 +1092,7 @@ class Qdrant(VectorDb):
                 return False
 
         except Exception as e:
-            log_warning(f"Error deleting points with content_id {content_id}: {e}")
+            log_warning(f"Error deleting points with content_id {content_id}: {str(e)}")
             return False
 
     def id_exists(self, id: str) -> bool:
@@ -963,20 +1113,34 @@ class Qdrant(VectorDb):
             log_info(f"Error checking if point {id} exists: {e}")
             return False
 
-    def content_hash_exists(self, content_hash: str) -> bool:
+    def _content_hash_filter(self, content_hash: str, user_id: Optional[str] = None) -> Any:
+        """Filter for one owner's points with this content hash.
+
+        Shared by both halves of the upsert dedup pair so they cannot drift onto different buckets.
+        Unlike ``delete_by_content_id``, ``None`` addresses the shared bucket alone, not every owner.
+        """
+        must_conditions: List[Any] = [
+            models.FieldCondition(key="content_hash", match=models.MatchValue(value=content_hash))
+        ]
+        if user_id is not None:
+            must_conditions.append(models.FieldCondition(key=self.USER_ID_KEY, match=models.MatchValue(value=user_id)))
+        else:
+            must_conditions.append(models.IsEmptyCondition(is_empty=models.PayloadField(key=self.USER_ID_KEY)))
+        return models.Filter(must=must_conditions)
+
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Check if any points with the given content hash exist in the collection.
 
         Args:
             content_hash (str): The content hash to check.
+            user_id (Optional[str]): Scope the check to this owner's points, so another owner's
+                identical upload is not judged a duplicate. ``None`` scopes to the shared bucket.
 
         Returns:
             bool: True if points with the content hash exist, False otherwise.
         """
         try:
-            # Create a filter to find points with the specified content_hash
-            filter_condition = models.Filter(
-                must=[models.FieldCondition(key="content_hash", match=models.MatchValue(value=content_hash))]
-            )
+            filter_condition = self._content_hash_filter(content_hash, user_id)
 
             # Count how many points match the filter
             count_result = self.client.count(collection_name=self.collection, count_filter=filter_condition, exact=True)
@@ -985,11 +1149,13 @@ class Qdrant(VectorDb):
             log_info(f"Error checking if content_hash {content_hash} exists: {e}")
             return False
 
-    def _delete_by_content_hash(self, content_hash: str) -> bool:
+    def _delete_by_content_hash(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Delete all points that have the specified content_hash in their payload.
 
         Args:
             content_hash (str): The content hash to delete.
+            user_id (Optional[str]): Owner to scope the delete to. ``None`` scopes to the shared
+                bucket, so a re-ingest never wipes another owner's identical points.
 
         Returns:
             bool: True if points were deleted successfully, False otherwise.
@@ -997,10 +1163,7 @@ class Qdrant(VectorDb):
         try:
             log_info(f"Attempting to delete all points with content_hash: {content_hash}")
 
-            # Create a filter to find all points with the specified content_hash
-            filter_condition = models.Filter(
-                must=[models.FieldCondition(key="content_hash", match=models.MatchValue(value=content_hash))]
-            )
+            filter_condition = self._content_hash_filter(content_hash, user_id)
 
             # First, count how many points will be deleted
             count_result = self.client.count(collection_name=self.collection, count_filter=filter_condition, exact=True)
@@ -1027,7 +1190,7 @@ class Qdrant(VectorDb):
                 return False
 
         except Exception as e:
-            log_warning(f"Error deleting points with content_hash {content_hash}: {e}")
+            log_warning(f"Error deleting points with content_hash {content_hash}: {str(e)}")
             return False
 
     def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
@@ -1092,7 +1255,7 @@ class Qdrant(VectorDb):
             log_debug(f"Updated metadata for {len(update_operations)} documents with content_id: {content_id}")
 
         except Exception as e:
-            log_error(f"Error updating metadata for content_id '{content_id}': {e}")
+            log_error(f"Error updating metadata for content_id '{content_id}': {str(e)}")
             raise
 
     def close(self) -> None:

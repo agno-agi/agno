@@ -1,5 +1,4 @@
 from agno.agent.agent import Agent
-from agno.utils.string import is_valid_uuid
 
 
 def test_set_id():
@@ -29,7 +28,13 @@ def test_set_id_from_name():
 def test_set_id_auto_generated():
     agent = Agent()
     agent.set_id()
-    assert is_valid_uuid(agent.id)
+    # Auto-generated IDs are Docker-style: adjective-name-hex8
+    parts = agent.id.split("-")
+    assert len(parts) == 3, f"Expected 3 parts, got {len(parts)}: {agent.id}"
+    assert parts[0].isalpha() and parts[0].islower()  # adjective
+    assert parts[1].isalpha() and parts[1].islower()  # name
+    assert len(parts[2]) == 8  # hex suffix
+    int(parts[2], 16)  # must be valid hex
 
 
 def test_deep_copy():

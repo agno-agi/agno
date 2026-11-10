@@ -1,0 +1,42 @@
+"""
+Aimlapi Image Agent With Memory
+===============================
+
+Cookbook example for `aimlapi/image_agent_with_memory.py`.
+"""
+
+from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
+from agno.media import Image
+from agno.models.aimlapi import AIMLAPI
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+agent = Agent(
+    model=AIMLAPI(id="gpt-5.6-luna"),
+    db=SqliteDb(db_file="tmp/aimlapi_image_agent.db"),
+    markdown=True,
+    add_history_to_context=True,
+    num_history_runs=3,
+)
+
+agent.print_response(
+    "Tell me about this image",
+    images=[
+        Image(
+            url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg"
+        )
+    ],
+    stream=True,
+)
+
+agent.print_response("Tell me where I can get more images?")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

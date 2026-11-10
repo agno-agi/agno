@@ -3,7 +3,8 @@
 import pytest
 
 from agno.run.workflow import WorkflowCompletedEvent, WorkflowRunOutput
-from agno.workflow import Parallel, Workflow
+from agno.workflow import Condition, Parallel, Step, Workflow
+from agno.workflow.steps import Steps
 from agno.workflow.types import StepInput, StepOutput
 
 
@@ -33,15 +34,18 @@ def parallel_aggregator_step(step_input: StepInput) -> StepOutput:
     step_b_data = parallel_data.get("step_b", "") if isinstance(parallel_data, dict) else ""
     step_c_data = parallel_data.get("step_c", "") if isinstance(parallel_data, dict) else ""
 
-    # Also test direct access to individual steps (should return None since they're sub-steps)
-    direct_step_a = step_input.get_step_content("step_a")
+    # Test direct access to individual steps using get_step_output (should now work)
+    direct_step_a_output = step_input.get_step_output("step_a")
+    direct_step_a_content = step_input.get_step_content("step_a")
+    direct_step_a_str = str(direct_step_a_content) if direct_step_a_content else "None"
 
     aggregated_report = f"""Parallel Aggregation Report:
         Parallel Data Type: {type(parallel_data).__name__}
         Step A: {step_a_data}
         Step B: {step_b_data}
         Step C: {step_c_data}
-        Direct Step A Access: {direct_step_a}
+        Direct Step A Output: {direct_step_a_output is not None}
+        Direct Step A Access: {direct_step_a_str}
         Available Steps: {list(step_input.previous_step_outputs.keys())}
         Previous step outputs: {step_input.previous_step_outputs}
     """
@@ -150,7 +154,8 @@ def test_parallel_step_access(shared_db):
     assert "Step A: Step A processed: test data" in aggregator_response.content
     assert "Step B: Step B analyzed: test data" in aggregator_response.content
     assert "Step C: Step C reviewed: test data" in aggregator_response.content
-    assert "Direct Step A Access: None" in aggregator_response.content
+    assert "Direct Step A Output: True" in aggregator_response.content
+    assert "Direct Step A Access: Step A processed: test data" in aggregator_response.content
     assert "Parallel Processing" in aggregator_response.content
 
 
@@ -174,6 +179,8 @@ async def test_async_parallel_step_access(shared_db):
     assert "Step A: Step A processed: async test data" in aggregator_response.content
     assert "Step B: Step B analyzed: async test data" in aggregator_response.content
     assert "Step C: Step C reviewed: async test data" in aggregator_response.content
+    assert "Direct Step A Output: True" in aggregator_response.content
+    assert "Direct Step A Access: Step A processed: async test data" in aggregator_response.content
 
 
 def test_single_parallel_step_access(shared_db):
@@ -192,3 +199,114 @@ def test_single_parallel_step_access(shared_db):
     aggregator_response = response.step_results[1]
     assert "Parallel Data Type: dict" in aggregator_response.content
     assert "Step A: Step A processed: single test" in aggregator_response.content
+
+
+def nested_step_inside_condition(step_input: StepInput) -> StepOutput:
+    """Step nested inside a Condition."""
+    return StepOutput(step_name="nested_step", content=f"Nested: {step_input.input}", success=True)
+
+
+def condition_evaluator(step_input: StepInput) -> bool:
+    """Always return True for testing."""
+    return True
+
+
+def test_nested_step_in_parallel_and_condition(shared_db):
+    """Test accessing a step nested inside Parallel -> Condition."""
+    workflow = Workflow(
+        name="Nested Step Access",
+        db=shared_db,
+        steps=[
+            Parallel(
+                Condition(
+                    name="nested_condition",
+                    evaluator=condition_evaluator,
+                    steps=[nested_step_inside_condition],
+                ),
+                name="Parallel Processing",
+            ),
+            parallel_aggregator_step,
+        ],
+    )
+
+    response = workflow.run(input="nested test")
+    assert isinstance(response, WorkflowRunOutput)
+    assert len(response.step_results) == 2
+
+    # Verify we can access the deeply nested step
+    aggregator_response = response.step_results[1]
+    assert "Parallel Aggregation Report:" in aggregator_response.content
+
+
+def test_direct_lookup_priority(shared_db):
+    """Test that direct lookup takes priority over nested search."""
+
+    # Create a step with the same name as a nested step
+    def top_level_step(step_input: StepInput) -> StepOutput:
+        return StepOutput(step_name="step_a", content="Top level step_a", success=True)
+
+    workflow = Workflow(
+        name="Direct Lookup Priority",
+        db=shared_db,
+        steps=[
+            top_level_step,  # Top-level step_a
+            Parallel(step_a, name="Parallel Processing"),  # Nested step_a
+            parallel_aggregator_step,
+        ],
+    )
+
+    response = workflow.run(input="priority test")
+    assert isinstance(response, WorkflowRunOutput)
+    assert len(response.step_results) == 3
+
+    # The aggregator should access the top-level step_a, not the nested one
+    aggregator_response = response.step_results[2]
+    # Since we have both top-level and nested step_a, get_step_output should return top-level first
+    # But get_step_content might return the nested one from parallel
+    assert "Parallel Aggregation Report:" in aggregator_response.content
+
+
+def test_multiple_depth_nested_access(shared_db):
+    """Test accessing steps at multiple depth levels."""
+
+    def deep_nested_step(step_input: StepInput) -> StepOutput:
+        """Step nested deep inside Parallel -> Condition -> Steps."""
+        return StepOutput(step_name="deep_nested_step", content="Deep nested content", success=True)
+
+    def verify_nested_access(step_input: StepInput) -> StepOutput:
+        """Verify we can access deeply nested step."""
+        nested_output = step_input.get_step_output("deep_nested_step")
+        nested_content = step_input.get_step_content("deep_nested_step")
+
+        result = f"Nested output found: {nested_output is not None}, Content: {nested_content}"
+        return StepOutput(step_name="verifier", content=result, success=True)
+
+    workflow = Workflow(
+        name="Multiple Depth Access",
+        db=shared_db,
+        steps=[
+            Parallel(
+                Condition(
+                    name="condition_layer",
+                    evaluator=condition_evaluator,
+                    steps=[
+                        Steps(
+                            name="steps_layer",
+                            steps=[deep_nested_step],
+                        )
+                    ],
+                ),
+                name="Parallel Processing",
+            ),
+            Step(name="verifier", executor=verify_nested_access),
+        ],
+    )
+
+    response = workflow.run(input="deep test")
+    assert isinstance(response, WorkflowRunOutput)
+    assert len(response.step_results) == 2
+
+    # Verify we can access the deeply nested step
+    verifier_response = response.step_results[1]
+    assert "Nested output found: True" in verifier_response.content
+    assert "Content: Deep nested content" in verifier_response.content

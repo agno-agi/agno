@@ -1,0 +1,820 @@
+"""Helpers for per-user data isolation at the route layer.
+
+This module exposes a small set of helpers that routers call explicitly to
+honour the opt-in ``AuthorizationConfig(user_isolation=True)`` contract:
+
+    from agno.os.middleware.user_scope import (
+        get_scoped_user_id,    # who, if anyone, are we scoping to?
+        resolve_db_and_scope,  # fetch DB + the user_id to thread on reads
+        enforce_owner_on_entity,  # coerce/validate user_id on writes
+    )
+
+The framework no longer wraps the DB in an adapter. Each router endpoint
+threads ``user_id`` through the underlying ``BaseDb`` / ``AsyncBaseDb`` call
+itself. The trade is fewer moving parts and clearer dispatch, at the cost
+of a per-endpoint convention: every user-scoped read passes ``user_id``,
+every write goes through ``enforce_owner_on_entity`` before persisting.
+
+.. important::
+
+   **Adding a new router endpoint that handles user-owned data?**
+
+   You MUST call one of the scoping helpers (``get_scoped_user_id``,
+   ``resolve_db_and_scope``, or ``apply_scope_to_kwargs``) and thread the
+   resulting ``user_id`` into every DB read/write. Omitting this will
+   silently bypass user isolation with no runtime error.
+
+   Pattern for reads::
+
+       scoped_user_id = get_scoped_user_id(request)
+       db.get_sessions(user_id=scoped_user_id, ...)
+
+   Pattern for writes::
+
+       enforce_owner_on_entity(entity, request)
+       db.upsert_session(entity)
+
+Admin users (with the configured ``admin_scope``) and callers running with
+isolation disabled get ``None`` from ``get_scoped_user_id`` — both helpers
+become no-ops in that case, preserving the legacy unscoped behaviour.
+"""
+
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Tuple, Union
+from urllib.parse import unquote
+
+from fastapi import HTTPException, Query, Request
+
+from agno.db.base import AsyncBaseDb, BaseDb
+from agno.db.schemas.service_accounts import SERVICE_ACCOUNT_PRINCIPAL_PREFIX
+from agno.os.scopes import AgentOSScope
+from agno.os.utils import get_db
+from agno.remote.base import RemoteDb
+from agno.utils.log import log_warning
+
+if TYPE_CHECKING:
+    from agno.agent import Agent, RemoteAgent
+    from agno.agent.protocol import AgentProtocol
+    from agno.db.base import SessionType
+    from agno.os.app import AgentOS
+    from agno.team import RemoteTeam, Team
+    from agno.workflow import RemoteWorkflow, Workflow
+
+
+ComponentType = Literal["agents", "teams", "workflows"]
+
+# Reused error messages — referenced by route code AND tests.
+SESSION_ID_REQUIRED = "session_id is required for this action"
+WORKFLOW_ID_REQUIRED_RECONNECT = "workflow_id is required to reconnect to a workflow run"
+SESSION_ID_REQUIRED_RECONNECT = "session_id is required to reconnect to a workflow run"
+INSUFFICIENT_PERMISSIONS_WS_RECONNECT = "Insufficient permissions to reconnect to this workflow"
+MISSING_USER_IDENTITY = "Authenticated request is missing a user identity"
+SESSION_NOT_FOUND = "Session not found"
+
+
+def _has_admin_scope(scopes: List[str], admin_scope: Optional[str] = None) -> bool:
+    """Check if the user's scopes include admin access.
+
+    Honours the configured ``admin_scope`` (set by JWTMiddleware via
+    request.state.admin_scope) and falls back to the default ``agent_os:admin``.
+    """
+    return (admin_scope or AgentOSScope.ADMIN.value) in scopes
+
+
+def caller_is_admin(request: Request) -> bool:
+    """True when the caller holds the configured (or default) admin scope AND that scope is
+    their actual authority.
+
+    Not the same as ``get_scoped_user_id(request) is None``: that returns None for
+    admins *and* for every caller on a non-isolated deployment (the default), so it
+    cannot stand in for an admin check.
+
+    The admin scope in a token counts ONLY when the caller's scopes are authoritative -- a
+    scope plane, or a service-account PAT (``caller_scopes_are_authoritative``). Under a
+    managed-roles / ReBAC plane a JWT's ``scopes`` claim is inert (the store/engine decides),
+    so a bare ``agent_os:admin`` string must NOT be trusted here: this gate feeds
+    ``assert_session_writable(is_admin=...)``, and trusting it would let any validly-signed
+    token skip the cross-user session-ownership check and write a run into another user's
+    session. Mirrors the admin logic in :func:`get_scoped_user_id`.
+    """
+    admin_scope_raw = getattr(request.state, "admin_scope", None)
+    if not _has_admin_scope(
+        list(getattr(request.state, "scopes", None) or []),
+        admin_scope=admin_scope_raw if isinstance(admin_scope_raw, str) else None,
+    ):
+        return False
+    from agno.os.auth import caller_scopes_are_authoritative
+
+    return caller_scopes_are_authoritative(request)
+
+
+def get_scoped_user_id(request: Request) -> Optional[str]:
+    """Get the user_id for data scoping from the request, or None if unscoped.
+
+    Returns None (meaning "no filtering") when:
+    - User isolation is not enabled (the opt-in
+      ``AuthorizationConfig(user_isolation=True)`` flag is off).
+    - The user has admin scope (admins see all data).
+    - The caller is the scheduler executor firing an *unowned* schedule. An owned
+      schedule scopes to the owner forwarded in ``SCHEDULE_OWNER_HEADER``.
+
+    Raises 403 when isolation is on and an authenticated caller carries no
+    identity, rather than falling through to unscoped.
+
+    Returns the user_id string only when a regular (non-admin) user is
+    authenticated AND user isolation is enabled.
+
+    Use this in endpoints that thread user_id through internal method calls
+    (e.g. agent.aget_run_output, aread_or_create_session).
+
+    If the operator configured a custom ``admin_scope`` on JWTMiddleware, that
+    value is honoured here too (read from ``request.state.admin_scope``).
+
+    Service-account (``sa:``) principals are the exception to the isolation
+    opt-in: they always self-scope to the data they created, even when
+    ``user_isolation`` is off, unless the token carries admin. A service account
+    is a machine identity whose sessions and memories are stamped with its own
+    principal, so "unscoped" would mean "reads every user's history" — never the
+    intended default for a minted token. An operator who wants a cross-user
+    debugging token mints one with the admin scope.
+    """
+    user_id = getattr(request.state, "user_id", None)
+    scopes: List[str] = getattr(request.state, "scopes", [])
+    admin_scope_raw = getattr(request.state, "admin_scope", None)
+    # Ignore non-string values (e.g. MagicMock auto-attrs in tests).
+    admin_scope: Optional[str] = admin_scope_raw if isinstance(admin_scope_raw, str) else None
+    is_service_account = isinstance(user_id, str) and user_id.startswith(SERVICE_ACCOUNT_PRINCIPAL_PREFIX)
+    # A token's admin scope only drops isolation (reads across users) when the scope
+    # is authoritative: a scope-based plane, OR a service-account/PAT, which is always
+    # scope-enforced regardless of the OS provider. Under a managed-roles/ReBAC plane a
+    # raw JWT admin scope carries no weight, so it must NOT grant cross-user reads.
+    from agno.os.auth import token_scopes_are_authoritative
+
+    is_admin = _has_admin_scope(scopes, admin_scope=admin_scope) and (
+        is_service_account or token_scopes_are_authoritative(request)
+    )
+
+    # Admin reads across users, so it is never scoped — checked first so it works
+    # regardless of the user_isolation flag (an admin service account must not
+    # fall through to self-scoping).
+    if is_admin:
+        return None
+
+    # Service-account self-scoping — independent of the user_isolation flag.
+    if is_service_account:
+        return user_id
+
+    # Opt-in gate: when user isolation is disabled, human/JWT callers see the raw,
+    # unscoped DB and route-level ownership checks behave as if no JWT user
+    # were present. JWT/RBAC remain in force; they're orthogonal to scoping.
+    if not getattr(request.state, "user_isolation_enabled", False):
+        return None
+
+    if not user_id:
+        # An agno auth middleware ran (nothing else sets ``user_isolation_enabled``)
+        # and produced no identity — fail closed instead of falling through to unscoped.
+        raise HTTPException(status_code=403, detail=MISSING_USER_IDENTITY)
+
+    # The sentinel identifies the caller, not an owner: scope to the schedule owner the
+    # executor forwarded. An unowned (system) schedule forwards none and stays unscoped.
+    from agno.os.auth import INTERNAL_SCHEDULER_USER_ID
+
+    if user_id == INTERNAL_SCHEDULER_USER_ID:
+        return _schedule_owner_from_header(request)
+
+    return user_id
+
+
+def sync_directory_from_request(request: Request, user_id: Optional[str]) -> None:
+    """Register a request's self-asserted ``user_id`` in the user directory when the caller is NOT
+    authenticated.
+
+    The directory is a roster, not a security boundary: with no auth configured a request still
+    carries a ``user_id`` (a run's form field, or a query param), and this registers that person so
+    a no-IdP deployment still gets a working directory -- the "user id chegizkhan comes in and it
+    just works" path for local/demo/cookbook use. Called from the run endpoints (form user_id) and
+    from the no-auth identity middleware (query user_id) so any endpoint fills the roster, matching
+    the authenticated path where the middleware provisions on every request.
+
+    Deliberately narrow:
+      * Only for UNAUTHENTICATED requests. When a token was verified the auth middleware /
+        WebSocket / MCP gates already provisioned (and enforced ``disabled``), so we skip.
+      * Only PROVISIONS -- it does NOT enforce the ``disabled`` kill-switch. Here the id is
+        self-asserted (a caller could send any id), so ``disabled`` is a real revocation only
+        under authorization, where identity is verified.
+      * Respects ``auto_provision``: an unknown id is created only when the operator opted in,
+        exactly as the authenticated path does.
+    """
+    if not user_id:
+        return
+    from agno.os.middleware.jwt import is_reserved_principal
+
+    if is_reserved_principal(user_id):
+        # A self-asserted id must never provision (or key off) a system-reserved principal
+        # (sa:*, __scheduler__, __oauth__:) -- those are first-party identities, not roster users.
+        return
+    if getattr(request.state, "authenticated", False) and not getattr(request.state, "is_internal_service", False):
+        return  # Verified JWT identities were provisioned by the auth middleware.
+    state = getattr(getattr(request, "app", None), "state", None)
+    if state is None:
+        return
+    user_store = getattr(state, "user_store", None)
+    if user_store is None or not getattr(state, "user_auto_provision", False):
+        return
+
+    from agno.os.auth import provision_user_with_default_role
+
+    try:
+        provision_user_with_default_role(
+            user_store,
+            getattr(state, "role_store", None),
+            user_id,
+            {},  # no token claims in the no-auth path: register by id alone
+            email_claim=getattr(state, "user_email_claim", "email"),
+            name_claim=getattr(state, "user_name_claim", "name"),
+        )
+    except Exception as e:  # a roster write must never break the run itself
+        log_warning(f"user directory sync failed for {user_id!r}: {e}")
+
+
+def _schedule_owner_from_header(request: Request) -> Optional[str]:
+    """Read the owner the executor forwarded for the schedule it is firing.
+
+    The executor percent-encodes the value, so decode before use. A header carrying
+    no usable identity is refused rather than treated as unowned.
+    """
+    from agno.db.schemas.scheduler import SCHEDULE_OWNER_HEADER
+    from agno.os.auth import INTERNAL_SCHEDULER_USER_ID
+
+    raw = request.headers.get(SCHEDULE_OWNER_HEADER)
+    if raw is None:
+        return None
+
+    owner = unquote(raw)
+    if not owner.strip() or owner == INTERNAL_SCHEDULER_USER_ID:
+        raise HTTPException(status_code=403, detail="Schedule owner is not a usable identity")
+    return owner
+
+
+def get_scoped_user_id_for_ws(
+    user_id: Optional[str],
+    *,
+    jwt_enabled: bool,
+    is_admin: bool,
+    user_isolation_enabled: bool,
+) -> Optional[str]:
+    """WebSocket counterpart of :func:`get_scoped_user_id`, with the same precedence.
+
+    Workflow WebSocket handlers have no ``Request`` to read ``request.state`` from,
+    so the auth flags are passed explicitly.
+
+    Raises 403 (like the REST helper) when isolation is on and the authenticated
+    caller carries no identity: returning ``None`` there would read as "unscoped
+    caller" and skip the run-ownership gates, so an identity-less token could
+    stream or continue any user's runs. Handlers catch the HTTPException and
+    surface it as a WS error event.
+    """
+    if is_admin:
+        return None
+
+    if isinstance(user_id, str) and user_id.startswith(SERVICE_ACCOUNT_PRINCIPAL_PREFIX):
+        return user_id
+
+    if not (jwt_enabled and user_isolation_enabled):
+        return None
+
+    if not user_id:
+        raise HTTPException(status_code=403, detail=MISSING_USER_IDENTITY)
+
+    return user_id
+
+
+def resolve_run_user_id(request: Request, client_user_id: Optional[str] = None) -> Optional[str]:
+    """Resolve the ``user_id`` a run should be attributed to, pinning authenticated callers.
+
+    Interfaces (A2A, AGUI) accept a client-supplied identity for anonymous attribution,
+    but must never take run identity from the client once the server has assigned one.
+    Precedence, mirroring the REST run route:
+
+    1. A non-admin scoped caller (a JWT user under ``user_isolation`` or any
+       service-account principal) is pinned to its own principal — the
+       client-supplied identity is ignored.
+    2. Any other authenticated caller (admin, or an unscoped JWT user) is pinned
+       to ``request.state.user_id``.
+    3. An anonymous caller (no server-assigned identity) may supply an identity
+       for attribution, but must not claim a server-reserved principal
+       (``sa:*`` / ``__scheduler__``).
+    """
+    # Local import: the jwt middleware imports modules that must stay importable
+    # without user_scope, so keep this edge lazy rather than module-level.
+    from agno.os.middleware.jwt import is_reserved_principal
+
+    scoped = get_scoped_user_id(request)
+    if scoped is not None:
+        return scoped
+
+    # Truthiness, not `is not None`: a validated JWT with an empty-string sub carries no
+    # usable identity, so fall through to anonymous handling rather than pinning user_id="".
+    state_uid = getattr(request.state, "user_id", None)
+    if state_uid:
+        return state_uid
+
+    if is_reserved_principal(client_user_id):
+        raise HTTPException(status_code=403, detail="Client-supplied user_id may not claim a reserved principal")
+    return client_user_id
+
+
+async def resolve_db_and_scope(
+    request: Request,
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
+    db_id: Optional[str] = None,
+    table: Optional[str] = None,
+    *,
+    fallback_user_id: Optional[str] = None,
+) -> Tuple[Union[BaseDb, AsyncBaseDb, RemoteDb], Optional[str]]:
+    """Look up the underlying DB and the ``user_id`` value to thread on reads.
+
+    Returns a ``(db, user_id)`` tuple. ``user_id`` is the JWT sub when the
+    caller is a non-admin scoped user; otherwise it falls back to
+    ``fallback_user_id`` (typically a query-param ``user_id`` that admins use
+    to filter, or the value the legacy unscoped path expected).
+
+    Endpoints are expected to forward the returned ``user_id`` to the DB on
+    every user-scoped read::
+
+        db, user_id = await resolve_db_and_scope(request, dbs, db_id, table,
+                                                  fallback_user_id=query_user_id)
+        sessions, total = await db.get_sessions(user_id=user_id, ...)
+
+    No wrapping, no virtual subclasses — the DB is the concrete backend the
+    route was always going to call. ``RemoteDb`` is returned unchanged and
+    receives ``user_id`` through the same forwarding kwarg.
+    """
+    db = await get_db(dbs, db_id, table)
+    scoped_uid = get_scoped_user_id(request)
+    if scoped_uid is not None:
+        return db, scoped_uid
+    return db, fallback_user_id
+
+
+def apply_scope_to_kwargs(
+    request: Request,
+    kwargs: Optional[Dict[str, Any]] = None,
+    *,
+    fallback_user_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return ``kwargs`` with ``user_id`` set to the right value for the caller.
+
+    Convenience for routers that prefer a single dict-spread call style::
+
+        local_kwargs = apply_scope_to_kwargs(request, {"limit": 20, ...},
+                                              fallback_user_id=query_user_id)
+        rows, total = await db.get_user_memories(**local_kwargs)
+
+    Mirrors ``resolve_db_and_scope`` — the JWT sub wins for non-admin scoped
+    callers, otherwise ``fallback_user_id`` is used (so admin / unscoped
+    callers keep their existing query-param filter behaviour).
+    """
+    out = dict(kwargs or {})
+    scoped_uid = get_scoped_user_id(request)
+    if scoped_uid is not None:
+        out["user_id"] = scoped_uid
+    elif fallback_user_id is not None:
+        out["user_id"] = fallback_user_id
+    return out
+
+
+def enforce_owner_on_entity(request: Request, entity: Any, *, kind: str = "entity") -> None:
+    """Coerce ``entity.user_id`` to the JWT sub for non-admin scoped callers.
+
+    A no-op when isolation is disabled or the caller is admin. When the
+    entity already carries a different ``user_id`` we warn loudly and rewrite
+    — this matches the pre-existing adapter behaviour and keeps a single
+    spoof attempt from poisoning storage. Routes that prefer a hard 404 on
+    mismatch can compare before persisting and raise themselves.
+    """
+    scoped_uid = get_scoped_user_id(request)
+    if scoped_uid is None:
+        return
+    current = getattr(entity, "user_id", None)
+    if current is not None and current != scoped_uid:
+        log_warning(
+            f"user_scope: {kind} arrived with user_id={current!r} but the "
+            f"caller is scoped to user_id={scoped_uid!r}. Coercing to the "
+            f"authenticated user."
+        )
+    try:
+        entity.user_id = scoped_uid  # type: ignore[attr-defined]
+    except AttributeError:
+        log_warning(f"user_scope: unable to coerce user_id on {kind} ({type(entity).__name__})")
+
+
+# ----------------------------------------------------------------------------
+# Run-ownership dependencies
+#
+# For endpoints keyed solely by run_id (cancel, continue) the cancellation
+# manager has no user_id column, so ownership has to be verified at the router
+# layer: load the session for {user_id, session_id} and ensure it contains the
+# run. The three factories below return a FastAPI dependency that fetches the
+# agent / team / workflow, enforces ownership for non-admin JWT callers, and
+# returns the entity so the route body doesn't re-resolve it.
+# ----------------------------------------------------------------------------
+
+
+_RUN_COMPONENT_FIELDS: dict[ComponentType, str] = {
+    "agents": "agent_id",
+    "teams": "team_id",
+    "workflows": "workflow_id",
+}
+
+
+def _component_field(component_type: Optional[ComponentType]) -> Optional[str]:
+    """Return the session/run attribute name for ``component_type``, or None
+    when no check was requested. An unknown component_type is treated as a
+    programmer error and triggers fail-closed at the call sites.
+    """
+    if component_type is None:
+        return None
+    if component_type not in _RUN_COMPONENT_FIELDS:
+        # Typo (e.g. "workflow" instead of "workflows") — fail closed at the
+        # call site rather than silently skipping validation.
+        raise ValueError(f"Unknown component_type: {component_type!r}")
+    return _RUN_COMPONENT_FIELDS[component_type]
+
+
+def run_matches_component(run, component_type: Optional[ComponentType], component_id: Optional[str]) -> bool:
+    """Return True if ``run`` explicitly belongs to the given path component.
+
+    Fails closed: a run that lacks the relevant component field is rejected,
+    because nested member runs inside team/workflow sessions can have
+    ambiguous attribution and must not be exposed through a sibling
+    component's route. Unknown component_type values raise (fail-closed at
+    the caller).
+    """
+    if not component_type or not component_id:
+        return True
+    field = _component_field(component_type)
+    if field is None:
+        return True
+    return getattr(run, field, None) == component_id
+
+
+def session_matches_component(session, component_type: Optional[ComponentType], component_id: Optional[str]) -> bool:
+    """Return True if ``session`` explicitly belongs to the given path component.
+
+    Fails closed (see ``run_matches_component`` for rationale). Unknown
+    component_type values raise.
+    """
+    if not component_type or not component_id:
+        return True
+    field = _component_field(component_type)
+    if field is None:
+        return True
+    return getattr(session, field, None) == component_id
+
+
+def assert_session_matches_component(
+    session,
+    component_type: ComponentType,
+    component_id: str,
+    *,
+    not_found_detail: str = "Session not found",
+) -> None:
+    """404 if ``session`` doesn't belong to the path component.
+
+    Pure attribute check (no IO) — synchronous so callers don't have to
+    ``await`` a function that can't actually suspend. Centralises the
+    open-coded ``getattr(session, "<x>_id", None) != path_id`` check used
+    across get/list/cancel/resume/continue routes and enforces fail-closed
+    semantics in one place.
+    """
+    if not session_matches_component(session, component_type, component_id):
+        raise HTTPException(status_code=404, detail=not_found_detail)
+
+
+async def assert_session_writable(
+    db: Union["BaseDb", "AsyncBaseDb", "RemoteDb", None],
+    session_id: Optional[str],
+    effective_user_id: Optional[str],
+    *,
+    session_type: Optional["SessionType"] = None,
+    is_admin: bool = False,
+) -> None:
+    """Raise 404 if ``session_id`` already exists and belongs to a different user.
+
+    Mirrors the ownership predicate every adapter's ``upsert_session`` already applies
+    on ON CONFLICT (``user_id = :uid OR user_id IS NULL``), so a run route refuses what
+    the session write would have silently dropped. Without this the run still lands in
+    the runs table, which carries no such predicate, and the owner's next run replays
+    the intruder's turn as history.
+
+    ``effective_user_id`` is the id the run will actually be attributed with: the
+    route's resolved ``user_id`` when there is one, else the component's own ``user_id``
+    default. Passing the raw route value instead would 404 every second run of a
+    component that sets its own ``user_id``.
+
+    Allows the run when there is no db or ``session_id``, when the caller is an admin,
+    for a ``RemoteDb`` (the downstream AgentOS enforces its own), when the session does
+    not exist yet, when the session is unowned (``user_id IS NULL`` — the shared-session
+    case the storage predicate already admits, which also covers anonymous dev runs and
+    the eval suite), and when it is already owned by ``effective_user_id``.
+
+    Deliberately NOT on that list: ``effective_user_id is None``. An identity-less run
+    into an *owned* session is refused; an identity-less run into an *unowned* session is
+    already allowed by the ``owner is None`` branch, which is what keeps dev mode working.
+    """
+    if db is None or not session_id or is_admin:
+        return
+    if isinstance(db, RemoteDb):
+        # The downstream AgentOS owns its own enforcement and already receives the
+        # caller's forwarded bearer; a second check here would need another round trip.
+        return
+
+    # user_id is deliberately NOT passed: the probe must see the row regardless of owner.
+    # deserialize=False keeps it a raw dict; runs_limit=1 bounds the run attach.
+    if isinstance(db, AsyncBaseDb):
+        row = await db.get_session(session_id=session_id, session_type=session_type, deserialize=False, runs_limit=1)
+    else:
+        row = db.get_session(session_id=session_id, session_type=session_type, deserialize=False, runs_limit=1)
+    if not row:
+        return
+    owner = row.get("user_id") if isinstance(row, dict) else getattr(row, "user_id", None)
+    if owner is None or owner == effective_user_id:
+        return
+
+    log_warning(
+        f"user_scope: refused a run into session_id={session_id!r} owned by "
+        f"user_id={owner!r} from a caller scoped to user_id={effective_user_id!r}."
+    )
+    raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
+
+
+async def verify_run_in_session(
+    entity,
+    session_id: str,
+    run_id: str,
+    user_id: str,
+    *,
+    component_type: Optional[ComponentType] = None,
+    component_id: Optional[str] = None,
+) -> None:
+    """Raise 404 if ``run_id`` isn't in a session owned by ``user_id``.
+
+    When ``component_type`` and ``component_id`` are provided, also verifies:
+      1. The loaded session belongs to that path component (a WorkflowSession
+         cannot be reached through /agents/... even if a nested agent run
+         lives inside it).
+      2. The loaded run belongs to the same path component.
+
+    Both checks fail closed when the component field is missing on the
+    session/run.
+    """
+    session = await entity.aget_session(session_id=session_id, user_id=user_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    # Session must belong to the path component before we even look at runs.
+    if not session_matches_component(session, component_type, component_id):
+        raise HTTPException(status_code=404, detail="Run not found")
+    run = session.get_run(run_id=run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if not run_matches_component(run, component_type, component_id):
+        # Mask existence — don't leak that the run lives under a different component.
+        raise HTTPException(status_code=404, detail="Run not found")
+
+
+async def verify_run_in_session_via_db(
+    db: Union["BaseDb", "AsyncBaseDb", None],
+    session_id: str,
+    run_id: str,
+    user_id: str,
+    *,
+    component_type: Optional[ComponentType] = None,
+    component_id: Optional[str] = None,
+) -> None:
+    """Raise 404 if ``run_id`` isn't in a session owned by ``user_id``.
+
+    Used by factory cancel routes that don't resolve an entity but still need
+    to verify run ownership before applying a global cancellation intent.
+
+    See ``verify_run_in_session`` for the session/run component checks.
+    """
+    if db is None:
+        # No DB to verify against — fail closed.
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    if isinstance(db, AsyncBaseDb):
+        session = await db.get_session(session_id=session_id, user_id=user_id)
+    else:
+        session = db.get_session(session_id=session_id, user_id=user_id)
+
+    if session is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    if not session_matches_component(session, component_type, component_id):
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    get_run = getattr(session, "get_run", None)
+    if get_run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    run = get_run(run_id=run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if not run_matches_component(run, component_type, component_id):
+        raise HTTPException(status_code=404, detail="Run not found")
+
+
+async def verify_run_belongs_to_component(
+    request: Request,
+    db: Union["BaseDb", "AsyncBaseDb", None],
+    *,
+    component_type: ComponentType,
+    component_id: str,
+    run_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+) -> None:
+    """Bind the run and session a request names to the path component the per-resource
+    gate authorised, for RBAC callers who are NOT isolation-scoped.
+
+    The gate on ``/agents/{agent_id}/runs/{run_id}/cancel`` (and continue, resume, fork)
+    decides on the path's ``agent_id``; the handler then acts on ``run_id`` and
+    ``session_id``, which the client chose. The owner check
+    (:func:`verify_run_in_session`) already ties them to the component, but it only runs
+    for an isolation-scoped caller. Without isolation, a caller granted ``run`` on one
+    agent could cancel or continue another agent's run through that agent's route, so
+    the per-resource grant was not per-resource for these verbs. This closes that gap
+    with the component half of the same check and no owner predicate.
+
+    Dormant when authorization is off (there is no per-resource grant to defend) and
+    for internal callers. A session or run that cannot be found is left to the handler:
+    cancel-before-start legitimately targets a run that has no row yet, and the other
+    verbs 404 on their own. A mismatch is a 404, masking the run's existence exactly as
+    the owner check does.
+    """
+    if not getattr(request.state, "authorization_enabled", False):
+        return
+    if getattr(request.state, "is_internal_service", False):
+        return
+    if db is None or isinstance(db, RemoteDb):
+        return
+
+    async def _get_session(sid: str):
+        if isinstance(db, AsyncBaseDb):
+            return await db.get_session(session_id=sid)
+        return db.get_session(session_id=sid)
+
+    async def _get_run(rid: str):
+        getter = getattr(db, "get_run", None)
+        if getter is None:
+            return None
+        try:
+            if isinstance(db, AsyncBaseDb):
+                return await getter(run_id=rid)
+            return getter(run_id=rid)
+        except NotImplementedError:
+            return None
+
+    run = None
+    if session_id:
+        session = await _get_session(session_id)
+        if session is not None:
+            if not session_matches_component(session, component_type, component_id):
+                raise HTTPException(status_code=404, detail="Run not found" if run_id else SESSION_NOT_FOUND)
+            get_run = getattr(session, "get_run", None)
+            if run_id and get_run is not None:
+                run = get_run(run_id=run_id)
+    if run_id and run is None:
+        run = await _get_run(run_id)
+    if run is not None and not run_matches_component(run, component_type, component_id):
+        raise HTTPException(status_code=404, detail="Run not found")
+
+
+def resolve_owned_agent(os: "AgentOS") -> Callable:
+    """Return a FastAPI dependency yielding the Agent for a run the caller owns.
+
+    For non-admin JWT callers the dependency also requires ``session_id`` as a
+    query param and checks the run belongs to the caller's session; mismatches
+    raise 404 so the existence of another user's run isn't leaked. Admins and
+    unauthenticated callers bypass the ownership check entirely.
+    """
+    from agno.os.utils import get_agent_by_id
+
+    async def dependency(
+        request: Request,
+        agent_id: str,
+        run_id: str,
+        session_id: Optional[str] = Query(
+            default=None,
+            description="Session ID the run belongs to. Required for non-admin JWT users.",
+        ),
+    ) -> "Union[Agent, RemoteAgent, AgentProtocol]":
+        agent = get_agent_by_id(
+            agent_id=agent_id,
+            agents=os.agents,
+            db=os.db,
+            registry=os.registry,
+            create_fresh=True,
+        )
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None:
+            if not session_id:
+                raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
+            await verify_run_in_session(
+                agent,
+                session_id,
+                run_id,
+                scoped_user_id,
+                component_type="agents",
+                component_id=agent_id,
+            )
+        return agent
+
+    return dependency
+
+
+def resolve_owned_team(os: "AgentOS") -> Callable:
+    """Return a dependency yielding the Team for a run the caller owns.
+
+    See ``resolve_owned_agent`` for behaviour.
+    """
+    from agno.os.utils import get_team_by_id
+
+    async def dependency(
+        request: Request,
+        team_id: str,
+        run_id: str,
+        session_id: Optional[str] = Query(
+            default=None,
+            description="Session ID the run belongs to. Required for non-admin JWT users.",
+        ),
+    ) -> "Union[Team, RemoteTeam]":
+        team = get_team_by_id(
+            team_id=team_id,
+            teams=os.teams,
+            db=os.db,
+            registry=os.registry,
+            create_fresh=True,
+        )
+        if team is None:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None:
+            if not session_id:
+                raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
+            await verify_run_in_session(
+                team,
+                session_id,
+                run_id,
+                scoped_user_id,
+                component_type="teams",
+                component_id=team_id,
+            )
+        return team
+
+    return dependency
+
+
+def resolve_owned_workflow(os: "AgentOS") -> Callable:
+    """Return a dependency yielding the Workflow for a run the caller owns.
+
+    See ``resolve_owned_agent`` for behaviour.
+    """
+    from agno.os.utils import get_workflow_by_id
+
+    async def dependency(
+        request: Request,
+        workflow_id: str,
+        run_id: str,
+        session_id: Optional[str] = Query(
+            default=None,
+            description="Session ID the run belongs to. Required for non-admin JWT users.",
+        ),
+    ) -> "Union[Workflow, RemoteWorkflow]":
+        workflow = get_workflow_by_id(
+            workflow_id=workflow_id,
+            workflows=os.workflows,
+            db=os.db,
+            registry=os.registry,
+            create_fresh=True,
+        )
+        if workflow is None:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None:
+            if not session_id:
+                raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
+            await verify_run_in_session(
+                workflow,
+                session_id,
+                run_id,
+                scoped_user_id,
+                component_type="workflows",
+                component_id=workflow_id,
+            )
+        return workflow
+
+    return dependency

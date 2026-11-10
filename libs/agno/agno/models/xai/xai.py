@@ -1,9 +1,10 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, List, Optional, Type, Union
 
 from pydantic import BaseModel
 
+from agno.exceptions import ModelAuthenticationError
 from agno.models.message import Citations, UrlCitation
 from agno.models.openai.like import OpenAILike
 from agno.models.response import ModelResponse
@@ -22,7 +23,7 @@ class xAI(OpenAILike):
     Class for interacting with the xAI API.
 
     Attributes:
-        id (str): The ID of the language model. Defaults to "grok-beta".
+        id (str): The ID of the language model. Defaults to "grok-4-1-fast-non-reasoning-latest".
         name (str): The name of the API. Defaults to "xAI".
         provider (str): The provider of the API. Defaults to "xAI".
         api_key (Optional[str]): The API key for the xAI API.
@@ -30,14 +31,30 @@ class xAI(OpenAILike):
         search_parameters (Optional[Dict[str, Any]]): Search parameters for enabling live search.
     """
 
-    id: str = "grok-beta"
+    id: str = "grok-4-1-fast-non-reasoning-latest"
     name: str = "xAI"
     provider: str = "xAI"
 
-    api_key: Optional[str] = field(default_factory=lambda: getenv("XAI_API_KEY"))
+    api_key: Optional[str] = None
     base_url: str = "https://api.x.ai/v1"
 
     search_parameters: Optional[Dict[str, Any]] = None
+
+    def _get_client_params(self) -> Dict[str, Any]:
+        """
+        Returns client parameters for API requests, checking for XAI_API_KEY.
+
+        Returns:
+            Dict[str, Any]: A dictionary of client parameters for API requests.
+        """
+        if not self.api_key:
+            self.api_key = getenv("XAI_API_KEY")
+            if not self.api_key:
+                raise ModelAuthenticationError(
+                    message="XAI_API_KEY not set. Please set the XAI_API_KEY environment variable.",
+                    model_name=self.name,
+                )
+        return super()._get_client_params()
 
     def get_request_params(
         self,

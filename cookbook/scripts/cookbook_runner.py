@@ -1,227 +1,306 @@
-import os
+"""Run cookbook scripts and report what passed.
+
+Cookbooks make real model calls, so a full folder is slow and expensive. This
+runner exists to make that survivable: it CAPTURES each script's output so a
+failure can be triaged from the report instead of by scrolling the terminal,
+shows live progress, and can run several scripts at once.
+
+    python cookbook/scripts/cookbook_runner.py cookbook/environments/_00_quickstart
+    python cookbook/scripts/cookbook_runner.py cookbook/environments -r --concurrency 4
+    python cookbook/scripts/cookbook_runner.py cookbook/environments -r --pattern basic.py
+"""
+
+from __future__ import annotations
+
+import json
 import subprocess
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
+from fnmatch import fnmatch
+from pathlib import Path
+from typing import List, Optional
 
-import click
-import inquirer
-
-"""
-CLI Tool: Cookbook runner
-
-This tool allows users to interactively navigate through directories, select a target directory,
-and execute all `.py` files in the selected directory. It also tracks cookbooks that fail to execute
-and prompts the user to rerun all failed cookbooks until all succeed or the user decides to exit.
-
-Usage:
-    1. Run the tool from the command line:
-        python cookbook/scripts/cookbook_runner.py [base_directory]
-
-    2. Navigate through the directory structure using the interactive prompts:
-        - Select a directory to drill down or choose the current directory.
-        - The default starting directory is the current working directory (".").
-
-    3. The tool runs all `.py` files in the selected directory and logs any that fail.
-
-    4. If any cookbook fails, the tool prompts the user to rerun all failed cookbooks:
-        - Select "yes" to rerun all failed cookbooks.
-        - Select "no" to exit, and the tool will log remaining failures.
-
-Dependencies:
-    - click
-    - inquirer
-
-Example:
-    $ python cookbook/scripts/cookbook_runner.py cookbook
-    Current directory: /cookbook
-    > [Select this directory]
-    > folder1
-    > folder2
-    > [Go back]
-
-    Running script1.py...
-    Running script2.py...
-
-    --- Error Log ---
-    Script: failing_cookbook.py failed to execute.
-
-    Some cookbooks failed. Do you want to rerun all failed cookbooks? [y/N]: y
-"""
-
-
-def select_directory(base_directory):
-    while True:
-        # Get all subdirectories and files in the current directory
-        items = [
-            item
-            for item in os.listdir(base_directory)
-            if os.path.isdir(os.path.join(base_directory, item))
-        ]
-        items.sort()
-        # Add options to select the current directory or go back
-        items.insert(0, "[Select this directory]")
-        if base_directory != "/":
-            items.insert(1, "[Go back]")
-
-        # Prompt the user to select an option
-        questions = [
-            inquirer.List(
-                "selected_item",
-                message=f"Current directory: {base_directory}",
-                choices=items,
-            )
-        ]
-        answers = inquirer.prompt(questions)
-
-        if not answers or "selected_item" not in answers:
-            print("No selection made. Exiting.")
-            return None
-
-        selected_item = answers["selected_item"]
-
-        # Handle the user's choice
-        if selected_item == "[Select this directory]":
-            return base_directory
-        elif selected_item == "[Go back]":
-            base_directory = os.path.dirname(base_directory)
-        else:
-            # Drill down into the selected directory
-            base_directory = os.path.join(base_directory, selected_item)
-
-
-def run_python_script(script_path):
-    """
-    Run a Python script and display its output in real time.
-    Pauses execution on failure to allow user intervention.
-    """
-    print(f"Running {script_path}...\n")
-    try:
-        with subprocess.Popen(
-            ["python", script_path],
-            stdout=sys.stdout,
-            stderr=sys.stderr,
-            text=True,
-        ) as process:
-            process.wait()
-
-        if process.returncode != 0:
-            raise subprocess.CalledProcessError(process.returncode, script_path)
-
-        return True  # Script ran successfully
-
-    except subprocess.CalledProcessError as e:
-        print(f"\nError: {script_path} failed with return code {e.returncode}.")
-        return False  # Script failed
-
-    except Exception as e:
-        print(f"\nUnexpected error while running {script_path}: {e}")
-        return False  # Script failed
-
-
-@click.command()
-@click.argument(
-    "base_directory",
-    type=click.Path(exists=True, file_okay=False, dir_okay=True),
-    default=".",
+import typer
+from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
 )
-def drill_and_run_scripts(base_directory):
-    """
-    A CLI tool that lets the user drill down into directories and runs all .py files in the selected directory.
-    Tracks cookbooks that encounter errors and keeps prompting to rerun until user decides to exit.
-    """
-    selected_directory = select_directory(base_directory)
+from rich.table import Table
 
-    if not selected_directory:
-        print("No directory selected. Exiting.")
-        return
+SKIP_FILE_NAMES = {"__init__.py", "__main__.py"}
+# `data` holds fixtures and generated exports, never runnable examples.
+SKIP_DIR_NAMES = {"__pycache__", "data"}
+# Enough tail to hold a traceback and the failing assertion, without pasting a
+# whole rollout transcript into the report.
+FAILURE_TAIL_LINES = 40
 
-    print(f"\nRunning .py files in directory: {selected_directory}\n")
+console = Console()
+app = typer.Typer(add_completion=False, help=__doc__)
 
-    python_files = [
-        filename
-        for filename in os.listdir(selected_directory)
-        if filename.endswith(".py")
-        and os.path.isfile(os.path.join(selected_directory, filename))
-        and filename not in ["__pycache__", "__init__.py"]
+
+@dataclass
+class Result:
+    script: str
+    status: str  # PASS | FAIL | TIMEOUT
+    returncode: int
+    duration_seconds: float
+    attempts: int = 1
+    error: Optional[str] = None
+    output_tail: List[str] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return self.status == "PASS"
+
+
+def resolve_python(python_bin: Optional[str]) -> str:
+    """Prefer the demo venv: cookbooks need model SDKs the dev venv may lack."""
+    if python_bin:
+        return python_bin
+    demo = Path(".venvs/demo/bin/python")
+    return demo.as_posix() if demo.exists() else sys.executable
+
+
+def discover(directory: Path, recursive: bool, pattern: Optional[str]) -> List[Path]:
+    walker = directory.rglob("*.py") if recursive else directory.glob("*.py")
+    found = [
+        path
+        for path in walker
+        if path.name not in SKIP_FILE_NAMES
+        and not any(part in SKIP_DIR_NAMES for part in path.parts)
+        and (pattern is None or fnmatch(path.name, pattern))
     ]
+    return sorted(found)
 
-    if not python_files:
-        print("No .py files found in the selected directory.")
-        return
 
-    error_log = []
+def _as_text(value: object) -> str:
+    """TimeoutExpired carries RAW BYTES even under text=True -- decoding only
+    happens on the normal return path -- and stderr may be None. Both must be
+    normalised before they are joined."""
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", "replace")
+    return str(value)
 
-    for py_file in python_files:
-        file_path = os.path.join(selected_directory, py_file)
-        if not run_python_script(file_path):
-            error_log.append(py_file)
 
-    while error_log:
-        print("\n--- Error Log ---")
-        for py_file in error_log:
-            print(f"Cookbook: {py_file} failed to execute.\n")
-
-        # Prompt the user for action
-        questions = [
-            inquirer.List(
-                "action",
-                message="Some cookbooks failed. What would you like to do?",
-                choices=[
-                    "Retry failed scripts",
-                    "Pause for manual intervention and retry",
-                    "Exit with error log",
-                ],
-            )
-        ]
-        answers = inquirer.prompt(questions)
-
-        if answers and answers.get("action") == "Retry failed scripts":
-            print("\nRe-running failed cookbooks...\n")
-            new_error_log = []
-            for py_file in error_log:
-                file_path = os.path.join(selected_directory, py_file)
-                if not run_python_script(file_path):
-                    new_error_log.append(py_file)
-
-            error_log = new_error_log
-
-        elif (
-            answers
-            and answers.get("action") == "Pause for manual intervention and retry"
+def _first_exception_line(output: str) -> Optional[str]:
+    """The exception line is what belongs in a summary row; the full tail stays
+    in the report."""
+    for line in reversed(output.splitlines()):
+        stripped = line.strip()
+        if stripped and (
+            ("Error" in stripped and ":" in stripped) or stripped.startswith("assert")
         ):
-            print(
-                "\nPaused for manual intervention. A shell is now open for you to execute commands (e.g., installing packages)."
-            )
-            print("Type 'exit' or 'Ctrl+D' to return and retry failed cookbooks.\n")
+            return stripped[:200]
+    return None
 
-            # Open an interactive shell for the user
-            try:
-                subprocess.run(["bash"], check=True)  # For Unix-like systems
-            except FileNotFoundError:
-                try:
-                    subprocess.run(["cmd"], check=True, shell=True)  # For Windows
-                except Exception as e:
-                    print(f"Error opening shell: {e}")
-                    print(
-                        "Please manually install required packages in a separate terminal."
-                    )
 
-            print("\nRe-running failed cookbooks after manual intervention...\n")
-            new_error_log = []
-            for py_file in error_log:
-                file_path = os.path.join(selected_directory, py_file)
-                if not run_python_script(file_path):
-                    new_error_log.append(py_file)
+def run_once(script: Path, python_bin: str, timeout: int) -> Result:
+    """One attempt. Output is captured rather than streamed: under concurrency
+    interleaved streams are unreadable, and the tail is what makes a failure
+    diagnosable from the report alone."""
+    start = time.perf_counter()
+    try:
+        completed = subprocess.run(
+            # -u keeps the child's stdout unbuffered: without it a timed-out
+            # script's partial output dies with the kill, and a timeout is
+            # exactly when you want to see how far it got.
+            [python_bin, "-u", script.as_posix()],
+            capture_output=True,
+            text=True,
+            timeout=timeout if timeout > 0 else None,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        partial = _as_text(exc.stdout) + _as_text(exc.stderr)
+        return Result(
+            script=script.as_posix(),
+            status="TIMEOUT",
+            returncode=124,
+            duration_seconds=round(time.perf_counter() - start, 2),
+            error=f"exceeded {timeout}s",
+            output_tail=partial.splitlines()[-FAILURE_TAIL_LINES:],
+        )
+    except OSError as exc:
+        return Result(
+            script=script.as_posix(),
+            status="FAIL",
+            returncode=1,
+            duration_seconds=round(time.perf_counter() - start, 2),
+            error=str(exc),
+        )
 
-            error_log = new_error_log
+    duration = round(time.perf_counter() - start, 2)
+    combined = _as_text(completed.stdout) + _as_text(completed.stderr)
+    if completed.returncode == 0:
+        return Result(script.as_posix(), "PASS", 0, duration)
+    return Result(
+        script=script.as_posix(),
+        status="FAIL",
+        returncode=completed.returncode,
+        duration_seconds=duration,
+        error=_first_exception_line(combined),
+        output_tail=combined.splitlines()[-FAILURE_TAIL_LINES:],
+    )
 
-        elif answers and answers.get("action") == "Exit with error log":
-            print("\nExiting. Remaining cookbooks that failed:")
-            for py_file in error_log:
-                print(f" - {py_file}")
-            return
 
-    print("\nAll cookbooks executed successfully!")
+def run_with_retries(
+    script: Path, python_bin: str, timeout: int, retries: int
+) -> Result:
+    result = run_once(script, python_bin, timeout)
+    attempt = 1
+    while not result.ok and attempt <= retries:
+        attempt += 1
+        result = run_once(script, python_bin, timeout)
+    result.attempts = attempt
+    return result
+
+
+def render_summary(results: List[Result], root: Path) -> None:
+    table = Table(title="Cookbook run", header_style="bold")
+    table.add_column("Script", overflow="fold")
+    table.add_column("Status", justify="center")
+    table.add_column("Time", justify="right")
+    table.add_column("Why it failed", overflow="fold")
+
+    for result in results:
+        style = {"PASS": "green", "FAIL": "red", "TIMEOUT": "yellow"}[result.status]
+        try:
+            name = Path(result.script).relative_to(root).as_posix()
+        except ValueError:
+            name = result.script
+        retry_note = "" if result.attempts == 1 else f" (x{result.attempts})"
+        table.add_row(
+            name,
+            f"[{style}]{result.status}[/{style}]{retry_note}",
+            f"{result.duration_seconds}s",
+            result.error or "",
+        )
+    console.print(table)
+
+    failed = [r for r in results if not r.ok]
+    passed = len(results) - len(failed)
+    total_time = round(sum(r.duration_seconds for r in results), 1)
+    console.print(
+        f"\n[bold]{passed}/{len(results)} passed[/bold] in {total_time}s"
+        + (f"  [red]{len(failed)} failed[/red]" if failed else "")
+    )
+    # The tail is the point: a failure should be diagnosable without re-running.
+    for result in failed:
+        console.print(f"\n[red]{'-' * 70}[/red]\n[red]{result.script}[/red]")
+        for line in result.output_tail:
+            console.print(f"  {line}", highlight=False)
+
+
+@app.command()
+def main(
+    directory: Path = typer.Argument(
+        ..., exists=True, file_okay=False, help="Folder of cookbooks to run."
+    ),
+    recursive: bool = typer.Option(
+        False, "--recursive", "-r", help="Include subfolders."
+    ),
+    pattern: Optional[str] = typer.Option(
+        None, "--pattern", help="Only run files matching a glob, e.g. basic.py"
+    ),
+    concurrency: int = typer.Option(
+        1, "--concurrency", "-c", min=1, help="Scripts to run at once."
+    ),
+    timeout_seconds: int = typer.Option(
+        1800, "--timeout-seconds", help="Per-script timeout. 0 disables."
+    ),
+    retries: int = typer.Option(
+        0, "--retries", min=0, help="Retries for a failing script."
+    ),
+    python_bin: Optional[str] = typer.Option(
+        None, "--python-bin", help="Defaults to .venvs/demo/bin/python."
+    ),
+    json_report: Optional[Path] = typer.Option(
+        None, "--json-report", help="Write machine-readable results."
+    ),
+    list_only: bool = typer.Option(
+        False, "--list", help="List what would run, then exit."
+    ),
+) -> None:
+    scripts = discover(directory, recursive, pattern)
+    if not scripts:
+        console.print(f"[yellow]No scripts found under {directory}[/yellow]")
+        raise typer.Exit(1)
+
+    if list_only:
+        for script in scripts:
+            console.print(script.as_posix())
+        raise typer.Exit(0)
+
+    interpreter = resolve_python(python_bin)
+    console.print(
+        f"[bold]{len(scripts)}[/bold] script(s) - {interpreter} - "
+        f"timeout {timeout_seconds or 'off'}s - concurrency {concurrency}\n"
+    )
+
+    results: List[Result] = []
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task("running", total=len(scripts))
+        if concurrency == 1:
+            for script in scripts:
+                progress.update(task, description=script.name)
+                results.append(
+                    run_with_retries(script, interpreter, timeout_seconds, retries)
+                )
+                progress.advance(task)
+        else:
+            with ThreadPoolExecutor(max_workers=concurrency) as pool:
+                futures = {
+                    pool.submit(
+                        run_with_retries, script, interpreter, timeout_seconds, retries
+                    ): script
+                    for script in scripts
+                }
+                for future in as_completed(futures):
+                    results.append(future.result())
+                    progress.update(task, description=futures[future].name)
+                    progress.advance(task)
+            results.sort(key=lambda item: item.script)
+
+    render_summary(results, directory)
+
+    if json_report:
+        json_report.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "directory": directory.resolve().as_posix(),
+            "python_bin": interpreter,
+            "timeout_seconds": timeout_seconds,
+            "concurrency": concurrency,
+            "summary": {
+                "total": len(results),
+                "passed": sum(1 for item in results if item.ok),
+                "failed": sum(1 for item in results if item.status == "FAIL"),
+                "timed_out": sum(1 for item in results if item.status == "TIMEOUT"),
+            },
+            "results": [asdict(item) for item in results],
+        }
+        json_report.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        console.print(f"\nReport: {json_report}")
+
+    raise typer.Exit(0 if all(item.ok for item in results) else 1)
 
 
 if __name__ == "__main__":
-    drill_and_run_scripts()
+    app()

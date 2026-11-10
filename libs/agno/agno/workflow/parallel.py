@@ -1,12 +1,18 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from copy import deepcopy
-from dataclasses import dataclass
+from contextvars import copy_context
+from copy import copy, deepcopy
+from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
 
-from agno.models.metrics import Metrics
+from agno.exceptions import RunCancelledException
+from agno.media.storage.base import AsyncMediaStorage, MediaStorage
+from agno.metrics import RunMetrics
+from agno.registry import Registry
 from agno.run.agent import RunOutputEvent
+from agno.run.base import RunContext
+from agno.run.cancel import araise_if_cancelled, raise_if_cancelled
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import (
     ParallelExecutionCompletedEvent,
@@ -15,11 +21,11 @@ from agno.run.workflow import (
     WorkflowRunOutputEvent,
 )
 from agno.session.workflow import WorkflowSession
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_error, logger
 from agno.utils.merge_dict import merge_parallel_session_states
 from agno.workflow.condition import Condition
-from agno.workflow.step import Step
-from agno.workflow.types import StepInput, StepOutput, StepType
+from agno.workflow.step import Step, UnresolvableCallableError
+from agno.workflow.types import HumanReview, StepInput, StepOutput, StepType
 
 WorkflowSteps = List[
     Union[
@@ -32,46 +38,142 @@ WorkflowSteps = List[
         "Parallel",  # type: ignore # noqa: F821
         "Condition",  # type: ignore # noqa: F821
         "Router",  # type: ignore # noqa: F821
+        "Workflow",  # type: ignore # noqa: F821 - Nested workflow support
     ]
 ]
 
 
 @dataclass
 class Parallel:
-    """A list of steps that execute in parallel"""
+    """A list of steps that execute in parallel.
 
-    steps: WorkflowSteps
+    Unlike sequential constructs (Steps, Loop), Parallel uses variadic arguments
+    to emphasize that the steps are independent and unordered.
+
+    Supports flexible calling conventions:
+        Parallel(step1, step2, step3)                      # Steps only (name defaults to "Parallel")
+        Parallel(step1, step2, name="my_parallel")         # Name as keyword (at end)
+        Parallel("my_parallel", step1, step2)              # Name as first positional arg
+    """
 
     name: Optional[str] = None
     description: Optional[str] = None
+    steps: WorkflowSteps = field(default_factory=list)
 
     def __init__(
         self,
-        *steps: WorkflowSteps,
+        *args: Union[str, WorkflowSteps],
         name: Optional[str] = None,
         description: Optional[str] = None,
+        human_review: Optional[HumanReview] = None,
     ):
-        self.steps = list(steps)
-        self.name = name
+        resolved_name = name
+        resolved_steps: List[Any] = []
+
+        if args:
+            first_arg = args[0]
+            # Check if first argument is a plain string (likely a name, not a step)
+            if isinstance(first_arg, str):
+                # First arg is the name, rest are steps
+                resolved_name = first_arg
+                resolved_steps = list(args[1:])
+            else:
+                # All args are steps
+                resolved_steps = list(args)
+
+        # If name was provided as keyword, it takes precedence
+        if name is not None:
+            resolved_name = name
+
+        self.steps = resolved_steps
+        self.name = resolved_name
         self.description = description
+        self.human_review = human_review or HumanReview()
+        _refuse_shared_harness_agents(self.steps)
+
+        from agno.workflow.types import validate_human_review_for_parallel
+
+        validate_human_review_for_parallel(self.human_review)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "type": "Parallel",
+            "name": self.name,
+            "description": self.description,
+            "steps": [step.to_dict() for step in self.steps if hasattr(step, "to_dict")],
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        registry: Optional["Registry"] = None,
+        db: Optional[Any] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+        strict: bool = False,
+        branch_suffix: str = "",
+    ) -> "Parallel":
+        from agno.workflow.condition import Condition
+        from agno.workflow.loop import Loop
+        from agno.workflow.router import Router
+        from agno.workflow.steps import Steps
+
+        def deserialize_step(step_data: Dict[str, Any], suffix: Optional[str] = None) -> Any:
+            suffix = branch_suffix if suffix is None else suffix
+            step_type = step_data.get("type", "Step")
+            if step_type == "Loop":
+                return Loop.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
+            elif step_type == "Parallel":
+                return cls.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
+            elif step_type == "Steps":
+                return Steps.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
+            elif step_type == "Condition":
+                return Condition.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
+            elif step_type == "Router":
+                return Router.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
+            else:
+                return Step.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
+
+        deserialized_steps = [deserialize_step(step) for step in data.get("steps", [])]
+        return cls(
+            *deserialized_steps,
+            name=data.get("name"),
+            description=data.get("description"),
+        )
 
     def _prepare_steps(self):
         """Prepare the steps for execution - mirrors workflow logic"""
         from agno.agent.agent import Agent
+        from agno.agents.base import BaseExternalAgent
         from agno.team.team import Team
         from agno.workflow.loop import Loop
         from agno.workflow.router import Router
         from agno.workflow.step import Step
         from agno.workflow.steps import Steps
+        from agno.workflow.workflow import Workflow
 
         prepared_steps: WorkflowSteps = []
         for step in self.steps:
             if callable(step) and hasattr(step, "__name__"):
                 prepared_steps.append(Step(name=step.__name__, description="User-defined callable step", executor=step))
-            elif isinstance(step, Agent):
+            elif isinstance(step, (Agent, BaseExternalAgent)):
                 prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
             elif isinstance(step, Team):
                 prepared_steps.append(Step(name=step.name, description=step.description, team=step))
+            elif isinstance(step, Workflow):
+                prepared_steps.append(Step(name=step.name, description=step.description, workflow=step))
             elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
                 prepared_steps.append(step)
             else:
@@ -81,6 +183,15 @@ class Parallel:
 
     def _aggregate_results(self, step_outputs: List[StepOutput]) -> StepOutput:
         """Aggregate multiple step outputs into a single StepOutput"""
+        # Check for executor HITL pauses - not supported in parallel steps
+        for output in step_outputs:
+            if getattr(output, "is_paused", False):
+                raise ValueError(
+                    f"Executor HITL inside Parallel steps is not supported. "
+                    f"Step '{output.step_name}' has a paused agent/team. "
+                    f"Move HITL tools to non-parallel steps or use step-level HITL."
+                )
+
         if not step_outputs:
             return StepOutput(
                 step_name=self.name or "Parallel",
@@ -99,11 +210,12 @@ class Parallel:
                 step_name=self.name or "Parallel",
                 step_id=str(uuid4()),
                 step_type=StepType.PARALLEL,
-                content=f"Parallel {self.name or 'execution'} completed with 1 result",
+                content=self._build_aggregated_content(step_outputs),
                 executor_name=self.name or "Parallel",
                 images=single_result.images,
                 videos=single_result.videos,
                 audio=single_result.audio,
+                files=single_result.files,
                 metrics=aggregated_metrics,
                 success=single_result.success,
                 error=single_result.error,
@@ -113,19 +225,21 @@ class Parallel:
 
         early_termination_requested = any(output.stop for output in step_outputs if hasattr(output, "stop"))
 
-        # Multiple results - aggregate them
-        aggregated_content = f"Parallel {self.name or 'execution'} completed with {len(step_outputs)} results"
+        # Multiple results - aggregate them with actual content from all steps
+        aggregated_content = self._build_aggregated_content(step_outputs)
 
         # Combine all media from parallel steps
         all_images = []
         all_videos = []
         all_audio = []
+        all_files = []
         has_any_failure = False
 
         for result in step_outputs:
             all_images.extend(result.images or [])
             all_videos.extend(result.videos or [])
             all_audio.extend(result.audio or [])
+            all_files.extend(result.files or [])
             if result.success is False:
                 has_any_failure = True
 
@@ -142,19 +256,20 @@ class Parallel:
             images=all_images if all_images else None,
             videos=all_videos if all_videos else None,
             audio=all_audio if all_audio else None,
+            files=all_files if all_files else None,
             success=not has_any_failure,
             stop=early_termination_requested,
             metrics=aggregated_metrics,
             steps=step_outputs,
         )
 
-    def _extract_metrics_from_response(self, step_outputs: List[StepOutput]) -> Optional[Metrics]:
+    def _extract_metrics_from_response(self, step_outputs: List[StepOutput]) -> Optional[RunMetrics]:
         """Extract and aggregate metrics from parallel step outputs"""
         if not step_outputs:
             return None
 
         # Aggregate metrics from all parallel step outputs
-        total_metrics = Metrics()
+        total_metrics = RunMetrics()
 
         for result in step_outputs:
             if result.metrics:
@@ -177,7 +292,7 @@ class Parallel:
 
         for i, output in enumerate(step_outputs):
             step_name = output.step_name or f"Step {i + 1}"
-            content = output.content or ""
+            content = output.content
 
             # Add status indicator
             if output.success is False:
@@ -186,7 +301,7 @@ class Parallel:
                 status_icon = "✅ SUCCESS:"
 
             aggregated += f"### {status_icon} {step_name}\n"
-            if content and str(content).strip():
+            if content is not None and str(content).strip():
                 aggregated += f"{content}\n\n"
             else:
                 aggregated += "*(No content)*\n\n"
@@ -200,10 +315,15 @@ class Parallel:
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
     ) -> StepOutput:
         """Execute all steps in parallel and return aggregated result"""
         # Use workflow logger for parallel orchestration
@@ -214,16 +334,23 @@ class Parallel:
         # Create individual session_state copies for each step to prevent race conditions
         session_state_copies = []
         for _ in range(len(self.steps)):
-            if session_state is not None:
-                session_state_copies.append(deepcopy(session_state))
+            # If using run context, no need to deepcopy the state. We want the direct reference.
+            if run_context is not None and run_context.session_state is not None:
+                session_state_copies.append(run_context.session_state)
             else:
-                session_state_copies.append({})
+                if session_state is not None:
+                    session_state_copies.append(deepcopy(session_state))
+                else:
+                    session_state_copies.append({})
 
         def execute_step_with_index(step_with_index):
             """Execute a single step and preserve its original index"""
             idx, step = step_with_index
             # Use the individual session_state copy for this step
             step_session_state = session_state_copies[idx]
+            # Shallow-copy run_context so each parallel step gets its own output_schema
+            # (prevents race condition when agents have heterogeneous schemas)
+            step_run_context = copy(run_context) if run_context is not None else None
 
             try:
                 step_result = step.execute(
@@ -232,15 +359,26 @@ class Parallel:
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    run_context=step_run_context,
                     session_state=step_session_state,
+                    background_tasks=background_tasks,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
                 )  # type: ignore[union-attr]
                 return idx, step_result, step_session_state
+            except RunCancelledException:
+                raise
+            except UnresolvableCallableError:
+                # A placeholder for an unresolved reference can never succeed:
+                # converting it to a failed StepOutput would let the run complete.
+                raise
             except Exception as exc:
                 parallel_step_name = getattr(step, "name", f"step_{idx}")
-                logger.error(f"Parallel step {parallel_step_name} failed: {exc}")
+                log_error(f"Parallel step {parallel_step_name} failed: {exc}")
                 return (
                     idx,
                     StepOutput(
@@ -257,8 +395,9 @@ class Parallel:
 
         with ThreadPoolExecutor(max_workers=len(self.steps)) as executor:
             # Submit all tasks with their original indices
+            # Use copy_context().run to propagate context variables to child threads
             future_to_index = {
-                executor.submit(execute_step_with_index, indexed_step): indexed_step[0]
+                executor.submit(copy_context().run, execute_step_with_index, indexed_step): indexed_step[0]
                 for indexed_step in indexed_steps
             }
 
@@ -272,10 +411,16 @@ class Parallel:
                     modified_session_states.append(modified_session_state)
                     step_name = getattr(self.steps[index], "name", f"step_{index}")
                     log_debug(f"Parallel step {step_name} completed")
+                except RunCancelledException:
+                    raise
+                except UnresolvableCallableError:
+                    # A placeholder for an unresolved reference can never succeed:
+                    # converting it to a failed StepOutput would let the run complete.
+                    raise
                 except Exception as e:
                     index = future_to_index[future]
                     step_name = getattr(self.steps[index], "name", f"step_{index}")
-                    logger.error(f"Parallel step {step_name} failed: {e}")
+                    logger.exception(f"Parallel step {step_name} failed")
                     results_with_indices.append(
                         (
                             index,
@@ -288,7 +433,7 @@ class Parallel:
                         )
                     )
 
-        if session_state is not None:
+        if run_context is None and session_state is not None:
             merge_parallel_session_states(session_state, modified_session_states)
 
         # Sort by original index to preserve order
@@ -317,18 +462,24 @@ class Parallel:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_events: bool = False,
-        stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute all steps in parallel with streaming support"""
+        if workflow_run_response and workflow_run_response.run_id:
+            raise_if_cancelled(workflow_run_response.run_id)
         log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
 
         parallel_step_id = str(uuid4())
@@ -338,13 +489,14 @@ class Parallel:
         # Create individual session_state copies for each step to prevent race conditions
         session_state_copies = []
         for _ in range(len(self.steps)):
-            if session_state is not None:
-                session_state_copies.append(deepcopy(session_state))
+            # If using run context, no need to deepcopy the state. We want the direct reference.
+            if run_context is not None and run_context.session_state is not None:
+                session_state_copies.append(run_context.session_state)
             else:
-                session_state_copies.append({})
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps
+                if session_state is not None:
+                    session_state_copies.append(deepcopy(session_state))
+                else:
+                    session_state_copies.append({})
 
         if stream_events and workflow_run_response:
             # Yield parallel step started event
@@ -371,6 +523,8 @@ class Parallel:
             idx, step = step_with_index
             # Use the individual session_state copy for this step
             step_session_state = session_state_copies[idx]
+            # Shallow-copy run_context so each parallel step gets its own output_schema
+            step_run_context = copy(run_context) if run_context is not None else None
 
             try:
                 step_outputs = []
@@ -394,11 +548,16 @@ class Parallel:
                     workflow_run_response=workflow_run_response,
                     step_index=sub_step_index,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     session_state=step_session_state,
+                    run_context=step_run_context,
                     parent_step_id=parallel_step_id,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
                 ):
                     # Put event immediately in queue
                     event_queue.put(("event", idx, event))
@@ -408,9 +567,15 @@ class Parallel:
                 # Signal completion for this step
                 event_queue.put(("complete", idx, step_outputs, step_session_state))
                 return idx, step_outputs, step_session_state
+            except RunCancelledException:
+                raise
+            except UnresolvableCallableError:
+                # A placeholder for an unresolved reference can never succeed:
+                # converting it to a failed StepOutput would let the run complete.
+                raise
             except Exception as exc:
                 parallel_step_name = getattr(step, "name", f"step_{idx}")
-                logger.error(f"Parallel step {parallel_step_name} streaming failed: {exc}")
+                log_error(f"Parallel step {parallel_step_name} streaming failed: {exc}")
                 error_event = StepOutput(
                     step_name=parallel_step_name,
                     content=f"Step {parallel_step_name} failed: {str(exc)}",
@@ -426,7 +591,11 @@ class Parallel:
 
         with ThreadPoolExecutor(max_workers=len(self.steps)) as executor:
             # Submit all tasks
-            futures = [executor.submit(execute_step_stream_with_index, indexed_step) for indexed_step in indexed_steps]
+            # Use copy_context().run to propagate context variables to child threads
+            futures = [
+                executor.submit(copy_context().run, execute_step_stream_with_index, indexed_step)
+                for indexed_step in indexed_steps
+            ]
 
             # Process events from queue as they arrive
             completed_steps = 0
@@ -451,24 +620,30 @@ class Parallel:
                         step_name = getattr(self.steps[step_idx], "name", f"step_{step_idx}")
                         log_debug(f"Parallel step {step_name} streaming completed")
 
-                except queue.Empty:
+                except queue.Empty as e:
                     for i, future in enumerate(futures):
                         if future.done() and future.exception():
-                            logger.error(f"Parallel step {i} failed: {future.exception()}")
+                            log_error(f"Parallel step {i} failed: {future.exception()}: {str(e)}")
                             if completed_steps < total_steps:
                                 completed_steps += 1
-                except Exception as e:
-                    logger.error(f"Error processing parallel step events: {e}")
+                except Exception:
+                    logger.exception("Error processing parallel step events")
                     completed_steps += 1
 
             for future in futures:
                 try:
                     future.result()
-                except Exception as e:
-                    logger.error(f"Future completion error: {e}")
+                except RunCancelledException:
+                    raise
+                except UnresolvableCallableError:
+                    # A placeholder for an unresolved reference can never
+                    # succeed; the refusal must reach the caller.
+                    raise
+                except Exception:
+                    logger.exception("Future completion error")
 
         # Merge all session_state changes back into the original session_state
-        if session_state is not None:
+        if run_context is None and session_state is not None:
             merge_parallel_session_states(session_state, modified_session_states)
 
         # Flatten step_results - handle steps that return List[StepOutput] (like Condition/Loop)
@@ -509,10 +684,15 @@ class Parallel:
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
     ) -> StepOutput:
         """Execute all steps in parallel using asyncio and return aggregated result"""
         # Use workflow logger for async parallel orchestration
@@ -523,16 +703,22 @@ class Parallel:
         # Create individual session_state copies for each step to prevent race conditions
         session_state_copies = []
         for _ in range(len(self.steps)):
-            if session_state is not None:
-                session_state_copies.append(deepcopy(session_state))
+            # If using run context, no need to deepcopy the state. We want the direct reference.
+            if run_context is not None and run_context.session_state is not None:
+                session_state_copies.append(run_context.session_state)
             else:
-                session_state_copies.append({})
+                if session_state is not None:
+                    session_state_copies.append(deepcopy(session_state))
+                else:
+                    session_state_copies.append({})
 
         async def execute_step_async_with_index(step_with_index):
             """Execute a single step asynchronously and preserve its original index"""
             idx, step = step_with_index
             # Use the individual session_state copy for this step
             step_session_state = session_state_copies[idx]
+            # Shallow-copy run_context so each parallel step gets its own output_schema
+            step_run_context = copy(run_context) if run_context is not None else None
 
             try:
                 inner_step_result = await step.aexecute(
@@ -541,15 +727,26 @@ class Parallel:
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
                     session_state=step_session_state,
+                    run_context=step_run_context,
+                    background_tasks=background_tasks,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
                 )  # type: ignore[union-attr]
                 return idx, inner_step_result, step_session_state
+            except RunCancelledException:
+                raise
+            except UnresolvableCallableError:
+                # A placeholder for an unresolved reference can never succeed:
+                # converting it to a failed StepOutput would let the run complete.
+                raise
             except Exception as exc:
                 parallel_step_name = getattr(step, "name", f"step_{idx}")
-                logger.error(f"Parallel step {parallel_step_name} failed: {exc}")
+                log_error(f"Parallel step {parallel_step_name} failed: {exc}")
                 return (
                     idx,
                     StepOutput(
@@ -574,9 +771,13 @@ class Parallel:
         processed_results_with_indices = []
         modified_session_states = []
         for i, result in enumerate(results_with_indices):
+            if isinstance(result, UnresolvableCallableError):
+                # A placeholder for an unresolved reference can never succeed:
+                # converting it to a failed StepOutput would let the run complete.
+                raise result
             if isinstance(result, Exception):
                 step_name = getattr(self.steps[i], "name", f"step_{i}")
-                logger.error(f"Parallel step {step_name} failed: {result}")
+                log_error(f"Parallel step {step_name} failed: {result}")
                 processed_results_with_indices.append(
                     (
                         i,
@@ -598,7 +799,7 @@ class Parallel:
                 log_debug(f"Parallel step {step_name} completed")
 
         # Smart merge all session_state changes back into the original session_state
-        if session_state is not None:
+        if run_context is None and session_state is not None:
             merge_parallel_session_states(session_state, modified_session_states)
 
         # Sort by original index to preserve order
@@ -627,18 +828,24 @@ class Parallel:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_events: bool = False,
-        stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Execute all steps in parallel with async streaming support"""
+        if workflow_run_response and workflow_run_response.run_id:
+            await araise_if_cancelled(workflow_run_response.run_id)
         log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
 
         parallel_step_id = str(uuid4())
@@ -648,13 +855,14 @@ class Parallel:
         # Create individual session_state copies for each step to prevent race conditions
         session_state_copies = []
         for _ in range(len(self.steps)):
-            if session_state is not None:
-                session_state_copies.append(deepcopy(session_state))
+            # If using run context, no need to deepcopy the state. We want the direct reference.
+            if run_context is not None and run_context.session_state is not None:
+                session_state_copies.append(run_context.session_state)
             else:
-                session_state_copies.append({})
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps
+                if session_state is not None:
+                    session_state_copies.append(deepcopy(session_state))
+                else:
+                    session_state_copies.append({})
 
         if stream_events and workflow_run_response:
             # Yield parallel step started event
@@ -681,6 +889,8 @@ class Parallel:
             idx, step = step_with_index
             # Use the individual session_state copy for this step
             step_session_state = session_state_copies[idx]
+            # Shallow-copy run_context so each parallel step gets its own output_schema
+            step_run_context = copy(run_context) if run_context is not None else None
 
             try:
                 step_outputs = []
@@ -704,11 +914,16 @@ class Parallel:
                     workflow_run_response=workflow_run_response,
                     step_index=sub_step_index,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     session_state=step_session_state,
+                    run_context=step_run_context,
                     parent_step_id=parallel_step_id,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
                 ):  # type: ignore[union-attr]
                     # Yield events immediately to the queue
                     await event_queue.put(("event", idx, event))
@@ -718,9 +933,17 @@ class Parallel:
                 # Signal completion for this step
                 await event_queue.put(("complete", idx, step_outputs, step_session_state))
                 return idx, step_outputs, step_session_state
+            except RunCancelledException:
+                raise
+            except UnresolvableCallableError as unresolved:
+                # A placeholder for an unresolved reference can never succeed,
+                # and raising here would leave the consumer awaiting a
+                # completion that never comes: signal it through the queue.
+                await event_queue.put(("unresolvable", idx, unresolved))
+                return idx, [], step_session_state
             except Exception as e:
                 parallel_step_name = getattr(step, "name", f"step_{idx}")
-                logger.error(f"Parallel step {parallel_step_name} async streaming failed: {e}")
+                logger.exception(f"Parallel step {parallel_step_name} async streaming failed")
                 error_event = StepOutput(
                     step_name=parallel_step_name,
                     content=f"Step {parallel_step_name} failed: {str(e)}",
@@ -759,14 +982,21 @@ class Parallel:
                     step_name = getattr(self.steps[step_idx], "name", f"step_{step_idx}")
                     log_debug(f"Parallel step {step_name} async streaming completed")
 
-            except Exception as e:
-                logger.error(f"Error processing parallel step events: {e}")
+                elif message_type == "unresolvable":
+                    for task in tasks:
+                        task.cancel()
+                    raise data[0]
+
+            except UnresolvableCallableError:
+                raise
+            except Exception:
+                logger.exception("Error processing parallel step events")
                 completed_steps += 1
 
         await asyncio.gather(*tasks, return_exceptions=True)
 
         # Merge all session_state changes back into the original session_state
-        if session_state is not None:
+        if run_context is None and session_state is not None:
             merge_parallel_session_states(session_state, modified_session_states)
 
         # Flatten step_results - handle steps that return List[StepOutput] (like Condition/Loop)
@@ -799,3 +1029,50 @@ class Parallel:
                 step_id=parallel_step_id,
                 parent_step_id=parent_step_id,
             )
+
+
+def _harness_agent_ids(item: Any) -> set:
+    """Ids of the harness agents (Claude Code, Codex) one Parallel branch runs, at any depth."""
+    from agno.agents.base import BaseExternalAgent
+    from agno.team.team import Team
+
+    if isinstance(item, BaseExternalAgent):
+        return {item.get_id()}
+    if isinstance(item, Team):
+        found: set = set()
+        for member in item.members if isinstance(item.members, list) else []:
+            found |= _harness_agent_ids(member)
+        return found
+    if isinstance(item, list):
+        found = set()
+        for child in item:
+            found |= _harness_agent_ids(child)
+        return found
+    found = set()
+    for attr in ("agent", "team"):
+        if getattr(item, attr, None) is not None:
+            found |= _harness_agent_ids(getattr(item, attr))
+    for attr in ("steps", "else_steps", "choices"):
+        children = getattr(item, attr, None)
+        if isinstance(children, list):
+            found |= _harness_agent_ids(children)
+    return found
+
+
+def _refuse_shared_harness_agents(branches: List[Any]) -> None:
+    """Refuse a harness agent that more than one branch runs.
+
+    A harness agent keeps one conversation per workflow session, and a conversation takes one turn at
+    a time, so two branches running it at once would leave one waiting on the other until its retries
+    ran out. Different harness agents, and Agno agents, can run side by side.
+    """
+    seen: Dict[str, int] = {}
+    for index, branch in enumerate(branches):
+        for agent_id in _harness_agent_ids(branch):
+            if agent_id in seen and seen[agent_id] != index:
+                raise ValueError(
+                    f"Harness agent '{agent_id}' is used in more than one Parallel branch. It keeps one "
+                    "conversation per workflow session, which takes one turn at a time; use a separate "
+                    "agent, with its own id, for each branch."
+                )
+            seen.setdefault(agent_id, index)

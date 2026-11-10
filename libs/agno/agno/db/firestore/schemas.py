@@ -61,12 +61,60 @@ SESSION_COLLECTION_SCHEMA = [
     },
 ]
 
+RUNS_COLLECTION_SCHEMA = [
+    {"key": "run_id"},
+    {"key": "session_id"},
+    {"key": "run_type"},
+    {"key": "agent_id"},
+    {"key": "team_id"},
+    {"key": "workflow_id"},
+    {"key": "user_id"},
+    {"key": "parent_run_id"},
+    {"key": "status"},
+    {"key": "created_at"},
+    {"key": "updated_at"},
+    # Compound index: ordered fetch of runs per session (used by
+    # _get_session_runs_docs — the hot path for reading a session's history).
+    {"key": [("session_id", "ASCENDING"), ("run_index", "ASCENDING")], "collection_group": False},
+    # get_runs supports filter-by-any-of + default order by run_index/created_at.
+    # Firestore requires a composite index for every filter+order combo — without
+    # these, queries fail at runtime with FAILED_PRECONDITION or fall back to
+    # unindexed scans that scale linearly with collection size.
+    {
+        "key": [("session_id", "ASCENDING"), ("status", "ASCENDING"), ("run_index", "ASCENDING")],
+        "collection_group": False,
+    },
+    {
+        "key": [("session_id", "ASCENDING"), ("agent_id", "ASCENDING"), ("run_index", "ASCENDING")],
+        "collection_group": False,
+    },
+    {
+        "key": [("session_id", "ASCENDING"), ("team_id", "ASCENDING"), ("run_index", "ASCENDING")],
+        "collection_group": False,
+    },
+    {
+        "key": [("session_id", "ASCENDING"), ("workflow_id", "ASCENDING"), ("run_index", "ASCENDING")],
+        "collection_group": False,
+    },
+    {"key": [("user_id", "ASCENDING"), ("created_at", "DESCENDING")], "collection_group": False},
+    {"key": [("agent_id", "ASCENDING"), ("created_at", "DESCENDING")], "collection_group": False},
+    {"key": [("team_id", "ASCENDING"), ("created_at", "DESCENDING")], "collection_group": False},
+    {"key": [("workflow_id", "ASCENDING"), ("created_at", "DESCENDING")], "collection_group": False},
+    {"key": [("status", "ASCENDING"), ("created_at", "DESCENDING")], "collection_group": False},
+    # Common HITL / background polling: find PENDING/RUNNING runs per user.
+    {
+        "key": [("user_id", "ASCENDING"), ("status", "ASCENDING"), ("created_at", "DESCENDING")],
+        "collection_group": False,
+    },
+]
+
 USER_MEMORY_COLLECTION_SCHEMA = [
     {"key": "memory_id", "unique": True},
     {"key": "user_id"},
     {"key": "agent_id"},
     {"key": "team_id"},
     {"key": "topics"},
+    {"key": "created_at"},
     {"key": "updated_at"},
     # Composite indexes for memory queries
     {"key": [("user_id", "ASCENDING"), ("agent_id", "ASCENDING")], "collection_group": False},
@@ -82,8 +130,11 @@ EVAL_COLLECTION_SCHEMA = [
     {"key": "team_id"},
     {"key": "workflow_id"},
     {"key": "model_id"},
+    {"key": "user_id"},
     {"key": "created_at"},
     {"key": "updated_at"},
+    # Composite index for user-scoped listing sorted by creation time
+    {"key": [("user_id", "ASCENDING"), ("created_at", "DESCENDING")], "collection_group": False},
 ]
 
 KNOWLEDGE_COLLECTION_SCHEMA = [
@@ -106,19 +157,54 @@ METRICS_COLLECTION_SCHEMA = [
     {"key": "id", "unique": True},
     {"key": "date"},
     {"key": "aggregation_period"},
+    # Rows with no owner use the empty-string sentinel so they fit the compound unique key below
+    {"key": "user_id"},
     {"key": "created_at"},
     {"key": "updated_at"},
     # Composite index for metrics uniqueness (same as MongoDB)
-    {"key": [("date", "ASCENDING"), ("aggregation_period", "ASCENDING")], "collection_group": False, "unique": True},
+    {
+        "key": [("user_id", "ASCENDING"), ("date", "ASCENDING"), ("aggregation_period", "ASCENDING")],
+        "collection_group": False,
+        "unique": True,
+    },
 ]
 
-CULTURAL_KNOWLEDGE_COLLECTION_SCHEMA = [
-    {"key": "id", "unique": True},
+TRACE_COLLECTION_SCHEMA = [
+    {"key": "trace_id", "unique": True},
     {"key": "name"},
+    {"key": "status"},
+    {"key": "run_id"},
+    {"key": "session_id"},
+    {"key": "user_id"},
     {"key": "agent_id"},
     {"key": "team_id"},
+    {"key": "workflow_id"},
+    {"key": "start_time"},
+    {"key": "end_time"},
     {"key": "created_at"},
-    {"key": "updated_at"},
+    # Composite indexes for common query patterns
+    {"key": [("session_id", "ASCENDING"), ("start_time", "DESCENDING")], "collection_group": False},
+    {"key": [("user_id", "ASCENDING"), ("start_time", "DESCENDING")], "collection_group": False},
+    {"key": [("agent_id", "ASCENDING"), ("start_time", "DESCENDING")], "collection_group": False},
+    {"key": [("team_id", "ASCENDING"), ("start_time", "DESCENDING")], "collection_group": False},
+    {"key": [("workflow_id", "ASCENDING"), ("start_time", "DESCENDING")], "collection_group": False},
+    {"key": [("run_id", "ASCENDING"), ("start_time", "DESCENDING")], "collection_group": False},
+    {"key": [("status", "ASCENDING"), ("start_time", "DESCENDING")], "collection_group": False},
+]
+
+SPAN_COLLECTION_SCHEMA = [
+    {"key": "span_id", "unique": True},
+    {"key": "trace_id"},
+    {"key": "parent_span_id"},
+    {"key": "name"},
+    {"key": "span_kind"},
+    {"key": "status_code"},
+    {"key": "start_time"},
+    {"key": "end_time"},
+    {"key": "created_at"},
+    # Composite indexes for common query patterns
+    {"key": [("trace_id", "ASCENDING"), ("start_time", "ASCENDING")], "collection_group": False},
+    {"key": [("parent_span_id", "ASCENDING"), ("start_time", "ASCENDING")], "collection_group": False},
 ]
 
 
@@ -126,11 +212,13 @@ def get_collection_indexes(collection_type: str) -> List[Dict[str, Any]]:
     """Get the index definitions for a specific collection type."""
     index_definitions = {
         "sessions": SESSION_COLLECTION_SCHEMA,
+        "runs": RUNS_COLLECTION_SCHEMA,
         "memories": USER_MEMORY_COLLECTION_SCHEMA,
         "metrics": METRICS_COLLECTION_SCHEMA,
         "evals": EVAL_COLLECTION_SCHEMA,
         "knowledge": KNOWLEDGE_COLLECTION_SCHEMA,
-        "culture": CULTURAL_KNOWLEDGE_COLLECTION_SCHEMA,
+        "traces": TRACE_COLLECTION_SCHEMA,
+        "spans": SPAN_COLLECTION_SCHEMA,
     }
 
     indexes = index_definitions.get(collection_type)

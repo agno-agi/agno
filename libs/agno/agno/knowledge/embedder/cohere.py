@@ -2,7 +2,12 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from agno.knowledge.embedder.base import Embedder
+from agno.knowledge.embedder.base import (
+    Embedder,
+    aembed_texts_individually,
+    pad_batch_embeddings,
+    raise_embedding_error,
+)
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
@@ -136,6 +141,7 @@ class CohereEmbedder(Embedder):
                 else:
                     log_warning("No embeddings found in response")
                     batch_embeddings = []
+                batch_embeddings = pad_batch_embeddings(batch_embeddings, texts, "Cohere")
 
                 # Extract usage information
                 usage = response.meta.billed_units if response.meta else None
@@ -149,8 +155,9 @@ class CohereEmbedder(Embedder):
                 if self._is_rate_limit_error(e):
                     if not self.exponential_backoff:
                         log_warning(
-                            "Rate limit detected. To enable automatic backoff retry, set enable_backoff=True when creating the embedder."
+                            f"Rate limit detected. To enable automatic backoff retry, set enable_backoff=True when creating the embedder.: {e}",
                         )
+
                         raise e
 
                     log_info(f"Async rate limit detected on attempt {attempt + 1}")
@@ -158,7 +165,7 @@ class CohereEmbedder(Embedder):
                         await self._async_rate_limit_backoff_sleep(attempt)
                         continue
                     else:
-                        log_warning(f"Async max retries ({max_retries}) reached for rate limiting")
+                        log_warning(f"Async max retries ({max_retries}) reached for rate limiting: {str(e)}")
                         raise e
                 else:
                     log_debug(f"Async non-rate-limit error on attempt {attempt + 1}: {e}")
@@ -169,21 +176,26 @@ class CohereEmbedder(Embedder):
         return [], []
 
     def get_embedding(self, text: str) -> List[float]:
-        response: Union[EmbeddingsFloatsEmbedResponse, EmbeddingsByTypeEmbedResponse] = self.response(text=text)
         try:
-            if isinstance(response, EmbeddingsFloatsEmbedResponse):
-                return response.embeddings[0]
-            elif isinstance(response, EmbeddingsByTypeEmbedResponse):
-                return response.embeddings.float_[0] if response.embeddings.float_ else []
-            else:
-                log_warning("No embeddings found")
-                return []
+            response: Union[EmbeddingsFloatsEmbedResponse, EmbeddingsByTypeEmbedResponse] = self.response(text=text)
         except Exception as e:
-            log_warning(e)
-            return []
+            raise_embedding_error(e, model_id=self.id, provider="Cohere")
+
+        # A 200 carrying no embedding is a valid provider response, not a failure (see
+        # the note in GeminiEmbedder.get_embedding).
+        if isinstance(response, EmbeddingsFloatsEmbedResponse):
+            return response.embeddings[0]
+        elif isinstance(response, EmbeddingsByTypeEmbedResponse):
+            if response.embeddings.float_:
+                return response.embeddings.float_[0]
+        log_warning("No embeddings found in response")
+        return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
-        response: Union[EmbeddingsFloatsEmbedResponse, EmbeddingsByTypeEmbedResponse] = self.response(text=text)
+        try:
+            response: Union[EmbeddingsFloatsEmbedResponse, EmbeddingsByTypeEmbedResponse] = self.response(text=text)
+        except Exception as e:
+            raise_embedding_error(e, model_id=self.id, provider="Cohere")
 
         embedding: List[float] = []
         if isinstance(response, EmbeddingsFloatsEmbedResponse):
@@ -220,8 +232,7 @@ class CohereEmbedder(Embedder):
                 log_warning("No embeddings found")
                 return []
         except Exception as e:
-            log_warning(e)
-            return []
+            raise_embedding_error(e, model_id=self.id, provider="Cohere")
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
         request_params: Dict[str, Any] = {}
@@ -235,9 +246,12 @@ class CohereEmbedder(Embedder):
         if self.request_params:
             request_params.update(self.request_params)
 
-        response: Union[EmbeddingsFloatsEmbedResponse, EmbeddingsByTypeEmbedResponse] = await self.aclient.embed(
-            texts=[text], **request_params
-        )
+        try:
+            response: Union[EmbeddingsFloatsEmbedResponse, EmbeddingsByTypeEmbedResponse] = await self.aclient.embed(
+                texts=[text], **request_params
+            )
+        except Exception as e:
+            raise_embedding_error(e, model_id=self.id, provider="Cohere")
 
         embedding: List[float] = []
         if isinstance(response, EmbeddingsFloatsEmbedResponse):
@@ -276,17 +290,20 @@ class CohereEmbedder(Embedder):
                 all_usage.extend(batch_usage)
 
             except Exception as e:
-                log_warning(f"Async batch embedding failed after retries: {e}")
+                log_warning(f"Async batch embedding failed after retries: {str(e)}")
 
                 # Check if this is a rate limit error and backoff is disabled
                 if self._is_rate_limit_error(e) and not self.exponential_backoff:
-                    log_warning("Rate limit hit and backoff is disabled. Failing immediately.")
+                    log_warning(f"Rate limit hit and backoff is disabled. Failing immediately.: {str(e)}")
                     raise e
 
                 # Only fall back to individual calls for non-rate-limit errors
                 # For rate limit errors, we should reduce batch size instead
                 if self._is_rate_limit_error(e):
-                    log_warning("Rate limit hit even after retries. Consider reducing batch_size or upgrading API key.")
+                    log_warning(
+                        f"Rate limit hit even after retries. Consider reducing batch_size or upgrading API key.: {e}",
+                    )
+
                     # Try with smaller batch size
                     if len(batch_texts) > 1:
                         smaller_batch_size = max(1, len(batch_texts) // 2)
@@ -299,25 +316,16 @@ class CohereEmbedder(Embedder):
                                 all_usage.extend(small_usage)
                             except Exception as e3:
                                 log_error(f"Failed even with reduced batch size: {e3}")
-                                # Fall back to empty results for this batch
-                                all_embeddings.extend([[] for _ in small_batch])
-                                all_usage.extend([None for _ in small_batch])
+                                raise_embedding_error(e3, model_id=self.id, provider="Cohere")
                     else:
-                        # Single item already failed, add empty result
-                        log_debug("Single item failed, adding empty result")
-                        all_embeddings.append([])
-                        all_usage.append(None)
+                        # Single item already failed, surface the error instead of a silent empty vector
+                        raise_embedding_error(e, model_id=self.id, provider="Cohere")
                 else:
-                    # For non-rate-limit errors, fall back to individual calls
+                    # For non-rate-limit errors, fall back to individual calls. Successes
+                    # are kept so one bad chunk does not discard the rest of the batch.
                     log_debug("Non-rate-limit error, falling back to individual calls")
-                    for text in batch_texts:
-                        try:
-                            embedding, usage = await self.async_get_embedding_and_usage(text)
-                            all_embeddings.append(embedding)
-                            all_usage.append(usage)
-                        except Exception as e2:
-                            log_warning(f"Error in individual async embedding fallback: {e2}")
-                            all_embeddings.append([])
-                            all_usage.append(None)
+                    batch_embeddings, batch_usage = await aembed_texts_individually(self, batch_texts)
+                    all_embeddings.extend(batch_embeddings)
+                    all_usage.extend(batch_usage)
 
         return all_embeddings, all_usage

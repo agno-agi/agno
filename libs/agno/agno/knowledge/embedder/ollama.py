@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
-from agno.knowledge.embedder.base import Embedder
+from agno.knowledge.embedder.base import Embedder, raise_embedding_error
 from agno.utils.log import log_error, logger
 
 try:
@@ -31,7 +31,7 @@ except ImportError as e:
 
 except Exception as e:
     # Catch-all for unexpected errors
-    log_error(f"An unexpected error occurred: {e}")
+    log_error(f"An unexpected error occurred: {str(e)}")
 
 
 @dataclass
@@ -85,6 +85,10 @@ class OllamaEmbedder(Embedder):
         if self.options is not None:
             kwargs["options"] = self.options
 
+        # Add dimensions parameter for models that support it
+        if self.dimensions is not None:
+            kwargs["dimensions"] = self.dimensions
+
         response = self.client.embed(input=text, model=self.id, **kwargs)
         if response and "embeddings" in response:
             embeddings = response["embeddings"]
@@ -103,8 +107,7 @@ class OllamaEmbedder(Embedder):
                 return []
             return embedding
         except Exception as e:
-            logger.warning(e)
-            return []
+            raise_embedding_error(e, model_id=self.id, provider="Ollama")
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         embedding = self.get_embedding(text=text)
@@ -116,6 +119,10 @@ class OllamaEmbedder(Embedder):
         kwargs: Dict[str, Any] = {}
         if self.options is not None:
             kwargs["options"] = self.options
+
+        # Add dimensions parameter for models that support it
+        if self.dimensions is not None:
+            kwargs["dimensions"] = self.dimensions
 
         response = await self.aclient.embed(input=text, model=self.id, **kwargs)
         if response and "embeddings" in response:
@@ -136,8 +143,7 @@ class OllamaEmbedder(Embedder):
                 return []
             return embedding
         except Exception as e:
-            logger.warning(f"Error getting embedding: {e}")
-            return []
+            raise_embedding_error(e, model_id=self.id, provider="Ollama")
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         """Async version of get_embedding_and_usage."""

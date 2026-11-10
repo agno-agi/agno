@@ -1,0 +1,96 @@
+# OpenAI Cookbook
+
+> Note: Fork and clone this repository if needed
+
+### 1. Create and activate a virtual environment
+
+```shell
+python3 -m venv ~/.venvs/aienv
+source ~/.venvs/aienv/bin/activate
+```
+
+### 2. Export your `OPENAI_API_KEY`
+
+```shell
+export OPENAI_API_KEY=***
+```
+
+### 3. Install libraries
+
+```shell
+uv pip install -U openai ddgs duckdb yfinance agno
+```
+
+### 4. Run basic Agent
+
+```shell
+python cookbook/90_models/openai/chat/basic.py
+```
+
+### 5. Run Agent with Tools
+
+- DuckDuckGo Search
+
+```shell
+python cookbook/90_models/openai/chat/tool_use.py
+```
+
+### 6. Run Agent that returns structured output
+
+```shell
+python cookbook/90_models/openai/chat/structured_output.py
+```
+
+### 7. Run Agent uses memory
+
+```shell
+python cookbook/90_models/openai/chat/memory.py
+```
+
+### 8. Run Agent that uses storage
+
+```shell
+python cookbook/90_models/openai/chat/db.py
+```
+
+### 9. Run Agent that uses knowledge
+
+```shell
+python cookbook/90_models/openai/chat/knowledge.py
+```
+
+### 10. Run Agent that generates an image using Dall-E
+
+```shell
+python cookbook/90_models/openai/chat/generate_images.py
+```
+
+### 11. Run Agent that analyzes an image
+
+```shell
+python cookbook/90_models/openai/chat/image_agent.py
+```
+
+or
+
+```shell
+python cookbook/90_models/openai/chat/image_agent_with_memory.py
+```
+
+### 12. Run Agent that analyzes audio
+
+```shell
+python cookbook/90_models/openai/chat/audio_input_agent.py
+```
+
+### 13. Run Agent that generates audio
+
+```shell
+python cookbook/90_models/openai/chat/audio_output_agent.py
+```
+
+### 14. Run Agent that returns web search citations
+
+```shell
+python cookbook/90_models/openai/chat/citations.py
+```

@@ -23,6 +23,7 @@ class YouTubeTools(Toolkit):
         all: bool = False,
         languages: Optional[List[str]] = None,
         proxies: Optional[Dict[str, Any]] = None,
+        timeout: int = 30,
         **kwargs,
     ):
         self.languages: Optional[List[str]] = languages
@@ -36,7 +37,7 @@ class YouTubeTools(Toolkit):
         if all or enable_get_video_timestamps:
             tools.append(self.get_video_timestamps)
 
-        super().__init__(name="youtube_tools", tools=tools, **kwargs)
+        super().__init__(name="youtube_tools", tools=tools, timeout=timeout, **kwargs)
 
     def get_youtube_video_id(self, url: str) -> Optional[str]:
         """Function to get the video ID from a YouTube URL.
@@ -48,18 +49,29 @@ class YouTubeTools(Toolkit):
             str: The video ID of the YouTube video.
         """
         parsed_url = urlparse(url)
+        if not parsed_url.scheme and not parsed_url.netloc:
+            parsed_url = urlparse(f"//{url}")
         hostname = parsed_url.hostname
 
         if hostname == "youtu.be":
-            return parsed_url.path[1:]
-        if hostname in ("www.youtube.com", "youtube.com"):
+            return parsed_url.path[1:] or None
+        if hostname in (
+            "www.youtube.com",
+            "youtube.com",
+            "m.youtube.com",
+            "music.youtube.com",
+            "www.youtube-nocookie.com",
+            "youtube-nocookie.com",
+            "www.youtube.com.br",
+            "youtube.com.br",
+            "www.youtube.co.uk",
+            "youtube.co.uk",
+        ):
             if parsed_url.path == "/watch":
                 query_params = parse_qs(parsed_url.query)
                 return query_params.get("v", [None])[0]
-            if parsed_url.path.startswith("/embed/"):
-                return parsed_url.path.split("/")[2]
-            if parsed_url.path.startswith("/v/"):
-                return parsed_url.path.split("/")[2]
+            if parsed_url.path.startswith(("/embed/", "/v/", "/shorts/", "/live/")):
+                return parsed_url.path.split("/")[2] or None
         return None
 
     def get_youtube_video_data(self, url: str) -> str:
@@ -82,13 +94,16 @@ class YouTubeTools(Toolkit):
         except Exception:
             return "Error getting video ID from URL, please provide a valid YouTube url"
 
+        if video_id is None:
+            return "No video ID found"
+
         try:
             params = {"format": "json", "url": f"https://www.youtube.com/watch?v={video_id}"}
             url = "https://www.youtube.com/oembed"
             query_string = urlencode(params)
             url = url + "?" + query_string
 
-            with urlopen(url) as response:
+            with urlopen(url, timeout=self.timeout) as response:
                 response_text = response.read()
                 video_data = json.loads(response_text.decode())
                 clean_data = {
@@ -126,17 +141,16 @@ class YouTubeTools(Toolkit):
         except Exception:
             return "Error getting video ID from URL, please provide a valid YouTube url"
 
+        if video_id is None:
+            return "No video ID found"
+
         try:
-            captions = None
             kwargs: Dict = {}
             if self.languages:
                 kwargs["languages"] = self.languages or ["en"]
             if self.proxies:
                 kwargs["proxies"] = self.proxies
-            if video_id is not None:
-                captions = YouTubeTranscriptApi().fetch(video_id, **kwargs)
-            else:
-                return "No video ID found"
+            captions = YouTubeTranscriptApi().fetch(video_id, **kwargs)
             if captions:
                 return " ".join(line.text for line in captions)
             return "No captions found for video"

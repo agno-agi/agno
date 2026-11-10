@@ -1,15 +1,123 @@
 from collections import OrderedDict
-from typing import Any, Callable, Dict, List, Optional
+from inspect import iscoroutinefunction
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union, cast, get_type_hints
 
+from agno.exceptions import PathSecurityError
 from agno.tools.function import Function
-from agno.utils.log import log_debug, log_warning, logger
+from agno.utils.log import log_debug, log_warning
+from agno.utils.path_safety import safe_join_relative_path
+from agno.utils.string import generate_id_from_name
+
+# Groups a Toolkit by what it contributes rather than by object identity.
+# Agent.deep_copy / Team.deep_copy clone a Toolkit list entry while the
+# rehydrated Functions that came from it keep pointing at the live registry
+# Toolkit, so identity splits one logical toolkit into two. A clone agrees with
+# its original on every part of this key, so the two regroup.
+#
+# The function surface is part of the key because the coverage check reads it:
+# two same-named toolkits carrying the same guidance but exposing different
+# functions would otherwise pool their members, and one toolkit's coverage would
+# be judged against the other's function set. The sync and async surfaces stay
+# separate parts of the key: coverage is measured per mode, and two toolkits
+# whose surfaces agree only as a union would pool members that mode-specific
+# coverage then judges against the wrong function set.
+ToolkitKey = Tuple[str, Any, bool, frozenset, frozenset]
+
+
+def _toolkit_key(toolkit: "Toolkit") -> ToolkitKey:
+    sync_surface = frozenset(toolkit.get_functions())
+    async_surface = frozenset(toolkit.get_async_functions())
+    instructions = toolkit.instructions
+    if instructions is not None and not isinstance(instructions, str):
+        # `instructions` is declared Optional[str] but nothing enforces it, and
+        # a list would make this key unhashable. Fall back to identity for that
+        # toolkit rather than raise: grouping degrades, the run does not fail.
+        return (toolkit.name, id(toolkit), toolkit.add_instructions, sync_surface, async_surface)
+    return (toolkit.name, instructions, toolkit.add_instructions, sync_surface, async_surface)
+
+
+def _group_source_toolkits(
+    tools: Sequence[Any],
+) -> Tuple[Dict[ToolkitKey, int], Dict[ToolkitKey, Set[str]], Dict[int, ToolkitKey]]:
+    """Index the bare Functions that a live Toolkit was flattened into.
+
+    Returns the last index each toolkit's members occupy in ``tools`` and the
+    member names present, both keyed by :func:`_toolkit_key`, plus the key
+    itself memoized per live Toolkit object. The key folds the toolkit's whole
+    function surface, so rebuilding it per member Function would make one
+    collection pass quadratic in the toolkit's size; every later key read must
+    come from the memo.
+    """
+    last_index: Dict[ToolkitKey, int] = {}
+    members: Dict[ToolkitKey, Set[str]] = {}
+    keys_by_id: Dict[int, ToolkitKey] = {}
+    for index, tool in enumerate(tools):
+        if not isinstance(tool, Function):
+            continue
+        source_toolkit = tool.source_toolkit
+        if not isinstance(source_toolkit, Toolkit):
+            continue
+        key = keys_by_id.get(id(source_toolkit))
+        if key is None:
+            key = keys_by_id[id(source_toolkit)] = _toolkit_key(source_toolkit)
+        last_index[key] = index
+        members.setdefault(key, set()).add(tool.name)
+    return last_index, members, keys_by_id
+
+
+def _emits_toolkit_instructions(
+    source_toolkit: "Toolkit",
+    index: int,
+    key: ToolkitKey,
+    last_index: Dict[ToolkitKey, int],
+    members: Dict[ToolkitKey, Set[str]],
+    async_mode: bool = False,
+) -> bool:
+    """Whether the bare Function at ``index`` should emit its toolkit's guidance.
+
+    Guidance belongs after all of the toolkit's member guidance, so only the
+    last member emits it, and only when the component holds every function the
+    toolkit exposes. Persistence records one dict per function, so a component
+    built from a whole toolkit and one built from a single member are
+    indistinguishable on reload; resolving that ambiguity as "whole toolkit"
+    would hand the model guidance naming tools it was not given.
+
+    ``key`` is ``_toolkit_key(source_toolkit)``, passed in from the caller's
+    memo rather than rebuilt here: the key folds the toolkit's whole function
+    surface, and this check runs once per member Function.
+
+    A live Toolkit for the same guidance elsewhere in the list needs no special
+    case: whichever representation reaches its emission point first wins, and
+    :func:`_toolkit_key` makes the caller's dedup collapse the two.
+    """
+    if last_index.get(key) != index:
+        return False
+    # Measured against the set this run would actually deliver: in async mode a
+    # live Toolkit contributes its async variants too, and the registry cannot
+    # rehydrate those, so an async-only member always leaves a gap here.
+    exposed = set(source_toolkit.get_async_functions() if async_mode else source_toolkit.get_functions())
+    present = members.get(key, set())
+    if not exposed <= present:
+        log_debug(
+            f"Toolkit '{source_toolkit.name}' instructions skipped: the component holds "
+            f"{len(present)} of its {len(exposed)} functions."
+        )
+        return False
+    return True
 
 
 class Toolkit:
+    # Set to True for toolkits that require connection management (e.g., database connections)
+    # When True, the Agent will automatically call connect() before using tools and close() after
+    _requires_connect: bool = False
+
     def __init__(
         self,
         name: str = "toolkit",
-        tools: List[Callable] = [],
+        id: Optional[str] = None,
+        tools: Optional[Sequence[Union[Callable[..., Any], Function]]] = None,
+        async_tools: Optional[Sequence[tuple[Callable[..., Any], str]]] = None,
         instructions: Optional[str] = None,
         add_instructions: bool = False,
         include_tools: Optional[list[str]] = None,
@@ -21,13 +129,18 @@ class Toolkit:
         cache_results: bool = False,
         cache_ttl: int = 3600,
         cache_dir: Optional[str] = None,
+        timeout: Optional[int] = None,
         auto_register: bool = True,
     ):
         """Initialize a new Toolkit.
 
         Args:
             name: A descriptive name for the toolkit
-            tools: List of tools to include in the toolkit
+            id: A unique identifier for the toolkit. If not provided, one is generated from the name.
+            tools: List of tools to include in the toolkit (can be callables or Function objects from @tool decorator)
+            async_tools: List of (async_callable, tool_name) tuples for async variants.
+                        Used when async methods have different names than sync methods.
+                        Example: [(self.anavigate_to, "navigate_to"), (self.ascreenshot, "screenshot")]
             instructions: Instructions for the toolkit
             add_instructions: Whether to add instructions to the toolkit
             include_tools: List of tool names to include in the toolkit
@@ -37,13 +150,24 @@ class Toolkit:
             cache_results (bool): Enable in-memory caching of function results.
             cache_ttl (int): Time-to-live for cached results in seconds.
             cache_dir (Optional[str]): Directory to store cache files. Defaults to system temp dir.
+            timeout (Optional[int]): Timeout in seconds for the primary I/O operation this toolkit
+                performs (e.g. HTTP request, SDK call, sandbox execution). Subclasses that talk to
+                external systems should accept their own ``timeout`` and forward it via
+                ``super().__init__(timeout=...)`` so agents have a uniform override path. Toolkits
+                that also expose secondary timers (job-poll intervals, per-task budgets) should keep
+                their own explicit names for those.
             auto_register (bool): Whether to automatically register all methods in the class.
             stop_after_tool_call_tools (Optional[List[str]]): List of function names that should stop the agent after execution.
             show_result_tools (Optional[List[str]]): List of function names whose results should be shown.
         """
         self.name: str = name
-        self.tools: List[Callable] = tools
+        self.id: str = id if id is not None else generate_id_from_name(name)
+        self.tools: Sequence[Union[Callable[..., Any], Function]] = tools or []
+        self._async_tools: Sequence[tuple[Callable[..., Any], str]] = async_tools or []
+        # Functions dict - used by agent.run() and agent.print_response()
         self.functions: Dict[str, Function] = OrderedDict()
+        # Async functions dict - used by agent.arun() and agent.aprint_response()
+        self.async_functions: Dict[str, Function] = OrderedDict()
         self.instructions: Optional[str] = instructions
         self.add_instructions: bool = add_instructions
 
@@ -54,7 +178,9 @@ class Toolkit:
         self.show_result_tools: list[str] = show_result_tools or []
 
         self._check_tools_filters(
-            available_tools=[tool.__name__ for tool in tools], include_tools=include_tools, exclude_tools=exclude_tools
+            available_tools=[self._get_tool_name(tool) for tool in self.tools],
+            include_tools=include_tools,
+            exclude_tools=exclude_tools,
         )
 
         self.include_tools = include_tools
@@ -64,9 +190,28 @@ class Toolkit:
         self.cache_ttl: int = cache_ttl
         self.cache_dir: Optional[str] = cache_dir
 
+        # Only assign timeout when the caller explicitly passed one, or when the
+        # subclass hasn't already set it before calling super().__init__(). This
+        # lets subclasses either forward timeout via super() (recommended) or set
+        # self.timeout locally without either pattern clobbering the other.
+        #
+        # Widen the value to Any at assignment: subclasses own the semantic type
+        # (int, float, or httpx.Timeout) and a base Optional[int] would break them.
+        if timeout is not None or not hasattr(self, "timeout"):
+            self.timeout = cast(Any, timeout)
+
         # Automatically register all methods if auto_register is True
-        if auto_register and self.tools:
-            self._register_tools()
+        if auto_register:
+            if self.tools:
+                self._register_tools()
+            if self._async_tools:
+                self._register_async_tools()
+
+    def _get_tool_name(self, tool: Union[Callable[..., Any], Function]) -> str:
+        """Get the name of a tool, whether it's a Function or callable."""
+        if isinstance(tool, Function):
+            return tool.name
+        return tool.__name__
 
     def _check_tools_filters(
         self,
@@ -100,22 +245,57 @@ class Toolkit:
                     f"External execution required tool(s) not present in the toolkit: {', '.join(missing_external_execution_required)}"
                 )
 
+        if self.stop_after_tool_call_tools:
+            missing_stop_after_tool_call = set(self.stop_after_tool_call_tools) - set(available_tools)
+            if missing_stop_after_tool_call:
+                log_warning(
+                    f"Stop after tool call tool(s) not present in the toolkit: {', '.join(missing_stop_after_tool_call)}"
+                )
+
+        if self.show_result_tools:
+            missing_show_result = set(self.show_result_tools) - set(available_tools)
+            if missing_show_result:
+                log_warning(f"Show result tool(s) not present in the toolkit: {', '.join(missing_show_result)}")
+
     def _register_tools(self) -> None:
-        """Register all tools."""
+        """Register all sync tools."""
         for tool in self.tools:
             self.register(tool)
 
-    def register(self, function: Callable[..., Any], name: Optional[str] = None):
+    def _register_async_tools(self) -> None:
+        """Register all async tools with their mapped names.
+
+        Async detection is automatic via iscoroutinefunction.
+        """
+        for async_func, tool_name in self._async_tools:
+            self.register(async_func, name=tool_name)
+
+    def register(self, function: Union[Callable[..., Any], Function], name: Optional[str] = None) -> None:
         """Register a function with the toolkit.
 
-        Args:
-            function: The callable to register
-            name: Optional custom name for the function
+        This method supports both regular callables and Function objects (from @tool decorator).
+        Automatically detects if the function is async (using iscoroutinefunction) and registers
+        it to the appropriate dict (functions for sync, async_functions for async).
 
-        Returns:
-            The registered function
+        When a Function object is passed (e.g., from a @tool decorated method), it will:
+        1. Extract the configuration from the Function object
+        2. Look for a bound method with the same name on `self`
+        3. Create a new Function with the bound method as entrypoint, preserving decorator settings
+
+        Args:
+            function: The callable or Function object to register
+            name: Optional custom name for the function (useful for aliasing)
         """
         try:
+            # Handle Function objects (from @tool decorator)
+            if isinstance(function, Function):
+                # Auto-detect if this is an async function
+                is_async = function.entrypoint is not None and iscoroutinefunction(function.entrypoint)
+                return self._register_decorated_tool(function, name, is_async=is_async)
+
+            # Handle regular callables - auto-detect async
+            is_async = iscoroutinefunction(function)
+
             tool_name = name or function.__name__
             if self.include_tools is not None and tool_name not in self.include_tools:
                 return
@@ -133,14 +313,194 @@ class Toolkit:
                 stop_after_tool_call=tool_name in self.stop_after_tool_call_tools,
                 show_result=tool_name in self.show_result_tools or tool_name in self.stop_after_tool_call_tools,
             )
-            self.functions[f.name] = f
-            log_debug(f"Function: {f.name} registered with {self.name}")
+
+            if is_async:
+                self.async_functions[f.name] = f
+                log_debug(f"Async function: {f.name} registered with {self.name}")
+            else:
+                self.functions[f.name] = f
+                log_debug(f"Function: {f.name} registered with {self.name}")
         except Exception as e:
-            logger.warning(f"Failed to create Function for: {function.__name__}")
+            func_name = self._get_tool_name(function)
+            log_warning(f"Failed to create Function for: {func_name}: {str(e)}")
             raise e
 
+    def _register_decorated_tool(self, function: Function, name: Optional[str] = None, is_async: bool = False) -> None:
+        """Register a Function object from @tool decorator, binding it to self.
+
+        When @tool decorator is used on a class method, it creates a Function with an unbound
+        method as entrypoint. This method creates a bound version of the entrypoint that
+        includes `self`, preserving all decorator settings.
+
+        Args:
+            function: The Function object from @tool decorator
+            name: Optional custom name override
+            is_async: If True, register to async_functions dict instead of functions
+        """
+        import inspect
+
+        tool_name = name or function.name
+        if self.include_tools is not None and len(self.include_tools) > 0 and tool_name not in self.include_tools:
+            return
+        if self.exclude_tools is not None and len(self.exclude_tools) > 0 and tool_name in self.exclude_tools:
+            return
+
+        # Get the original entrypoint from the Function
+        if function.entrypoint is None:
+            log_warning(f"Function '{tool_name}' has no entrypoint, skipping registration")
+            return
+
+        original_func = function.entrypoint
+
+        # Check if the function expects 'self' as first argument (i.e., it's an unbound method)
+        sig = inspect.signature(original_func)
+        params = list(sig.parameters.keys())
+
+        if params and params[0] == "self":
+            # Create a bound method by wrapping the function to include self
+            if is_async:
+
+                def make_bound_method(func, instance):
+                    async def bound(*args, **kwargs):
+                        return await func(instance, *args, **kwargs)
+
+                    bound.__name__ = getattr(func, "__name__", tool_name)
+                    bound.__doc__ = getattr(func, "__doc__", None)
+                    return bound
+            else:
+
+                def make_bound_method(func, instance):
+                    def bound(*args, **kwargs):
+                        return func(instance, *args, **kwargs)
+
+                    bound.__name__ = getattr(func, "__name__", tool_name)
+                    bound.__doc__ = getattr(func, "__doc__", None)
+                    return bound
+
+            bound_method = make_bound_method(original_func, self)
+            # Expose the original signature (minus self) and annotations on the wrapper.
+            # FunctionCall._build_entrypoint_args inspects the entrypoint's signature to
+            # inject run_context/agent/team/etc.; without this it sees (*args, **kwargs)
+            # and skips the injection.
+            bound_method.__signature__ = sig.replace(  # type: ignore[attr-defined]
+                parameters=[param for param_name, param in sig.parameters.items() if param_name != "self"]
+            )
+            # Resolve annotations against the original method's own module so type-based
+            # Agent/Team injection still works when the user's module uses
+            # `from __future__ import annotations` (PEP 563). The @tool wrapper's globals
+            # point at the decorator module, so unwrap to the underlying method first;
+            # otherwise the raw string annotations stay unresolvable and injection is skipped.
+            try:
+                resolved_annotations = get_type_hints(inspect.unwrap(original_func))
+            except Exception:
+                resolved_annotations = getattr(original_func, "__annotations__", {})
+            bound_method.__annotations__ = {k: v for k, v in resolved_annotations.items() if k != "self"}
+        else:
+            # Function doesn't expect self (e.g., static method or already bound)
+            bound_method = original_func
+
+        # decorator settings take precedence, then toolkit settings
+        stop_after = function.stop_after_tool_call or tool_name in self.stop_after_tool_call_tools
+        show_result = function.show_result or tool_name in self.show_result_tools or stop_after
+        requires_confirmation = function.requires_confirmation or tool_name in self.requires_confirmation_tools
+        external_execution = function.external_execution or tool_name in self.external_execution_required_tools
+
+        # Create new Function with bound method, preserving decorator settings
+        f = Function(
+            name=tool_name,
+            description=function.description,
+            title=function.title,
+            annotations=function.annotations,
+            parameters=function.parameters,
+            strict=function.strict,
+            instructions=function.instructions,
+            add_instructions=function.add_instructions,
+            entrypoint=bound_method,
+            skip_entrypoint_processing=True,  # Parameters already processed by decorator
+            show_result=show_result,
+            stop_after_tool_call=stop_after,
+            pre_hook=function.pre_hook,
+            post_hook=function.post_hook,
+            tool_hooks=function.tool_hooks,
+            requires_confirmation=requires_confirmation,
+            requires_user_input=function.requires_user_input,
+            user_input_fields=function.user_input_fields,
+            user_input_schema=function.user_input_schema,
+            external_execution=external_execution,
+            approval_type=function.approval_type,
+            cache_results=function.cache_results if function.cache_results else self.cache_results,
+            cache_dir=function.cache_dir if function.cache_dir else self.cache_dir,
+            cache_ttl=function.cache_ttl if function.cache_ttl != 3600 else self.cache_ttl,
+        )
+
+        if is_async:
+            self.async_functions[f.name] = f
+            log_debug(f"Async function: {f.name} registered with {self.name} (from @tool decorator)")
+        else:
+            self.functions[f.name] = f
+            log_debug(f"Function: {f.name} registered with {self.name} (from @tool decorator)")
+
+    def get_functions(self) -> Dict[str, Function]:
+        """Get sync functions dict.
+
+        Returns:
+            Dict of function name to Function for sync execution
+        """
+        return self.functions
+
+    def get_async_functions(self) -> Dict[str, Function]:
+        """Get functions dict optimized for async execution.
+
+        Returns a merged dict where async_functions take precedence over functions.
+        This allows async-optimized implementations to be automatically used in async contexts,
+        while falling back to sync implementations for tools without async variants.
+
+        Returns:
+            Dict of function name to Function, with async variants preferred
+        """
+        # Merge: start with sync functions, override with async variants
+        merged = OrderedDict(self.functions)
+        merged.update(self.async_functions)
+        return merged
+
+    @property
+    def requires_connect(self) -> bool:
+        """Whether the toolkit requires connection management."""
+        return self._requires_connect
+
+    def connect(self) -> None:
+        """
+        Establish any required connections for the toolkit.
+        Override this method in subclasses that require connection management.
+        Called automatically by the Agent when _requires_connect is True.
+        """
+        pass
+
+    def close(self) -> None:
+        """
+        Close any open connections for the toolkit.
+        Override this method in subclasses that require connection management.
+        Called automatically by the Agent when _requires_connect is True.
+        """
+        pass
+
+    def _check_path(self, file_name: str, base_dir: Path, restrict_to_base_dir: bool = True) -> Tuple[bool, Path]:
+        """Resolve ``file_name`` inside ``base_dir``. Returns (is_safe, resolved_path)."""
+        if not restrict_to_base_dir:
+            try:
+                resolved = base_dir.joinpath(file_name).resolve()
+                return True, resolved
+            except (OSError, ValueError):
+                return False, base_dir
+
+        try:
+            resolved_path = safe_join_relative_path(base_dir, file_name)
+            return True, resolved_path
+        except (PathSecurityError, OSError):
+            return False, base_dir
+
     def __repr__(self):
-        return f"<{self.__class__.__name__} name={self.name} functions={list(self.functions.keys())}>"
+        return f"<{self.__class__.__name__} id={self.id} name={self.name} functions={list(self.functions.keys())}>"
 
     def __str__(self):
         return self.__repr__()

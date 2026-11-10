@@ -1,0 +1,9 @@
+agno[os]
+google-genai
+fastapi[standard]
+mcp
+openai
+rich
+sqlalchemy
+typer
+notion-client

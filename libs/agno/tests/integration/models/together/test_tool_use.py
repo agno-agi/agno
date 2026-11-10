@@ -4,8 +4,8 @@ import pytest
 
 from agno.agent import Agent
 from agno.models.together import Together
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 
 
@@ -92,7 +92,7 @@ async def test_async_tool_use_stream():
 def test_multiple_tool_calls():
     agent = Agent(
         model=Together(id="meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"),
-        tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
+        tools=[YFinanceTools(cache_results=True), WebSearchTools(cache_results=True)],
         markdown=True,
         telemetry=False,
     )

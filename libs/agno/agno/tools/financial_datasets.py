@@ -11,12 +11,14 @@ class FinancialDatasetsTools(Toolkit):
     def __init__(
         self,
         api_key: Optional[str] = None,
+        timeout: int = 30,
         **kwargs,
     ):
         """Initialize the Financial Datasets Tools.
 
         Args:
             api_key: API key for Financial Datasets API (optional, can be set via environment variable)
+            timeout: Per-request HTTP timeout in seconds. Default is 30.
         """
 
         self.api_key: Optional[str] = api_key or getenv("FINANCIAL_DATASETS_API_KEY")
@@ -52,7 +54,7 @@ class FinancialDatasetsTools(Toolkit):
             self.search_tickers,
         ]
 
-        super().__init__(name="financial_datasets_tools", tools=tools, **kwargs)
+        super().__init__(name="financial_datasets_tools", tools=tools, timeout=timeout, **kwargs)
 
     def _make_request(self, endpoint: str, params: Dict[str, Any]) -> str:
         """
@@ -73,7 +75,7 @@ class FinancialDatasetsTools(Toolkit):
         url = f"{self.base_url}/{endpoint}"
 
         try:
-            response = requests.get(url, headers=headers, params=params)
+            response = requests.get(url, headers=headers, params=params, timeout=self.timeout)
             response.raise_for_status()
             return response.text
         except requests.exceptions.RequestException as e:

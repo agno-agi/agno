@@ -1,250 +1,286 @@
 """Async router handling exposing an Agno Agent or Team in an A2A compatible format."""
 
-from typing import Optional, Union
-from uuid import uuid4
+import hashlib
+import json
+from typing import Any, Callable, Dict, Optional, Sequence, Union
 
-from fastapi import HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi import Depends, HTTPException, Request
+from fastapi.responses import JSONResponse, Response
 from fastapi.routing import APIRouter
+from starlette.routing import BaseRoute, Route
 from typing_extensions import List
 
 try:
-    from a2a.types import SendMessageSuccessResponse, Task, TaskState, TaskStatus
+    from a2a.server.request_handlers.response_helpers import agent_card_to_dict
+    from a2a.server.routes import create_jsonrpc_routes
+    from a2a.types import AgentCard, AgentProvider, SecurityScheme
 except ImportError as e:
-    raise ImportError("`a2a` not installed. Please install it with `pip install -U a2a-sdk`") from e
+    raise ImportError("`a2a-sdk` 1.x not installed. Please install it with `pip install -U 'agno[a2a]'`") from e
 
-from agno.agent import Agent
-from agno.os.interfaces.a2a.utils import (
-    map_a2a_request_to_run_input,
-    map_run_output_to_a2a_task,
-    stream_a2a_response_with_error_handling,
-)
-from agno.os.router import _get_request_kwargs
-from agno.os.utils import get_agent_by_id, get_team_by_id, get_workflow_by_id
-from agno.team import Team
-from agno.workflow import Workflow
+
+from agno.agent import Agent, RemoteAgent
+from agno.agent.protocol import AgentProtocol
+from agno.os.interfaces.a2a.agent_card import build_agent_card
+from agno.os.interfaces.a2a.auth import authorize_a2a_request, require_a2a_card_access
+from agno.os.interfaces.a2a.context import A2ACallContextBuilder, A2ARequestContextBuilder, A2ARequestHandler
+from agno.os.interfaces.a2a.executor import A2AExecutor
+from agno.os.interfaces.a2a.task_store import A2ATaskStore
+from agno.os.utils import get_agent_by_id, get_team_by_id, get_workflow_by_id, public_scheme
+from agno.team import RemoteTeam, Team
+from agno.workflow import RemoteWorkflow, Workflow
+
+
+def _get_card_url(request: Request, router: APIRouter, base_url: Optional[str], path: str) -> str:
+    """Get the public URL of an entity's A2A endpoint: the configured base URL, else the one the request came in on."""
+    resolved_base_url = (base_url or str(request.base_url.replace(scheme=public_scheme(request)))).rstrip("/")
+    return f"{resolved_base_url}{router.prefix}{path}"
+
+
+def _get_card_response(request: Request, agent_card: AgentCard) -> Response:
+    """Get the response for an Agent Card, with an ETag and a 304 when the client already holds this card."""
+    card_data = agent_card_to_dict(agent_card)
+    etag = f'"{hashlib.sha256(json.dumps(card_data, sort_keys=True).encode()).hexdigest()}"'
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={"ETag": etag})
+    return JSONResponse(content=card_data, headers={"ETag": etag})
+
+
+def _build_a2a_endpoint(endpoint: Callable, resource_type: str, entity: Any) -> Callable:
+    """Build the route handler of an entity's A2A endpoint: authorize the request, then hand it to the A2A server."""
+
+    async def a2a_endpoint(request: Request):
+        await authorize_a2a_request(request, resource_type, entity)
+        return await endpoint(request)
+
+    return a2a_endpoint
+
+
+def _attach_a2a_endpoint(
+    router: APIRouter,
+    routes: Sequence[BaseRoute],
+    operation_id: str,
+    resource_type: str,
+    entity: Any,
+) -> None:
+    """Attach the A2A server routes to the router as API routes, so they are served and documented with it."""
+    for route in routes:
+        # A route that cannot be wrapped would be served without the A2A authorization
+        if not isinstance(route, Route) or not route.methods:
+            raise ValueError(f"Unsupported A2A route type: {type(route).__name__}")
+        router.add_api_route(
+            route.path,
+            _build_a2a_endpoint(route.endpoint, resource_type, entity),
+            methods=sorted(method for method in route.methods if method != "HEAD"),
+            operation_id=operation_id,
+            name=operation_id,
+            description="Send an A2A request to an Agno Agent, Team or Workflow. The A2A method is carried in the JSON-RPC body. "
+            "Optional: Pass user ID via X-User-ID header (recommended) or 'userId' in params.message.metadata.",
+            responses={
+                400: {"description": "Invalid request"},
+                403: {"description": "Access denied"},
+                404: {"description": "Session not found"},
+            },
+        )
 
 
 def attach_routes(
     router: APIRouter,
-    agents: Optional[List[Agent]] = None,
-    teams: Optional[List[Team]] = None,
-    workflows: Optional[List[Workflow]] = None,
+    agents: Optional[List[Union[Agent, RemoteAgent, AgentProtocol]]] = None,
+    teams: Optional[List[Union[Team, RemoteTeam]]] = None,
+    workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = None,
+    base_url: Optional[str] = None,
+    security_schemes: Optional[Dict[str, SecurityScheme]] = None,
+    enable_v0_3_compat: bool = True,
+    request_handlers: Optional[Dict[str, Any]] = None,
+    provider: Optional[AgentProvider] = None,
+    documentation_url: Optional[str] = None,
+    icon_url: Optional[str] = None,
 ) -> APIRouter:
     if agents is None and teams is None and workflows is None:
         raise ValueError("Agents, Teams, or Workflows are required to setup the A2A interface.")
 
-    @router.post(
-        "/message/send",
-        operation_id="send_message",
-        name="send_message",
-        description="Send a message to an Agno Agent, Team, or Workflow. "
-        "The Agent, Team or Workflow is identified via the 'agentId' field in params.message or X-Agent-ID header. "
-        "Optional: Pass user ID via X-User-ID header (recommended) or 'userId' in params.message.metadata.",
-        response_model_exclude_none=True,
-        responses={
-            200: {
-                "description": "Message sent successfully",
-                "content": {
-                    "application/json": {
-                        "example": {
-                            "jsonrpc": "2.0",
-                            "id": "request-123",
-                            "result": {
-                                "task": {
-                                    "id": "task-456",
-                                    "context_id": "context-789",
-                                    "status": "completed",
-                                    "history": [
-                                        {
-                                            "message_id": "msg-1",
-                                            "role": "agent",
-                                            "parts": [{"kind": "text", "text": "Response from agent"}],
-                                        }
-                                    ],
-                                }
-                            },
-                        }
-                    }
-                },
-            },
-            400: {"description": "Invalid request or unsupported method"},
-            404: {"description": "Agent, Team, or Workflow not found"},
-        },
-        response_model=SendMessageSuccessResponse,
+    context_builder = A2ACallContextBuilder()
+    # Request handlers are kept by endpoint, so routes built again reuse the handler that holds the running tasks
+    request_handlers = request_handlers if request_handlers is not None else {}
+
+    # ============= AGENTS =============
+    @router.get(
+        "/agents/{id}/.well-known/agent-card.json",
+        operation_id="get_agent_card",
+        name="get_agent_card",
+        responses={404: {"description": "Agent not found"}},
+        dependencies=[Depends(require_a2a_card_access("agents", "id"))],
     )
-    async def a2a_send_message(request: Request):
-        request_body = await request.json()
-        kwargs = await _get_request_kwargs(request, a2a_send_message)
+    async def get_agent_card(request: Request, id: str):
+        agent = get_agent_by_id(id, agents)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
 
-        # 1. Get the Agent, Team, or Workflow to run
-        agent_id = request_body.get("params", {}).get("message", {}).get("agentId") or request.headers.get("X-Agent-ID")
+        agent_card = build_agent_card(
+            agent,
+            url=_get_card_url(request, router, base_url, f"/agents/{agent.id}"),
+            security_schemes=security_schemes,
+            enable_v0_3_compat=enable_v0_3_compat,
+            provider=provider,
+            documentation_url=documentation_url,
+            icon_url=icon_url,
+        )
+        return _get_card_response(request, agent_card)
+
+    for agent in agents or []:
+        # An entity passed only to the interface has no id yet
+        if getattr(agent, "id", None) is None and hasattr(agent, "set_id"):
+            agent.set_id()
+        agent_id = getattr(agent, "id", None)
         if not agent_id:
-            raise HTTPException(
-                status_code=400,
-                detail="Entity ID required. Provide it via 'agentId' in params.message or 'X-Agent-ID' header.",
+            continue
+        agent_handler = request_handlers.get(f"agents/{agent_id}")
+        if agent_handler is None:
+            agent_task_store = A2ATaskStore(entity_type="agent", entity=agent)
+            agent_handler = A2ARequestHandler(
+                agent_executor=A2AExecutor(
+                    entity_type="agent", entity_id=agent_id, agents=agents, task_store=agent_task_store
+                ),
+                task_store=agent_task_store,
+                agent_card=build_agent_card(agent, url=f"{router.prefix}/agents/{agent_id}"),
+                request_context_builder=A2ARequestContextBuilder(task_store=agent_task_store),
             )
-        entity: Optional[Union[Agent, Team, Workflow]] = None
-        if agents:
-            entity = get_agent_by_id(agent_id, agents)
-        if not entity and teams:
-            entity = get_team_by_id(agent_id, teams)
-        if not entity and workflows:
-            entity = get_workflow_by_id(agent_id, workflows)
-        if entity is None:
-            raise HTTPException(status_code=404, detail=f"Agent, Team, or Workflow with ID '{agent_id}' not found")
+            request_handlers[f"agents/{agent_id}"] = agent_handler
+        else:
+            # A resync may replace the agent under the same id: its running tasks stay, the new agent runs
+            agent_handler.agent_executor.agents = agents
+            agent_handler.task_store.set_entity(agent)
+        _attach_a2a_endpoint(
+            router,
+            create_jsonrpc_routes(
+                agent_handler,
+                rpc_url=f"/agents/{agent_id}",
+                context_builder=context_builder,
+                enable_v0_3_compat=enable_v0_3_compat,
+            ),
+            operation_id=f"a2a_agent_{agent_id}",
+            resource_type="agents",
+            entity=agent,
+        )
 
-        # 2. Map the request to our run_input and run variables
-        run_input = await map_a2a_request_to_run_input(request_body, stream=False)
-        context_id = request_body.get("params", {}).get("message", {}).get("contextId")
-        user_id = request.headers.get("X-User-ID")
-        if not user_id:
-            user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
-
-        # 3. Run the agent, team, or workflow
-        try:
-            if isinstance(entity, Workflow):
-                response = await entity.arun(
-                    input=run_input.input_content,
-                    images=list(run_input.images) if run_input.images else None,
-                    videos=list(run_input.videos) if run_input.videos else None,
-                    audio=list(run_input.audios) if run_input.audios else None,
-                    files=list(run_input.files) if run_input.files else None,
-                    session_id=context_id,
-                    user_id=user_id,
-                    **kwargs,
-                )
-            else:
-                response = await entity.arun(
-                    input=run_input.input_content,
-                    images=run_input.images,
-                    videos=run_input.videos,
-                    audio=run_input.audios,
-                    files=run_input.files,
-                    session_id=context_id,
-                    user_id=user_id,
-                    **kwargs,
-                )
-
-            # 4. Send the response
-            a2a_task = map_run_output_to_a2a_task(response)
-            return SendMessageSuccessResponse(
-                id=request_body.get("id", "unknown"),
-                result=a2a_task,
-            )
-
-        # Handle all critical errors
-        except Exception as e:
-            from a2a.types import Message as A2AMessage
-            from a2a.types import Part, Role, TextPart
-
-            error_message = A2AMessage(
-                message_id=str(uuid4()),
-                role=Role.agent,
-                parts=[Part(root=TextPart(text=f"Error: {str(e)}"))],
-                context_id=context_id or str(uuid4()),
-            )
-            failed_task = Task(
-                id=str(uuid4()),
-                context_id=context_id or str(uuid4()),
-                status=TaskStatus(state=TaskState.failed),
-                history=[error_message],
-            )
-
-            return SendMessageSuccessResponse(
-                id=request_body.get("id", "unknown"),
-                result=failed_task,
-            )
-
-    @router.post(
-        "/message/stream",
-        operation_id="stream_message",
-        name="stream_message",
-        description="Stream a message to an Agno Agent, Team, or Workflow."
-        "The Agent, Team or Workflow is identified via the 'agentId' field in params.message or X-Agent-ID header. "
-        "Optional: Pass user ID via X-User-ID header (recommended) or 'userId' in params.message.metadata. "
-        "Returns real-time updates as newline-delimited JSON (NDJSON).",
-        response_model_exclude_none=True,
-        responses={
-            200: {
-                "description": "Streaming response with task updates",
-                "content": {
-                    "application/x-ndjson": {
-                        "example": '{"jsonrpc":"2.0","id":"request-123","result":{"taskId":"task-456","status":"working"}}\n'
-                        '{"jsonrpc":"2.0","id":"request-123","result":{"messageId":"msg-1","role":"agent","parts":[{"kind":"text","text":"Response"}]}}\n'
-                    }
-                },
-            },
-            400: {"description": "Invalid request or unsupported method"},
-            404: {"description": "Agent, Team, or Workflow not found"},
-        },
+    # ============= TEAMS =============
+    @router.get(
+        "/teams/{id}/.well-known/agent-card.json",
+        operation_id="get_team_card",
+        name="get_team_card",
+        responses={404: {"description": "Team not found"}},
+        dependencies=[Depends(require_a2a_card_access("teams", "id"))],
     )
-    async def a2a_stream_message(request: Request):
-        request_body = await request.json()
-        kwargs = await _get_request_kwargs(request, a2a_stream_message)
+    async def get_team_card(request: Request, id: str):
+        team = get_team_by_id(id, teams)
+        if not team:
+            raise HTTPException(status_code=404, detail="Team not found")
 
-        # 1. Get the Agent, Team, or Workflow to run
-        agent_id = request_body.get("params", {}).get("message", {}).get("agentId")
-        if not agent_id:
-            agent_id = request.headers.get("X-Agent-ID")
-        if not agent_id:
-            raise HTTPException(
-                status_code=400,
-                detail="Entity ID required. Provide 'agentId' in params.message or 'X-Agent-ID' header.",
+        agent_card = build_agent_card(
+            team,
+            url=_get_card_url(request, router, base_url, f"/teams/{team.id}"),
+            security_schemes=security_schemes,
+            enable_v0_3_compat=enable_v0_3_compat,
+            provider=provider,
+            documentation_url=documentation_url,
+            icon_url=icon_url,
+        )
+        return _get_card_response(request, agent_card)
+
+    for team in teams or []:
+        # An entity passed only to the interface has no id yet
+        if getattr(team, "id", None) is None and hasattr(team, "set_id"):
+            team.set_id()
+        team_id = getattr(team, "id", None)
+        if not team_id:
+            continue
+        team_handler = request_handlers.get(f"teams/{team_id}")
+        if team_handler is None:
+            team_task_store = A2ATaskStore(entity_type="team", entity=team)
+            team_handler = A2ARequestHandler(
+                agent_executor=A2AExecutor(
+                    entity_type="team", entity_id=team_id, teams=teams, task_store=team_task_store
+                ),
+                task_store=team_task_store,
+                agent_card=build_agent_card(team, url=f"{router.prefix}/teams/{team_id}"),
+                request_context_builder=A2ARequestContextBuilder(task_store=team_task_store),
             )
-        entity: Optional[Union[Agent, Team, Workflow]] = None
-        if agents:
-            entity = get_agent_by_id(agent_id, agents)
-        if not entity and teams:
-            entity = get_team_by_id(agent_id, teams)
-        if not entity and workflows:
-            entity = get_workflow_by_id(agent_id, workflows)
-        if entity is None:
-            raise HTTPException(status_code=404, detail=f"Agent, Team, or Workflow with ID '{agent_id}' not found")
+            request_handlers[f"teams/{team_id}"] = team_handler
+        else:
+            # A resync may replace the team under the same id: its running tasks stay, the new team runs
+            team_handler.agent_executor.teams = teams
+            team_handler.task_store.set_entity(team)
+        _attach_a2a_endpoint(
+            router,
+            create_jsonrpc_routes(
+                team_handler,
+                rpc_url=f"/teams/{team_id}",
+                context_builder=context_builder,
+                enable_v0_3_compat=enable_v0_3_compat,
+            ),
+            operation_id=f"a2a_team_{team_id}",
+            resource_type="teams",
+            entity=team,
+        )
 
-        # 2. Map the request to our run_input and run variables
-        run_input = await map_a2a_request_to_run_input(request_body, stream=True)
-        context_id = request_body.get("params", {}).get("message", {}).get("contextId")
-        user_id = request.headers.get("X-User-ID")
-        if not user_id:
-            user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
+    # ============= WORKFLOWS =============
+    @router.get(
+        "/workflows/{id}/.well-known/agent-card.json",
+        operation_id="get_workflow_card",
+        name="get_workflow_card",
+        responses={404: {"description": "Workflow not found"}},
+        dependencies=[Depends(require_a2a_card_access("workflows", "id"))],
+    )
+    async def get_workflow_card(request: Request, id: str):
+        workflow = get_workflow_by_id(id, workflows)
+        if not workflow:
+            raise HTTPException(status_code=404, detail="Workflow not found")
 
-        # 3. Run the Agent, Team, or Workflow and stream the response
-        try:
-            if isinstance(entity, Workflow):
-                event_stream = entity.arun(
-                    input=run_input.input_content,
-                    images=list(run_input.images) if run_input.images else None,
-                    videos=list(run_input.videos) if run_input.videos else None,
-                    audio=list(run_input.audios) if run_input.audios else None,
-                    files=list(run_input.files) if run_input.files else None,
-                    session_id=context_id,
-                    user_id=user_id,
-                    stream=True,
-                    stream_events=True,
-                    **kwargs,
-                )
-            else:
-                event_stream = entity.arun(  # type: ignore[assignment]
-                    input=run_input.input_content,
-                    images=run_input.images,
-                    videos=run_input.videos,
-                    audio=run_input.audios,
-                    files=run_input.files,
-                    session_id=context_id,
-                    user_id=user_id,
-                    stream=True,
-                    stream_events=True,
-                    **kwargs,
-                )
+        agent_card = build_agent_card(
+            workflow,
+            url=_get_card_url(request, router, base_url, f"/workflows/{workflow.id}"),
+            security_schemes=security_schemes,
+            enable_v0_3_compat=enable_v0_3_compat,
+            provider=provider,
+            documentation_url=documentation_url,
+            icon_url=icon_url,
+        )
+        return _get_card_response(request, agent_card)
 
-            # 4. Stream the response
-            return StreamingResponse(
-                stream_a2a_response_with_error_handling(event_stream=event_stream, request_id=request_body["id"]),  # type: ignore[arg-type]
-                media_type="application/x-ndjson",
+    for workflow in workflows or []:
+        # An entity passed only to the interface has no id yet
+        if getattr(workflow, "id", None) is None and hasattr(workflow, "set_id"):
+            workflow.set_id()
+        workflow_id = getattr(workflow, "id", None)
+        if not workflow_id:
+            continue
+        workflow_handler = request_handlers.get(f"workflows/{workflow_id}")
+        if workflow_handler is None:
+            workflow_task_store = A2ATaskStore(entity_type="workflow", entity=workflow)
+            workflow_handler = A2ARequestHandler(
+                agent_executor=A2AExecutor(
+                    entity_type="workflow", entity_id=workflow_id, workflows=workflows, task_store=workflow_task_store
+                ),
+                task_store=workflow_task_store,
+                agent_card=build_agent_card(workflow, url=f"{router.prefix}/workflows/{workflow_id}"),
+                request_context_builder=A2ARequestContextBuilder(task_store=workflow_task_store),
             )
-
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to start run: {str(e)}")
+            request_handlers[f"workflows/{workflow_id}"] = workflow_handler
+        else:
+            # A resync may replace the workflow under the same id: its running tasks stay, the new workflow runs
+            workflow_handler.agent_executor.workflows = workflows
+            workflow_handler.task_store.set_entity(workflow)
+        _attach_a2a_endpoint(
+            router,
+            create_jsonrpc_routes(
+                workflow_handler,
+                rpc_url=f"/workflows/{workflow_id}",
+                context_builder=context_builder,
+                enable_v0_3_compat=enable_v0_3_compat,
+            ),
+            operation_id=f"a2a_workflow_{workflow_id}",
+            resource_type="workflows",
+            entity=workflow,
+        )
 
     return router

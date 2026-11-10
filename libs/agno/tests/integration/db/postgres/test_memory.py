@@ -496,3 +496,97 @@ def test_delete_user_memories_without_user_id_filter(postgres_db_real: PostgresD
     # Verify the third memory still exists
     result3 = postgres_db_real.get_user_memory(memory_id="no_filter_m3")
     assert result3 is not None
+
+
+def test_get_all_memory_topics_with_user_id_filter(postgres_db_real: PostgresDb):
+    """Test get_all_memory_topics filters correctly by user_id (PR #7490 fix)"""
+    memories = [
+        UserMemory(
+            memory_id="topics_m1",
+            memory="Alice memory 1",
+            topics=["work", "python"],
+            user_id="alice",
+            updated_at=datetime.now(),
+        ),
+        UserMemory(
+            memory_id="topics_m2",
+            memory="Alice memory 2",
+            topics=["travel", "japan"],
+            user_id="alice",
+            updated_at=datetime.now(),
+        ),
+        UserMemory(
+            memory_id="topics_m3",
+            memory="Bob memory 1",
+            topics=["gaming", "rust"],
+            user_id="bob",
+            updated_at=datetime.now(),
+        ),
+        UserMemory(
+            memory_id="topics_m4",
+            memory="Bob memory 2",
+            topics=["work", "typescript"],
+            user_id="bob",
+            updated_at=datetime.now(),
+        ),
+    ]
+
+    for memory in memories:
+        postgres_db_real.upsert_user_memory(memory)
+
+    alice_topics = postgres_db_real.get_all_memory_topics(user_id="alice")
+    assert set(alice_topics) == {"work", "python", "travel", "japan"}
+
+    bob_topics = postgres_db_real.get_all_memory_topics(user_id="bob")
+    assert set(bob_topics) == {"gaming", "rust", "work", "typescript"}
+
+    all_topics = postgres_db_real.get_all_memory_topics()
+    assert set(all_topics) == {"work", "python", "travel", "japan", "gaming", "rust", "typescript"}
+
+
+def test_get_all_memory_topics_unknown_user_returns_empty(postgres_db_real: PostgresDb):
+    """Test get_all_memory_topics returns empty list for unknown user"""
+    memory = UserMemory(
+        memory_id="topics_existing",
+        memory="Existing memory",
+        topics=["topic1"],
+        user_id="existing_user",
+        updated_at=datetime.now(),
+    )
+    postgres_db_real.upsert_user_memory(memory)
+
+    unknown_topics = postgres_db_real.get_all_memory_topics(user_id="unknown_user")
+    assert unknown_topics == []
+
+
+def test_get_all_memory_topics_tenant_isolation(postgres_db_real: PostgresDb):
+    """Test that user_id filtering provides proper tenant isolation"""
+    memories = [
+        UserMemory(
+            memory_id="iso_m1",
+            memory="Alice secret",
+            topics=["confidential", "alice_only"],
+            user_id="alice",
+            updated_at=datetime.now(),
+        ),
+        UserMemory(
+            memory_id="iso_m2",
+            memory="Bob secret",
+            topics=["confidential", "bob_only"],
+            user_id="bob",
+            updated_at=datetime.now(),
+        ),
+    ]
+
+    for memory in memories:
+        postgres_db_real.upsert_user_memory(memory)
+
+    alice_topics = set(postgres_db_real.get_all_memory_topics(user_id="alice"))
+    bob_topics = set(postgres_db_real.get_all_memory_topics(user_id="bob"))
+
+    assert "alice_only" in alice_topics
+    assert "alice_only" not in bob_topics
+    assert "bob_only" in bob_topics
+    assert "bob_only" not in alice_topics
+    assert "confidential" in alice_topics
+    assert "confidential" in bob_topics

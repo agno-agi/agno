@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from agno.utils.log import log_warning
 
 
-def get_json_output_prompt(output_schema: Union[str, list, BaseModel]) -> str:
+def get_json_output_prompt(output_schema: Union[str, list, dict, BaseModel]) -> str:
     """Return the JSON output prompt for the Agent.
 
     This is added to the system prompt when the output_schema is set and structured_outputs is False.
@@ -20,13 +20,15 @@ def get_json_output_prompt(output_schema: Union[str, list, BaseModel]) -> str:
             json_output_prompt += "\n</json_fields>"
         elif isinstance(output_schema, list):
             json_output_prompt += "\n<json_fields>"
-            json_output_prompt += f"\n{json.dumps(output_schema)}"
+            json_output_prompt += f"\n{json.dumps(output_schema, ensure_ascii=False)}"
             json_output_prompt += "\n</json_fields>"
-        elif (
-            issubclass(type(output_schema), BaseModel)
-            or issubclass(output_schema, BaseModel)  # type: ignore
-            or isinstance(output_schema, BaseModel)
-        ):  # type: ignore
+        elif isinstance(output_schema, dict):
+            json_output_prompt += "\n<json_fields>"
+            json_output_prompt += f"\n{json.dumps(output_schema, ensure_ascii=False)}"
+            json_output_prompt += "\n</json_fields>"
+        elif (isinstance(output_schema, type) and issubclass(output_schema, BaseModel)) or isinstance(
+            output_schema, BaseModel
+        ):
             json_schema = output_schema.model_json_schema()
             if json_schema is not None:
                 response_model_properties = {}
@@ -76,13 +78,11 @@ def get_json_output_prompt(output_schema: Union[str, list, BaseModel]) -> str:
 
                 if len(response_model_properties) > 0:
                     json_output_prompt += "\n<json_fields>"
-                    json_output_prompt += (
-                        f"\n{json.dumps([key for key in response_model_properties.keys() if key != '$defs'])}"
-                    )
+                    json_output_prompt += f"\n{json.dumps([key for key in response_model_properties.keys() if key != '$defs'], ensure_ascii=False)}"
                     json_output_prompt += "\n</json_fields>"
                     json_output_prompt += "\n\nHere are the properties for each field:"
                     json_output_prompt += "\n<json_field_properties>"
-                    json_output_prompt += f"\n{json.dumps(response_model_properties, indent=2)}"
+                    json_output_prompt += f"\n{json.dumps(response_model_properties, indent=2, ensure_ascii=False)}"
                     json_output_prompt += "\n</json_field_properties>"
         else:
             log_warning(f"Could not build json schema for {output_schema}")

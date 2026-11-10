@@ -16,3 +16,24 @@ except ImportError:
     class AzureOpenAI:  # type: ignore
         def __init__(self, *args, **kwargs):
             raise ImportError("`openai` not installed. Please install it via `pip install openai`")
+
+
+try:
+    from agno.models.azure.openai_responses import AzureOpenAIResponses
+except ImportError as azure_openai_responses_error:
+    _azure_openai_responses_import_error = azure_openai_responses_error
+
+    class AzureOpenAIResponses:  # type: ignore
+        def __init__(self, *args, **kwargs):
+            raise ImportError(
+                "`openai` not installed. Please install it via `pip install openai`"
+            ) from _azure_openai_responses_import_error
+
+
+try:
+    from agno.models.azure.claude import Claude as AzureFoundryClaude
+except ImportError:
+
+    class AzureFoundryClaude:  # type: ignore
+        def __init__(self, *args, **kwargs):
+            raise ImportError("`anthropic` not installed. Please install it via `pip install anthropic`")

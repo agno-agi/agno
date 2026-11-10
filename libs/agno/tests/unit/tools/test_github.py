@@ -1257,6 +1257,78 @@ def test_get_file_content(mock_github):
     assert "Not Found" in result_data["error"]
 
 
+def test_get_file_content_preserves_non_ascii_text(mock_github):
+    """Valid non-ASCII UTF-8 text must not be misclassified as binary (fixes #10477)."""
+    mock_client, mock_repo = mock_github
+    github_tools = GithubTools()
+
+    # 300 Chinese characters: every one is outside the ASCII printable range,
+    # which the old heuristic wrongly counted toward the binary threshold.
+    text = "中文文档内容" * 50
+    mock_content = MagicMock()
+    mock_content.name = "README.md"
+    mock_content.path = "README.md"
+    mock_content.sha = "abc123"
+    mock_content.size = len(text.encode("utf-8"))
+    mock_content.type = "file"
+    mock_content.html_url = "https://github.com/test-org/test-repo/blob/main/README.md"
+    mock_content.decoded_content = text.encode("utf-8")
+
+    mock_repo.get_contents.return_value = mock_content
+
+    result = github_tools.get_file_content(repo_name="test-org/test-repo", path="README.md")
+    result_data = json.loads(result)
+
+    assert result_data["content"] == text
+    assert result_data["content"] != "Binary file (content not displayed)"
+
+
+def test_get_file_content_still_hides_control_char_binary(mock_github):
+    """Content dominated by non-text control characters is still treated as binary."""
+    mock_client, mock_repo = mock_github
+    github_tools = GithubTools()
+
+    mock_content = MagicMock()
+    mock_content.name = "blob.bin"
+    mock_content.path = "blob.bin"
+    mock_content.sha = "bin123"
+    mock_content.size = 400
+    mock_content.type = "file"
+    mock_content.html_url = "https://github.com/test-org/test-repo/blob/main/blob.bin"
+    # Valid UTF-8 (control chars are single bytes) but not displayable text.
+    mock_content.decoded_content = b"\x01\x02\x03\x04" * 100
+
+    mock_repo.get_contents.return_value = mock_content
+
+    result = github_tools.get_file_content(repo_name="test-org/test-repo", path="blob.bin")
+    result_data = json.loads(result)
+
+    assert result_data["content"] == "Binary file (content not displayed)"
+
+
+def test_get_file_content_hides_del_and_c1_controls(mock_github):
+    """DEL (U+007F) and C1 (U+0080-U+009F) controls are still treated as binary."""
+    mock_client, mock_repo = mock_github
+    github_tools = GithubTools()
+
+    mock_content = MagicMock()
+    mock_content.name = "blob.bin"
+    mock_content.path = "blob.bin"
+    mock_content.sha = "bin123"
+    mock_content.size = 600
+    mock_content.type = "file"
+    mock_content.html_url = "https://github.com/test-org/test-repo/blob/main/blob.bin"
+    # DEL and a C1 control repeated past the 200 threshold; valid UTF-8 once encoded.
+    mock_content.decoded_content = ("\x7f\x9f" * 300).encode("utf-8")
+
+    mock_repo.get_contents.return_value = mock_content
+
+    result = github_tools.get_file_content(repo_name="test-org/test-repo", path="blob.bin")
+    result_data = json.loads(result)
+
+    assert result_data["content"] == "Binary file (content not displayed)"
+
+
 def test_update_file(mock_github):
     """Test updating a file in a repository."""
     mock_client, mock_repo = mock_github
@@ -1423,6 +1495,7 @@ def test_create_branch(mock_github):
 
     # Mock repository default branch
     mock_repo.default_branch = "main"
+    mock_repo.html_url = "https://github.com/test-org/test-repo"
 
     # Mock source branch reference
     mock_source_ref = MagicMock()
@@ -1465,6 +1538,37 @@ def test_create_branch(mock_github):
 
     assert "error" in result_data
     assert "Reference not found" in result_data["error"]
+
+
+def test_create_branch_uses_enterprise_repository_url(mock_github):
+    """Branch links should use the repository's web URL, not its API URL."""
+    _, mock_repo = mock_github
+    github_tools = GithubTools(base_url="https://github.example.com/api/v3")
+    mock_repo.default_branch = "main"
+    mock_repo.html_url = "https://github.example.com/test-org/test-repo"
+    mock_repo.get_git_ref.return_value.object.sha = "source-commit-sha"
+    mock_repo.create_git_ref.return_value.object.sha = "source-commit-sha"
+    mock_repo.create_git_ref.return_value.url = (
+        "https://github.example.com/api/v3/repos/test-org/test-repo/git/refs/heads/feature/agent"
+    )
+
+    result = github_tools.create_branch(repo_name="test-org/test-repo", branch_name="feature/agent")
+
+    assert json.loads(result)["url"] == "https://github.example.com/test-org/test-repo/tree/feature/agent"
+
+
+def test_create_branch_url_encodes_branch_name(mock_github):
+    """Branch names with URL-reserved characters should produce a working link."""
+    _, mock_repo = mock_github
+    github_tools = GithubTools()
+    mock_repo.default_branch = "main"
+    mock_repo.html_url = "https://github.com/test-org/test-repo"
+    mock_repo.get_git_ref.return_value.object.sha = "source-commit-sha"
+    mock_repo.create_git_ref.return_value.object.sha = "source-commit-sha"
+
+    result = github_tools.create_branch(repo_name="test-org/test-repo", branch_name="fix/issue#123")
+
+    assert json.loads(result)["url"] == "https://github.com/test-org/test-repo/tree/fix/issue%23123"
 
 
 def test_set_default_branch(mock_github):
@@ -1575,3 +1679,72 @@ def test_search_code(mock_github):
 
     assert "error" in result_data
     assert "API rate limit exceeded" in result_data["error"]
+
+
+def test_get_pull_requests_fewer_than_limit(mock_github):
+    """Test that get_pull_requests works when there are fewer PRs than the requested limit.
+
+    Regression test for https://github.com/agno-agi/agno/issues/7342
+    PyGithub's PaginatedList does not support slicing with [:limit] when there are
+    fewer items than the limit, raising an IndexError.
+    """
+    mock_client, mock_repo = mock_github
+    github_tools = GithubTools()
+
+    # Create only 2 mock PRs
+    mock_pr1 = MagicMock(spec=PullRequest)
+    mock_pr1.number = 1
+    mock_pr1.title = "First PR"
+    mock_pr1.html_url = "https://github.com/test-org/test-repo/pull/1"
+    mock_pr1.state = "open"
+    mock_pr1.user.login = "test-user"
+    mock_pr1.created_at.isoformat.return_value = "2024-02-04T12:00:00"
+    mock_pr1.updated_at.isoformat.return_value = "2024-02-04T13:00:00"
+
+    mock_pr2 = MagicMock(spec=PullRequest)
+    mock_pr2.number = 2
+    mock_pr2.title = "Second PR"
+    mock_pr2.html_url = "https://github.com/test-org/test-repo/pull/2"
+    mock_pr2.state = "open"
+    mock_pr2.user.login = "another-user"
+    mock_pr2.created_at.isoformat.return_value = "2024-02-03T12:00:00"
+    mock_pr2.updated_at.isoformat.return_value = "2024-02-03T14:00:00"
+
+    # Return only 2 PRs but request limit=50 (the default)
+    mock_repo.get_pulls.return_value = iter([mock_pr1, mock_pr2])
+
+    result = github_tools.get_pull_requests("test-org/test-repo", state="open", limit=50)
+    result_data = json.loads(result)
+
+    assert len(result_data) == 2
+    assert result_data[0]["number"] == 1
+    assert result_data[1]["number"] == 2
+
+
+def test_get_pull_requests_limit_respected(mock_github):
+    """Test that get_pull_requests respects the limit parameter."""
+    mock_client, mock_repo = mock_github
+    github_tools = GithubTools()
+
+    # Create 5 mock PRs
+    mock_prs = []
+    for i in range(5):
+        pr = MagicMock(spec=PullRequest)
+        pr.number = i + 1
+        pr.title = f"PR #{i + 1}"
+        pr.html_url = f"https://github.com/test-org/test-repo/pull/{i + 1}"
+        pr.state = "open"
+        pr.user.login = "test-user"
+        pr.created_at.isoformat.return_value = "2024-02-04T12:00:00"
+        pr.updated_at.isoformat.return_value = "2024-02-04T13:00:00"
+        mock_prs.append(pr)
+
+    mock_repo.get_pulls.return_value = iter(mock_prs)
+
+    # Request only 3
+    result = github_tools.get_pull_requests("test-org/test-repo", state="open", limit=3)
+    result_data = json.loads(result)
+
+    assert len(result_data) == 3
+    assert result_data[0]["number"] == 1
+    assert result_data[2]["number"] == 3

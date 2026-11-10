@@ -1,0 +1,2145 @@
+"""
+Unit tests for Team configuration serialization and persistence.
+
+Tests cover:
+- to_dict(): Serialization of team to dictionary
+- from_dict(): Deserialization of team from dictionary
+- save(): Saving team to database (including members)
+- load(): Loading team from database (with hydrated members)
+- delete(): Deleting team from database
+- get_team_by_id(): Helper function to get team by ID
+- get_teams(): Helper function to get all teams
+"""
+
+from typing import Any, Dict
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from agno.agent.agent import Agent
+from agno.db.base import BaseDb, ComponentType
+from agno.db.sqlite import SqliteDb
+from agno.registry import Registry
+from agno.registry._reserved import RESERVED_MANAGER_IDS
+from agno.session import TeamSession
+from agno.team.team import _COMPONENT_LIST_PAGE, Team, get_team_by_id, get_teams
+
+# =============================================================================
+# Fixtures
+# =============================================================================
+
+
+def _create_mock_db_class():
+    """Create a concrete BaseDb subclass with all abstract methods stubbed."""
+    abstract_methods = {}
+    for name in dir(BaseDb):
+        attr = getattr(BaseDb, name, None)
+        if getattr(attr, "__isabstractmethod__", False):
+            abstract_methods[name] = MagicMock()
+    return type("MockDb", (BaseDb,), abstract_methods)
+
+
+@pytest.fixture
+def mock_db():
+    """Create a mock database instance that passes isinstance(db, BaseDb)."""
+    MockDbClass = _create_mock_db_class()
+    db = MockDbClass()
+
+    # Configure common mock methods
+    db.upsert_component = MagicMock()
+    db.upsert_config = MagicMock(return_value={"version": 1})
+    db.delete_component = MagicMock(return_value=True)
+    db.get_config = MagicMock()
+    db.list_components = MagicMock()
+    db.upsert_component_link = MagicMock()
+    db.load_component_graph = MagicMock()
+    db.to_dict = MagicMock(return_value={"type": "postgres", "id": "test-db"})
+
+    return db
+
+
+@pytest.fixture
+def basic_team():
+    """Create a basic team for testing."""
+    return Team(
+        id="test-team",
+        name="Test Team",
+        description="A test team for unit testing",
+        members=[],
+    )
+
+
+@pytest.fixture
+def member_agent():
+    """Create a member agent for team testing."""
+    return Agent(
+        id="member-agent",
+        name="Member Agent",
+        role="A member agent",
+    )
+
+
+@pytest.fixture
+def team_with_members(member_agent):
+    """Create a team with member agents."""
+    agent2 = Agent(
+        id="agent-2",
+        name="Agent 2",
+        role="Second agent",
+    )
+    return Team(
+        id="team-with-members",
+        name="Team With Members",
+        members=[member_agent, agent2],
+    )
+
+
+@pytest.fixture
+def team_with_model():
+    """Create a team with a real model."""
+    from agno.models.openai import OpenAIChat
+
+    model = OpenAIChat(id="gpt-4o-mini")
+    return Team(
+        id="model-team",
+        name="Model Team",
+        model=model,
+        members=[],
+    )
+
+
+@pytest.fixture
+def team_with_settings():
+    """Create a team with various settings configured."""
+    return Team(
+        id="settings-team",
+        name="Settings Team",
+        description="Team with many settings",
+        instructions="Work together efficiently",
+        markdown=True,
+        debug_mode=True,
+        retries=3,
+        respond_directly=True,
+        delegate_to_all_members=True,
+        add_datetime_to_context=True,
+        members=[],
+    )
+
+
+@pytest.fixture
+def sample_team_config() -> Dict[str, Any]:
+    """Sample team configuration dictionary."""
+    return {
+        "id": "sample-team",
+        "name": "Sample Team",
+        "description": "A sample team",
+        "instructions": "Be helpful",
+        "markdown": True,
+    }
+
+
+# =============================================================================
+# to_dict() Tests
+# =============================================================================
+
+
+def _force_delete_config(db, component_id: str, version: int) -> None:
+    """Simulate a corrupt/legacy catalog by removing a config row directly.
+
+    The hardened delete_config refuses to break
+    a pin, so the broken state these tests exercise can only arrive from
+    outside the API - which is exactly what this raw delete reproduces.
+    """
+    table = db._get_table(table_type="component_configs")
+    with db.Session() as sess, sess.begin():
+        sess.execute(
+            table.delete().where(
+                table.c.component_id == component_id,
+                table.c.version == version,
+            )
+        )
+
+
+class TestTeamToDict:
+    """Tests for Team.to_dict() method."""
+
+    def test_to_dict_basic_team(self, basic_team):
+        """Test to_dict with a basic team."""
+        config = basic_team.to_dict()
+
+        assert config["id"] == "test-team"
+        assert config["name"] == "Test Team"
+        assert config["description"] == "A test team for unit testing"
+
+    def test_to_dict_with_model(self, team_with_model):
+        """Test to_dict includes model configuration."""
+        config = team_with_model.to_dict()
+
+        assert "model" in config
+        assert config["model"]["provider"] == "OpenAI"
+        assert config["model"]["id"] == "gpt-4o-mini"
+
+    def test_to_dict_with_members(self, team_with_members):
+        """Test to_dict serializes members as references."""
+        config = team_with_members.to_dict()
+
+        assert "members" in config
+        assert len(config["members"]) == 2
+        assert config["members"][0] == {"type": "agent", "agent_id": "member-agent"}
+        assert config["members"][1] == {"type": "agent", "agent_id": "agent-2"}
+
+    def test_to_dict_with_settings(self, team_with_settings):
+        """Test to_dict preserves all settings."""
+        config = team_with_settings.to_dict()
+
+        assert config["id"] == "settings-team"
+        assert config["name"] == "Settings Team"
+        assert config["description"] == "Team with many settings"
+        assert config["instructions"] == "Work together efficiently"
+        assert config["markdown"] is True
+        assert config["debug_mode"] is True
+        assert config["retries"] == 3
+        assert config["respond_directly"] is True
+        assert config["delegate_to_all_members"] is True
+        assert config["add_datetime_to_context"] is True
+
+    def test_to_dict_excludes_default_values(self):
+        """Test that default values are not included in the config."""
+        team = Team(id="minimal-team", members=[])
+        config = team.to_dict()
+
+        # Default values should not be present
+        assert "markdown" not in config  # defaults to False
+        assert "debug_mode" not in config  # defaults to False
+        assert "retries" not in config  # defaults to 0
+        assert "respond_directly" not in config  # defaults to False
+
+    def test_store_history_messages_default_is_false(self):
+        """Test store_history_messages defaults to False and is omitted from config."""
+        team = Team(id="history-default-team", members=[])
+
+        assert team.store_history_messages is False
+        assert "store_history_messages" not in team.to_dict()
+
+    def test_add_search_knowledge_instructions_default_omitted(self):
+        """Test add_search_knowledge_instructions default is omitted from config."""
+        team = Team(id="search-default-team", members=[])
+
+        assert "add_search_knowledge_instructions" not in team.to_dict()
+
+    def test_add_search_knowledge_instructions_false_is_serialized(self):
+        """Test add_search_knowledge_instructions=False is serialized in config."""
+        team = Team(id="search-false-team", members=[], add_search_knowledge_instructions=False)
+        config = team.to_dict()
+
+        assert config["add_search_knowledge_instructions"] is False
+
+    def test_to_dict_with_db(self, basic_team, mock_db):
+        """Test to_dict includes database configuration."""
+        basic_team.db = mock_db
+        config = basic_team.to_dict()
+
+        assert "db" in config
+        assert config["db"] == {"type": "postgres", "id": "test-db"}
+
+    def test_to_dict_with_instructions_list(self):
+        """Test to_dict handles instructions as a list."""
+        team = Team(
+            id="list-instructions-team",
+            instructions=["Step 1: Coordinate", "Step 2: Execute"],
+            members=[],
+        )
+        config = team.to_dict()
+
+        assert config["instructions"] == ["Step 1: Coordinate", "Step 2: Execute"]
+
+    def test_to_dict_with_system_message(self):
+        """Test to_dict includes system message when it's a string."""
+        team = Team(
+            id="system-message-team",
+            system_message="You are a coordinating team leader.",
+            members=[],
+        )
+        config = team.to_dict()
+
+        assert config["system_message"] == "You are a coordinating team leader."
+
+    def test_to_dict_with_metadata(self):
+        """Test to_dict includes metadata."""
+        team = Team(
+            id="metadata-team",
+            metadata={"version": "1.0", "team_type": "research"},
+            members=[],
+        )
+        config = team.to_dict()
+
+        assert config["metadata"] == {"version": "1.0", "team_type": "research"}
+
+    def test_to_dict_with_nested_team(self):
+        """Test to_dict serializes nested team as reference."""
+        inner_team = Team(id="inner-team", name="Inner Team", members=[])
+        outer_team = Team(
+            id="outer-team",
+            name="Outer Team",
+            members=[inner_team],
+        )
+        config = outer_team.to_dict()
+
+        assert "members" in config
+        assert len(config["members"]) == 1
+        assert config["members"][0] == {"type": "team", "team_id": "inner-team"}
+
+    def test_to_dict_with_mode(self):
+        """Test to_dict includes mode and max_iterations."""
+        from agno.team.mode import TeamMode
+
+        team = Team(id="task-team", members=[], mode=TeamMode.tasks, max_iterations=20)
+        config = team.to_dict()
+
+        assert config["mode"] == "tasks"
+        assert config["max_iterations"] == 20
+
+    def test_to_dict_mode_default_not_serialized(self):
+        """Test that default max_iterations is not serialized."""
+        from agno.team.mode import TeamMode
+
+        team = Team(id="coord-team", members=[], mode=TeamMode.coordinate)
+        config = team.to_dict()
+
+        assert config["mode"] == "coordinate"
+        assert "max_iterations" not in config  # default=10 should not be serialized
+
+    def test_to_dict_records_owning_toolkit(self):
+        """Functions flattened from a toolkit carry the toolkit's name so
+        rehydration can re-bind same-named functions to the right toolkit
+        (see Registry.rehydrate_function). Plain tools stay unqualified."""
+        from agno.tools.toolkit import Toolkit
+
+        def read_file(path: str) -> str:
+            """Read a file."""
+            return path
+
+        def plain_tool(x: int) -> int:
+            """A plain callable tool."""
+            return x
+
+        toolkit = Toolkit(name="agent_files", tools=[read_file])
+        team = Team(
+            id="toolkit-team",
+            members=[],
+            tools=[toolkit, plain_tool],
+        )
+
+        config = team.to_dict()
+
+        tools_by_name = {t["name"]: t for t in config["tools"]}
+        assert tools_by_name["read_file"]["toolkit"] == "agent_files"
+        assert "toolkit" not in tools_by_name["plain_tool"]
+
+    def test_to_dict_round_trip_preserves_toolkit(self):
+        """A rehydrated team holds bare Functions, not Toolkits; their
+        owning_toolkit re-stamps the "toolkit" key so the attribution
+        survives load -> save (e.g. a Studio edit)."""
+        from agno.registry import Registry
+        from agno.tools.toolkit import Toolkit
+
+        def read_file(path: str) -> str:
+            """Read a file."""
+            return path
+
+        toolkit = Toolkit(name="agent_files", tools=[read_file])
+        team = Team(id="round-trip-team", members=[], tools=[toolkit])
+        registry = Registry(tools=[toolkit])
+
+        config = team.to_dict()
+        assert config["tools"][0]["toolkit"] == "agent_files"
+
+        loaded = Team.from_dict(config, registry=registry)
+        assert loaded.tools[0].entrypoint is read_file
+
+        config_resaved = loaded.to_dict()
+
+        tools_by_name = {t["name"]: t for t in config_resaved["tools"]}
+        assert tools_by_name["read_file"]["toolkit"] == "agent_files"
+
+    def test_to_dict_serializes_per_get_functions(self):
+        """The team serializer reads get_functions() -- what the team runtime
+        exposes -- so a toolkit subclass hiding a member never persists it."""
+        from agno.tools.toolkit import Toolkit
+
+        def only_a(x: str) -> str:
+            """Tool a."""
+            return x
+
+        def _make_search(tag):
+            def search(q: str) -> str:
+                """Search."""
+                return f"{tag}:{q}"
+
+            return search
+
+        class GatedToolkit(Toolkit):
+            def get_functions(self):
+                return {name: f for name, f in self.functions.items() if name != "search"}
+
+        alpha = GatedToolkit(name="alpha", tools=[only_a, _make_search("alpha")])
+        beta = Toolkit(name="beta", tools=[_make_search("beta")])
+        team = Team(id="gated-team", members=[], tools=[alpha, beta])
+
+        config = team.to_dict()
+
+        serialized = {(t["name"], t.get("toolkit")) for t in config["tools"]}
+        assert serialized == {("only_a", "alpha"), ("search", "beta")}
+
+
+# =============================================================================
+# from_dict() Tests
+# =============================================================================
+
+
+class TestTeamFromDict:
+    """Tests for Team.from_dict() method."""
+
+    def test_from_dict_basic(self, sample_team_config):
+        """Test from_dict creates team with basic config."""
+        team = Team.from_dict(sample_team_config)
+
+        assert team.id == "sample-team"
+        assert team.name == "Sample Team"
+        assert team.description == "A sample team"
+        assert team.instructions == "Be helpful"
+        assert team.markdown is True
+
+    def test_from_dict_with_model(self):
+        """Test from_dict reconstructs model from config."""
+        from agno.models.openai import OpenAIResponses
+
+        config = {
+            "id": "model-team",
+            "name": "Model Team",
+            "model": {"provider": "openai", "id": "gpt-4o-mini"},
+        }
+
+        team = Team.from_dict(config)
+
+        assert team.model is not None
+        assert isinstance(team.model, OpenAIResponses)
+        assert team.model.id == "gpt-4o-mini"
+
+    def test_from_dict_preserves_settings(self):
+        """Test from_dict preserves all settings."""
+        config = {
+            "id": "full-team",
+            "name": "Full Team",
+            "debug_mode": True,
+            "retries": 3,
+            "respond_directly": True,
+            "delegate_to_all_members": True,
+            "add_datetime_to_context": True,
+        }
+
+        team = Team.from_dict(config)
+
+        assert team.debug_mode is True
+        assert team.retries == 3
+        assert team.respond_directly is True
+        assert team.delegate_to_all_members is True
+        assert team.add_datetime_to_context is True
+
+    def test_from_dict_with_db_postgres(self):
+        """Test from_dict reconstructs PostgresDb."""
+        config = {
+            "id": "db-team",
+            "db": {"type": "postgres", "db_url": "postgresql://localhost/test"},
+        }
+
+        with patch("agno.db.postgres.PostgresDb.from_dict") as mock_from_dict:
+            mock_db = MagicMock()
+            mock_from_dict.return_value = mock_db
+
+            team = Team.from_dict(config)
+
+            mock_from_dict.assert_called_once()
+            assert team.db == mock_db
+
+    def test_from_dict_with_db_sqlite(self):
+        """Test from_dict reconstructs SqliteDb."""
+        config = {
+            "id": "sqlite-team",
+            "db": {"type": "sqlite", "db_file": "/tmp/test.db"},
+        }
+
+        with patch("agno.db.sqlite.SqliteDb.from_dict") as mock_from_dict:
+            mock_db = MagicMock()
+            mock_from_dict.return_value = mock_db
+
+            team = Team.from_dict(config)
+
+            mock_from_dict.assert_called_once()
+            assert team.db == mock_db
+
+    def test_from_dict_with_registry_tools(self):
+        """from_dict rehydrates the whole tools list in ONE batch call, so a
+        component load shares a single lookup-rebuild budget."""
+        tool_dicts = [
+            {"name": "search", "description": "Search the web"},
+            {"name": "read_file", "description": "Read a file"},
+            {"name": "write_file", "description": "Write a file"},
+        ]
+        config = {"id": "tools-team", "tools": list(tool_dicts)}
+
+        mock_registry = MagicMock()
+        mock_tools = [MagicMock(), MagicMock(), MagicMock()]
+        mock_registry.rehydrate_functions.return_value = mock_tools
+
+        team = Team.from_dict(config, registry=mock_registry)
+
+        mock_registry.rehydrate_functions.assert_called_once_with(tool_dicts, strict=False)
+        assert team.tools == mock_tools
+
+    def test_from_dict_without_registry_raises_for_tools(self):
+        """Test from_dict fails loudly when tools cannot be rehydrated."""
+        from agno.exceptions import ComponentRehydrationError
+
+        config = {
+            "id": "no-registry-team",
+            "tools": [{"name": "search", "description": "Search", "parameters": {"type": "object", "properties": {}}}],
+        }
+
+        with pytest.raises(ComponentRehydrationError, match="need a registry"):
+            Team.from_dict(config, strict=True)
+
+    def test_from_dict_without_registry_keeps_registry_free_tools_when_lenient(self):
+        """A lenient load without a registry keeps everything that carries
+        itself: provider dicts unchanged, serialized Functions rebuilt without
+        entrypoints, bare references as-is with a warning. Deleting them made
+        the default load LOSSIER than strict."""
+        from agno.tools.function import Function
+
+        provider_tool = {"type": "web_search_preview"}
+        function_tool = {"name": "search", "description": "S", "parameters": {"type": "object", "properties": {}}}
+        config = {
+            "id": "no-registry-team",
+            "tools": [provider_tool, function_tool],
+        }
+
+        team = Team.from_dict(config, strict=False)
+
+        assert team.tools is not None and len(team.tools) == 2
+        assert team.tools[0] == provider_tool
+        assert isinstance(team.tools[1], Function) and team.tools[1].entrypoint is None
+
+    def test_from_dict_with_members_loads_from_db(self, mock_db):
+        """Test from_dict loads member agents from database."""
+        config = {
+            "id": "members-team",
+            "members": [{"type": "agent", "agent_id": "agent-1"}],
+        }
+
+        # get_agent_by_id is imported inside from_dict from agno.agent
+        with patch("agno.agent.get_agent_by_id") as mock_get_agent:
+            mock_agent = MagicMock()
+            mock_get_agent.return_value = mock_agent
+
+            team = Team.from_dict(config, db=mock_db, strict=True)
+
+            mock_get_agent.assert_called_once_with(
+                id="agent-1", db=mock_db, version=None, registry=None, user_id=None, strict=True
+            )
+            assert team.members == [mock_agent]
+
+    def test_from_dict_falls_back_to_registry_for_member_agent(self, mock_db, member_agent):
+        """Test from_dict resolves a code-defined member agent via the registry.
+
+        Regression test for teams created via the AgentOS UI whose members are
+        code-defined agents (not persisted as DB components). The DB lookup
+        returns None, so the registry fallback must find the agent instead of
+        silently dropping it.
+        """
+        config = {
+            "id": "members-team",
+            "members": [{"type": "agent", "agent_id": "member-agent"}],
+        }
+        registry = Registry(agents=[member_agent])
+
+        # DB has no such component -> get_agent_by_id returns None
+        with patch("agno.agent.get_agent_by_id", return_value=None):
+            team = Team.from_dict(config, db=mock_db, registry=registry)
+
+        assert len(team.members) == 1
+        assert team.members[0].id == "member-agent"
+        # A deep copy is used so the shared registry singleton is not mutated on run
+        assert team.members[0] is not member_agent
+
+    def test_from_dict_member_registry_fallback_without_db(self, member_agent):
+        """Test from_dict resolves a registry member even when db is None."""
+        config = {
+            "id": "members-team",
+            "members": [{"type": "agent", "agent_id": "member-agent"}],
+        }
+        registry = Registry(agents=[member_agent])
+
+        team = Team.from_dict(config, db=None, registry=registry)
+
+        assert len(team.members) == 1
+        assert team.members[0].id == "member-agent"
+        assert team.members[0] is not member_agent
+
+    def test_from_dict_unknown_member_raises(self, mock_db):
+        """Test from_dict fails loudly for a member in neither db nor registry."""
+        from agno.exceptions import ComponentRehydrationError
+
+        config = {
+            "id": "members-team",
+            "members": [{"type": "agent", "agent_id": "ghost-agent"}],
+        }
+        registry = Registry(agents=[])
+
+        with patch("agno.agent.get_agent_by_id", return_value=None):
+            with pytest.raises(ComponentRehydrationError, match="ghost-agent"):
+                Team.from_dict(config, db=mock_db, registry=registry, strict=True)
+
+    def test_from_dict_unknown_member_is_dropped_when_lenient(self, mock_db):
+        """Test strict=False drops a member that is in neither db nor registry."""
+        config = {
+            "id": "members-team",
+            "members": [{"type": "agent", "agent_id": "ghost-agent"}],
+        }
+        registry = Registry(agents=[])
+
+        with patch("agno.agent.get_agent_by_id", return_value=None):
+            team = Team.from_dict(config, db=mock_db, registry=registry, strict=False)
+
+        assert team.members == []
+
+    def test_from_dict_roundtrip(self, team_with_settings):
+        """Test that to_dict -> from_dict preserves team configuration."""
+        config = team_with_settings.to_dict()
+        reconstructed = Team.from_dict(config)
+
+        assert reconstructed.id == team_with_settings.id
+        assert reconstructed.name == team_with_settings.name
+        assert reconstructed.description == team_with_settings.description
+        assert reconstructed.markdown == team_with_settings.markdown
+        assert reconstructed.debug_mode == team_with_settings.debug_mode
+        assert reconstructed.retries == team_with_settings.retries
+
+    def test_from_dict_with_mode(self):
+        """Test from_dict reconstructs mode and max_iterations."""
+        from agno.team.mode import TeamMode
+
+        config = {
+            "id": "task-team",
+            "mode": "tasks",
+            "max_iterations": 25,
+        }
+        team = Team.from_dict(config)
+
+        assert team.mode == TeamMode.tasks
+        assert team.max_iterations == 25
+
+    def test_from_dict_mode_roundtrip(self):
+        """Test to_dict -> from_dict roundtrip preserves mode."""
+        from agno.team.mode import TeamMode
+
+        team = Team(id="rt-team", members=[], mode=TeamMode.route, max_iterations=15)
+        config = team.to_dict()
+        reconstructed = Team.from_dict(config)
+
+        assert reconstructed.mode == TeamMode.route
+        assert reconstructed.max_iterations == 15
+
+    def test_from_dict_no_mode_defaults(self):
+        """Test from_dict with no mode field defaults correctly."""
+        config = {"id": "no-mode-team"}
+        team = Team.from_dict(config)
+
+        # Mode should be inferred as coordinate (default)
+        from agno.team.mode import TeamMode
+
+        assert team.mode == TeamMode.coordinate
+        assert team.max_iterations == 10
+
+
+# =============================================================================
+# save() Tests
+# =============================================================================
+
+
+class TestTeamSave:
+    """Tests for Team.save() method."""
+
+    def test_save_calls_upsert_component(self, basic_team, mock_db):
+        """Test save calls upsert_component with correct parameters."""
+        mock_db.upsert_config.return_value = {"version": 1}
+
+        basic_team.db = mock_db
+        version = basic_team.save()
+
+        mock_db.upsert_component.assert_called_once_with(
+            component_id="test-team",
+            component_type=ComponentType.TEAM,
+            name="Test Team",
+            description="A test team for unit testing",
+            metadata=None,
+        )
+        assert version == 1
+
+    def test_save_calls_upsert_config(self, basic_team, mock_db):
+        """Test save calls upsert_config with team config."""
+        mock_db.upsert_config.return_value = {"version": 2}
+
+        basic_team.db = mock_db
+        version = basic_team.save()
+
+        mock_db.upsert_config.assert_called_once()
+        call_args = mock_db.upsert_config.call_args
+        assert call_args.kwargs["component_id"] == "test-team"
+        assert "config" in call_args.kwargs
+        assert version == 2
+
+    def test_save_with_members_saves_each_member(self, mock_db, member_agent):
+        """Test save saves each member agent."""
+        mock_db.upsert_config.return_value = {"version": 1}
+
+        # Create a spy on member.save
+        member_agent.save = MagicMock(return_value=1)
+
+        team = Team(
+            id="team-with-member",
+            name="Team",
+            members=[member_agent],
+            db=mock_db,
+        )
+        team.save()
+
+        # Member should be saved
+        member_agent.save.assert_called_once()
+
+    def test_save_creates_member_links(self, mock_db, member_agent):
+        """Test save creates links for members."""
+        mock_db.upsert_config.return_value = {"version": 1}
+        member_agent.save = MagicMock(return_value=5)
+
+        team = Team(
+            id="linked-team",
+            name="Linked Team",
+            members=[member_agent],
+            db=mock_db,
+        )
+        team.save()
+
+        # Check that links were passed to upsert_config
+        call_args = mock_db.upsert_config.call_args
+        links = call_args.kwargs.get("links")
+        assert links is not None
+        assert len(links) == 1
+        assert links[0]["link_kind"] == "member"
+        assert links[0]["child_component_id"] == "member-agent"
+        assert links[0]["child_version"] == 5
+        assert links[0]["meta"]["type"] == "agent"
+
+    def test_save_with_explicit_db(self, basic_team, mock_db):
+        """Test save uses explicitly provided db."""
+        mock_db.upsert_config.return_value = {"version": 1}
+
+        version = basic_team.save(db=mock_db)
+
+        mock_db.upsert_component.assert_called_once()
+        mock_db.upsert_config.assert_called_once()
+        assert version == 1
+
+    def test_save_with_label(self, basic_team, mock_db):
+        """Test save passes label to upsert_config."""
+        mock_db.upsert_config.return_value = {"version": 1}
+
+        basic_team.db = mock_db
+        basic_team.save(label="production")
+
+        call_args = mock_db.upsert_config.call_args
+        assert call_args.kwargs["label"] == "production"
+
+    def test_save_with_stage(self, basic_team, mock_db):
+        """Test save passes stage to upsert_config."""
+        mock_db.upsert_config.return_value = {"version": 1}
+
+        basic_team.db = mock_db
+        basic_team.save(stage="draft")
+
+        call_args = mock_db.upsert_config.call_args
+        assert call_args.kwargs["stage"] == "draft"
+
+    def test_save_without_db_raises_error(self, basic_team):
+        """Test save raises error when no db is available."""
+        with pytest.raises(ValueError, match="Db not initialized or provided"):
+            basic_team.save()
+
+    def test_save_handles_db_error(self, basic_team, mock_db):
+        """Test save raises error when database operation fails."""
+        mock_db.upsert_component.side_effect = Exception("Database error")
+
+        basic_team.db = mock_db
+
+        with pytest.raises(Exception, match="Database error"):
+            basic_team.save()
+
+
+# =============================================================================
+# load() Tests
+# =============================================================================
+
+
+class TestTeamLoad:
+    """Tests for Team.load() class method."""
+
+    def test_load_returns_team(self, mock_db, sample_team_config):
+        """Test load returns a team from database."""
+        mock_db.load_component_graph.return_value = {
+            "component": {"component_id": "sample-team"},
+            "config": {"config": sample_team_config},
+            "children": [],
+        }
+
+        team = Team.load(id="sample-team", db=mock_db)
+
+        assert team is not None
+        assert team.id == "sample-team"
+        assert team.name == "Sample Team"
+
+    def test_load_with_version(self, mock_db):
+        """Test load retrieves specific version."""
+        mock_db.load_component_graph.return_value = {
+            "component": {"component_id": "versioned-team"},
+            "config": {"config": {"id": "versioned-team", "name": "V2 Team"}},
+            "children": [],
+        }
+
+        Team.load(id="versioned-team", db=mock_db, version=2)
+
+        mock_db.load_component_graph.assert_called_once_with("versioned-team", version=2, label=None)
+
+    def test_load_with_label(self, mock_db):
+        """Test load retrieves labeled version."""
+        mock_db.load_component_graph.return_value = {
+            "component": {"component_id": "labeled-team"},
+            "config": {"config": {"id": "labeled-team", "name": "Production Team"}},
+            "children": [],
+        }
+
+        Team.load(id="labeled-team", db=mock_db, label="production")
+
+        mock_db.load_component_graph.assert_called_once_with("labeled-team", version=None, label="production")
+
+    def test_load_hydrates_member_agents(self, mock_db):
+        """Test load hydrates member agents from graph."""
+        mock_db.load_component_graph.return_value = {
+            "component": {"component_id": "team-with-members"},
+            "config": {"config": {"id": "team-with-members", "name": "Team"}},
+            "children": [
+                {
+                    "link": {"meta": {"type": "agent"}},
+                    "graph": {
+                        "component": {"component_id": "agent-1"},
+                        "config": {"config": {"id": "agent-1", "name": "Agent 1"}},
+                    },
+                }
+            ],
+        }
+
+        team = Team.load(id="team-with-members", db=mock_db)
+
+        assert team is not None
+        assert len(team.members) == 1
+        assert team.members[0].id == "agent-1"
+
+    def test_load_preserves_registry_members_without_graph_children(self, mock_db, member_agent):
+        """Test load keeps registry-resolved members when the graph has no children.
+
+        Code-defined member agents are not DB components, so the loaded graph has
+        no children for them. _hydrate_from_graph must not clobber the members
+        that from_dict resolved via the registry.
+        """
+        mock_db.load_component_graph.return_value = {
+            "component": {"component_id": "team-with-registry-member"},
+            "config": {
+                "config": {
+                    "id": "team-with-registry-member",
+                    "name": "Team",
+                    "members": [{"type": "agent", "agent_id": "member-agent"}],
+                }
+            },
+            "children": [],
+        }
+        registry = Registry(agents=[member_agent])
+
+        with patch("agno.agent.get_agent_by_id", return_value=None):
+            team = Team.load(id="team-with-registry-member", db=mock_db, registry=registry)
+
+        assert team is not None
+        assert len(team.members) == 1
+        assert team.members[0].id == "member-agent"
+
+    def test_load_merges_graph_and_registry_members(self, mock_db, member_agent):
+        """Test load merges DB-persisted graph children with registry members."""
+        mock_db.load_component_graph.return_value = {
+            "component": {"component_id": "mixed-team"},
+            "config": {
+                "config": {
+                    "id": "mixed-team",
+                    "name": "Mixed Team",
+                    "members": [
+                        {"type": "agent", "agent_id": "member-agent"},
+                        {"type": "agent", "agent_id": "db-agent"},
+                    ],
+                }
+            },
+            "children": [
+                {
+                    "link": {"meta": {"type": "agent"}},
+                    "graph": {
+                        "component": {"component_id": "db-agent"},
+                        "config": {"config": {"id": "db-agent", "name": "DB Agent"}},
+                    },
+                }
+            ],
+        }
+        registry = Registry(agents=[member_agent])
+
+        # DB lookup only resolves the graph-backed member; registry resolves the other
+        def fake_get_agent(id, db, version=None, registry=None, user_id=None, strict=True):  # noqa: A002
+            if id == "db-agent":
+                agent = Agent(id="db-agent", name="DB Agent")
+                return agent
+            return None
+
+        with patch("agno.agent.get_agent_by_id", side_effect=fake_get_agent):
+            team = Team.load(id="mixed-team", db=mock_db, registry=registry)
+
+        assert team is not None
+        member_ids = [m.id for m in team.members]
+        assert "member-agent" in member_ids
+        assert "db-agent" in member_ids
+        assert len(team.members) == 2
+
+    def test_load_returns_none_when_not_found(self, mock_db):
+        """Test load returns None when team not found."""
+        mock_db.load_component_graph.return_value = None
+
+        team = Team.load(id="nonexistent-team", db=mock_db)
+
+        assert team is None
+
+    def test_load_returns_none_when_config_missing(self, mock_db):
+        """Test load returns None when config is missing."""
+        mock_db.load_component_graph.return_value = {
+            "component": {"component_id": "empty-config"},
+            "config": {"config": None},
+            "children": [],
+        }
+
+        team = Team.load(id="empty-config-team", db=mock_db)
+
+        assert team is None
+
+    def test_load_sets_db_on_team(self, mock_db):
+        """Test load sets db attribute on returned team."""
+        mock_db.load_component_graph.return_value = {
+            "component": {"component_id": "db-team"},
+            "config": {"config": {"id": "db-team", "name": "DB Team"}},
+            "children": [],
+        }
+
+        team = Team.load(id="db-team", db=mock_db)
+
+        assert team is not None
+        assert team.db == mock_db
+
+    def test_load_round_trips_on_real_sqlite_db(self, tmp_path):
+        """Test save/load round-trips on a real SqliteDb.
+
+        The mock_db fixture accepts any call signature, so only a real backend
+        catches an override whose signature diverges from BaseDb (SqliteDb's
+        load_component_graph rejected the label kwarg that load() always passes).
+        """
+        db = SqliteDb(db_file=str(tmp_path / "team_load.db"))
+        team = Team(id="rt-team", name="Round Trip Team", members=[Agent(id="rt-agent", name="Round Trip Agent")])
+        team.save(db=db)
+
+        loaded = Team.load(id="rt-team", db=db)
+
+        assert loaded is not None
+        assert loaded.id == "rt-team"
+        assert loaded.name == "Round Trip Team"
+        assert len(loaded.members) == 1
+        assert loaded.members[0].id == "rt-agent"
+
+    def test_get_team_by_id_honors_pinned_member_versions(self, tmp_path):
+        """get_team_by_id must load members at the version pinned by the team's
+        links, like the graph loader does, not at the member's current version."""
+        db = SqliteDb(db_file=str(tmp_path / "team_pin.db"))
+
+        member = Agent(id="pin-agent", name="Pin Agent", description="v1 description")
+        team = Team(id="pin-team", name="Pin Team", members=[member])
+        team.save(db=db)
+
+        # Publish a newer member version after the team pinned the old one
+        member.description = "v2 description"
+        member.save(db=db)
+
+        graph_loaded = Team.load(id="pin-team", db=db)
+        by_id_loaded = get_team_by_id(db=db, id="pin-team")
+
+        assert graph_loaded is not None
+        assert graph_loaded.members[0].description == "v1 description"
+        assert by_id_loaded is not None
+        assert by_id_loaded.members[0].description == "v1 description"
+
+    def test_load_passes_registry_to_graph_members(self, tmp_path):
+        """Members hydrated from the component graph must receive the registry
+        so their tools survive a load."""
+        from agno.models.openai import OpenAIChat
+
+        def search(query: str) -> str:
+            """Search for a query."""
+            return f"results for {query}"
+
+        db = SqliteDb(db_file=str(tmp_path / "team_tools.db"))
+        member = Agent(id="tool-agent", name="Tool Agent", model=OpenAIChat(id="gpt-4o-mini"), tools=[search])
+        team = Team(id="tool-team", name="Tool Team", members=[member])
+        team.save(db=db)
+
+        loaded = Team.load(id="tool-team", db=db, registry=Registry(tools=[search]))
+
+        assert loaded is not None
+        loaded_member = loaded.members[0]
+        assert loaded_member.tools, "graph-hydrated member lost its tools"
+        assert loaded_member.tools[0].entrypoint is search
+
+    def test_load_rehydrates_member_agent_tools(self, tmp_path):
+        """A member agent's tools must be rehydrated against the same registry
+        the team was loaded with. Without it Agent.from_dict takes its
+        no-registry branch, drops the tools outright, and the member comes back
+        with none -- the nested-team branch already forwards the registry."""
+        from agno.models.openai import OpenAIResponses
+        from agno.tools.toolkit import Toolkit
+
+        def search_web(query: str) -> str:
+            """Search the web."""
+            return "results"
+
+        toolkit = Toolkit(
+            name="web",
+            tools=[search_web],
+            instructions="Cite every source.",
+            add_instructions=True,
+        )
+        model = OpenAIResponses(id="gpt-5.5")
+        db = SqliteDb(db_file=str(tmp_path / "team_member_tools.db"))
+        member = Agent(id="member", name="Member", model=model, tools=[toolkit])
+        Team(id="tool-team", name="Tool Team", model=model, members=[member]).save(db=db)
+
+        loaded = Team.load(id="tool-team", db=db, registry=Registry(tools=[toolkit], models=[model]))
+
+        assert loaded is not None
+        member_tools = loaded.members[0].tools or []
+        assert [tool.name for tool in member_tools] == ["search_web"]
+        assert member_tools[0].entrypoint is not None
+        # And the toolkit came with them, so its guidance survives the reload.
+        assert member_tools[0].source_toolkit is toolkit
+
+    def test_load_passes_member_provider_dict_tools_through(self, tmp_path):
+        """Provider-run tools persist as plain dicts, typed builtins and
+        untyped custom shapes alike. Rehydrating one as a Function config
+        raised a ValidationError that took the whole team load down; they must
+        ride through the member's tools untouched instead."""
+        from agno.models.openai import OpenAIResponses
+
+        provider_dicts = [
+            {"type": "web_search"},
+            {"name": "get_weather", "description": "Weather", "input_schema": {"type": "object"}},
+        ]
+        model = OpenAIResponses(id="gpt-5.5")
+        db = SqliteDb(db_file=str(tmp_path / "team_builtin_tools.db"))
+        member = Agent(id="builtin-member", name="Member", model=model, tools=list(provider_dicts))
+        Team(id="builtin-team", name="Builtin Team", model=model, members=[member]).save(db=db)
+
+        loaded = Team.load(id="builtin-team", db=db, registry=Registry(models=[model]))
+
+        assert loaded is not None
+        assert loaded.members[0].tools == provider_dicts
+
+
+# =============================================================================
+# delete() Tests
+# =============================================================================
+
+
+class TestTeamDelete:
+    """Tests for Team.delete() method."""
+
+    def test_delete_calls_delete_component(self, basic_team, mock_db):
+        """Test delete calls delete_component."""
+        mock_db.delete_component.return_value = True
+
+        basic_team.db = mock_db
+        result = basic_team.delete()
+
+        mock_db.delete_component.assert_called_once_with(
+            component_id="test-team", hard_delete=False, require_no_dependents=True
+        )
+        assert result is True
+
+    def test_delete_with_hard_delete(self, basic_team, mock_db):
+        """Test delete with hard_delete flag."""
+        mock_db.delete_component.return_value = True
+
+        basic_team.db = mock_db
+        result = basic_team.delete(hard_delete=True)
+
+        mock_db.delete_component.assert_called_once_with(
+            component_id="test-team", hard_delete=True, require_no_dependents=True
+        )
+        assert result is True
+
+    def test_delete_with_explicit_db(self, basic_team, mock_db):
+        """Test delete uses explicitly provided db."""
+        mock_db.delete_component.return_value = True
+
+        result = basic_team.delete(db=mock_db)
+
+        mock_db.delete_component.assert_called_once()
+        assert result is True
+
+    def test_delete_without_db_raises_error(self, basic_team):
+        """Test delete raises error when no db is available."""
+        with pytest.raises(ValueError, match="Db not initialized or provided"):
+            basic_team.delete()
+
+    def test_delete_returns_false_on_failure(self, basic_team, mock_db):
+        """Test delete returns False when operation fails."""
+        mock_db.delete_component.return_value = False
+
+        basic_team.db = mock_db
+        result = basic_team.delete()
+
+        assert result is False
+
+
+class TestTeamSessionNaming:
+    def test_generate_session_name_fallback_after_max_retries(self):
+        """Test generate_session_name falls back after repeated invalid model output."""
+        team = Team(id="session-name-team", members=[])
+        team.model = MagicMock()
+        team.model.response = MagicMock(return_value=MagicMock(content=None))
+
+        session = TeamSession(session_id="session-1", runs=[])
+        session_name = team.generate_session_name(session=session)
+
+        assert session_name == "Team Session"
+        assert team.model.response.call_count == 4
+
+
+# =============================================================================
+# get_team_by_id() Tests
+# =============================================================================
+
+
+class TestGetTeamById:
+    """Tests for get_team_by_id() helper function."""
+
+    def test_get_team_by_id_returns_team(self, mock_db):
+        """Test get_team_by_id returns team from database."""
+        # published_only resolution reads the component row first (spec 3.3)
+        mock_db.get_component = MagicMock(return_value={"component_id": "c", "current_version": 1})
+        mock_db.get_config.return_value = {"config": {"id": "found-team", "name": "Found Team"}}
+
+        team = get_team_by_id(db=mock_db, id="found-team")
+
+        assert team is not None
+        assert team.id == "found-team"
+        assert team.name == "Found Team"
+
+    def test_get_team_by_id_with_version(self, mock_db):
+        """Test get_team_by_id retrieves specific version."""
+        mock_db.get_config.return_value = {"config": {"id": "versioned", "name": "V3"}}
+
+        get_team_by_id(db=mock_db, id="versioned", version=3)
+
+        mock_db.get_config.assert_called_once_with(component_id="versioned", version=3, label=None)
+
+    def test_get_team_by_id_with_label(self, mock_db):
+        """Test get_team_by_id retrieves labeled version."""
+        mock_db.get_config.return_value = {"config": {"id": "labeled", "name": "Staging"}}
+
+        get_team_by_id(db=mock_db, id="labeled", label="staging")
+
+        mock_db.get_config.assert_called_once_with(component_id="labeled", version=None, label="staging")
+
+    def test_get_team_by_id_with_registry(self, mock_db):
+        """Test get_team_by_id passes registry."""
+        # published_only resolution reads the component row first (spec 3.3)
+        mock_db.get_component = MagicMock(return_value={"component_id": "c", "current_version": 1})
+        mock_db.get_config.return_value = {"config": {"id": "registry-team", "tools": [{"name": "calc"}]}}
+
+        mock_registry = MagicMock()
+        mock_registry.rehydrate_functions.return_value = [MagicMock()]
+
+        team = get_team_by_id(db=mock_db, id="registry-team", registry=mock_registry)
+
+        assert team is not None
+
+    def test_get_team_by_id_returns_none_when_not_found(self, mock_db):
+        """Test get_team_by_id returns None when not found."""
+        mock_db.get_config.return_value = None
+
+        team = get_team_by_id(db=mock_db, id="missing")
+
+        assert team is None
+
+    def test_get_team_by_id_sets_db(self, mock_db):
+        """Test get_team_by_id sets db on returned team via registry."""
+        # published_only resolution reads the component row first (spec 3.3)
+        mock_db.get_component = MagicMock(return_value={"component_id": "c", "current_version": 1})
+        # The db is set via registry lookup when config contains a serialized db reference
+        mock_db.id = "test-db"
+        mock_db.get_config.return_value = {
+            "config": {
+                "id": "db-team",
+                "name": "DB Team",
+                "db": {"type": "postgres", "id": "test-db"},
+            }
+        }
+
+        # Create registry with the mock db registered
+        registry = Registry(dbs=[mock_db])
+
+        team = get_team_by_id(db=mock_db, id="db-team", registry=registry)
+
+        assert team is not None
+        assert team.db == mock_db
+
+    def test_get_team_by_id_handles_error(self, mock_db):
+        """Test get_team_by_id returns None on error."""
+        mock_db.get_config.side_effect = Exception("DB error")
+
+        team = get_team_by_id(db=mock_db, id="error-team")
+
+        assert team is None
+
+
+# =============================================================================
+# get_teams() Tests
+# =============================================================================
+
+
+class TestGetTeams:
+    """Tests for get_teams() helper function."""
+
+    def test_get_teams_returns_list(self, mock_db):
+        """Test get_teams returns list of teams."""
+        mock_db.list_components.return_value = (
+            [
+                {"component_id": "team-1"},
+                {"component_id": "team-2"},
+            ],
+            2,
+        )
+        mock_db.get_config.side_effect = [
+            {"config": {"id": "team-1", "name": "Team 1"}},
+            {"config": {"id": "team-2", "name": "Team 2"}},
+        ]
+
+        teams = get_teams(db=mock_db)
+
+        assert len(teams) == 2
+        assert teams[0].id == "team-1"
+        assert teams[1].id == "team-2"
+
+    def test_get_teams_filters_by_type(self, mock_db):
+        """Test get_teams filters by TEAM component type."""
+        mock_db.list_components.return_value = ([], None)
+
+        get_teams(db=mock_db)
+
+        mock_db.list_components.assert_called_once_with(
+            component_type=ComponentType.TEAM,
+            exclude_component_ids=RESERVED_MANAGER_IDS,
+            user_id=None,
+            limit=_COMPONENT_LIST_PAGE,
+            offset=0,
+        )
+
+    def test_get_teams_with_registry(self, mock_db):
+        """Test get_teams passes registry to from_dict."""
+        mock_db.list_components.return_value = (
+            [{"component_id": "tools-team"}],
+            1,
+        )
+        mock_db.get_config.return_value = {"config": {"id": "tools-team", "tools": [{"name": "search"}]}}
+
+        mock_registry = MagicMock()
+        mock_registry.rehydrate_functions.return_value = [MagicMock()]
+
+        teams = get_teams(db=mock_db, registry=mock_registry)
+
+        assert len(teams) == 1
+
+    def test_get_teams_returns_empty_list_on_error(self, mock_db):
+        """Test get_teams returns empty list on error."""
+        mock_db.list_components.side_effect = Exception("DB error")
+
+        teams = get_teams(db=mock_db)
+
+        assert teams == []
+
+    def test_get_teams_skips_invalid_configs(self, mock_db):
+        """Test get_teams skips teams with invalid configs."""
+        mock_db.list_components.return_value = (
+            [
+                {"component_id": "valid-team"},
+                {"component_id": "invalid-team"},
+            ],
+            2,
+        )
+        mock_db.get_config.side_effect = [
+            {"config": {"id": "valid-team", "name": "Valid"}},
+            {"config": None},  # Invalid config
+        ]
+
+        teams = get_teams(db=mock_db)
+
+        assert len(teams) == 1
+        assert teams[0].id == "valid-team"
+
+    def test_get_teams_sets_db_on_all_teams(self, mock_db):
+        """Test get_teams sets db on all returned teams via registry."""
+        # The db is set via registry lookup when config contains a serialized db reference
+        mock_db.id = "test-db"
+        mock_db.list_components.return_value = (
+            [{"component_id": "team-1"}],
+            1,
+        )
+        mock_db.get_config.return_value = {
+            "config": {
+                "id": "team-1",
+                "name": "Team 1",
+                "db": {"type": "postgres", "id": "test-db"},
+            }
+        }
+
+        # Create registry with the mock db registered
+        registry = Registry(dbs=[mock_db])
+
+        teams = get_teams(db=mock_db, registry=registry)
+
+        assert len(teams) == 1
+        assert teams[0].db == mock_db
+
+
+def test_team_load_survives_broken_current_member_version(tmp_path):
+    """Team.load resolves members at the versions pinned by the graph links,
+    so a later member version with unresolvable references must not abort the
+    load of a team pinned to a clean version."""
+    from agno.models.openai import OpenAIChat
+
+    db = SqliteDb(db_file=str(tmp_path / "team_pin_broken.db"))
+
+    member = Agent(id="m1", name="M1")
+    team = Team(id="t1", name="T1", members=[member])
+    team.save(db=db)
+
+    def search(query: str) -> str:
+        """Search for a query."""
+        return f"results for {query}"
+
+    # Publish a v2 of the member that needs a registry to rehydrate
+    member.model = OpenAIChat(id="gpt-4o-mini")
+    member.tools = [search]
+    member.save(db=db)
+
+    loaded = Team.load(id="t1", db=db)
+
+    assert loaded is not None
+    assert [m.id for m in loaded.members] == ["m1"]
+
+
+class TestMemberPinFailures:
+    def test_strict_pin_miss_refuses_and_names_the_version(self, tmp_path):
+        """A pinned member version whose config row was deleted must refuse
+        with the pin and the remedy, not report the member as missing."""
+        from agno.exceptions import ComponentRehydrationError
+
+        db = SqliteDb(db_file=str(tmp_path / "pin_miss.db"))
+        member = Agent(id="pm-member", name="Member")
+        Team(id="pm-team", name="Team", members=[member]).save(db=db)
+        member.description = "v2"
+        member.save(db=db)
+        links = db.get_links(component_id="pm-team", version=1)
+        pinned = next(link for link in links if link["link_kind"] == "member")["child_version"]
+        _force_delete_config(db, "pm-member", pinned)
+
+        with pytest.raises(ComponentRehydrationError, match=f"pins member agent 'pm-member' at version {pinned}"):
+            get_team_by_id(db=db, id="pm-team", strict=True)
+
+    def test_strict_pin_miss_does_not_substitute_registry_component(self, tmp_path):
+        """An explicit pin names one stored version; a same-id registry
+        component is a different object and must not silently replace it."""
+        from agno.exceptions import ComponentRehydrationError
+
+        db = SqliteDb(db_file=str(tmp_path / "pin_subst.db"))
+        member = Agent(id="ps-member", name="Member")
+        Team(id="ps-team", name="Team", members=[member]).save(db=db)
+        member.description = "v2"
+        member.save(db=db)
+        links = db.get_links(component_id="ps-team", version=1)
+        pinned = next(link for link in links if link["link_kind"] == "member")["child_version"]
+        _force_delete_config(db, "ps-member", pinned)
+        registry = Registry(agents=[Agent(id="ps-member", name="Code Member")])
+
+        with pytest.raises(ComponentRehydrationError, match="pins member agent 'ps-member'"):
+            get_team_by_id(db=db, id="ps-team", registry=registry, strict=True)
+
+        # Lenient degrades to the member's current stored version, so the
+        # team stays usable without silently substituting the registry object.
+        lenient = get_team_by_id(db=db, id="ps-team", registry=registry, strict=False)
+        assert lenient.members[0].description == "v2"
+
+
+def test_from_dict_without_registry_loads_registry_free_tools_under_strict():
+    """Provider-native dicts and external-execution tools need no registry, so
+    a strict team load without one accepts them."""
+    config = {
+        "id": "registry-free-team",
+        "tools": [
+            {"type": "web_search"},
+            {
+                "name": "charge_card",
+                "description": "Charge",
+                "parameters": {"type": "object", "properties": {}},
+                "external_execution": True,
+            },
+        ],
+    }
+
+    team = Team.from_dict(config, strict=True)
+
+    assert team.tools is not None and len(team.tools) == 2
+
+
+def test_strict_refuses_a_member_of_unknown_type():
+    """A member kind the loader does not model must refuse under strict, not
+    silently dispatch a reduced team."""
+    from agno.exceptions import ComponentRehydrationError
+
+    config = {
+        "id": "future-team",
+        "members": [{"type": "future-member", "future_id": "x"}],
+    }
+
+    with pytest.raises(ComponentRehydrationError, match="future-member"):
+        Team.from_dict(config, strict=True)
+
+    lenient = Team.from_dict(config, strict=False)
+    assert lenient.members == []
+
+
+def test_strict_refuses_a_wrong_type_registry_copy():
+    """A custom deep_copy returning the wrong type must refuse under strict,
+    not dispatch the impostor."""
+    from agno.exceptions import ComponentRehydrationError
+
+    class ImposterAgent(Agent):
+        def deep_copy(self, *, update=None):
+            return object()
+
+    registry = Registry(agents=[ImposterAgent(id="imp", name="Imp")])
+    config = {"id": "imp-team", "members": [{"type": "agent", "agent_id": "imp"}]}
+
+    with pytest.raises(ComponentRehydrationError, match="not a Agent|not an Agent|object"):
+        Team.from_dict(config, registry=registry, strict=True)
+
+
+def test_strict_refuses_a_copy_that_lost_serialized_state():
+    """A subclass whose __init__ swallows kwargs turns the inherited deep_copy
+    into an empty shell; strict must refuse the lossy copy, not dispatch it."""
+    from agno.exceptions import ComponentRehydrationError
+
+    class PolicyAgent(Agent):
+        def __init__(self, *args, policy=None, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.policy = policy
+
+    registry = Registry(agents=[PolicyAgent(id="pol", name="Pol", instructions="policy says", policy="strict")])
+    config = {"id": "pol-team", "members": [{"type": "agent", "agent_id": "pol"}]}
+
+    with pytest.raises(ComponentRehydrationError, match="lost state"):
+        Team.from_dict(config, registry=registry, strict=True)
+
+
+def test_team_provider_envelope_tools_survive_save_and_strict_reload(tmp_path):
+    """Team's serializer must keep provider-native dict tools, so an envelope
+    that rides through a load is not destroyed by the next save."""
+    from agno.db.sqlite import SqliteDb
+    from agno.models.openai import OpenAIResponses
+
+    db = SqliteDb(db_file=str(tmp_path / "team_envelope.db"))
+    envelope = {"type": "web_search_preview"}
+    team = Team(id="env-team", name="T", model=OpenAIResponses(id="gpt-5.5"), members=[], tools=[envelope])
+    team.save(db=db)
+
+    stored = db.get_config(component_id="env-team")["config"]
+    assert stored.get("tools") == [envelope]
+
+    loaded = get_team_by_id(db=db, id="env-team", registry=Registry(dbs=[db]), strict=True)
+    assert loaded is not None
+    assert loaded.tools == [envelope]
+
+    # And a load-save cycle keeps it too.
+    loaded.save(db=db)
+    assert db.get_config(component_id="env-team")["config"].get("tools") == [envelope]
+
+
+# =============================================================================
+# Memory manager round-trip (A3 regression: auto-generated ids 422'd dispatch)
+# =============================================================================
+
+
+class TestTeamMemoryManagerRoundTrip:
+    """Mirror of the agent memory_manager round-trip: a saved reference must
+    never refuse a team that would rebuild a default manager on its own, and
+    must round-trip a registered manager to the same live instance."""
+
+    def test_auto_created_manager_survives_fresh_registry_strict_load(self):
+        from agno.team._init import initialize_team
+
+        team = Team(id="mem-team", name="Mem Team", members=[], enable_agentic_memory=True)
+        initialize_team(team)
+        assert team.memory_manager is not None
+        assert team.memory_manager.id.startswith("memory_manager_")
+
+        config = team.to_dict()
+        assert "memory_manager" not in config
+
+        loaded = Team.from_dict(config, registry=Registry(), strict=True)
+        assert loaded.enable_agentic_memory is True
+        initialize_team(loaded)
+        assert loaded.memory_manager is not None
+
+    def test_registered_manager_round_trips_to_same_instance(self):
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="shared-memory")
+        team = Team(id="mem-team", name="Mem Team", members=[], memory_manager=manager)
+
+        config = team.to_dict()
+        assert config["memory_manager"] == {"registry_id": "shared-memory"}
+
+        loaded = Team.from_dict(config, registry=Registry(memory_managers=[manager]), strict=True)
+        assert loaded.memory_manager is manager
+
+    def test_unregistered_manager_with_memory_flags_still_raises_strict(self):
+        from agno.exceptions import ComponentRehydrationError
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="my-memory")
+        team = Team(id="mem-team", name="Mem Team", members=[], memory_manager=manager, update_memory_on_run=True)
+        config = team.to_dict()
+        assert config["memory_manager"] == {"registry_id": "my-memory"}
+
+        # Teams share the agent module's memory manager resolution.
+        with pytest.raises(ComponentRehydrationError, match="my-memory"):
+            Team.from_dict(config, registry=Registry(), strict=True)
+
+        # strict=False still loads the component without it.
+        loaded = Team.from_dict(config, registry=Registry(), strict=False)
+        assert loaded.memory_manager is None
+
+    def test_unregistered_manager_without_flags_raises_strict(self):
+        from agno.exceptions import ComponentRehydrationError
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="my-memory")
+        team = Team(id="mem-team", name="Mem Team", members=[], memory_manager=manager)
+        config = team.to_dict()
+
+        with pytest.raises(ComponentRehydrationError, match="memory manager 'my-memory'"):
+            Team.from_dict(config, registry=Registry(), strict=True)
+
+        loaded = Team.from_dict(config, registry=Registry(), strict=False)
+        assert loaded.memory_manager is None
+
+    def test_auto_generated_id_never_serialized_even_for_explicit_manager(self):
+        from agno.memory.manager import MemoryManager
+
+        team = Team(id="mem-team", name="Mem Team", members=[], memory_manager=MemoryManager())
+        with patch("agno.team._storage.log_warning") as mock_warn:
+            config = team.to_dict()
+        assert "memory_manager" not in config
+        assert mock_warn.called
+
+    def test_legacy_auto_id_reference_dropped_under_strict(self):
+        config = {
+            "id": "legacy-team",
+            "name": "Legacy Team",
+            "memory_manager": {"registry_id": "memory_manager_ab12cd34"},
+        }
+
+        loaded = Team.from_dict(config, registry=Registry(), strict=True)
+        assert loaded.memory_manager is None
+
+
+class TestTeamMemoryManagerReferenceShapes:
+    """Mirror of the agent reference-shape suite: a config authored against
+    the registry listing carries the resource's name or id, and every shape
+    has to bind the same live manager."""
+
+    def _team_config(self, manager_ref):
+        return {"id": "mem-team", "name": "Mem Team", "members": [], "memory_manager": manager_ref}
+
+    def test_registry_id_key_resolves(self):
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="mm-1", name="Support Memory")
+        loaded = Team.from_dict(
+            self._team_config({"registry_id": "mm-1"}),
+            registry=Registry(memory_managers=[manager]),
+            strict=True,
+        )
+        assert loaded.memory_manager is manager
+
+    def test_id_key_resolves(self):
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="mm-1", name="Support Memory")
+        loaded = Team.from_dict(
+            self._team_config({"id": "mm-1"}),
+            registry=Registry(memory_managers=[manager]),
+            strict=True,
+        )
+        assert loaded.memory_manager is manager
+
+    def test_name_key_resolves(self):
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="mm-1", name="Support Memory")
+        loaded = Team.from_dict(
+            self._team_config({"name": "Support Memory", "description": "picked in the UI"}),
+            registry=Registry(memory_managers=[manager]),
+            strict=True,
+        )
+        assert loaded.memory_manager is manager
+
+    def test_name_key_resolves_to_id_when_manager_is_unnamed(self):
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="mm-1")
+        loaded = Team.from_dict(
+            self._team_config({"name": "mm-1"}),
+            registry=Registry(memory_managers=[manager]),
+            strict=True,
+        )
+        assert loaded.memory_manager is manager
+
+    def test_bare_string_reference_resolves(self):
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="mm-1")
+        loaded = Team.from_dict(
+            self._team_config("mm-1"),
+            registry=Registry(memory_managers=[manager]),
+            strict=True,
+        )
+        assert loaded.memory_manager is manager
+
+    def test_id_wins_over_name(self):
+        from agno.memory.manager import MemoryManager
+
+        by_name = MemoryManager(id="mm-1", name="shared-key")
+        by_id = MemoryManager(id="shared-key", name="Other Memory")
+        loaded = Team.from_dict(
+            self._team_config({"name": "shared-key"}),
+            registry=Registry(memory_managers=[by_name, by_id]),
+            strict=True,
+        )
+        assert loaded.memory_manager is by_id
+
+    def test_ambiguous_name_refuses_strict(self):
+        from agno.exceptions import ComponentRehydrationError
+        from agno.memory.manager import MemoryManager
+
+        first = MemoryManager(id="mm-1", name="Support Memory")
+        second = MemoryManager(id="mm-2", name="Support Memory")
+        registry = Registry(memory_managers=[first, second])
+
+        with pytest.raises(ComponentRehydrationError, match="two distinct"):
+            Team.from_dict(self._team_config({"name": "Support Memory"}), registry=registry, strict=True)
+
+        loaded = Team.from_dict(self._team_config({"name": "Support Memory"}), registry=registry, strict=False)
+        assert loaded.memory_manager is first
+
+    def test_unresolvable_name_still_raises_strict_and_drops_lenient(self):
+        from agno.exceptions import ComponentRehydrationError
+        from agno.memory.manager import MemoryManager
+
+        registry = Registry(memory_managers=[MemoryManager(id="mm-1", name="Support Memory")])
+
+        with pytest.raises(ComponentRehydrationError, match="memory manager 'Other Memory'"):
+            Team.from_dict(self._team_config({"name": "Other Memory"}), registry=registry, strict=True)
+
+        loaded = Team.from_dict(self._team_config({"name": "Other Memory"}), registry=registry, strict=False)
+        assert loaded.memory_manager is None
+
+    def test_keyless_reference_reports_the_payload(self):
+        from agno.exceptions import ComponentRehydrationError
+
+        payload = {"class_path": "agno.memory.manager.MemoryManager"}
+
+        with pytest.raises(ComponentRehydrationError) as exc_info:
+            Team.from_dict(self._team_config(payload), registry=Registry(), strict=True)
+        message = str(exc_info.value)
+        assert "'None'" not in message
+        assert "class_path" in message
+        assert "serving" in message
+
+        loaded = Team.from_dict(self._team_config(payload), registry=Registry(), strict=False)
+        assert loaded.memory_manager is None
+
+    def test_ambiguous_name_refuses_even_with_the_memory_flags_set(self):
+        """A team whose own settings rebuild a default manager never needed
+        the referenced one, so an ambiguous name must drop with a warning
+        rather than make the team permanently unloadable."""
+        from agno.exceptions import ComponentRehydrationError
+        from agno.memory.manager import MemoryManager
+
+        registry = Registry(
+            memory_managers=[
+                MemoryManager(id="mm-1", name="Support Memory"),
+                MemoryManager(id="mm-2", name="Support Memory"),
+            ]
+        )
+        config = self._team_config({"name": "Support Memory"})
+        config["update_memory_on_run"] = True
+
+        # Teams share the agent module's memory manager resolution.
+        with pytest.raises(ComponentRehydrationError, match="Support Memory"):
+            Team.from_dict(config, registry=registry, strict=True)
+
+        # strict=False keeps the documented lenient behaviour: warn, and bind
+        # the first of the competing managers.
+        loaded = Team.from_dict(config, registry=registry, strict=False)
+        assert loaded.update_memory_on_run is True
+        assert loaded.memory_manager is not None
+
+    def test_stale_id_key_falls_back_to_the_name_key(self):
+        """The registry listing emits both an id and a name, so a config
+        authored from it carries both; a manager re-registered under a new id
+        must still bind through the name."""
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="mm-new", name="Support Memory")
+        loaded = Team.from_dict(
+            self._team_config({"id": "mm-old", "name": "Support Memory"}),
+            registry=Registry(memory_managers=[manager]),
+            strict=True,
+        )
+        assert loaded.memory_manager is manager
+
+    def test_stale_auto_generated_id_falls_back_to_the_name_key(self):
+        """An auto-generated id is minted fresh every process, so the name is
+        the only key that can resolve; the stale id must not swallow the
+        reference and leave the team silently without memory."""
+        from agno.memory.manager import MemoryManager
+
+        manager = MemoryManager(id="mm-1", name="Support Memory")
+        loaded = Team.from_dict(
+            self._team_config({"id": "memory_manager_deadbeef", "name": "Support Memory"}),
+            registry=Registry(memory_managers=[manager]),
+            strict=True,
+        )
+        assert loaded.memory_manager is manager
+
+    def test_auto_generated_id_with_unresolvable_name_still_raises_strict(self):
+        """The auto-id escape covers a reference carrying nothing else; a real
+        name alongside it is a manager the user asked for by name."""
+        from agno.exceptions import ComponentRehydrationError
+        from agno.memory.manager import MemoryManager
+
+        registry = Registry(memory_managers=[MemoryManager(id="mm-1", name="Support Memory")])
+
+        with pytest.raises(ComponentRehydrationError) as exc_info:
+            Team.from_dict(
+                self._team_config({"id": "memory_manager_deadbeef", "name": "Other Memory"}),
+                registry=registry,
+                strict=True,
+            )
+        message = str(exc_info.value)
+        assert "memory_manager_deadbeef" in message
+        assert "Other Memory" in message
+
+    def test_lenient_ambiguous_name_warns_naming_the_competing_managers(self):
+        """Lenient stays lenient and binds the first match, but the arbitrary
+        choice must not be silent."""
+        from agno.memory.manager import MemoryManager
+
+        first = MemoryManager(id="mm-1", name="Support Memory")
+        second = MemoryManager(id="mm-2", name="Support Memory")
+
+        with patch("agno.agent._storage.log_warning") as mock_warn:
+            loaded = Team.from_dict(
+                self._team_config({"name": "Support Memory"}),
+                registry=Registry(memory_managers=[first, second]),
+                strict=False,
+            )
+        assert loaded.memory_manager is first
+        warnings = " ".join(str(c) for c in mock_warn.call_args_list)
+        assert "mm-1" in warnings
+        assert "mm-2" in warnings
+
+
+# =============================================================================
+# Learning machine reference round-trip
+# =============================================================================
+
+
+class TestTeamLearningReferenceRoundTrip:
+    """Mirror of the agent learning round-trip. The team reads the reference
+    through the shared resolver BEFORE its constructor-time
+    _deserialize_learning, so a reference never reaches LearningMachine.from_dict
+    and an inline config never reaches the registry."""
+
+    def test_named_machine_serializes_as_reference_and_resolves_to_same_instance(self):
+        from agno.learn import LearningMachine
+
+        machine = LearningMachine(name="shared-brain", user_memory=True)
+        team = Team(id="learn-team", name="Learn Team", members=[], learning=machine)
+
+        config = team.to_dict()
+        assert config["learning"] == {"name": "shared-brain"}
+
+        loaded = Team.from_dict(config, registry=Registry(learning=[machine]), strict=True)
+        assert loaded.learning is machine
+
+    def test_unnamed_machine_still_inlines(self):
+        from agno.learn import LearningMachine
+
+        team = Team(id="learn-team", name="Learn Team", members=[], learning=LearningMachine(user_memory=True))
+        config = team.to_dict()
+        assert "name" not in config["learning"]
+
+        loaded = Team.from_dict(config, registry=Registry(), strict=True)
+        assert isinstance(loaded.learning, LearningMachine)
+        assert loaded.learning.name is None
+        assert loaded.learning.user_memory is True
+
+    def test_inline_shapes_rebuild_and_a_named_inline_config_drops_its_name(self):
+        """``{}`` and a dict carrying a name plus store keys are inline configs
+        on the team path too: rebuilt unnamed, re-saved inline."""
+        from agno.learn import LearningMachine
+
+        for payload in ({}, {"name": "brain", "user_memory": True, "namespace": "west"}):
+            config = {"id": "learn-team", "name": "Learn Team", "members": [], "learning": payload}
+            loaded = Team.from_dict(config, registry=Registry(), strict=True)
+            assert isinstance(loaded.learning, LearningMachine), payload
+            assert loaded.learning.name is None, payload
+        assert loaded.learning.user_memory is True
+        assert loaded.to_dict()["learning"] == {"user_memory": True, "namespace": "west"}
+
+    def test_missing_reference_raises_strict_and_drops_lenient(self):
+        from agno.exceptions import ComponentRehydrationError
+
+        config = {"id": "learn-team", "name": "Learn Team", "members": [], "learning": {"name": "ghost"}}
+
+        with pytest.raises(ComponentRehydrationError, match="learning machine 'ghost'"):
+            Team.from_dict(config, registry=Registry(), strict=True)
+
+        with patch("agno.agent._storage.log_warning") as mock_warn:
+            loaded = Team.from_dict(config, registry=Registry(), strict=False)
+        assert loaded.learning is None
+        assert any("ghost" in str(call) for call in mock_warn.call_args_list)
+
+    def test_ambiguous_name_raises_strict_and_binds_first_lenient(self):
+        from agno.exceptions import ComponentRehydrationError
+        from agno.learn import LearningMachine
+
+        first = LearningMachine(name="shared-brain", user_memory=True)
+        second = LearningMachine(name="shared-brain", entity_memory=True)
+        registry = Registry(learning=[first, second])
+        config = {"id": "learn-team", "name": "Learn Team", "members": [], "learning": {"name": "shared-brain"}}
+
+        with pytest.raises(ComponentRehydrationError, match="two distinct"):
+            Team.from_dict(config, registry=registry, strict=True)
+
+        loaded = Team.from_dict(config, registry=registry, strict=False)
+        assert loaded.learning is first
+
+
+# =============================================================================
+# get_teams() Pagination Tests
+# =============================================================================
+
+
+class TestGetTeamsPagination:
+    """get_teams must page past the DB's default list_components limit.
+
+    Published components from other users share the catalog, so without
+    paging they crowd a user's own teams out of the first page.
+    """
+
+    @pytest.fixture
+    def sqlite_db(self, tmp_path):
+        return SqliteDb(db_file=str(tmp_path / "teams_pagination.db"))
+
+    def _create(self, db, component_id, user_id):
+        db.create_component_with_config(
+            component_id=component_id,
+            component_type=ComponentType.TEAM,
+            name=component_id,
+            config={"name": component_id, "members": []},
+            stage="published",
+            user_id=user_id,
+        )
+
+    def test_returns_all_own_teams_beyond_default_page(self, sqlite_db):
+        for i in range(25):
+            self._create(sqlite_db, f"own-team-{i:02d}", "owner")
+
+        teams = get_teams(db=sqlite_db, user_id="owner")
+
+        assert {t.id for t in teams} == {f"own-team-{i:02d}" for i in range(25)}
+
+    def test_own_teams_not_crowded_out_by_foreign_published(self, sqlite_db):
+        # Own rows first (older), foreign rows second (newer): the listing
+        # orders created_at DESC with component_id ASC ties, so the foreign
+        # rows fill the first page either way.
+        for i in range(5):
+            self._create(sqlite_db, f"z-own-team-{i}", "owner")
+        for i in range(25):
+            self._create(sqlite_db, f"a-pub-team-{i:02d}", "someone-else")
+
+        teams = get_teams(db=sqlite_db, user_id="owner")
+
+        ids = {t.id for t in teams}
+        assert {f"z-own-team-{i}" for i in range(5)} <= ids
+        assert len(teams) == 30
+
+    def test_cap_truncates_with_single_warning(self, mock_db, monkeypatch):
+        import agno.team.team as team_module
+
+        monkeypatch.setattr(team_module, "_COMPONENT_LIST_PAGE", 5)
+        monkeypatch.setattr(team_module, "_COMPONENT_LIST_CAP", 10)
+        mock_warn = MagicMock()
+        monkeypatch.setattr(team_module, "log_warning", mock_warn)
+
+        def fake_list_components(**kwargs):
+            rows = [{"component_id": f"team-{kwargs['offset'] + i:03d}"} for i in range(kwargs["limit"])]
+            return rows, 50
+
+        mock_db.list_components.side_effect = fake_list_components
+        mock_db.get_config.side_effect = lambda component_id: {"config": {"name": component_id, "members": []}}
+
+        teams = get_teams(db=mock_db, user_id="owner")
+
+        assert len(teams) == 10
+        mock_warn.assert_called_once()
+        assert "10 of 50" in mock_warn.call_args[0][0]
+
+    def test_paging_advances_the_offset_past_the_first_block(self, sqlite_db):
+        # A loop stuck at offset=0 still terminates (len >= total after two
+        # identical pages) but returns duplicates and misses the tail; unique
+        # recovery of 120 rows requires the offset to actually advance.
+        for i in range(120):
+            self._create(sqlite_db, f"own-team-{i:03d}", "owner")
+
+        loaded = get_teams(db=sqlite_db, user_id="owner")
+
+        assert len(loaded) == 120
+        assert {item.id for item in loaded} == {f"own-team-{i:03d}" for i in range(120)}
+
+
+# =============================================================================
+# Follow-up configuration round trip
+# =============================================================================
+
+
+class TestTeamFollowupConfigRoundtrip:
+    """followups (bool or FollowupConfig), num_followups and followup_model survive to_dict/from_dict."""
+
+    def test_to_dict_serializes_followup_settings(self):
+        from agno.agent import FollowupConfig
+
+        team = Team(members=[], followups=FollowupConfig(instructions="Only docs.", num_followups=2))
+        config = team.to_dict()
+        assert config["followups"] == {"instructions": "Only docs.", "num_followups": 2}
+        # The config carries the count and model; the top-level keys are only for the top-level form.
+        assert "num_followups" not in config
+        assert "followup_model" not in config
+        assert "followup_config" not in config
+
+    def test_boolean_followups_serialize_as_booleans(self):
+        assert Team(members=[], followups=True).to_dict()["followups"] is True
+        assert "followups" not in Team(members=[], followups=False).to_dict()  # the default is omitted
+        assert Team.from_dict({"id": "on", "followups": True}).followups is True
+        assert Team.from_dict({"id": "off", "followups": False}).followups is False
+
+    def test_from_dict_roundtrip_preserves_followup_settings(self):
+        from agno.agent import FollowupConfig
+
+        team = Team(members=[], followups=FollowupConfig(instructions="Only docs.", num_followups=2))
+        reconstructed = Team.from_dict(team.to_dict())
+        assert isinstance(reconstructed.followups, FollowupConfig)
+        assert reconstructed.num_followups == 2
+        assert reconstructed.followups.instructions == "Only docs."
+        assert reconstructed.followups.model is None
+
+    def test_legacy_followup_model_roundtrip(self):
+        from agno.models.openai import OpenAIChat
+
+        model = OpenAIChat(id="gpt-5.5")
+        config = Team(members=[], followups=True, followup_model=model).to_dict()
+        assert config["followup_model"] == {"id": model.id, "name": model.name, "provider": model.provider}
+        reconstructed = Team.from_dict(config)
+        assert isinstance(reconstructed.followup_model, OpenAIChat)
+        assert reconstructed.followup_model.id == "gpt-5.5"
+
+    def test_config_model_roundtrip(self):
+        from agno.agent import FollowupConfig
+        from agno.models.openai import OpenAIResponses
+
+        model = OpenAIResponses(id="gpt-5.5")
+        config = Team(members=[], followups=FollowupConfig(model=model, instructions="Only docs.")).to_dict()
+        identity = {"id": model.id, "name": model.name, "provider": model.provider}
+        assert config["followups"] == {"model": identity, "instructions": "Only docs."}
+        reconstructed = Team.from_dict(config)
+        assert isinstance(reconstructed.followups.model, OpenAIResponses)
+        assert reconstructed.followups.model.id == "gpt-5.5"
+        assert reconstructed.followups.instructions == "Only docs."
+
+    def test_config_model_and_main_model_survive_distinctly(self):
+        from agno.agent import FollowupConfig
+        from agno.models.openai import OpenAIChat, OpenAIResponses
+
+        team = Team(
+            members=[],
+            model=OpenAIChat(id="gpt-4o"),
+            followups=FollowupConfig(model=OpenAIResponses(id="gpt-4.1-mini")),
+        )
+        reconstructed = Team.from_dict(team.to_dict())
+        assert reconstructed.model.id == "gpt-4o"
+        assert reconstructed.followup_model is None
+        assert reconstructed.followups.model.id == "gpt-4.1-mini"
+        assert isinstance(reconstructed.followups.model, OpenAIResponses)
+
+    def test_instructions_only_config(self):
+        from agno.agent import FollowupConfig
+
+        config = Team(members=[], followups=FollowupConfig(instructions="Only docs.")).to_dict()
+        assert config["followups"] == {"instructions": "Only docs."}
+        assert Team.from_dict(config).followups.model is None
+
+    def test_model_only_config(self):
+        from agno.agent import FollowupConfig
+        from agno.models.openai import OpenAIResponses
+
+        model = OpenAIResponses(id="gpt-5.5")
+        config = Team(members=[], followups=FollowupConfig(model=model)).to_dict()
+        assert config["followups"] == {"model": {"id": model.id, "name": model.name, "provider": model.provider}}
+        assert Team.from_dict(config).followups.instructions is None
+
+    def test_empty_config_object_is_distinct_from_true(self):
+        from agno.agent import FollowupConfig
+
+        with_empty = Team(members=[], followups=FollowupConfig()).to_dict()
+        assert with_empty["followups"] == {}
+        reconstructed = Team.from_dict(with_empty)
+        assert reconstructed.followups == FollowupConfig()
+        assert reconstructed.num_followups == 3
+
+        plain = Team(members=[], followups=True).to_dict()
+        assert plain["followups"] is True
+        assert Team.from_dict(plain).followups is True
+
+    def test_default_num_followups_is_omitted(self):
+        assert "num_followups" not in Team(members=[], followups=True).to_dict()
+
+    def test_config_count_is_stored_on_the_config(self):
+        from agno.agent import FollowupConfig
+
+        config = Team(members=[], followups=FollowupConfig(num_followups=5)).to_dict()
+        assert config["followups"] == {"num_followups": 5}
+        assert "num_followups" not in config  # carried by the config
+        reconstructed = Team.from_dict(config)
+        assert reconstructed.followups.num_followups == 5
+        assert reconstructed.num_followups == 5
+
+    def test_dict_without_followup_keys_uses_defaults(self, sample_team_config):
+        reconstructed = Team.from_dict(sample_team_config)
+        assert reconstructed.followups is False
+        assert reconstructed.num_followups == 3
+        assert reconstructed.followup_model is None
+
+    @pytest.mark.parametrize(
+        "instructions",
+        [None, "", "   ", "Suggest only documentation questions.", "Nur Dokumentation – 日本語 ✓"],
+        ids=["none", "empty", "whitespace", "plain", "unicode"],
+    )
+    def test_instructions_preserved_exactly(self, instructions):
+        from agno.agent import FollowupConfig
+
+        config = Team(members=[], followups=FollowupConfig(instructions=instructions)).to_dict()
+        assert Team.from_dict(config).followups.instructions == instructions
+
+    def test_string_model_references_roundtrip(self):
+        from agno.agent import FollowupConfig
+        from agno.models.base import Model
+
+        # Resolved at construction, so either slot serializes as a model dict.
+        config = Team(members=[], followups=FollowupConfig(model="openai:gpt-5.5")).to_dict()
+        assert config["followups"]["model"]["id"] == "gpt-5.5"
+        assert isinstance(Team.from_dict(config).followups.model, Model)
+        config = Team(members=[], followups=True, followup_model="openai:gpt-5.5").to_dict()
+        assert config["followup_model"]["id"] == "gpt-5.5"
+        assert isinstance(Team.from_dict(config).followup_model, Model)
+
+    def test_raw_string_references_in_serialized_dict_resolve(self):
+        from agno.models.openai import OpenAIResponses
+
+        config = {
+            "id": "string-team",
+            "followups": {"model": "openai:gpt-5.5", "instructions": "Only docs."},
+        }
+        reconstructed = Team.from_dict(config)
+        assert isinstance(reconstructed.followups.model, OpenAIResponses)
+        assert reconstructed.followups.instructions == "Only docs."
+        legacy = Team.from_dict({"id": "legacy", "followups": True, "followup_model": "openai:gpt-5.5"})
+        assert isinstance(legacy.followup_model, OpenAIResponses)
+
+    def test_stored_dict_with_both_forms_is_rejected(self):
+        with pytest.raises(ValueError, match="not both"):
+            Team.from_dict({"id": "both", "followups": {"instructions": "Only docs."}, "num_followups": 2})
+
+    def test_registry_model_is_reused_with_its_connection_settings(self):
+        from agno.agent import FollowupConfig
+        from agno.models.openai import OpenAIResponses
+
+        live = OpenAIResponses(id="gpt-5.5", base_url="http://localhost:1/v1")
+        registry = Registry(models=[live])
+        configured = Team.from_dict(Team(members=[], followups=FollowupConfig(model=live)).to_dict(), registry=registry)
+        assert configured.followups.model is live
+        assert configured.followups.model.base_url == "http://localhost:1/v1"
+        top_level = Team.from_dict(Team(members=[], followups=True, followup_model=live).to_dict(), registry=registry)
+        assert top_level.followup_model is live
+
+    def test_no_credentials_or_clients_serialized(self):
+        from agno.agent import FollowupConfig
+        from agno.models.openai import OpenAIResponses
+
+        secret = "sk-review-not-a-real-key"
+        live = OpenAIResponses(id="gpt-5.5", api_key=secret, base_url="http://localhost:1/v1")
+        for team in (
+            Team(members=[], followups=FollowupConfig(model=live, instructions="x")),
+            Team(members=[], followups=True, followup_model=live),
+        ):
+            serialized = repr(team.to_dict())
+            assert secret not in serialized
+            for forbidden in ("api_key", "base_url", "client", "http://"):
+                assert forbidden not in serialized

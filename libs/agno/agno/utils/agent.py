@@ -1,12 +1,35 @@
+import asyncio
 from asyncio import Future, Task
-from typing import AsyncIterator, Iterator, List, Optional, Sequence, Union
+from copy import deepcopy
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Dict,
+    Iterator,
+    List,
+    Optional,
+    Sequence,
+    Type,
+    TypeVar,
+    Union,
+)
 
+from pydantic import BaseModel
+
+from agno.db.base import AsyncBaseDb
 from agno.media import Audio, File, Image, Video
+from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.message import Message
+from agno.models.response import ModelResponse
+from agno.run import RunContext
 from agno.run.agent import RunEvent, RunInput, RunOutput, RunOutputEvent
 from agno.run.team import RunOutputEvent as TeamRunOutputEvent
 from agno.run.team import TeamRunOutput
-from agno.session import AgentSession, TeamSession
+from agno.session import AgentSession, TeamSession, WorkflowSession
+from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.events import (
     create_memory_update_completed_event,
     create_memory_update_started_event,
@@ -16,10 +39,20 @@ from agno.utils.events import (
 )
 from agno.utils.log import log_debug, log_warning
 
+if TYPE_CHECKING:
+    from agno.agent.agent import Agent
+    from agno.media.reference import MediaReference
+    from agno.team.team import Team
 
-async def await_for_background_tasks(
+
+def _has_async_db(entity: Union["Agent", "Team"]) -> bool:
+    """Return True if the entity's db is an async implementation."""
+    return entity.db is not None and isinstance(entity.db, AsyncBaseDb)
+
+
+async def await_for_open_threads(
     memory_task: Optional[Task] = None,
-    cultural_knowledge_task: Optional[Task] = None,
+    learning_task: Optional[Task] = None,
 ) -> None:
     if memory_task is not None:
         try:
@@ -27,15 +60,16 @@ async def await_for_background_tasks(
         except Exception as e:
             log_warning(f"Error in memory creation: {str(e)}")
 
-    if cultural_knowledge_task is not None:
+    if learning_task is not None:
         try:
-            await cultural_knowledge_task
+            await learning_task
         except Exception as e:
-            log_warning(f"Error in cultural knowledge creation: {str(e)}")
+            log_warning(f"Error in learning extraction: {str(e)}")
 
 
-def wait_for_background_tasks(
-    memory_future: Optional[Future] = None, cultural_knowledge_future: Optional[Future] = None
+def wait_for_open_threads(
+    memory_future: Optional[Future] = None,
+    learning_future: Optional[Future] = None,
 ) -> None:
     if memory_future is not None:
         try:
@@ -43,21 +77,21 @@ def wait_for_background_tasks(
         except Exception as e:
             log_warning(f"Error in memory creation: {str(e)}")
 
-    # Wait for cultural knowledge creation
-    if cultural_knowledge_future is not None:
+    if learning_future is not None:
         try:
-            cultural_knowledge_future.result()
+            learning_future.result()
         except Exception as e:
-            log_warning(f"Error in cultural knowledge creation: {str(e)}")
+            log_warning(f"Error in learning extraction: {str(e)}")
 
 
-async def await_for_background_tasks_stream(
+async def await_for_thread_tasks_stream(
     run_response: Union[RunOutput, TeamRunOutput],
     memory_task: Optional[Task] = None,
-    cultural_knowledge_task: Optional[Task] = None,
+    learning_task: Optional[Task] = None,
     stream_events: bool = False,
     events_to_skip: Optional[List[RunEvent]] = None,
     store_events: bool = False,
+    get_memories_callback: Optional[Callable[[], Union[Optional[List[Any]], Awaitable[Optional[List[Any]]]]]] = None,
 ) -> AsyncIterator[RunOutputEvent]:
     if memory_task is not None:
         if stream_events:
@@ -80,35 +114,49 @@ async def await_for_background_tasks_stream(
         except Exception as e:
             log_warning(f"Error in memory creation: {str(e)}")
         if stream_events:
+            # Get memories after update if callback provided
+            memories = None
+            if get_memories_callback is not None:
+                try:
+                    result = get_memories_callback()
+                    # Handle both sync and async callbacks
+                    if asyncio.iscoroutine(result):
+                        memories = await result
+                    else:
+                        memories = result
+                except Exception as e:
+                    log_warning(f"Error getting memories: {str(e)}")
+
             if isinstance(run_response, TeamRunOutput):
                 yield handle_event(  # type: ignore
-                    create_team_memory_update_completed_event(from_run_response=run_response),
+                    create_team_memory_update_completed_event(from_run_response=run_response, memories=memories),
                     run_response,
                     events_to_skip=events_to_skip,  # type: ignore
                     store_events=store_events,
                 )
             else:
                 yield handle_event(  # type: ignore
-                    create_memory_update_completed_event(from_run_response=run_response),
+                    create_memory_update_completed_event(from_run_response=run_response, memories=memories),
                     run_response,
                     events_to_skip=events_to_skip,  # type: ignore
                     store_events=store_events,
                 )
 
-    if cultural_knowledge_task is not None:
+    if learning_task is not None:
         try:
-            await cultural_knowledge_task
+            await learning_task
         except Exception as e:
-            log_warning(f"Error in cultural knowledge creation: {str(e)}")
+            log_warning(f"Error in learning extraction: {str(e)}")
 
 
-def wait_for_background_tasks_stream(
+def wait_for_thread_tasks_stream(
     run_response: Union[TeamRunOutput, RunOutput],
     memory_future: Optional[Future] = None,
-    cultural_knowledge_future: Optional[Future] = None,
+    learning_future: Optional[Future] = None,
     stream_events: bool = False,
     events_to_skip: Optional[List[RunEvent]] = None,
     store_events: bool = False,
+    get_memories_callback: Optional[Callable[[], Optional[List[Any]]]] = None,
 ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]:
     if memory_future is not None:
         if stream_events:
@@ -131,28 +179,55 @@ def wait_for_background_tasks_stream(
         except Exception as e:
             log_warning(f"Error in memory creation: {str(e)}")
         if stream_events:
+            # Get memories after update if callback provided
+            memories = None
+            if get_memories_callback is not None:
+                try:
+                    memories = get_memories_callback()
+                except Exception as e:
+                    log_warning(f"Error getting memories: {str(e)}")
+
             if isinstance(run_response, TeamRunOutput):
                 yield handle_event(  # type: ignore
-                    create_team_memory_update_completed_event(from_run_response=run_response),
+                    create_team_memory_update_completed_event(from_run_response=run_response, memories=memories),
                     run_response,
                     events_to_skip=events_to_skip,  # type: ignore
                     store_events=store_events,
                 )
             else:
                 yield handle_event(  # type: ignore
-                    create_memory_update_completed_event(from_run_response=run_response),
+                    create_memory_update_completed_event(from_run_response=run_response, memories=memories),
                     run_response,
                     events_to_skip=events_to_skip,  # type: ignore
                     store_events=store_events,
                 )
 
-    # Wait for cultural knowledge creation
-    if cultural_knowledge_future is not None:
-        # TODO: Add events
+    if learning_future is not None:
         try:
-            cultural_knowledge_future.result()
+            learning_future.result()
         except Exception as e:
-            log_warning(f"Error in cultural knowledge creation: {str(e)}")
+            log_warning(f"Error in learning extraction: {str(e)}")
+
+
+def collect_background_metrics(*futures_or_tasks: Any) -> List["RunMetrics"]:
+    """Collect RunMetrics returned by completed background futures/tasks.
+
+    Call this after wait_for_open_threads / await_for_open_threads (or the
+    streaming variants) to gather the isolated metrics collectors produced by
+    background memory and learning tasks.  Each argument can be a
+    ``concurrent.futures.Future``, ``asyncio.Task``, or ``None``.
+    """
+    collected: List[RunMetrics] = []
+    for f in futures_or_tasks:
+        if f is None or not f.done():
+            continue
+        try:
+            result = f.result()
+            if isinstance(result, RunMetrics):
+                collected.append(result)
+        except BaseException:
+            pass
+    return collected
 
 
 def collect_joint_images(
@@ -286,46 +361,215 @@ def collect_joint_files(
     return joint_files if joint_files else None
 
 
-def scrub_media_from_run_output(run_response: Union[RunOutput, TeamRunOutput]) -> None:
+def store_media_util(run_response: Union[RunOutput, TeamRunOutput], model_response: ModelResponse):
+    """Store media from model response in run_response for persistence"""
+    # Handle generated media fields from ModelResponse (generated media)
+    if model_response.images is not None:
+        for image in model_response.images:
+            if run_response.images is None:
+                run_response.images = []
+            run_response.images.append(image)  # Generated images go to run_response.images
+
+    if model_response.videos is not None:
+        for video in model_response.videos:
+            if run_response.videos is None:
+                run_response.videos = []
+            run_response.videos.append(video)  # Generated videos go to run_response.videos
+
+    if model_response.audios is not None:
+        for audio in model_response.audios:
+            if run_response.audio is None:
+                run_response.audio = []
+            run_response.audio.append(audio)  # Generated audio go to run_response.audio
+
+    if model_response.files is not None:
+        for file in model_response.files:
+            if run_response.files is None:
+                run_response.files = []
+            run_response.files.append(file)  # Generated files go to run_response.files
+
+
+def validate_media_object_id(
+    images: Optional[Sequence[Image]] = None,
+    videos: Optional[Sequence[Video]] = None,
+    audios: Optional[Sequence[Audio]] = None,
+    files: Optional[Sequence[File]] = None,
+) -> tuple:
+    image_list = None
+    if images:
+        image_list = []
+        for img in images:
+            if not img.id:
+                from uuid import uuid4
+
+                img.id = str(uuid4())
+            image_list.append(img)
+
+    video_list = None
+    if videos:
+        video_list = []
+        for vid in videos:
+            if not vid.id:
+                from uuid import uuid4
+
+                vid.id = str(uuid4())
+            video_list.append(vid)
+
+    audio_list = None
+    if audios:
+        audio_list = []
+        for aud in audios:
+            if not aud.id:
+                from uuid import uuid4
+
+                aud.id = str(uuid4())
+            audio_list.append(aud)
+
+    file_list = None
+    if files:
+        file_list = []
+        for file in files:
+            if not file.id:
+                from uuid import uuid4
+
+                file.id = str(uuid4())
+            file_list.append(file)
+
+    return image_list, video_list, audio_list, file_list
+
+
+def _media_carries_data(media: Any) -> bool:
+    """True if a media object still carries retrievable data.
+
+    Media with an offload reference, inline content, or a provider-managed handle (e.g. a
+    GeminiFile) is kept by the keep_references scrub; empty and url-only ones are dropped.
     """
-    Completely remove all media from RunOutput when store_media=False.
-    This includes media in input, output artifacts, and all messages.
+    return (
+        getattr(media, "media_reference", None) is not None
+        or getattr(media, "content", None) is not None
+        or getattr(media, "external", None) is not None
+    )
+
+
+def scrub_media_from_run_output(run_response: Union[RunOutput, TeamRunOutput], keep_references: bool = False) -> None:
+    """
+    Remove media from RunOutput when store_media=False.
+
+    With keep_references=True (media_storage configured), media that still carries data is
+    preserved: offloaded media as a lightweight MediaReference, un-offloaded media inline.
     """
     # 1. Scrub RunInput media
     if run_response.input is not None:
-        run_response.input.images = []
-        run_response.input.videos = []
-        run_response.input.audios = []
-        run_response.input.files = []
+        if keep_references:
+            run_response.input.images = [img for img in (run_response.input.images or []) if _media_carries_data(img)]
+            run_response.input.videos = [v for v in (run_response.input.videos or []) if _media_carries_data(v)]
+            run_response.input.audios = [a for a in (run_response.input.audios or []) if _media_carries_data(a)]
+            run_response.input.files = [f for f in (run_response.input.files or []) if _media_carries_data(f)]
+        else:
+            run_response.input.images = []
+            run_response.input.videos = []
+            run_response.input.audios = []
+            run_response.input.files = []
 
-    # 3. Scrub media from all messages
+    # 2. Scrub media from all messages
     if run_response.messages:
         for message in run_response.messages:
-            scrub_media_from_message(message)
+            scrub_media_from_message(message, keep_references=keep_references)
 
-    # 4. Scrub media from additional_input messages if any
+    # 3. Scrub media from additional_input messages if any
     if run_response.additional_input:
         for message in run_response.additional_input:
-            scrub_media_from_message(message)
+            scrub_media_from_message(message, keep_references=keep_references)
 
-    # 5. Scrub media from reasoning_messages if any
+    # 4. Scrub media from reasoning_messages if any
     if run_response.reasoning_messages:
         for message in run_response.reasoning_messages:
-            scrub_media_from_message(message)
+            scrub_media_from_message(message, keep_references=keep_references)
+
+    # 5. Null top-level output media fields
+    if keep_references:
+        run_response.images = [img for img in (run_response.images or []) if _media_carries_data(img)] or None
+        run_response.videos = [v for v in (run_response.videos or []) if _media_carries_data(v)] or None
+        run_response.audio = [a for a in (run_response.audio or []) if _media_carries_data(a)] or None
+        run_response.files = [f for f in (run_response.files or []) if _media_carries_data(f)] or None
+    else:
+        run_response.images = None
+        run_response.videos = None
+        run_response.audio = None
+        run_response.files = None
+
+    # 6. Member responses (TeamRunOutput only) follow this row's store_media; their own flags
+    # are applied by Team._scrub_member_responses.
+    member_responses = getattr(run_response, "member_responses", None)
+    if member_responses:
+        for member_response in member_responses:
+            scrub_media_from_run_output(member_response, keep_references=keep_references)
 
 
-def scrub_media_from_message(message: Message) -> None:
-    """Remove all media from a Message object."""
-    # Input media
-    message.images = None
-    message.videos = None
-    message.audio = None
-    message.files = None
+def scrub_media_from_message(message: Message, keep_references: bool = False) -> None:
+    """Remove media from a Message. If keep_references=True, preserve media that still
+    carries data (reference, inline content, or external handle).
+    """
+    if keep_references:
+        message.images = [img for img in (message.images or []) if _media_carries_data(img)] or None
+        message.videos = [v for v in (message.videos or []) if _media_carries_data(v)] or None
+        message.audio = [a for a in (message.audio or []) if _media_carries_data(a)] or None
+        message.files = [f for f in (message.files or []) if _media_carries_data(f)] or None
+        # Output media
+        if message.audio_output and not _media_carries_data(message.audio_output):
+            message.audio_output = None
+        if message.image_output and not _media_carries_data(message.image_output):
+            message.image_output = None
+        if message.video_output and not _media_carries_data(message.video_output):
+            message.video_output = None
+    else:
+        # Input media
+        message.images = None
+        message.videos = None
+        message.audio = None
+        message.files = None
+        # Output media
+        message.audio_output = None
+        message.image_output = None
+        message.video_output = None
 
-    # Output media
-    message.audio_output = None
-    message.image_output = None
-    message.video_output = None
+
+def scrub_workflow_media(run_response: Any, keep_references: bool = False) -> None:
+    """Remove media from a WorkflowRunOutput when store_media=False.
+
+    Mirrors scrub_media_from_run_output across the workflow shape: top-level media, step
+    outputs, step executor runs, and the workflow agent run.
+    """
+    from agno.run.workflow import WorkflowRunOutput
+    from agno.utils.media_offload import iter_step_outputs
+
+    def _filter(media_list: Optional[Sequence[Any]]) -> Optional[List[Any]]:
+        if not keep_references:
+            return None
+        return [m for m in (media_list or []) if _media_carries_data(m)] or None
+
+    run_response.images = _filter(run_response.images)
+    run_response.videos = _filter(run_response.videos)
+    run_response.audio = _filter(run_response.audio)
+    run_response.files = _filter(run_response.files)
+    response_audio = run_response.response_audio
+    if response_audio is not None and not (keep_references and _media_carries_data(response_audio)):
+        run_response.response_audio = None
+
+    for step_output in iter_step_outputs(run_response):
+        step_output.images = _filter(step_output.images)
+        step_output.videos = _filter(step_output.videos)
+        step_output.audio = _filter(step_output.audio)
+        step_output.files = _filter(step_output.files)
+
+    for executor_run in run_response.step_executor_runs or []:
+        if isinstance(executor_run, WorkflowRunOutput):
+            scrub_workflow_media(executor_run, keep_references=keep_references)
+        else:
+            scrub_media_from_run_output(executor_run, keep_references=keep_references)
+
+    if run_response.workflow_agent_run is not None:
+        scrub_media_from_run_output(run_response.workflow_agent_run, keep_references=keep_references)
 
 
 def scrub_tool_results_from_run_output(run_response: Union[RunOutput, TeamRunOutput]) -> None:
@@ -370,3 +614,787 @@ def scrub_history_messages_from_run_output(run_response: Union[RunOutput, TeamRu
     # Remove messages with from_history=True
     if run_response.messages:
         run_response.messages = [msg for msg in run_response.messages if not msg.from_history]
+
+
+def isolate_media_scrub_targets(run_response: Union[RunOutput, TeamRunOutput]) -> None:
+    """Give ``run_response`` its own shallow copies of the collections that media
+    scrubbing mutates in place (Message objects and RunInput).
+
+    ``scrub_media_from_run_output`` (store_media=False) reassigns attributes on
+    Message and RunInput objects. A shallow ``copy.copy`` of a RunOutput shares
+    those nested objects with the source, so scrubbing a *storage copy* on a
+    mid-run checkpoint would strip media off the still-running live run. Call
+    this on the storage copy before scrubbing on the in-flight (checkpoint) path.
+
+    Shallow per-element copies are enough — the scrub only reassigns attributes,
+    it does not mutate nested structures — and they avoid duplicating the media
+    payloads themselves (the copies share the payload refs until they are nulled).
+    """
+    import copy
+
+    if run_response.messages is not None:
+        run_response.messages = [copy.copy(message) for message in run_response.messages]
+    if run_response.additional_input is not None:
+        run_response.additional_input = [copy.copy(message) for message in run_response.additional_input]
+    if run_response.reasoning_messages is not None:
+        run_response.reasoning_messages = [copy.copy(message) for message in run_response.reasoning_messages]
+    if run_response.input is not None:
+        run_response.input = copy.copy(run_response.input)
+
+    # Member responses (TeamRunOutput only) are the same objects the member rows are written from.
+    if isinstance(run_response, TeamRunOutput) and run_response.member_responses:
+        isolated_members = []
+        for member_response in run_response.member_responses:
+            member_copy = copy.copy(member_response)
+            isolate_media_scrub_targets(member_copy)
+            isolated_members.append(member_copy)
+        run_response.member_responses = isolated_members
+
+
+RunOutputT = TypeVar("RunOutputT", RunOutput, TeamRunOutput)
+
+
+def drop_opted_out_member_media(entity: Union["Agent", "Team"], run_response: Any) -> None:
+    """Strip member media the team is not allowed to upload. No-op outside a team run.
+
+    Gated on the run being a team run, not on it holding member responses: media a member
+    surfaced as the team's own answer is filtered off the top level either way.
+    """
+    if not hasattr(run_response, "member_responses"):
+        return
+
+    from agno.team._run import drop_opted_out_member_media as drop_for_team
+
+    drop_for_team(entity, run_response)  # type: ignore[arg-type]
+
+
+def build_offloaded_storage_copy(
+    entity: Union["Agent", "Team"],
+    run_response: RunOutputT,
+    session_id: str,
+    cache: Optional[Dict[str, "MediaReference"]] = None,
+) -> Optional[RunOutputT]:
+    """Return a deep copy of ``run_response`` with its media offloaded, or None.
+
+    Used by the writes that persist a run while its media is still inline: background
+    PENDING/RUNNING rows and mid-run checkpoints. None means the caller writes the run
+    inline, either because there was nothing to offload or because the copy failed.
+    """
+    # With store_media off the media is scrubbed from the row anyway, so uploading it is wasted.
+    if not entity.store_media or entity.media_storage is None:
+        return None
+
+    import copy
+
+    from agno.media.storage.base import AsyncMediaStorage
+    from agno.utils.media_offload import offload_cache_for
+
+    # A caller that already holds a cache passes it in, so a run reached by two writes uploads once.
+    if cache is None:
+        cache = offload_cache_for(run_response)
+
+    # Raised, not caught below: an async backend on a sync run is a configuration error.
+    if isinstance(entity.media_storage, AsyncMediaStorage):
+        raise ValueError("Cannot use sync run() with an AsyncMediaStorage. Use arun() instead.")
+
+    try:
+        from agno.utils.media_offload import offload_run_media
+
+        storage_copy = copy.deepcopy(run_response)
+        drop_opted_out_member_media(entity, storage_copy)
+        offload_run_media(
+            storage_copy,
+            entity.media_storage,
+            session_id,
+            cache=cache,
+        )
+        return storage_copy
+    except Exception as e:
+        log_warning(f"Media offload failed, falling back to inline storage: {e}")
+        return None
+
+
+async def abuild_offloaded_storage_copy(
+    entity: Union["Agent", "Team"],
+    run_response: RunOutputT,
+    session_id: str,
+    cache: Optional[Dict[str, "MediaReference"]] = None,
+) -> Optional[RunOutputT]:
+    """Async variant of :func:`build_offloaded_storage_copy`."""
+    if not entity.store_media or entity.media_storage is None:
+        return None
+
+    import copy
+
+    from agno.media.storage.base import AsyncMediaStorage, MediaStorage
+    from agno.utils.media_offload import offload_cache_for
+
+    if cache is None:
+        cache = offload_cache_for(run_response)
+
+    try:
+        if isinstance(entity.media_storage, AsyncMediaStorage):
+            from agno.utils.media_offload import aoffload_run_media
+
+            storage_copy = copy.deepcopy(run_response)
+            drop_opted_out_member_media(entity, storage_copy)
+            await aoffload_run_media(
+                storage_copy,
+                entity.media_storage,
+                session_id,
+                cache=cache,
+            )
+            return storage_copy
+        if isinstance(entity.media_storage, MediaStorage):
+            # Sync storage in an async run: upload in a worker thread to keep the event loop free.
+            from agno.utils.media_offload import offload_run_media
+
+            storage_copy = copy.deepcopy(run_response)
+            drop_opted_out_member_media(entity, storage_copy)
+            await asyncio.to_thread(
+                offload_run_media,
+                storage_copy,
+                entity.media_storage,
+                session_id,
+                cache,
+            )
+            return storage_copy
+        log_warning("media_storage is not a MediaStorage or AsyncMediaStorage. Skipping media offload.")
+    except Exception as e:
+        log_warning(f"Media offload failed, falling back to inline storage: {e}")
+    return None
+
+
+async def abuild_full_run_storage_copy(
+    entity: Union["Agent", "Team"],
+    run_response: RunOutputT,
+    session_id: str,
+) -> RunOutputT:
+    """Return the ``full_run`` copy of ``run_response``, honouring ``store_media``.
+
+    Offloaded when ``store_media`` is on, scrubbed when it is off, so the row never carries
+    raw bytes. Async only: every ``full_run`` write goes through ``apersist_run_transition``.
+    """
+    if not entity.store_media:
+        import copy
+
+        try:
+            # An uncopyable payload must not take the persist down with it.
+            scrubbed = copy.deepcopy(run_response)
+        except Exception as e:
+            log_warning(f"Could not copy run for the media scrub, scrubbing in place: {e}")
+            scrubbed = run_response
+        scrub_media_from_run_output(scrubbed, keep_references=False)
+        return scrubbed
+    return await abuild_offloaded_storage_copy(entity, run_response, session_id) or run_response
+
+
+def get_run_output_util(
+    entity: Union["Agent", "Team"],
+    run_id: str,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> Optional[
+    Union[
+        RunOutput,
+        TeamRunOutput,
+    ]
+]:
+    """
+    Get a RunOutput from the database.
+
+    Args:
+        run_id (str): The run_id to load from storage.
+        session_id (Optional[str]): The session_id to load from storage.
+        user_id (Optional[str]): The user_id to scope the session lookup.
+    """
+    if session_id is not None:
+        if _has_async_db(entity):
+            raise ValueError("Async database not supported for sync functions")
+
+        session = entity.get_session(session_id=session_id, user_id=user_id)
+        if session is not None:
+            run_response = session.get_run(run_id=run_id)
+            if run_response is not None:
+                return run_response  # type: ignore
+            else:
+                log_warning(f"RunOutput {run_id} not found in Session {session_id}")
+    elif entity.cached_session is not None:
+        run_response = entity.cached_session.get_run(run_id=run_id)
+        if run_response is not None:
+            return run_response  # type: ignore
+        else:
+            log_warning(f"RunOutput {run_id} not found in Session {entity.cached_session.session_id}")
+            return None
+    return None
+
+
+async def aget_run_output_util(
+    entity: Union["Agent", "Team"],
+    run_id: str,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> Optional[Union[RunOutput, TeamRunOutput]]:
+    """
+    Get a RunOutput from the database.
+
+    Args:
+        run_id (str): The run_id to load from storage.
+        session_id (Optional[str]): The session_id to load from storage.
+        user_id (Optional[str]): The user_id to scope the session lookup.
+    """
+    if session_id is not None:
+        session = await entity.aget_session(session_id=session_id, user_id=user_id)
+        if session is not None:
+            run_response = session.get_run(run_id=run_id)
+            if run_response is not None:
+                return run_response  # type: ignore
+            else:
+                log_warning(f"RunOutput {run_id} not found in Session {session_id}")
+    elif entity.cached_session is not None:
+        run_response = entity.cached_session.get_run(run_id=run_id)
+        if run_response is not None:
+            return run_response
+        else:
+            log_warning(f"RunOutput {run_id} not found in Session {entity.cached_session.session_id}")
+            return None
+    return None
+
+
+def _ensure_entity_id(entity: Union["Agent", "Team"]) -> None:
+    """Auto-derive ``entity.id`` from ``entity.name`` when it is not set.
+
+    Mirrors what ``arun()`` / ``initialize_*()`` do during a run. Uses
+    ``isinstance`` rather than class-name comparison so the right ``set_id``
+    is picked even for subclasses, and so mypy can narrow the argument type.
+    Imports are local because ``Agent`` / ``Team`` would cause a circular
+    import at module load time.
+    """
+    from agno.agent.agent import Agent
+    from agno.team.team import Team
+
+    if isinstance(entity, Team):
+        from agno.team._init import set_id as set_team_id
+
+        set_team_id(entity)
+    elif isinstance(entity, Agent):
+        from agno.agent._init import set_id as set_agent_id
+
+        set_agent_id(entity)
+
+
+def get_last_run_output_util(
+    entity: Union["Agent", "Team"], session_id: Optional[str] = None
+) -> Optional[Union[RunOutput, TeamRunOutput]]:
+    """
+    Get the last run response from the database.
+
+    Args:
+        session_id (Optional[str]): The session_id to load from storage.
+
+    Returns:
+        RunOutput: The last run response from the database.
+    """
+    from agno.agent.agent import Agent
+    from agno.team.team import Team
+
+    _ensure_entity_id(entity)
+
+    if session_id is not None:
+        if _has_async_db(entity):
+            raise ValueError("Async database not supported for sync functions")
+
+        session = entity.get_session(session_id=session_id)
+        if session is not None and session.runs is not None and len(session.runs) > 0:
+            for run_output in reversed(session.runs):
+                # A copy of the caller's own: history run objects are shared
+                # between session reads, and callers of the last-run getter
+                # mutate what they fetch (the continue-run flow in particular).
+                if isinstance(entity, Team):
+                    if getattr(run_output, "team_id", None) == entity.id:
+                        return deepcopy(run_output)  # type: ignore
+                elif isinstance(entity, Agent):
+                    if getattr(run_output, "agent_id", None) == entity.id:
+                        return deepcopy(run_output)  # type: ignore
+        else:
+            log_warning(f"No run responses found in Session {session_id}")
+
+    elif (
+        entity.cached_session is not None
+        and entity.cached_session.runs is not None
+        and len(entity.cached_session.runs) > 0
+    ):
+        for run_output in reversed(entity.cached_session.runs):
+            if isinstance(entity, Team):
+                if getattr(run_output, "team_id", None) == entity.id:
+                    return deepcopy(run_output)  # type: ignore
+            elif isinstance(entity, Agent):
+                if getattr(run_output, "agent_id", None) == entity.id:
+                    return deepcopy(run_output)  # type: ignore
+    return None
+
+
+async def aget_last_run_output_util(
+    entity: Union["Agent", "Team"], session_id: Optional[str] = None
+) -> Optional[Union[RunOutput, TeamRunOutput]]:
+    """
+    Get the last run response from the database.
+
+    Args:
+        session_id (Optional[str]): The session_id to load from storage.
+
+    Returns:
+        RunOutput: The last run response from the database.
+    """
+    from agno.agent.agent import Agent
+    from agno.team.team import Team
+
+    _ensure_entity_id(entity)
+
+    if session_id is not None:
+        session = await entity.aget_session(session_id=session_id)
+        if session is not None and session.runs is not None and len(session.runs) > 0:
+            for run_output in reversed(session.runs):
+                # A copy of the caller's own: history run objects are shared
+                # between session reads, and callers of the last-run getter
+                # mutate what they fetch (the continue-run flow in particular).
+                if isinstance(entity, Team):
+                    if getattr(run_output, "team_id", None) == entity.id:
+                        return deepcopy(run_output)  # type: ignore
+                elif isinstance(entity, Agent):
+                    if getattr(run_output, "agent_id", None) == entity.id:
+                        return deepcopy(run_output)  # type: ignore
+        else:
+            log_warning(f"No run responses found in Session {session_id}")
+
+    elif (
+        entity.cached_session is not None
+        and entity.cached_session.runs is not None
+        and len(entity.cached_session.runs) > 0
+    ):
+        for run_output in reversed(entity.cached_session.runs):
+            if isinstance(entity, Team):
+                if getattr(run_output, "team_id", None) == entity.id:
+                    return deepcopy(run_output)  # type: ignore
+            elif isinstance(entity, Agent):
+                if getattr(run_output, "agent_id", None) == entity.id:
+                    return deepcopy(run_output)  # type: ignore
+    return None
+
+
+def set_session_name_util(
+    entity: Union["Agent", "Team"], session_id: str, autogenerate: bool = False, session_name: Optional[str] = None
+) -> Union[AgentSession, TeamSession, WorkflowSession]:
+    """Set the session name and save to storage"""
+    if _has_async_db(entity):
+        raise ValueError("Async database not supported for sync functions")
+
+    session = entity.get_session(session_id=session_id)  # type: ignore
+
+    if session is None:
+        raise Exception("No session found")
+
+    # -*- Generate name for session
+    if autogenerate:
+        session_name = entity.generate_session_name(session=session)  # type: ignore
+        log_debug(f"Generated Session Name: {session_name}")
+    elif session_name is None:
+        raise Exception("No session name provided")
+
+    # -*- Rename session
+    if session.session_data is None:
+        session.session_data = {"session_name": session_name}
+    else:
+        session.session_data["session_name"] = session_name
+    # -*- Save to storage
+    entity.save_session(session=session)  # type: ignore
+
+    return session
+
+
+async def aset_session_name_util(
+    entity: Union["Agent", "Team"], session_id: str, autogenerate: bool = False, session_name: Optional[str] = None
+) -> Union[AgentSession, TeamSession, WorkflowSession]:
+    """Set the session name and save to storage"""
+    session = await entity.aget_session(session_id=session_id)  # type: ignore
+
+    if session is None:
+        raise Exception("Session not found")
+
+    # -*- Generate name for session
+    if autogenerate:
+        session_name = entity.generate_session_name(session=session)  # type: ignore
+        log_debug(f"Generated Session Name: {session_name}")
+    elif session_name is None:
+        raise Exception("No session name provided")
+
+    # -*- Rename session
+    if session.session_data is None:
+        session.session_data = {"session_name": session_name}
+    else:
+        session.session_data["session_name"] = session_name
+
+    # -*- Save to storage
+    await entity.asave_session(session=session)  # type: ignore
+
+    return session
+
+
+def get_session_name_util(entity: Union["Agent", "Team"], session_id: str) -> str:
+    """Get the session name for the given session ID and user ID."""
+
+    if _has_async_db(entity):
+        raise ValueError("Async database not supported for sync functions")
+
+    session = entity.get_session(session_id=session_id)  # type: ignore
+    if session is None:
+        raise Exception("Session not found")
+    return session.session_data.get("session_name", "") if session.session_data is not None else ""  # type: ignore
+
+
+async def aget_session_name_util(entity: Union["Agent", "Team"], session_id: str) -> str:
+    """Get the session name for the given session ID and user ID."""
+    session = await entity.aget_session(session_id=session_id)  # type: ignore
+    if session is None:
+        raise Exception("Session not found")
+    return session.session_data.get("session_name", "") if session.session_data is not None else ""  # type: ignore
+
+
+def get_session_state_util(entity: Union["Agent", "Team"], session_id: str) -> Dict[str, Any]:
+    """Get the session state for the given session ID and user ID."""
+    if _has_async_db(entity):
+        raise ValueError("Async database not supported for sync functions")
+
+    session = entity.get_session(session_id=session_id)  # type: ignore
+    if session is None:
+        raise Exception("Session not found")
+    return session.session_data.get("session_state", {}) if session.session_data is not None else {}  # type: ignore
+
+
+async def aget_session_state_util(entity: Union["Agent", "Team"], session_id: str) -> Dict[str, Any]:
+    """Get the session state for the given session ID and user ID."""
+    session = await entity.aget_session(session_id=session_id)  # type: ignore
+    if session is None:
+        raise Exception("Session not found")
+    return session.session_data.get("session_state", {}) if session.session_data is not None else {}  # type: ignore
+
+
+def update_session_state_util(
+    entity: Union["Agent", "Team"], session_state_updates: Dict[str, Any], session_id: str
+) -> str:
+    """
+    Update the session state for the given session ID and user ID.
+    Args:
+        session_state_updates: The updates to apply to the session state. Should be a dictionary of key-value pairs.
+        session_id: The session ID to update. If not provided, the current cached session ID is used.
+    Returns:
+        dict: The updated session state.
+    """
+    if _has_async_db(entity):
+        raise ValueError("Async database not supported for sync functions")
+
+    session = entity.get_session(session_id=session_id)  # type: ignore
+    if session is None:
+        raise Exception("Session not found")
+
+    if session.session_data is not None and "session_state" not in session.session_data:
+        session.session_data["session_state"] = {}
+
+    for key, value in session_state_updates.items():
+        session.session_data["session_state"][key] = value  # type: ignore
+
+    entity.save_session(session=session)  # type: ignore
+
+    return session.session_data["session_state"]  # type: ignore
+
+
+async def aupdate_session_state_util(
+    entity: Union["Agent", "Team"], session_state_updates: Dict[str, Any], session_id: str
+) -> str:
+    """
+    Update the session state for the given session ID and user ID.
+    Args:
+        session_state_updates: The updates to apply to the session state. Should be a dictionary of key-value pairs.
+        session_id: The session ID to update. If not provided, the current cached session ID is used.
+    Returns:
+        dict: The updated session state.
+    """
+    session = await entity.aget_session(session_id=session_id)  # type: ignore
+    if session is None:
+        raise Exception("Session not found")
+
+    if session.session_data is not None and "session_state" not in session.session_data:
+        session.session_data["session_state"] = {}
+
+    for key, value in session_state_updates.items():
+        session.session_data["session_state"][key] = value  # type: ignore
+
+    await entity.asave_session(session=session)  # type: ignore
+
+    return session.session_data["session_state"]  # type: ignore
+
+
+def get_session_metrics_util(entity: Union["Agent", "Team"], session_id: str) -> Optional[SessionMetrics]:
+    """Get the session metrics for the given session ID and user ID."""
+    if _has_async_db(entity):
+        raise ValueError("Async database not supported for sync functions")
+
+    session = entity.get_session(session_id=session_id)  # type: ignore
+    if session is None:
+        raise Exception("Session not found")
+
+    if session.session_data is not None:
+        session_metrics_from_db = session.session_data.get("session_metrics")
+        if isinstance(session_metrics_from_db, dict):
+            return SessionMetrics.from_dict(session_metrics_from_db)
+        elif isinstance(session_metrics_from_db, SessionMetrics):
+            return session_metrics_from_db
+        elif isinstance(session_metrics_from_db, RunMetrics):
+            # Legacy: convert RunMetrics to SessionMetrics
+            return SessionMetrics(
+                input_tokens=session_metrics_from_db.input_tokens,
+                output_tokens=session_metrics_from_db.output_tokens,
+                total_tokens=session_metrics_from_db.total_tokens,
+                audio_input_tokens=session_metrics_from_db.audio_input_tokens,
+                audio_output_tokens=session_metrics_from_db.audio_output_tokens,
+                audio_total_tokens=session_metrics_from_db.audio_total_tokens,
+                cache_read_tokens=session_metrics_from_db.cache_read_tokens,
+                cache_write_tokens=session_metrics_from_db.cache_write_tokens,
+                reasoning_tokens=session_metrics_from_db.reasoning_tokens,
+                cost=session_metrics_from_db.cost,
+            )
+    return None
+
+
+async def aget_session_metrics_util(entity: Union["Agent", "Team"], session_id: str) -> Optional[SessionMetrics]:
+    """Get the session metrics for the given session ID and user ID."""
+    session = await entity.aget_session(session_id=session_id)  # type: ignore
+    if session is None:
+        raise Exception("Session not found")
+
+    if session.session_data is not None:
+        session_metrics = session.session_data.get("session_metrics")
+        if isinstance(session_metrics, dict):
+            return SessionMetrics.from_dict(session_metrics)
+        elif isinstance(session_metrics, SessionMetrics):
+            return session_metrics
+        elif isinstance(session_metrics, RunMetrics):
+            return SessionMetrics(
+                input_tokens=session_metrics.input_tokens,
+                output_tokens=session_metrics.output_tokens,
+                total_tokens=session_metrics.total_tokens,
+                audio_input_tokens=session_metrics.audio_input_tokens,
+                audio_output_tokens=session_metrics.audio_output_tokens,
+                audio_total_tokens=session_metrics.audio_total_tokens,
+                cache_read_tokens=session_metrics.cache_read_tokens,
+                cache_write_tokens=session_metrics.cache_write_tokens,
+                reasoning_tokens=session_metrics.reasoning_tokens,
+                cost=session_metrics.cost,
+            )
+    return None
+
+
+def get_chat_history_util(entity: Union["Agent", "Team"], session_id: str) -> List[Message]:
+    """Read the chat history from the session
+
+    Args:
+        session_id: The session ID to get the chat history for. If not provided, the current cached session ID is used.
+    Returns:
+        List[Message]: The chat history from the session.
+    """
+    if _has_async_db(entity):
+        raise ValueError("Async database not supported for sync functions")
+
+    session = entity.get_session(session_id=session_id)  # type: ignore
+
+    if session is None:
+        raise Exception("Session not found")
+
+    return session.get_chat_history()  # type: ignore
+
+
+async def aget_chat_history_util(entity: Union["Agent", "Team"], session_id: str) -> List[Message]:
+    """Read the chat history from the session
+
+    Args:
+        session_id: The session ID to get the chat history for. If not provided, the current cached session ID is used.
+    Returns:
+        List[Message]: The chat history from the session.
+    """
+    session = await entity.aget_session(session_id=session_id)  # type: ignore
+
+    if session is None:
+        raise Exception("Session not found")
+
+    return session.get_chat_history()  # type: ignore
+
+
+def execute_instructions(
+    instructions: Callable,
+    agent: Optional[Union["Agent", "Team"]] = None,
+    team: Optional["Team"] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+) -> Union[str, List[str]]:
+    """Execute the instructions function."""
+    import inspect
+
+    signature = inspect.signature(instructions)
+    instruction_args: Dict[str, Any] = {}
+
+    # Check for agent parameter
+    if "agent" in signature.parameters:
+        instruction_args["agent"] = agent
+
+    if "team" in signature.parameters:
+        instruction_args["team"] = team
+
+    # Check for session_state parameter
+    if "session_state" in signature.parameters:
+        instruction_args["session_state"] = session_state if session_state is not None else {}
+
+    # Check for run_context parameter
+    if "run_context" in signature.parameters:
+        instruction_args["run_context"] = run_context or None
+
+    # Run the instructions function, await if it's awaitable, otherwise run directly (in thread)
+    if inspect.iscoroutinefunction(instructions):
+        raise Exception("Instructions function is async, use `agent.arun()` instead")
+
+    # Run the instructions function
+    return instructions(**instruction_args)
+
+
+def execute_system_message(
+    system_message: Callable,
+    agent: Optional[Union["Agent", "Team"]] = None,
+    team: Optional["Team"] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+) -> str:
+    """Execute the system message function."""
+    import inspect
+
+    signature = inspect.signature(system_message)
+    system_message_args: Dict[str, Any] = {}
+
+    # Check for agent parameter
+    if "agent" in signature.parameters:
+        system_message_args["agent"] = agent
+    if "team" in signature.parameters:
+        system_message_args["team"] = team
+    if inspect.iscoroutinefunction(system_message):
+        raise ValueError("System message function is async, use `agent.arun()` instead")
+
+    return system_message(**system_message_args)
+
+
+async def aexecute_instructions(
+    instructions: Callable,
+    agent: Optional[Union["Agent", "Team"]] = None,
+    team: Optional["Team"] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+) -> Union[str, List[str]]:
+    """Execute the instructions function."""
+    import inspect
+
+    signature = inspect.signature(instructions)
+    instruction_args: Dict[str, Any] = {}
+
+    # Check for agent parameter
+    if "agent" in signature.parameters:
+        instruction_args["agent"] = agent
+    if "team" in signature.parameters:
+        instruction_args["team"] = team
+
+    # Check for session_state parameter
+    if "session_state" in signature.parameters:
+        instruction_args["session_state"] = session_state if session_state is not None else {}
+
+    # Check for run_context parameter
+    if "run_context" in signature.parameters:
+        instruction_args["run_context"] = run_context or None
+
+    if inspect.iscoroutinefunction(instructions):
+        return await instructions(**instruction_args)
+    else:
+        return instructions(**instruction_args)
+
+
+async def aexecute_system_message(
+    system_message: Callable,
+    agent: Optional[Union["Agent", "Team"]] = None,
+    team: Optional["Team"] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+) -> str:
+    import inspect
+
+    signature = inspect.signature(system_message)
+    system_message_args: Dict[str, Any] = {}
+
+    # Check for agent parameter
+    if "agent" in signature.parameters:
+        system_message_args["agent"] = agent
+    if "team" in signature.parameters:
+        system_message_args["team"] = team
+
+    if inspect.iscoroutinefunction(system_message):
+        return await system_message(**system_message_args)
+    else:
+        return system_message(**system_message_args)
+
+
+def validate_input(
+    input: Union[str, List, Dict, Message, BaseModel], input_schema: Optional[Type[BaseModel]] = None
+) -> Union[str, List, Dict, Message, BaseModel]:
+    """Parse and validate input against input_schema if provided, otherwise return input as-is"""
+    if input_schema is None:
+        return input  # Return input unchanged if no schema is set
+
+    if input is None:
+        raise ValueError("Input required when input_schema is set")
+
+    # Handle Message objects - extract content
+    if isinstance(input, Message):
+        input = input.content  # type: ignore
+
+    # If input is a string, convert it to a dict
+    if isinstance(input, str):
+        import json
+
+        try:
+            input = json.loads(input)
+        except Exception as e:
+            raise ValueError(f"Failed to parse input. Is it a valid JSON string?: {e}")
+
+    # Case 1: Message is already a BaseModel instance
+    if isinstance(input, BaseModel):
+        if isinstance(input, input_schema):
+            try:
+                return input
+            except Exception as e:
+                raise ValueError(f"BaseModel validation failed: {str(e)}")
+        else:
+            # Different BaseModel types
+            raise ValueError(f"Expected {input_schema.__name__} but got {type(input).__name__}")
+
+    # Case 2: Message is a dict
+    elif isinstance(input, dict):
+        try:
+            # Check if the schema is a TypedDict
+            if is_typed_dict(input_schema):
+                validated_dict = validate_typed_dict(input, input_schema)
+                return validated_dict
+            else:
+                validated_model = input_schema(**input)
+                return validated_model
+        except Exception as e:
+            raise ValueError(f"Failed to parse dict into {input_schema.__name__}: {str(e)}")
+
+    # Case 3: Other types not supported for structured input
+    else:
+        raise ValueError(
+            f"Cannot validate {type(input)} against input_schema. Expected dict or {input_schema.__name__} instance."
+        )

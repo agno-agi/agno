@@ -2,38 +2,52 @@ import json
 import time
 from datetime import date, datetime, timedelta, timezone
 from os import getenv
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
+
+if TYPE_CHECKING:
+    from agno.tracing.schemas import Span, Trace
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.dynamo.schemas import get_table_schema_definition
 from agno.db.dynamo.utils import (
     apply_pagination,
     apply_sorting,
+    batch_write_with_retry,
     build_query_filter_expression,
     build_topic_filter_expression,
     calculate_date_metrics,
     create_table_if_not_exists,
-    deserialize_cultural_knowledge_from_db,
-    deserialize_eval_record,
     deserialize_from_dynamodb_item,
     deserialize_knowledge_row,
-    deserialize_session,
+    deserialize_metrics_date,
     deserialize_session_result,
     execute_query_with_pagination,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
     merge_with_existing_session,
     prepare_session_data,
-    serialize_cultural_knowledge_for_db,
     serialize_eval_record,
     serialize_knowledge_row,
     serialize_to_dynamo_item,
 )
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.session import AgentSession, Session, TeamSession, WorkflowSession
+from agno.db.utils import (
+    build_single_run_row,
+    deserialize_run,
+    deserialize_session,
+    deserialize_sessions,
+    drop_legacy_metrics,
+    filter_context_runs,
+    merge_runs_table_with_legacy_blob,
+    metrics_starting_date_from_records,
+)
+from agno.run.agent import RunOutput
+from agno.run.base import RunStatus
+from agno.run.team import TeamRunOutput
+from agno.run.workflow import WorkflowRunOutput
+from agno.session import Session
 from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
 
@@ -55,11 +69,13 @@ class DynamoDb(BaseDb):
         aws_access_key_id: Optional[str] = None,
         aws_secret_access_key: Optional[str] = None,
         session_table: Optional[str] = None,
-        culture_table: Optional[str] = None,
+        runs_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        traces_table: Optional[str] = None,
+        spans_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -71,11 +87,12 @@ class DynamoDb(BaseDb):
             aws_access_key_id: AWS access key ID.
             aws_secret_access_key: AWS secret access key.
             session_table: The name of the session table.
-            culture_table: The name of the culture table.
             memory_table: The name of the memory table.
             metrics_table: The name of the metrics table.
             eval_table: The name of the eval table.
             knowledge_table: The name of the knowledge table.
+            traces_table: The name of the traces table.
+            spans_table: The name of the spans table.
             id: ID of the database.
         """
         if id is None:
@@ -85,11 +102,13 @@ class DynamoDb(BaseDb):
         super().__init__(
             id=id,
             session_table=session_table,
-            culture_table=culture_table,
+            runs_table=runs_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
+            traces_table=traces_table,
+            spans_table=spans_table,
         )
 
         if db_client is not None:
@@ -112,27 +131,8 @@ class DynamoDb(BaseDb):
             session = boto3.Session(**session_kwargs)
             self.client = session.client("dynamodb")
 
-    def _create_tables(self):
-        tables_to_create = [
-            (self.session_table_name, "sessions"),
-            (self.memory_table_name, "memories"),
-            (self.metrics_table_name, "metrics"),
-            (self.eval_table_name, "evals"),
-            (self.knowledge_table_name, "knowledge_sources"),
-        ]
-
-        for table_name, table_type in tables_to_create:
-            if table_name:
-                try:
-                    schema = get_table_schema_definition(table_type)
-                    schema["TableName"] = table_name
-                    create_table_if_not_exists(self.client, table_name, schema)
-
-                except Exception as e:
-                    log_error(f"Failed to create table {table_name}: {e}")
-
-    def _table_exists(self, table_name: str) -> bool:
-        """Check if a DynamoDB table with the given name exists.
+    def table_exists(self, table_name: str) -> bool:
+        """Check if a DynamoDB table exists.
 
         Args:
             table_name: The name of the table to check
@@ -145,16 +145,30 @@ class DynamoDb(BaseDb):
             return True
         except self.client.exceptions.ResourceNotFoundException:
             return False
-        except Exception as e:
-            log_error(f"Error checking if table {table_name} exists: {e}")
-            return False
+
+    def _create_all_tables(self):
+        """Create all configured DynamoDB tables if they don't exist."""
+        tables_to_create = [
+            ("sessions", self.session_table_name),
+            ("runs", self.runs_table_name),
+            ("memories", self.memory_table_name),
+            ("metrics", self.metrics_table_name),
+            ("evals", self.eval_table_name),
+            ("knowledge", self.knowledge_table_name),
+        ]
+
+        for table_type, table_name in tables_to_create:
+            if not self.table_exists(table_name):
+                schema = get_table_schema_definition(table_type)
+                schema["TableName"] = table_name
+                create_table_if_not_exists(self.client, table_name, schema)
 
     def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = True) -> Optional[str]:
         """
         Get table name and ensure the table exists, creating it if needed.
 
         Args:
-            table_type: Type of table ("sessions", "memories", "metrics", "evals", "knowledge_sources")
+            table_type: Type of table ("sessions", "memories", "metrics", "evals", "knowledge", "traces", "spans")
 
         Returns:
             str: The table name
@@ -166,6 +180,8 @@ class DynamoDb(BaseDb):
 
         if table_type == "sessions":
             table_name = self.session_table_name
+        elif table_type == "runs":
+            table_name = self.runs_table_name
         elif table_type == "memories":
             table_name = self.memory_table_name
         elif table_type == "metrics":
@@ -174,27 +190,425 @@ class DynamoDb(BaseDb):
             table_name = self.eval_table_name
         elif table_type == "knowledge":
             table_name = self.knowledge_table_name
-        elif table_type == "culture":
-            table_name = self.culture_table_name
+        elif table_type == "traces":
+            table_name = self.trace_table_name
+        elif table_type == "spans":
+            # Ensure traces table exists first (spans reference traces)
+            self._get_table("traces", create_table_if_not_found=True)
+            table_name = self.span_table_name
         else:
             raise ValueError(f"Unknown table type: {table_type}")
 
         # Check if table exists, create if it doesn't
-        if not self._table_exists(table_name) and create_table_if_not_found:
+        if not self.table_exists(table_name) and create_table_if_not_found:
             schema = get_table_schema_definition(table_type)
             schema["TableName"] = table_name
             create_table_if_not_exists(self.client, table_name, schema)
 
         return table_name
 
+    def _ensure_schema_versions_table(self) -> None:
+        from agno.db.dynamo.schemas import SCHEMA_VERSIONS_TABLE_SCHEMA
+        from agno.db.dynamo.utils import create_table_if_not_exists
+
+        schema = SCHEMA_VERSIONS_TABLE_SCHEMA.copy()
+        schema["TableName"] = self.versions_table_name
+        create_table_if_not_exists(self.client, self.versions_table_name, schema)
+
+    def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
+        """Get the schema version stamped for the given table.
+
+        Defaults to "2.0.0" when nothing is stamped so the MigrationManager
+        runs migrations instead of skipping the table.
+        """
+        self._ensure_schema_versions_table()
+        response = self.client.get_item(
+            TableName=self.versions_table_name,
+            Key={"table_name": {"S": table_name}},
+        )
+        item = response.get("Item")
+        if not item:
+            return "2.0.0"
+        return item.get("version", {}).get("S") or "2.0.0"
+
+    def upsert_schema_version(self, table_name: str = "", version: str = "") -> None:
+        """Record the schema version stamp for the given table."""
+        self._ensure_schema_versions_table()
+        self.client.put_item(
+            TableName=self.versions_table_name,
+            Item={
+                "table_name": {"S": table_name},
+                "version": {"S": version},
+                "updated_at": {"N": str(int(time.time()))},
+            },
+        )
+
+    # --- Runs ---
+
+    def _query_runs_by_session(self, session_id: str) -> List[Dict[str, Any]]:
+        """Query all run items for a session, ordered by created_at via the GSI."""
+        table_name = self._get_table("runs", create_table_if_not_found=False)
+        items: List[Dict[str, Any]] = []
+        try:
+            response = self.client.query(
+                TableName=table_name,
+                IndexName="session_id-created_at-index",
+                KeyConditionExpression="session_id = :sid",
+                ExpressionAttributeValues={":sid": {"S": session_id}},
+            )
+            items.extend(response.get("Items", []))
+            while "LastEvaluatedKey" in response:
+                response = self.client.query(
+                    TableName=table_name,
+                    IndexName="session_id-created_at-index",
+                    KeyConditionExpression="session_id = :sid",
+                    ExpressionAttributeValues={":sid": {"S": session_id}},
+                    ExclusiveStartKey=response["LastEvaluatedKey"],
+                )
+                items.extend(response.get("Items", []))
+        except self.client.exceptions.ResourceNotFoundException:
+            return []
+        return items
+
+    def _get_session_runs_data(self, session_id: str) -> List[Dict[str, Any]]:
+        """Return raw run_data dicts for a session, ordered by run_index then created_at."""
+        items = self._query_runs_by_session(session_id)
+        rows = [deserialize_from_dynamodb_item(it) for it in items]
+        rows.sort(key=lambda r: (r.get("run_index") or 0, r.get("created_at") or 0))
+        return [r["run_data"] for r in rows if "run_data" in r]
+
+    def _get_sessions_runs(self, session_ids: List[str]) -> Optional[Dict[str, List[Dict[str, Any]]]]:
+        """Run dicts for several sessions in one read, used by the search fallback."""
+        return self._get_sessions_runs_data(session_ids)
+
+    def _get_sessions_runs_data(self, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+        if not session_ids:
+            return {}
+        if len(session_ids) == 1:
+            return {session_ids[0]: self._get_session_runs_data(session_ids[0])}
+        from concurrent.futures import ThreadPoolExecutor
+
+        # Runs are partitioned by session_id in the GSI, so each session needs its own Query; run them concurrently.
+        with ThreadPoolExecutor(max_workers=min(len(session_ids), 16)) as pool:
+            return dict(zip(session_ids, pool.map(self._get_session_runs_data, session_ids)))
+
+    def upsert_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> None:
+        """Upsert a single run item into the runs table (O(1) operation).
+
+        Optimized for updating existing runs (e.g., status changes in HITL or
+        background mode) without re-upserting all runs in the session.
+
+        For new runs, ``run_index`` should be provided or will be read from
+        ``run_data``. For updates to existing runs, ``run_index`` is preserved
+        from the original insert.
+
+        Args:
+            run: The run object or dictionary to upsert.
+            session_id: The session ID this run belongs to.
+            user_id: Optional user ID to associate with the run.
+            run_index: Optional run index for new runs.
+
+        Raises:
+            ValueError: If the run has no run_id.
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            table_name = self._get_table("runs", create_table_if_not_found=True)
+            if table_name is None:
+                return
+
+            row = build_single_run_row(
+                run=run,
+                session_id=session_id,
+                user_id=user_id,
+                run_index=run_index,
+            )
+
+            # Preserve the original run_index if the item already exists
+            try:
+                existing_resp = self.client.get_item(TableName=table_name, Key={"run_id": {"S": row["run_id"]}})
+                existing_item = existing_resp.get("Item")
+                if existing_item:
+                    existing = deserialize_from_dynamodb_item(existing_item)
+                    if "run_index" in existing:
+                        row["run_index"] = existing["run_index"]
+            except self.client.exceptions.ResourceNotFoundException:
+                pass
+
+            payload = {k: v for k, v in row.items() if v is not None}
+            if "run_data" in payload and isinstance(payload["run_data"], (dict, list)):
+                payload["run_data"] = json.dumps(payload["run_data"])
+            item = serialize_to_dynamo_item(payload)
+            self.client.put_item(TableName=table_name, Item=item)
+        except Exception as e:
+            log_error(f"Exception upserting run into runs table: {str(e)}")
+            raise e
+
+    def _delete_session_runs(self, session_id: str) -> int:
+        """Cascade-delete every run row for a session."""
+        items = self._query_runs_by_session(session_id)
+        if not items:
+            return 0
+        table_name = self._get_table("runs", create_table_if_not_found=False)
+        run_ids = [it.get("run_id", {}).get("S") for it in items]
+        run_ids = [r for r in run_ids if r]
+        for i in range(0, len(run_ids), DYNAMO_BATCH_SIZE_LIMIT):
+            batch = run_ids[i : i + DYNAMO_BATCH_SIZE_LIMIT]
+            delete_requests = [{"DeleteRequest": {"Key": {"run_id": {"S": rid}}}} for rid in batch]
+            batch_write_with_retry(self.client, {table_name: delete_requests})
+        return len(run_ids)
+
+    def cleanup_legacy_runs_field(self, force: bool = False) -> bool:
+        """Unset the legacy ``runs`` attribute on every session item.
+
+        The v3.0.0 migration intentionally leaves the legacy ``runs`` field as a
+        backup. Once verified, call this to reclaim the storage.
+
+        Args:
+            force: If True, unset the field even on sessions that still hold a
+                non-null ``runs`` blob. Defaults to False.
+
+        Returns:
+            True if any session items were touched.
+        """
+        table_name = self._get_table("sessions", create_table_if_not_found=False)
+        items: List[Dict[str, Any]] = []
+        try:
+            response = self.client.scan(TableName=table_name)
+            items.extend(response.get("Items", []))
+            while "LastEvaluatedKey" in response:
+                response = self.client.scan(TableName=table_name, ExclusiveStartKey=response["LastEvaluatedKey"])
+                items.extend(response.get("Items", []))
+        except self.client.exceptions.ResourceNotFoundException:
+            return False
+
+        if not items:
+            return False
+
+        if not force:
+            pending = 0
+            for it in items:
+                runs_attr = it.get("runs")
+                if runs_attr is None:
+                    continue
+                # Treat empty list/string as "no legacy data"
+                if "S" in runs_attr:
+                    try:
+                        decoded = json.loads(runs_attr["S"])
+                        if decoded:
+                            pending += 1
+                    except (json.JSONDecodeError, TypeError):
+                        if runs_attr["S"]:
+                            pending += 1
+                elif "L" in runs_attr and runs_attr["L"]:
+                    pending += 1
+            if pending:
+                raise RuntimeError(
+                    f"Refusing to unset {table_name}.runs: {pending} session(s) still have "
+                    "non-null `runs` content. Run MigrationManager(db).up() first, or pass force=True."
+                )
+
+        touched = 0
+        for it in items:
+            if "runs" not in it:
+                continue
+            session_id = it.get("session_id", {}).get("S")
+            if not session_id:
+                continue
+            try:
+                self.client.update_item(
+                    TableName=table_name,
+                    Key={"session_id": {"S": session_id}},
+                    UpdateExpression="REMOVE #runs",
+                    ExpressionAttributeNames={"#runs": "runs"},
+                )
+                touched += 1
+            except Exception as e:
+                log_error(f"Failed to unset runs on session {session_id}: {str(e)}")
+        log_info(f"Unset runs on {touched} session item(s)")
+        return touched > 0
+
+    def get_run(
+        self, run_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]]]:
+        try:
+            table_name = self._get_table("runs", create_table_if_not_found=False)
+            response = self.client.get_item(TableName=table_name, Key={"run_id": {"S": run_id}})
+            item = response.get("Item")
+            if not item:
+                return None
+            row = deserialize_from_dynamodb_item(item)
+            if not deserialize:
+                return row
+            return deserialize_run(row.get("run_type"), row["run_data"])
+        except self.client.exceptions.ResourceNotFoundException:
+            return None
+        except Exception as e:
+            log_error(f"Error reading run {run_id}: {str(e)}")
+            raise e
+
+    def get_runs(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[RunStatus] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
+        try:
+            table_name = self._get_table("runs", create_table_if_not_found=False)
+            items: List[Dict[str, Any]] = []
+            try:
+                if session_id is not None:
+                    items = self._query_runs_by_session(session_id)
+                else:
+                    response = self.client.scan(TableName=table_name)
+                    items.extend(response.get("Items", []))
+                    while "LastEvaluatedKey" in response:
+                        response = self.client.scan(
+                            TableName=table_name, ExclusiveStartKey=response["LastEvaluatedKey"]
+                        )
+                        items.extend(response.get("Items", []))
+            except self.client.exceptions.ResourceNotFoundException:
+                items = []
+
+            rows = [deserialize_from_dynamodb_item(it) for it in items]
+
+            if user_id is not None:
+                rows = [r for r in rows if r.get("user_id") == user_id]
+            if agent_id is not None:
+                rows = [r for r in rows if r.get("agent_id") == agent_id]
+            if team_id is not None:
+                rows = [r for r in rows if r.get("team_id") == team_id]
+            if workflow_id is not None:
+                rows = [r for r in rows if r.get("workflow_id") == workflow_id]
+            if status is not None:
+                status_value = status.value if isinstance(status, RunStatus) else status
+                rows = [r for r in rows if r.get("status") == status_value]
+
+            total_count = len(rows)
+
+            if sort_by is not None:
+                rows = apply_sorting(rows, sort_by, sort_order)
+            else:
+                rows = sorted(rows, key=lambda r: (r.get("run_index") or 0, r.get("created_at") or 0))
+
+            if limit is not None:
+                rows = apply_pagination(rows, limit, page)
+
+            if not deserialize:
+                return rows, total_count
+            return [deserialize_run(r.get("run_type"), r["run_data"]) for r in rows]
+        except Exception as e:
+            log_error(f"Error reading runs: {str(e)}")
+            raise e
+
+    def _scrub_run_ids_from_session_legacy_blob(self, session_id: str, run_ids: set) -> None:
+        """Remove ``run_ids`` from the given session's legacy ``runs`` field.
+
+        Partial-migration hygiene: v3 copied runs into their own table but
+        preserved the session item's ``runs`` attribute as backup. Deleting
+        the run item alone leaves that attribute intact, and the read path's
+        ``merge_runs_table_with_legacy_blob`` resurrects the ghost.
+        """
+        if not run_ids or not session_id:
+            return
+        try:
+            sessions_table = self._get_table("sessions", create_table_if_not_found=False)
+            resp = self.client.get_item(TableName=sessions_table, Key={"session_id": {"S": session_id}})
+            item = resp.get("Item")
+            if not item:
+                return
+            session = deserialize_from_dynamodb_item(item)
+            legacy = session.get("runs")
+            if not isinstance(legacy, list):
+                return
+            kept = [r for r in legacy if not (isinstance(r, dict) and r.get("run_id") in run_ids)]
+            if len(kept) == len(legacy):
+                return
+            session["runs"] = kept
+            self.client.put_item(TableName=sessions_table, Item=serialize_to_dynamo_item(session))
+        except Exception:
+            log_debug("legacy-runs scrub failed; primary delete still succeeded", exc_info=True)
+
+    def delete_run(self, run_id: str) -> bool:
+        try:
+            table_name = self._get_table("runs", create_table_if_not_found=False)
+            # Fetch session_id before deletion so we can scrub the legacy blob.
+            sid: Optional[str] = None
+            try:
+                snap = self.client.get_item(TableName=table_name, Key={"run_id": {"S": run_id}})
+                if snap.get("Item"):
+                    sid = deserialize_from_dynamodb_item(snap["Item"]).get("session_id")
+            except Exception:
+                pass
+            self.client.delete_item(
+                TableName=table_name,
+                Key={"run_id": {"S": run_id}},
+                ConditionExpression="attribute_exists(run_id)",
+            )
+            if sid:
+                self._scrub_run_ids_from_session_legacy_blob(sid, {run_id})
+            return True
+        except self.client.exceptions.ConditionalCheckFailedException:
+            return False
+        except self.client.exceptions.ResourceNotFoundException:
+            return False
+        except Exception as e:
+            log_error(f"Error deleting run {run_id}: {str(e)}")
+            raise e
+
+    def delete_runs(self, run_ids: List[str]) -> None:
+        if not run_ids:
+            return
+        try:
+            table_name = self._get_table("runs", create_table_if_not_found=False)
+            # Pre-fetch session_id → run_ids mapping for legacy-blob scrub.
+            runs_by_session: Dict[str, set] = {}
+            for rid in run_ids:
+                try:
+                    snap = self.client.get_item(TableName=table_name, Key={"run_id": {"S": rid}})
+                    if snap.get("Item"):
+                        sid = deserialize_from_dynamodb_item(snap["Item"]).get("session_id")
+                        if sid:
+                            runs_by_session.setdefault(sid, set()).add(rid)
+                except Exception:
+                    pass
+
+            for i in range(0, len(run_ids), DYNAMO_BATCH_SIZE_LIMIT):
+                batch = run_ids[i : i + DYNAMO_BATCH_SIZE_LIMIT]
+                delete_requests = [{"DeleteRequest": {"Key": {"run_id": {"S": rid}}}} for rid in batch]
+                batch_write_with_retry(self.client, {table_name: delete_requests})
+
+            for sid, rids in runs_by_session.items():
+                self._scrub_run_ids_from_session_legacy_blob(sid, rids)
+        except self.client.exceptions.ResourceNotFoundException:
+            return
+        except Exception as e:
+            log_error(f"Error deleting runs: {str(e)}")
+            raise e
+
     # --- Sessions ---
 
-    def delete_session(self, session_id: Optional[str] = None) -> bool:
+    def delete_session(self, session_id: Optional[str] = None, user_id: Optional[str] = None) -> bool:
         """
         Delete a session from the database.
 
         Args:
             session_id: The ID of the session to delete.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Raises:
             Exception: If any error occurs while deleting the session.
@@ -203,22 +617,36 @@ class DynamoDb(BaseDb):
             return False
 
         try:
-            self.client.delete_item(
-                TableName=self.session_table_name,
-                Key={"session_id": {"S": session_id}},
-            )
+            kwargs: Dict[str, Any] = {
+                "TableName": self.session_table_name,
+                "Key": {"session_id": {"S": session_id}},
+            }
+            if user_id is not None:
+                kwargs["ConditionExpression"] = "user_id = :user_id"
+                kwargs["ExpressionAttributeValues"] = {":user_id": {"S": user_id}}
+            self.client.delete_item(**kwargs)
+            # Cascade-delete runs for this session
+            try:
+                self._delete_session_runs(session_id)
+            except Exception as e:
+                log_error(f"Failed to cascade-delete runs for session {session_id}: {str(e)}")
             return True
 
+        except self.client.exceptions.ConditionalCheckFailedException:
+            log_debug(f"No session found to delete with session_id: {session_id} and user_id: {user_id}")
+            return False
+
         except Exception as e:
-            log_error(f"Failed to delete session {session_id}: {e}")
+            log_error(f"Failed to delete session {session_id}: {str(e)}")
             raise e
 
-    def delete_sessions(self, session_ids: List[str]) -> None:
+    def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
         """
         Delete sessions from the database in batches.
 
         Args:
             session_ids: List of session IDs to delete
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Raises:
             Exception: If any error occurs while deleting the sessions.
@@ -227,34 +655,53 @@ class DynamoDb(BaseDb):
             return
 
         try:
-            # Process the items to delete in batches of the max allowed size or less
-            for i in range(0, len(session_ids), DYNAMO_BATCH_SIZE_LIMIT):
-                batch = session_ids[i : i + DYNAMO_BATCH_SIZE_LIMIT]
-                delete_requests = []
+            if user_id is not None:
+                for session_id in session_ids:
+                    try:
+                        self.client.delete_item(
+                            TableName=self.session_table_name,
+                            Key={"session_id": {"S": session_id}},
+                            ConditionExpression="user_id = :user_id",
+                            ExpressionAttributeValues={":user_id": {"S": user_id}},
+                        )
+                    except self.client.exceptions.ConditionalCheckFailedException:
+                        pass
+            else:
+                for i in range(0, len(session_ids), DYNAMO_BATCH_SIZE_LIMIT):
+                    batch = session_ids[i : i + DYNAMO_BATCH_SIZE_LIMIT]
+                    delete_requests = []
 
-                for session_id in batch:
-                    delete_requests.append({"DeleteRequest": {"Key": {"session_id": {"S": session_id}}}})
+                    for session_id in batch:
+                        delete_requests.append({"DeleteRequest": {"Key": {"session_id": {"S": session_id}}}})
 
-                if delete_requests:
-                    self.client.batch_write_item(RequestItems={self.session_table_name: delete_requests})
+                    if delete_requests:
+                        batch_write_with_retry(self.client, {self.session_table_name: delete_requests})
+
+            # Cascade-delete runs for each session
+            for session_id in session_ids:
+                try:
+                    self._delete_session_runs(session_id)
+                except Exception as e:
+                    log_error(f"Failed to cascade-delete runs for session {session_id}: {str(e)}")
 
         except Exception as e:
-            log_error(f"Failed to delete sessions: {e}")
+            log_error(f"Failed to delete sessions: {str(e)}")
             raise e
 
     def get_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Get a session from the database as a Session object.
 
         Args:
             session_id (str): The ID of the session to get.
-            session_type (SessionType): The type of session to get.
+            session_type (Optional[SessionType]): The type of session to get. If None, the type is inferred.
             user_id (Optional[str]): The ID of the user to get the session for.
             deserialize (Optional[bool]): Whether to deserialize the session.
 
@@ -277,33 +724,35 @@ class DynamoDb(BaseDb):
 
             session = deserialize_from_dynamodb_item(item)
 
-            if session.get("session_type") != session_type.value:
-                return None
-            if user_id and session.get("user_id") != user_id:
+            if user_id is not None and session.get("user_id") != user_id:
                 return None
 
             if not session:
                 return None
 
+            # Attach runs from the runs table, merged with any legacy `runs` field
+            try:
+                runs_data = self._get_session_runs_data(session_id)
+                session["runs"] = merge_runs_table_with_legacy_blob(runs_data, session.get("runs"))
+                if runs_limit is not None:
+                    # No query engine to push "last N" down: filter+slice in memory to
+                    # match the SQL fast path (drop member/skip-status runs, then last N).
+                    session["runs"] = filter_context_runs(session["runs"] or [])[-runs_limit:]
+            except Exception as e:
+                log_error(f"Failed to load runs for session {session_id}: {str(e)}")
+
             if not deserialize:
                 return session
 
-            if session_type == SessionType.AGENT:
-                return AgentSession.from_dict(session)
-            elif session_type == SessionType.TEAM:
-                return TeamSession.from_dict(session)
-            elif session_type == SessionType.WORKFLOW:
-                return WorkflowSession.from_dict(session)
-            else:
-                raise ValueError(f"Invalid session type: {session_type}")
+            return deserialize_session(session_type, session)
 
         except Exception as e:
-            log_error(f"Failed to get session {session_id}: {e}")
+            log_error(f"Failed to get session {session_id}: {str(e)}")
             raise e
 
     def get_sessions(
         self,
-        session_type: SessionType,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
         session_name: Optional[str] = None,
@@ -314,79 +763,133 @@ class DynamoDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         try:
             table_name = self._get_table("sessions")
             if table_name is None:
                 return [] if deserialize else ([], 0)
 
-            # Build filter expression for additional filters
-            filter_expression = None
-            expression_attribute_names = {}
-            expression_attribute_values = {":session_type": {"S": session_type.value}}
+            # Build filter parts (non-key filters used by both query and scan)
+            non_key_filters: List[str] = []
+            expression_attribute_names: Dict[str, str] = {}
+            expression_attribute_values: Dict[str, Any] = {}
 
-            if user_id:
-                filter_expression = "#user_id = :user_id"
+            if user_id is not None:
+                non_key_filters.append("#user_id = :user_id")
                 expression_attribute_names["#user_id"] = "user_id"
                 expression_attribute_values[":user_id"] = {"S": user_id}
 
             if component_id:
-                # Map component_id to the appropriate field based on session type
                 if session_type == SessionType.AGENT:
-                    component_filter = "#agent_id = :component_id"
+                    non_key_filters.append("#agent_id = :component_id")
                     expression_attribute_names["#agent_id"] = "agent_id"
                 elif session_type == SessionType.TEAM:
-                    component_filter = "#team_id = :component_id"
+                    non_key_filters.append("#team_id = :component_id")
                     expression_attribute_names["#team_id"] = "team_id"
-                else:
-                    component_filter = "#workflow_id = :component_id"
+                elif session_type == SessionType.WORKFLOW:
+                    non_key_filters.append("#workflow_id = :component_id")
                     expression_attribute_names["#workflow_id"] = "workflow_id"
+                elif session_type is None:
+                    non_key_filters.append(
+                        "(#agent_id = :component_id OR #team_id = :component_id OR #workflow_id = :component_id)"
+                    )
+                    expression_attribute_names["#agent_id"] = "agent_id"
+                    expression_attribute_names["#team_id"] = "team_id"
+                    expression_attribute_names["#workflow_id"] = "workflow_id"
+                expression_attribute_values[":component_id"] = {"S": component_id}
 
-                if component_filter:
-                    expression_attribute_values[":component_id"] = {"S": component_id}
-                    if filter_expression:
-                        filter_expression += f" AND {component_filter}"
-                    else:
-                        filter_expression = component_filter
+            # Build timestamp conditions separately: they go into KeyConditionExpression
+            # when querying the session_type-created_at-index GSI (created_at is the range key),
+            # but into FilterExpression when scanning the base table.
+            #
+            # DynamoDB only allows one condition per key in KeyConditionExpression, so when
+            # both start and end are provided we must use BETWEEN instead of two separate conditions.
+            has_start = start_timestamp is not None
+            has_end = end_timestamp is not None
 
-            if session_name:
-                name_filter = "#session_name = :session_name"
-                expression_attribute_names["#session_name"] = "session_name"
-                expression_attribute_values[":session_name"] = {"S": session_name}
-                if filter_expression:
-                    filter_expression += f" AND {name_filter}"
-                else:
-                    filter_expression = name_filter
+            if has_start or has_end:
+                expression_attribute_names["#created_at"] = "created_at"
 
-            # Use GSI query for session_type
-            query_kwargs = {
-                "TableName": table_name,
-                "IndexName": "session_type-created_at-index",
-                "KeyConditionExpression": "session_type = :session_type",
-                "ExpressionAttributeValues": expression_attribute_values,
-            }
-            if filter_expression:
-                query_kwargs["FilterExpression"] = filter_expression
-            if expression_attribute_names:
-                query_kwargs["ExpressionAttributeNames"] = expression_attribute_names
+            if has_start:
+                expression_attribute_values[":start_ts"] = {"N": str(start_timestamp)}
+            if has_end:
+                expression_attribute_values[":end_ts"] = {"N": str(end_timestamp)}
 
-            # Apply sorting
-            if sort_by == "created_at":
-                query_kwargs["ScanIndexForward"] = sort_order != "desc"  # type: ignore
+            # For the scan path, individual conditions are fine (no key constraint).
+            scan_timestamp_conditions: List[str] = []
+            if has_start:
+                scan_timestamp_conditions.append("#created_at >= :start_ts")
+            if has_end:
+                scan_timestamp_conditions.append("#created_at <= :end_ts")
 
-            # Apply limit at DynamoDB level
-            if limit and not page:
-                query_kwargs["Limit"] = limit  # type: ignore
+            # For the query path (GSI), build a single key range condition.
+            if has_start and has_end:
+                key_range_condition = "#created_at BETWEEN :start_ts AND :end_ts"
+            elif has_start:
+                key_range_condition = "#created_at >= :start_ts"
+            elif has_end:
+                key_range_condition = "#created_at <= :end_ts"
+            else:
+                key_range_condition = None
 
             items = []
-            response = self.client.query(**query_kwargs)
-            items.extend(response.get("Items", []))
+            if session_type is not None:
+                expression_attribute_values[":session_type"] = {"S": session_type.value}
 
-            # Handle pagination
-            while "LastEvaluatedKey" in response:
-                query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                # When querying session_type-created_at-index, created_at is the range key
+                # and must be part of KeyConditionExpression, not FilterExpression.
+                key_condition = "session_type = :session_type"
+                if key_range_condition:
+                    key_condition += " AND " + key_range_condition
+
+                query_kwargs: Dict[str, Any] = {
+                    "TableName": table_name,
+                    "IndexName": "session_type-created_at-index",
+                    "KeyConditionExpression": key_condition,
+                    "ExpressionAttributeValues": expression_attribute_values,
+                }
+                if non_key_filters:
+                    query_kwargs["FilterExpression"] = " AND ".join(non_key_filters)
+                if expression_attribute_names:
+                    query_kwargs["ExpressionAttributeNames"] = expression_attribute_names
+
+                if sort_by == "created_at":
+                    query_kwargs["ScanIndexForward"] = sort_order != "desc"
+
+                if limit and not page:
+                    query_kwargs["Limit"] = limit
+
                 response = self.client.query(**query_kwargs)
                 items.extend(response.get("Items", []))
+
+                # Handle query pagination
+                while "LastEvaluatedKey" in response:
+                    query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                    response = self.client.query(**query_kwargs)
+                    items.extend(response.get("Items", []))
+            else:
+                # For scan, timestamp conditions go into FilterExpression
+                # (created_at is not a key attribute on the base table).
+                all_scan_filters = non_key_filters + scan_timestamp_conditions
+                scan_kwargs: Dict[str, Any] = {"TableName": table_name}
+                if all_scan_filters:
+                    scan_kwargs["FilterExpression"] = " AND ".join(all_scan_filters)
+                if expression_attribute_names:
+                    scan_kwargs["ExpressionAttributeNames"] = expression_attribute_names
+                if expression_attribute_values:
+                    scan_kwargs["ExpressionAttributeValues"] = expression_attribute_values
+                if limit and not page:
+                    scan_kwargs["Limit"] = limit
+
+                response = self.client.scan(**scan_kwargs)
+                items.extend(response.get("Items", []))
+
+                # Handle scan pagination
+                while "LastEvaluatedKey" in response:
+                    scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                    response = self.client.scan(**scan_kwargs)
+                    items.extend(response.get("Items", []))
 
             # Convert DynamoDB items to session data
             sessions_data = []
@@ -395,8 +898,28 @@ class DynamoDb(BaseDb):
                 if session_data:
                     sessions_data.append(session_data)
 
-            # Apply in-memory sorting for fields not supported by DynamoDB
-            if sort_by and sort_by != "created_at":
+            # Search scans skip the runs table; the record's legacy runs field is kept for merging later.
+            # Attach runs from the runs table, merged with legacy blob
+            if include_runs and sessions_data:
+                try:
+                    runs_by_session = self._get_sessions_runs_data([s["session_id"] for s in sessions_data])
+                    for s in sessions_data:
+                        s["runs"] = merge_runs_table_with_legacy_blob(
+                            runs_by_session.get(s["session_id"], []), s.get("runs")
+                        )
+                except Exception as e:
+                    log_error(f"Failed to attach runs to sessions: {str(e)}")
+
+            # Filter by session_name in-memory (stored inside session_data JSON)
+            if session_name:
+                sessions_data = [
+                    s
+                    for s in sessions_data
+                    if session_name.lower() in (s.get("session_data") or {}).get("session_name", "").lower()
+                ]
+
+            # Apply in-memory sorting
+            if sort_by:
                 sessions_data = apply_sorting(sessions_data, sort_by, sort_order)
 
             # Get total count before pagination
@@ -409,23 +932,18 @@ class DynamoDb(BaseDb):
             if not deserialize:
                 return sessions_data, total_count
 
-            sessions = []
-            for session_data in sessions_data:
-                session = deserialize_session(session_data)
-                if session:
-                    sessions.append(session)
-
-            return sessions
+            return deserialize_sessions(session_type, sessions_data)
 
         except Exception as e:
-            log_error(f"Failed to get sessions: {e}")
+            log_error(f"Failed to get sessions: {str(e)}")
             raise e
 
     def rename_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType],
         session_name: str,
+        user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
@@ -435,6 +953,7 @@ class DynamoDb(BaseDb):
             session_id: The ID of the session to rename.
             session_type: The type of session to rename.
             session_name: The new name for the session.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             Optional[Session]: The renamed session if successful, None otherwise.
@@ -455,38 +974,64 @@ class DynamoDb(BaseDb):
             if not current_item:
                 return None
 
+            # Deserialize the item once and reuse
+            item_data = deserialize_from_dynamodb_item(current_item)
+
+            # Verify user_id if provided
+            if user_id is not None:
+                if item_data.get("user_id") != user_id:
+                    return None
+
             # Update session_data with the new session_name
-            session_data = deserialize_from_dynamodb_item(current_item).get("session_data", {})
+            session_data = item_data.get("session_data", {})
             session_data["session_name"] = session_name
-            response = self.client.update_item(
-                TableName=self.session_table_name,
-                Key={"session_id": {"S": session_id}},
-                UpdateExpression="SET session_data = :session_data, updated_at = :updated_at",
-                ConditionExpression="session_type = :session_type",
-                ExpressionAttributeValues={
-                    ":session_data": {"S": json.dumps(session_data)},
-                    ":session_type": {"S": session_type.value},
-                    ":updated_at": {"N": str(int(time.time()))},
-                },
-                ReturnValues="ALL_NEW",
-            )
+            attr_values: Dict[str, Any] = {
+                ":session_data": {"S": json.dumps(session_data)},
+                ":updated_at": {"N": str(int(time.time()))},
+            }
+            condition_parts: List[str] = []
+            if session_type is not None:
+                attr_values[":session_type"] = {"S": session_type.value}
+                condition_parts.append("session_type = :session_type")
+            if user_id is not None:
+                condition_parts.append("user_id = :user_id")
+                attr_values[":user_id"] = {"S": user_id}
+
+            update_kwargs: Dict[str, Any] = {
+                "TableName": self.session_table_name,
+                "Key": {"session_id": {"S": session_id}},
+                "UpdateExpression": "SET session_data = :session_data, updated_at = :updated_at",
+                "ExpressionAttributeValues": attr_values,
+                "ReturnValues": "ALL_NEW",
+            }
+            if condition_parts:
+                update_kwargs["ConditionExpression"] = " AND ".join(condition_parts)
+
+            response = self.client.update_item(**update_kwargs)
             item = response.get("Attributes")
             if not item:
                 return None
 
             session = deserialize_from_dynamodb_item(item)
+
+            # Attach runs from the runs table, merged with legacy blob
+            try:
+                runs_data = self._get_session_runs_data(session_id)
+                session["runs"] = merge_runs_table_with_legacy_blob(runs_data, session.get("runs"))
+            except Exception as e:
+                log_error(f"Failed to load runs for renamed session {session_id}: {str(e)}")
+
             if not deserialize:
                 return session
 
-            if session_type == SessionType.AGENT:
-                return AgentSession.from_dict(session)
-            elif session_type == SessionType.TEAM:
-                return TeamSession.from_dict(session)
-            else:
-                return WorkflowSession.from_dict(session)
+            return deserialize_session(session_type, session)
+
+        except self.client.exceptions.ConditionalCheckFailedException:
+            log_debug(f"Rename condition not met for session {session_id} (type/user mismatch)")
+            return None
 
         except Exception as e:
-            log_error(f"Failed to rename session {session_id}: {e}")
+            log_error(f"Failed to rename session {session_id}: {str(e)}")
             raise e
 
     def upsert_session(
@@ -513,22 +1058,48 @@ class DynamoDb(BaseDb):
             response = self.client.get_item(TableName=table_name, Key={"session_id": {"S": session.session_id}})
             existing_item = response.get("Item")
 
-            # Prepare the session to upsert, merging with existing session if it exists.
-            serialized_session = prepare_session_data(session)
+            if existing_item:
+                existing_uid = existing_item.get("user_id", {}).get("S")
+                if existing_uid is not None and existing_uid != session.user_id:
+                    return None
+
+            # Prepare the session to upsert (without the inline `runs` list).
+            serialized_session = prepare_session_data(session, include_runs=False)
             if existing_item:
                 serialized_session = merge_with_existing_session(serialized_session, existing_item)
                 serialized_session["updated_at"] = int(time.time())
             else:
                 serialized_session["updated_at"] = serialized_session["created_at"]
 
-            # Upsert
+            # The legacy `runs` attribute is intentionally preserved: merge_with_existing_session
+            # above carries it forward from the existing item, and put_item writes it back as a
+            # frozen backup until cleanup_legacy_runs_field() removes it. Dropping it here would
+            # lose history for sessions not yet migrated to the runs table.
             item = serialize_to_dynamo_item(serialized_session)
-            self.client.put_item(TableName=table_name, Item=item)
+            put_kwargs: Dict[str, Any] = {"TableName": table_name, "Item": item}
 
+            expr_names = {"#uid": "user_id"}
+            if session.user_id is not None:
+                put_kwargs["ConditionExpression"] = (
+                    "attribute_not_exists(session_id) OR #uid = :incoming_uid OR attribute_not_exists(#uid)"
+                )
+                put_kwargs["ExpressionAttributeValues"] = {":incoming_uid": {"S": session.user_id}}
+            else:
+                put_kwargs["ConditionExpression"] = "attribute_not_exists(session_id) OR attribute_not_exists(#uid)"
+            put_kwargs["ExpressionAttributeNames"] = expr_names
+
+            try:
+                self.client.put_item(**put_kwargs)
+            except self.client.exceptions.ConditionalCheckFailedException:
+                return None
+
+            # Runs are persisted separately via upsert_run by the caller (agent loop).
+            # Attach the in-memory runs to the returned dict so callers see them.
+            serialized_session["runs"] = [r.to_dict() if hasattr(r, "to_dict") else r for r in (session.runs or [])]
             return deserialize_session_result(serialized_session, session, deserialize)
 
         except Exception as e:
-            log_error(f"Failed to upsert session {session.session_id}: {e}")
+            log_error(f"Failed to upsert session {session.session_id}: {str(e)}")
             raise e
 
     def upsert_sessions(
@@ -565,7 +1136,7 @@ class DynamoDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception during bulk session upsert: {e}")
+            log_error(f"Exception during bulk session upsert: {str(e)}")
             return []
 
     # --- User Memory ---
@@ -583,7 +1154,7 @@ class DynamoDb(BaseDb):
         """
         try:
             # If user_id is provided, verify the memory belongs to the user before deleting
-            if user_id:
+            if user_id is not None:
                 response = self.client.get_item(
                     TableName=self.memory_table_name,
                     Key={"memory_id": {"S": memory_id}},
@@ -602,7 +1173,7 @@ class DynamoDb(BaseDb):
             log_debug(f"Deleted user memory {memory_id}")
 
         except Exception as e:
-            log_error(f"Failed to delete user memory {memory_id}: {e}")
+            log_error(f"Failed to delete user memory {memory_id}: {str(e)}")
             raise e
 
     def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
@@ -619,7 +1190,7 @@ class DynamoDb(BaseDb):
 
         try:
             # If user_id is provided, filter memory_ids to only those belonging to the user
-            if user_id:
+            if user_id is not None:
                 filtered_memory_ids = []
                 for memory_id in memory_ids:
                     response = self.client.get_item(
@@ -640,17 +1211,17 @@ class DynamoDb(BaseDb):
                 for memory_id in batch:
                     delete_requests.append({"DeleteRequest": {"Key": {"memory_id": {"S": memory_id}}}})
 
-                self.client.batch_write_item(RequestItems={self.memory_table_name: delete_requests})
+                batch_write_with_retry(self.client, {self.memory_table_name: delete_requests})
 
         except Exception as e:
-            log_error(f"Failed to delete user memories: {e}")
+            log_error(f"Failed to delete user memories: {str(e)}")
             raise e
 
-    def get_all_memory_topics(self) -> List[str]:
+    def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         """Get all memory topics from the database.
 
         Args:
-            user_id: The ID of the user (optional, for filtering).
+            user_id (Optional[str]): The ID of the user to filter by.
 
         Returns:
             List[str]: List of unique memory topics.
@@ -660,8 +1231,10 @@ class DynamoDb(BaseDb):
             if table_name is None:
                 return []
 
-            # Build filter expression for user_id if provided
-            scan_kwargs = {"TableName": table_name}
+            scan_kwargs: Dict[str, Any] = {"TableName": table_name}
+            if user_id is not None:
+                scan_kwargs["FilterExpression"] = "user_id = :user_id"
+                scan_kwargs["ExpressionAttributeValues"] = {":user_id": {"S": user_id}}
 
             # Scan the table to get memories
             response = self.client.scan(**scan_kwargs)
@@ -674,16 +1247,17 @@ class DynamoDb(BaseDb):
                 items.extend(response.get("Items", []))
 
             # Extract topics from all memories
-            all_topics = set()
+            all_topics: set[str] = set()
             for item in items:
                 memory_data = deserialize_from_dynamodb_item(item)
-                topics = memory_data.get("memory", {}).get("topics", [])
-                all_topics.update(topics)
+                topics = memory_data.get("topics") or []
+                if isinstance(topics, list):
+                    all_topics.update(topics)
 
             return list(all_topics)
 
         except Exception as e:
-            log_error(f"Exception reading from memory table: {e}")
+            log_error(f"Exception reading from memory table: {str(e)}")
             raise e
 
     def get_user_memory(
@@ -726,7 +1300,7 @@ class DynamoDb(BaseDb):
             return UserMemory.from_dict(item)
 
         except Exception as e:
-            log_error(f"Failed to get user memory {memory_id}: {e}")
+            log_error(f"Failed to get user memory {memory_id}: {str(e)}")
             raise e
 
     def get_user_memories(
@@ -749,7 +1323,6 @@ class DynamoDb(BaseDb):
             user_id: The ID of the user to get the memories for.
             agent_id: The ID of the agent to get the memories for.
             team_id: The ID of the team to get the memories for.
-            workflow_id: The ID of the workflow to get the memories for.
             topics: The topics to filter the memories by.
             search_content: The content to search for in the memories.
             limit: The maximum number of memories to return.
@@ -789,7 +1362,7 @@ class DynamoDb(BaseDb):
                 filter_expression = f"{filter_expression} AND {search_filter}" if filter_expression else search_filter
 
             # Determine whether to use GSI query or table scan
-            if user_id:
+            if user_id is not None:
                 # Use GSI query when user_id is provided
                 key_condition_expression = "#user_id = :user_id"
 
@@ -846,13 +1419,14 @@ class DynamoDb(BaseDb):
             return [UserMemory.from_dict(item) for item in items]
 
         except Exception as e:
-            log_error(f"Failed to get user memories: {e}")
+            log_error(f"Failed to get user memories: {str(e)}")
             raise e
 
     def get_user_memory_stats(
         self,
         limit: Optional[int] = None,
         page: Optional[int] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Get user memories stats.
 
@@ -880,7 +1454,17 @@ class DynamoDb(BaseDb):
             table_name = self._get_table("memories")
 
             # Build filter expression for user_id if provided
+            filter_expression = None
+            expression_attribute_values = {}
+            if user_id is not None:
+                filter_expression = "user_id = :user_id"
+                expression_attribute_values[":user_id"] = {"S": user_id}
+
             scan_kwargs = {"TableName": table_name}
+            if filter_expression:
+                scan_kwargs["FilterExpression"] = filter_expression
+            if expression_attribute_values:
+                scan_kwargs["ExpressionAttributeValues"] = expression_attribute_values  # type: ignore
 
             response = self.client.scan(**scan_kwargs)
             items = response.get("Items", [])
@@ -921,7 +1505,7 @@ class DynamoDb(BaseDb):
             # Convert to list and apply sorting
             stats_list = list(user_stats.values())
             stats_list.sort(
-                key=lambda x: (x["last_memory_updated_at"] if x["last_memory_updated_at"] is not None else 0),
+                key=lambda x: x["last_memory_updated_at"] if x["last_memory_updated_at"] is not None else 0,
                 reverse=True,
             )
 
@@ -937,7 +1521,7 @@ class DynamoDb(BaseDb):
             return stats_list, total_count
 
         except Exception as e:
-            log_error(f"Failed to get user memory stats: {e}")
+            log_error(f"Failed to get user memory stats: {str(e)}")
             raise e
 
     def upsert_user_memory(
@@ -966,7 +1550,7 @@ class DynamoDb(BaseDb):
             return UserMemory.from_dict(memory_dict)
 
         except Exception as e:
-            log_error(f"Failed to upsert user memory: {e}")
+            log_error(f"Failed to upsert user memory: {str(e)}")
             raise e
 
     def upsert_memories(
@@ -1003,7 +1587,7 @@ class DynamoDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception during bulk memory upsert: {e}")
+            log_error(f"Exception during bulk memory upsert: {str(e)}")
             return []
 
     def clear_memories(self) -> None:
@@ -1039,12 +1623,12 @@ class DynamoDb(BaseDb):
                         delete_requests.append({"DeleteRequest": {"Key": {"memory_id": {"S": memory_id}}}})
 
                 if delete_requests:
-                    self.client.batch_write_item(RequestItems={table_name: delete_requests})
+                    batch_write_with_retry(self.client, {table_name: delete_requests})
 
         except Exception as e:
             from agno.utils.log import log_warning
 
-            log_warning(f"Exception deleting all memories: {e}")
+            log_warning(f"Exception deleting all memories: {str(e)}")
             raise e
 
     # --- Metrics ---
@@ -1077,9 +1661,13 @@ class DynamoDb(BaseDb):
                 return None
 
             # Get timestamp range for session data
-            start_timestamp = int(datetime.combine(dates_to_process[0], datetime.min.time()).timestamp())
+            start_timestamp = int(
+                datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+            )
             end_timestamp = int(
-                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time()).timestamp()
+                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
             )
 
             # Get all sessions for the date range
@@ -1110,8 +1698,8 @@ class DynamoDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
-                metrics_records.append(metrics_record)
+                # One record per user_id, plus the empty-string bucket for unowned sessions
+                metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             # Store metrics in DynamoDB
             if metrics_records:
@@ -1122,7 +1710,7 @@ class DynamoDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Failed to calculate metrics: {e}")
+            log_error(f"Failed to calculate metrics: {str(e)}")
             raise e
 
     def _get_metrics_calculation_starting_date(self) -> Optional[date]:
@@ -1159,26 +1747,11 @@ class DynamoDb(BaseDb):
                 metrics_items.extend(response.get("Items", []))
 
             if metrics_items:
-                # Find the latest date with metrics
-                latest_complete_date = None
-                incomplete_dates = []
-
-                for item in metrics_items:
-                    metrics_data = deserialize_from_dynamodb_item(item)
-                    record_date = datetime.fromisoformat(metrics_data["date"]).date()
-                    is_completed = metrics_data.get("completed", False)
-
-                    if is_completed:
-                        if latest_complete_date is None or record_date > latest_complete_date:
-                            latest_complete_date = record_date
-                    else:
-                        incomplete_dates.append(record_date)
-
-                # Return the earliest incomplete date, or the day after the latest complete date
-                if incomplete_dates:
-                    return min(incomplete_dates)
-                elif latest_complete_date:
-                    return latest_complete_date + timedelta(days=1)
+                resume_date = metrics_starting_date_from_records(
+                    [deserialize_from_dynamodb_item(item) for item in metrics_items]
+                )
+                if resume_date is not None:
+                    return resume_date
 
             # 2. No metrics records. Return the date of the first recorded session.
             sessions_table_name = self._get_table("sessions")
@@ -1208,7 +1781,7 @@ class DynamoDb(BaseDb):
             return earliest_session_date
 
         except Exception as e:
-            log_error(f"Failed to get metrics calculation starting date: {e}")
+            log_error(f"Failed to get metrics calculation starting date: {str(e)}")
             raise e
 
     def _get_all_sessions_for_metrics_calculation(
@@ -1263,10 +1836,21 @@ class DynamoDb(BaseDb):
                     if session_data:
                         all_sessions.append(session_data)
 
+            # Attach runs from the runs table, merged with legacy blob
+            if all_sessions:
+                try:
+                    runs_by_session = self._get_sessions_runs_data([s["session_id"] for s in all_sessions])
+                    for s in all_sessions:
+                        s["runs"] = merge_runs_table_with_legacy_blob(
+                            runs_by_session.get(s["session_id"], []), s.get("runs")
+                        )
+                except Exception as e:
+                    log_error(f"Failed to attach runs to sessions for metrics: {str(e)}")
+
             return all_sessions
 
         except Exception as e:
-            log_error(f"Failed to get sessions for metrics calculation: {e}")
+            log_error(f"Failed to get sessions for metrics calculation: {str(e)}")
             raise e
 
     def _bulk_upsert_metrics(self, metrics_records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -1294,11 +1878,14 @@ class DynamoDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Failed to bulk upsert metrics: {e}")
+            log_error(f"Failed to bulk upsert metrics: {str(e)}")
             raise e
 
     def _upsert_single_metrics_record(self, table_name: str, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Upsert a single metrics record, checking for existing records with the same date.
+        """Upsert a single metrics record.
+
+        Do not dedupe via the ``date-aggregation_period-index`` GSI: it lacks ``user_id``,
+        so a Query collapses every per-user record for a date into one.
 
         Args:
             table_name: The DynamoDB table name
@@ -1308,116 +1895,22 @@ class DynamoDb(BaseDb):
             Optional[Dict[str, Any]]: The upserted record or None if failed
         """
         try:
-            date_str = record.get("date")
-            if not date_str:
-                log_error("Metrics record missing date field")
+            if not record.get("id"):
+                log_error("Metrics record missing id field")
                 return None
 
-            # Convert date object to string if needed
-            if hasattr(date_str, "isoformat"):
-                date_str = date_str.isoformat()
+            record["updated_at"] = int(time.time())
 
-            # Check if a record already exists for this date
-            existing_record = self._get_existing_metrics_record(table_name, date_str)
-
-            if existing_record:
-                return self._update_existing_metrics_record(table_name, existing_record, record)
-            else:
-                return self._create_new_metrics_record(table_name, record)
-
-        except Exception as e:
-            log_error(f"Failed to upsert single metrics record: {e}")
-            raise e
-
-    def _get_existing_metrics_record(self, table_name: str, date_str: str) -> Optional[Dict[str, Any]]:
-        """Get existing metrics record for a given date.
-
-        Args:
-            table_name: The DynamoDB table name
-            date_str: The date string to search for
-
-        Returns:
-            Optional[Dict[str, Any]]: The existing record or None if not found
-        """
-        try:
-            # Query using the date-aggregation_period-index
-            response = self.client.query(
-                TableName=table_name,
-                IndexName="date-aggregation_period-index",
-                KeyConditionExpression="#date = :date AND aggregation_period = :period",
-                ExpressionAttributeNames={"#date": "date"},
-                ExpressionAttributeValues={
-                    ":date": {"S": date_str},
-                    ":period": {"S": "daily"},
-                },
-                Limit=1,
-            )
-
-            items = response.get("Items", [])
-            if items:
-                return deserialize_from_dynamodb_item(items[0])
-            return None
-
-        except Exception as e:
-            log_error(f"Failed to get existing metrics record for date {date_str}: {e}")
-            raise e
-
-    def _update_existing_metrics_record(
-        self,
-        table_name: str,
-        existing_record: Dict[str, Any],
-        new_record: Dict[str, Any],
-    ) -> Optional[Dict[str, Any]]:
-        """Update an existing metrics record.
-
-        Args:
-            table_name: The DynamoDB table name
-            existing_record: The existing record
-            new_record: The new record data
-
-        Returns:
-            Optional[Dict[str, Any]]: The updated record or None if failed
-        """
-        try:
-            # Use the existing record's ID
-            new_record["id"] = existing_record["id"]
-            new_record["updated_at"] = int(time.time())
-
-            # Prepare and serialize the record
-            prepared_record = self._prepare_metrics_record_for_dynamo(new_record)
-            item = self._serialize_metrics_to_dynamo_item(prepared_record)
-
-            # Update the record
-            self.client.put_item(TableName=table_name, Item=item)
-
-            return new_record
-
-        except Exception as e:
-            log_error(f"Failed to update existing metrics record: {e}")
-            raise e
-
-    def _create_new_metrics_record(self, table_name: str, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Create a new metrics record.
-
-        Args:
-            table_name: The DynamoDB table name
-            record: The record to create
-
-        Returns:
-            Optional[Dict[str, Any]]: The created record or None if failed
-        """
-        try:
-            # Prepare and serialize the record
             prepared_record = self._prepare_metrics_record_for_dynamo(record)
             item = self._serialize_metrics_to_dynamo_item(prepared_record)
 
-            # Create the record
+            # The id is deterministic per (date, user_id, period), so put_item is itself the upsert
             self.client.put_item(TableName=table_name, Item=item)
 
             return record
 
         except Exception as e:
-            log_error(f"Failed to create new metrics record: {e}")
+            log_error(f"Failed to upsert single metrics record: {str(e)}")
             raise e
 
     def _prepare_metrics_record_for_dynamo(self, record: Dict[str, Any]) -> Dict[str, Any]:
@@ -1481,6 +1974,7 @@ class DynamoDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Any], Optional[int]]:
         """
         Get metrics from the database.
@@ -1488,6 +1982,8 @@ class DynamoDb(BaseDb):
         Args:
             starting_date: The starting date to filter metrics by.
             ending_date: The ending date to filter metrics by.
+            user_id: When set, returns only that user's bucket. ``None`` returns every bucket,
+                including the unowned one.
 
         Returns:
             Tuple[List[Any], Optional[int]]: A tuple containing the metrics data and the total count.
@@ -1531,25 +2027,52 @@ class DynamoDb(BaseDb):
                 items.extend(response.get("Items", []))
 
             # Convert to metrics data
-            metrics_data = []
-            for item in items:
-                metric_data = deserialize_from_dynamodb_item(item)
-                if metric_data:
-                    metrics_data.append(metric_data)
+            records = [record for record in (deserialize_from_dynamodb_item(item) for item in items) if record]
+            # Records written before ownership existed hold a whole day, and only an
+            # unscoped read sees them: an owner filter excludes them already
+            if user_id is None:
+                records = drop_legacy_metrics(records)
 
-            return metrics_data, len(metrics_data)
+            metrics_data = []
+            for metric_data in records:
+                # Filter by user_id in-memory (user_id is not a key attribute)
+                if user_id is not None and metric_data.get("user_id") != user_id:
+                    continue
+                # The empty-string bucket holds unowned sessions
+                if metric_data.get("user_id") == "":
+                    metric_data["user_id"] = None
+                # Stored as an ISO string, and a string renders timezone-naive at the API layer
+                metric_data["date"] = deserialize_metrics_date(metric_data.get("date"))
+                metrics_data.append(metric_data)
+
+            # Latest updated_at across the returned rows, like every other adapter
+            latest_updated_at = None
+            if metrics_data:
+                latest_updated_at = max(metric.get("updated_at") or 0 for metric in metrics_data)
+
+            return metrics_data, latest_updated_at
 
         except Exception as e:
-            log_error(f"Failed to get metrics: {e}")
+            log_error(f"Failed to get metrics: {str(e)}")
             raise e
 
     # --- Knowledge methods ---
 
-    def delete_knowledge_content(self, id: str):
+    @staticmethod
+    def _knowledge_row_is_visible(row: KnowledgeRow, user_id: Optional[str]) -> bool:
+        """Unscoped callers see every row. Scoped callers see their own rows and unowned ones."""
+        if user_id is None:
+            return True
+        owner = getattr(row, "user_id", None)
+        return owner is None or owner == user_id
+
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): When set, only rows owned by this user are deleted. Unowned
+                rows are shared content and are left alone.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -1557,19 +2080,27 @@ class DynamoDb(BaseDb):
         try:
             table_name = self._get_table("knowledge")
 
-            self.client.delete_item(TableName=table_name, Key={"id": {"S": id}})
+            kwargs: Dict[str, Any] = {"TableName": table_name, "Key": {"id": {"S": id}}}
+            if user_id is not None:
+                kwargs["ConditionExpression"] = "user_id = :user_id"
+                kwargs["ExpressionAttributeValues"] = {":user_id": {"S": user_id}}
+            self.client.delete_item(**kwargs)
 
             log_debug(f"Deleted knowledge content {id}")
 
+        except self.client.exceptions.ConditionalCheckFailedException:
+            log_debug(f"Skipping delete of knowledge content {id}: not owned by {user_id}")
+
         except Exception as e:
-            log_error(f"Failed to delete knowledge content {id}: {e}")
+            log_error(f"Failed to delete knowledge content {id}: {str(e)}")
             raise e
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): When set, the row is only returned if owned by this user or unowned.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -1579,13 +2110,16 @@ class DynamoDb(BaseDb):
             response = self.client.get_item(TableName=table_name, Key={"id": {"S": id}})
 
             item = response.get("Item")
-            if item:
-                return deserialize_knowledge_row(item)
+            if not item:
+                return None
 
-            return None
+            row = deserialize_knowledge_row(item)
+            if not self._knowledge_row_is_visible(row, user_id):
+                return None
+            return row
 
         except Exception as e:
-            log_error(f"Failed to get knowledge content {id}: {e}")
+            log_error(f"Failed to get knowledge content {id}: {str(e)}")
             raise e
 
     def get_knowledge_contents(
@@ -1594,6 +2128,8 @@ class DynamoDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1602,7 +2138,8 @@ class DynamoDb(BaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
-            create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
+            linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): When set, only rows owned by this user or unowned rows are returned.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1633,7 +2170,15 @@ class DynamoDb(BaseDb):
                     knowledge_row = deserialize_knowledge_row(item)
                     knowledge_rows.append(knowledge_row)
                 except Exception as e:
-                    log_error(f"Failed to deserialize knowledge row: {e}")
+                    log_error(f"Failed to deserialize knowledge row: {str(e)}")
+
+            # Filter by user_id if provided
+            if user_id is not None:
+                knowledge_rows = [row for row in knowledge_rows if self._knowledge_row_is_visible(row, user_id)]
+
+            # Apply linked_to filter if provided
+            if linked_to is not None:
+                knowledge_rows = [row for row in knowledge_rows if row.linked_to == linked_to]
 
             # Apply sorting
             if sort_by:
@@ -1657,7 +2202,7 @@ class DynamoDb(BaseDb):
             return knowledge_rows, total_count
 
         except Exception as e:
-            log_error(f"Failed to get knowledge contents: {e}")
+            log_error(f"Failed to get knowledge contents: {str(e)}")
             raise e
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
@@ -1671,6 +2216,14 @@ class DynamoDb(BaseDb):
         """
         try:
             table_name = self._get_table("knowledge", create_table_if_not_found=True)
+
+            # A scoped write must not overwrite an item it does not own
+            if knowledge_row.user_id is not None and knowledge_row.id:
+                response = self.client.get_item(TableName=table_name, Key={"id": {"S": knowledge_row.id}})
+                stored = response.get("Item")
+                if stored is not None and stored.get("user_id", {}).get("S") != knowledge_row.user_id:
+                    raise ValueError(f"Knowledge content {knowledge_row.id} not found")
+
             item = serialize_knowledge_row(knowledge_row)
 
             self.client.put_item(TableName=table_name, Item=item)
@@ -1678,7 +2231,7 @@ class DynamoDb(BaseDb):
             return knowledge_row
 
         except Exception as e:
-            log_error(f"Failed to upsert knowledge content {knowledge_row.id}: {e}")
+            log_error(f"Failed to upsert knowledge content {knowledge_row.id}: {str(e)}")
             raise e
 
     # --- Eval ---
@@ -1708,14 +2261,24 @@ class DynamoDb(BaseDb):
             return eval_run
 
         except Exception as e:
-            log_error(f"Failed to create eval run: {e}")
+            log_error(f"Failed to create eval run: {str(e)}")
             raise e
 
-    def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+    def delete_eval_runs(self, eval_run_ids: List[str], user_id: Optional[str] = None) -> None:
         if not eval_run_ids or not self.eval_table_name:
             return
 
         try:
+            if user_id is not None:
+                # Only delete runs owned by this user.
+                owned = []
+                for eval_run_id in eval_run_ids:
+                    response = self.client.get_item(TableName=self.eval_table_name, Key={"run_id": {"S": eval_run_id}})
+                    item = response.get("Item")
+                    if item is not None and item.get("user_id", {}).get("S") == user_id:
+                        owned.append(eval_run_id)
+                eval_run_ids = owned
+
             for i in range(0, len(eval_run_ids), DYNAMO_BATCH_SIZE_LIMIT):
                 batch = eval_run_ids[i : i + DYNAMO_BATCH_SIZE_LIMIT]
 
@@ -1723,10 +2286,10 @@ class DynamoDb(BaseDb):
                 for eval_run_id in batch:
                     delete_requests.append({"DeleteRequest": {"Key": {"run_id": {"S": eval_run_id}}}})
 
-                self.client.batch_write_item(RequestItems={self.eval_table_name: delete_requests})
+                batch_write_with_retry(self.client, {self.eval_table_name: delete_requests})
 
         except Exception as e:
-            log_error(f"Failed to delete eval runs: {e}")
+            log_error(f"Failed to delete eval runs: {str(e)}")
             raise e
 
     def get_eval_run_raw(self, eval_run_id: str, table: Optional[Any] = None) -> Optional[Dict[str, Any]]:
@@ -1742,10 +2305,16 @@ class DynamoDb(BaseDb):
             return None
 
         except Exception as e:
-            log_error(f"Failed to get eval run {eval_run_id}: {e}")
+            log_error(f"Failed to get eval run {eval_run_id}: {str(e)}")
             raise e
 
-    def get_eval_run(self, eval_run_id: str, table: Optional[Any] = None) -> Optional[EvalRunRecord]:
+    def get_eval_run(
+        self,
+        eval_run_id: str,
+        deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
+        table: Optional[Any] = None,
+    ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         if not self.eval_table_name:
             return None
 
@@ -1753,12 +2322,20 @@ class DynamoDb(BaseDb):
             response = self.client.get_item(TableName=self.eval_table_name, Key={"run_id": {"S": eval_run_id}})
 
             item = response.get("Item")
-            if item:
-                return deserialize_eval_record(item)
-            return None
+            if not item:
+                return None
+
+            eval_item = deserialize_from_dynamodb_item(item)
+            if user_id is not None and eval_item.get("user_id") != user_id:
+                return None
+
+            if not deserialize:
+                return eval_item
+
+            return EvalRunRecord.model_validate(eval_item)
 
         except Exception as e:
-            log_error(f"Failed to get eval run {eval_run_id}: {e}")
+            log_error(f"Failed to get eval run {eval_run_id}: {str(e)}")
             raise e
 
     def get_eval_runs(
@@ -1774,6 +2351,7 @@ class DynamoDb(BaseDb):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         try:
             table_name = self._get_table("evals")
@@ -1800,6 +2378,10 @@ class DynamoDb(BaseDb):
             if model_id:
                 filter_expressions.append("model_id = :model_id")
                 expression_values[":model_id"] = {"S": model_id}
+
+            if user_id is not None:
+                filter_expressions.append("user_id = :user_id")
+                expression_values[":user_id"] = {"S": user_id}
 
             if eval_type is not None and len(eval_type) > 0:
                 eval_type_conditions = []
@@ -1859,17 +2441,17 @@ class DynamoDb(BaseDb):
             return eval_runs
 
         except Exception as e:
-            log_error(f"Failed to get eval runs: {e}")
+            log_error(f"Failed to get eval runs: {str(e)}")
             raise e
 
     def rename_eval_run(
-        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         if not self.eval_table_name:
             return None
 
         try:
-            response = self.client.update_item(
+            update_kwargs: Dict[str, Any] = dict(
                 TableName=self.eval_table_name,
                 Key={"run_id": {"S": eval_run_id}},
                 UpdateExpression="SET #name = :name, updated_at = :updated_at",
@@ -1880,6 +2462,18 @@ class DynamoDb(BaseDb):
                 },
                 ReturnValues="ALL_NEW",
             )
+            # Avoid upserting a phantom item when the run doesn't exist. Such an item carries
+            # no eval_type, and every later read of the table fails on it.
+            update_kwargs["ConditionExpression"] = "attribute_exists(run_id)"
+            # Only rename if owned by this user.
+            if user_id is not None:
+                update_kwargs["ConditionExpression"] += " AND user_id = :user_id"
+                update_kwargs["ExpressionAttributeValues"][":user_id"] = {"S": user_id}
+
+            try:
+                response = self.client.update_item(**update_kwargs)
+            except self.client.exceptions.ConditionalCheckFailedException:
+                return None
 
             item = response.get("Attributes")
             if item is None:
@@ -1891,159 +2485,796 @@ class DynamoDb(BaseDb):
             return EvalRunRecord.model_validate(item) if deserialize else item
 
         except Exception as e:
-            log_error(f"Failed to rename eval run {eval_run_id}: {e}")
+            log_error(f"Failed to rename eval run {eval_run_id}: {str(e)}")
             raise e
 
-    # -- Culture methods --
+    def update_eval_run_user_id(self, eval_run_id: str, user_id: str) -> None:
+        """Set the owner (user_id) on an existing eval run.
 
-    def clear_cultural_knowledge(self) -> None:
-        """Delete all cultural knowledge from the database."""
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            user_id (str): The owner to set.
+        """
+        if not self.eval_table_name:
+            return
+
         try:
-            table_name = self._get_table("culture")
-            response = self.client.scan(TableName=table_name, ProjectionExpression="id")
+            self.client.update_item(
+                TableName=self.eval_table_name,
+                Key={"run_id": {"S": eval_run_id}},
+                UpdateExpression="SET user_id = :user_id",
+                # Avoid upserting a phantom item when the run doesn't exist.
+                ConditionExpression="attribute_exists(run_id)",
+                ExpressionAttributeValues={":user_id": {"S": user_id}},
+            )
 
-            with self.client.batch_writer(table_name) as batch:
-                for item in response.get("Items", []):
-                    batch.delete_item(Key={"id": item["id"]})
+        except self.client.exceptions.ConditionalCheckFailedException:
+            return
+
         except Exception as e:
-            log_error(f"Failed to clear cultural knowledge: {e}")
+            log_error(f"Failed to set owner on eval run {eval_run_id}: {str(e)}")
             raise e
 
-    def delete_cultural_knowledge(self, id: str) -> None:
-        """Delete a cultural knowledge entry from the database."""
+    # --- Traces ---
+    def upsert_trace(self, trace: "Trace") -> None:
+        """Create or update a single trace record in the database.
+
+        Args:
+            trace: The Trace object to store (one per trace_id).
+        """
         try:
-            table_name = self._get_table("culture")
-            self.client.delete_item(TableName=table_name, Key={"id": {"S": id}})
+            table_name = self._get_table("traces", create_table_if_not_found=True)
+            if table_name is None:
+                return
+
+            # Check if trace already exists
+            response = self.client.get_item(
+                TableName=table_name,
+                Key={"trace_id": {"S": trace.trace_id}},
+            )
+
+            existing_item = response.get("Item")
+            if existing_item:
+                # Update existing trace
+                existing = deserialize_from_dynamodb_item(existing_item)
+
+                # Determine component level for name update priority
+                def get_component_level(workflow_id, team_id, agent_id, name):
+                    is_root_name = ".run" in name or ".arun" in name
+                    if not is_root_name:
+                        return 0
+                    elif workflow_id:
+                        return 3
+                    elif team_id:
+                        return 2
+                    elif agent_id:
+                        return 1
+                    else:
+                        return 0
+
+                existing_level = get_component_level(
+                    existing.get("workflow_id"),
+                    existing.get("team_id"),
+                    existing.get("agent_id"),
+                    existing.get("name", ""),
+                )
+                new_level = get_component_level(trace.workflow_id, trace.team_id, trace.agent_id, trace.name)
+                should_update_name = new_level > existing_level
+
+                # Parse existing start_time to calculate correct duration
+                existing_start_time_str = existing.get("start_time")
+                if isinstance(existing_start_time_str, str):
+                    existing_start_time = datetime.fromisoformat(existing_start_time_str.replace("Z", "+00:00"))
+                else:
+                    existing_start_time = trace.start_time
+
+                recalculated_duration_ms = int((trace.end_time - existing_start_time).total_seconds() * 1000)
+
+                # Build update expression
+                update_parts = [
+                    "end_time = :end_time",
+                    "duration_ms = :duration_ms",
+                    "#status = :status",
+                ]
+                expression_attr_names = {"#status": "status"}
+                expression_attr_values: Dict[str, Any] = {
+                    ":end_time": {"S": trace.end_time.isoformat()},
+                    ":duration_ms": {"N": str(recalculated_duration_ms)},
+                    ":status": {"S": trace.status},
+                }
+
+                if should_update_name:
+                    update_parts.append("#name = :name")
+                    expression_attr_names["#name"] = "name"
+                    expression_attr_values[":name"] = {"S": trace.name}
+
+                # Preserve existing non-null context values: only fill in fields
+                # that the existing row left blank. Otherwise a later upsert from
+                # a child span (e.g. a post-hook agent's run with a different
+                # session_id) would overwrite the trace's already-correct context.
+                if existing.get("run_id") is None and trace.run_id is not None:
+                    update_parts.append("run_id = :run_id")
+                    expression_attr_values[":run_id"] = {"S": trace.run_id}
+                if existing.get("session_id") is None and trace.session_id is not None:
+                    update_parts.append("session_id = :session_id")
+                    expression_attr_values[":session_id"] = {"S": trace.session_id}
+                if existing.get("user_id") is None and trace.user_id is not None:
+                    update_parts.append("user_id = :user_id")
+                    expression_attr_values[":user_id"] = {"S": trace.user_id}
+                if existing.get("agent_id") is None and trace.agent_id is not None:
+                    update_parts.append("agent_id = :agent_id")
+                    expression_attr_values[":agent_id"] = {"S": trace.agent_id}
+                if existing.get("team_id") is None and trace.team_id is not None:
+                    update_parts.append("team_id = :team_id")
+                    expression_attr_values[":team_id"] = {"S": trace.team_id}
+                if existing.get("workflow_id") is None and trace.workflow_id is not None:
+                    update_parts.append("workflow_id = :workflow_id")
+                    expression_attr_values[":workflow_id"] = {"S": trace.workflow_id}
+
+                self.client.update_item(
+                    TableName=table_name,
+                    Key={"trace_id": {"S": trace.trace_id}},
+                    UpdateExpression="SET " + ", ".join(update_parts),
+                    ExpressionAttributeNames=expression_attr_names,
+                    ExpressionAttributeValues=expression_attr_values,
+                )
+            else:
+                # Create new trace with initialized counters
+                trace_dict = trace.to_dict()
+                trace_dict["total_spans"] = 0
+                trace_dict["error_count"] = 0
+                item = serialize_to_dynamo_item(trace_dict)
+                self.client.put_item(TableName=table_name, Item=item)
+
         except Exception as e:
-            log_error(f"Failed to delete cultural knowledge {id}: {e}")
-            raise e
+            log_error(f"Error creating trace: {str(e)}")
 
-    def get_cultural_knowledge(
-        self, id: str, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Get a cultural knowledge entry from the database."""
+    def get_trace(
+        self,
+        trace_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+    ):
+        """Get a single trace by trace_id or other filters.
+
+        Args:
+            trace_id: The unique trace identifier.
+            run_id: Filter by run ID (returns first match).
+
+        Returns:
+            Optional[Trace]: The trace if found, None otherwise.
+
+        Note:
+            If multiple filters are provided, trace_id takes precedence.
+            For other filters, the most recent trace is returned.
+        """
         try:
-            table_name = self._get_table("culture")
-            response = self.client.get_item(TableName=table_name, Key={"id": {"S": id}})
+            from agno.tracing.schemas import Trace
 
-            item = response.get("Item")
-            if not item:
+            table_name = self._get_table("traces")
+            if table_name is None:
                 return None
 
-            db_row = deserialize_from_dynamodb_item(item)
-            if not deserialize:
-                return db_row
+            if trace_id:
+                # Direct lookup by primary key
+                response = self.client.get_item(
+                    TableName=table_name,
+                    Key={"trace_id": {"S": trace_id}},
+                )
+                item = response.get("Item")
+                if item:
+                    trace_data = deserialize_from_dynamodb_item(item)
+                    trace_data.setdefault("total_spans", 0)
+                    trace_data.setdefault("error_count", 0)
+                    return Trace.from_dict(trace_data)
+                return None
 
-            return deserialize_cultural_knowledge_from_db(db_row)
+            elif run_id:
+                # Query using GSI
+                response = self.client.query(
+                    TableName=table_name,
+                    IndexName="run_id-start_time-index",
+                    KeyConditionExpression="run_id = :run_id",
+                    ExpressionAttributeValues={":run_id": {"S": run_id}},
+                    ScanIndexForward=False,  # Descending order
+                    Limit=1,
+                )
+                items = response.get("Items", [])
+                if items:
+                    trace_data = deserialize_from_dynamodb_item(items[0])
+                    # Use stored values (default to 0 if not present)
+                    trace_data.setdefault("total_spans", 0)
+                    trace_data.setdefault("error_count", 0)
+                    return Trace.from_dict(trace_data)
+                return None
+
+            else:
+                log_debug("get_trace called without any filter parameters")
+                return None
+
         except Exception as e:
-            log_error(f"Failed to get cultural knowledge {id}: {e}")
-            raise e
+            log_error(f"Error getting trace: {str(e)}")
+            return None
 
-    def get_all_cultural_knowledge(
+    def get_traces(
         self,
-        name: Optional[str] = None,
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-        """Get all cultural knowledge from the database."""
+        workflow_id: Optional[str] = None,
+        status: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+    ) -> tuple[List, int]:
+        """Get traces matching the provided filters.
+
+        Args:
+            run_id: Filter by run ID.
+            session_id: Filter by session ID.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
+            status: Filter by status (OK, ERROR, UNSET).
+            start_time: Filter traces starting after this datetime.
+            end_time: Filter traces ending before this datetime.
+            limit: Maximum number of traces to return per page.
+            page: Page number (1-indexed).
+
+        Returns:
+            tuple[List[Trace], int]: Tuple of (list of matching traces, total count).
+        """
         try:
-            table_name = self._get_table("culture")
+            from agno.tracing.schemas import Trace
+
+            table_name = self._get_table("traces")
+            if table_name is None:
+                return [], 0
+
+            # Determine if we can use a GSI query or need to scan
+            use_gsi = False
+            gsi_name = None
+            key_condition = None
+            key_values: Dict[str, Any] = {}
+
+            # Check for GSI-compatible filters (only one can be used as key condition)
+            if session_id:
+                use_gsi = True
+                gsi_name = "session_id-start_time-index"
+                key_condition = "session_id = :session_id"
+                key_values[":session_id"] = {"S": session_id}
+            elif user_id is not None:
+                use_gsi = True
+                gsi_name = "user_id-start_time-index"
+                key_condition = "user_id = :user_id"
+                key_values[":user_id"] = {"S": user_id}
+            elif agent_id:
+                use_gsi = True
+                gsi_name = "agent_id-start_time-index"
+                key_condition = "agent_id = :agent_id"
+                key_values[":agent_id"] = {"S": agent_id}
+            elif team_id:
+                use_gsi = True
+                gsi_name = "team_id-start_time-index"
+                key_condition = "team_id = :team_id"
+                key_values[":team_id"] = {"S": team_id}
+            elif workflow_id:
+                use_gsi = True
+                gsi_name = "workflow_id-start_time-index"
+                key_condition = "workflow_id = :workflow_id"
+                key_values[":workflow_id"] = {"S": workflow_id}
+            elif run_id:
+                use_gsi = True
+                gsi_name = "run_id-start_time-index"
+                key_condition = "run_id = :run_id"
+                key_values[":run_id"] = {"S": run_id}
+            elif status:
+                use_gsi = True
+                gsi_name = "status-start_time-index"
+                key_condition = "#status = :status"
+                key_values[":status"] = {"S": status}
+
+            # Build filter expression for additional filters
+            filter_parts = []
+            filter_values: Dict[str, Any] = {}
+            expression_attr_names: Dict[str, str] = {}
+
+            if start_time:
+                filter_parts.append("start_time >= :start_time")
+                filter_values[":start_time"] = {"S": start_time.isoformat()}
+            if end_time:
+                filter_parts.append("end_time <= :end_time")
+                filter_values[":end_time"] = {"S": end_time.isoformat()}
+
+            if status and gsi_name != "status-start_time-index":
+                filter_parts.append("#status = :filter_status")
+                filter_values[":filter_status"] = {"S": status}
+                expression_attr_names["#status"] = "status"
+
+            items = []
+            if use_gsi and gsi_name and key_condition:
+                # Use GSI query
+                query_kwargs: Dict[str, Any] = {
+                    "TableName": table_name,
+                    "IndexName": gsi_name,
+                    "KeyConditionExpression": key_condition,
+                    "ExpressionAttributeValues": {**key_values, **filter_values},
+                    "ScanIndexForward": False,  # Descending order by start_time
+                }
+                if gsi_name == "status-start_time-index":
+                    expression_attr_names["#status"] = "status"
+                if expression_attr_names:
+                    query_kwargs["ExpressionAttributeNames"] = expression_attr_names
+                if filter_parts:
+                    query_kwargs["FilterExpression"] = " AND ".join(filter_parts)
+
+                response = self.client.query(**query_kwargs)
+                items.extend(response.get("Items", []))
+
+                while "LastEvaluatedKey" in response:
+                    query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                    response = self.client.query(**query_kwargs)
+                    items.extend(response.get("Items", []))
+            else:
+                # Use scan
+                scan_kwargs: Dict[str, Any] = {"TableName": table_name}
+                if filter_parts:
+                    scan_kwargs["FilterExpression"] = " AND ".join(filter_parts)
+                    scan_kwargs["ExpressionAttributeValues"] = filter_values
+                if expression_attr_names:
+                    scan_kwargs["ExpressionAttributeNames"] = expression_attr_names
+
+                response = self.client.scan(**scan_kwargs)
+                items.extend(response.get("Items", []))
+
+                while "LastEvaluatedKey" in response:
+                    scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                    response = self.client.scan(**scan_kwargs)
+                    items.extend(response.get("Items", []))
+
+            # Deserialize items
+            traces_data = [deserialize_from_dynamodb_item(item) for item in items]
+
+            # Sort by start_time descending
+            traces_data.sort(key=lambda x: x.get("start_time", ""), reverse=True)
+
+            # Get total count
+            total_count = len(traces_data)
+
+            # Apply pagination
+            offset = (page - 1) * limit if page and limit else 0
+            paginated_data = traces_data[offset : offset + limit] if limit else traces_data
+
+            # Use stored total_spans and error_count (default to 0 if not present)
+            traces = []
+            for trace_data in paginated_data:
+                # Use stored values - these are updated by create_spans
+                trace_data.setdefault("total_spans", 0)
+                trace_data.setdefault("error_count", 0)
+                traces.append(Trace.from_dict(trace_data))
+
+            return traces, total_count
+
+        except Exception as e:
+            log_error(f"Error getting traces: {str(e)}")
+            return [], 0
+
+    def get_trace_stats(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+        group_by: Literal["session", "agent", "team", "workflow", "endpoint"] = "session",
+    ) -> tuple[List[Dict[str, Any]], int]:
+        """Get trace statistics grouped by session.
+
+        Args:
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
+            start_time: Filter sessions with traces created after this datetime.
+            end_time: Filter sessions with traces created before this datetime.
+            limit: Maximum number of sessions to return per page.
+            page: Page number (1-indexed).
+            group_by: Only the default "session" grouping is supported by this backend.
+
+        Returns:
+            tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
+                Each dict contains: session_id, user_id, agent_id, team_id, workflow_id, total_traces,
+                first_trace_at, last_trace_at.
+        """
+        if group_by != "session":
+            raise NotImplementedError(
+                f"get_trace_stats with group_by={group_by!r} is not supported by {self.__class__.__name__}. "
+                "Only the default 'session' grouping is available."
+            )
+
+        try:
+            table_name = self._get_table("traces")
+            if table_name is None:
+                return [], 0
+
+            # Fetch all traces and aggregate in memory (DynamoDB doesn't support GROUP BY)
+            scan_kwargs: Dict[str, Any] = {"TableName": table_name}
 
             # Build filter expression
-            filter_expressions = []
-            expression_values = {}
+            filter_parts = []
+            filter_values: Dict[str, Any] = {}
 
-            if name:
-                filter_expressions.append("#name = :name")
-                expression_values[":name"] = {"S": name}
+            if user_id is not None:
+                filter_parts.append("user_id = :user_id")
+                filter_values[":user_id"] = {"S": user_id}
             if agent_id:
-                filter_expressions.append("agent_id = :agent_id")
-                expression_values[":agent_id"] = {"S": agent_id}
+                filter_parts.append("agent_id = :agent_id")
+                filter_values[":agent_id"] = {"S": agent_id}
             if team_id:
-                filter_expressions.append("team_id = :team_id")
-                expression_values[":team_id"] = {"S": team_id}
+                filter_parts.append("team_id = :team_id")
+                filter_values[":team_id"] = {"S": team_id}
+            if workflow_id:
+                filter_parts.append("workflow_id = :workflow_id")
+                filter_values[":workflow_id"] = {"S": workflow_id}
+            if start_time:
+                filter_parts.append("created_at >= :start_time")
+                filter_values[":start_time"] = {"S": start_time.isoformat()}
+            if end_time:
+                filter_parts.append("created_at <= :end_time")
+                filter_values[":end_time"] = {"S": end_time.isoformat()}
 
-            scan_kwargs: Dict[str, Any] = {"TableName": table_name}
-            if filter_expressions:
-                scan_kwargs["FilterExpression"] = " AND ".join(filter_expressions)
-                scan_kwargs["ExpressionAttributeValues"] = expression_values
-                if name:
-                    scan_kwargs["ExpressionAttributeNames"] = {"#name": "name"}
+            # Filter for records with session_id
+            filter_parts.append("attribute_exists(session_id)")
 
-            # Execute scan
+            if filter_parts:
+                scan_kwargs["FilterExpression"] = " AND ".join(filter_parts)
+            if filter_values:
+                scan_kwargs["ExpressionAttributeValues"] = filter_values
+
+            # Scan all matching traces
+            items = []
             response = self.client.scan(**scan_kwargs)
-            items = response.get("Items", [])
+            items.extend(response.get("Items", []))
 
-            # Continue scanning if there's more data
             while "LastEvaluatedKey" in response:
                 scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
                 response = self.client.scan(**scan_kwargs)
                 items.extend(response.get("Items", []))
 
-            # Deserialize items from DynamoDB format
-            db_rows = [deserialize_from_dynamodb_item(item) for item in items]
+            # Aggregate by session_id
+            session_stats: Dict[str, Dict[str, Any]] = {}
+            for item in items:
+                trace_data = deserialize_from_dynamodb_item(item)
+                session_id = trace_data.get("session_id")
+                if not session_id:
+                    continue
 
-            # Apply sorting
-            if sort_by:
-                reverse = sort_order == "desc" if sort_order else False
-                db_rows.sort(key=lambda x: x.get(sort_by, ""), reverse=reverse)
+                if session_id not in session_stats:
+                    session_stats[session_id] = {
+                        "session_id": session_id,
+                        "user_id": trace_data.get("user_id"),
+                        "agent_id": trace_data.get("agent_id"),
+                        "team_id": trace_data.get("team_id"),
+                        "workflow_id": trace_data.get("workflow_id"),
+                        "total_traces": 0,
+                        "first_trace_at": trace_data.get("created_at"),
+                        "last_trace_at": trace_data.get("created_at"),
+                    }
+
+                session_stats[session_id]["total_traces"] += 1
+
+                created_at = trace_data.get("created_at")
+                if (
+                    created_at
+                    and session_stats[session_id]["first_trace_at"]
+                    and session_stats[session_id]["last_trace_at"]
+                ):
+                    if created_at < session_stats[session_id]["first_trace_at"]:
+                        session_stats[session_id]["first_trace_at"] = created_at
+                    if created_at > session_stats[session_id]["last_trace_at"]:
+                        session_stats[session_id]["last_trace_at"] = created_at
+
+            # Convert to list and sort by last_trace_at descending
+            stats_list = list(session_stats.values())
+            stats_list.sort(key=lambda x: x.get("last_trace_at", ""), reverse=True)
+
+            # Convert datetime strings to datetime objects
+            for stat in stats_list:
+                first_trace_at = stat["first_trace_at"]
+                last_trace_at = stat["last_trace_at"]
+                if isinstance(first_trace_at, str):
+                    stat["first_trace_at"] = datetime.fromisoformat(first_trace_at.replace("Z", "+00:00"))
+                if isinstance(last_trace_at, str):
+                    stat["last_trace_at"] = datetime.fromisoformat(last_trace_at.replace("Z", "+00:00"))
+
+            # Get total count
+            total_count = len(stats_list)
 
             # Apply pagination
-            total_count = len(db_rows)
-            if limit and page:
-                start = (page - 1) * limit
-                db_rows = db_rows[start : start + limit]
-            elif limit:
-                db_rows = db_rows[:limit]
+            offset = (page - 1) * limit if page and limit else 0
+            paginated_stats = stats_list[offset : offset + limit] if limit else stats_list
 
-            if not deserialize:
-                return db_rows, total_count
+            return paginated_stats, total_count
 
-            return [deserialize_cultural_knowledge_from_db(row) for row in db_rows]
         except Exception as e:
-            log_error(f"Failed to get all cultural knowledge: {e}")
-            raise e
+            log_error(f"Error getting trace stats: {str(e)}")
+            return [], 0
 
-    def upsert_cultural_knowledge(
-        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Upsert a cultural knowledge entry into the database."""
+    # --- Spans ---
+    def create_span(self, span: "Span") -> None:
+        """Create a single span in the database.
+
+        Args:
+            span: The Span object to store.
+        """
         try:
-            from uuid import uuid4
+            table_name = self._get_table("spans", create_table_if_not_found=True)
+            if table_name is None:
+                return
 
-            table_name = self._get_table("culture", create_table_if_not_found=True)
+            span_dict = span.to_dict()
+            # Serialize attributes as JSON string
+            if "attributes" in span_dict and isinstance(span_dict["attributes"], dict):
+                span_dict["attributes"] = json.dumps(span_dict["attributes"])
 
-            if not cultural_knowledge.id:
-                cultural_knowledge.id = str(uuid4())
-
-            # Serialize content, categories, and notes into a dict for DB storage
-            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
-
-            # Create the item dict with serialized content
-            item_dict = {
-                "id": cultural_knowledge.id,
-                "name": cultural_knowledge.name,
-                "summary": cultural_knowledge.summary,
-                "content": content_dict if content_dict else None,
-                "metadata": cultural_knowledge.metadata,
-                "input": cultural_knowledge.input,
-                "created_at": cultural_knowledge.created_at,
-                "updated_at": int(time.time()),
-                "agent_id": cultural_knowledge.agent_id,
-                "team_id": cultural_knowledge.team_id,
-            }
-
-            # Convert to DynamoDB format
-            item = serialize_to_dynamo_item(item_dict)
+            item = serialize_to_dynamo_item(span_dict)
             self.client.put_item(TableName=table_name, Item=item)
 
-            return self.get_cultural_knowledge(cultural_knowledge.id, deserialize=deserialize)
+            # Increment total_spans and error_count on trace
+            traces_table_name = self._get_table("traces")
+            if traces_table_name:
+                try:
+                    update_expr = "ADD total_spans :inc"
+                    expr_values: Dict[str, Any] = {":inc": {"N": "1"}}
+
+                    if span.status_code == "ERROR":
+                        update_expr += ", error_count :inc"
+
+                    self.client.update_item(
+                        TableName=traces_table_name,
+                        Key={"trace_id": {"S": span.trace_id}},
+                        UpdateExpression=update_expr,
+                        ExpressionAttributeValues=expr_values,
+                    )
+                except Exception as update_error:
+                    log_debug(f"Could not update trace span counts: {update_error}")
 
         except Exception as e:
-            log_error(f"Failed to upsert cultural knowledge: {e}")
-            raise e
+            log_error(f"Error creating span: {str(e)}")
+
+    def create_spans(self, spans: List) -> None:
+        """Create multiple spans in the database as a batch.
+
+        Args:
+            spans: List of Span objects to store.
+        """
+        if not spans:
+            return
+
+        try:
+            table_name = self._get_table("spans", create_table_if_not_found=True)
+            if table_name is None:
+                return
+
+            for i in range(0, len(spans), DYNAMO_BATCH_SIZE_LIMIT):
+                batch = spans[i : i + DYNAMO_BATCH_SIZE_LIMIT]
+                put_requests = []
+
+                for span in batch:
+                    span_dict = span.to_dict()
+                    # Serialize attributes as JSON string
+                    if "attributes" in span_dict and isinstance(span_dict["attributes"], dict):
+                        span_dict["attributes"] = json.dumps(span_dict["attributes"])
+
+                    item = serialize_to_dynamo_item(span_dict)
+                    put_requests.append({"PutRequest": {"Item": item}})
+
+                if put_requests:
+                    batch_write_with_retry(self.client, {table_name: put_requests})
+
+            # Update trace with total_spans and error_count using ADD (atomic increment)
+            trace_id = spans[0].trace_id
+            spans_count = len(spans)
+            error_count = sum(1 for s in spans if s.status_code == "ERROR")
+
+            traces_table_name = self._get_table("traces")
+            if traces_table_name:
+                try:
+                    # Use ADD for atomic increment - works even if attributes don't exist yet
+                    update_expr = "ADD total_spans :spans_inc"
+                    expr_values: Dict[str, Any] = {":spans_inc": {"N": str(spans_count)}}
+
+                    if error_count > 0:
+                        update_expr += ", error_count :error_inc"
+                        expr_values[":error_inc"] = {"N": str(error_count)}
+
+                    self.client.update_item(
+                        TableName=traces_table_name,
+                        Key={"trace_id": {"S": trace_id}},
+                        UpdateExpression=update_expr,
+                        ExpressionAttributeValues=expr_values,
+                    )
+                except Exception as update_error:
+                    log_debug(f"Could not update trace span counts: {update_error}")
+
+        except Exception as e:
+            log_error(f"Error creating spans batch: {str(e)}")
+
+    def get_span(self, span_id: str):
+        """Get a single span by its span_id.
+
+        Args:
+            span_id: The unique span identifier.
+
+        Returns:
+            Optional[Span]: The span if found, None otherwise.
+        """
+        try:
+            from agno.tracing.schemas import Span
+
+            table_name = self._get_table("spans")
+            if table_name is None:
+                return None
+
+            response = self.client.get_item(
+                TableName=table_name,
+                Key={"span_id": {"S": span_id}},
+            )
+
+            item = response.get("Item")
+            if item:
+                span_data = deserialize_from_dynamodb_item(item)
+                # Deserialize attributes from JSON string
+                if "attributes" in span_data and isinstance(span_data["attributes"], str):
+                    span_data["attributes"] = json.loads(span_data["attributes"])
+                return Span.from_dict(span_data)
+            return None
+
+        except Exception as e:
+            log_error(f"Error getting span: {str(e)}")
+            return None
+
+    def get_spans(
+        self,
+        trace_id: Optional[str] = None,
+        parent_span_id: Optional[str] = None,
+        limit: Optional[int] = 1000,
+    ) -> List:
+        """Get spans matching the provided filters.
+
+        Args:
+            trace_id: Filter by trace ID.
+            parent_span_id: Filter by parent span ID.
+            limit: Maximum number of spans to return.
+
+        Returns:
+            List[Span]: List of matching spans.
+        """
+        try:
+            from agno.tracing.schemas import Span
+
+            table_name = self._get_table("spans")
+            if table_name is None:
+                return []
+
+            items = []
+
+            if trace_id:
+                # Use GSI query
+                query_kwargs: Dict[str, Any] = {
+                    "TableName": table_name,
+                    "IndexName": "trace_id-start_time-index",
+                    "KeyConditionExpression": "trace_id = :trace_id",
+                    "ExpressionAttributeValues": {":trace_id": {"S": trace_id}},
+                }
+                if limit:
+                    query_kwargs["Limit"] = limit
+
+                response = self.client.query(**query_kwargs)
+                items.extend(response.get("Items", []))
+
+                while "LastEvaluatedKey" in response and (limit is None or len(items) < limit):
+                    query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                    response = self.client.query(**query_kwargs)
+                    items.extend(response.get("Items", []))
+
+            elif parent_span_id:
+                # Use GSI query
+                query_kwargs = {
+                    "TableName": table_name,
+                    "IndexName": "parent_span_id-start_time-index",
+                    "KeyConditionExpression": "parent_span_id = :parent_span_id",
+                    "ExpressionAttributeValues": {":parent_span_id": {"S": parent_span_id}},
+                }
+                if limit:
+                    query_kwargs["Limit"] = limit
+
+                response = self.client.query(**query_kwargs)
+                items.extend(response.get("Items", []))
+
+                while "LastEvaluatedKey" in response and (limit is None or len(items) < limit):
+                    query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                    response = self.client.query(**query_kwargs)
+                    items.extend(response.get("Items", []))
+
+            else:
+                # Scan all spans
+                scan_kwargs: Dict[str, Any] = {"TableName": table_name}
+                if limit:
+                    scan_kwargs["Limit"] = limit
+
+                response = self.client.scan(**scan_kwargs)
+                items.extend(response.get("Items", []))
+
+                while "LastEvaluatedKey" in response and (limit is None or len(items) < limit):
+                    scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                    response = self.client.scan(**scan_kwargs)
+                    items.extend(response.get("Items", []))
+
+            # Deserialize items
+            spans = []
+            for item in items[:limit] if limit else items:
+                span_data = deserialize_from_dynamodb_item(item)
+                # Deserialize attributes from JSON string
+                if "attributes" in span_data and isinstance(span_data["attributes"], str):
+                    span_data["attributes"] = json.loads(span_data["attributes"])
+                spans.append(Span.from_dict(span_data))
+
+            return spans
+
+        except Exception as e:
+            log_error(f"Error getting spans: {str(e)}")
+            return []
+
+    # -- Learning methods (stubs) --
+    def get_learning(
+        self,
+        learning_type: str,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError("Learning methods not yet implemented for DynamoDb")
+
+    def upsert_learning(
+        self,
+        id: str,
+        learning_type: str,
+        content: Dict[str, Any],
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        raise NotImplementedError("Learning methods not yet implemented for DynamoDb")
+
+    def delete_learning(self, id: str) -> bool:
+        raise NotImplementedError("Learning methods not yet implemented for DynamoDb")
+
+    def get_learnings(
+        self,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        raise NotImplementedError("Learning methods not yet implemented for DynamoDb")

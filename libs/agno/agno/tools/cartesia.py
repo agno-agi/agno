@@ -20,7 +20,7 @@ class CartesiaTools(Toolkit):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model_id: str = "sonic-2",
+        model_id: str = "sonic-3.6",
         default_voice_id: str = "78ab82d5-25be-4f7d-82b3-7ad64e5b85b2",
         enable_text_to_speech: bool = True,
         enable_list_voices: bool = True,
@@ -74,16 +74,16 @@ class CartesiaTools(Toolkit):
                             filtered_result.append(voice_data)
                         else:
                             log_info(f"Could not extract 'id' from voice object: {voice}")
-                    except AttributeError as ae:
-                        log_error(f"AttributeError accessing voice data: {ae}. Voice data: {voice}")
+                    except AttributeError as e:
+                        log_error(f"AttributeError accessing voice data. Voice data: {voice}: {str(e)}")
                         continue
-                    except Exception as inner_e:
-                        log_error(f"Unexpected error processing voice: {inner_e}. Voice data: {voice}")
+                    except Exception as e:
+                        log_error(f"Unexpected error processing voice. Voice data: {voice}: {str(e)}")
                         continue
 
             return json.dumps(filtered_result, indent=4)
         except Exception as e:
-            log_error(f"Error listing voices from Cartesia: {e}", exc_info=True)
+            log_error(f"Error listing voices from Cartesia: {str(e)}")
             return json.dumps({"error": str(e), "detail": "Error occurred in list_voices function."})
 
     def localize_voice(
@@ -124,7 +124,7 @@ class CartesiaTools(Toolkit):
                 return result.model_dump_json(indent=4)
 
         except Exception as e:
-            log_error(f"Error localizing voice with Cartesia: {e}", exc_info=True)
+            log_error(f"Error localizing voice with Cartesia: {str(e)}")
             return json.dumps({"error": str(e), "type": type(e).__name__})
 
     def text_to_speech(
@@ -183,5 +183,5 @@ class CartesiaTools(Toolkit):
             )
 
         except Exception as e:
-            log_error(f"Error generating speech with Cartesia: {e}", exc_info=True)
+            log_error(f"Error generating speech with Cartesia: {str(e)}")
             return ToolResult(content=f"Error generating speech: {e}")

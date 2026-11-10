@@ -4,8 +4,14 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from typing_extensions import Literal
 
-from agno.knowledge.embedder.base import Embedder
-from agno.utils.log import logger
+from agno.knowledge.embedder.base import (
+    Embedder,
+    aembed_texts_individually,
+    first_embedding,
+    pad_batch_embeddings,
+    raise_embedding_error,
+)
+from agno.utils.log import log_warning, logger
 
 try:
     from openai import AsyncAzureOpenAI as AsyncAzureOpenAIClient
@@ -18,8 +24,7 @@ except ImportError:
 @dataclass
 class AzureOpenAIEmbedder(Embedder):
     id: str = "text-embedding-3-small"  # This has to match the model that you deployed at the provided URL
-
-    dimensions: int = 1536
+    dimensions: Optional[int] = None
     encoding_format: Literal["float", "base64"] = "float"
     user: Optional[str] = None
     api_key: Optional[str] = getenv("AZURE_EMBEDDER_OPENAI_API_KEY")
@@ -34,6 +39,10 @@ class AzureOpenAIEmbedder(Embedder):
     client_params: Optional[Dict[str, Any]] = None
     openai_client: Optional[AzureOpenAIClient] = None
     async_client: Optional[AsyncAzureOpenAIClient] = None
+
+    def __post_init__(self):
+        if self.dimensions is None and self.id.startswith("text-embedding-3"):
+            self.dimensions = 1536
 
     @property
     def client(self) -> AzureOpenAIClient:
@@ -94,13 +103,13 @@ class AzureOpenAIEmbedder(Embedder):
 
     def _response(self, text: str) -> CreateEmbeddingResponse:
         _request_params: Dict[str, Any] = {
-            "input": text,
+            "input": [text],
             "model": self.id,
             "encoding_format": self.encoding_format,
         }
         if self.user is not None:
             _request_params["user"] = self.user
-        if self.id.startswith("text-embedding-3"):
+        if self.dimensions is not None:
             _request_params["dimensions"] = self.dimensions
         if self.request_params:
             _request_params.update(self.request_params)
@@ -108,30 +117,34 @@ class AzureOpenAIEmbedder(Embedder):
         return self.client.embeddings.create(**_request_params)
 
     def get_embedding(self, text: str) -> List[float]:
-        response: CreateEmbeddingResponse = self._response(text=text)
         try:
-            return response.data[0].embedding
+            response: CreateEmbeddingResponse = self._response(text=text)
+            entry = first_embedding(response.data, "AzureOpenAI")
+            return entry.embedding if entry else []
         except Exception as e:
-            logger.warning(e)
-            return []
+            raise_embedding_error(e, model_id=self.id, provider="AzureOpenAI")
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
-        response: CreateEmbeddingResponse = self._response(text=text)
+        try:
+            response: CreateEmbeddingResponse = self._response(text=text)
 
-        embedding = response.data[0].embedding
-        usage = response.usage
-        return embedding, usage.model_dump()
+            entry = first_embedding(response.data, "AzureOpenAI")
+            embedding = entry.embedding if entry else []
+            usage = response.usage
+            return embedding, usage.model_dump() if usage else None
+        except Exception as e:
+            raise_embedding_error(e, model_id=self.id, provider="AzureOpenAI")
 
     async def _aresponse(self, text: str) -> CreateEmbeddingResponse:
         """Async version of _response method."""
         _request_params: Dict[str, Any] = {
-            "input": text,
+            "input": [text],
             "model": self.id,
             "encoding_format": self.encoding_format,
         }
         if self.user is not None:
             _request_params["user"] = self.user
-        if self.id.startswith("text-embedding-3"):
+        if self.dimensions is not None:
             _request_params["dimensions"] = self.dimensions
         if self.request_params:
             _request_params.update(self.request_params)
@@ -140,20 +153,24 @@ class AzureOpenAIEmbedder(Embedder):
 
     async def async_get_embedding(self, text: str) -> List[float]:
         """Async version of get_embedding using the native Azure OpenAI async client."""
-        response: CreateEmbeddingResponse = await self._aresponse(text=text)
         try:
-            return response.data[0].embedding
+            response: CreateEmbeddingResponse = await self._aresponse(text=text)
+            entry = first_embedding(response.data, "AzureOpenAI")
+            return entry.embedding if entry else []
         except Exception as e:
-            logger.warning(e)
-            return []
+            raise_embedding_error(e, model_id=self.id, provider="AzureOpenAI")
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         """Async version of get_embedding_and_usage using the native Azure OpenAI async client."""
-        response: CreateEmbeddingResponse = await self._aresponse(text=text)
+        try:
+            response: CreateEmbeddingResponse = await self._aresponse(text=text)
 
-        embedding = response.data[0].embedding
-        usage = response.usage
-        return embedding, usage.model_dump()
+            entry = first_embedding(response.data, "AzureOpenAI")
+            embedding = entry.embedding if entry else []
+            usage = response.usage
+            return embedding, usage.model_dump() if usage else None
+        except Exception as e:
+            raise_embedding_error(e, model_id=self.id, provider="AzureOpenAI")
 
     async def async_get_embeddings_batch_and_usage(
         self, texts: List[str]
@@ -181,30 +198,28 @@ class AzureOpenAIEmbedder(Embedder):
             }
             if self.user is not None:
                 req["user"] = self.user
-            if self.id.startswith("text-embedding-3"):
+            if self.dimensions is not None:
                 req["dimensions"] = self.dimensions
             if self.request_params:
                 req.update(self.request_params)
 
             try:
                 response: CreateEmbeddingResponse = await self.aclient.embeddings.create(**req)
-                batch_embeddings = [data.embedding for data in response.data]
+                batch_embeddings = pad_batch_embeddings(
+                    [data.embedding for data in response.data], batch_texts, "AzureOpenAI"
+                )
                 all_embeddings.extend(batch_embeddings)
 
                 # For each embedding in the batch, add the same usage information
                 usage_dict = response.usage.model_dump() if response.usage else None
                 all_usage.extend([usage_dict] * len(batch_embeddings))
             except Exception as e:
-                logger.warning(f"Error in async batch embedding: {e}")
-                # Fallback to individual calls for this batch
-                for text in batch_texts:
-                    try:
-                        embedding, usage = await self.async_get_embedding_and_usage(text)
-                        all_embeddings.append(embedding)
-                        all_usage.append(usage)
-                    except Exception as e2:
-                        logger.warning(f"Error in individual async embedding fallback: {e2}")
-                        all_embeddings.append([])
-                        all_usage.append(None)
+                log_warning(f"Error in async batch embedding: {str(e)}")
+                # Fall back to individual calls: a whole-batch failure is often transient
+                # (or caused by a single bad text). Successes are kept so one bad chunk
+                # does not discard the rest of the batch.
+                batch_embeddings, batch_usage = await aembed_texts_individually(self, batch_texts)
+                all_embeddings.extend(batch_embeddings)
+                all_usage.extend(batch_usage)
 
         return all_embeddings, all_usage

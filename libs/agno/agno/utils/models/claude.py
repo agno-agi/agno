@@ -1,18 +1,127 @@
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 from agno.media import File, Image
 from agno.models.message import Message
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 
-try:
-    from anthropic.types import (
-        TextBlock,
-        ToolUseBlock,
-    )
-except ImportError:
-    raise ImportError("`anthropic` not installed. Please install using `pip install anthropic`")
+if TYPE_CHECKING:
+    from agno.models.anthropic.claude import SystemPromptBlock
+
+
+# Models that support assistant message prefill. This is a closed set —
+# prefill was deprecated starting with Claude 4.6 and all future models
+# are expected to reject it.
+_PREFILL_SUPPORTED_PREFIXES = (
+    "claude-3-",
+    "claude-sonnet-4-0",
+    "claude-sonnet-4-1",
+    "claude-sonnet-4-2",
+    "claude-sonnet-4-5",
+    "claude-opus-4-0",
+    "claude-opus-4-1",
+    "claude-opus-4-2",
+    "claude-opus-4-5",
+    "claude-haiku-4-0",
+    "claude-haiku-4-1",
+    "claude-haiku-4-2",
+    "claude-haiku-4-5",
+)
+
+# Aliases like "claude-sonnet-4" point to the latest version in that family
+# (currently 4-0, which supports prefill). These must be exact matches — a
+# startswith check would incorrectly match "claude-sonnet-4-6".
+_PREFILL_SUPPORTED_ALIASES = {
+    "claude-sonnet-4",
+    "claude-opus-4",
+    "claude-haiku-4",
+}
+
+# Models that still accept temperature, top_p and top_k. Another closed set — the
+# sampling parameters were deprecated with Claude 4.7, so the 4.x releases that
+# predate it are the last ones that take them. Opus shipped 4-7 and 4-8, so the
+# versions are enumerated rather than matched on a "claude-opus-4-" prefix.
+_SAMPLING_SUPPORTED_PREFIXES = (
+    "claude-3-",
+    "claude-sonnet-4-0",
+    "claude-sonnet-4-1",
+    "claude-sonnet-4-2",
+    "claude-sonnet-4-5",
+    "claude-sonnet-4-6",
+    "claude-opus-4-0",
+    "claude-opus-4-1",
+    "claude-opus-4-2",
+    "claude-opus-4-5",
+    "claude-opus-4-6",
+    "claude-haiku-4-0",
+    "claude-haiku-4-1",
+    "claude-haiku-4-2",
+    "claude-haiku-4-5",
+)
+
+# Family aliases, exact-matched for the same reason as the prefill aliases above.
+_SAMPLING_SUPPORTED_ALIASES = {
+    "claude-sonnet-4",
+    "claude-opus-4",
+    "claude-haiku-4",
+}
+
+
+def core_model_id(model_id: str) -> str:
+    """Strip provider decoration from a Claude model ID, leaving the bare Anthropic ID.
+
+    Handles provider-specific ID formats:
+      - Anthropic direct:  "claude-sonnet-4-5-20250929"
+      - Bedrock:           "us.anthropic.claude-sonnet-4-6-v1:0"
+      - Vertex AI:         "claude-sonnet-4@20250514"
+      - LiteLLM:           "anthropic/claude-sonnet-4-6"
+    """
+    # Strip LiteLLM provider prefix (e.g. "anthropic/claude-sonnet-4-6")
+    core_id = model_id.split("/")[-1] if "/" in model_id else model_id
+    # Strip Bedrock prefix (e.g. "us.anthropic.claude-sonnet-4-6-v1:0")
+    core_id = core_id.split("anthropic.")[-1] if "anthropic." in core_id else core_id
+    # Strip Vertex AI version suffix (e.g. "claude-sonnet-4@20250514")
+    core_id = core_id.split("@")[0] if "@" in core_id else core_id
+    # Strip Bedrock version suffix (e.g. "claude-sonnet-4-5-20250929-v1:0")
+    if ":0" in core_id:
+        core_id = core_id.split("-v")[0] if "-v" in core_id else core_id.split(":")[0]
+    return core_id
+
+
+def supports_prefill(model_id: str) -> bool:
+    """Return True if the given model ID supports assistant message prefill."""
+    core_id = core_model_id(model_id)
+
+    if not core_id.startswith("claude"):
+        return True  # Non-Claude models are unaffected — don't inject trailing messages
+
+    return core_id in _PREFILL_SUPPORTED_ALIASES or core_id.startswith(_PREFILL_SUPPORTED_PREFIXES)
+
+
+def supports_sampling_params(model_id: str) -> bool:
+    """Return True if the given model ID accepts temperature, top_p and top_k.
+
+    Claude 4.7 deprecated the sampling parameters, and every model released since
+    rejects a non-default value with a 400. This is a closed set of the families that
+    still accept them, so an unrecognised Claude ID is assumed to reject them rather
+    than assumed to work.
+    """
+    core_id = core_model_id(model_id)
+
+    if not core_id.startswith("claude"):
+        return True  # Non-Claude models are unaffected — pass their parameters through
+
+    return core_id in _SAMPLING_SUPPORTED_ALIASES or core_id.startswith(_SAMPLING_SUPPORTED_PREFIXES)
+
+
+def supports_thinking_budget(model_id: str) -> bool:
+    """Return True if the given model ID accepts thinking={"type": "enabled", "budget_tokens": N}.
+
+    Claude 4.7 removed thinking budgets in the same release that deprecated the sampling
+    parameters, so the closed set of families that still accept one is the same.
+    """
+    return supports_sampling_params(model_id)
 
 
 @dataclass
@@ -37,6 +146,110 @@ ROLE_MAP = {
     "assistant": "assistant",
     "tool": "user",
 }
+
+
+def _anthropic_block_identity(block: Any) -> Optional[Tuple[str, str]]:
+    """Return a stable identity key for an Anthropic content block, or None if untrackable.
+
+    Server tool blocks pair a ``server_tool_use`` (carrying ``id``) with a result block
+    (carrying ``tool_use_id`` referencing that id). The (type, id-or-tool_use_id) tuple
+    lets us dedupe across provider_data["server_tool_blocks"] and list-shaped message.content
+    without dropping blocks that exist in only one source.
+    """
+    if not isinstance(block, dict):
+        return None
+    block_type = block.get("type")
+    if not block_type:
+        return None
+    block_id = block.get("id") or block.get("tool_use_id")
+    if not isinstance(block_id, str):
+        return None
+    return (block_type, block_id)
+
+
+def _anthropic_coerce_content_block(item: Any) -> Optional[Any]:
+    """Normalize a stored message content item into an Anthropic Messages API block dict."""
+    if item is None:
+        return None
+    if isinstance(item, dict):
+        block_dict = item
+    else:
+        model_dump = getattr(item, "model_dump", None)
+        if not callable(model_dump):
+            return None
+        try:
+            block_dict = model_dump(exclude_none=True)
+        except Exception as e:
+            log_warning(f"Failed to serialize Anthropic content block of type {type(item).__name__}: {e}")
+            return None
+    if not isinstance(block_dict, dict) or not block_dict.get("type"):
+        return None
+    if block_dict["type"] == "text" and isinstance(block_dict.get("citations"), list):
+        # Document titles are required but nullable. Restore nulls dropped by
+        # exclude_none above or by earlier versions, without mutating stored history.
+        block_dict = {
+            **block_dict,
+            "citations": [
+                {"document_title": None, **citation}
+                if isinstance(citation, dict)
+                and citation.get("type") in ("page_location", "char_location", "content_block_location")
+                else citation
+                for citation in block_dict["citations"]
+            ],
+        }
+    return block_dict
+
+
+_ANTHROPIC_THINKING_BLOCK_TYPES = ("thinking", "redacted_thinking")
+
+
+def _anthropic_block_type(block: Any) -> Optional[str]:
+    """Return the ``type`` of a content block that may be a dict or an SDK block object."""
+    block_type = block.get("type") if isinstance(block, dict) else getattr(block, "type", None)
+    return block_type if isinstance(block_type, str) else None
+
+
+def serialize_content_blocks(blocks: Any) -> List[Dict[str, Any]]:
+    """Serialize a provider response's content blocks, in order, into plain dicts.
+
+    The result is stored on the assistant message so a later request can echo the turn back
+    exactly as the API produced it. The API signs thinking blocks and verifies them on replay,
+    so the stored sequence must keep every block, its order, and its signature.
+    """
+    serialized: List[Dict[str, Any]] = []
+    for block in blocks or []:
+        block_dict = _anthropic_coerce_content_block(block)
+        if block_dict is None:
+            continue
+        if block_dict.get("type") == "redacted_reasoning_content":
+            # Legacy spelling accepted from rehydrated events; the API only knows redacted_thinking.
+            block_dict = {**block_dict, "type": "redacted_thinking"}
+        serialized.append(block_dict)
+    return serialized
+
+
+def _anthropic_stored_assistant_blocks(message: Message) -> Optional[List[Dict[str, Any]]]:
+    """Return the provider content blocks stored on an assistant message, ready to replay.
+
+    Returns None when the message carries no stored blocks (it predates block storage, or was
+    produced by another provider) so the caller rebuilds the turn from the convenience fields.
+    ``tool_use`` blocks are kept only when the message still carries the matching tool call: a
+    response truncated by ``max_tokens`` can contain a tool_use that never ran, and the API
+    rejects a tool_use that has no tool_result.
+    """
+    if not message.provider_data:
+        return None
+    stored = message.provider_data.get("content_blocks")
+    if not isinstance(stored, list) or not stored:
+        return None
+    tool_call_ids = {tc.get("id") for tc in (message.tool_calls or []) if isinstance(tc, dict)}
+    replay: List[Dict[str, Any]] = []
+    for block in serialize_content_blocks(stored):
+        if block.get("type") == "tool_use" and block.get("id") not in tool_call_ids:
+            continue
+        # Copy so request-time edits to the payload can never reach the stored session message.
+        replay.append(dict(block))
+    return replay
 
 
 def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
@@ -68,6 +281,8 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     }
 
     try:
+        img_type = None
+
         # Case 0: Image is an Anthropic uploaded file
         if image.content is not None and hasattr(image.content, "id"):
             content_bytes = image.content
@@ -75,6 +290,16 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
         # Case 1: Image is a URL
         if image.url is not None:
             content_bytes = image.get_content_bytes()  # type: ignore
+
+            # If image URL has a suffix, use it as the type (without dot)
+            import os
+            from urllib.parse import urlparse
+
+            if image.url:
+                parsed_url = urlparse(image.url)
+                _, ext = os.path.splitext(parsed_url.path)
+                if ext:
+                    img_type = ext.lstrip(".").lower()
 
         # Case 2: Image is a local file path
         elif image.filepath is not None:
@@ -84,6 +309,11 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
             if path.exists() and path.is_file():
                 with open(image.filepath, "rb") as f:
                     content_bytes = f.read()
+
+                # If image file path has a suffix, use it as the type (without dot)
+                path_ext = path.suffix.lstrip(".")
+                if path_ext:
+                    img_type = path_ext.lower()
             else:
                 log_error(f"Image file not found: {image}")
                 return None
@@ -96,15 +326,16 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
             log_error(f"Unsupported image type: {type(image)}")
             return None
 
-        if using_filetype:
-            kind = filetype.guess(content_bytes)
-            if not kind:
-                log_error("Unable to determine image type")
-                return None
+        if not img_type:
+            if using_filetype:
+                kind = filetype.guess(content_bytes)
+                if not kind:
+                    log_error("Unable to determine image type")
+                    return None
 
-            img_type = kind.extension
-        else:
-            img_type = imghdr.what(None, h=content_bytes)  # type: ignore
+                img_type = kind.extension
+            else:
+                img_type = imghdr.what(None, h=content_bytes)  # type: ignore
 
         if not img_type:
             log_error("Unable to determine image type")
@@ -125,18 +356,49 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
         }
 
     except Exception as e:
-        log_error(f"Error processing image: {e}")
+        log_error(f"Error processing image: {str(e)}")
         return None
 
 
-def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
+def _format_file_for_message(file: File, enable_citations: bool = True) -> Optional[Dict[str, Any]]:
     """
     Add a document url or base64 encoded content to a message.
-    """
 
-    mime_mapping = {
+    Args:
+        file: The file to format.
+        enable_citations: Caller-level ceiling. When False, citations are suppressed
+            regardless of ``File.citations``. When True, ``File.citations`` may opt an
+            individual file out.
+    """
+    if not enable_citations:
+        citations_on = False
+        if file.citations is True:
+            identifier = (
+                file.filename or file.url or (str(file.filepath) if file.filepath else None) or file.id or "<unnamed>"
+            )
+            log_warning(
+                f"File.citations=True ignored for {identifier}: request-level citations are "
+                "disabled for this call (structured output is active and Anthropic rejects "
+                "citations alongside output_format)."
+            )
+    else:
+        citations_on = file.citations if file.citations is not None else True
+
+    mime_mapping: dict[str, str] = {
         "application/pdf": "base64",
+        # All text/* MIME types use the "text" source type
         "text/plain": "text",
+        "text/csv": "text",
+        "text/html": "text",
+        "text/css": "text",
+        "text/markdown": "text",
+        "text/xml": "text",
+        "text/rtf": "text",
+        "text/javascript": "text",
+        "text/x-python": "text",
+        "application/json": "text",
+        "application/x-javascript": "text",
+        "application/x-python": "text",
     }
 
     # Case 0: File is an Anthropic uploaded file
@@ -149,16 +411,47 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
             },
         }
 
+    document: Optional[Dict[str, Any]] = None
+
     # Case 1: Document is a URL
     if file.url is not None:
-        return {
-            "type": "document",
-            "source": {
-                "type": "url",
-                "url": file.url,
-            },
-            "citations": {"enabled": True},
-        }
+        # Anthropic accepts a url document source for PDFs only; anything else is inlined below.
+        media_type = file.mime_type
+        if media_type is None or media_type == "application/pdf":
+            document = {
+                "type": "document",
+                "source": {
+                    "type": "url",
+                    "url": file.url,
+                },
+            }
+        else:
+            import base64
+
+            raw_bytes = file.get_content_bytes()
+            if raw_bytes is None:
+                log_error(f"Failed to read document from url: {file}")
+                return None
+
+            source_type = mime_mapping.get(media_type, "base64")
+            if source_type == "text":
+                document = {
+                    "type": "document",
+                    "source": {
+                        "type": "text",
+                        "media_type": "text/plain",
+                        "data": raw_bytes.decode("utf-8", errors="replace"),
+                    },
+                }
+            else:
+                document = {
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": base64.standard_b64encode(raw_bytes).decode("utf-8"),
+                    },
+                }
     # Case 2: Document is a local file path
     elif file.filepath is not None:
         import base64
@@ -166,7 +459,7 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
 
         path = Path(file.filepath) if isinstance(file.filepath, str) else file.filepath
         if path.exists() and path.is_file():
-            file_data = base64.standard_b64encode(path.read_bytes()).decode("utf-8")
+            raw_bytes = path.read_bytes()
 
             # Determine media type
             media_type = file.mime_type
@@ -175,45 +468,171 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
 
                 media_type = mimetypes.guess_type(file.filepath)[0] or "application/pdf"
 
-            # Map media type to type, default to "base64" if no mapping exists
-            type = mime_mapping.get(media_type, "base64")
+            # Map media type to source type, default to "base64" if no mapping exists
+            source_type = mime_mapping.get(media_type, "base64")
 
-            return {
-                "type": "document",
-                "source": {
-                    "type": type,
-                    "media_type": media_type,
-                    "data": file_data,
-                },
-                "citations": {"enabled": True},
-            }
+            if source_type == "text":
+                document = {
+                    "type": "document",
+                    "source": {
+                        "type": "text",
+                        # Anthropic's text document source only accepts "text/plain". Other
+                        # text/* subtypes (markdown, csv, html, ...) are sent as plain text.
+                        "media_type": "text/plain",
+                        "data": raw_bytes.decode("utf-8", errors="replace"),
+                    },
+                }
+            else:
+                document = {
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": base64.standard_b64encode(raw_bytes).decode("utf-8"),
+                    },
+                }
         else:
             log_error(f"Document file not found: {file}")
             return None
     # Case 3: Document is bytes content
     elif file.content is not None:
-        import base64
+        media_type = file.mime_type or "application/pdf"
+        # Map media type to source type, default to "base64" if no mapping exists
+        source_type = mime_mapping.get(media_type, "base64")
 
-        file_data = base64.standard_b64encode(file.content).decode("utf-8")
-        return {
-            "type": "document",
-            "source": {"type": "base64", "media_type": file.mime_type or "application/pdf", "data": file_data},
-            "citations": {"enabled": True},
-        }
-    return None
+        if source_type == "text":
+            document = {
+                "type": "document",
+                "source": {
+                    "type": "text",
+                    # Anthropic's text document source only accepts "text/plain". Other
+                    # text/* subtypes (markdown, csv, html, ...) are sent as plain text.
+                    "media_type": "text/plain",
+                    "data": file.content.decode("utf-8", errors="replace"),
+                },
+            }
+        else:
+            import base64
+
+            document = {
+                "type": "document",
+                "source": {
+                    "type": "base64",
+                    "media_type": media_type,
+                    "data": base64.standard_b64encode(file.content).decode("utf-8"),
+                },
+            }
+
+    if document is not None and citations_on:
+        document["citations"] = {"enabled": True}
+    return document
 
 
-def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]:
+def build_system_blocks(
+    system_message: Union[str, List["SystemPromptBlock"]],
+    cache_system_prompt: bool,
+    extended_cache_time: bool = False,
+) -> List[Dict[str, Any]]:
+    """Build the system parameter blocks for the Anthropic API.
+
+    Converts either a plain string or a list of SystemPromptBlock into the
+    list-of-dicts format the Anthropic API expects for the ``system`` field.
+
+    Caching semantics are asymmetric by design:
+    - For a string (the agent-built system message), ``cache_system_prompt``
+      decides whether it gets ``cache_control``. That flag is the single
+      switch for the agent-built block.
+    - For a list of ``SystemPromptBlock`` (user-supplied), each block's own
+      ``block.cache`` field decides. This is independent of
+      ``cache_system_prompt`` so that you can leave the agent-built block
+      uncached while still caching selected user blocks (or vice versa).
+
+    TTL resolution for each cached block:
+    - Explicit ``block.ttl`` wins: ``"5m"`` => plain ephemeral (5m is the
+      default), ``"1h"`` => ephemeral with ttl key.
+    - ``block.ttl is None`` => falls back to model-level ``extended_cache_time``.
+    """
+    if isinstance(system_message, str):
+        entry: Dict[str, Any] = {"text": system_message, "type": "text"}
+        if cache_system_prompt:
+            cc: Dict[str, str] = {"type": "ephemeral"}
+            if extended_cache_time:
+                cc["ttl"] = "1h"
+            entry["cache_control"] = cc
+        return [entry]
+
+    result: List[Dict[str, Any]] = []
+    for block in system_message:
+        b: Dict[str, Any] = {"text": block.text, "type": "text"}
+        if block.cache:
+            # Explicit block-level ttl wins; None falls back to model-level extended_cache_time.
+            # Deliberately independent of cache_system_prompt — that flag only gates the
+            # agent-built block, so users can cache custom blocks without also caching
+            # the agent-built one (and vice versa).
+            effective_ttl = block.ttl if block.ttl is not None else ("1h" if extended_cache_time else "5m")
+            cc = {"type": "ephemeral"}
+            if effective_ttl == "1h":
+                cc["ttl"] = "1h"
+            b["cache_control"] = cc
+        result.append(b)
+    return result
+
+
+def _validate_cache_ttl_order(blocks: List[Dict[str, Any]]) -> None:
+    """Validate that no 5m-cached block appears before a 1h-cached block.
+
+    Anthropic's prompt caching rejects requests where a longer-TTL cache entry
+    follows a shorter-TTL one in the cached prefix. Catch this at assembly
+    time with an actionable error rather than letting the API reject it.
+    """
+    seen_5m = False
+    for block in blocks:
+        cc = block.get("cache_control")
+        if cc is None:
+            continue
+        if cc.get("ttl") == "1h":
+            if seen_5m:
+                raise ValueError(
+                    "Invalid Anthropic cache TTL ordering: a 1h cached block cannot "
+                    "follow a 5m cached block. This usually means cache_system_prompt=True "
+                    "(so the agent-built block is cached at 5m by default) together with "
+                    "a SystemPromptBlock(ttl='1h'). Fix with one of:\n"
+                    "  - Claude(extended_cache_time=True) so the agent-built block is 1h too\n"
+                    "  - Change your block ttl to '5m' or None\n"
+                    "  - Set cache_system_prompt=False to leave the agent-built block "
+                    "uncached (custom blocks still cache per their own block.cache field)"
+                )
+        else:
+            seen_5m = True
+
+
+def format_messages(
+    messages: List[Message],
+    compress_tool_results: bool = False,
+    append_trailing_user_message: Optional[bool] = False,
+    trailing_user_message_content: str = "continue",
+    enable_citations: bool = True,
+) -> Tuple[List[Dict[str, Union[str, list]]], str]:
     """
     Process the list of messages and separate them into API messages and system messages.
 
     Args:
         messages (List[Message]): The list of messages to process.
+        compress_tool_results: Whether to compress tool results.
+        append_trailing_user_message: If True, append a dummy user message when the conversation
+            ends with an assistant turn. Required for models that do not support assistant prefill.
+        trailing_user_message_content: The text content of the injected trailing user message.
+        enable_citations: Default for document citation attachment.
 
     Returns:
-        Tuple[List[Dict[str, str]], str]: A tuple containing the list of API messages and the concatenated system messages.
+        Tuple[List[Dict[str, Union[str, list]]], str]: A tuple containing the list of API messages and the concatenated system messages.
     """
-    chat_messages: List[Dict[str, str]] = []
+    from agno.utils.message import normalize_tool_messages
+
+    # Backwards compat: expand old Gemini combined tool messages into individual canonical messages
+    messages = normalize_tool_messages(messages)
+
+    chat_messages: List[Dict[str, Union[str, list]]] = []
     system_messages: List[str] = []
 
     for message in messages:
@@ -226,6 +645,11 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
         elif message.role == "user":
             if isinstance(content, str):
                 content = [{"type": "text", "text": content}]
+            elif isinstance(content, list):
+                # Work on a copy: appending media blocks into the live
+                # Message.content would duplicate them on every model round
+                # of the run and persist provider blocks into the message
+                content = list(content)
 
             if message.images is not None:
                 for image in message.images:
@@ -235,7 +659,7 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
 
             if message.files is not None:
                 for file in message.files:
-                    file_content = _format_file_for_message(file)
+                    file_content = _format_file_for_message(file, enable_citations=enable_citations)
                     if file_content:
                         content.append(file_content)
 
@@ -246,48 +670,111 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
                 log_warning("Video input is currently unsupported.")
 
         elif message.role == "assistant":
+            from anthropic.types import TextBlock, ToolUseBlock
+
             content = []
 
-            if message.reasoning_content is not None and message.provider_data is not None:
-                from anthropic.types import RedactedThinkingBlock, ThinkingBlock
+            stored_blocks = _anthropic_stored_assistant_blocks(message)
+            if stored_blocks is not None:
+                # Echo the turn exactly as the API produced it: block order, text boundaries and
+                # every signed thinking block. Rebuilding the turn from the convenience fields
+                # below loses all of those, and the API rejects a modified thinking sequence.
+                # A stored list that filters down to nothing (a truncated tool_use only) falls
+                # through to the empty-assistant skip below like any other empty turn.
+                content.extend(stored_blocks)
+            else:
+                if message.reasoning_content is not None and message.provider_data is not None:
+                    from anthropic.types import ThinkingBlock
 
-                content.append(
-                    ThinkingBlock(
-                        thinking=message.reasoning_content,
-                        signature=message.provider_data.get("signature"),
-                        type="thinking",
-                    )
-                )
-
-            if message.redacted_reasoning_content is not None:
-                from anthropic.types import RedactedThinkingBlock
-
-                content.append(
-                    RedactedThinkingBlock(data=message.redacted_reasoning_content, type="redacted_reasoning_content")
-                )
-
-            if isinstance(message.content, str) and message.content and len(message.content.strip()) > 0:
-                content.append(TextBlock(text=message.content, type="text"))
-
-            if message.tool_calls:
-                for tool_call in message.tool_calls:
-                    content.append(
-                        ToolUseBlock(
-                            id=tool_call["id"],
-                            input=json.loads(tool_call["function"]["arguments"])
-                            if "arguments" in tool_call["function"]
-                            else {},
-                            name=tool_call["function"]["name"],
-                            type="tool_use",
+                    signature = message.provider_data.get("signature")
+                    if isinstance(signature, str) and signature:
+                        content.append(
+                            ThinkingBlock(
+                                thinking=message.reasoning_content,
+                                signature=signature,
+                                type="thinking",
+                            )
                         )
+                    else:
+                        # The API verifies thinking blocks by signature, so one without a signature
+                        # (reasoning from another provider, or a partially stored response) can only
+                        # be omitted. Omitting prior thinking is permitted outside a tool-use turn.
+                        log_debug("Omitting reasoning content without a thinking signature from Anthropic history")
+
+                if message.redacted_reasoning_content is not None:
+                    from anthropic.types import RedactedThinkingBlock
+
+                    content.append(
+                        RedactedThinkingBlock(data=message.redacted_reasoning_content, type="redacted_thinking")
                     )
+
+                # Extract structured blocks from list-shaped content (used when callers persist and
+                # rehydrate full assistant turns rather than the text-only + provider_data split).
+                structured_from_list: List[Any] = []
+                list_block_identities: set = set()
+                if isinstance(message.content, list):
+                    for item in message.content:
+                        blk = _anthropic_coerce_content_block(item)
+                        if blk is None:
+                            continue
+                        if _anthropic_block_type(blk) == "tool_use" and message.tool_calls:
+                            continue
+                        identity = _anthropic_block_identity(blk)
+                        if identity is not None:
+                            list_block_identities.add(identity)
+                        structured_from_list.append(blk)
+
+                # Reconstruct server tool blocks (web_fetch, web_search, etc.) from provider_data.
+                # Merge by identity (type, id-or-tool_use_id) so blocks already present in list-content
+                # aren't duplicated, but blocks that exist only in provider_data are still emitted.
+                if message.provider_data and message.provider_data.get("server_tool_blocks"):
+                    for block_dict in message.provider_data["server_tool_blocks"]:
+                        identity = _anthropic_block_identity(block_dict)
+                        if identity is not None and identity in list_block_identities:
+                            continue
+                        content.append(block_dict)
+
+                if structured_from_list:
+                    content.extend(structured_from_list)
+                elif isinstance(message.content, str) and message.content and len(message.content.strip()) > 0:
+                    content.append(TextBlock(text=message.content, type="text"))
+
+                if message.tool_calls:
+                    for tool_call in message.tool_calls:
+                        content.append(
+                            ToolUseBlock(
+                                id=tool_call["id"],
+                                input=json.loads(tool_call["function"]["arguments"])
+                                if "arguments" in tool_call["function"]
+                                else {},
+                                name=tool_call["function"]["name"],
+                                type="tool_use",
+                            )
+                        )
         elif message.role == "tool":
             content = []
+
+            # Use compressed content for tool messages if compression is active
+            tool_result = message.get_content(use_compressed_content=compress_tool_results)
+            if isinstance(tool_result, list):
+                normalized_blocks: List[Any] = []
+                for item in tool_result:
+                    coerced = _anthropic_coerce_content_block(item)
+                    if coerced is not None:
+                        normalized_blocks.append(coerced)
+                    else:
+                        # Fall back to a text block so unknown items still reach the model rather
+                        # than being silently dropped or breaking the request shape.
+                        log_warning(f"Coercing non-block tool_result item of type {type(item).__name__} to text")
+                        normalized_blocks.append({"type": "text", "text": str(item)})
+                tool_payload: Union[str, List[Any]] = normalized_blocks
+            else:
+                tool_payload = str(tool_result)
             content.append(
                 {
                     "type": "tool_result",
                     "tool_use_id": message.tool_call_id,
-                    "content": str(message.content),
+                    "content": tool_payload,
                 }
             )
 
@@ -296,12 +783,80 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
             continue
 
         chat_messages.append({"role": ROLE_MAP[message.role], "content": content})  # type: ignore
-    return chat_messages, " ".join(system_messages)
+
+    # Merge consecutive messages with the same role (Claude requires alternating user/assistant roles).
+    # This happens when multiple tool results (mapped to "user") appear in sequence, or when a tool
+    # result is followed by a user message.
+    # Merging must always build a NEW content list: a list here can be the
+    # same object as a live Message.content (session history included), and
+    # extending or inserting into it in place would corrupt that message on
+    # every subsequent request.
+    merged_messages: List[Dict[str, Union[str, list]]] = []
+    for msg in chat_messages:
+        if merged_messages and merged_messages[-1]["role"] == msg["role"]:
+            # Same role as previous, merge contents
+            prev_content = merged_messages[-1]["content"]
+            curr_content = msg["content"]
+
+            prev_blocks = (
+                prev_content if isinstance(prev_content, list) else [{"type": "text", "text": str(prev_content)}]
+            )
+            curr_blocks = (
+                curr_content if isinstance(curr_content, list) else [{"type": "text", "text": str(curr_content)}]
+            )
+            if msg["role"] == "assistant":
+                # Two assistant responses can only share one message by dropping the earlier
+                # response's thinking: the API verifies an assistant message's thinking sequence
+                # against a single original response and rejects a stitched sequence. Omitting
+                # that thinking is permitted because the earlier response ended without a tool
+                # call to continue (a thinking-only response truncated by max_tokens, or an
+                # injected assistant message).
+                prev_blocks = [
+                    b for b in prev_blocks if _anthropic_block_type(b) not in _ANTHROPIC_THINKING_BLOCK_TYPES
+                ]
+            merged_messages[-1]["content"] = [*prev_blocks, *curr_blocks]
+        else:
+            merged_messages.append(msg)
+
+    # Claude 4.6+ models do not support assistant message prefill.
+    # Append a trailing user turn so the request ends with a user message.
+    if append_trailing_user_message and merged_messages and merged_messages[-1]["role"] == "assistant":
+        log_info("Appending trailing user message because this model does not support assistant message prefill")
+        merged_messages.append({"role": "user", "content": [{"type": "text", "text": trailing_user_message_content}]})
+
+    return merged_messages, " ".join(system_messages)
+
+
+def _ensure_additional_properties_false(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """Recursively ensure all object schemas have additionalProperties: false.
+
+    Anthropic's API requires this on all object-type schemas, not just the root.
+    """
+    if not isinstance(schema, dict):
+        return schema
+
+    result = schema.copy()
+
+    # Only set additionalProperties: false on structured object schemas (those with "properties").
+    # Dict-type schemas use additionalProperties as a value type schema, so leave those alone.
+    if "properties" in result:
+        result["additionalProperties"] = False
+
+    for key, value in result.items():
+        if key == "properties" and isinstance(value, dict):
+            result[key] = {k: _ensure_additional_properties_false(v) for k, v in value.items()}
+        elif key == "items" and isinstance(value, dict):
+            result[key] = _ensure_additional_properties_false(value)
+        elif key in ("anyOf", "allOf", "oneOf") and isinstance(value, list):
+            result[key] = [_ensure_additional_properties_false(v) if isinstance(v, dict) else v for v in value]
+
+    return result
 
 
 def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Optional[List[Dict[str, Any]]]:
     """
     Transforms function definitions into a format accepted by the Anthropic API.
+    Now supports strict mode for structured outputs.
     """
     if not tools:
         return None
@@ -321,20 +876,143 @@ def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Opti
         input_properties: Dict[str, Any] = {}
         for param_name, param_info in properties.items():
             # Preserve the complete schema structure for complex types
-            input_properties[param_name] = param_info.copy()
+            # and recursively ensure additionalProperties: false on nested objects
+            input_properties[param_name] = _ensure_additional_properties_false(param_info.copy())
 
             # Ensure description is present (default to empty if missing)
             if "description" not in input_properties[param_name]:
                 input_properties[param_name]["description"] = ""
 
+        input_schema: Dict[str, Any] = {
+            "type": parameters.get("type", "object"),
+            "properties": input_properties,
+            "required": required_params,
+            "additionalProperties": False,
+        }
+
+        # MCP tools pass raw JSON Schemas that may use $defs/$ref for nested types
+        if "$defs" in parameters:
+            input_schema["$defs"] = parameters["$defs"]
+        if "definitions" in parameters:
+            input_schema["definitions"] = parameters["definitions"]
+
         tool = {
             "name": func_def.get("name") or "",
             "description": func_def.get("description") or "",
-            "input_schema": {
-                "type": parameters.get("type", "object"),
-                "properties": input_properties,
-                "required": required_params,
-            },
+            "input_schema": input_schema,
         }
+
+        # Add strict mode if specified (check both function dict and tool_def top level)
+        strict_mode = func_def.get("strict") or tool_def.get("strict")
+        if strict_mode is True:
+            tool["strict"] = True
+
         parsed_tools.append(tool)
     return parsed_tools
+
+
+# Sampling parameters the Anthropic SDK stopped declaring on its request methods in
+# 1.0.0: passing one raises TypeError before the request leaves the process. The API
+# still honours them, so they travel in extra_body, which every SDK version merges
+# into the request JSON as-is.
+SAMPLING_PARAMS = ("temperature", "top_p", "top_k")
+
+
+def route_sampling_params_to_extra_body(
+    request_params: Dict[str, Any], model_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """Move the sampling parameters out of the request kwargs and into extra_body.
+
+    Mutates and returns the dict it is given, so it also catches a sampling parameter
+    that arrived through ``request_params`` rather than through a model field.
+
+    When ``model_id`` names a model that rejects the sampling parameters, they are
+    dropped with a warning instead of being sent: the model would answer the whole
+    request with a 400, and the parameter is the only part of it that is unsupported.
+    """
+    moved = {name: request_params.pop(name) for name in SAMPLING_PARAMS if name in request_params}
+    if not moved:
+        return request_params
+
+    if model_id is not None and not supports_sampling_params(model_id):
+        names = ", ".join(sorted(moved))
+        log_warning(
+            f"{model_id} rejects {names}, so the request is sent without {names}. "
+            "Guide the model through its prompt instead."
+        )
+        return request_params
+
+    # A caller who wrote extra_body themselves outranks the model's own fields.
+    request_params["extra_body"] = {**moved, **(request_params.get("extra_body") or {})}
+    return request_params
+
+
+def route_thinking_budget_to_adaptive(request_params: Dict[str, Any], model_id: Optional[str] = None) -> Dict[str, Any]:
+    """Replace a thinking budget with adaptive thinking on models that no longer accept one.
+
+    Mutates and returns the dict it is given, so it also catches a thinking config that
+    arrived through ``request_params`` rather than through the ``thinking`` field.
+
+    Those models answer ``{"type": "enabled", "budget_tokens": N}`` with a 400. Adaptive
+    thinking is their replacement for it; ``display`` defaults to ``"summarized"`` because
+    they otherwise return empty thinking blocks, which would leave ``reasoning_content`` empty.
+    """
+    thinking = request_params.get("thinking")
+    if model_id is None or not isinstance(thinking, dict) or thinking.get("type") != "enabled":
+        return request_params
+    if supports_thinking_budget(model_id):
+        return request_params
+
+    log_warning(
+        f"{model_id} rejects thinking budgets, so the request is sent with adaptive thinking instead. "
+        "Use output_config={'effort': ...} to control how much it thinks."
+    )
+    request_params["thinking"] = {"type": "adaptive", "display": thinking.get("display", "summarized")}
+    return request_params
+
+
+def sdk_http_client_type(is_async: bool = False) -> type:
+    """The HTTP client class the installed Anthropic SDK accepts.
+
+    anthropic 1.0.0 moved its HTTP layer from httpx to httpx2 and raises TypeError at
+    construction when handed an ``httpx.Client``, so the accepted class is read off the
+    SDK's own re-export rather than assumed to be httpx's.
+    """
+    import httpx
+
+    fallback = httpx.AsyncClient if is_async else httpx.Client
+    try:
+        from anthropic import DefaultAsyncHttpxClient, DefaultHttpxClient
+    except ImportError:
+        return fallback
+
+    default = DefaultAsyncHttpxClient if is_async else DefaultHttpxClient
+    wanted = "AsyncClient" if is_async else "Client"
+    for base in default.__mro__[1:]:
+        if base.__name__ == wanted:
+            return base
+    return fallback
+
+
+def resolve_http_client(
+    http_client: Optional[Any], is_async: bool = False, fallback: Optional[Any] = None
+) -> Optional[Any]:
+    """Return the HTTP client to hand the Anthropic SDK, or None to let it build its own.
+
+    A client of the wrong flavour is dropped with a warning instead of being passed on,
+    where it would raise TypeError at client construction and take every request with it.
+    """
+    expected = sdk_http_client_type(is_async)
+
+    if http_client is not None:
+        if isinstance(http_client, expected):
+            return http_client
+        log_warning(
+            f"http_client is not an instance of {expected.__module__}.{expected.__qualname__} "
+            f"(the Anthropic SDK's HTTP client). Ignoring and using the SDK default."
+        )
+
+    # The shared agno client is httpx's, which an httpx2-based SDK will not take.
+    if fallback is not None and isinstance(fallback, expected):
+        return fallback
+    return None

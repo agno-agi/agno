@@ -1,3 +1,0 @@
-"""
-Tools-related team examples.
-"""

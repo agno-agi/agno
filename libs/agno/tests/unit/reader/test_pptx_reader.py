@@ -4,6 +4,8 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
+from pptx import Presentation as PptxPresentation
+from pptx.util import Emu
 
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.pptx_reader import PPTXReader
@@ -251,3 +253,47 @@ def test_pptx_reader_shapes_without_text():
         assert len(documents) == 1
         expected_content = "Slide 1:\nValid text"
         assert documents[0].content == expected_content
+
+
+def _add_textbox(shapes, text, column):
+    box = shapes.add_textbox(Emu(column * 914400), Emu(0), Emu(914400), Emu(457200))
+    box.text_frame.text = text
+
+
+def test_pptx_reader_grouped_shapes(tmp_path):
+    """Test reading text from shapes inside a group and inside a nested group"""
+    path = tmp_path / "grouped.pptx"
+    presentation = PptxPresentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+    _add_textbox(slide.shapes, "Top level text", 0)
+    group = slide.shapes.add_group_shape()
+    _add_textbox(group.shapes, "Grouped text", 1)
+    nested = group.shapes.add_group_shape()
+    _add_textbox(nested.shapes, "Nested group text", 2)
+    presentation.save(str(path))
+
+    reader = PPTXReader()
+    documents = reader.read(path)
+
+    assert len(documents) == 1
+    assert documents[0].content == "Slide 1:\nTop level text\nGrouped text\nNested group text"
+
+
+def test_pptx_reader_chunk_size_propagation():
+    """Test that chunk_size is propagated to default chunking strategy"""
+    from agno.knowledge.chunking.document import DocumentChunking
+
+    reader = PPTXReader(chunk_size=450)
+    assert reader.chunk_size == 450
+    assert reader.chunking_strategy.chunk_size == 450
+    assert isinstance(reader.chunking_strategy, DocumentChunking)
+
+
+def test_pptx_reader_default_chunk_size():
+    """Test default chunk_size is 5000"""
+    from agno.knowledge.chunking.document import DocumentChunking
+
+    reader = PPTXReader()
+    assert reader.chunk_size == 5000
+    assert reader.chunking_strategy.chunk_size == 5000
+    assert isinstance(reader.chunking_strategy, DocumentChunking)

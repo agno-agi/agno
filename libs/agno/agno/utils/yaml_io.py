@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_error
 
 
 def read_yaml_file(file_path: Optional[Path]) -> Optional[Dict[str, Any]]:
@@ -9,11 +9,11 @@ def read_yaml_file(file_path: Optional[Path]) -> Optional[Dict[str, Any]]:
         import yaml
 
         log_debug(f"Reading {file_path}")
-        data_from_file = yaml.safe_load(file_path.read_text())
+        data_from_file = yaml.safe_load(file_path.read_text(encoding="utf-8"))
         if data_from_file is not None and isinstance(data_from_file, dict):
             return data_from_file
         else:
-            logger.error(f"Invalid file: {file_path}")
+            log_error(f"Invalid file: {file_path}")
     return None
 
 
@@ -22,4 +22,4 @@ def write_yaml_file(file_path: Optional[Path], data: Optional[Dict[str, Any]], *
         import yaml
 
         log_debug(f"Writing {file_path}")
-        file_path.write_text(yaml.safe_dump(data, **kwargs))
+        file_path.write_text(yaml.safe_dump(data, **kwargs), encoding="utf-8")

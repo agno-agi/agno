@@ -16,9 +16,11 @@
 # pytest libs/agno/tests/integration/db/surrealdb/test_surrealdb_memory.py
 # ```
 
+import time
 from datetime import datetime
 
 import pytest
+from surrealdb import RecordID
 
 from agno.db.schemas.memory import UserMemory
 from agno.db.surrealdb import SurrealDb
@@ -81,3 +83,45 @@ def test_crud_memory(db: SurrealDb):
     db.delete_user_memories([x.memory_id for x in user_mems if x.memory_id is not None])
     list_ = db.get_user_memories("2")
     assert len(list_) == 0
+
+
+def test_memory_created_at_preserved_on_update(db: SurrealDb):
+    """Test that memory created_at is preserved when updating."""
+    db.clear_memories()
+
+    now = int(datetime.now().timestamp())
+    memory = UserMemory(
+        memory="Test memory content",
+        user_id="test_user_1",
+        topics=["test"],
+        created_at=now,
+        updated_at=now,
+    )
+    created = db.upsert_user_memory(memory)
+    assert created is not None
+    memory_id = created.memory_id
+
+    table = db._get_table("memories")
+    record_id = RecordID(table, memory_id)
+    raw_result = db._query_one("SELECT * FROM ONLY $record_id", {"record_id": record_id}, dict)
+    assert raw_result is not None
+    original_created_at = raw_result.get("created_at")
+    original_updated_at = raw_result.get("updated_at")
+
+    time.sleep(1.1)
+
+    memory.memory_id = memory_id
+    memory.memory = "Updated memory content"
+    db.upsert_user_memory(memory)
+
+    raw_result = db._query_one("SELECT * FROM ONLY $record_id", {"record_id": record_id}, dict)
+    assert raw_result is not None
+    new_created_at = raw_result.get("created_at")
+    new_updated_at = raw_result.get("updated_at")
+
+    db.clear_memories()
+
+    # created_at should not change on update
+    assert original_created_at == new_created_at
+    # updated_at should change on update
+    assert original_updated_at != new_updated_at

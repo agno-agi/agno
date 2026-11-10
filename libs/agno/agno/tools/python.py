@@ -4,25 +4,70 @@ from pathlib import Path
 from typing import Any, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_error, log_info, logger
 
 
 @functools.lru_cache(maxsize=None)
 def warn() -> None:
-    logger.warning("PythonTools can run arbitrary code, please provide human supervision.")
+    logger.warning(
+        "PythonTools executes arbitrary Python in this process. Provide human supervision and never "
+        "expose it to untrusted input; safe_globals/safe_locals and restrict_to_base_dir are not a sandbox."
+    )
 
 
 class PythonTools(Toolkit):
+    """Tools for generating, saving, and executing Python code in the current process.
+
+    .. warning::
+        ``run_python_code`` and ``save_to_file_and_run`` execute model-generated
+        Python in this process via ``exec``/``runpy`` with full builtins, imports,
+        filesystem, and network access. There is no sandbox: an RCE sink if the
+        agent is prompt-injected.
+
+        ``safe_globals`` / ``safe_locals`` are NOT a security boundary despite the
+        name: they default to this module's real namespaces and only seed the
+        execution scope. ``restrict_to_base_dir`` constrains the *path arguments*
+        of the file helpers (read_file, save_to_file_and_run, ...) but does nothing
+        to code once it runs: executed code can read ``/etc/passwd``, dump
+        ``os.environ``, or reach the network regardless of that flag.
+
+        To require human approval before code runs, gate the tools through the
+        toolkit's confirmation mechanism::
+
+            PythonTools(requires_confirmation_tools=["run_python_code", "save_to_file_and_run"])
+
+        To drop the execution tools entirely, use ``exclude_tools=[...]``. For
+        untrusted input, run code in a real sandbox (separate process or container
+        with a scrubbed environment, no network, and a read-only mount). See
+        DaytonaTools for a remote-sandbox alternative.
+    """
+
     def __init__(
         self,
         base_dir: Optional[Path] = None,
         safe_globals: Optional[dict] = None,
         safe_locals: Optional[dict] = None,
+        restrict_to_base_dir: bool = True,
         **kwargs,
     ):
-        self.base_dir: Path = base_dir or Path.cwd()
+        """Initialize PythonTools.
 
-        # Restricted global and local scope
+        Args:
+            base_dir: Root directory for file operations. Defaults to cwd.
+            safe_globals: Globals namespace seeded into executed code. NOT a
+                sandbox; defaults to this module's globals. Does not limit what
+                executed code can import or access.
+            safe_locals: Locals namespace seeded into executed code. NOT a sandbox;
+                see safe_globals.
+            restrict_to_base_dir: If True, confine the *path arguments* of the file
+                helpers to base_dir. This does not sandbox executed code, which can
+                still touch any path the process can. Do not rely on it for
+                untrusted input.
+        """
+        self.base_dir: Path = (base_dir or Path.cwd()).resolve()
+        self.restrict_to_base_dir = restrict_to_base_dir
+
+        # Execution namespaces seeded into exec()/runpy. Not a security boundary.
         self.safe_globals: dict = safe_globals or globals()
         self.safe_locals: dict = safe_locals or locals()
 
@@ -55,7 +100,9 @@ class PythonTools(Toolkit):
         """
         try:
             warn()
-            file_path = self.base_dir.joinpath(file_name)
+            safe, file_path = self._check_path(file_name, self.base_dir, self.restrict_to_base_dir)
+            if not safe:
+                return f"Error: Path '{file_name}' is outside the allowed base directory"
             log_debug(f"Saving code to {file_path}")
             if not file_path.parent.exists():
                 file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -67,15 +114,15 @@ class PythonTools(Toolkit):
             globals_after_run = runpy.run_path(str(file_path), init_globals=self.safe_globals, run_name="__main__")
 
             if variable_to_return:
-                variable_value = globals_after_run.get(variable_to_return)
-                if variable_value is None:
+                if variable_to_return not in globals_after_run:
                     return f"Variable {variable_to_return} not found"
+                variable_value = globals_after_run[variable_to_return]
                 log_debug(f"Variable {variable_to_return} value: {variable_value}")
                 return str(variable_value)
             else:
                 return f"successfully ran {str(file_path)}"
         except Exception as e:
-            logger.error(f"Error saving and running code: {e}")
+            logger.exception("Error saving and running code")
             return f"Error saving and running code: {e}"
 
     def run_python_file_return_variable(self, file_name: str, variable_to_return: Optional[str] = None) -> str:
@@ -89,20 +136,21 @@ class PythonTools(Toolkit):
         """
         try:
             warn()
-            file_path = self.base_dir.joinpath(file_name)
-
+            safe, file_path = self._check_path(file_name, self.base_dir, self.restrict_to_base_dir)
+            if not safe:
+                return f"Error: Path '{file_name}' is outside the allowed base directory"
             log_info(f"Running {file_path}")
             globals_after_run = runpy.run_path(str(file_path), init_globals=self.safe_globals, run_name="__main__")
             if variable_to_return:
-                variable_value = globals_after_run.get(variable_to_return)
-                if variable_value is None:
+                if variable_to_return not in globals_after_run:
                     return f"Variable {variable_to_return} not found"
+                variable_value = globals_after_run[variable_to_return]
                 log_debug(f"Variable {variable_to_return} value: {variable_value}")
                 return str(variable_value)
             else:
                 return f"successfully ran {str(file_path)}"
         except Exception as e:
-            logger.error(f"Error running file: {e}")
+            logger.exception("Error running file")
             return f"Error running file: {e}"
 
     def read_file(self, file_name: str) -> str:
@@ -113,11 +161,14 @@ class PythonTools(Toolkit):
         """
         try:
             log_info(f"Reading file: {file_name}")
-            file_path = self.base_dir.joinpath(file_name)
+            safe, file_path = self._check_path(file_name, self.base_dir, self.restrict_to_base_dir)
+            if not safe:
+                log_error(f"Attempted to read file outside base directory: {file_name}")
+                return "Error reading file: path outside allowed directory"
             contents = file_path.read_text(encoding="utf-8")
             return str(contents)
         except Exception as e:
-            logger.error(f"Error reading file: {e}")
+            logger.exception("Error reading file")
             return f"Error reading file: {e}"
 
     def list_files(self) -> str:
@@ -130,7 +181,7 @@ class PythonTools(Toolkit):
             files = [str(file_path.name) for file_path in self.base_dir.iterdir()]
             return ", ".join(files)
         except Exception as e:
-            logger.error(f"Error reading files: {e}")
+            logger.exception("Error reading files")
             return f"Error reading files: {e}"
 
     def run_python_code(self, code: str, variable_to_return: Optional[str] = None) -> str:
@@ -151,15 +202,15 @@ class PythonTools(Toolkit):
             exec(code, self.safe_globals, self.safe_locals)
 
             if variable_to_return:
-                variable_value = self.safe_locals.get(variable_to_return)
-                if variable_value is None:
+                if variable_to_return not in self.safe_locals:
                     return f"Variable {variable_to_return} not found"
+                variable_value = self.safe_locals[variable_to_return]
                 log_debug(f"Variable {variable_to_return} value: {variable_value}")
                 return str(variable_value)
             else:
                 return "successfully ran python code"
         except Exception as e:
-            logger.error(f"Error running python code: {e}")
+            logger.exception("Error running python code")
             return f"Error running python code: {e}"
 
     def pip_install_package(self, package_name: str) -> str:
@@ -180,7 +231,7 @@ class PythonTools(Toolkit):
             subprocess.check_call([sys.executable, "-m", "pip", "install", package_name])
             return f"successfully installed package {package_name}"
         except Exception as e:
-            logger.error(f"Error installing package {package_name}: {e}")
+            logger.exception(f"Error installing package {package_name}")
             return f"Error installing package {package_name}: {e}"
 
     def uv_pip_install_package(self, package_name: str) -> str:
@@ -201,5 +252,5 @@ class PythonTools(Toolkit):
             subprocess.check_call([sys.executable, "-m", "uv", "pip", "install", package_name])
             return f"successfully installed package {package_name}"
         except Exception as e:
-            logger.error(f"Error installing package {package_name}: {e}")
+            logger.exception(f"Error installing package {package_name}")
             return f"Error installing package {package_name}: {e}"

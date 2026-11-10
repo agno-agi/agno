@@ -165,6 +165,27 @@ async def test_async_read_video(mock_transcript):
 
 
 @pytest.mark.asyncio
+async def test_async_read_video_with_name(mock_transcript):
+    video_url = "https://www.youtube.com/watch?v=test_video_id"
+
+    with patch("agno.knowledge.reader.youtube_reader.YouTubeTranscriptApi") as mock_api_class:
+        mock_api_instance = MagicMock()
+        mock_api_class.return_value = mock_api_instance
+        mock_api_instance.fetch.return_value = mock_transcript
+
+        reader = YouTubeReader()
+        # Ensure chunking is disabled
+        reader.chunk = False
+        documents = await reader.async_read(video_url, name="Product demo")
+
+        assert len(documents) == 1
+        assert documents[0].name == "Product demo"
+        assert documents[0].id == "youtube_test_video_id"
+        assert documents[0].meta_data["video_url"] == video_url
+        assert documents[0].content == "First segment Second segment Third segment"
+
+
+@pytest.mark.asyncio
 async def test_async_read_video_with_chunking(mock_transcript):
     video_url = "https://www.youtube.com/watch?v=test_video_id"
 
@@ -274,3 +295,25 @@ async def test_async_read_video_unicode_content():
 
         assert len(documents) == 1
         assert "Unicode content 值" in documents[0].content
+
+
+def test_youtube_reader_chunk_size_propagation():
+    """Test that chunk_size is propagated to default chunking strategy"""
+    from agno.knowledge.chunking.recursive import RecursiveChunking
+    from agno.knowledge.reader.youtube_reader import YouTubeReader
+
+    reader = YouTubeReader(chunk_size=500)
+    assert reader.chunk_size == 500
+    assert reader.chunking_strategy.chunk_size == 500
+    assert isinstance(reader.chunking_strategy, RecursiveChunking)
+
+
+def test_youtube_reader_default_chunk_size():
+    """Test default chunk_size is 5000"""
+    from agno.knowledge.chunking.recursive import RecursiveChunking
+    from agno.knowledge.reader.youtube_reader import YouTubeReader
+
+    reader = YouTubeReader()
+    assert reader.chunk_size == 5000
+    assert reader.chunking_strategy.chunk_size == 5000
+    assert isinstance(reader.chunking_strategy, RecursiveChunking)

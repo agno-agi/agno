@@ -1,18 +1,23 @@
 """Integration tests for session and run endpoints in AgentOS."""
 
+import json
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
 
 from agno.agent.agent import Agent
 from agno.db.sqlite import SqliteDb
+from agno.models.message import Message
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
+from agno.os.utils import get_session_name
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
+from agno.run.team import TeamRunOutput
 from agno.session.agent import AgentSession
+from agno.session.team import TeamSession
 
 
 @pytest.fixture
@@ -95,8 +100,16 @@ def session_with_runs(shared_db, test_agent: Agent):
         updated_at=now,
     )
 
-    # Save session to database
+    # Save session to database. Under v3, upsert_session writes only the
+    # session row — runs must be persisted individually via upsert_run.
     shared_db.upsert_session(session)
+    for idx, run in enumerate([run1, run2, run3, run4]):
+        shared_db.upsert_run(
+            run=run,
+            session_id=session.session_id,
+            user_id=session.user_id,
+            run_index=idx,
+        )
 
     return session
 
@@ -241,7 +254,7 @@ def test_get_session_runs_with_epoch_timestamp(session_with_runs, shared_db):
     client = TestClient(app)
 
     # Get timestamp for start of today
-    start_of_today = int(datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+    start_of_today = int(datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
 
     # Get runs from today
     response = client.get(
@@ -362,9 +375,11 @@ def test_endpoints_with_multiple_sessions(shared_db, test_agent: Agent):
         updated_at=now,
     )
 
-    # Save sessions
+    # Save sessions and their runs (v3: runs live in a separate table)
     shared_db.upsert_session(session1)
+    shared_db.upsert_run(run=run1_session1, session_id=session1.session_id, user_id=session1.user_id, run_index=0)
     shared_db.upsert_session(session2)
+    shared_db.upsert_run(run=run1_session2, session_id=session2.session_id, user_id=session2.user_id, run_index=0)
 
     # Create test client
     agent_os = AgentOS(agents=[test_agent])
@@ -437,7 +452,7 @@ def test_update_session_summary(session_with_runs, shared_db, test_agent: Agent)
     # Update session summary
     summary_data = {
         "summary": "The user asked about AI capabilities and received information about available features.",
-        "updated_at": datetime.utcnow().isoformat(),
+        "updated_at": datetime.now(UTC).isoformat(),
     }
 
     response = client.patch(
@@ -551,7 +566,7 @@ def test_update_multiple_session_fields(session_with_runs, shared_db, test_agent
         },
         "summary": {
             "summary": "Session was updated with multiple fields.",
-            "updated_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
         },
     }
 
@@ -670,7 +685,7 @@ def test_create_empty_session_minimal(shared_db, test_agent: Agent):
     data = response.json()
     assert "session_id" in data
     assert data["session_id"] is not None
-    assert data["agent_id"] is None
+    assert data.get("agent_id") is None  # None fields are excluded with response_model_exclude_none=True
     assert data.get("session_state") is None
     assert data.get("chat_history") == []
 
@@ -761,6 +776,35 @@ def test_create_empty_session_with_all_params(shared_db, test_agent: Agent):
     saved_session = shared_db.get_session(session_id=custom_session_id, session_type="agent")
     assert saved_session is not None
     assert saved_session.session_id == custom_session_id
+
+
+def test_create_existing_session_returns_conflict(session_with_runs, shared_db, test_agent: Agent):
+    """Re-creating an existing session_id must 409, not overwrite the stored runs/user_id.
+
+    Regression: create unconditionally upserted a fresh (empty) session over the existing
+    one, dropping its runs/session_data (and, with owner-guarded backends, surfacing a 500).
+    A duplicate create is a conflict (mirrors create_learning / schedules), so the stored
+    session is left untouched and the caller is steered to PATCH.
+    """
+    agent_os = AgentOS(agents=[test_agent])
+    app = agent_os.get_app()
+    client = TestClient(app)
+
+    session_id = session_with_runs.session_id
+
+    # Re-create the same session — must be rejected with 409, not silently overwritten.
+    response = client.post(
+        "/sessions",
+        params={"type": "agent"},
+        json={"session_id": session_id},
+    )
+    assert response.status_code == 409, response.text
+
+    # The stored owner and runs must be preserved, not overwritten with the empty create payload.
+    saved_session = shared_db.get_session(session_id=session_id, session_type="agent")
+    assert saved_session is not None
+    assert saved_session.user_id == "test-user"
+    assert len(saved_session.runs) == 4
 
 
 def test_create_empty_session_auto_generates_id(shared_db, test_agent: Agent):
@@ -866,3 +910,349 @@ def test_create_empty_workflow_session(shared_db, test_agent: Agent):
     assert "session_id" in data
     assert data["workflow_id"] == test_workflow.id
     assert data["session_state"] == {"workflow_step": 1}
+
+
+# --- Session name tests ---
+
+
+def test_get_session_name_returns_explicit_session_name(session_with_explicit_name):
+    """Test that get_session_name returns explicitly set session_name from session_data."""
+    assert get_session_name(session_with_explicit_name.to_dict()) == "My Custom Session Name"
+
+
+def test_get_session_name_returns_first_user_message(session_with_user_message):
+    """Test that get_session_name returns first user message when no session_name is set."""
+    assert get_session_name(session_with_user_message.to_dict()) == "Hello, how are you?"
+
+
+def test_get_session_name_fallback_to_second_run(session_with_fallback):
+    """Test that get_session_name falls back to user message in second run when first run has none."""
+    assert get_session_name(session_with_fallback.to_dict()) == "What is the weather?"
+
+
+def test_get_session_name_empty_runs(session_empty_runs):
+    """Test that get_session_name returns empty string when session has no runs."""
+    assert get_session_name(session_empty_runs.to_dict()) == ""
+
+
+def test_get_session_name_no_user_messages(session_no_user_messages):
+    """Test that get_session_name returns empty string when no user messages exist."""
+    assert get_session_name(session_no_user_messages.to_dict()) == ""
+
+
+def test_get_session_name_with_introduction(session_with_introduction):
+    """Test that get_session_name skips assistant introduction and returns user message."""
+    assert get_session_name(session_with_introduction.to_dict()) == "What is the weather like?"
+
+
+@pytest.fixture
+def team_session_with_fallback():
+    """Team session where first team run has no user message, should fallback to second."""
+    # First team run (no agent_id) - only has introduction
+    team_run1 = TeamRunOutput(
+        run_id="team-run-1",
+        team_id="test-team",
+        user_id="test-user",
+        status=RunStatus.completed,
+        messages=[
+            Message(role="assistant", content="Hello! I'm your team assistant."),
+        ],
+        created_at=int(time.time()) - 3600,
+    )
+    # Second team run (no agent_id) - has user message
+    team_run2 = TeamRunOutput(
+        run_id="team-run-2",
+        team_id="test-team",
+        user_id="test-user",
+        status=RunStatus.completed,
+        messages=[
+            Message(role="user", content="Research AI trends"),
+            Message(role="assistant", content="I'll research that for you."),
+        ],
+        created_at=int(time.time()) - 1800,
+    )
+    # Member run (has agent_id) - should be skipped
+    member_run = RunOutput(
+        run_id="member-run-1",
+        agent_id="researcher-agent",
+        user_id="test-user",
+        status=RunStatus.completed,
+        messages=[
+            Message(role="user", content="Internal delegation message"),
+            Message(role="assistant", content="Researching..."),
+        ],
+        created_at=int(time.time()),
+    )
+    return TeamSession(
+        session_id="team-session-fallback",
+        team_id="test-team",
+        user_id="test-user",
+        runs=[team_run1, team_run2, member_run],
+    )
+
+
+@pytest.fixture
+def team_session_with_user_message():
+    """Team session with user message in first team run."""
+    # Team run (no agent_id)
+    team_run = TeamRunOutput(
+        run_id="team-run-1",
+        team_id="test-team",
+        user_id="test-user",
+        status=RunStatus.completed,
+        messages=[
+            Message(role="user", content="Research AI trends"),
+            Message(role="assistant", content="I'll research that for you."),
+        ],
+        created_at=int(time.time()) - 3600,
+    )
+    # Member run (has agent_id) - should be skipped
+    member_run = RunOutput(
+        run_id="member-run-1",
+        agent_id="researcher-agent",
+        user_id="test-user",
+        status=RunStatus.completed,
+        messages=[
+            Message(role="user", content="Internal delegation message"),
+            Message(role="assistant", content="Researching..."),
+        ],
+        created_at=int(time.time()),
+    )
+    return TeamSession(
+        session_id="team-session",
+        team_id="test-team",
+        user_id="test-user",
+        runs=[team_run, member_run],
+    )
+
+
+def test_get_session_name_team_fallback_to_second_run(team_session_with_fallback):
+    """Test that get_session_name falls back to second team run when first has no user message."""
+    assert get_session_name(team_session_with_fallback.to_dict()) == "Research AI trends"
+
+
+def test_get_session_name_team_first_user_message(team_session_with_user_message):
+    """Test that get_session_name returns first user message from team run."""
+    assert get_session_name(team_session_with_user_message.to_dict()) == "Research AI trends"
+
+
+# --- Workflow session name tests ---
+
+
+def test_get_session_name_workflow_string_input(workflow_session_with_string_input):
+    """Test that get_session_name returns string input for workflow sessions."""
+    session_dict = {**workflow_session_with_string_input.to_dict(), "session_type": "workflow"}
+    assert get_session_name(session_dict) == "Generate a blog post about AI"
+
+
+def test_get_session_name_workflow_dict_input(workflow_session_with_dict_input):
+    """Test that get_session_name returns JSON dumped dict input for workflow sessions."""
+    import json
+
+    session_dict = {**workflow_session_with_dict_input.to_dict(), "session_type": "workflow"}
+    result = get_session_name(session_dict)
+    assert json.loads(result) == {"topic": "AI", "style": "formal"}
+
+
+def test_get_session_name_workflow_empty_runs(workflow_session_empty_runs):
+    """Test that get_session_name returns empty string for workflow with no runs."""
+    session_dict = {**workflow_session_empty_runs.to_dict(), "session_type": "workflow"}
+    assert get_session_name(session_dict) == ""
+
+
+def test_get_session_name_workflow_no_input(workflow_session_no_input):
+    """Test that get_session_name returns 'New {name} Session' when workflow has no input."""
+    session_dict = {**workflow_session_no_input.to_dict(), "session_type": "workflow"}
+    assert get_session_name(session_dict) == "New BlogGenerator Session"
+
+
+@pytest.fixture
+def mixed_status_session(shared_db, test_agent: Agent):
+    """A session whose runs span the live and terminal status sets - the
+    shape a queue tray queries."""
+    now = int(time.time())
+    statuses = {
+        "run-q": RunStatus.pending,
+        "run-r": RunStatus.running,
+        "run-p": RunStatus.paused,
+        "run-c": RunStatus.completed,
+        "run-e": RunStatus.error,
+    }
+    runs = []
+    for idx, (run_id, run_status) in enumerate(statuses.items()):
+        run = RunOutput(
+            run_id=run_id,
+            agent_id=test_agent.id,
+            user_id="test-user",
+            status=run_status,
+            messages=[],
+            created_at=now - (len(statuses) - idx),
+        )
+        run.content = f"Content for {run_id} " + "x" * 400
+        runs.append(run)
+    session = AgentSession(
+        session_id="mixed-status-session",
+        agent_id=test_agent.id,
+        user_id="test-user",
+        session_data={"session_name": "Mixed"},
+        agent_data={"name": test_agent.name, "agent_id": test_agent.id},
+        runs=runs,
+        created_at=now,
+        updated_at=now,
+    )
+    shared_db.upsert_session(session)
+    for idx, run in enumerate(runs):
+        shared_db.upsert_run(run=run, session_id=session.session_id, user_id=session.user_id, run_index=idx)
+    return session
+
+
+def _mixed_client(shared_db):
+    agent = Agent(name="test-agent", id="test-agent-id", db=shared_db)
+    return TestClient(AgentOS(agents=[agent]).get_app())
+
+
+def test_get_session_runs_status_filter_live_set(mixed_status_session, shared_db):
+    """Repeatable status filter: the tray's live set (queued + executing +
+    awaiting approval) excludes terminal runs."""
+    client = _mixed_client(shared_db)
+    response = client.get(
+        f"/sessions/{mixed_status_session.session_id}/runs",
+        params={"status": ["PENDING", "RUNNING", "PAUSED"]},
+    )
+    assert response.status_code == 200
+    assert {run["run_id"] for run in response.json()} == {"run-q", "run-r", "run-p"}
+
+
+def test_get_session_runs_status_filter_is_case_insensitive(mixed_status_session, shared_db):
+    client = _mixed_client(shared_db)
+    response = client.get(
+        f"/sessions/{mixed_status_session.session_id}/runs",
+        params={"status": ["error"]},
+    )
+    assert response.status_code == 200
+    assert {run["run_id"] for run in response.json()} == {"run-e"}
+
+
+def test_get_session_runs_unknown_status_is_400(mixed_status_session, shared_db):
+    client = _mixed_client(shared_db)
+    response = client.get(
+        f"/sessions/{mixed_status_session.session_id}/runs",
+        params={"status": ["FAILED"]},
+    )
+    assert response.status_code == 400
+    assert "FAILED" in response.json()["detail"]
+
+
+def test_get_session_run_previews_are_lightweight(mixed_status_session, shared_db):
+    """Previews truncated, heavy fields absent, status filter composes."""
+    client = _mixed_client(shared_db)
+    response = client.get(
+        f"/sessions/{mixed_status_session.session_id}/run-previews",
+        params={"status": ["COMPLETED"]},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert [run["run_id"] for run in data] == ["run-c"]
+    entry = data[0]
+    assert entry["status"] == "COMPLETED"
+    assert len(entry["content_preview"]) <= 280
+    assert "messages" not in entry and "events" not in entry and "metrics" not in entry
+
+
+@pytest.fixture
+def team_session_with_structured_run(shared_db):
+    now = int(time.time())
+    run = TeamRunOutput(
+        run_id="team-run-1",
+        team_id="test-team-id",
+        user_id="test-user",
+        status=RunStatus.completed,
+        content={"answer": 42, "notes": "structured"},
+        messages=[],
+        created_at=now,
+    )
+    session = TeamSession(
+        session_id="team-structured-session",
+        team_id="test-team-id",
+        user_id="test-user",
+        session_data={"session_name": "Team"},
+        team_data={"name": "test-team", "team_id": "test-team-id"},
+        runs=[run],
+        created_at=now,
+        updated_at=now,
+    )
+    shared_db.upsert_session(session)
+    shared_db.upsert_run(run=run, session_id=session.session_id, user_id=session.user_id, run_index=0)
+    return session
+
+
+def test_get_session_runs_team_runs_carry_user_id(team_session_with_structured_run, shared_db):
+    client = _mixed_client(shared_db)
+    session_id = team_session_with_structured_run.session_id
+    full = client.get(f"/sessions/{session_id}/runs", params={"type": "team"})
+    previews = client.get(f"/sessions/{session_id}/run-previews", params={"type": "team"})
+    assert full.status_code == 200 and previews.status_code == 200
+    assert full.json()[0]["user_id"] == "test-user"
+    assert previews.json()[0]["user_id"] == "test-user"
+
+
+def test_get_session_run_previews_render_structured_content_as_json(team_session_with_structured_run, shared_db):
+    client = _mixed_client(shared_db)
+    response = client.get(
+        f"/sessions/{team_session_with_structured_run.session_id}/run-previews",
+        params={"type": "team"},
+    )
+    assert response.status_code == 200
+    assert json.loads(response.json()[0]["content_preview"]) == {"answer": 42, "notes": "structured"}
+
+
+def test_get_session_runs_default_shape_is_unchanged(mixed_status_session, shared_db):
+    client = _mixed_client(shared_db)
+    response = client.get(f"/sessions/{mixed_status_session.session_id}/runs", params={"status": ["COMPLETED"]})
+    assert response.status_code == 200
+    entry = response.json()[0]
+    assert "content" in entry and "content_preview" not in entry
+
+
+def test_get_session_run_previews_unknown_session_is_404(shared_db):
+    client = _mixed_client(shared_db)
+    assert client.get("/sessions/no-such-session/run-previews").status_code == 404
+
+
+@pytest.fixture
+def os_client(shared_db, monkeypatch):
+    """AgentOSClient wired to the in-process app over ASGI, so requests take the client's real HTTP path."""
+    import httpx
+
+    from agno.client import os as client_module
+    from agno.client.os import AgentOSClient
+
+    app = AgentOS(agents=[Agent(name="test-agent", id="test-agent-id", db=shared_db)]).get_app()
+    async_http = httpx.AsyncClient(transport=httpx.ASGITransport(app=app))
+    sync_http = TestClient(app)
+    monkeypatch.setattr(client_module, "get_default_async_client", lambda: async_http)
+    monkeypatch.setattr(client_module, "get_default_sync_client", lambda: sync_http)
+    return AgentOSClient(base_url="http://agentos")
+
+
+async def test_client_get_session_runs_status_filter(mixed_status_session, os_client):
+    runs = await os_client.get_session_runs(mixed_status_session.session_id, status=["PENDING", "RUNNING"])
+    assert {run.run_id for run in runs} == {"run-q", "run-r"}
+
+
+def _assert_completed_and_error_previews(previews):
+    from agno.os.schema import SessionRunPreviewSchema
+
+    assert {p.run_id for p in previews} == {"run-c", "run-e"}
+    assert all(isinstance(p, SessionRunPreviewSchema) for p in previews)
+    assert all(len(p.content_preview or "") <= 280 for p in previews)
+
+
+def test_client_get_session_run_previews(mixed_status_session, os_client):
+    previews = os_client.get_session_run_previews(mixed_status_session.session_id, status=["COMPLETED", "ERROR"])
+    _assert_completed_and_error_previews(previews)
+
+
+async def test_client_aget_session_run_previews(mixed_status_session, os_client):
+    previews = await os_client.aget_session_run_previews(mixed_status_session.session_id, status=["COMPLETED", "ERROR"])
+    _assert_completed_and_error_previews(previews)

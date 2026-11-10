@@ -17,9 +17,9 @@ def read_pyproject_agno(pyproject_file: Path) -> Optional[Dict]:
             with open(pyproject_file, "rb") as f:
                 pyproject_dict = tomllib.load(f)
         except ImportError:
-            import tomli
+            import tomli  # type: ignore
 
-            pyproject_dict = tomli.loads(pyproject_file.read_text())
+            pyproject_dict = tomli.loads(pyproject_file.read_text(encoding="utf-8"))
 
         agno_conf = pyproject_dict.get("tool", {}).get("agno", None)
         if agno_conf is not None and isinstance(agno_conf, dict):

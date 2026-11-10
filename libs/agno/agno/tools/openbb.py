@@ -29,8 +29,8 @@ class OpenBBTools(Toolkit):
         try:
             if openbb_pat or getenv("OPENBB_PAT"):
                 self.obb.account.login(pat=openbb_pat or getenv("OPENBB_PAT"))  # type: ignore
-        except Exception as e:
-            logger.error(f"Error logging into OpenBB: {e}")
+        except Exception:
+            logger.exception("Error logging into OpenBB")
 
         self.provider: Literal["benzinga", "fmp", "intrinio", "polygon", "tiingo", "tmx", "yfinance"] = provider
 

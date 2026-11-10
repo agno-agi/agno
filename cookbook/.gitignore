@@ -1,1 +1,16 @@
 data/
+docs/examples/
+
+# data_labeling numbered folders commit hand-written fixtures in data/;
+# generated output stays ignored via data/generated/
+!data_labeling/_*/data/
+data_labeling/_*/data/generated/
+
+# environments numbered folders commit hand-written task fixtures in data/;
+# rollout exports and saved baselines stay ignored via data/generated/
+!environments/_*/data/
+environments/_*/data/generated/
+
+# quickstart commits its small, versioned knowledge fixture.
+!00_quickstart/data/
+!00_quickstart/data/agno_overview.md

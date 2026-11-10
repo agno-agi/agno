@@ -15,7 +15,7 @@ def cleanup_evals(postgres_db_real: PostgresDb):
 
     with postgres_db_real.Session() as session:
         try:
-            eval_table = postgres_db_real._get_table("evals")
+            eval_table = postgres_db_real._get_table("evals", create_table_if_not_found=True)
             session.execute(eval_table.delete())
             session.commit()
 
@@ -414,7 +414,7 @@ def test_rename_eval_run_without_deserialization(postgres_db_real: PostgresDb, s
 
 def test_eval_table_creation_and_structure(postgres_db_real: PostgresDb):
     """Test that the eval table is created with the correct structure"""
-    eval_table = postgres_db_real._get_table("evals")
+    eval_table = postgres_db_real._get_table("evals", create_table_if_not_found=True)
 
     assert eval_table is not None
     assert eval_table.name == "test_evals"

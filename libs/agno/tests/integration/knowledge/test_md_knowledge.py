@@ -35,12 +35,12 @@ def prepare_knowledge_base(setup_vector_db):
     kb = Knowledge(vector_db=setup_vector_db)
 
     # Load documents with different user IDs and metadata
-    kb.add_content(
+    kb.insert(
         path=get_filtered_data_dir() / "cv_1.md",
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
     )
 
-    kb.add_content(
+    kb.insert(
         path=get_filtered_data_dir() / "cv_2.md",
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )
@@ -56,16 +56,17 @@ def test_text_knowledge_base_directory(setup_vector_db):
         vector_db=setup_vector_db,
     )
 
-    kb.add_content(
+    kb.insert(
         path=text_dir,
         include=["*.md"],
         reader=MarkdownReader(),
         skip_if_exists=True,
     )
 
-    # Asserting the vector DB exists and pg_essay.md was split as expected
+    # pg_essay.md splits into 4 chunks; directory ingestion recurses, so
+    # filters/cv_1.md and filters/cv_2.md land one chunk each as well
     assert setup_vector_db.exists()
-    assert setup_vector_db.get_count() == 4
+    assert setup_vector_db.get_count() == 6
 
     agent = Agent(knowledge=kb)
     response = agent.run("What are the key factors in doing great work?", markdown=True)
@@ -85,14 +86,15 @@ async def test_text_knowledge_base_async_directory(setup_vector_db):
     text_dir = get_test_data_dir()
 
     kb = Knowledge(vector_db=setup_vector_db)
-    await kb.add_content_async(
+    await kb.ainsert(
         path=text_dir,
         include=["*.md"],
     )
 
-    # Asserting the vector DB exists and pg_essay.md was split as expected
+    # pg_essay.md splits into 4 chunks; directory ingestion recurses, so
+    # filters/cv_1.md and filters/cv_2.md land one chunk each as well
     assert setup_vector_db.exists()
-    assert setup_vector_db.get_count() == 4
+    assert setup_vector_db.get_count() == 6
 
     agent = Agent(knowledge=kb)
     response = await agent.arun("What does Paul Graham say about great work?", markdown=True)
@@ -112,12 +114,12 @@ def test_text_knowledge_base_with_metadata_path(setup_vector_db):
         vector_db=setup_vector_db,
     )
 
-    kb.add_content(
+    kb.insert(
         path=str(get_filtered_data_dir() / "cv_1.md"),
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
     )
 
-    kb.add_content(
+    kb.insert(
         path=str(get_filtered_data_dir() / "cv_2.md"),
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )
@@ -131,7 +133,7 @@ def test_text_knowledge_base_with_metadata_path(setup_vector_db):
     assert (
         "entry" in response.content.lower()  # type: ignore
         or "junior" in response.content.lower()  # type: ignore
-        or "Jordan" in response.content.lower()  # type: ignore
+        or "jordan" in response.content.lower()  # type: ignore
     )
     assert "senior developer" not in response.content.lower()  # type: ignore
 
@@ -142,12 +144,12 @@ def test_knowledge_base_with_metadata_path_invalid_filter(setup_vector_db):
         vector_db=setup_vector_db,
     )
 
-    kb.add_content(
+    kb.insert(
         path=str(get_filtered_data_dir() / "cv_1.md"),
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
     )
 
-    kb.add_content(
+    kb.insert(
         path=str(get_filtered_data_dir() / "cv_2.md"),
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )

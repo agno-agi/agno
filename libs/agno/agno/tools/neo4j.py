@@ -27,20 +27,19 @@ class Neo4jTools(Toolkit):
     ):
         """
         Initialize the Neo4jTools toolkit.
-        Connection parameters (uri/user/password or host/port) can be provided.
+        Connection parameters (uri/user/password) can be provided.
         If not provided, falls back to NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD env vars.
 
         Args:
             uri (Optional[str]): The Neo4j URI.
             user (Optional[str]): The Neo4j username.
             password (Optional[str]): The Neo4j password.
-            host (Optional[str]): The Neo4j host.
-            port (Optional[int]): The Neo4j port.
             database (Optional[str]): The Neo4j database.
-            list_labels (bool): Whether to list node labels.
-            list_relationships (bool): Whether to list relationship types.
-            get_schema (bool): Whether to get the schema.
-            run_cypher (bool): Whether to run Cypher queries.
+            enable_list_labels (bool): Whether to list node labels.
+            enable_list_relationships (bool): Whether to list relationship types.
+            enable_get_schema (bool): Whether to get the schema.
+            enable_run_cypher (bool): Whether to run Cypher queries.
+            all (bool): Enable all tools. Overrides individual flags when True. Default is False.
             **kwargs: Additional keyword arguments.
         """
         # Determine the connection URI and credentials
@@ -56,8 +55,8 @@ class Neo4jTools(Toolkit):
             self.driver = GraphDatabase.driver(uri, auth=(user, password))  # type: ignore
             self.driver.verify_connectivity()
             log_debug("Connected to Neo4j database")
-        except Exception as e:
-            logger.error(f"Failed to connect to Neo4j: {e}")
+        except Exception:
+            logger.exception("Failed to connect to Neo4j")
             raise
 
         self.database = database or "neo4j"
@@ -84,8 +83,8 @@ class Neo4jTools(Toolkit):
                 result = session.run("CALL db.labels()")
                 labels = [record["label"] for record in result]
             return labels
-        except Exception as e:
-            logger.error(f"Error listing labels: {e}")
+        except Exception:
+            logger.exception("Error listing labels")
             return []
 
     def list_relationship_types(self) -> list:
@@ -98,8 +97,8 @@ class Neo4jTools(Toolkit):
                 result = session.run("CALL db.relationshipTypes()")
                 types = [record["relationshipType"] for record in result]
             return types
-        except Exception as e:
-            logger.error(f"Error listing relationship types: {e}")
+        except Exception:
+            logger.exception("Error listing relationship types")
             return []
 
     def get_schema(self) -> list:
@@ -112,8 +111,8 @@ class Neo4jTools(Toolkit):
                 result = session.run("CALL db.schema.visualization()")
                 schema_data = result.data()
             return schema_data
-        except Exception as e:
-            logger.error(f"Error getting Neo4j schema: {e}")
+        except Exception:
+            logger.exception("Error getting Neo4j schema")
             return []
 
     def run_cypher_query(self, query: str) -> list:
@@ -129,6 +128,6 @@ class Neo4jTools(Toolkit):
                 result = session.run(query)  # type: ignore[arg-type]
                 data = result.data()
             return data
-        except Exception as e:
-            logger.error(f"Error running Cypher query: {e}")
+        except Exception:
+            logger.exception("Error running Cypher query")
             return []

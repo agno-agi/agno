@@ -1,0 +1,1700 @@
+"""Session persistence and serialization helpers for Team."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from agno.offload.store import ResultStore
+    from agno.team.mode import TeamMode
+    from agno.team.team import Team
+
+from typing import (
+    Any,
+    Dict,
+    List,
+    Optional,
+    Union,
+    cast,
+)
+
+from pydantic import BaseModel
+
+from agno.agent import Agent
+from agno.agent._storage import (
+    _followups_from_config,
+    _followups_to_config,
+    is_auto_generated_memory_manager_id,
+    resolve_learning_reference,
+    resolve_memory_manager_reference,
+)
+from agno.agent.followup import FollowupConfig, model_identity
+from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
+from agno.db.schemas.scheduler import strip_reserved_run_metadata
+from agno.db.utils import resolve_db_from_config
+from agno.exceptions import ComponentPinError, ComponentRehydrationError
+from agno.models.base import Model
+from agno.models.message import Message
+from agno.models.utils import resolve_model
+from agno.registry._reserved import RESERVED_MANAGER_IDS, _reserved_manager_id_message
+from agno.registry.registry import Registry
+from agno.run.agent import RunOutput
+from agno.run.team import (
+    TeamRunOutput,
+)
+from agno.session import TeamSession, WorkflowSession
+from agno.tools import Toolkit
+from agno.tools.function import Function
+from agno.utils.agent import (
+    aget_last_run_output_util,
+    aget_run_output_util,
+    aget_session_metrics_util,
+    get_last_run_output_util,
+    get_run_output_util,
+    get_session_metrics_util,
+)
+from agno.utils.db_fallback import require_db_fallback_matches
+from agno.utils.log import (
+    log_debug,
+    log_error,
+    log_warning,
+)
+from agno.utils.merge_dict import merge_dictionaries
+from agno.utils.string import generate_id_from_name
+
+# ---------------------------------------------------------------------------
+# Run output accessors
+# ---------------------------------------------------------------------------
+
+
+def _offload_to_config(value: Any) -> Union[bool, Dict[str, Any]]:
+    """The offload_tool_results setting as it is stored: True, False, or the ResultStore settings."""
+    from agno.offload.store import ResultStore
+
+    if value is True or value is False:
+        return value
+    if isinstance(value, ResultStore):
+        return value.to_dict()
+    raise TypeError(
+        "offload_tool_results must be True, False, None or a ResultStore; set the threshold with ResultStore(threshold_chars=...)."
+    )
+
+
+def _offload_from_config(value: Any) -> Optional[Union[bool, "ResultStore"]]:
+    """The offload_tool_results setting from a stored config: unset, True, False, or a ResultStore."""
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        from agno.offload.store import ResultStore
+
+        return ResultStore.from_dict(value)
+    return bool(value)
+
+
+def get_run_output(
+    team: "Team", run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
+) -> Optional[Union[TeamRunOutput, RunOutput]]:
+    """
+    Get a RunOutput or TeamRunOutput from the database.  Handles cached sessions.
+
+    Args:
+        run_id (str): The run_id to load from storage.
+        session_id (Optional[str]): The session_id to load from storage.
+        user_id (Optional[str]): The user_id to scope the session lookup.
+    """
+    if not session_id and not team.session_id:
+        raise Exception("No session_id provided")
+
+    session_id_to_load = session_id or team.session_id
+    return get_run_output_util(cast(Any, team), run_id=run_id, session_id=session_id_to_load, user_id=user_id)
+
+
+async def aget_run_output(
+    team: "Team", run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
+) -> Optional[Union[TeamRunOutput, RunOutput]]:
+    """
+    Get a RunOutput or TeamRunOutput from the database.  Handles cached sessions.
+
+    Args:
+        run_id (str): The run_id to load from storage.
+        session_id (Optional[str]): The session_id to load from storage.
+        user_id (Optional[str]): The user_id to scope the session lookup.
+    """
+    if not session_id and not team.session_id:
+        raise Exception("No session_id provided")
+
+    session_id_to_load = session_id or team.session_id
+    return await aget_run_output_util(cast(Any, team), run_id=run_id, session_id=session_id_to_load, user_id=user_id)
+
+
+def get_last_run_output(team: "Team", session_id: Optional[str] = None) -> Optional[TeamRunOutput]:
+    """
+    Get the last run response from the database.
+
+    Args:
+        session_id (Optional[str]): The session_id to load from storage.
+
+    Returns:
+        RunOutput: The last run response from the database.
+    """
+    if not session_id and not team.session_id:
+        raise Exception("No session_id provided")
+
+    session_id_to_load = session_id or team.session_id
+    return cast(TeamRunOutput, get_last_run_output_util(cast(Any, team), session_id=session_id_to_load))
+
+
+async def aget_last_run_output(team: "Team", session_id: Optional[str] = None) -> Optional[TeamRunOutput]:
+    """
+    Get the last run response from the database.
+
+    Args:
+        session_id (Optional[str]): The session_id to load from storage.
+
+    Returns:
+        RunOutput: The last run response from the database.
+    """
+    if not session_id and not team.session_id:
+        raise Exception("No session_id provided")
+
+    session_id_to_load = session_id or team.session_id
+    return cast(TeamRunOutput, await aget_last_run_output_util(cast(Any, team), session_id=session_id_to_load))
+
+
+# ---------------------------------------------------------------------------
+# Session read / write
+# ---------------------------------------------------------------------------
+
+
+def _read_session(
+    team: "Team", session_id: str, session_type: SessionType = SessionType.TEAM, user_id: Optional[str] = None
+) -> Optional[Union[TeamSession, WorkflowSession]]:
+    """Get a Session from the database.
+
+    Read errors propagate. Do NOT coerce failures to None here: an empty result
+    is indistinguishable from "row does not exist", and the caller will happily
+    create a fresh session with the same id and overwrite the real row on the
+    next write. This is how a transient Postgres failover wiped six weeks of
+    conversation history in a real incident. Let the exception surface and
+    fail the run loudly -- a failed run is recoverable, a wiped session is not.
+    """
+    if not team.db:
+        raise ValueError("Db not initialized")
+    session = team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
+    return session  # type: ignore
+
+
+async def _aread_session(
+    team: "Team", session_id: str, session_type: SessionType = SessionType.TEAM, user_id: Optional[str] = None
+) -> Optional[Union[TeamSession, WorkflowSession]]:
+    """Async twin of :func:`_read_session`. Same rationale: do NOT swallow errors."""
+    from agno.team._init import _has_async_db
+
+    if not team.db:
+        raise ValueError("Db not initialized")
+    if _has_async_db(team):
+        team.db = cast(AsyncBaseDb, team.db)
+        session = await team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
+    else:
+        session = team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore[assignment]
+    return session  # type: ignore
+
+
+def _upsert_session(team: "Team", session: TeamSession) -> Optional[TeamSession]:
+    """Upsert a Session into the database."""
+
+    try:
+        if not team.db:
+            raise ValueError("Db not initialized")
+        return team.db.upsert_session(session=session)  # type: ignore
+    except Exception as e:
+        log_warning(f"Error upserting session into db: {str(e)}")
+    return None
+
+
+async def _aupsert_session(team: "Team", session: TeamSession) -> Optional[TeamSession]:
+    """Upsert a Session into the database."""
+    from agno.team._init import _has_async_db
+
+    try:
+        if not team.db:
+            raise ValueError("Db not initialized")
+        if _has_async_db(team):
+            return await team.db.upsert_session(session=session)  # type: ignore
+        else:
+            return team.db.upsert_session(session=session)  # type: ignore
+    except Exception as e:
+        log_warning(f"Error upserting session into db: {str(e)}")
+    return None
+
+
+def _upsert_run(
+    team: "Team",
+    run: Union[TeamRunOutput, RunOutput],
+    session_id: str,
+    user_id: Optional[str] = None,
+    run_index: Optional[int] = None,
+) -> None:
+    """Persist a single run to the runs storage (O(1) write).
+
+    Silently no-ops on adapters that have not implemented ``upsert_run`` yet.
+    """
+    try:
+        if not team.db:
+            return
+        from agno.run.status_persist import persist_worker_owned_run
+
+        # Queue-worker-owned runs save through the attempt-fenced primitive;
+        # member-run saves pass through untouched (their run_ids are never
+        # registered - a zombie leg's member writes orphan, not clobber)
+        if persist_worker_owned_run(team.db, run, session_id=session_id, user_id=user_id):
+            return
+        team.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
+    except NotImplementedError:
+        log_debug(f"{type(team.db).__name__} does not implement upsert_run; skipping per-run write")
+    except Exception as e:
+        log_warning(f"Error upserting run into db: {str(e)}")
+
+
+async def _aupsert_run(
+    team: "Team",
+    run: Union[TeamRunOutput, RunOutput],
+    session_id: str,
+    user_id: Optional[str] = None,
+    run_index: Optional[int] = None,
+) -> None:
+    """Async version of ``_upsert_run``."""
+    from agno.team._init import _has_async_db
+
+    try:
+        if not team.db:
+            return
+        from agno.run.status_persist import apersist_worker_owned_run
+
+        # Queue-worker-owned runs save through the attempt-fenced primitive;
+        # member-run saves pass through untouched (see _upsert_run)
+        if await apersist_worker_owned_run(team.db, run, session_id=session_id, user_id=user_id):
+            return
+        if _has_async_db(team):
+            await team.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr,misc]
+        else:
+            team.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
+    except NotImplementedError:
+        log_debug(f"{type(team.db).__name__} does not implement upsert_run; skipping per-run write")
+    except Exception as e:
+        log_warning(f"Error upserting run into db: {str(e)}")
+
+
+def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str] = None) -> TeamSession:
+    """Load the TeamSession from storage
+
+    Returns:
+        Optional[TeamSession]: The loaded TeamSession or None if not found.
+    """
+    from time import time
+
+    from agno.session.team import TeamSession
+    from agno.team._telemetry import get_team_data
+
+    # Return existing session if we have one
+    cached_session = team._get_cached_session(session_id, user_id=user_id)
+    if cached_session is not None:
+        return cached_session
+
+    # Try to load from database
+    team_session = None
+    if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
+        team_session = cast(TeamSession, _read_session(team, session_id=session_id, user_id=user_id))
+
+    # Create new session if none found
+    if team_session is None:
+        log_debug(f"Creating new TeamSession: {session_id}")
+        from copy import deepcopy
+
+        session_data = {}
+        if team.session_state is not None:
+            session_data["session_state"] = deepcopy(team.session_state)
+        team_session = TeamSession(
+            session_id=session_id,
+            team_id=team.id,
+            user_id=user_id,
+            team_data=get_team_data(team),
+            session_data=session_data,
+            # Copy so the session record never aliases the shared Team's dict
+            metadata=deepcopy(team.metadata),
+            created_at=int(time()),
+        )
+        if team.introduction is not None:
+            from uuid import uuid4
+
+            introduction_run = TeamRunOutput(
+                run_id=str(uuid4()),
+                team_id=team.id,
+                session_id=session_id,
+                user_id=user_id,
+                team_name=team.name,
+                content=team.introduction,
+                messages=[Message(role=team.model.assistant_message_role, content=team.introduction)],  # type: ignore
+            )
+            team_session.upsert_run(introduction_run)
+
+            # v3: session.runs is in-memory; persist the intro to the runs table
+            # so a session reload picks it up (pre-3.0's save_session wrote the
+            # entire runs blob, so this happened for free).
+            if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
+                from agno.team._session import save_session
+                from agno.team._storage import _upsert_run
+
+                save_session(team, session=team_session)
+                _upsert_run(team, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
+
+    # Cache the session if relevant
+    if team_session is not None and team.cache_session:
+        team._set_cached_session(team_session)
+
+    return team_session
+
+
+async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optional[str] = None) -> TeamSession:
+    """Load the TeamSession from storage
+
+    Returns:
+        Optional[TeamSession]: The loaded TeamSession or None if not found.
+    """
+    from time import time
+
+    from agno.session.team import TeamSession
+    from agno.team._init import _has_async_db
+    from agno.team._telemetry import get_team_data
+
+    # Return existing session if we have one
+    cached_session = team._get_cached_session(session_id, user_id=user_id)
+    if cached_session is not None:
+        return cached_session
+
+    # Try to load from database
+    team_session = None
+    if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
+        if _has_async_db(team):
+            team_session = cast(TeamSession, await _aread_session(team, session_id=session_id, user_id=user_id))
+        else:
+            team_session = cast(TeamSession, _read_session(team, session_id=session_id, user_id=user_id))
+
+    # Create new session if none found
+    if team_session is None:
+        log_debug(f"Creating new TeamSession: {session_id}")
+        from copy import deepcopy
+
+        session_data = {}
+        if team.session_state is not None:
+            session_data["session_state"] = deepcopy(team.session_state)
+        team_session = TeamSession(
+            session_id=session_id,
+            team_id=team.id,
+            user_id=user_id,
+            team_data=get_team_data(team),
+            session_data=session_data,
+            # Copy so the session record never aliases the shared Team's dict
+            metadata=deepcopy(team.metadata),
+            created_at=int(time()),
+        )
+        if team.introduction is not None:
+            from uuid import uuid4
+
+            introduction_run = TeamRunOutput(
+                run_id=str(uuid4()),
+                team_id=team.id,
+                session_id=session_id,
+                user_id=user_id,
+                team_name=team.name,
+                content=team.introduction,
+                messages=[Message(role=team.model.assistant_message_role, content=team.introduction)],  # type: ignore
+            )
+            team_session.upsert_run(introduction_run)
+
+            # v3: session.runs is in-memory; persist the intro to the runs table
+            # so a session reload picks it up (pre-3.0's save_session wrote the
+            # entire runs blob, so this happened for free).
+            if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
+                from agno.team._init import _has_async_db
+                from agno.team._session import asave_session, save_session
+                from agno.team._storage import _aupsert_run, _upsert_run
+
+                if _has_async_db(team):
+                    await asave_session(team, session=team_session)
+                    await _aupsert_run(team, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
+                else:
+                    save_session(team, session=team_session)
+                    _upsert_run(team, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
+
+    # Cache the session if relevant
+    if team_session is not None and team.cache_session:
+        team._set_cached_session(team_session)
+
+    return team_session
+
+
+def _load_session_state(team: "Team", session: TeamSession, session_state: Dict[str, Any]) -> Dict[str, Any]:
+    """Load and return the stored session_state from the database, optionally merging it with the given one"""
+
+    # Get the session_state from the database and merge with proper precedence
+    # At this point session_state contains: agent_defaults + run_params
+    if session.session_data is not None and "session_state" in session.session_data:
+        session_state_from_db = session.session_data.get("session_state")
+
+        if (
+            session_state_from_db is not None
+            and isinstance(session_state_from_db, dict)
+            and len(session_state_from_db) > 0
+            and not team.overwrite_db_session_state
+        ):
+            # This preserves precedence: run_params > db_state > agent_defaults
+            merged_state = session_state_from_db.copy()
+            merge_dictionaries(merged_state, session_state)
+            session_state.clear()
+            session_state.update(merged_state)
+
+    # Update the session_state in the session
+    if session.session_data is not None:
+        session.session_data["session_state"] = session_state
+
+    return session_state
+
+
+def _update_metadata(team: "Team", session: TeamSession):
+    """Merge the team's metadata into the session's metadata.
+
+    Team metadata provides defaults; the session's own stored values win on
+    conflict, matching resolve_run_options (team < session), so a value set on
+    the session is not overwritten by a team default and persists across runs.
+    Only the session is updated; the shared Team instance is never mutated.
+    """
+    if session.metadata is not None and team.metadata is not None:
+        from copy import deepcopy
+
+        merged = deepcopy(team.metadata)
+        merge_dictionaries(merged, session.metadata)
+        session.metadata.clear()
+        session.metadata.update(merged)
+
+
+def to_dict(team: "Team") -> Dict[str, Any]:
+    """
+    Convert the Team to a dictionary.
+
+    Returns:
+        Dict[str, Any]: Dictionary representation of the team configuration
+    """
+    from agno.team.team import Team
+
+    config: Dict[str, Any] = {}
+
+    # --- Team Settings ---
+    if team.id is not None:
+        config["id"] = team.id
+    if team.name is not None:
+        config["name"] = team.name
+    if team.role is not None:
+        config["role"] = team.role
+    if team.description is not None:
+        config["description"] = team.description
+
+    # --- Model ---
+    if team.model is not None:
+        config["model"] = team.model.to_dict() if isinstance(team.model, Model) else str(team.model)
+
+    # --- Members ---
+    if team.members and isinstance(team.members, list):
+        serialized_members = []
+        for member in team.members:
+            if isinstance(member, Agent):
+                serialized_members.append({"type": "agent", "agent_id": member.id})
+            elif isinstance(member, Team):
+                serialized_members.append({"type": "team", "team_id": member.id})
+        if serialized_members:
+            config["members"] = serialized_members
+
+    # --- Mode ---
+    if team.mode is not None:
+        config["mode"] = team.mode.value if hasattr(team.mode, "value") else str(team.mode)
+    if team.max_iterations != 10:
+        config["max_iterations"] = team.max_iterations
+
+    # --- Execution settings (only if non-default) ---
+    if team.respond_directly:
+        config["respond_directly"] = team.respond_directly
+    if team.delegate_to_all_members:
+        config["delegate_to_all_members"] = team.delegate_to_all_members
+    if not team.determine_input_for_members:  # default is True
+        config["determine_input_for_members"] = team.determine_input_for_members
+
+    # --- User settings ---
+    if team.user_id is not None:
+        config["user_id"] = team.user_id
+
+    # --- Session settings ---
+    if team.session_id is not None:
+        config["session_id"] = team.session_id
+    if team.session_state is not None:
+        config["session_state"] = team.session_state
+    if team.add_session_state_to_context:
+        config["add_session_state_to_context"] = team.add_session_state_to_context
+    if team.enable_agentic_state:
+        config["enable_agentic_state"] = team.enable_agentic_state
+    if team.overwrite_db_session_state:
+        config["overwrite_db_session_state"] = team.overwrite_db_session_state
+    if team.cache_session:
+        config["cache_session"] = team.cache_session
+
+    # --- Team history settings ---
+    if team.add_team_history_to_members:
+        config["add_team_history_to_members"] = team.add_team_history_to_members
+    if team.num_team_history_runs != 3:  # default is 3
+        config["num_team_history_runs"] = team.num_team_history_runs
+    if team.share_member_interactions:
+        config["share_member_interactions"] = team.share_member_interactions
+    if team.search_past_sessions:
+        config["search_past_sessions"] = team.search_past_sessions
+    if team.num_past_sessions_to_search is not None:
+        config["num_past_sessions_to_search"] = team.num_past_sessions_to_search
+    if team.num_past_session_runs_in_search is not None:
+        config["num_past_session_runs_in_search"] = team.num_past_session_runs_in_search
+    if team.read_chat_history:
+        config["read_chat_history"] = team.read_chat_history
+
+    # --- System message settings ---
+    if team.system_message is not None and isinstance(team.system_message, str):
+        config["system_message"] = team.system_message
+    if team.system_message_role != "system":  # default is "system"
+        config["system_message_role"] = team.system_message_role
+    if team.introduction is not None:
+        config["introduction"] = team.introduction
+    if team.instructions is not None and not callable(team.instructions):
+        config["instructions"] = team.instructions
+    if team.expected_output is not None:
+        config["expected_output"] = team.expected_output
+    if team.additional_context is not None:
+        config["additional_context"] = team.additional_context
+
+    # --- Context settings ---
+    if team.markdown:
+        config["markdown"] = team.markdown
+    if team.add_datetime_to_context:
+        config["add_datetime_to_context"] = team.add_datetime_to_context
+    if team.add_location_to_context:
+        config["add_location_to_context"] = team.add_location_to_context
+    if team.datetime_format is not None:
+        config["datetime_format"] = team.datetime_format
+    if team.timezone_identifier is not None:
+        config["timezone_identifier"] = team.timezone_identifier
+    if team.add_name_to_context:
+        config["add_name_to_context"] = team.add_name_to_context
+    if team.add_member_tools_to_context:
+        config["add_member_tools_to_context"] = team.add_member_tools_to_context
+    if not team.resolve_in_context:  # default is True
+        config["resolve_in_context"] = team.resolve_in_context
+
+    # --- Database settings ---
+    if team.db is not None and hasattr(team.db, "to_dict"):
+        config["db"] = team.db.to_dict()
+
+    # --- Dependencies ---
+    if team.dependencies is not None:
+        config["dependencies"] = team.dependencies
+    if team.add_dependencies_to_context:
+        config["add_dependencies_to_context"] = team.add_dependencies_to_context
+
+    # --- Knowledge settings ---
+    # Knowledge is a non-serializable object (it holds live db/vector_db connections),
+    # so we store a reference by name and resolve it from the registry on load.
+    if team.knowledge is not None:
+        knowledge_name = getattr(team.knowledge, "name", None)
+        if knowledge_name is not None:
+            config["knowledge"] = {"name": knowledge_name}
+        else:
+            log_warning("Team knowledge has no name; it cannot be referenced from the registry and will not be saved.")
+    if team.knowledge_filters is not None:
+        config["knowledge_filters"] = team.knowledge_filters
+    if team.enable_agentic_knowledge_filters:
+        config["enable_agentic_knowledge_filters"] = team.enable_agentic_knowledge_filters
+    if team.update_knowledge:
+        config["update_knowledge"] = team.update_knowledge
+    if team.add_knowledge_to_context:
+        config["add_knowledge_to_context"] = team.add_knowledge_to_context
+    if not team.search_knowledge:  # default is True
+        config["search_knowledge"] = team.search_knowledge
+    if not team.add_search_knowledge_instructions:  # default is True
+        config["add_search_knowledge_instructions"] = team.add_search_knowledge_instructions
+    if team.references_format != "json":  # default is "json"
+        config["references_format"] = team.references_format
+
+    # --- Tools ---
+    if team.tools and isinstance(team.tools, list):
+        serialized_tools = []
+        for tool in team.tools:
+            try:
+                if isinstance(tool, Function):
+                    func_dict = tool.to_dict()
+                    # A rehydrated team holds bare Functions; re-stamp the
+                    # attribution they carry so it survives the round trip.
+                    if tool.owning_toolkit:
+                        func_dict["toolkit"] = tool.owning_toolkit
+                    serialized_tools.append(func_dict)
+                elif isinstance(tool, Toolkit):
+                    # get_functions() is the exposed subset -- the only functions
+                    # the team runtime ever calls.
+                    for func in tool.get_functions().values():
+                        func_dict = func.to_dict()
+                        # Record the owning toolkit so rehydration can re-bind
+                        # same-named functions to the right toolkit (see
+                        # Registry.rehydrate_function).
+                        if isinstance(tool.name, str) and tool.name:
+                            func_dict["toolkit"] = tool.name
+                        serialized_tools.append(func_dict)
+                elif isinstance(tool, dict):
+                    # Provider-native tool dicts serialize as themselves.
+                    serialized_tools.append(tool)
+                elif callable(tool):
+                    func = Function.from_callable(tool)
+                    serialized_tools.append(func.to_dict())
+            except Exception as e:
+                log_warning(f"Could not serialize tool {tool}: {str(e)}")
+        if serialized_tools:
+            config["tools"] = serialized_tools
+    if team.tool_choice is not None:
+        config["tool_choice"] = team.tool_choice
+    if team.tool_call_limit is not None:
+        config["tool_call_limit"] = team.tool_call_limit
+    if team.get_member_information_tool:
+        config["get_member_information_tool"] = team.get_member_information_tool
+
+    # --- Schema settings ---
+    if team.input_schema is not None:
+        if issubclass(team.input_schema, BaseModel):
+            config["input_schema"] = team.input_schema.__name__
+        elif isinstance(team.input_schema, dict):
+            config["input_schema"] = team.input_schema
+    if team.output_schema is not None:
+        if isinstance(team.output_schema, type) and issubclass(team.output_schema, BaseModel):
+            config["output_schema"] = team.output_schema.__name__
+        elif isinstance(team.output_schema, dict):
+            config["output_schema"] = team.output_schema
+
+    # --- Parser and output settings ---
+    if team.parser_model is not None:
+        if isinstance(team.parser_model, Model):
+            config["parser_model"] = team.parser_model.to_dict()
+        else:
+            config["parser_model"] = str(team.parser_model)
+    if team.parser_model_prompt is not None:
+        config["parser_model_prompt"] = team.parser_model_prompt
+    if team.output_model is not None:
+        if isinstance(team.output_model, Model):
+            config["output_model"] = team.output_model.to_dict()
+        else:
+            config["output_model"] = str(team.output_model)
+    if team.output_model_prompt is not None:
+        config["output_model_prompt"] = team.output_model_prompt
+    if team.use_json_mode:
+        config["use_json_mode"] = team.use_json_mode
+    if not team.parse_response:  # default is True
+        config["parse_response"] = team.parse_response
+
+    # --- Memory settings ---
+    # Stored as a registry reference by id, like knowledge: the manager holds
+    # a model and callables, so the config names it and the registry supplies
+    # the live object on load. An auto-generated id is minted fresh every
+    # process, so it can never resolve in a new one: writing it would poison
+    # every future strict load. Only a stable, user-assigned id is referenced.
+    if team.memory_manager is not None:
+        memory_manager_id = getattr(team.memory_manager, "id", None)
+        if memory_manager_id and not is_auto_generated_memory_manager_id(memory_manager_id):
+            config["memory_manager"] = {"registry_id": memory_manager_id}
+        elif team.enable_agentic_memory or team.update_memory_on_run:
+            # The default manager initialize_team builds; it rebuilds itself
+            # from these flags on load, so there is nothing to reference.
+            log_debug("Team memory_manager has an auto-generated id; not saved, the default rebuilds on load.")
+        else:
+            log_warning(
+                "Team memory_manager has no stable id, so it cannot be referenced across processes and will "
+                "not be saved. Give the manager an explicit id and register it in the registry to keep it."
+            )
+    if team.enable_agentic_memory:
+        config["enable_agentic_memory"] = team.enable_agentic_memory
+    if team.update_memory_on_run:
+        config["update_memory_on_run"] = team.update_memory_on_run
+    if team.add_memories_to_context is not None:
+        config["add_memories_to_context"] = team.add_memories_to_context
+    if team.enable_session_summaries:
+        config["enable_session_summaries"] = team.enable_session_summaries
+    if team.add_session_summary_to_context is not None:
+        config["add_session_summary_to_context"] = team.add_session_summary_to_context
+    # TODO: implement session summary manager serialization
+    # if team.session_summary_manager is not None:
+    #     config["session_summary_manager"] = team.session_summary_manager.to_dict()
+
+    # --- Learning settings ---
+    # A named machine is a registry resource: stored as a reference by name,
+    # like knowledge, and resolved from the registry on load. Its config is
+    # never inlined, so a stored component cannot carry learning the deployer
+    # did not declare. An unnamed machine belongs to this component and is
+    # inlined in full.
+    if team.learning is not None:
+        learning_name = getattr(team.learning, "name", None)
+        if team.learning is True:
+            config["learning"] = True
+        elif team.learning is False:
+            config["learning"] = False
+        elif isinstance(learning_name, str) and learning_name:
+            config["learning"] = {"name": learning_name}
+        elif hasattr(team.learning, "to_dict"):
+            config["learning"] = team.learning.to_dict()
+        else:
+            config["learning"] = True if team.learning else False
+    if not team.add_learnings_to_context:  # default is True
+        config["add_learnings_to_context"] = team.add_learnings_to_context
+
+    # --- History settings ---
+    if team.add_history_to_context:
+        config["add_history_to_context"] = team.add_history_to_context
+    if team.num_history_runs is not None:
+        config["num_history_runs"] = team.num_history_runs
+    if team.num_history_messages is not None:
+        config["num_history_messages"] = team.num_history_messages
+    if team.max_tool_calls_from_history is not None:
+        config["max_tool_calls_from_history"] = team.max_tool_calls_from_history
+
+    # --- Media/storage settings ---
+    if not team.send_media_to_model:  # default is True
+        config["send_media_to_model"] = team.send_media_to_model
+    if not team.store_media:  # default is True
+        config["store_media"] = team.store_media
+    if not team.store_tool_messages:  # default is True
+        config["store_tool_messages"] = team.store_tool_messages
+    if team.store_history_messages:  # default is False
+        config["store_history_messages"] = team.store_history_messages
+
+    # --- Compression settings ---
+    if team.compress_tool_results:
+        config["compress_tool_results"] = team.compress_tool_results
+
+    # --- Result offloading settings ---
+    if team.offload_tool_results is not None:
+        config["offload_tool_results"] = _offload_to_config(team.offload_tool_results)
+    # TODO: implement compression manager serialization
+    # if team.compression_manager is not None:
+    #     config["compression_manager"] = team.compression_manager.to_dict()
+
+    # --- Reasoning settings ---
+    if team.reasoning_model is not None:
+        # Mirrors the agent side. from_dict does not read this back yet
+        # (#9452), so it is not round-tripped -- but without it the field is
+        # lost at SAVE time, which leaves nothing for a loader to notice or a
+        # future reconstruction to restore.
+        if isinstance(team.reasoning_model, Model):
+            config["reasoning_model"] = team.reasoning_model.to_dict()
+        else:
+            config["reasoning_model"] = str(team.reasoning_model)
+
+    # --- Followup settings ---
+    if team.followups:
+        config["followups"] = _followups_to_config(team.followups)
+    # A FollowupConfig carries the count and model; the top-level fields are stored only without one.
+    if not isinstance(team.followups, FollowupConfig):
+        if team.num_followups != 3:
+            config["num_followups"] = team.num_followups
+        if team.followup_model is not None:
+            if isinstance(team.followup_model, Model):
+                config["followup_model"] = model_identity(team.followup_model)
+            else:
+                config["followup_model"] = str(team.followup_model)
+
+    # --- Streaming settings ---
+    if team.stream is not None:
+        config["stream"] = team.stream
+    if team.stream_events is not None:
+        config["stream_events"] = team.stream_events
+    if not team.stream_member_events:  # default is True
+        config["stream_member_events"] = team.stream_member_events
+    if team.store_events:
+        config["store_events"] = team.store_events
+    if team.store_member_responses:
+        config["store_member_responses"] = team.store_member_responses
+
+    # --- Retry settings ---
+    if team.retries > 0:
+        config["retries"] = team.retries
+    if team.delay_between_retries != 1:  # default is 1
+        config["delay_between_retries"] = team.delay_between_retries
+    if team.exponential_backoff:
+        config["exponential_backoff"] = team.exponential_backoff
+
+    # --- Metadata ---
+    if team.metadata is not None:
+        config["metadata"] = team.metadata
+
+    # --- Debug and telemetry settings ---
+    if team.debug_mode:
+        config["debug_mode"] = team.debug_mode
+    if team.debug_level != 1:  # default is 1
+        config["debug_level"] = team.debug_level
+    if team.show_members_responses:
+        config["show_members_responses"] = team.show_members_responses
+    if not team.telemetry:  # default is True
+        config["telemetry"] = team.telemetry
+
+    return config
+
+
+def _deserialize_learning(value: Any) -> Any:
+    """Deserialize a learning config value from to_dict output.
+
+    Returns True, False, None, or a LearningMachine instance.
+    """
+    if value is None or value is True or value is False:
+        return value
+    if isinstance(value, dict):
+        from agno.learn.machine import LearningMachine
+
+        # An inline machine belongs to this component: a name on it is dropped
+        # so the rebuilt machine keeps round-tripping inline instead of being
+        # re-saved as a reference to a machine no registry declares.
+        return LearningMachine.from_dict({key: item for key, item in value.items() if key != "name"})
+    return value
+
+
+def _parse_team_mode(value: Optional[str]) -> Optional["TeamMode"]:
+    """Parse a string into a TeamMode enum, returning None if not provided."""
+    if value is None:
+        return None
+    from agno.team.mode import TeamMode
+
+    return TeamMode(value)
+
+
+def _team_type() -> type:
+    from agno.team.team import Team
+
+    return Team
+
+
+def _refuse_external_member(agent: Any, label: str, strict: bool) -> Any:
+    """None in place of an external adapter resolved as a member; strict loads raise.
+
+    Teams delegate to Agents: an external harness agent has no member protocol,
+    so a stored reference to one can never be honoured.
+    """
+    from agno.agents.base import BaseExternalAgent
+
+    if not isinstance(agent, BaseExternalAgent):
+        return agent
+    message = f"{label} is a {agent.sdk!r} external agent; external agents cannot be team members."
+    if strict:
+        raise ComponentRehydrationError(message)
+    log_warning(message)
+    return None
+
+
+def _registry_copy(component: Any, label: str, strict: bool, expected_type: type) -> Any:
+    """An isolated copy of a code-defined registry component.
+
+    Strict loads refuse a copy that is the shared registry instance, a failed
+    copy, or an object of the wrong type: team initialization mutates member
+    state, so sharing the singleton corrupts every concurrent load, and a
+    custom deep_copy that returns something else would dispatch it. Lenient
+    loads keep the old shared-instance fallback with a warning.
+    """
+    try:
+        copied = component.deep_copy()
+    except Exception as e:
+        if strict:
+            raise ComponentRehydrationError(
+                f"{label} could not be copied out of the registry (deep_copy failed: {e}); a "
+                "strict load refuses to share the registry instance."
+            ) from e
+        log_warning(f"{label}: deep_copy failed ({e}); using the shared registry instance.")
+        return component
+    if copied is component:
+        if strict:
+            raise ComponentRehydrationError(
+                f"{label} deep_copy returned the shared registry instance; a strict load requires an isolated copy."
+            )
+        log_warning(f"{label}: deep_copy returned the shared registry instance.")
+    if strict and not isinstance(copied, expected_type):
+        raise ComponentRehydrationError(
+            f"{label} deep_copy returned a {type(copied).__name__}, not a "
+            f"{expected_type.__name__}; a strict load refuses it."
+        )
+    if strict:
+        from agno.utils.copies import copy_divergence
+
+        divergence = copy_divergence(component, copied)
+        if divergence is not None:
+            raise ComponentRehydrationError(
+                f"{label} deep_copy lost state: {divergence}. A strict load refuses a copy that "
+                "does not serialize like its original; give the subclass a faithful deep_copy."
+            )
+    return copied
+
+
+def from_dict(
+    cls,
+    data: Dict[str, Any],
+    db: Optional["BaseDb"] = None,
+    registry: Optional["Registry"] = None,
+    links: Optional[List[Dict[str, Any]]] = None,
+    strict: bool = False,
+) -> "Team":
+    """
+    Create a Team from a dictionary.
+
+    Args:
+        data: Dictionary containing team configuration
+        db: Optional database for loading agents in members
+        registry: Optional registry for rehydrating tools
+        links: Optional component links for this team version. Member links
+            carry the member version pinned at save time; when provided,
+            members load at their pinned version instead of the current one,
+            matching the component-graph loader's semantics.
+        strict: If True, unresolvable members and registry
+            references raise ComponentRehydrationError instead of being
+            silently dropped. Pass False to reconstruct as much as possible,
+            e.g. for listings that must show degraded components.
+
+    Returns:
+        Team: Reconstructed team instance
+
+    Raises:
+        ComponentRehydrationError: If strict and a member or registry reference cannot be resolved.
+    """
+    config = data.copy()
+
+    component_label = f"Team '{config.get('id') or config.get('name') or '<unknown>'}'"
+
+    # --- Handle Model reconstruction ---
+    if "model" in config:
+        config["model"] = resolve_model(config["model"], registry)
+
+    # --- Handle Members reconstruction ---
+    members: Optional[List[Union[Agent, "Team"]]] = None
+    from agno.agent import get_agent_by_id
+    from agno.team import get_team_by_id
+    from agno.utils.component_scope import get_component_owner_scope
+
+    # Resolve DB-backed members as the component owner when a scope is set, so a stored
+    # reference to another user's private component is not rehydrated here.
+    owner_user_id = get_component_owner_scope()
+
+    # Member versions pinned by this team version's links (written by save()).
+    pinned_versions: Dict[str, Optional[int]] = {}
+    for link in links or []:
+        if link.get("link_kind") == "member" and link.get("child_component_id"):
+            child_id = link["child_component_id"]
+            child_version = link.get("child_version")
+            if child_id in pinned_versions and pinned_versions[child_id] != child_version:
+                log_warning(
+                    f"{component_label} carries member links for '{child_id}' pinned at different "
+                    f"versions ({pinned_versions[child_id]} and {child_version}); using {child_version}."
+                )
+            pinned_versions[child_id] = child_version
+
+    if "members" in config and config["members"]:
+        members = []
+        for member_data in config["members"]:
+            member_type = member_data.get("type")
+            if member_type == "agent":
+                agent_id = member_data["agent_id"]
+                pinned = pinned_versions.get(agent_id)
+                try:
+                    agent = (
+                        get_agent_by_id(
+                            id=agent_id,
+                            db=db,
+                            version=pinned,
+                            registry=registry,
+                            user_id=owner_user_id,
+                            strict=strict,
+                        )
+                        if db is not None
+                        else None
+                    )
+                except ComponentRehydrationError as member_error:
+                    if pinned is not None:
+                        raise ComponentPinError(
+                            f"{component_label} pins member agent '{agent_id}' at version {pinned}, "
+                            f"which failed to rebuild: {member_error} "
+                            "Re-save the team to pin the member's current version."
+                        ) from member_error
+                    raise
+                # An explicit pin names one exact stored version; a same-id
+                # registry component is a different object, so a strict load
+                # refuses rather than substituting it. A lenient load degrades
+                # to the member's current version so the team stays usable.
+                if agent is None and pinned is not None:
+                    if strict:
+                        raise ComponentPinError(
+                            f"{component_label} pins member agent '{agent_id}' at version {pinned}, "
+                            "which was not found in the db. Restore that version, or re-save the "
+                            "team to pin the member's current version."
+                        )
+                    log_warning(
+                        f"{component_label} pins member agent '{agent_id}' at version {pinned}, which "
+                        "was not found in the db; loading the member's current version instead."
+                    )
+                    if db is not None:
+                        agent = get_agent_by_id(
+                            id=agent_id, db=db, registry=registry, strict=False, user_id=owner_user_id
+                        )
+                agent = _refuse_external_member(agent, f"{component_label} member agent '{agent_id}'", strict)
+                # Fall back to a code-defined agent registered in the registry.
+                # These are legitimately not persisted as DB components (e.g. agents
+                # passed to AgentOS(agents=[...])), so a DB lookup returns nothing.
+                # Deep copy so the shared registry singleton isn't mutated when the
+                # owning team runs (initialize_team sets team_id/_team on members).
+                if agent is None and registry is not None:
+                    registered_agent = _refuse_external_member(
+                        registry.get_agent(agent_id), f"{component_label} member agent '{agent_id}'", strict
+                    )
+                    agent = (
+                        _registry_copy(registered_agent, f"{component_label} member agent '{agent_id}'", strict, Agent)
+                        if registered_agent is not None
+                        else None
+                    )
+                if agent is not None:
+                    members.append(agent)
+                elif strict:
+                    raise ComponentRehydrationError(
+                        f"{component_label} member agent '{agent_id}' was not found in the db or "
+                        "registry. Restore the member, or pass strict=False to load the team "
+                        "without it."
+                    )
+                else:
+                    log_warning(f"Team member agent not found in db or registry: {agent_id}")
+            elif member_type == "team":
+                # Handle nested teams as members
+                team_id = member_data["team_id"]
+                pinned = pinned_versions.get(team_id)
+                try:
+                    nested_team = (
+                        get_team_by_id(
+                            id=team_id,
+                            db=db,
+                            version=pinned,
+                            registry=registry,
+                            user_id=owner_user_id,
+                            strict=strict,
+                        )
+                        if db is not None
+                        else None
+                    )
+                except ComponentRehydrationError as member_error:
+                    if pinned is not None:
+                        raise ComponentPinError(
+                            f"{component_label} pins member team '{team_id}' at version {pinned}, "
+                            f"which failed to rebuild: {member_error} "
+                            "Re-save the team to pin the member's current version."
+                        ) from member_error
+                    raise
+                # An explicit pin names one exact stored version; a same-id
+                # registry component is a different object, so a strict load
+                # refuses rather than substituting it. A lenient load degrades
+                # to the member's current version so the team stays usable.
+                if nested_team is None and pinned is not None:
+                    if strict:
+                        raise ComponentPinError(
+                            f"{component_label} pins member team '{team_id}' at version {pinned}, "
+                            "which was not found in the db. Restore that version, or re-save the "
+                            "team to pin the member's current version."
+                        )
+                    log_warning(
+                        f"{component_label} pins member team '{team_id}' at version {pinned}, which "
+                        "was not found in the db; loading the member's current version instead."
+                    )
+                    if db is not None:
+                        nested_team = get_team_by_id(
+                            id=team_id, db=db, registry=registry, strict=False, user_id=owner_user_id
+                        )
+                # Fall back to a code-defined team registered in the registry.
+                # Deep copy so the shared registry singleton isn't mutated on run.
+                if nested_team is None and registry is not None:
+                    registered_team = registry.get_team(team_id)
+                    nested_team = (
+                        _registry_copy(
+                            registered_team, f"{component_label} member team '{team_id}'", strict, _team_type()
+                        )
+                        if registered_team is not None
+                        else None
+                    )
+                if nested_team is not None:
+                    members.append(nested_team)
+                elif strict:
+                    raise ComponentRehydrationError(
+                        f"{component_label} member team '{team_id}' was not found in the db or "
+                        "registry. Restore the member, or pass strict=False to load the team "
+                        "without it."
+                    )
+                else:
+                    log_warning(f"Team member team not found in db or registry: {team_id}")
+            else:
+                if strict:
+                    raise ComponentRehydrationError(
+                        f"{component_label} member of unknown type {member_type!r} cannot be "
+                        "reconstructed. Fix the stored config, or pass strict=False to load the "
+                        "team without it."
+                    )
+                log_warning(f"Team member of unknown type skipped: {member_type!r}")
+
+    # --- Handle reasoning_model reconstruction ---
+    if config.get("reasoning_model") is not None:
+        config["reasoning_model"] = resolve_model(config["reasoning_model"], registry)
+
+    # --- Handle followup model reconstruction ---
+    if config.get("followup_model") is not None:
+        config["followup_model"] = resolve_model(config["followup_model"], registry)
+
+    # --- Handle parser_model reconstruction ---
+    # TODO: implement parser model deserialization
+    # if "parser_model" in config:
+    #     model_data = config["parser_model"]
+    #     if isinstance(model_data, dict) and "id" in model_data:
+    #         config["parser_model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
+    #     elif isinstance(model_data, str):
+    #         config["parser_model"] = get_model(model_data)
+
+    # --- Handle output_model reconstruction ---
+    # TODO: implement output model deserialization
+    # if "output_model" in config:
+    #     model_data = config["output_model"]
+    #     if isinstance(model_data, dict) and "id" in model_data:
+    #         config["output_model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
+    #     elif isinstance(model_data, str):
+    #         config["output_model"] = get_model(model_data)
+
+    # --- Handle tools reconstruction ---
+    if "tools" in config and config["tools"]:
+        if registry:
+            from agno.agent._storage import _unresolvable_tool_name
+
+            rehydrated_tools = registry.rehydrate_functions(config["tools"], strict=strict)
+            unresolved_tools = [
+                name for entry in rehydrated_tools if (name := _unresolvable_tool_name(entry)) is not None
+            ]
+            if unresolved_tools and strict:
+                raise ComponentRehydrationError(
+                    f"{component_label} references tools not resolvable from the registry: "
+                    f"{unresolved_tools}. Add missing tools to the registry (and connect MCP "
+                    "toolkits before loading); a bare name-only reference cannot be resolved from "
+                    "a registry and needs the component re-saved from code. Or pass strict=False."
+                )
+            config["tools"] = rehydrated_tools
+        elif strict:
+            # Provider-run dicts and external-execution tools need no registry;
+            # an empty one gives them the same treatment a real one would.
+            from agno.agent._storage import _unresolvable_tool_name
+
+            rehydrated_tools = Registry().rehydrate_functions(config["tools"], strict=True)
+            unresolved_tools = [
+                name for entry in rehydrated_tools if (name := _unresolvable_tool_name(entry)) is not None
+            ]
+            if unresolved_tools:
+                raise ComponentRehydrationError(
+                    f"{component_label} references tools that need a registry to rehydrate: "
+                    f"{unresolved_tools}. Provide a registry, or pass strict=False to load the "
+                    "component without them."
+                )
+            config["tools"] = rehydrated_tools
+        else:
+            from agno.agent._storage import _unresolvable_tool_name
+
+            rehydrated_tools = Registry().rehydrate_functions(config["tools"])
+            unresolved_tools = [
+                name for entry in rehydrated_tools if (name := _unresolvable_tool_name(entry)) is not None
+            ]
+            if unresolved_tools:
+                log_warning(f"No registry provided; these tools cannot execute: {unresolved_tools}")
+            config["tools"] = rehydrated_tools
+
+    # --- Handle DB reconstruction ---
+    if "db" in config and isinstance(config["db"], dict):
+        resolved = resolve_db_from_config(config["db"], registry=registry)
+        if resolved is not None:
+            config["db"] = resolved
+        else:
+            # Only postgres, sqlite and clickhouse serialize a type; on other
+            # backends the caller's own db is the fallback, in both modes.
+            log_warning(f"{component_label} has a serialized db config that could not be resolved.")
+            del config["db"]
+
+    # --- Handle Schema reconstruction ---
+    if "input_schema" in config and isinstance(config["input_schema"], str):
+        schema_cls = registry.get_schema(config["input_schema"]) if registry else None
+        if schema_cls:
+            config["input_schema"] = schema_cls
+        elif strict:
+            raise ComponentRehydrationError(
+                f"{component_label} references input schema '{config['input_schema']}' which was not "
+                "found in the registry. Register the schema, or pass strict=False to load the "
+                "component without it."
+            )
+        else:
+            log_warning(f"Input schema {config['input_schema']} not found in registry, skipping.")
+            del config["input_schema"]
+
+    if "output_schema" in config and isinstance(config["output_schema"], str):
+        schema_cls = registry.get_schema(config["output_schema"]) if registry else None
+        if schema_cls:
+            config["output_schema"] = schema_cls
+        elif strict:
+            raise ComponentRehydrationError(
+                f"{component_label} references output schema '{config['output_schema']}' which was not "
+                "found in the registry. Register the schema, or pass strict=False to load the "
+                "component without it."
+            )
+        else:
+            log_warning(f"Output schema {config['output_schema']} not found in registry, skipping.")
+            del config["output_schema"]
+
+    # --- Handle MemoryManager reconstruction ---
+    resolve_memory_manager_reference(config, registry, strict, component_label)
+
+    # --- Handle SessionSummaryManager reconstruction ---
+    # TODO: implement session summary manager deserialization
+    # if "session_summary_manager" in config and isinstance(config["session_summary_manager"], dict):
+    #     from agno.session import SessionSummaryManager
+    #     config["session_summary_manager"] = SessionSummaryManager.from_dict(config["session_summary_manager"])
+
+    # --- Handle Knowledge reconstruction ---
+    # Knowledge is stored as a reference by name and resolved from the registry,
+    # since it holds live db/vector_db connections that cannot be serialized.
+    if "knowledge" in config and isinstance(config["knowledge"], dict):
+        knowledge_name = config["knowledge"].get("name")
+        if strict and registry and knowledge_name and registry.knowledge_name_is_ambiguous(knowledge_name):
+            raise ComponentRehydrationError(
+                f"{component_label} references knowledge '{knowledge_name}', but two distinct "
+                "knowledge instances share that name, so the reference could bind the wrong "
+                "store. Give the instances distinct names."
+            )
+        resolved_knowledge = registry.get_knowledge(knowledge_name) if (registry and knowledge_name) else None
+        if resolved_knowledge is not None:
+            config["knowledge"] = resolved_knowledge
+        elif strict:
+            raise ComponentRehydrationError(
+                f"{component_label} references knowledge '{knowledge_name}' which was not found in "
+                "the registry. Register the knowledge, or pass strict=False to load the component "
+                "without it."
+            )
+        else:
+            log_warning(f"Knowledge '{knowledge_name}' not found in registry, skipping.")
+            del config["knowledge"]
+
+    # --- Handle CompressionManager reconstruction ---
+    # TODO: implement compression manager deserialization
+    # if "compression_manager" in config and isinstance(config["compression_manager"], dict):
+    #     from agno.compression.manager import CompressionManager
+    #     config["compression_manager"] = CompressionManager.from_dict(config["compression_manager"])
+
+    # --- Handle Learning reconstruction ---
+    # A named machine is stored as a reference and resolved from the registry
+    # here; an inline machine config is rebuilt by _deserialize_learning in
+    # the constructor call below.
+    resolve_learning_reference(config, registry, strict, component_label)
+
+    team = cast(
+        "Team",
+        cls(
+            # --- Team settings ---
+            id=config.get("id"),
+            name=config.get("name"),
+            role=config.get("role"),
+            description=config.get("description"),
+            # --- Model ---
+            model=config.get("model"),
+            # --- Members ---
+            members=members or [],
+            # --- Mode ---
+            mode=_parse_team_mode(config.get("mode")),
+            max_iterations=config.get("max_iterations", 10),
+            # --- Execution settings ---
+            respond_directly=config.get("respond_directly", False),
+            delegate_to_all_members=config.get("delegate_to_all_members", False),
+            determine_input_for_members=config.get("determine_input_for_members", True),
+            # --- User settings ---
+            user_id=config.get("user_id"),
+            # --- Session settings ---
+            session_id=config.get("session_id"),
+            session_state=config.get("session_state"),
+            add_session_state_to_context=config.get("add_session_state_to_context", False),
+            enable_agentic_state=config.get("enable_agentic_state", False),
+            overwrite_db_session_state=config.get("overwrite_db_session_state", False),
+            cache_session=config.get("cache_session", False),
+            add_team_history_to_members=config.get("add_team_history_to_members", False),
+            num_team_history_runs=config.get("num_team_history_runs", 3),
+            share_member_interactions=config.get("share_member_interactions", False),
+            search_past_sessions=config.get("search_past_sessions", False),
+            num_past_sessions_to_search=config.get("num_past_sessions_to_search"),
+            num_past_session_runs_in_search=config.get("num_past_session_runs_in_search"),
+            read_chat_history=config.get("read_chat_history", False),
+            # --- System message settings ---
+            system_message=config.get("system_message"),
+            system_message_role=config.get("system_message_role", "system"),
+            introduction=config.get("introduction"),
+            instructions=config.get("instructions"),
+            expected_output=config.get("expected_output"),
+            additional_context=config.get("additional_context"),
+            markdown=config.get("markdown", False),
+            add_datetime_to_context=config.get("add_datetime_to_context", False),
+            add_location_to_context=config.get("add_location_to_context", False),
+            datetime_format=config.get("datetime_format"),
+            timezone_identifier=config.get("timezone_identifier"),
+            add_name_to_context=config.get("add_name_to_context", False),
+            add_member_tools_to_context=config.get("add_member_tools_to_context", False),
+            resolve_in_context=config.get("resolve_in_context", True),
+            # --- Database settings ---
+            db=config.get("db"),
+            # --- Dependencies ---
+            dependencies=config.get("dependencies"),
+            add_dependencies_to_context=config.get("add_dependencies_to_context", False),
+            # --- Knowledge settings ---
+            knowledge=config.get("knowledge"),
+            knowledge_filters=config.get("knowledge_filters"),
+            enable_agentic_knowledge_filters=config.get("enable_agentic_knowledge_filters", False),
+            add_knowledge_to_context=config.get("add_knowledge_to_context", False),
+            update_knowledge=config.get("update_knowledge", False),
+            search_knowledge=config.get("search_knowledge", True),
+            add_search_knowledge_instructions=config.get("add_search_knowledge_instructions", True),
+            references_format=config.get("references_format", "json"),
+            # --- Tools ---
+            tools=config.get("tools"),
+            tool_call_limit=config.get("tool_call_limit"),
+            tool_choice=config.get("tool_choice"),
+            get_member_information_tool=config.get("get_member_information_tool", False),
+            # --- Schema settings ---
+            input_schema=config.get("input_schema"),
+            output_schema=config.get("output_schema"),
+            # --- Parser and output settings ---
+            # parser_model=config.get("parser_model"),  # TODO
+            parser_model_prompt=config.get("parser_model_prompt"),
+            # output_model=config.get("output_model"),  # TODO
+            output_model_prompt=config.get("output_model_prompt"),
+            use_json_mode=config.get("use_json_mode", False),
+            parse_response=config.get("parse_response", True),
+            # --- Memory settings ---
+            memory_manager=config.get("memory_manager"),
+            enable_agentic_memory=config.get("enable_agentic_memory", False),
+            update_memory_on_run=config.get("update_memory_on_run", False),
+            add_memories_to_context=config.get("add_memories_to_context"),
+            enable_session_summaries=config.get("enable_session_summaries", False),
+            add_session_summary_to_context=config.get("add_session_summary_to_context"),
+            # session_summary_manager=config.get("session_summary_manager"),  # TODO
+            # --- Learning settings ---
+            learning=_deserialize_learning(config.get("learning")),
+            add_learnings_to_context=config.get("add_learnings_to_context", True),
+            # --- History settings ---
+            add_history_to_context=config.get("add_history_to_context", False),
+            num_history_runs=config.get("num_history_runs"),
+            num_history_messages=config.get("num_history_messages"),
+            max_tool_calls_from_history=config.get("max_tool_calls_from_history"),
+            # --- Compression settings ---
+            compress_tool_results=config.get("compress_tool_results", False),
+            # compression_manager=config.get("compression_manager"),  # TODO
+            # --- Result offloading settings ---
+            offload_tool_results=_offload_from_config(config.get("offload_tool_results")),
+            # --- Reasoning settings ---
+            reasoning_model=config.get("reasoning_model"),
+            # --- Followup settings ---
+            followups=_followups_from_config(config.get("followups"), registry),
+            num_followups=config.get("num_followups"),
+            followup_model=config.get("followup_model"),
+            # --- Streaming settings ---
+            stream=config.get("stream"),
+            stream_events=config.get("stream_events"),
+            stream_member_events=config.get("stream_member_events", True),
+            store_events=config.get("store_events", False),
+            store_member_responses=config.get("store_member_responses", False),
+            # --- Media settings ---
+            send_media_to_model=config.get("send_media_to_model", True),
+            store_media=config.get("store_media", True),
+            store_tool_messages=config.get("store_tool_messages", True),
+            store_history_messages=config.get("store_history_messages", False),
+            # --- Retry settings ---
+            retries=config.get("retries", 0),
+            delay_between_retries=config.get("delay_between_retries", 1),
+            exponential_backoff=config.get("exponential_backoff", False),
+            # --- Metadata ---
+            metadata=strip_reserved_run_metadata(config.get("metadata")),
+            # --- Debug and telemetry settings ---
+            debug_mode=config.get("debug_mode", False),
+            debug_level=config.get("debug_level", 1),
+            show_members_responses=config.get("show_members_responses", False),
+            telemetry=config.get("telemetry", True),
+        ),
+    )
+
+    return team
+
+
+def save(
+    team: "Team",
+    *,
+    db: Optional["BaseDb"] = None,
+    stage: str = "published",
+    label: Optional[str] = None,
+    notes: Optional[str] = None,
+) -> Optional[int]:
+    """
+    Save the team component and config to the database, including member agents/teams.
+
+    Args:
+        db: The database to save the component and config to.
+        stage: The stage of the component. Defaults to "published".
+        label: The label of the component.
+        notes: The notes of the component.
+
+    Returns:
+        Optional[int]: The version number of the saved config.
+    """
+    from agno.agent.agent import Agent
+
+    db_ = db or team.db
+    if not db_:
+        raise ValueError("Db not initialized or provided")
+    if not isinstance(db_, BaseDb):
+        raise ValueError("Async databases not yet supported for save(). Use a sync database.")
+    if team.id is None:
+        team.id = generate_id_from_name(team.name)
+
+    try:
+        # Collect all links for members
+        all_links: List[Dict[str, Any]] = []
+
+        # Save each member (Agent or nested Team) and collect links
+        # Only iterate if members is a static list (not a callable factory)
+        members_list = team.members if isinstance(team.members, list) else []
+        for position, member in enumerate(members_list):
+            # Save member first - returns version
+            member_version = member.save(db=db_, stage=stage, label=label, notes=notes)
+
+            # Add link
+            all_links.append(
+                {
+                    "link_kind": "member",
+                    "link_key": f"member_{position}",
+                    "child_component_id": member.id,
+                    "child_version": member_version,
+                    "position": position,
+                    "meta": {"type": "agent" if isinstance(member, Agent) else "team"},
+                }
+            )
+
+        # Create or update component
+        db_.upsert_component(
+            component_id=team.id,
+            component_type=ComponentType.TEAM,
+            name=getattr(team, "name", team.id),
+            description=getattr(team, "description", None),
+            metadata=getattr(team, "metadata", None),
+        )
+
+        # Create or update config with links
+        config = db_.upsert_config(
+            component_id=team.id,
+            config=team.to_dict(),
+            links=all_links if all_links else None,
+            label=label,
+            stage=stage,
+            notes=notes,
+        )
+
+        return config["version"]
+
+    except Exception as e:
+        log_error(f"Error saving Team to database: {str(e)}")
+        raise
+
+
+def _hydrate_from_graph(
+    cls,
+    graph: Dict[str, Any],
+    *,
+    db: "BaseDb",
+    registry: Optional["Registry"] = None,
+    strict: bool = False,
+) -> Optional["Team"]:
+    """
+    Hydrate a team and its members from an already-loaded component graph.
+
+    This avoids re-querying the DB for nested teams whose graphs are already available.
+    """
+    from agno.agent.agent import Agent
+
+    config = graph["config"].get("config")
+    if config is None:
+        return None
+
+    # Resolve members at the versions pinned by the graph's links. Without
+    # this, from_dict loads each member at its current version before the
+    # graph children overwrite it - and a current version that fails strict
+    # resolution would abort the load even though the pinned version is fine.
+    member_links = [child["link"] for child in graph.get("children", []) if child.get("link")]
+    team = cls.from_dict(config, db=db, registry=registry, links=member_links, strict=strict)
+    team.id = graph["component"]["component_id"]
+    # Only fall back to the caller-provided db if the config didn't
+    # reconstruct one. Otherwise we'd clobber any custom table names
+    # (session_table, memory_table, ...) that were serialized with the team.
+    if team.db is None:
+        if strict:
+            require_db_fallback_matches(config, db, "team", team.id)
+        team.db = db
+
+    # Hydrate members directly from the already-loaded graph children. This
+    # reuses the preloaded nested graphs and avoids extra DB round-trips for
+    # members that are persisted DB components.
+    graph_members: Dict[str, Union[Agent, "Team"]] = {}
+    for child in graph.get("children", []):
+        child_graph = child.get("graph")
+        if child_graph is None:
+            continue
+
+        child_config = child_graph["config"].get("config")
+        if child_config is None:
+            continue
+
+        link_meta = child["link"].get("meta", {})
+        member_type = link_meta.get("type")
+
+        if member_type == "agent":
+            agent = Agent.from_dict(child_config, registry=registry, strict=strict)
+            agent.id = child_graph["component"]["component_id"]
+            if agent.db is None:
+                if strict:
+                    require_db_fallback_matches(child_config, db, "agent", agent.id)
+                agent.db = db
+            graph_members[agent.id] = agent
+        elif member_type == "team":
+            # Recursively hydrate nested teams from the already-loaded child graph
+            nested_team = _hydrate_from_graph(cls, child_graph, db=db, registry=registry, strict=strict)
+            if nested_team is not None and nested_team.id is not None:
+                graph_members[nested_team.id] = nested_team
+
+    # Merge the graph-hydrated members with the members already resolved by
+    # from_dict. from_dict resolves members that are NOT DB components (e.g.
+    # code-defined agents from the registry), which have no graph child. We
+    # must not drop those. When a graph child exists for a member, prefer it
+    # (its nested graph is already loaded). Order follows the config members,
+    # with any graph-only children appended afterwards.
+    resolved_members = team.members if isinstance(team.members, list) else []
+    if graph_members:
+        merged: List[Union[Agent, "Team"]] = []
+        seen = set()
+        for member in resolved_members:
+            member_id = getattr(member, "id", None)
+            if member_id is not None and member_id in graph_members:
+                merged.append(graph_members[member_id])
+                seen.add(member_id)
+            else:
+                merged.append(member)
+                if member_id is not None:
+                    seen.add(member_id)
+        for graph_member_id, graph_member in graph_members.items():
+            if graph_member_id not in seen:
+                merged.append(graph_member)
+        team.members = merged
+
+    return team
+
+
+def load(
+    cls,
+    id: str,
+    *,
+    db: "BaseDb",
+    registry: Optional["Registry"] = None,
+    label: Optional[str] = None,
+    version: Optional[int] = None,
+    strict: bool = False,
+    published_only: bool = False,
+) -> Optional["Team"]:
+    """
+    Load a team by id, with hydrated members.
+
+    Args:
+        id: The id of the team to load.
+        db: The database to load the team from.
+        label: The label of the team to load.
+        strict: If True, unresolvable members and registry
+            references raise ComponentRehydrationError instead of being
+            silently dropped.
+
+    Returns:
+        The team loaded from the database with hydrated members, or None if not found.
+    """
+    if id in RESERVED_MANAGER_IDS:
+        raise ComponentRehydrationError(_reserved_manager_id_message(id))
+
+    if published_only and version is None and label is None:
+        # Dispatch semantics on demand: resolve strictly through the live
+        # pointer instead of the current-or-latest-draft read fallback.
+        component_row = db.get_component(component_id=id)
+        current_version = component_row.get("current_version") if isinstance(component_row, dict) else None
+        if current_version is None:
+            return None
+        version = current_version
+
+    # Use graph to load team + all members in a single DB call
+    graph = db.load_component_graph(id, version=version, label=label)
+    if graph is None:
+        return None
+
+    return _hydrate_from_graph(cls, graph, db=db, registry=registry, strict=strict)
+
+
+def delete(
+    team: "Team",
+    *,
+    db: Optional["BaseDb"] = None,
+    hard_delete: bool = False,
+    require_no_dependents: bool = True,
+) -> bool:
+    """
+    Delete the team component.
+
+    Args:
+        db: The database to delete the component from.
+        hard_delete: Whether to hard delete the component.
+        require_no_dependents: Refuse when another component pins this one.
+            The default protects a composition from losing a member it cannot
+            rebuild; pass False to delete anyway and leave those parents
+            pointing at nothing.
+
+    Returns:
+        True if the component was deleted, False if there was nothing to delete.
+
+    Raises:
+        ComponentDependencyError: If another component pins this one and
+            require_no_dependents is True.
+    """
+    db_ = db or team.db
+    if not db_:
+        raise ValueError("Db not initialized or provided")
+    if not isinstance(db_, BaseDb):
+        raise ValueError("Async databases not yet supported for delete(). Use a sync database.")
+    if team.id is None:
+        raise ValueError("Cannot delete team without an id")
+
+    return db_.delete_component(
+        component_id=team.id, hard_delete=hard_delete, require_no_dependents=require_no_dependents
+    )
+
+
+def get_session_metrics(team: "Team", session_id: Optional[str] = None):
+    session_id = session_id or team.session_id
+    if session_id is None:
+        raise Exception("Session ID is not set")
+    return get_session_metrics_util(team, session_id=session_id)
+
+
+async def aget_session_metrics(team: "Team", session_id: Optional[str] = None):
+    session_id = session_id or team.session_id
+    if session_id is None:
+        raise Exception("Session ID is not set")
+    return await aget_session_metrics_util(team, session_id=session_id)

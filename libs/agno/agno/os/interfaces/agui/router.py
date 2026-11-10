@@ -1,120 +1,189 @@
-"""Async router handling exposing an Agno Agent or Team in an AG-UI compatible format."""
-
-import logging
+import copy
 import uuid
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator, Optional, Union
 
-from ag_ui.core import (
-    BaseEvent,
-    EventType,
-    RunAgentInput,
-    RunErrorEvent,
-    RunStartedEvent,
-)
-from ag_ui.encoder import EventEncoder
-from fastapi import APIRouter
+from agno.utils.log import log_error, log_warning
+
+try:
+    from ag_ui.core import (
+        BaseEvent,
+        EventType,
+        RunAgentInput,
+        RunErrorEvent,
+        RunStartedEvent,
+        StateSnapshotEvent,
+    )
+    from ag_ui.encoder import EventEncoder
+except ImportError as e:
+    raise ImportError("`ag_ui` not installed. Please install it with `pip install -U ag-ui-protocol`") from e
+
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from agno.agent.agent import Agent
-from agno.os.interfaces.agui.utils import (
-    async_stream_agno_response_as_agui_events,
-    convert_agui_messages_to_agno_messages,
+from agno.agent import Agent, RemoteAgent
+from agno.os.interfaces.agui.input import (
+    extract_context,
+    extract_media,
+    extract_tool_messages,
+    extract_user_input,
+    parse_client_tools,
+    validate_state,
 )
+from agno.os.interfaces.agui.resume import resume_paused_run
+from agno.os.interfaces.agui.stream import async_stream_agno_response_as_agui_events
+from agno.os.middleware.user_scope import assert_session_writable, caller_is_admin, resolve_run_user_id
+from agno.run.base import RunContext
+from agno.team.remote import RemoteTeam
 from agno.team.team import Team
 
-logger = logging.getLogger(__name__)
 
+async def run_entity(
+    entity: Union[Agent, RemoteAgent, Team, RemoteTeam],
+    run_input: RunAgentInput,
+    user_id: Optional[str] = None,
+) -> AsyncIterator[BaseEvent]:
+    """Shared handler for running an Agent or Team with AG-UI input/output mapping.
 
-async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
-    """Run the contextual Agent, mapping AG-UI input messages to Agno format, and streaming the response in AG-UI format."""
+    ``user_id`` is the server-resolved identity (see the route handler). It is
+    deliberately NOT read from ``run_input.forwarded_props`` here: an authenticated
+    caller must not attribute runs, sessions, or memory writes to an arbitrary user.
+    """
     run_id = run_input.run_id or str(uuid.uuid4())
 
     try:
-        # Preparing the input for the Agent and emitting the run started event
-        messages = convert_agui_messages_to_agno_messages(run_input.messages or [])
+        messages = run_input.messages or []
+
+        # 1. Extract inputs from AG-UI message history
+        user_input = extract_user_input(messages)
+        images, audio, videos, files = extract_media(messages)
+        tool_messages = extract_tool_messages(messages)
+
+        # 2. Convert frontend tool definitions to Agno Functions
+        client_tools = parse_client_tools(run_input.tools) or None
+
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
 
-        # Look for user_id in run_input.forwarded_props
-        user_id = None
-        if run_input.forwarded_props and isinstance(run_input.forwarded_props, dict):
-            user_id = run_input.forwarded_props.get("user_id")
+        session_state = validate_state(run_input.state, run_input.thread_id)
 
-        # Request streaming response from agent
-        response_stream = agent.arun(
-            input=messages,
+        if session_state is not None:
+            yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=copy.deepcopy(session_state))
+
+        ui_deps = extract_context(run_input.context)
+
+        # 3. Build RunContext with client_tools and session_state
+        run_context = RunContext(
+            run_id=run_id,
             session_id=run_input.thread_id,
-            stream=True,
-            stream_events=True,
             user_id=user_id,
+            client_tools=client_tools,
+            dependencies=ui_deps,
+            session_state=session_state,
         )
 
-        # Stream the response content in AG-UI format
+        run_kwargs: dict = {}
+        if ui_deps:
+            run_kwargs["add_dependencies_to_context"] = True
+
+        # 4. Determine if this is a resume (trailing ToolMessages) or fresh run
+        if tool_messages:
+            # Resume: frontend executed external tools and sent results back
+            response_stream = await resume_paused_run(
+                entity=entity,  # type: ignore[arg-type]
+                session_id=run_input.thread_id,
+                tool_messages=tool_messages,
+                run_context=run_context,
+                run_kwargs=run_kwargs,
+            )
+        else:
+            # Fresh run: new user input
+            if isinstance(entity, (RemoteAgent, RemoteTeam)):
+                # A RunContext is an in-process object: RemoteAgent/RemoteTeam forward every
+                # unknown kwarg as a form field, and the remote AgentOS would hand the
+                # stringified object to Agent.arun. Send the wire fields it carries instead.
+                run_kwargs["session_state"] = session_state
+                run_kwargs["dependencies"] = ui_deps
+                if client_tools:
+                    # Dropped: the remote agent cannot pause back into this process's session.
+                    log_warning("AG-UI client tools are not forwarded to remote agents or teams")
+            else:
+                run_kwargs["run_context"] = run_context
+            response_stream = entity.arun(  # type: ignore
+                input=user_input,
+                stream=True,
+                stream_events=True,
+                session_id=run_input.thread_id,
+                user_id=user_id,
+                run_id=run_id,
+                images=images or None,
+                audio=audio or None,
+                videos=videos or None,
+                files=files or None,
+                **run_kwargs,
+            )
+
         async for event in async_stream_agno_response_as_agui_events(
             response_stream=response_stream,  # type: ignore
             thread_id=run_input.thread_id,
             run_id=run_id,
-        ):
-            yield event
-
-    # Emit a RunErrorEvent if any error occurs
-    except Exception as e:
-        logger.error(f"Error running agent: {e}", exc_info=True)
-        yield RunErrorEvent(type=EventType.RUN_ERROR, message=str(e))
-
-
-async def run_team(team: Team, input: RunAgentInput) -> AsyncIterator[BaseEvent]:
-    """Run the contextual Team, mapping AG-UI input messages to Agno format, and streaming the response in AG-UI format."""
-    run_id = input.run_id or str(uuid.uuid4())
-    try:
-        # Extract the last user message for team execution
-        messages = convert_agui_messages_to_agno_messages(input.messages or [])
-        yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=input.thread_id, run_id=run_id)
-
-        # Look for user_id in input.forwarded_props
-        user_id = None
-        if input.forwarded_props and isinstance(input.forwarded_props, dict):
-            user_id = input.forwarded_props.get("user_id")
-
-        # Request streaming response from team
-        response_stream = team.arun(
-            input=messages,
-            session_id=input.thread_id,
-            stream=True,
-            stream_steps=True,
-            user_id=user_id,
-        )
-
-        # Stream the response content in AG-UI format
-        async for event in async_stream_agno_response_as_agui_events(
-            response_stream=response_stream, thread_id=input.thread_id, run_id=run_id
+            run_state=session_state,
         ):
             yield event
 
     except Exception as e:
-        logger.error(f"Error running team: {e}", exc_info=True)
+        log_error(f"Error running entity: {str(e)}")
         yield RunErrorEvent(type=EventType.RUN_ERROR, message=str(e))
 
 
-def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Optional[Team] = None) -> APIRouter:
+def attach_routes(
+    router: APIRouter, agent: Optional[Union[Agent, RemoteAgent]] = None, team: Optional[Union[Team, RemoteTeam]] = None
+) -> APIRouter:
     if agent is None and team is None:
         raise ValueError("Either agent or team must be provided.")
 
+    entity = agent or team
     encoder = EventEncoder()
 
-    @router.post(
-        "/agui",
-        name="run_agent",
-    )
-    async def run_agent_agui(run_input: RunAgentInput):
+    @router.post("/agui", name="run_agent")
+    async def run_agent_agui(request: Request, run_input: RunAgentInput):
+        # Resolve identity before streaming so rejection is a proper 403
+        client_user_id = run_input.forwarded_props.get("user_id") if run_input.forwarded_props else None
+        user_id = resolve_run_user_id(request, client_user_id)
+
+        # The thread id is client-supplied and becomes the session id, so a caller can
+        # name another user's session. Refuse before streaming starts: the run would
+        # otherwise be persisted into that session and replayed as the owner's history.
+        await assert_session_writable(
+            getattr(entity, "db", None),
+            run_input.thread_id,
+            user_id or getattr(entity, "user_id", None),
+            is_admin=caller_is_admin(request),
+        )
+
+        # A trailing tool message resumes a paused run with caller-supplied answers, which
+        # is a /continue. REST, MCP and the WebSocket all refuse to continue a run that is
+        # paused on an admin-required approval; this transport must too, or the run's
+        # initiator confirms the approval themselves by replaying the tool call here.
+        # Decided before the stream opens so the refusal is a real 403.
+        tool_messages = extract_tool_messages(run_input.messages or [])
+        if tool_messages:
+            from agno.os.auth import run_continuation_blocked_reason
+            from agno.os.interfaces.agui.resume import find_resume_target_run_id
+
+            entity_db = getattr(entity, "db", None)
+            run_id = await find_resume_target_run_id(entity, run_input.thread_id, tool_messages)
+            reason = await run_continuation_blocked_reason(
+                entity_db,
+                run_id,
+                authorization_enabled=bool(getattr(request.state, "authorization_enabled", False)),
+                user_scopes=list(getattr(request.state, "scopes", None) or []),
+                request=request,
+            )
+            if reason:
+                raise HTTPException(status_code=403, detail=reason)
+
         async def event_generator():
-            if agent:
-                async for event in run_agent(agent, run_input):
-                    encoded_event = encoder.encode(event)
-                    yield encoded_event
-            elif team:
-                async for event in run_team(team, run_input):
-                    encoded_event = encoder.encode(event)
-                    yield encoded_event
+            async for event in run_entity(entity, run_input, user_id=user_id):  # type: ignore
+                yield encoder.encode(event)
 
         return StreamingResponse(
             event_generator(),

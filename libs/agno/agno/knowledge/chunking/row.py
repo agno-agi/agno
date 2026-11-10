@@ -17,12 +17,11 @@ class RowChunking(ChunkingStrategy):
             raise ValueError("Document content must be a string")
 
         rows = document.content.splitlines()
+        start_index = document.meta_data.get("start_row", 1)  # Set by readers that split a file into pages
 
-        if self.skip_header and rows:
+        if self.skip_header and rows and start_index == 1:  # Only a document starting at row 1 holds the header
             rows = rows[1:]
-            start_index = 2
-        else:
-            start_index = 1
+            start_index += 1
 
         chunks = []
         for i, row in enumerate(rows):
@@ -33,7 +32,8 @@ class RowChunking(ChunkingStrategy):
 
             if chunk_content:  # Skip empty rows
                 meta_data = document.meta_data.copy()
-                meta_data["row_number"] = start_index + i  # Preserve logical row numbering
-                chunk_id = f"{document.id}_row_{start_index + i}" if document.id else None
+                row_number = start_index + i
+                meta_data["row_number"] = row_number  # Preserve logical row numbering
+                chunk_id = self._generate_chunk_id(document, row_number, chunk_content, prefix="row")
                 chunks.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content=chunk_content))
         return chunks

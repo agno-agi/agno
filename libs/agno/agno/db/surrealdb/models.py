@@ -1,12 +1,11 @@
 from dataclasses import asdict
 from datetime import date, datetime, timezone
 from textwrap import dedent
-from typing import Any, Dict, List, Literal, Optional, Sequence
+from typing import List, Literal, Optional, Sequence
 
 from surrealdb import RecordID
 
 from agno.db.base import SessionType
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalRunRecord
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
@@ -17,13 +16,15 @@ from agno.session.workflow import WorkflowSession
 
 TableType = Literal[
     "agents",
-    "culture",
     "evals",
     "knowledge",
     "memories",
     "metrics",
+    "runs",
     "sessions",
+    "spans",
     "teams",
+    "traces",
     "users",
     "workflows",
 ]
@@ -46,7 +47,7 @@ def surrealize_dates(record: dict) -> dict:
         if isinstance(value, date):
             copy[key] = datetime.combine(value, datetime.min.time()).replace(tzinfo=timezone.utc)
         elif key in ["created_at", "updated_at"] and isinstance(value, (int, float)):
-            copy[key] = datetime.fromtimestamp(value).replace(tzinfo=timezone.utc)
+            copy[key] = datetime.fromtimestamp(value, tz=timezone.utc)
         elif key in ["created_at", "updated_at"] and isinstance(value, str):
             # Handle ISO string format - convert back to datetime object for SurrealDB
             try:
@@ -73,8 +74,8 @@ def desurrealize_dates(record: dict) -> dict:
     return copy
 
 
-def serialize_session(session: Session, table_names: dict[TableType, str]) -> dict:
-    _dict = session.to_dict()
+def serialize_session(session: Session, table_names: dict[TableType, str], include_runs: bool = True) -> dict:
+    _dict = session.to_dict(include_runs=include_runs)
 
     if session.session_id is not None:
         _dict["id"] = RecordID(table_names["sessions"], session.session_id)
@@ -96,14 +97,12 @@ def serialize_session(session: Session, table_names: dict[TableType, str]) -> di
     return _dict
 
 
-def desurrealize_session(session_raw: dict, session_type: Optional[SessionType] = None) -> dict:
+def desurrealize_session(session_raw: dict) -> dict:
     session_raw = deserialize_record_id(session_raw, "session_id", "id")
-    if session_type == SessionType.AGENT:
-        session_raw = deserialize_record_id(session_raw, "agent_id", "agent")
-    elif session_type == SessionType.TEAM:
-        session_raw = deserialize_record_id(session_raw, "team_id", "team")
-    elif session_type == SessionType.WORKFLOW:
-        session_raw = deserialize_record_id(session_raw, "workflow_id", "workflow")
+    # Always attempt to convert all RecordID fields so agent_id/team_id/workflow_id are populated
+    session_raw = deserialize_record_id(session_raw, "agent_id", "agent")
+    session_raw = deserialize_record_id(session_raw, "team_id", "team")
+    session_raw = deserialize_record_id(session_raw, "workflow_id", "workflow")
 
     session_raw = desurrealize_dates(session_raw)
 
@@ -115,23 +114,6 @@ def desurrealize_session(session_raw: dict, session_type: Optional[SessionType] 
         session_raw["session_type"] = SessionType.WORKFLOW
 
     return session_raw
-
-
-def deserialize_session(session_type: SessionType, session_raw: dict) -> Optional[Session]:
-    session_raw = desurrealize_session(session_raw, session_type)
-
-    if session_type == SessionType.AGENT:
-        return AgentSession.from_dict(session_raw)
-    elif session_type == SessionType.TEAM:
-        return TeamSession.from_dict(session_raw)
-    elif session_type == SessionType.WORKFLOW:
-        return WorkflowSession.from_dict(session_raw)
-    else:
-        raise ValueError(f"Invalid session type: {session_type}")
-
-
-def deserialize_sessions(session_type: SessionType, sessions_raw: List[dict]) -> List[Session]:
-    return [x for x in [deserialize_session(session_type, x) for x in sessions_raw] if x is not None]
 
 
 def get_session_type(session: Session) -> SessionType:
@@ -206,48 +188,6 @@ def serialize_knowledge_row(knowledge_row: KnowledgeRow, knowledge_table_name: s
     return dict_
 
 
-def deserialize_cultural_knowledge(cultural_knowledge_raw: dict) -> CulturalKnowledge:
-    copy = cultural_knowledge_raw.copy()
-
-    copy = deserialize_record_id(copy, "id")
-    copy = desurrealize_dates(copy)
-
-    # Extract content, categories, and notes from the content field
-    content_json = copy.get("content", {}) or {}
-    if isinstance(content_json, dict):
-        copy["content"] = content_json.get("content")
-        copy["categories"] = content_json.get("categories")
-        copy["notes"] = content_json.get("notes")
-
-    return CulturalKnowledge.from_dict(copy)
-
-
-def serialize_cultural_knowledge(cultural_knowledge: CulturalKnowledge, culture_table_name: str) -> dict:
-    dict_ = asdict(cultural_knowledge)
-    if cultural_knowledge.id is not None:
-        dict_["id"] = RecordID(culture_table_name, cultural_knowledge.id)
-
-    # Serialize content, categories, and notes into a single content dict for DB storage
-    content_dict: Dict[str, Any] = {}
-    if cultural_knowledge.content is not None:
-        content_dict["content"] = cultural_knowledge.content
-    if cultural_knowledge.categories is not None:
-        content_dict["categories"] = cultural_knowledge.categories
-    if cultural_knowledge.notes is not None:
-        content_dict["notes"] = cultural_knowledge.notes
-
-    # Replace the separate fields with the combined content field
-    dict_["content"] = content_dict if content_dict else None
-    # Remove the now-redundant fields since they're in content
-    dict_.pop("categories", None)
-    dict_.pop("notes", None)
-
-    # surrealize dates
-    dict_ = surrealize_dates(dict_)
-
-    return dict_
-
-
 def desurrealize_eval_run_record(eval_run_record_raw: dict) -> dict:
     copy = eval_run_record_raw.copy()
 
@@ -255,6 +195,7 @@ def desurrealize_eval_run_record(eval_run_record_raw: dict) -> dict:
     copy = deserialize_record_id(copy, "agent_id", "agent")
     copy = deserialize_record_id(copy, "team_id", "team")
     copy = deserialize_record_id(copy, "workflow_id", "workflow")
+    copy = desurrealize_dates(copy)
 
     return copy
 
@@ -290,20 +231,73 @@ def get_schema(table_type: TableType, table_name: str) -> str:
     elif table_type == "knowledge":
         return dedent(f"""
             {define_table}
-            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime VALUE time::now();
+            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime DEFAULT time::now();
             DEFINE FIELD OVERWRITE updated_at ON {table_name} TYPE datetime VALUE time::now();
             """)
-    elif table_type == "culture":
+    elif table_type == "evals":
         return dedent(f"""
             {define_table}
-            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime VALUE time::now();
+            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime DEFAULT time::now();
             DEFINE FIELD OVERWRITE updated_at ON {table_name} TYPE datetime VALUE time::now();
             """)
     elif table_type == "sessions":
         return dedent(f"""
             {define_table}
-            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime VALUE time::now();
+            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime DEFAULT time::now();
             DEFINE FIELD OVERWRITE updated_at ON {table_name} TYPE datetime VALUE time::now();
+            """)
+    elif table_type == "traces":
+        return dedent(f"""
+            {define_table}
+            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime DEFAULT time::now();
+            DEFINE INDEX idx_trace_id ON {table_name} FIELDS trace_id UNIQUE;
+            DEFINE INDEX idx_run_id ON {table_name} FIELDS run_id;
+            DEFINE INDEX idx_session_id ON {table_name} FIELDS session_id;
+            DEFINE INDEX idx_user_id ON {table_name} FIELDS user_id;
+            DEFINE INDEX idx_agent_id ON {table_name} FIELDS agent_id;
+            DEFINE INDEX idx_team_id ON {table_name} FIELDS team_id;
+            DEFINE INDEX idx_workflow_id ON {table_name} FIELDS workflow_id;
+            DEFINE INDEX idx_status ON {table_name} FIELDS status;
+            DEFINE INDEX idx_start_time ON {table_name} FIELDS start_time;
+            """)
+    elif table_type == "spans":
+        return dedent(f"""
+            {define_table}
+            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime DEFAULT time::now();
+            DEFINE INDEX idx_span_id ON {table_name} FIELDS span_id UNIQUE;
+            DEFINE INDEX idx_trace_id ON {table_name} FIELDS trace_id;
+            DEFINE INDEX idx_parent_span_id ON {table_name} FIELDS parent_span_id;
+            DEFINE INDEX idx_start_time ON {table_name} FIELDS start_time;
+            """)
+    elif table_type == "runs":
+        return dedent(f"""
+            {define_table}
+            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime DEFAULT time::now();
+            DEFINE FIELD OVERWRITE updated_at ON {table_name} TYPE datetime VALUE time::now();
+            DEFINE INDEX idx_run_id ON {table_name} FIELDS run_id UNIQUE;
+            DEFINE INDEX idx_session_id ON {table_name} FIELDS session_id;
+            DEFINE INDEX idx_user_id ON {table_name} FIELDS user_id;
+            DEFINE INDEX idx_agent_id ON {table_name} FIELDS agent_id;
+            DEFINE INDEX idx_team_id ON {table_name} FIELDS team_id;
+            DEFINE INDEX idx_workflow_id ON {table_name} FIELDS workflow_id;
+            DEFINE INDEX idx_status ON {table_name} FIELDS status;
             """)
     else:
         return define_table
+
+
+def serialize_run_row(row: dict, runs_table_name: str) -> dict:
+    """Convert a build_run_rows_for_session row to a SurrealDB-friendly dict."""
+    out = dict(row)
+    if "run_id" in out and out["run_id"]:
+        out["id"] = RecordID(runs_table_name, out["run_id"])
+    out = surrealize_dates(out)
+    return out
+
+
+def desurrealize_run_row(row: dict) -> dict:
+    """Convert a SurrealDB run row back into the plain dict shape."""
+    copy = dict(row)
+    copy = deserialize_record_id(copy, "run_id", "id")
+    copy = desurrealize_dates(copy)
+    return copy

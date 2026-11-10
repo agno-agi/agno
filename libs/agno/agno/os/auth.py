@@ -1,24 +1,648 @@
-from fastapi import Depends, HTTPException
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+import asyncio
+import hmac
+from functools import lru_cache
+from os import getenv
+from typing import Any, Dict, List, Literal, Optional, Set
 
+from fastapi import Depends, HTTPException, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from starlette.concurrency import run_in_threadpool
+
+from agno.db.schemas.scheduler import INTERNAL_SCHEDULER_USER_ID
+from agno.os.authz.provider import AuthorizationContext, AuthorizationProvider
+from agno.os.scopes import (
+    get_default_scope_mappings,
+    has_required_scopes,
+)
+from agno.os.service_accounts import TOKEN_PREFIX as SERVICE_ACCOUNT_TOKEN_PREFIX
+from agno.os.service_accounts import ServiceAccountVerification, authenticate_service_account_request
 from agno.os.settings import AgnoAPISettings
+from agno.utils.log import log_warning
 
 # Create a global HTTPBearer instance
 security = HTTPBearer(auto_error=False)
+
+
+def verify_internal_service_request(request: Request) -> bool:
+    """Verify the scheduler credential before granting internal request handling."""
+    headers = request.headers.getlist("authorization")
+    if len(headers) != 1 or not headers[0].lower().startswith("bearer "):
+        return False
+    token = headers[0][7:]
+    internal = getattr(request.app.state, "internal_service_token", None)
+    if not internal or not hmac.compare_digest(token, internal):
+        return False
+    request.state.authenticated = True
+    request.state.user_id = INTERNAL_SCHEDULER_USER_ID
+    request.state.scopes = list(INTERNAL_SERVICE_SCOPES)
+    request.state._agno_verified_internal = True
+    return True
+
+
+async def require_verified_public_workflow(request: Request, settings: AgnoAPISettings, workflow_id: str) -> None:
+    """Require real bearer verification on selected workflows, including open instances."""
+    headers = request.headers.getlist("authorization")
+    if len(headers) != 1 or not headers[0].lower().startswith("bearer ") or not headers[0][7:]:
+        raise HTTPException(status_code=401, detail="Authorization required")
+    token = headers[0][7:]
+    if verify_internal_service_request(request):
+        return
+    if not getattr(request.state, "authenticated", False):
+        if token.startswith(SERVICE_ACCOUNT_TOKEN_PREFIX):
+            await _authenticate_service_account(request, token, treat_unverifiable_as_anonymous=False)
+        elif get_effective_auth_mode(settings, app=request.app) == "security_key" and hmac.compare_digest(
+            token, settings.os_security_key or ""
+        ):
+            request.state.authenticated = True
+        else:
+            raise HTTPException(status_code=401, detail="Invalid authentication token")
+    if not getattr(request.state, "authenticated", False):
+        raise HTTPException(status_code=401, detail="Invalid authentication token")
+    if getattr(request.state, "authorization_enabled", False):
+        action = "read" if request.method == "GET" else "run"
+        if not await acheck_resource_access(request, workflow_id, "workflows", action):
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
+    request.state._agno_public_workflow = True
+
+
+@lru_cache(maxsize=1)
+def _default_authorization_provider() -> AuthorizationProvider:
+    """The default scope-based provider, cached so the fast path (no custom provider
+    configured) reuses one stateless instance rather than allocating per request.
+
+    Deferred import keeps this module free of the concrete provider at import time
+    and avoids a cycle (scope_provider imports scopes, which is fine, but keeping it
+    lazy mirrors the rest of the authz seam)."""
+    from agno.os.authz.scope_provider import ScopeAuthorizationProvider
+
+    return ScopeAuthorizationProvider()
+
+
+def resolve_authorization_provider(app_or_request: Any) -> AuthorizationProvider:
+    """Resolve the AuthorizationProvider enforcing this AgentOS instance.
+
+    Returns ``app.state.authorization_provider`` when AgentOS seeded one (a custom
+    provider or a managed-role store's provider), otherwise the cached default
+    :class:`ScopeAuthorizationProvider`. Accepts either a FastAPI ``app`` or a
+    ``Request``/``WebSocket`` (from which ``.app`` is read), so all four choke
+    points can call it with whatever object they hold.
+
+    Because the default reproduces the exact scope math the pipeline used before
+    the seam existed, resolving here is behaviour-preserving whenever no provider
+    is configured.
+    """
+    app = getattr(app_or_request, "app", app_or_request)
+    provider = getattr(getattr(app, "state", None), "authorization_provider", None)
+    return provider if provider is not None else _default_authorization_provider()
+
+
+def _store_default_role(role_store: Any) -> Optional[str]:
+    """The role store's ``is_default`` role, tolerating custom stores that lack the method
+    (a third-party PolicyEngine-backed store need not implement ``default_role``)."""
+    fn = getattr(role_store, "default_role", None)
+    if not callable(fn):
+        return None
+    try:
+        return fn()
+    except Exception:
+        return None
+
+
+def _is_role_slug(role_store: Any, subject: str) -> bool:
+    """Whether ``subject`` names a role in the store (a defined role, or one that exists only as
+    an assignment). False when there is no store or it cannot list roles."""
+    fn = getattr(role_store, "list_roles", None) if role_store is not None else None
+    if not callable(fn):
+        return False
+    try:
+        return subject in fn()
+    except Exception:
+        return False
+
+
+async def _ais_role_slug(role_store: Any, subject: str) -> bool:
+    """Async twin of :func:`_is_role_slug`."""
+    afn = getattr(role_store, "alist_roles", None) if role_store is not None else None
+    if callable(afn):
+        try:
+            return subject in await afn()
+        except Exception:
+            return False
+    return await asyncio.to_thread(_is_role_slug, role_store, subject)
+
+
+def provision_user_with_default_role(
+    user_store: Any,
+    role_store: Any,
+    subject: str,
+    claims: Dict[str, Any],
+    *,
+    email_claim: str = "email",
+    name_claim: str = "name",
+) -> Optional[dict]:
+    """JIT-provision ``subject`` from token claims; on first creation, grant the default role.
+
+    Shared by the three provisioning choke points (HTTP middleware, WebSocket connect, MCP
+    identity bridge) so the behaviour is identical wherever a token first arrives.
+
+    Single-role model (a subject holds one role). The default is the role flagged
+    ``define_role(..., default=True)`` in the role store. If none is flagged and a role store is present,
+    the new user is left inert -- denied until an admin assigns a role -- and a warning is
+    logged, never a silent grant. With no role store (the scope plane) roles do not apply, so
+    nothing is granted and nothing is warned. Granting happens only on first creation, so a
+    later login never re-grants and never fights an admin who removed the role.
+
+    Returns the provisioned user row (so the caller can read ``disabled`` off it without a
+    second query).
+    """
+    existing = user_store.get(subject)
+    if existing is not None:
+        # Already in the directory: the row (and its disabled flag) is the answer. Nothing below
+        # applies to an existing person, and this runs on every authenticated request, so it must
+        # not pay for the checks that only guard a create.
+        return existing
+    if _is_role_slug(role_store, subject):
+        # Subjects and roles share one namespace. A token whose ``sub`` is a role slug is already
+        # refused by the engine's collision guard; provisioning it would still create a directory
+        # row named after the role, and (before the store refused it) hand the role the default
+        # role as an inheritance edge -- every holder of that role gained the default's grants.
+        # No row, no grant: the request stays denied and the roster stays a roster of people.
+        log_warning(f"not provisioning {subject!r}: it is a role slug, not a user")
+        return None
+    user, created = user_store.provision_from_claims(subject, claims, email_claim=email_claim, name_claim=name_claim)
+    # is_default is a floor for the role-less, never an override: a subject new to the DIRECTORY may
+    # already hold a role (an admin granted via seed(admin=)/role_store.assign but never added to the
+    # roster), and granting the default here would DEMOTE them on their first request. Guard on it.
+    if created and role_store is not None and not role_store.roles_of(subject):
+        role = _store_default_role(role_store)
+        if role:
+            try:
+                role_store.assign(subject, role, actor="system:jit")
+            except Exception as e:
+                log_warning(f"could not grant default role {role!r} to provisioned user {subject!r}: {e}")
+        else:
+            log_warning(
+                f"auto-provisioned user {subject!r} has no default role "
+                "(flag one with define_role(..., default=True)); "
+                "they are denied until a role is assigned"
+            )
+    return user
+
+
+async def _astore_default_role(role_store: Any) -> Optional[str]:
+    """Async twin of :func:`_store_default_role`."""
+    afn = getattr(role_store, "adefault_role", None)
+    if callable(afn):
+        try:
+            return await afn()
+        except Exception:
+            return None
+    return await asyncio.to_thread(_store_default_role, role_store)
+
+
+async def _aroles_of(role_store: Any, subject: str) -> List[str]:
+    """The subject's roles via the store's async method when present, else the sync one offloaded.
+    Used to guard the default-role grant so a role-holder new to the directory is not demoted."""
+    afn = getattr(role_store, "aroles_of", None)
+    if callable(afn):
+        return await afn(subject)
+    return await asyncio.to_thread(role_store.roles_of, subject)
+
+
+async def aprovision_user_with_default_role(
+    user_store: Any,
+    role_store: Any,
+    subject: str,
+    claims: Dict[str, Any],
+    *,
+    email_claim: str = "email",
+    name_claim: str = "name",
+) -> Optional[dict]:
+    """Async twin of :func:`provision_user_with_default_role`, for the async request path.
+
+    Same single-role, grant-on-first-creation behaviour; awaits the store's async methods so
+    JIT provisioning against an async database never blocks the event loop."""
+    existing = await user_store.aget(subject)
+    if existing is not None:
+        return existing  # see the sync twin
+    if await _ais_role_slug(role_store, subject):
+        log_warning(f"not provisioning {subject!r}: it is a role slug, not a user")  # see the sync twin
+        return None
+    user, created = await user_store.aprovision_from_claims(
+        subject, claims, email_claim=email_claim, name_claim=name_claim
+    )
+    # Only grant the default to a subject that holds no role yet (see the sync twin): a subject new to
+    # the directory may already be an admin, and the default must not demote them on first request.
+    if created and role_store is not None and not await _aroles_of(role_store, subject):
+        role = await _astore_default_role(role_store)
+        if role:
+            try:
+                aassign = getattr(role_store, "aassign", None)
+                if callable(aassign):
+                    await aassign(subject, role, actor="system:jit")
+                else:
+                    await asyncio.to_thread(role_store.assign, subject, role, actor="system:jit")
+            except Exception as e:
+                log_warning(f"could not grant default role {role!r} to provisioned user {subject!r}: {e}")
+        else:
+            log_warning(
+                f"auto-provisioned user {subject!r} has no default role "
+                "(flag one with define_role(..., default=True)); "
+                "they are denied until a role is assigned"
+            )
+    return user
+
+
+def create_dev_token(
+    sub: str,
+    *,
+    secret: str,
+    scopes: Optional[List[str]] = None,
+    audience: Optional[str] = None,
+    email: Optional[str] = None,
+    name: Optional[str] = None,
+    expires_in: int = 3600,
+    algorithm: str = "HS256",
+    extra_claims: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Mint a signed JWT for LOCAL DEV / testing, so you can "be" any user without an IdP.
+
+    This is the honest local path: the token runs through the exact same verification,
+    provisioning and isolation pipeline as a production token, so what you see locally is what you
+    get in production. Sign it with the same key you put on
+    ``AuthorizationConfig(verification_keys=[secret])`` (HS256 by default).
+
+        secret = "dev-secret-at-least-256-bits-long-xxxxxxxxxxxxxxxx"
+        AgentOS(
+            db=db,
+            authorization=True,
+            authorization_config=AuthorizationConfig(verification_keys=[secret]),
+            user_directory=True,
+        )
+        alice = create_dev_token("alice", secret=secret, email="alice@example.com", name="Alice")
+        client.get("/agents/x", headers={"Authorization": f"Bearer {alice}"})
+        # alice is authenticated -> her data is isolated AND she is auto-registered, for real.
+
+    NOT for production: there, tokens come from your IdP / control plane. This exists so a local
+    demo or test needs one line per user instead of an identity provider.
+
+    Args:
+        sub: the user id this token authenticates as (the JWT ``sub``).
+        secret: the signing key -- must match a value in ``verification_keys``.
+        scopes: optional scope strings (only meaningful on the scope plane; managed roles ignore them).
+        audience: the ``aud`` claim; set it to your ``os_id`` when ``verify_audience=True``.
+        email / name: written as claims so ``auto_provision`` can populate the directory row.
+        expires_in: token lifetime in seconds (default 1 hour).
+        algorithm: JWT algorithm (default HS256, the symmetric dev default).
+        extra_claims: any additional claims to stamp (e.g. a custom ``iss``).
+    """
+    from datetime import datetime, timedelta, timezone
+    from uuid import uuid4
+
+    import jwt as pyjwt
+
+    now = datetime.now(timezone.utc)
+    payload: Dict[str, Any] = {
+        "sub": sub,
+        "scopes": list(scopes or []),
+        "iat": now,
+        "exp": now + timedelta(seconds=expires_in),
+        "jti": uuid4().hex,
+    }
+    if audience is not None:
+        payload["aud"] = audience
+    if email is not None:
+        payload["email"] = email
+    if name is not None:
+        payload["name"] = name
+    if extra_claims:
+        payload.update(extra_claims)
+    return pyjwt.encode(payload, secret, algorithm=algorithm)
+
+
+def token_scopes_are_authoritative(app_or_request: Any) -> bool:
+    """True when a scope plane actually enforces on this AgentOS -- i.e. the token's
+    ``scopes`` claim carries authorization weight for access decisions.
+
+    Only then may a gate treat a scope in the token (e.g. ``agent_os:admin``) as the
+    caller's authority. Under a managed-roles or ReBAC deployment the enforcement
+    provider ignores token scopes entirely (see :mod:`agno.os.authz.provider`), so a
+    gate that trusts them -- the PAT-mint subset rule, the schedule endpoint gate, the
+    WebSocket admin bypass, the user-isolation admin drop -- would let any
+    validly-signed token escalate. Resolve the provider AgentOS enforces with and
+    require a :class:`~agno.os.authz.scope_provider.ScopeAuthorizationProvider` to be
+    part of it (standalone or composed in a list). The default (no provider
+    configured) IS the scope provider, so scope-based deployments are unaffected.
+
+    Note: this describes the *instance's* enforcement plane. A service-account PAT is
+    always scope-enforced regardless (see :func:`_provider_for`), so gates that key off a
+    CALLER's token scopes should use :func:`caller_scopes_are_authoritative`, which ORs in
+    the service-account carve-out.
+    """
+    provider = resolve_authorization_provider(app_or_request)
+    # Read the provider's declared flag rather than an isinstance() check: a hardening
+    # SUBCLASS of ScopeAuthorizationProvider can turn it off, and a composite computes it
+    # from ALL of its (possibly nested) planes. Defaults False for any provider that does
+    # not opt in (managed roles, ReBAC, custom).
+    return bool(getattr(provider, "enforces_token_scopes", False))
+
+
+def _caller_is_service_account(request: Any) -> bool:
+    """The authenticated caller is a service-account/PAT (``sa:`` principal)."""
+    from agno.db.schemas.service_accounts import SERVICE_ACCOUNT_PRINCIPAL_PREFIX
+
+    user_id = getattr(getattr(request, "state", None), "user_id", None)
+    return isinstance(user_id, str) and user_id.startswith(SERVICE_ACCOUNT_PRINCIPAL_PREFIX)
+
+
+def caller_scopes_are_authoritative(request: Any) -> bool:
+    """Whether the CALLER's token ``scopes`` claim is their authorization authority.
+
+    :func:`token_scopes_are_authoritative` for the instance, OR the caller is a
+    service-account/PAT -- whose scopes ARE its first-party ACL and are always
+    scope-enforced regardless of the OS provider (see :func:`_provider_for`). Use this at
+    gates that measure the caller by their token scopes (PAT-mint subset rule, schedule
+    endpoint gate, job-queue admin, ...) so a legitimate admin PAT is not denied under a
+    managed-roles/ReBAC plane, while a raw JWT admin scope stays inert there.
+    """
+    return _caller_is_service_account(request) or token_scopes_are_authoritative(request)
+
+
+def _provider_for(request: Any) -> AuthorizationProvider:
+    """The provider that decides for *this caller*.
+
+    Service accounts authenticate with a PAT whose scopes ARE their ACL: they are
+    first-party machine credentials, not directory users, so they have no subject or
+    role in a managed store. Routing them through a configured provider would deny
+    every request (the store has no row for ``sa:<name>``) even though the route gate
+    already admitted them on scope math -- so PAT callers are always evaluated by the
+    scope provider, exactly as they were before the provider seam existed.
+    """
+    if getattr(request.state, "service_account_name", None) is not None:
+        return _default_authorization_provider()
+    return resolve_authorization_provider(request)
+
+
+def _authorization_context(
+    request: Request,
+    *,
+    resource_type: Optional[str] = None,
+    resource_id: Optional[str] = None,
+    action: Optional[str] = None,
+) -> AuthorizationContext:
+    """Build an :class:`AuthorizationContext` from the per-request auth state.
+
+    Reads exactly the fields the JWT middleware attaches (``user_id``, ``scopes``,
+    ``claims``, ``admin_scope``); the scope-based default provider uses the scope
+    fields and produces the same decision the pre-seam scope math did, while a
+    managed-role / custom provider keys off ``principal_id`` + ``claims`` instead.
+    """
+    admin_scope_raw = getattr(request.state, "admin_scope", None)
+    admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
+    return AuthorizationContext(
+        principal_id=getattr(request.state, "user_id", None),
+        scopes=list(getattr(request.state, "scopes", None) or []),
+        claims=getattr(request.state, "claims", None) or {},
+        resource_type=resource_type,
+        resource_id=resource_id,
+        action=action,
+        admin_scope=admin_scope,
+    )
+
+
+@lru_cache(maxsize=1)
+def _default_scope_mappings() -> Dict[str, List[str]]:
+    """The default route→scope mappings, built once (they are static data) so the
+    per-request service-account path does not rebuild the dict on every call."""
+    return get_default_scope_mappings()
+
+
+# Scopes granted to the internal service token (used by the scheduler executor).
+# Shared constant so auth.py and jwt.py stay in sync.
+# Deliberately excludes schedules:write and schedules:delete: the executor only
+# POSTs a schedule's own run endpoint, so a leaked internal token must not be
+# able to create or repoint schedule rows.
+INTERNAL_SERVICE_SCOPES: List[str] = [
+    "agents:read",
+    "agents:run",
+    "teams:read",
+    "teams:run",
+    "workflows:read",
+    "workflows:run",
+    "schedules:read",
+]
+
+
+def get_auth_token_from_request(request: Request) -> Optional[str]:
+    """
+    Extract the JWT/Bearer token from the Authorization header.
+
+    This is used to forward the auth token to remote agents/teams/workflows
+    when making requests through the gateway.
+
+    Args:
+        request: The FastAPI request object
+
+    Returns:
+        The bearer token string if present, None otherwise
+
+    Usage:
+        auth_token = get_auth_token_from_request(request)
+        if auth_token and isinstance(agent, RemoteAgent):
+            await agent.arun(message, auth_token=auth_token)
+    """
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.lower().startswith("bearer "):
+        return auth_header[7:]  # Remove "Bearer " prefix
+    return None
+
+
+async def _authenticate_service_account(
+    request: Request, token: str, treat_unverifiable_as_anonymous: bool = False
+) -> bool:
+    """Verify a service account token (agno_pat_...) and attach its identity to the request.
+
+    Runs for requests that carry an ``agno_pat_`` bearer but were not already
+    authenticated by the auth middleware. On success, request.state gets the same
+    identity the middleware would attach (user_id = the ``sa:<name>`` principal,
+    the account's scopes) and the scopes are enforced against the route. Scope
+    enforcement is never skipped: service account scopes are ACL data owned by
+    this AgentOS instance, unlike JWT claims.
+
+    ``treat_unverifiable_as_anonymous`` selects what happens when the token can
+    NOT be verified (unknown, expired, revoked, or verification unavailable):
+
+    - ``False`` (instances with auth configured): the request is rejected.
+    - ``True`` (open instances -- no security key, no JWT): the token is ignored
+      and the request proceeds anonymously, the same as any other unrecognized
+      header on a server without auth. This keeps a stale token left behind in a
+      client from locking out an instance that has no auth on it.
+
+    A token that DOES verify is never ignored: it attributes the request and its
+    scopes apply, in both modes.
+    """
+    verifier = getattr(request.app.state, "service_account_verifier", None)
+    if verifier is None:
+        if treat_unverifiable_as_anonymous:
+            return True
+        raise HTTPException(status_code=401, detail="Service accounts are not enabled on this AgentOS instance")
+
+    admin_scope_raw = getattr(request.app.state, "admin_scope", None)
+    admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
+
+    scope_mappings = getattr(request.app.state, "scope_mappings", None)
+    if scope_mappings is None:
+        scope_mappings = _default_scope_mappings()
+
+    error = await authenticate_service_account_request(
+        request,
+        token,
+        verifier=verifier,
+        scope_mappings=scope_mappings,
+        admin_scope=admin_scope,
+    )
+    if error is not None:
+        status_code, detail, required_scopes = error
+        if status_code == 403:
+            # The token verified, so the account's ACL applies: insufficient scopes
+            # reject the request even on an otherwise-open instance.
+            raise HTTPException(status_code=403, detail=build_insufficient_permissions_detail(required_scopes))
+        if treat_unverifiable_as_anonymous:
+            return True
+        raise HTTPException(status_code=status_code, detail=detail)
+
+    return True
+
+
+def _is_jwt_configured() -> bool:
+    """Check if JWT authentication is configured via environment variables.
+
+    This covers cases where JWT middleware is set up manually (not via authorization=True).
+    """
+    return bool(getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE"))
+
+
+def _has_jwt_middleware(app: Any) -> bool:
+    """Check whether the app has JWTMiddleware installed via ``add_middleware``.
+
+    Covers deployments that wire JWT auth by calling ``app.add_middleware(JWTMiddleware, ...)``
+    directly instead of via ``AgentOS(authorization=True)`` or JWT env vars.
+    """
+    if app is None:
+        return False
+    try:
+        from agno.os.middleware.jwt import JWTMiddleware, jwt_kwargs_have_key_source
+    except ImportError:
+        return False
+    user_middleware = getattr(app, "user_middleware", None) or []
+    for mw in user_middleware:
+        cls = getattr(mw, "cls", None)
+        if not (isinstance(cls, type) and issubclass(cls, JWTMiddleware)):
+            continue
+        # Only count instances that actually validate JWTs: AgentOS installs the same
+        # middleware class as the auth layer for security-key / service-account-only
+        # modes, constructed without any JWT source. (Env-var-configured JWT is
+        # detected separately by _is_jwt_configured.)
+        if jwt_kwargs_have_key_source(getattr(mw, "kwargs", None) or {}):
+            return True
+    return False
+
+
+def get_effective_auth_mode(
+    settings: Optional[AgnoAPISettings],
+    authorization: bool = False,
+    app: Any = None,
+) -> Literal["none", "security_key", "jwt"]:
+    """Return the REST/WS authentication mode effectively enforced by the OS.
+
+    This describes the REST/WS plane only. ``mcp_auth`` is deliberately NOT consulted:
+    it protects the MCP endpoint alone (its own OAuth surface is described separately
+    under ``/info``'s ``mcp.oauth`` block), so folding it in here would mislabel a
+    deployment -- reporting "oauth" while REST is actually open, or masking a real "jwt"
+    REST posture. Consumers read this to pick REST/WS credentials, so it must reflect the
+    REST plane. The precedence mirrors ``get_authentication_dependency``: JWT (via
+    authorization=True on AgentOS, JWT environment variables, or a manually installed
+    ``JWTMiddleware``) over the security key over no auth.
+
+    Args:
+        settings: The API settings containing the security key and authorization flag
+        authorization: The AgentOS authorization flag (JWT middleware enabled)
+        app: The Starlette/FastAPI app instance; when provided, its middleware stack
+            is inspected so a manually-installed ``JWTMiddleware`` is detected.
+
+    Returns:
+        "jwt" when JWT authorization is effectively active, "security_key" when only the
+        OS security key is enforced, "none" when REST authentication is disabled.
+    """
+    if (
+        authorization
+        or (settings is not None and settings.authorization_enabled)
+        or _is_jwt_configured()
+        or _has_jwt_middleware(app)
+    ):
+        return "jwt"
+    if settings is not None and settings.os_security_key:
+        return "security_key"
+    return "none"
 
 
 def get_authentication_dependency(settings: AgnoAPISettings):
     """
     Create an authentication dependency function for FastAPI routes.
 
+    This handles security key authentication (OS_SECURITY_KEY).
+    When JWT authorization is enabled (via authorization=True, JWT environment variables,
+    or manually added JWT middleware), this dependency is skipped as JWT middleware
+    handles authentication.
+
     Args:
-        settings: The API settings containing the security key
+        settings: The API settings containing the security key and authorization flag
 
     Returns:
         A dependency function that can be used with FastAPI's Depends()
     """
 
-    def auth_dependency(credentials: HTTPAuthorizationCredentials = Depends(security)) -> bool:
+    async def auth_dependency(request: Request, credentials: HTTPAuthorizationCredentials = Depends(security)) -> bool:
+        # If JWT authorization is enabled via settings (authorization=True on AgentOS)
+        if settings and settings.authorization_enabled:
+            return True
+
+        # Check if JWT middleware has already handled authentication
+        if getattr(request.state, "authenticated", False):
+            return True
+
+        # Service account tokens (agno_pat_...) are dispatched by prefix: they never
+        # reach the JWT validator or the security-key comparison below. With auth
+        # configured (security key or JWT), a PAT must verify or the request is
+        # rejected. On an open instance a PAT that verifies still provides
+        # attribution and scope enforcement, while one that cannot be verified is
+        # ignored like any other unrecognized header on a server without auth.
+        token = credentials.credentials if credentials else None
+        if token and token.startswith(SERVICE_ACCOUNT_TOKEN_PREFIX):
+            instance_has_auth = bool(settings and settings.os_security_key) or _is_jwt_configured()
+            return await _authenticate_service_account(
+                request, token, treat_unverifiable_as_anonymous=not instance_has_auth
+            )
+
+        # Also skip if JWT is configured via environment variables
+        if _is_jwt_configured():
+            return True
+
+        # Check internal service token (used by scheduler executor).
+        # ``INTERNAL_SCHEDULER_USER_ID`` identifies the caller, not the owner of the work:
+        # routes prefer the executor's form-field ``user_id`` so writes land on the schedule owner.
+        internal_token = getattr(request.app.state, "internal_service_token", None)
+        if token and internal_token and _constant_time_equal(token, internal_token):
+            request.state.authenticated = True
+            request.state.user_id = INTERNAL_SCHEDULER_USER_ID
+            request.state.scopes = list(INTERNAL_SERVICE_SCOPES)
+            # Mark as a trusted internal caller AFTER the constant-time token match so a
+            # provider-backed per-resource gate short-circuits (the scheduler principal
+            # has no role/subject in a managed store). Unforgeable: request.state is
+            # server-only — no client input maps onto this attribute.
+            request.state.is_internal_service = True
+            return True
+
         # If no security key is set, skip authentication entirely
         if not settings or not settings.os_security_key:
             return True
@@ -29,10 +653,16 @@ def get_authentication_dependency(settings: AgnoAPISettings):
 
         token = credentials.credentials
 
-        # Verify the token
-        if token != settings.os_security_key:
+        # Verify the token against the security key in constant time, like the internal token
+        # above and the middleware path, so a mismatch position cannot be timed.
+        if not _constant_time_equal(token, settings.os_security_key):
             raise HTTPException(status_code=401, detail="Invalid authentication token")
 
+        # A valid security key is a trusted, unscoped root. Mark it authenticated like the
+        # internal-token path above, so downstream gates that distinguish an authenticated
+        # root from an anonymous open-mode caller (e.g. service-account minting) treat it as
+        # a real credential rather than falling through to the fail-closed anonymous branch.
+        request.state.authenticated = True
         return True
 
     return auth_dependency
@@ -40,18 +670,454 @@ def get_authentication_dependency(settings: AgnoAPISettings):
 
 def validate_websocket_token(token: str, settings: AgnoAPISettings) -> bool:
     """
-    Validate a bearer token for WebSocket authentication.
+    Validate a bearer token for WebSocket authentication (legacy os_security_key method).
+
+    When JWT authorization is enabled (via authorization=True or JWT environment variables),
+    this validation is skipped as JWT middleware handles authentication.
 
     Args:
         token: The bearer token to validate
-        settings: The API settings containing the security key
+        settings: The API settings containing the security key and authorization flag
 
     Returns:
         True if the token is valid or authentication is disabled, False otherwise
     """
+    # If JWT authorization is enabled, skip security key validation
+    if settings and settings.authorization_enabled:
+        return True
+
+    # Also skip if JWT is configured via environment variables (manual JWT middleware setup)
+    if _is_jwt_configured():
+        return True
+
     # If no security key is set, skip authentication entirely
     if not settings or not settings.os_security_key:
         return True
 
-    # Verify the token matches the configured security key
-    return token == settings.os_security_key
+    # Verify the token matches the configured security key, in constant time
+    return _constant_time_equal(token, settings.os_security_key)
+
+
+def _constant_time_equal(presented: str, expected: str) -> bool:
+    """Constant-time equality for a presented credential. Compared as UTF-8 bytes: the str
+    form of ``compare_digest`` raises on non-ASCII input, which would turn a garbage header
+    into a 500 instead of a 401."""
+    return hmac.compare_digest(str(presented).encode("utf-8"), str(expected).encode("utf-8"))
+
+
+async def verify_websocket_service_account(
+    token: str, app: Any, client_key: Optional[str] = None
+) -> Optional[ServiceAccountVerification]:
+    """Verify a service-account token (``agno_pat_...``) for WebSocket authentication.
+
+    The REST dependency accepts service account tokens in every deployment mode, so the
+    WebSocket path must too. Returns the full verification result (None when no verifier
+    is configured) rather than a bare pass/fail: the caller needs ``result.account`` --
+    its principal and scopes -- to populate the WebSocket auth context so the same RBAC
+    and attribution gates that police JWTs apply to PATs.
+    """
+    verifier = getattr(app.state, "service_account_verifier", None)
+    if verifier is None:
+        return None
+    return await verifier.verify(token, client_key=client_key)
+
+
+def build_insufficient_permissions_detail(required_scopes: Optional[List[str]]) -> str:
+    """Format a 403 detail string, appending the required scope(s) when known."""
+    base = "Insufficient permissions"
+    if required_scopes:
+        return f"{base}. Required scope(s): {', '.join(required_scopes)}"
+    return base
+
+
+def get_accessible_resources(request: Request, resource_type: str) -> Set[str]:
+    """
+    Get the set of resource IDs the user has access to based on their scopes.
+
+    This function is used to filter lists of resources (agents, teams, workflows)
+    based on the user's scopes from their JWT token.
+
+    Args:
+        request: The FastAPI request object (contains request.state.scopes)
+        resource_type: Type of resource ("agents", "teams", "workflows")
+
+    Returns:
+        Set of resource IDs the user can access. Returns {"*"} for wildcard access.
+
+    Usage:
+        accessible_ids = get_accessible_resources(request, "agents")
+        if "*" not in accessible_ids:
+            agents = [a for a in agents if a.id in accessible_ids]
+
+    Examples:
+        >>> # User with specific agent access
+        >>> # Token scopes: ["agent-os:my-os:agents:my-agent:read"]
+        >>> get_accessible_resources(request, "agents")
+        {'my-agent'}
+
+        >>> # User with wildcard access
+        >>> # Token scopes: ["agent-os:my-os:agents:*:read"] or ["admin"]
+        >>> get_accessible_resources(request, "agents")
+        {'*'}
+
+        >>> # User with agent-os level access (global resource scope)
+        >>> # Token scopes: ["agent-os:my-os:agents:read"]
+        >>> get_accessible_resources(request, "agents")
+        {'*'}
+    """
+    # Check if accessible_resource_ids is already cached in request state (set by JWT middleware)
+    # This happens when user doesn't have global scope but has specific resource scopes.
+    # The cache is populated by the route gate (which now runs through the same provider),
+    # so honouring it keeps the listing decision consistent with the gate that let the
+    # request in — for both the default scope provider and a custom one.
+    cached_ids = getattr(request.state, "accessible_resource_ids", None)
+    if cached_ids is not None:
+        return cached_ids
+
+    # _provider_for, not the raw resolver: a service-account PAT carries its own scopes as
+    # its ACL and has no row in a managed store, so asking a role store about it answers
+    # "no access" for a caller the route gate already admitted. Must match the per-resource
+    # gate, or a PAT is allowed one agent and refused the list containing it.
+    provider = _provider_for(request)
+    ctx = _authorization_context(request, resource_type=resource_type)
+    return provider.accessible_resource_ids(ctx)
+
+
+async def aget_accessible_resources(request: Request, resource_type: str) -> Set[str]:
+    """Async twin of :func:`get_accessible_resources` (awaits the provider off the loop)."""
+    cached_ids = getattr(request.state, "accessible_resource_ids", None)
+    if cached_ids is not None:
+        return cached_ids
+    provider = _provider_for(request)
+    ctx = _authorization_context(request, resource_type=resource_type)
+    return await provider.aaccessible_resource_ids(ctx)
+
+
+def filter_resources_by_access(request: Request, resources: List, resource_type: str) -> List:
+    """
+    Filter a list of resources based on user's access permissions.
+
+    Args:
+        request: The FastAPI request object
+        resources: List of resource objects (agents, teams, or workflows) with 'id' attribute
+        resource_type: Type of resource ("agents", "teams", "workflows")
+
+    Returns:
+        Filtered list of resources the user has access to
+
+    Usage:
+        agents = filter_resources_by_access(request, all_agents, "agents")
+        teams = filter_resources_by_access(request, all_teams, "teams")
+        workflows = filter_resources_by_access(request, all_workflows, "workflows")
+
+    Examples:
+        >>> # User with specific access
+        >>> agents = [Agent(id="agent-1"), Agent(id="agent-2"), Agent(id="agent-3")]
+        >>> # Token scopes: ["agent-os:my-os:agents:agent-1:read", "agent-os:my-os:agents:agent-2:read"]
+        >>> filter_resources_by_access(request, agents, "agents")
+        [Agent(id="agent-1"), Agent(id="agent-2")]
+
+        >>> # User with wildcard access
+        >>> # Token scopes: ["admin"]
+        >>> filter_resources_by_access(request, agents, "agents")
+        [Agent(id="agent-1"), Agent(id="agent-2"), Agent(id="agent-3")]
+    """
+    # The route gate may have cached an accessible-id set on request.state (the caller
+    # holds only per-resource scopes on a GET listing). Use it to NARROW the candidates,
+    # never as the final answer: that set is built from allow rows alone, so returning
+    # it directly would drop a provider's deny-overrides and leak an explicitly-denied
+    # resource into the listing while the per-resource gate still 403s it.
+    cached_ids = getattr(request.state, "accessible_resource_ids", None)
+    if cached_ids is not None and "*" not in cached_ids:
+        resources = [r for r in resources if getattr(r, "id", None) in cached_ids]
+
+    # The provider is the authority: it may filter more richly than a plain id-set
+    # membership test (e.g. deny-overrides for managed roles). _provider_for keeps a
+    # service-account PAT on scope math here too -- see get_accessible_resources.
+    provider = _provider_for(request)
+    # action="read": listing is a read, and the deny-aware filter must only apply
+    # read denies. With action=None every deny row matches regardless of action, so a
+    # "can read all, run none" role (allow agents:*:read + deny agents:*:run) would be
+    # handed an empty list -- the run-deny wrongly hiding read visibility.
+    ctx = _authorization_context(request, resource_type=resource_type, action="read")
+    return provider.filter_accessible(ctx, resources)
+
+
+async def afilter_resources_by_access(request: Request, resources: List, resource_type: str) -> List:
+    """Async twin of :func:`filter_resources_by_access` (awaits the provider off the loop)."""
+    cached_ids = getattr(request.state, "accessible_resource_ids", None)
+    if cached_ids is not None and "*" not in cached_ids:
+        resources = [r for r in resources if getattr(r, "id", None) in cached_ids]
+    provider = _provider_for(request)
+    ctx = _authorization_context(request, resource_type=resource_type, action="read")
+    return await provider.afilter_accessible(ctx, resources)
+
+
+def check_resource_access(request: Request, resource_id: str, resource_type: str, action: str = "read") -> bool:
+    """
+    Check if user has access to a specific resource for a specific action.
+
+    Args:
+        request: The FastAPI request object
+        resource_id: ID of the resource to check
+        resource_type: Type of resource ("agents", "teams", "workflows")
+        action: Action to check ("read", "run", etc.)
+
+    Returns:
+        True if user has access, False otherwise
+
+    Usage:
+        if not check_resource_access(request, agent_id, "agents", "run"):
+            raise HTTPException(status_code=403, detail="Access denied")
+
+    Examples:
+        >>> # Token scopes: ["agents:my-agent:read", "agents:my-agent:run"]
+        >>> check_resource_access(request, "my-agent", "agents", "run")
+        True
+
+        >>> # Token scopes: ["agents:my-agent:read"] (no run scope)
+        >>> check_resource_access(request, "my-agent", "agents", "run")
+        False
+    """
+    # Internal service credentials (the scheduler executor's token, or a validated
+    # security key) are trusted first-party callers with no role/subject in a managed
+    # store, so a provider-backed per-resource gate would 403 them. The route gate has
+    # already enforced their INTERNAL_SERVICE_SCOPES, so short-circuit here.
+    # is_internal_service is set ONLY by the middleware's internal-token branch (and the
+    # security-key dependency) AFTER a constant-time token match; it lives on
+    # request.state, which is server-populated per request and cannot be set by a client
+    # (no header/body maps onto it), so it is unforgeable.
+    if getattr(request.state, "is_internal_service", False):
+        return True
+
+    ctx = _authorization_context(
+        request,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        action=action,
+    )
+    return _provider_for(request).check(ctx)
+
+
+async def acheck_resource_access(request: Request, resource_id: str, resource_type: str, action: str = "read") -> bool:
+    """Async twin of :func:`check_resource_access` (awaits the provider off the loop)."""
+    if getattr(request.state, "is_internal_service", False):
+        return True
+    ctx = _authorization_context(
+        request,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        action=action,
+    )
+    return await _provider_for(request).acheck(ctx)
+
+
+def require_resource_access(resource_type: str, action: str, resource_id_param: str):
+    """
+    Create a dependency that checks if the user has access to a specific resource.
+
+    This dependency factory creates a FastAPI dependency that automatically checks
+    authorization when authorization is enabled. It extracts the resource ID from
+    the path parameters and verifies the user has the required access.
+
+    Args:
+        resource_type: Type of resource ("agents", "teams", "workflows")
+        action: Action to check ("read", "run")
+        resource_id_param: Name of the path parameter containing the resource ID
+
+    Returns:
+        A dependency function for use with FastAPI's Depends()
+
+    Usage:
+        @router.post("/agents/{agent_id}/runs")
+        async def create_agent_run(
+            agent_id: str,
+            request: Request,
+            _: None = Depends(require_resource_access("agents", "run", "agent_id")),
+        ):
+            ...
+
+        @router.get("/agents/{agent_id}")
+        async def get_agent(
+            agent_id: str,
+            request: Request,
+            _: None = Depends(require_resource_access("agents", "read", "agent_id")),
+        ):
+            ...
+
+    Examples:
+        >>> # Creates dependency for checking agent run access
+        >>> dep = require_resource_access("agents", "run", "agent_id")
+
+        >>> # Creates dependency for checking team read access
+        >>> dep = require_resource_access("teams", "read", "team_id")
+    """
+    # Map resource_type to singular form for error messages
+    resource_singular = {
+        "agents": "agent",
+        "teams": "team",
+        "workflows": "workflow",
+    }.get(resource_type, resource_type.rstrip("s"))
+
+    # `async def`: the per-resource decision now awaits the provider's async path
+    # (:func:`acheck_resource_access`), which drives an async database natively and a sync
+    # one in a worker thread -- so the blocking DB/network I/O of a managed-role or FGA
+    # provider stays off the event loop either way, without the sync-in-threadpool hop.
+    async def dependency(request: Request):
+        # Only check authorization if it's enabled
+        if not getattr(request.state, "authorization_enabled", False):
+            return
+
+        # Get the resource_id from path parameters
+        resource_id = request.path_params.get(resource_id_param)
+        # A verified public workflow GET is authorized as a read, even where the route's
+        # nominal action is stricter (main's public-workflow path).
+        effective_action = (
+            "read"
+            if (
+                getattr(request.state, "_agno_public_workflow", False)
+                and resource_type == "workflows"
+                and request.method == "GET"
+            )
+            else action
+        )
+        if resource_id and not await acheck_resource_access(request, resource_id, resource_type, effective_action):
+            # Record the per-resource DENY. The route gate already logged an allow for
+            # this request (with the concrete resource in the path), so a per-resource
+            # ALLOW would only duplicate it -- but a per-resource DENY is otherwise
+            # invisible: the trail would show the route allowed and never show what
+            # actually blocked the request. For a role/ReBAC model this is the
+            # security-relevant decision, so it must appear in the access audit.
+            from agno.os.authz.audit import arecord_decision
+
+            await arecord_decision(
+                request,
+                allowed=False,
+                target=f"{request.method} /{resource_type}/{resource_id}",
+                principal=getattr(request.state, "user_id", None),
+                required_scopes=[f"{resource_type}:{resource_id}:{effective_action}"],
+                scopes=list(getattr(request.state, "scopes", None) or []),
+                claims=getattr(request.state, "claims", None),
+                reason="resource_access_denied",
+            )
+            raise HTTPException(status_code=403, detail=f"Access denied to {action} this {resource_singular}")
+
+    return dependency
+
+
+def require_approval_resolved(db: Any) -> Any:
+    """
+    Dependency factory that blocks a run continuation when a pending admin-required
+    approval exists for the run.
+
+    Designed to sit alongside ``require_resource_access`` in the route's
+    ``dependencies`` list.  Pass the OS-level DB adapter at router-creation time
+    (the same pattern used by ``get_approval_router``).
+
+    Usage::
+
+        dependencies=[
+            Depends(require_resource_access("agents", "run", "agent_id")),
+            Depends(require_approval_resolved(os.db)),
+        ]
+    """
+
+    async def dependency(request: Request) -> None:
+        reason = await run_continuation_blocked_reason(
+            db,
+            request.path_params.get("run_id"),
+            authorization_enabled=getattr(request.state, "authorization_enabled", False),
+            user_scopes=getattr(request.state, "scopes", []),
+            request=request,
+        )
+        if reason:
+            raise HTTPException(status_code=403, detail=reason)
+
+    return dependency
+
+
+def _caller_is_approval_admin(request: Any, user_scopes: List[str]) -> bool:
+    """Does the caller hold approval-admin authority (``approvals:write``)?
+
+    Provider-aware: a token's ``approvals:write`` / admin scope only counts when scopes
+    are the caller's authority (a scope plane, or a service-account/PAT). Under a
+    managed-roles/ReBAC plane, ask the provider instead -- so a raw JWT scope cannot bypass
+    the gate, AND a genuine admin-role holder (whose token carries no scopes claim) is not
+    wrongly blocked from ever resolving an approval.
+    """
+    if request is None or caller_scopes_are_authoritative(request):
+        return has_required_scopes(list(user_scopes or []), ["approvals:write"])
+    from agno.os.authz.provider import AuthorizationContext
+
+    admin_scope_raw = getattr(getattr(request, "state", None), "admin_scope", None)
+    provider = resolve_authorization_provider(request)
+    ctx = AuthorizationContext(
+        principal_id=getattr(request.state, "user_id", None),
+        scopes=list(user_scopes or []),
+        claims=getattr(request.state, "claims", None) or {},
+        resource_type="approvals",
+        resource_id="*",
+        action="write",
+        admin_scope=admin_scope_raw if isinstance(admin_scope_raw, str) else None,
+    )
+    return provider.check(ctx)
+
+
+async def run_continuation_blocked_reason(
+    db: Any,
+    run_id: Optional[str],
+    *,
+    authorization_enabled: bool,
+    user_scopes: List[str],
+    request: Any = None,
+) -> Optional[str]:
+    """Whether a paused run may NOT be continued yet, as a 403 detail string (else None).
+
+    A run paused on an admin-required approval must not be continued by its own initiator;
+    only a separate admin (holding ``approvals:write``) may resolve it. This is the single
+    decision shared by the REST ``/continue`` routes (via ``require_approval_resolved``) and
+    the MCP ``continue_run`` tool, so the gate cannot drift between transports.
+
+    Skips the check only when the db has no approvals support, so non-approval deployments
+    are unaffected. A db that supports approvals but cannot be read fails closed: the run is
+    refused until the state can be verified. It never fails open on the authorization
+    decision either; that is the caller's ``authorization_enabled`` gate.
+    """
+    # Mirror require_resource_access: skip entirely when authorization is disabled.
+    if not authorization_enabled or db is None or not run_id:
+        return None
+
+    # Approval-admins (approvals:write) bypass this gate — they can force-continue a run
+    # for operational or debugging purposes. Decided provider-aware (see helper) so the
+    # bypass can't be spoofed by a raw token scope under a managed-roles plane.
+    if _caller_is_approval_admin(request, user_scopes):
+        return None
+
+    fn = getattr(db, "get_approvals", None)
+    if fn is None:
+        return None
+
+    try:
+        if asyncio.iscoroutinefunction(fn):
+            result = await fn(run_id=run_id, status="pending", approval_type="required")
+        else:
+            # Sync DB drivers do blocking I/O; keep it off the event loop, matching the
+            # service-account verifier and the service-accounts router.
+            result = await run_in_threadpool(fn, run_id=run_id, status="pending", approval_type="required")
+        approvals = result[0] if isinstance(result, tuple) else result
+        if approvals:
+            return "This run requires admin approval before it can be continued"
+    except NotImplementedError:
+        # The db declares the method but does not implement approvals: not an approval
+        # deployment, so there is nothing to gate.
+        return None
+    except Exception as exc:
+        # The db supports approvals and the read failed. Letting the run continue here would
+        # let a database outage resolve an admin-required approval, so refuse until the
+        # state can be read; the caller may retry.
+        from agno.utils.log import log_warning
+
+        log_warning(f"Approval state could not be read for run {run_id!r}; refusing to continue: {exc}")
+        return "This run's approval state could not be verified; try again"
+
+    return None

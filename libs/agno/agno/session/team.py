@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
@@ -7,6 +8,7 @@ from pydantic import BaseModel
 
 from agno.models.message import Message
 from agno.run.agent import RunOutput, RunStatus
+from agno.run.base import HISTORY_SKIP_STATUSES
 from agno.run.team import TeamRunOutput
 from agno.session.summary import SessionSummary
 from agno.utils.log import log_debug, log_warning
@@ -42,10 +44,18 @@ class TeamSession:
     # The unix timestamp when this session was last updated
     updated_at: Optional[int] = None
 
-    def to_dict(self) -> Dict[str, Any]:
-        session_dict = asdict(self)
+    def to_dict(self, include_runs: bool = True) -> Dict[str, Any]:
+        # Exclude runs from asdict to avoid the deep serialization cost. Serialize
+        # a shallow copy so we never mutate a live (possibly shared/cached) session
+        # while another thread reads self.runs.
+        session_copy = copy.copy(self)
+        session_copy.runs = None
+        session_dict = asdict(session_copy)
 
-        session_dict["runs"] = [run.to_dict() for run in self.runs] if self.runs else None
+        if include_runs:
+            session_dict["runs"] = [run.to_dict() for run in self.runs] if self.runs else None
+        else:
+            session_dict.pop("runs", None)
         session_dict["summary"] = self.summary.to_dict() if self.summary else None
 
         return session_dict
@@ -57,12 +67,13 @@ class TeamSession:
             return None
 
         summary = data.get("summary")
+        summary_obj = summary
         if summary is not None and isinstance(summary, dict):
-            data["summary"] = SessionSummary.from_dict(data["summary"])  # type: ignore
+            summary_obj = SessionSummary.from_dict(summary)
 
         runs = data.get("runs")
         serialized_runs: List[Union[TeamRunOutput, RunOutput]] = []
-        if runs is not None and isinstance(runs[0], dict):
+        if runs and isinstance(runs[0], dict):
             for run in runs:
                 if "agent_id" in run:
                     serialized_runs.append(RunOutput.from_dict(run))
@@ -80,7 +91,7 @@ class TeamSession:
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
             runs=serialized_runs,
-            summary=data.get("summary"),
+            summary=summary_obj,
         )
 
     def get_run(self, run_id: str) -> Optional[Union[TeamRunOutput, RunOutput]]:
@@ -91,21 +102,24 @@ class TeamSession:
 
     def upsert_run(self, run_response: Union[TeamRunOutput, RunOutput]):
         """Adds a RunOutput, together with some calculated data, to the runs list."""
-
         messages = run_response.messages
-        if messages is None:
-            return
 
-        # Make message duration None
+        # Clear message timer before storage
         for m in messages or []:
-            if m.metrics is not None:
-                m.metrics.duration = None
+            if m.metrics is not None and hasattr(m.metrics, "timer"):
+                m.metrics.timer = None
 
         if not self.runs:
             self.runs = []
 
         for i, existing_run in enumerate(self.runs or []):
             if existing_run.run_id == run_response.run_id:
+                # queue_attempt is sticky: the generation stamp lives on the
+                # stored row (written by the queue worker's fenced patch), and
+                # a whole-run save from execution - which never knows its
+                # attempt - must not erase it
+                if getattr(run_response, "queue_attempt", None) is None:
+                    run_response.queue_attempt = getattr(existing_run, "queue_attempt", None)
                 self.runs[i] = run_response
                 break
         else:
@@ -113,76 +127,164 @@ class TeamSession:
 
         log_debug("Added RunOutput to Team Session")
 
-    def get_messages_from_last_n_runs(
+    def get_messages(
         self,
-        agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-        last_n: Optional[int] = None,
-        skip_role: Optional[str] = None,
-        skip_status: Optional[List[RunStatus]] = None,
+        member_ids: Optional[List[str]] = None,
+        last_n_runs: Optional[int] = None,
+        limit: Optional[int] = None,
+        skip_roles: Optional[List[str]] = None,
+        skip_statuses: Optional[List[RunStatus]] = None,
         skip_history_messages: bool = True,
-        member_runs: bool = False,
+        skip_member_messages: bool = True,
     ) -> List[Message]:
-        """Returns the messages from the last_n runs, excluding previously tagged history messages.
-        Args:
+        """Returns the messages belonging to the session that fit the given criteria.
 
-            agent_id: The id of the agent to get the messages from.
+        Args:
             team_id: The id of the team to get the messages from.
-            last_n: The number of runs to return from the end of the conversation. Defaults to all runs.
-            skip_role: Skip messages with this role.
-            skip_status: Skip messages with this status.
+            member_ids: The ids of the members to get the messages from.
+            last_n_runs: The number of runs to return messages from, counting from the latest. Defaults to all runs.
+            limit: The number of messages to return, counting from the latest. Defaults to all messages.
+            skip_roles: Skip messages with these roles.
+            skip_statuses: Skip messages with these statuses.
             skip_history_messages: Skip messages that were tagged as history in previous runs.
+            skip_member_messages: Skip messages created by members of the team.
+
         Returns:
-            A list of Messages from the specified runs, excluding history messages.
+            A list of Messages belonging to the session.
         """
+
+        def _should_skip_message(
+            message: Message, skip_roles: Optional[List[str]] = None, skip_history_messages: bool = True
+        ) -> bool:
+            """Processes a message for history"""
+            # Skip messages that were tagged as history in previous runs
+            if hasattr(message, "from_history") and message.from_history and skip_history_messages:
+                return True
+
+            # Skip messages with specified role
+            if skip_roles and message.role in skip_roles:
+                return True
+            return False
+
+        if (member_ids is not None or team_id is not None) and skip_member_messages:
+            log_debug("Member or team IDs to filter by were provided. The skip_member_messages flag will be ignored.")
+            skip_member_messages = False
+
         if not self.runs:
             return []
 
-        if skip_status is None:
-            skip_status = [RunStatus.paused, RunStatus.cancelled, RunStatus.error]
+        if skip_statuses is None:
+            skip_statuses = list(HISTORY_SKIP_STATUSES)
 
         session_runs = self.runs
 
-        # Filter by agent_id and team_id
-        if agent_id:
-            session_runs = [run for run in session_runs if hasattr(run, "agent_id") and run.agent_id == agent_id]  # type: ignore
+        # Filter by team_id and member_ids
         if team_id:
             session_runs = [run for run in session_runs if hasattr(run, "team_id") and run.team_id == team_id]  # type: ignore
+        if member_ids:
+            filtered_runs = []
+            seen_run_ids: set[str] = set()
 
-        if not member_runs:
-            # Filter for the main team runs
+            def _add_if_unseen(run: Union[TeamRunOutput, RunOutput]) -> None:
+                run_id = getattr(run, "run_id", None)
+                if run_id and run_id in seen_run_ids:
+                    return
+                if run_id:
+                    seen_run_ids.add(run_id)
+                filtered_runs.append(run)
+
+            for run in session_runs:
+                if hasattr(run, "agent_id") and run.agent_id in member_ids:  # type: ignore
+                    _add_if_unseen(run)
+                elif hasattr(run, "member_responses"):
+                    for member_run in run.member_responses:
+                        if hasattr(member_run, "agent_id") and member_run.agent_id in member_ids:  # type: ignore
+                            _add_if_unseen(member_run)
+            session_runs = filtered_runs
+
+        if skip_member_messages:
+            # Filter for the top-level runs (main team runs or agent runs when sharing session)
             session_runs = [run for run in session_runs if run.parent_run_id is None]  # type: ignore
-        # Filter by status
-        session_runs = [run for run in session_runs if hasattr(run, "status") and run.status not in skip_status]  # type: ignore
 
-        # Filter by last_n
-        runs_to_process = session_runs[-last_n:] if last_n is not None else session_runs
+        # Filter by status
+        session_runs = [run for run in session_runs if hasattr(run, "status") and run.status not in skip_statuses]  # type: ignore
+
+        # Filter by last_n_runs before applying message limit
+        if last_n_runs is not None:
+            if last_n_runs <= 0:
+                return []
+            session_runs = session_runs[-last_n_runs:]
+
         messages_from_history = []
         system_message = None
 
-        for run_response in runs_to_process:
-            if not (run_response and run_response.messages):
-                continue
-
-            for message in run_response.messages or []:
-                # Skip messages that were tagged as history in previous runs
-                if hasattr(message, "from_history") and message.from_history and skip_history_messages:
+        # Limit the number of messages returned if limit is set
+        if limit is not None:
+            for run_response in session_runs:
+                if not run_response or not run_response.messages:
                     continue
 
-                # Skip messages with specified role
-                if skip_role and message.role == skip_role:
-                    continue
+                for message in run_response.messages or []:
+                    if _should_skip_message(message, skip_roles, skip_history_messages):
+                        continue
 
-                if message.role == "system":
-                    # Only add the system message once
-                    if system_message is None:
-                        system_message = message
-                        messages_from_history.append(system_message)
+                    if message.role == "system":
+                        # Only add the system message once
+                        if system_message is None:
+                            system_message = message
+                    else:
+                        messages_from_history.append(message)
+
+            if system_message:
+                if limit <= 1:
+                    messages_from_history = [system_message]
                 else:
-                    messages_from_history.append(message)
+                    messages_from_history = [system_message] + messages_from_history[
+                        -(limit - 1) :
+                    ]  # Grab one less message then add the system message
+            else:
+                if limit <= 0:
+                    messages_from_history = []
+                else:
+                    messages_from_history = messages_from_history[-limit:]
+
+            # Remove tool result messages that don't have an associated assistant message with tool calls
+            while len(messages_from_history) > 0 and messages_from_history[0].role == "tool":
+                messages_from_history.pop(0)
+        else:
+            for run_response in session_runs:
+                if not (run_response and run_response.messages):
+                    continue
+
+                for message in run_response.messages or []:
+                    if _should_skip_message(message, skip_roles, skip_history_messages):
+                        continue
+
+                    if message.role == "system":
+                        # Only add the system message once
+                        if system_message is None:
+                            system_message = message
+                            messages_from_history.append(system_message)
+                    else:
+                        messages_from_history.append(message)
 
         log_debug(f"Getting messages from previous runs: {len(messages_from_history)}")
         return messages_from_history
+
+    def get_chat_history(self, last_n_runs: Optional[int] = None) -> List[Message]:
+        """Return the chat history (user and assistant messages) for the session.
+        Use get_messages() for more filtering options.
+
+        Args:
+            last_n_runs: Number of recent runs to include. If None, all runs will be considered.
+
+        Returns:
+            A list of user and assistant Messages belonging to the session.
+        """
+        return self.get_messages(
+            skip_roles=["system", "tool"], skip_member_messages=True, skip_statuses=[], last_n_runs=last_n_runs
+        )
 
     def get_tool_calls(self, num_calls: Optional[int] = None) -> List[Dict[str, Any]]:
         """Returns a list of tool calls from the messages"""
@@ -202,53 +304,17 @@ class TeamSession:
                                 return tool_calls
         return tool_calls
 
-    def get_messages_for_session(
-        self,
-        user_role: str = "user",
-        assistant_role: Optional[List[str]] = None,
-        skip_history_messages: bool = True,
-    ) -> List[Message]:
-        """Returns a list of messages for the session that iterate through user message and assistant response."""
+    def get_team_history(self, team_id: Optional[str] = None, num_runs: Optional[int] = None) -> List[Tuple[str, str]]:
+        """Get team history as structured data (input, response pairs).
 
-        if assistant_role is None:
-            # TODO: Check if we still need CHATBOT as a role
-            assistant_role = ["assistant", "model", "CHATBOT"]
-
-        final_messages: List[Message] = []
-        session_runs = self.runs
-        if session_runs is None:
-            return []
-
-        for run_response in session_runs:
-            if run_response and run_response.messages:
-                user_message_from_run = None
-                assistant_message_from_run = None
-
-                # Start from the beginning to look for the user message
-                for message in run_response.messages or []:
-                    if hasattr(message, "from_history") and message.from_history and skip_history_messages:
-                        continue
-                    if message.role == user_role:
-                        user_message_from_run = message
-                        break
-
-                # Start from the end to look for the assistant response
-                for message in run_response.messages[::-1]:
-                    if hasattr(message, "from_history") and message.from_history and skip_history_messages:
-                        continue
-                    if message.role in assistant_role:
-                        assistant_message_from_run = message
-                        break
-
-                if user_message_from_run and assistant_message_from_run:
-                    final_messages.append(user_message_from_run)
-                    final_messages.append(assistant_message_from_run)
-        return final_messages
-
-    def get_team_history(self, num_runs: Optional[int] = None) -> List[Tuple[str, str]]:
-        """Get team history as structured data (input, response pairs) -> This is the history of the team leader, not the members.
+        When called without ``team_id``, returns only top-level team runs
+        (those with ``parent_run_id is None``) — i.e. the team leader's own
+        history.  When *team_id* is provided, returns runs belonging to that
+        specific team regardless of nesting depth, which is useful for
+        retrieving a sub-team's history from a shared session.
 
         Args:
+            team_id: If provided, filter runs to this specific team.
             num_runs: Number of recent runs to include. If None, returns all available history.
         """
         if not self.runs:
@@ -257,9 +323,20 @@ class TeamSession:
         from agno.run.base import RunStatus
 
         # Get completed runs only (exclude current/pending run)
-        completed_runs = [run for run in self.runs if run.status == RunStatus.completed and run.parent_run_id is None]
+        if team_id is not None:
+            completed_runs = [
+                run
+                for run in self.runs
+                if run.status == RunStatus.completed and getattr(run, "team_id", None) == team_id
+            ]
+        else:
+            completed_runs = [
+                run for run in self.runs if run.status == RunStatus.completed and run.parent_run_id is None
+            ]
 
-        if num_runs is not None and len(completed_runs) > num_runs:
+        if num_runs is not None:
+            if num_runs <= 0:
+                return []
             recent_runs = completed_runs[-num_runs:]
         else:
             recent_runs = completed_runs
@@ -288,13 +365,14 @@ class TeamSession:
 
         return history_data
 
-    def get_team_history_context(self, num_runs: Optional[int] = None) -> Optional[str]:
-        """Get formatted team history context for steps
+    def get_team_history_context(self, team_id: Optional[str] = None, num_runs: Optional[int] = None) -> Optional[str]:
+        """Get formatted team history context for steps.
 
         Args:
+            team_id: If provided, return history for this specific team.
             num_runs: Number of recent runs to include. If None, returns all available history.
         """
-        history_data = self.get_team_history(num_runs)
+        history_data = self.get_team_history(team_id=team_id, num_runs=num_runs)
 
         if not history_data:
             return None
@@ -324,30 +402,3 @@ class TeamSession:
             return None
 
         return self.summary  # type: ignore
-
-    # Chat History functions
-    def get_chat_history(
-        self, skip_history_messages: bool = True, skip_roles: Optional[List[str]] = None
-    ) -> List[Message]:
-        """
-        Get the chat history for the session.
-        This is all messages across all runs for the team leader.
-        """
-
-        messages = []
-        if self.runs is None:
-            return []
-
-        for run in self.runs or []:
-            if run.parent_run_id is not None:
-                continue
-
-            if run.messages is not None:
-                for msg in run.messages or []:
-                    if skip_history_messages and msg.from_history:
-                        continue
-                    if skip_roles and msg.role in skip_roles:
-                        continue
-                    messages.append(msg)
-
-        return messages

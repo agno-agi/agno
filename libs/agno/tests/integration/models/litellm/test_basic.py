@@ -101,7 +101,7 @@ def test_with_memory():
     assert "John Smith" in response2.content
 
     # Verify memories were created
-    messages = agent.get_messages_for_session()
+    messages = agent.get_session_messages()
     assert len(messages) == 5
     assert [m.role for m in messages] == ["system", "user", "assistant", "user", "assistant"]
 
@@ -130,11 +130,34 @@ def test_output_schema():
     assert response.content.plot is not None
 
 
+def test_output_schema_native():
+    class MovieScript(BaseModel):
+        title: str = Field(..., description="Movie title")
+        genre: str = Field(..., description="Movie genre")
+        plot: str = Field(..., description="Brief plot summary")
+
+    agent = Agent(
+        model=LiteLLM(id="gpt-4o", supports_native_structured_outputs=True),
+        telemetry=False,
+        output_schema=MovieScript,
+        structured_outputs=True,
+    )
+
+    response = agent.run("Create a movie about time travel")
+
+    # Verify native structured output (response_format forwarded to the provider)
+    assert isinstance(response.content, MovieScript)
+    assert response.content.title is not None
+    assert response.content.genre is not None
+    assert response.content.plot is not None
+
+
 def test_history():
     agent = Agent(
         model=LiteLLM(id="gpt-4o"),
         db=SqliteDb(db_file="tmp/litellm/test_basic.db"),
         add_history_to_context=True,
+        store_history_messages=True,
         telemetry=False,
     )
     run_output = agent.run("Hello")
@@ -149,3 +172,36 @@ def test_history():
     run_output = agent.run("Hello 4")
     assert run_output.messages is not None
     assert len(run_output.messages) == 8
+
+
+def test_count_tokens():
+    from agno.models.message import Message
+
+    model = LiteLLM(id="gpt-4o")
+    messages = [
+        Message(role="user", content="Hello world, this is a test message for token counting"),
+    ]
+
+    tokens = model.count_tokens(messages)
+
+    assert isinstance(tokens, int)
+    assert tokens > 0
+    assert tokens < 100
+
+
+def test_count_tokens_with_tools():
+    from agno.models.message import Message
+    from agno.tools.calculator import CalculatorTools
+
+    model = LiteLLM(id="gpt-4o")
+    messages = [
+        Message(role="user", content="What is 2 + 2?"),
+    ]
+
+    calculator = CalculatorTools()
+
+    tokens_without_tools = model.count_tokens(messages)
+    tokens_with_tools = model.count_tokens(messages, tools=list(calculator.functions.values()))
+
+    assert isinstance(tokens_with_tools, int)
+    assert tokens_with_tools > tokens_without_tools, "Token count with tools should be higher"

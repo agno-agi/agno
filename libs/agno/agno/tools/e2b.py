@@ -13,7 +13,7 @@ from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
 from agno.utils.code_execution import prepare_python_code
-from agno.utils.log import logger
+from agno.utils.log import log_error, logger
 
 try:
     from e2b_code_interpreter import Sandbox
@@ -48,7 +48,7 @@ class E2BTools(Toolkit):
         try:
             self.sandbox = Sandbox.create(api_key=self.api_key, timeout=timeout, **self.sandbox_options)
         except Exception as e:
-            logger.error(f"Warning: Could not create sandbox: {e}")
+            logger.exception("Warning: Could not create sandbox")
             raise e
 
         # Last execution result for reference
@@ -202,13 +202,10 @@ class E2BTools(Toolkit):
             with fdopen(fd, "wb") as tmp:
                 tmp.write(png_data)
 
-            # Generate a file:// URL for the temp file
-            file_url = f"file://{temp_path}"
-
-            # Create Image object
+            # A local path belongs in filepath, not a file:// url: url is fetched over http(s).
             image_id = str(uuid4())
             image_artifact = Image(
-                id=image_id, url=file_url, original_prompt=f"Generated from code execution result {result_index}"
+                id=image_id, filepath=temp_path, original_prompt=f"Generated from code execution result {result_index}"
             )
 
             if output_path:
@@ -289,13 +286,12 @@ class E2BTools(Toolkit):
                 with os.fdopen(fd, "wb") as tmp:
                     tmp.write(png_data)
 
-                # Generate a file:// URL for the temp file
-                file_url = f"file://{temp_path}"
-
-                # Create Image object
+                # A local path belongs in filepath, not a file:// url: url is fetched over http(s).
                 image_id = str(uuid4())
                 image_artifact = Image(
-                    id=image_id, url=file_url, original_prompt=f"Interactive {chart_type} chart from code execution"
+                    id=image_id,
+                    filepath=temp_path,
+                    original_prompt=f"Interactive {chart_type} chart from code execution",
                 )
 
                 summary += f"\nChart image added as artifact with ID {image_id}"
@@ -402,7 +398,7 @@ class E2BTools(Toolkit):
 
         def stderr_callback(data):
             outputs.append(f"STDERR: {data}")
-            logger.error(f"STDERR: {data}")
+            log_error(f"STDERR: {data}")
 
         try:
             self.run_command(command, on_stdout=stdout_callback, on_stderr=stderr_callback)

@@ -1,17 +1,20 @@
 import json
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from os import getenv
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Type, Union
 
 from pydantic import BaseModel
 
-from agno.exceptions import AgnoError, ModelProviderError
+from agno.exceptions import ModelProviderError
+from agno.metrics import MessageMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.models.claude import supports_prefill
+from agno.utils.tokens import count_schema_tokens
 
 try:
     from boto3 import client as AwsClient
@@ -46,8 +49,8 @@ class AwsBedrock(Model):
        - AWS_REGION
     2. Or provide a boto3 Session object
 
-    For async support, you also need aioboto3 installed:
-       pip install aioboto3
+    For async support, install aioboto3 (`pip install aioboto3`), or supply an already-entered
+    async_client.
 
     Not all Bedrock models support all features. See this documentation for more information: https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-supported-models-features.html
 
@@ -57,6 +60,8 @@ class AwsBedrock(Model):
         aws_secret_access_key (Optional[str]): The AWS secret access key to use.
         aws_sso_auth (Optional[str]): Removes the need for an access and secret access key by leveraging the current profile's authentication
         session (Optional[Session]): A boto3 Session object to use for authentication.
+        async_client (Optional[Any]): An initialized async Bedrock client (e.g. an aioboto3 client that has already
+            been entered). Its lifecycle stays with the caller: it is used as-is and never closed by this model.
     """
 
     id: str = "mistral.mistral-small-2402-v1:0"
@@ -67,6 +72,7 @@ class AwsBedrock(Model):
     aws_region: Optional[str] = None
     aws_access_key_id: Optional[str] = None
     aws_secret_access_key: Optional[str] = None
+    aws_session_token: Optional[str] = None
     session: Optional[Session] = None
 
     # Request parameters
@@ -75,10 +81,47 @@ class AwsBedrock(Model):
     top_p: Optional[float] = None
     stop_sequences: Optional[List[str]] = None
     request_params: Optional[Dict[str, Any]] = None
+    append_trailing_user_message: Optional[bool] = None
+    trailing_user_message_content: str = "continue"
 
     client: Optional[AwsClient] = None
     async_client: Optional[Any] = None
     async_session: Optional[Any] = None
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.append_trailing_user_message is None:
+            self.append_trailing_user_message = not supports_prefill(self.id)
+        if self.async_client is not None:
+            self._check_async_client(self.async_client)
+
+    @staticmethod
+    def _check_async_client(client: Any) -> None:
+        """
+        Reject `async_client` objects that are known to be unusable: one with no `converse`, or a
+        sync boto3 client. Best-effort — an object with a sync `converse` still passes here and fails
+        at call time.
+
+        botocore generates `converse` as a plain function on both its sync and async clients, so the
+        sync client is recognised by its packages rather than by inspecting the method.
+        """
+        if not hasattr(client, "converse"):
+            message = (
+                f"`async_client` must be an initialized async Bedrock client, got {type(client).__name__} "
+                "with no `converse` method."
+            )
+            if hasattr(client, "__aenter__"):
+                message += (
+                    " Enter it first, e.g. `client = await AsyncExitStack().enter_async_context("
+                    "aioboto3.Session().client('bedrock-runtime'))`."
+                )
+            raise ValueError(message)
+        packages = {cls.__module__.split(".")[0] for cls in type(client).__mro__}
+        if "botocore" in packages and "aiobotocore" not in packages:
+            raise ValueError(
+                "`async_client` must be an initialized async Bedrock client, got a sync boto3 client "
+                f"({type(client).__name__}). Pass it as `client=` instead, or supply an aiobotocore client."
+            )
 
     def get_client(self) -> AwsClient:
         """
@@ -87,24 +130,30 @@ class AwsBedrock(Model):
         Returns:
             AwsClient: The Bedrock client.
         """
-        if self.client is not None:
+        # When using a boto3 session, always recreate the client so
+        # session credentials can be refreshed (IAM roles, EKS, STS).
+        if not self.session and self.client is not None:
             return self.client
 
+        # Return directly (not via self.client) so concurrent callers
+        # on the same model instance each get their own client.
         if self.session:
-            self.client = self.session.client("bedrock-runtime")
-            return self.client
+            return self.session.client(
+                "bedrock-runtime",
+                region_name=self.aws_region or self.session.region_name,
+            )
 
         self.aws_access_key_id = self.aws_access_key_id or getenv("AWS_ACCESS_KEY_ID")
         self.aws_secret_access_key = self.aws_secret_access_key or getenv("AWS_SECRET_ACCESS_KEY")
+        self.aws_session_token = self.aws_session_token or getenv("AWS_SESSION_TOKEN")
         self.aws_region = self.aws_region or getenv("AWS_REGION")
 
         if self.aws_sso_auth:
             self.client = AwsClient(service_name="bedrock-runtime", region_name=self.aws_region)
         else:
             if not self.aws_access_key_id or not self.aws_secret_access_key:
-                raise AgnoError(
-                    message="AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session.",
-                    status_code=400,
+                log_error(
+                    "AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session."
                 )
 
             self.client = AwsClient(
@@ -112,29 +161,55 @@ class AwsBedrock(Model):
                 region_name=self.aws_region,
                 aws_access_key_id=self.aws_access_key_id,
                 aws_secret_access_key=self.aws_secret_access_key,
+                aws_session_token=self.aws_session_token,
             )
         return self.client
 
     def get_async_client(self):
         """
-        Get the async Bedrock client context manager.
+        Create an async Bedrock client context manager owned by this model.
+
+        This always builds a new client from this model's credentials; it does not consider a
+        caller-supplied `async_client`. Run requests through `_async_client()`, which prefers an
+        injected client and owns the lifecycle difference between the two.
 
         Returns:
-            The async Bedrock client context manager.
+            An async Bedrock client context manager, to be entered and closed by the caller.
         """
         if not AIOBOTO3_AVAILABLE:
             raise ImportError(
-                "`aioboto3` not installed. Please install using `pip install aioboto3` for async support."
+                "`aioboto3` not installed. Please install using `pip install aioboto3` or supply your own configured async_client."
             )
+
+        # When using a boto3 session, create the aioboto3 session from it
+        # so that session credentials (IAM roles, EKS, STS) are respected.
+        if self.session:
+            credentials = self.session.get_credentials()
+            if credentials is None:
+                raise ValueError(
+                    "boto3 session has no credentials. Check your AWS configuration "
+                    "(environment variables, config files, IAM role, etc.)."
+                )
+            # Use local variables (not self.async_session) so concurrent
+            # callers each get their own session and client.
+            frozen = credentials.get_frozen_credentials()
+            async_session = aioboto3.Session(
+                aws_access_key_id=frozen.access_key,
+                aws_secret_access_key=frozen.secret_key,
+                aws_session_token=frozen.token,
+                region_name=self.aws_region or self.session.region_name,
+            )
+            return async_session.client("bedrock-runtime")
 
         if self.async_session is None:
             self.aws_access_key_id = self.aws_access_key_id or getenv("AWS_ACCESS_KEY_ID")
             self.aws_secret_access_key = self.aws_secret_access_key or getenv("AWS_SECRET_ACCESS_KEY")
+            self.aws_session_token = self.aws_session_token or getenv("AWS_SESSION_TOKEN")
             self.aws_region = self.aws_region or getenv("AWS_REGION")
 
             self.async_session = aioboto3.Session()
 
-        client_kwargs = {
+        client_kwargs: Dict[str, Any] = {
             "service_name": "bedrock-runtime",
             "region_name": self.aws_region,
         }
@@ -147,24 +222,61 @@ class AwsBedrock(Model):
 
                 env_access_key = os.environ.get("AWS_ACCESS_KEY_ID")
                 env_secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
+                env_session_token = os.environ.get("AWS_SESSION_TOKEN")
                 env_region = os.environ.get("AWS_REGION")
 
                 if env_access_key and env_secret_key:
                     self.aws_access_key_id = env_access_key
                     self.aws_secret_access_key = env_secret_key
+                    self.aws_session_token = env_session_token
                     if env_region:
                         self.aws_region = env_region
                         client_kwargs["region_name"] = self.aws_region
 
             if self.aws_access_key_id and self.aws_secret_access_key:
-                client_kwargs.update(
-                    {
-                        "aws_access_key_id": self.aws_access_key_id,
-                        "aws_secret_access_key": self.aws_secret_access_key,
-                    }
-                )
+                client_kwargs["aws_access_key_id"] = self.aws_access_key_id
+                client_kwargs["aws_secret_access_key"] = self.aws_secret_access_key
+                if self.aws_session_token:
+                    client_kwargs["aws_session_token"] = self.aws_session_token
 
         return self.async_session.client(**client_kwargs)
+
+    @asynccontextmanager
+    async def _async_client(self) -> AsyncIterator[Any]:
+        """
+        Yield an async Bedrock client to run a single request against.
+
+        A caller-supplied `async_client` is owned by the caller: it is yielded as-is and never entered
+        or closed, so it stays usable across requests and does not need to implement the async context
+        manager protocol. Otherwise a client is created for this request, then entered and closed.
+        """
+        if self.async_client is not None:
+            self._check_async_client(self.async_client)
+            yield self.async_client
+            return
+
+        async with self.get_async_client() as client:
+            yield client
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert the model to a dictionary.
+
+        Returns:
+            Dict[str, Any]: The dictionary representation of the model.
+        """
+        model_dict = super().to_dict()
+        model_dict.update(
+            {
+                "aws_region": self.aws_region,
+                "max_tokens": self.max_tokens,
+                "temperature": self.temperature,
+                "top_p": self.top_p,
+                "stop_sequences": self.stop_sequences,
+            }
+        )
+        cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
+        return cleaned_dict
 
     def _format_tools_for_request(self, tools: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
         """
@@ -219,21 +331,47 @@ class AwsBedrock(Model):
 
         return {k: v for k, v in request_kwargs.items() if v is not None}
 
-    def _format_messages(self, messages: List[Message]) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
+    def _format_messages(
+        self, messages: List[Message], compress_tool_results: bool = False
+    ) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
         """
         Format the messages for the request.
+
+        Args:
+            messages: List of messages to format
+            compress_tool_results: Whether to compress tool results
 
         Returns:
             Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]: The formatted messages.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        # Backwards compat: expand old Gemini combined tool messages into individual canonical messages
+        messages = normalize_tool_messages(messages)
+
         formatted_messages: List[Dict[str, Any]] = []
         system_message = None
         for message in messages:
             if message.role == "system":
                 system_message = [{"text": message.content}]
+            elif message.role == "tool":
+                content = message.get_content(use_compressed_content=compress_tool_results)
+                tool_result = {
+                    "toolUseId": message.tool_call_id,
+                    "content": [{"json": {"result": content}}],
+                }
+                if (
+                    formatted_messages
+                    and formatted_messages[-1]["role"] == "user"
+                    and formatted_messages[-1]["content"]
+                    and "toolResult" in formatted_messages[-1]["content"][0]
+                ):
+                    formatted_messages[-1]["content"].append({"toolResult": tool_result})
+                else:
+                    formatted_message: Dict[str, Any] = {"role": "user", "content": [{"toolResult": tool_result}]}
+                    formatted_messages.append(formatted_message)
             else:
-                formatted_message: Dict[str, Any] = {"role": message.role, "content": []}
-                # Handle tool results
+                formatted_message = {"role": message.role, "content": []}
                 if isinstance(message.content, list):
                     formatted_message["content"].extend(message.content)
                 elif message.tool_calls:
@@ -247,7 +385,7 @@ class AwsBedrock(Model):
                             else:
                                 tool_input = json.loads(arguments)
                         except (json.JSONDecodeError, KeyError) as e:
-                            log_warning(f"Failed to parse tool call arguments: {e}")
+                            log_warning(f"Failed to parse tool call arguments: {str(e)}")
                             tool_input = {}
 
                         tool_use_content.append(
@@ -341,8 +479,74 @@ class AwsBedrock(Model):
                         )
 
                 formatted_messages.append(formatted_message)
+
+        # Claude 4.6+ models do not support assistant message prefill.
+        # Append a trailing user turn so the request ends with a user message.
+        if self.append_trailing_user_message and formatted_messages and formatted_messages[-1]["role"] == "assistant":
+            log_info("Appending trailing user message because this model does not support assistant message prefill")
+            formatted_messages.append({"role": "user", "content": [{"text": self.trailing_user_message_content}]})
+
         # TODO: Add caching: https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-call.html
         return formatted_messages, system_message
+
+    def count_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> int:
+        try:
+            formatted_messages, system_message = self._format_messages(messages, compress_tool_results=True)
+            converse_input: Dict[str, Any] = {"messages": formatted_messages}
+            if system_message:
+                converse_input["system"] = system_message
+
+            response = self.get_client().count_tokens(modelId=self.id, input={"converse": converse_input})
+            tokens = response.get("inputTokens", 0)
+
+            # Count tool tokens
+            if tools:
+                from agno.utils.tokens import count_tool_tokens
+
+                tokens += count_tool_tokens(tools, self.id)
+
+            # Count schema tokens
+            tokens += count_schema_tokens(output_schema, self.id)
+
+            return tokens
+        except Exception as e:
+            log_warning(f"Failed to count tokens via Bedrock API: {str(e)}")
+            return super().count_tokens(messages, tools, output_schema)
+
+    async def acount_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> int:
+        try:
+            formatted_messages, system_message = self._format_messages(messages, compress_tool_results=True)
+            converse_input: Dict[str, Any] = {"messages": formatted_messages}
+            if system_message:
+                converse_input["system"] = system_message
+
+            async with self._async_client() as client:
+                response = await client.count_tokens(modelId=self.id, input={"converse": converse_input})
+            tokens = response.get("inputTokens", 0)
+
+            # Count tool tokens
+            if tools:
+                from agno.utils.tokens import count_tool_tokens
+
+                tokens += count_tool_tokens(tools, self.id)
+
+            # Count schema tokens
+            tokens += count_schema_tokens(output_schema, self.id)
+
+            return tokens
+        except Exception as e:
+            log_warning(f"Failed to count tokens via Bedrock API: {str(e)}")
+            return await super().acount_tokens(messages, tools, output_schema)
 
     def invoke(
         self,
@@ -352,12 +556,13 @@ class AwsBedrock(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Invoke the Bedrock API.
         """
         try:
-            formatted_messages, system_message = self._format_messages(messages)
+            formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
             tool_config = None
             if tools:
@@ -373,9 +578,6 @@ class AwsBedrock(Model):
             if self.request_params:
                 log_debug(f"Calling {self.provider} with request parameters: {self.request_params}", log_level=2)
                 body.update(**self.request_params)
-
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
 
             assistant_message.metrics.start_timer()
             response = self.get_client().converse(modelId=self.id, messages=formatted_messages, **body)
@@ -400,12 +602,13 @@ class AwsBedrock(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> Iterator[ModelResponse]:
         """
         Invoke the Bedrock API with streaming.
         """
         try:
-            formatted_messages, system_message = self._format_messages(messages)
+            formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
             tool_config = None
             if tools:
@@ -420,9 +623,6 @@ class AwsBedrock(Model):
 
             if self.request_params:
                 body.update(**self.request_params)
-
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
 
             assistant_message.metrics.start_timer()
 
@@ -452,12 +652,13 @@ class AwsBedrock(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Async invoke the Bedrock API.
         """
         try:
-            formatted_messages, system_message = self._format_messages(messages)
+            formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
             tool_config = None
             if tools:
@@ -474,12 +675,9 @@ class AwsBedrock(Model):
                 log_debug(f"Calling {self.provider} with request parameters: {self.request_params}", log_level=2)
                 body.update(**self.request_params)
 
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
 
-            async with self.get_async_client() as client:
+            async with self._async_client() as client:
                 response = await client.converse(modelId=self.id, messages=formatted_messages, **body)
 
             assistant_message.metrics.stop_timer()
@@ -503,12 +701,13 @@ class AwsBedrock(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
         Async invoke the Bedrock API with streaming.
         """
         try:
-            formatted_messages, system_message = self._format_messages(messages)
+            formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
             tool_config = None
             if tools:
@@ -524,15 +723,12 @@ class AwsBedrock(Model):
             if self.request_params:
                 body.update(**self.request_params)
 
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
 
             # Track current tool being built across chunks
             current_tool: Dict[str, Any] = {}
 
-            async with self.get_async_client() as client:
+            async with self._async_client() as client:
                 response = await client.converse_stream(modelId=self.id, messages=formatted_messages, **body)
                 async for chunk in response["stream"]:
                     model_response, current_tool = self._parse_provider_response_delta(chunk, current_tool)
@@ -549,30 +745,34 @@ class AwsBedrock(Model):
 
     # Overwrite the default from the base model
     def format_function_call_results(
-        self, messages: List[Message], function_call_results: List[Message], **kwargs
+        self,
+        messages: List[Message],
+        function_call_results: List[Message],
+        compress_tool_results: bool = False,
+        **kwargs,
     ) -> None:
         """
-        Handle the results of function calls.
+        Handle the results of function calls for Bedrock.
+        Uses compressed_content if compress_tool_results is True.
 
         Args:
             messages (List[Message]): The list of conversation messages.
             function_call_results (List[Message]): The results of the function calls.
+            compress_tool_results: Whether to compress tool results.
             **kwargs: Additional arguments including tool_ids.
         """
+
         if function_call_results:
             tool_ids = kwargs.get("tool_ids", [])
-            tool_result_content: List = []
 
             for _fc_message_index, _fc_message in enumerate(function_call_results):
                 # Use tool_call_id from message if tool_ids list is insufficient
                 tool_id = tool_ids[_fc_message_index] if _fc_message_index < len(tool_ids) else _fc_message.tool_call_id
-                tool_result = {
-                    "toolUseId": tool_id,
-                    "content": [{"json": {"result": _fc_message.content}}],
-                }
-                tool_result_content.append({"toolResult": tool_result})
+                if not _fc_message.tool_call_id:
+                    _fc_message.tool_call_id = tool_id
 
-            messages.append(Message(role="user", content=tool_result_content))
+                # Append as standard role="tool" message
+                messages.append(_fc_message)
 
     def _parse_provider_response(self, response: Dict[str, Any], **kwargs) -> ModelResponse:
         """
@@ -682,20 +882,23 @@ class AwsBedrock(Model):
 
         return model_response, current_tool
 
-    def _get_metrics(self, response_usage: Dict[str, Any]) -> Metrics:
+    def _get_metrics(self, response_usage: Dict[str, Any]) -> MessageMetrics:
         """
-        Parse the given AWS Bedrock usage into an Agno Metrics object.
+        Parse the given AWS Bedrock usage into an Agno MessageMetrics object.
 
         Args:
             response_usage: Usage data from AWS Bedrock
 
         Returns:
-            Metrics: Parsed metrics data
+            MessageMetrics: Parsed metrics data
         """
-        metrics = Metrics()
+        metrics = MessageMetrics()
 
         metrics.input_tokens = response_usage.get("inputTokens", 0) or 0
         metrics.output_tokens = response_usage.get("outputTokens", 0) or 0
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
+
+        metrics.cache_read_tokens = response_usage.get("cacheReadInputTokens", 0) or 0
+        metrics.cache_write_tokens = response_usage.get("cacheWriteInputTokens", 0) or 0
 
         return metrics

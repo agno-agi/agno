@@ -1,0 +1,849 @@
+"""DbFileSystem: the database backend for FileSystem (Postgres + SQLite)."""
+
+import asyncio
+import threading
+import time
+from contextlib import contextmanager
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Set, Tuple
+from weakref import WeakKeyDictionary
+
+from agno.fs._paths import build_chunk, path_sort_key
+from agno.fs.base import BaseFS, _build_match
+from agno.fs.errors import QuotaExceededError, SchemaOutdatedError, VersionConflictError
+from agno.fs.types import FileData, FileMeta, NamespaceUsage, SearchMatch
+from agno.utils.log import log_debug, log_info, log_warning
+
+try:
+    from sqlalchemy import (
+        BigInteger,
+        Column,
+        MetaData,
+        PrimaryKeyConstraint,
+        String,
+        Table,
+        Text,
+        and_,
+        case,
+        delete,
+        func,
+        literal,
+        or_,
+        true,
+        update,
+    )
+    from sqlalchemy import inspect as sa_inspect
+    from sqlalchemy import text as sql_text
+    from sqlalchemy.engine import Engine, create_engine, make_url
+    from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
+    from sqlalchemy.schema import CreateTable
+    from sqlalchemy.sql import select
+except ImportError:
+    raise ImportError("`sqlalchemy` not installed. Please install it using `pip install 'agno[sql]'`")
+
+if TYPE_CHECKING:
+    from agno.db.base import BaseDb
+
+SUPPORTED_DIALECTS = ("postgresql", "sqlite")
+
+DEFAULT_DB_SCHEMA = "fs"
+"""Database schema for the agent's files, separate from agno's platform schema.
+
+The filesystem is a tool component, not platform state that AgentOS reads back
+(§D4), so it gets its own schema rather than sharing `ai` with sessions, memory
+and evals. That keeps the boundary visible in the database, lets you inspect,
+back up or drop the agent's files on their own, and keeps this table out of any
+future rename of the platform schema. Passing an agno `db` still means one
+database and one connection; the schema is just organization inside it. Override
+with `db_schema=`. Backends that have no schemas ignore it, as SQLite does.
+"""
+
+
+class DbFileSystem(BaseFS):
+    """Database-backed file storage: one row per ``(namespace, user_id, path)``.
+
+    ``user_id`` is the user partition: ``""`` for the shared partition, a user's
+    id for their own. Every statement filters on it, so a partition is invisible
+    from any other.
+
+    Safe for multi-worker deployments, since all coordination happens in the
+    database: writes are atomic upserts (last-writer-wins, or CAS via
+    ``expected_version``), appends serialize on the row lock behind a guarded
+    upsert that enforces the per-file cap in the same statement, and moves are
+    a single UPDATE. SQLite is for dev, Postgres for production.
+    """
+
+    def __init__(
+        self,
+        db: Optional["BaseDb"] = None,
+        db_url: Optional[str] = None,
+        db_engine: Optional[Engine] = None,
+        *,
+        table_name: str = "agno_fs",
+        db_schema: Optional[str] = DEFAULT_DB_SCHEMA,
+    ) -> None:
+        provided = [source for source in (db, db_url, db_engine) if source is not None]
+        if len(provided) != 1:
+            raise ValueError("Provide exactly one of db, db_url, or db_engine")
+        self.db = db
+        if db is not None:
+            # Reuse the engine of an agno db the caller already configured, so the
+            # agent's files live beside its sessions and memory with one connection
+            # setup. Only the engine is borrowed; the files get their own schema
+            # (DEFAULT_DB_SCHEMA); nothing is added to the BaseDb contract. Not every
+            # agno db is SQL-backed (Mongo, Redis, DynamoDb, ... have no engine), so
+            # fail with a clear message rather than an AttributeError.
+            borrowed = getattr(db, "db_engine", None)
+            if not isinstance(borrowed, Engine):
+                # An async agno db (AsyncPostgresDb) HAS a db_engine, so a bare
+                # hasattr check accepts it and the first operation dies inside
+                # `with self.db_engine.begin()`. Name the problem here instead.
+                detail = "an async engine; DbFileSystem is sync" if borrowed is not None else "no db_engine"
+                raise ValueError(
+                    f"DbFileSystem needs a SQL-backed sync agno db, got {type(db).__name__} ({detail}). "
+                    "Use SqliteDb or PostgresDb, or pass db_url/db_engine directly."
+                )
+            self.db_engine: Engine = borrowed
+        elif db_engine is not None:
+            self.db_engine = db_engine
+        else:
+            url = make_url(db_url)  # type: ignore[arg-type]
+            backend_name = url.get_backend_name()
+            if backend_name not in SUPPORTED_DIALECTS:
+                raise ValueError(
+                    f"DbFileSystem supports dialects {SUPPORTED_DIALECTS}, got {backend_name!r}. "
+                    "Use a postgresql or sqlite db_url/db_engine."
+                )
+            # Create the parent directory for a sqlite file path, since sqlite will not
+            # create it and errors on connect. Matches SqliteDb (db/sqlite/sqlite.py),
+            # so a `sqlite:///tmp/x.db` url just works without the caller pre-making tmp/.
+            if backend_name == "sqlite" and url.database and url.database != ":memory:":
+                Path(url.database).resolve().parent.mkdir(parents=True, exist_ok=True)
+            self.db_engine = create_engine(db_url)  # type: ignore[arg-type]
+        self.dialect: str = self.db_engine.dialect.name
+        if self.dialect not in SUPPORTED_DIALECTS:
+            raise ValueError(
+                f"DbFileSystem supports dialects {SUPPORTED_DIALECTS}, got {self.dialect!r}. "
+                "Use a postgresql or sqlite db_url/db_engine."
+            )
+        if self.dialect == "sqlite":
+            import sqlite3
+
+            # The guarded append and CAS write detect outcomes via RETURNING,
+            # which SQLite added in 3.35.0. Fail with a clear message instead
+            # of an opaque CompileError on first write.
+            if sqlite3.sqlite_version_info < (3, 35, 0):
+                raise ValueError(
+                    f"DbFileSystem requires SQLite >= 3.35.0 (RETURNING support); found {sqlite3.sqlite_version}."
+                )
+        self.table_name = table_name
+        self.db_schema = db_schema if self.dialect == "postgresql" else None
+        self.metadata = MetaData(schema=self.db_schema)
+        self.table = Table(
+            self.table_name,
+            self.metadata,
+            Column("namespace", String, nullable=False),
+            Column("path", String, nullable=False),
+            Column("content", Text, nullable=False),
+            Column("size_bytes", BigInteger, nullable=False),
+            Column("version", BigInteger, nullable=False),
+            Column("created_at", BigInteger, nullable=False),
+            Column("updated_at", BigInteger, nullable=True),
+            # The user partition. "" is the shared partition; a bound user's files
+            # carry their id. Part of the key, so two users can hold the same path.
+            Column("user_id", String, nullable=False, server_default=""),
+            PrimaryKeyConstraint("namespace", "user_id", "path", name=f"pk_{self.table_name}"),
+        )
+        self._table_ready = False
+        self._table_lock = threading.Lock()
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    @property
+    def _bind(self) -> Any:
+        return getattr(self, "_bound_connection", None) or self.db_engine
+
+    @contextmanager
+    def _connection(self):
+        connection = getattr(self, "_bound_connection", None)
+        if connection is not None:
+            with connection.begin_nested():
+                yield connection
+        else:
+            with self.db_engine.begin() as connection:
+                yield connection
+
+    def _ensure_table(self) -> None:
+        if self._table_ready:
+            return
+        with self._table_lock:
+            if self._table_ready:
+                return
+            # CREATE SCHEMA IF NOT EXISTS and checkfirst are both check-then-create,
+            # so instances in other threads, workers, or processes can race them on
+            # first use. Losing the race is fine: verify the table exists and move on.
+            try:
+                # Only attempt CREATE SCHEMA when the schema is actually missing, and
+                # never let it be fatal. Postgres checks CREATE-on-database privilege
+                # before the IF NOT EXISTS check, so a least-privilege role that can
+                # create tables inside an existing schema but lacks database-wide
+                # CREATE would fail here with "permission denied for database", which
+                # points at the wrong thing. Warn and let create_all decide, which is
+                # what PostgresDb does (db/postgres/utils.py:71-75).
+                if self.db_schema is not None and not sa_inspect(self._bind).has_schema(self.db_schema):
+                    try:
+                        with self._connection() as conn:
+                            conn.execute(sql_text(f'CREATE SCHEMA IF NOT EXISTS "{self.db_schema}"'))
+                    except Exception as e:
+                        log_warning(f"Could not create schema {self.db_schema}: {e}")
+                with self._connection() as conn:
+                    self.metadata.create_all(conn, tables=[self.table], checkfirst=True)
+            except (IntegrityError, ProgrammingError, OperationalError):
+                if not sa_inspect(self._bind).has_table(self.table_name, schema=self.db_schema):
+                    raise
+            self._require_current_schema()
+            log_debug(f"DbFileSystem table ready: {self.table.fullname}")
+            self._table_ready = True
+
+    # ------------------------------------------------------------------
+    # Upgrade of tables created before the user partition
+    # ------------------------------------------------------------------
+
+    _KEY_COLUMNS = ("namespace", "user_id", "path")
+
+    def _qualified_name(self, name: Optional[str] = None) -> str:
+        name = name or self.table_name
+        return f'"{self.db_schema}"."{name}"' if self.db_schema else f'"{name}"'
+
+    def _schema_state(self) -> Tuple[Dict[str, Any], Tuple[str, ...]]:
+        """The table's columns and key as they are in the database."""
+        inspector = sa_inspect(self._bind)
+        columns = {column["name"]: column for column in inspector.get_columns(self.table_name, schema=self.db_schema)}
+        key = tuple(
+            inspector.get_pk_constraint(self.table_name, schema=self.db_schema).get("constrained_columns") or ()
+        )
+        return columns, key
+
+    def _is_current(self, columns: Dict[str, Any], key: Tuple[str, ...]) -> bool:
+        return "user_id" in columns and not columns["user_id"]["nullable"] and set(key) == set(self._KEY_COLUMNS)
+
+    def _require_current_schema(self) -> None:
+        """Refuse a table that predates the user partition.
+
+        The upgrade changes the table's key, so it is an operator's decision and
+        never runs on its own: an old table is reported, with the way to upgrade
+        it, before any statement can run against it.
+        """
+        columns, key = self._schema_state()
+        if self._is_current(columns, key):
+            return
+        raise SchemaOutdatedError(
+            f"filesystem table {self.table.fullname} predates the user partition (key {list(key)}, "
+            f"current key {list(self._KEY_COLUMNS)}). Upgrade it once with DbFileSystem.upgrade_schema() "
+            "or the migration script for your database in libs/agno/migrations "
+            "(migrate_filesystem_postgres.py or migrate_filesystem_sqlite.py), then start again."
+        )
+
+    def upgrade_schema(self) -> bool:
+        """Bring a table created before ``user_id`` onto the ``(namespace, user_id, path)`` key.
+
+        Returns ``True`` when the table was changed and ``False`` when it was
+        already current. Older tables keyed on ``(namespace, path)`` gain the
+        column with the shared partition as default, then the key. Rows keep
+        their namespace and land in the shared partition, so nothing is lost.
+        On PostgreSQL this is an ``ALTER TABLE``; SQLite cannot change a key in
+        place, so there the table is rebuilt and swapped in one transaction.
+        Idempotent: run it again and it finds the table current.
+        """
+        with self._table_lock:
+            if not sa_inspect(self._bind).has_table(self.table_name, schema=self.db_schema):
+                return False
+            columns, key = self._schema_state()
+            if self._is_current(columns, key):
+                return False
+            if self.dialect == "sqlite":
+                self._rebuild_sqlite_table("user_id" in columns)
+            else:
+                with self._connection() as conn:
+                    if "user_id" not in columns:
+                        conn.execute(
+                            sql_text(
+                                f"ALTER TABLE {self._qualified_name()} ADD COLUMN user_id VARCHAR NOT NULL DEFAULT ''"
+                            )
+                        )
+                    elif columns["user_id"]["nullable"]:
+                        conn.execute(update(self.table).where(self.table.c.user_id.is_(None)).values(user_id=""))
+                        conn.execute(
+                            sql_text(
+                                f"ALTER TABLE {self._qualified_name()} ALTER COLUMN user_id SET NOT NULL, "
+                                "ALTER COLUMN user_id SET DEFAULT ''"
+                            )
+                        )
+                    if set(key) != set(self._KEY_COLUMNS):
+                        old_name = (
+                            sa_inspect(self._bind).get_pk_constraint(self.table_name, schema=self.db_schema).get("name")
+                        )
+                        if old_name:
+                            conn.execute(sql_text(f'ALTER TABLE {self._qualified_name()} DROP CONSTRAINT "{old_name}"'))
+                        conn.execute(
+                            sql_text(
+                                f'ALTER TABLE {self._qualified_name()} ADD CONSTRAINT "pk_{self.table_name}" '
+                                "PRIMARY KEY (namespace, user_id, path)"
+                            )
+                        )
+            log_info(f"DbFileSystem upgraded {self.table.fullname} to the user partition key")
+            return True
+
+    async def aupgrade_schema(self) -> bool:
+        """Async variant of ``upgrade_schema``."""
+        return await asyncio.to_thread(self.upgrade_schema)
+
+    def _rebuild_sqlite_table(self, has_user_id: bool) -> None:
+        """Copy the table into one with the current schema and swap it in, in one transaction."""
+        new_name = f"{self.table_name}__partitioned"
+        replacement = self.table.to_metadata(MetaData(), name=new_name)
+        columns = "namespace, path, content, size_bytes, version, created_at, updated_at"
+        source_user = "COALESCE(user_id, '')" if has_user_id else "''"
+        with self._connection() as conn:
+            conn.execute(sql_text(f'DROP TABLE IF EXISTS "{new_name}"'))
+            conn.execute(CreateTable(replacement))
+            conn.execute(
+                sql_text(
+                    f'INSERT INTO "{new_name}" ({columns}, user_id) '
+                    f'SELECT {columns}, {source_user} FROM "{self.table_name}"'
+                )
+            )
+            conn.execute(sql_text(f'DROP TABLE "{self.table_name}"'))
+            conn.execute(sql_text(f'ALTER TABLE "{new_name}" RENAME TO "{self.table_name}"'))
+
+    def _insert(self):
+        if self.dialect == "postgresql":
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+            return pg_insert
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+        return sqlite_insert
+
+    def _key(self, namespace: str, user_id: str):
+        t = self.table
+        return and_(t.c.namespace == namespace, t.c.user_id == user_id)
+
+    def _directory_predicate(self, directory: str):
+        t = self.table
+        if not directory:
+            return true()
+        # Segment-boundary matching by exact prefix comparison, NOT LIKE: SQLite's LIKE
+        # case-folds ASCII while Postgres's does not, so a LIKE predicate would scope
+        # differently on the two backends for the same data, and in the harmful
+        # direction (dev silently treating a genuinely-new item as already-seen). substr
+        # equality is case-sensitive and byte-exact on both, matching the == arm.
+        prefix = directory + "/"
+        return or_(t.c.path == directory, func.substr(t.c.path, 1, len(prefix)) == prefix)
+
+    def _tail_expression(self):
+        t = self.table
+        if self.dialect == "postgresql":
+            return func.right(t.c.content, 1)
+        return func.substr(t.c.content, -1)
+
+    # ------------------------------------------------------------------
+    # Required core
+    # ------------------------------------------------------------------
+
+    def _write_on(self, conn, namespace: str, path: str, content: str, *, user_id: str = "") -> FileMeta:
+        """Write through a caller-owned transaction after trusted table setup."""
+        t = self.table
+        now = int(time.time())
+        stmt = self._insert()(t).values(
+            namespace=namespace,
+            user_id=user_id,
+            path=path,
+            content=content,
+            size_bytes=len(content.encode("utf-8")),
+            version=1,
+            created_at=now,
+            updated_at=now,
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[t.c.namespace, t.c.user_id, t.c.path],
+            set_={
+                "content": stmt.excluded.content,
+                "size_bytes": stmt.excluded.size_bytes,
+                "version": t.c.version + 1,
+                "updated_at": now,
+            },
+        ).returning(t.c.version, t.c.size_bytes)
+        row = conn.execute(stmt).one()
+        return FileMeta(path=path, version=row[0], size_bytes=row[1], updated_at=now, user_id=user_id or None)
+
+    def _delete_on(self, conn, namespace: str, path: str, *, user_id: str = "") -> None:
+        """Delete through a caller-owned transaction without committing it."""
+        conn.execute(delete(self.table).where(self._key(namespace, user_id), self.table.c.path == path))
+
+    def read(self, namespace: str, path: str, *, user_id: str = "") -> Optional[str]:
+        self._ensure_table()
+        t = self.table
+        with self._connection() as conn:
+            row = conn.execute(select(t.c.content).where(and_(self._key(namespace, user_id), t.c.path == path))).first()
+        return None if row is None else row[0]
+
+    def write(
+        self,
+        namespace: str,
+        path: str,
+        content: str,
+        *,
+        expected_version: Optional[int] = None,
+        user_id: str = "",
+    ) -> FileMeta:
+        self._ensure_table()
+        t = self.table
+        now = int(time.time())
+        size_bytes = len(content.encode("utf-8"))
+        if expected_version == 0:
+            stmt = (
+                self._insert()(t)
+                .values(
+                    namespace=namespace,
+                    user_id=user_id,
+                    path=path,
+                    content=content,
+                    size_bytes=size_bytes,
+                    version=1,
+                    created_at=now,
+                    updated_at=now,
+                )
+                .on_conflict_do_nothing(index_elements=["namespace", "user_id", "path"])
+                .returning(t.c.version)
+            )
+            with self._connection() as conn:
+                if conn.execute(stmt).first() is None:
+                    actual = conn.execute(
+                        select(t.c.version).where(and_(self._key(namespace, user_id), t.c.path == path))
+                    ).scalar()
+                    raise VersionConflictError(f"file already exists: {path}", expected=0, actual=actual)
+            return FileMeta(path=path, size_bytes=size_bytes, version=1, updated_at=now, user_id=user_id or None)
+        if expected_version is not None:
+            stmt = (
+                update(t)
+                .where(and_(self._key(namespace, user_id), t.c.path == path, t.c.version == expected_version))
+                .values(content=content, size_bytes=size_bytes, version=t.c.version + 1, updated_at=now)
+                .returning(t.c.version, t.c.size_bytes)
+            )
+            with self._connection() as conn:
+                row = conn.execute(stmt).first()
+                if row is None:
+                    actual = conn.execute(
+                        select(t.c.version).where(and_(self._key(namespace, user_id), t.c.path == path))
+                    ).scalar()
+                    raise VersionConflictError(
+                        f"version conflict on {path}: expected {expected_version}, actual {actual}",
+                        expected=expected_version,
+                        actual=actual,
+                    )
+            return FileMeta(path=path, size_bytes=row[1], version=row[0], updated_at=now, user_id=user_id or None)
+        with self._connection() as conn:
+            return self._write_on(conn, namespace, path, content, user_id=user_id)
+
+    def list(self, namespace: str, directory: str = "", *, user_id: str = "") -> List[FileMeta]:
+        self._ensure_table()
+        t = self.table
+        stmt = select(t.c.path, t.c.size_bytes, t.c.version, t.c.updated_at).where(
+            and_(self._key(namespace, user_id), self._directory_predicate(directory))
+        )
+        with self._connection() as conn:
+            rows = conn.execute(stmt).all()
+        return [
+            FileMeta(path=r[0], size_bytes=r[1], version=r[2], updated_at=r[3], user_id=user_id or None) for r in rows
+        ]
+
+    def delete(self, namespace: str, path: str, *, user_id: str = "", expected_version: Optional[int] = None) -> bool:
+        self._ensure_table()
+        t = self.table
+        with self._connection() as conn:
+            condition = and_(self._key(namespace, user_id), t.c.path == path)
+            if expected_version is not None:
+                condition = and_(condition, t.c.version == expected_version)
+            result = conn.execute(delete(t).where(condition))
+        return result.rowcount > 0
+
+    # ------------------------------------------------------------------
+    # Native implementations
+    # ------------------------------------------------------------------
+
+    def read_with_meta(self, namespace: str, path: str, *, user_id: str = "") -> Optional[FileData]:
+        self._ensure_table()
+        t = self.table
+        with self._connection() as conn:
+            row = conn.execute(
+                select(t.c.content, t.c.size_bytes, t.c.version, t.c.updated_at).where(
+                    and_(self._key(namespace, user_id), t.c.path == path)
+                )
+            ).first()
+        if row is None:
+            return None
+        return FileData(
+            content=row[0],
+            metadata=FileMeta(path=path, size_bytes=row[1], version=row[2], updated_at=row[3], user_id=user_id or None),
+        )
+
+    def _stat(self, namespace: str, path: str, *, user_id: str = "") -> Optional[FileMeta]:
+        self._ensure_table()
+        t = self.table
+        with self._connection() as conn:
+            row = conn.execute(
+                select(t.c.size_bytes, t.c.version, t.c.updated_at).where(
+                    and_(self._key(namespace, user_id), t.c.path == path)
+                )
+            ).first()
+        if row is None:
+            return None
+        return FileMeta(path=path, size_bytes=row[0], version=row[1], updated_at=row[2], user_id=user_id or None)
+
+    def append(
+        self,
+        namespace: str,
+        path: str,
+        content: str,
+        *,
+        max_file_bytes: Optional[int] = None,
+        user_id: str = "",
+    ) -> FileMeta:
+        """Guarded atomic append: one upsert enforces the per-file cap and appends.
+
+        Concurrent appends serialize on the row lock; all land; none lost. The
+        guard is detected via ``RETURNING``, never ``result.rowcount``, which is
+        ``-1`` on psycopg3 for a guarded upsert whether it blocked or not.
+        """
+        self._ensure_table()
+        chunk = build_chunk(content)
+        if not chunk:
+            existing = self._stat(namespace, path, user_id=user_id)
+            if existing is not None:
+                return existing
+            return FileMeta(path=path, size_bytes=0, version=None, updated_at=None, user_id=user_id or None)
+        chunk_bytes = len(chunk.encode("utf-8"))
+        # New-file inserts take the VALUES arm, which the WHERE guard does not cover,
+        # so pre-check the chunk client-side (exact: content is fully known). This must
+        # NOT be conditional on the row existing: a concurrent delete between that check
+        # and the upsert would send an oversized chunk down the uncovered insert arm and
+        # blow past the cap. A chunk over the cap can never land either way: the insert
+        # would create an oversized file, and the update arm would be larger still, so
+        # refuse unconditionally. _stat only enriches the reported size.
+        if max_file_bytes is not None and chunk_bytes > max_file_bytes:
+            existing = self._stat(namespace, path, user_id=user_id)
+            would_be = chunk_bytes if existing is None else existing.size_bytes + 1 + chunk_bytes
+            raise QuotaExceededError(
+                f"{path} would be {would_be} bytes (limit {max_file_bytes} per file)",
+                scope="file",
+                current=would_be,
+                limit=max_file_bytes,
+            )
+        t = self.table
+        now = int(time.time())
+        tail = self._tail_expression()
+        # The content != '' arm is load-bearing: without it every new-from-empty
+        # file starts with a blank line while size_bytes stays exact.
+        needs_sep = and_(t.c.content != "", tail != "\n")
+        sep = case((needs_sep, literal("\n")), else_=literal(""))
+        sep_len = case((needs_sep, literal(1)), else_=literal(0))
+
+        insert = self._insert()
+        stmt = insert(t).values(
+            namespace=namespace,
+            user_id=user_id,
+            path=path,
+            content=chunk,
+            size_bytes=chunk_bytes,
+            version=1,
+            created_at=now,
+            updated_at=now,
+        )
+        new_size = t.c.size_bytes + sep_len + stmt.excluded.size_bytes
+        set_ = {
+            "content": t.c.content + sep + stmt.excluded.content,
+            "size_bytes": new_size,
+            "version": t.c.version + 1,
+            "updated_at": now,
+        }
+        key_columns = [t.c.namespace, t.c.user_id, t.c.path]
+        if max_file_bytes is not None:
+            stmt = stmt.on_conflict_do_update(index_elements=key_columns, set_=set_, where=(new_size <= max_file_bytes))
+        else:
+            stmt = stmt.on_conflict_do_update(index_elements=key_columns, set_=set_)
+        stmt = stmt.returning(t.c.version, t.c.size_bytes)
+
+        with self._connection() as conn:
+            row = conn.execute(stmt).first()
+            if row is None:
+                # Guard blocked the update. Fetch the current tail to report the
+                # exact size the file would have reached.
+                blocked = conn.execute(
+                    select(t.c.size_bytes, tail).where(and_(self._key(namespace, user_id), t.c.path == path))
+                ).first()
+                if blocked is not None:
+                    separator_len = 1 if blocked[0] > 0 and blocked[1] != "\n" else 0
+                    would_be = blocked[0] + separator_len + chunk_bytes
+                else:
+                    would_be = chunk_bytes
+                raise QuotaExceededError(
+                    f"{path} would be {would_be} bytes (limit {max_file_bytes} per file)",
+                    scope="file",
+                    current=would_be,
+                    limit=max_file_bytes if max_file_bytes is not None else 0,
+                )
+        return FileMeta(path=path, size_bytes=row[1], version=row[0], updated_at=now, user_id=user_id or None)
+
+    def move(self, namespace: str, src: str, dst: str, *, overwrite: bool = False, user_id: str = "") -> FileMeta:
+        """Atomic move: a single UPDATE of ``path``. A destination collision
+        surfaces as ``IntegrityError`` inside a SAVEPOINT (so the transaction is
+        not poisoned on Postgres) and re-raises as ``FileExistsError``."""
+        self._ensure_table()
+        t = self.table
+        now = int(time.time())
+        stmt = (
+            update(t)
+            .where(and_(self._key(namespace, user_id), t.c.path == src))
+            .values(path=dst, version=t.c.version + 1, updated_at=now)
+            .returning(t.c.version, t.c.size_bytes)
+        )
+        with self._connection() as conn:
+            try:
+                # Both statements inside the one SAVEPOINT: the DELETE+UPDATE
+                # pair is a single rollback unit on the overwrite path.
+                with conn.begin_nested():
+                    if overwrite and src != dst:
+                        if self.dialect == "postgresql":
+                            # Lock both rows in sorted order first: cyclic
+                            # concurrent moves (a->b and b->a) would otherwise
+                            # acquire the two row locks in opposite order and
+                            # deadlock.
+                            for locked_path in sorted((src, dst)):
+                                conn.execute(
+                                    select(t.c.path)
+                                    .where(and_(self._key(namespace, user_id), t.c.path == locked_path))
+                                    .with_for_update()
+                                )
+                        conn.execute(delete(t).where(and_(self._key(namespace, user_id), t.c.path == dst)))
+                    row = conn.execute(stmt).first()
+                    if row is None:
+                        raise FileNotFoundError(f"file not found: {src}")
+            except IntegrityError:
+                raise FileExistsError(f"file exists: {dst}") from None
+        return FileMeta(path=dst, size_bytes=row[1], version=row[0], updated_at=now, user_id=user_id or None)
+
+    def contains(self, namespace: str, lines: Sequence[str], directory: str = "", *, user_id: str = "") -> Set[str]:
+        """Exact-line membership via the padded LIKE predicate as a row prefilter,
+        with Python owning the final per-line attribution (byte-exact, and always
+        in agreement with the base emulation)."""
+        self._ensure_table()
+        remaining = set(lines)
+        found: Set[str] = set()
+        if not remaining:
+            return found
+        t = self.table
+        padded = literal("\n") + t.c.content + literal("\n")
+        line_predicates = [padded.contains("\n" + line + "\n", autoescape=True) for line in lines]
+        stmt = select(t.c.content).where(
+            and_(self._key(namespace, user_id), self._directory_predicate(directory), or_(*line_predicates))
+        )
+        with self._connection() as conn:
+            rows = conn.execute(stmt)
+            for row in rows:
+                hit = remaining & set(row[0].split("\n"))
+                found |= hit
+                remaining -= hit
+                if not remaining:
+                    break
+        return found
+
+    def search(
+        self, namespace: str, query: str, directory: str = "", limit: int = 10, *, user_id: str = ""
+    ) -> List[SearchMatch]:
+        """Case-insensitive substring search. Correctness is owned by Python; the
+        SQL predicate only prefilters candidate rows. On Postgres ILIKE folds
+        every query; on SQLite, LIKE folds ASCII only, so the prefilter applies
+        to pure-ASCII queries and a non-ASCII query still scans every in-scope
+        row. One known gap remains on SQLite: content containing a non-ASCII
+        uppercase form whose lowercase is ASCII (the Kelvin sign, U+212A) is
+        excluded by the ASCII prefilter for the matching ASCII query."""
+        self._ensure_table()
+        if not query:
+            return []
+        t = self.table
+        conditions = [self._key(namespace, user_id), self._directory_predicate(directory)]
+        if self.dialect == "postgresql":
+            conditions.append(t.c.content.icontains(query, autoescape=True))
+        elif query.isascii():
+            conditions.append(t.c.content.icontains(query, autoescape=True))
+        stmt = select(t.c.path, t.c.size_bytes, t.c.content).where(and_(*conditions))
+        with self._connection() as conn:
+            rows = conn.execute(stmt).all()
+        matches: List[SearchMatch] = []
+        for row in sorted(rows, key=lambda r: path_sort_key(r[0])):
+            if len(matches) >= limit:
+                break
+            match = _build_match(row[0], row[1], row[2], query)
+            if match is not None:
+                matches.append(match)
+        return matches
+
+    def partitions(self, namespace: str) -> List[str]:
+        self._ensure_table()
+        t = self.table
+        stmt = select(t.c.user_id).distinct().where(and_(t.c.namespace == namespace, t.c.user_id != ""))
+        with self._connection() as conn:
+            return [str(row[0]) for row in conn.execute(stmt).all()]
+
+    def usage(self, namespace: str, *, user_id: str = "") -> NamespaceUsage:
+        self._ensure_table()
+        t = self.table
+        stmt = select(func.count(), func.coalesce(func.sum(t.c.size_bytes), 0)).where(self._key(namespace, user_id))
+        with self._connection() as conn:
+            row = conn.execute(stmt).one()
+        # Postgres sum(bigint) returns Decimal; coerce so callers (and json.dumps in
+        # list_files) always see plain ints, matching SQLite.
+        return NamespaceUsage(file_count=int(row[0]), total_bytes=int(row[1]))
+
+
+class AsyncDbFileSystem(DbFileSystem):
+    """The same filesystem SQL and version checks on an asynchronous database.
+
+    SQLAlchemy's run_sync adapts the synchronous SQL operations to the async
+    driver on one connection. It does not create a second engine or pool.
+    Use the a-prefixed methods; synchronous I/O is deliberately refused.
+    """
+
+    _pool_locks: Any = WeakKeyDictionary()
+
+    def __init__(self, db: Any, *, table_name: str = "agno_fs", db_schema: Optional[str] = DEFAULT_DB_SCHEMA):
+        from sqlalchemy.ext.asyncio import AsyncEngine
+
+        engine = getattr(db, "db_engine", None)
+        if not isinstance(engine, AsyncEngine):
+            raise ValueError("AsyncDbFileSystem requires an asynchronous SQL database")
+        super().__init__(db_engine=engine.sync_engine, table_name=table_name, db_schema=db_schema)
+        self.db = db
+        self._bound_connection: Any = None
+        self._async_engine = engine
+        self._async_lock = asyncio.Lock()
+
+    def _ensure_table(self) -> None:
+        if getattr(self, "_bound_connection", None) is None:
+            raise TypeError("Use asynchronous FileSystem methods with an asynchronous database")
+        super()._ensure_table()
+
+    async def _run(self, method: str, *args: Any, **kwargs: Any) -> Any:
+        from copy import copy
+
+        from sqlalchemy.pool import StaticPool
+
+        lock = self._async_lock
+        if isinstance(self._async_engine.pool, StaticPool):
+            # In-memory SQLite shares one connection across backend instances.
+            # Keep its transactions separate, with locks bound to the current loop.
+            per_loop = self._pool_locks.setdefault(self._async_engine.pool, WeakKeyDictionary())
+            lock = per_loop.setdefault(asyncio.get_running_loop(), asyncio.Lock())
+        async with lock:
+            bound = copy(self)
+            async with self._async_engine.begin() as connection:
+                if self.dialect == "sqlite":
+                    # SQLite's legacy transaction mode does not BEGIN before a
+                    # SAVEPOINT. Releasing that savepoint would commit the write
+                    # before the outer async transaction can roll it back.
+                    raw = await connection.get_raw_connection()
+                    driver = raw.driver_connection
+                    if driver is None:
+                        raise RuntimeError("SQLite driver connection is unavailable")
+                    if not driver.in_transaction:
+                        # Reserve the writer before cold schema inspection; two
+                        # deferred readers cannot both upgrade to create a table.
+                        # Respect engines that already BEGIN via a caller's hook
+                        # or non-legacy driver transaction configuration.
+                        statement = (
+                            "BEGIN IMMEDIATE" if not self._table_ready or method == "upgrade_schema" else "BEGIN"
+                        )
+                        await connection.exec_driver_sql(statement)
+
+                def operation(sync_connection):
+                    bound._bound_connection = sync_connection
+                    return getattr(DbFileSystem, method)(bound, *args, **kwargs)
+
+                result = await connection.run_sync(operation)
+            self._table_ready = bound._table_ready
+            return result
+
+    async def aupgrade_schema(self) -> bool:
+        """Upgrade the existing filesystem table using the async connection."""
+        return await self._run("upgrade_schema")
+
+    async def aread(self, namespace: str, path: str, *, user_id: str = "") -> Optional[str]:
+        """Async variant of read."""
+        return await self._run("read", namespace, path, user_id=user_id)
+
+    async def awrite(
+        self,
+        namespace: str,
+        path: str,
+        content: str,
+        *,
+        expected_version: Optional[int] = None,
+        user_id: str = "",
+    ) -> FileMeta:
+        """Async variant of write."""
+        return await self._run("write", namespace, path, content, expected_version=expected_version, user_id=user_id)
+
+    async def alist(self, namespace: str, directory: str = "", *, user_id: str = "") -> List[FileMeta]:
+        """Async variant of list."""
+        return await self._run("list", namespace, directory, user_id=user_id)
+
+    async def adelete(
+        self, namespace: str, path: str, *, user_id: str = "", expected_version: Optional[int] = None
+    ) -> bool:
+        """Async variant of delete."""
+        return await self._run("delete", namespace, path, user_id=user_id, expected_version=expected_version)
+
+    async def aread_with_meta(self, namespace: str, path: str, *, user_id: str = "") -> Optional[FileData]:
+        """Async variant of read_with_meta."""
+        return await self._run("read_with_meta", namespace, path, user_id=user_id)
+
+    async def aappend(
+        self,
+        namespace: str,
+        path: str,
+        content: str,
+        *,
+        max_file_bytes: Optional[int] = None,
+        user_id: str = "",
+    ) -> FileMeta:
+        """Async variant of append."""
+        return await self._run("append", namespace, path, content, max_file_bytes=max_file_bytes, user_id=user_id)
+
+    async def amove(
+        self, namespace: str, src: str, dst: str, *, overwrite: bool = False, user_id: str = ""
+    ) -> FileMeta:
+        """Async variant of move."""
+        return await self._run("move", namespace, src, dst, overwrite=overwrite, user_id=user_id)
+
+    async def acontains(
+        self, namespace: str, lines: Sequence[str], directory: str = "", *, user_id: str = ""
+    ) -> Set[str]:
+        """Async variant of contains."""
+        return await self._run("contains", namespace, lines, directory, user_id=user_id)
+
+    async def asearch(
+        self, namespace: str, query: str, directory: str = "", limit: int = 10, *, user_id: str = ""
+    ) -> List[SearchMatch]:
+        """Async variant of search."""
+        return await self._run("search", namespace, query, directory, limit, user_id=user_id)
+
+    async def apartitions(self, namespace: str) -> List[str]:
+        """Async variant of partitions."""
+        return await self._run("partitions", namespace)
+
+    async def ausage(self, namespace: str, *, user_id: str = "") -> NamespaceUsage:
+        """Async variant of usage."""
+        return await self._run("usage", namespace, user_id=user_id)

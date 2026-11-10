@@ -1,20 +1,39 @@
+from copy import copy
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from time import time
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union, get_args
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agno.media import Audio, File, Image, Video
+from agno.metrics import RunMetrics
 from agno.models.message import Citations, Message
-from agno.models.metrics import Metrics
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
-from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
-from agno.utils.log import logger
+from agno.run.base import BaseRunOutputEvent, CancellationStage, MessageReferences, RunStatus
+from agno.run.requirement import RunRequirement
+from agno.utils.log import log_error
+from agno.utils.media import (
+    reconstruct_audio_list,
+    reconstruct_files,
+    reconstruct_images,
+    reconstruct_response_audio,
+    reconstruct_videos,
+)
 
 if TYPE_CHECKING:
+    from agno.compaction.types import CompactionRecord
     from agno.session.summary import SessionSummary
+
+
+class Followups(BaseModel):
+    """Followup prompts generated after the main response."""
+
+    suggestions: List[str] = Field(
+        ...,
+        description="Short action-oriented followup prompts (5-10 words each)",
+    )
 
 
 @dataclass
@@ -46,9 +65,12 @@ class RunInput:
         elif isinstance(self.input_content, BaseModel):
             return self.input_content.model_dump_json(exclude_none=True)
         elif isinstance(self.input_content, Message):
-            return json.dumps(self.input_content.to_dict())
-        elif isinstance(self.input_content, list) and self.input_content and isinstance(self.input_content[0], Message):
-            return json.dumps([m.to_dict() for m in self.input_content])
+            return json.dumps(self.input_content.to_dict(), ensure_ascii=False)
+        elif isinstance(self.input_content, list):
+            try:
+                return json.dumps(self.to_dict().get("input_content"), ensure_ascii=False)
+            except Exception:
+                return str(self.input_content)
         else:
             return str(self.input_content)
 
@@ -63,12 +85,36 @@ class RunInput:
                 result["input_content"] = self.input_content.model_dump(exclude_none=True)
             elif isinstance(self.input_content, Message):
                 result["input_content"] = self.input_content.to_dict()
-            elif (
-                isinstance(self.input_content, list)
-                and self.input_content
-                and isinstance(self.input_content[0], Message)
-            ):
-                result["input_content"] = [m.to_dict() for m in self.input_content]
+            elif isinstance(self.input_content, list):
+                serialized_items: List[Any] = []
+                for item in self.input_content:
+                    if isinstance(item, Message):
+                        serialized_items.append(item.to_dict())
+                    elif isinstance(item, BaseModel):
+                        serialized_items.append(item.model_dump(exclude_none=True))
+                    elif isinstance(item, dict):
+                        content = dict(item)
+                        if content.get("images"):
+                            content["images"] = [
+                                img.to_dict() if isinstance(img, Image) else img for img in content["images"]
+                            ]
+                        if content.get("videos"):
+                            content["videos"] = [
+                                vid.to_dict() if isinstance(vid, Video) else vid for vid in content["videos"]
+                            ]
+                        if content.get("audios"):
+                            content["audios"] = [
+                                aud.to_dict() if isinstance(aud, Audio) else aud for aud in content["audios"]
+                            ]
+                        if content.get("files"):
+                            content["files"] = [
+                                file.to_dict() if isinstance(file, File) else file for file in content["files"]
+                            ]
+                        serialized_items.append(content)
+                    else:
+                        serialized_items.append(item)
+
+                result["input_content"] = serialized_items
             else:
                 result["input_content"] = self.input_content
 
@@ -86,21 +132,10 @@ class RunInput:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RunInput":
         """Create RunInput from dictionary"""
-        images = None
-        if data.get("images"):
-            images = [Image.model_validate(img_data) for img_data in data["images"]]
-
-        videos = None
-        if data.get("videos"):
-            videos = [Video.model_validate(vid_data) for vid_data in data["videos"]]
-
-        audios = None
-        if data.get("audios"):
-            audios = [Audio.model_validate(aud_data) for aud_data in data["audios"]]
-
-        files = None
-        if data.get("files"):
-            files = [File.model_validate(file_data) for file_data in data["files"]]
+        images = reconstruct_images(data.get("images"))
+        videos = reconstruct_videos(data.get("videos"))
+        audios = reconstruct_audio_list(data.get("audios"))
+        files = reconstruct_files(data.get("files"))
 
         return cls(
             input_content=data.get("input_content", ""), images=images, videos=videos, audios=audios, files=files
@@ -129,9 +164,11 @@ class RunEvent(str, Enum):
 
     tool_call_started = "ToolCallStarted"
     tool_call_completed = "ToolCallCompleted"
+    tool_call_error = "ToolCallError"
 
     reasoning_started = "ReasoningStarted"
     reasoning_step = "ReasoningStep"
+    reasoning_content_delta = "ReasoningContentDelta"
     reasoning_completed = "ReasoningCompleted"
 
     memory_update_started = "MemoryUpdateStarted"
@@ -145,6 +182,18 @@ class RunEvent(str, Enum):
 
     output_model_response_started = "OutputModelResponseStarted"
     output_model_response_completed = "OutputModelResponseCompleted"
+
+    model_request_started = "ModelRequestStarted"
+    model_request_completed = "ModelRequestCompleted"
+
+    compression_started = "CompressionStarted"
+    compression_completed = "CompressionCompleted"
+
+    compaction_started = "CompactionStarted"
+    compaction_completed = "CompactionCompleted"
+
+    followups_started = "FollowupsStarted"
+    followups_completed = "FollowupsCompleted"
 
     custom_event = "CustomEvent"
 
@@ -165,6 +214,8 @@ class BaseAgentRunEvent(BaseRunOutputEvent):
     step_id: Optional[str] = None
     step_name: Optional[str] = None
     step_index: Optional[int] = None
+    # Nesting depth: 0 = top-level workflow, 1 = first nested, 2 = nested-in-nested, etc.
+    nested_depth: int = 0
     tools: Optional[List[ToolExecution]] = None
 
     # For backwards compatibility
@@ -198,6 +249,9 @@ class RunContentEvent(BaseAgentRunEvent):
 
     event: str = RunEvent.run_content.value
     content: Optional[Any] = None
+    workflow_agent: bool = (
+        False  # Used by consumers of the events to distinguish between workflow agent and regular agent
+    )
     content_type: str = "str"
     reasoning_content: Optional[str] = None
     model_provider_data: Optional[Dict[str, Any]] = None
@@ -233,27 +287,42 @@ class RunCompletedEvent(BaseAgentRunEvent):
     images: Optional[List[Image]] = None  # Images attached to the response
     videos: Optional[List[Video]] = None  # Videos attached to the response
     audio: Optional[List[Audio]] = None  # Audio attached to the response
+    files: Optional[List[File]] = None  # Files attached to the response
     response_audio: Optional[Audio] = None  # Model audio response
     references: Optional[List[MessageReferences]] = None
     additional_input: Optional[List[Message]] = None
     reasoning_steps: Optional[List[ReasoningStep]] = None
     reasoning_messages: Optional[List[Message]] = None
     metadata: Optional[Dict[str, Any]] = None
-    metrics: Optional[Metrics] = None
+    metrics: Optional[RunMetrics] = None
+    session_state: Optional[Dict[str, Any]] = None
 
 
 @dataclass
 class RunPausedEvent(BaseAgentRunEvent):
+    # An external agent's (Claude Code, Codex) native permission request or question: owner, digest and
+    # native context, carried from a sandbox runtime to the host so the paused run can record it.
+    external_agent_request: Optional[Dict[str, Any]] = None
+    content: Optional[Any] = None
     event: str = RunEvent.run_paused.value
     tools: Optional[List[ToolExecution]] = None
+    requirements: Optional[List[RunRequirement]] = None
 
     @property
     def is_paused(self):
         return True
 
+    @property
+    def active_requirements(self) -> List[RunRequirement]:
+        if not self.requirements:
+            return []
+        return [requirement for requirement in self.requirements if not requirement.is_resolved()]
+
 
 @dataclass
 class RunContinuedEvent(BaseAgentRunEvent):
+    # The external agent's permission request or question this continuation answered.
+    external_agent_request_id: Optional[str] = None
     event: str = RunEvent.run_continued.value
 
 
@@ -312,6 +381,7 @@ class MemoryUpdateStartedEvent(BaseAgentRunEvent):
 @dataclass
 class MemoryUpdateCompletedEvent(BaseAgentRunEvent):
     event: str = RunEvent.memory_update_completed.value
+    memories: Optional[List[Any]] = None
 
 
 @dataclass
@@ -339,6 +409,14 @@ class ReasoningStepEvent(BaseAgentRunEvent):
 
 
 @dataclass
+class ReasoningContentDeltaEvent(BaseAgentRunEvent):
+    """Event for streaming reasoning content chunks as they arrive."""
+
+    event: str = RunEvent.reasoning_content_delta.value
+    reasoning_content: str = ""  # The delta/chunk of reasoning content
+
+
+@dataclass
 class ReasoningCompletedEvent(BaseAgentRunEvent):
     event: str = RunEvent.reasoning_completed.value
     content: Optional[Any] = None
@@ -359,6 +437,14 @@ class ToolCallCompletedEvent(BaseAgentRunEvent):
     images: Optional[List[Image]] = None  # Images produced by the tool call
     videos: Optional[List[Video]] = None  # Videos produced by the tool call
     audio: Optional[List[Audio]] = None  # Audio produced by the tool call
+    files: Optional[List[File]] = None  # Files produced by the tool call
+
+
+@dataclass
+class ToolCallErrorEvent(BaseAgentRunEvent):
+    event: str = RunEvent.tool_call_error.value
+    tool: Optional[ToolExecution] = None
+    error: Optional[str] = None
 
 
 @dataclass
@@ -382,8 +468,81 @@ class OutputModelResponseCompletedEvent(BaseAgentRunEvent):
 
 
 @dataclass
+class ModelRequestStartedEvent(BaseAgentRunEvent):
+    """Event sent when a model request is about to be made"""
+
+    event: str = RunEvent.model_request_started.value
+    model: Optional[str] = None
+    model_provider: Optional[str] = None
+
+
+@dataclass
+class ModelRequestCompletedEvent(BaseAgentRunEvent):
+    """Event sent when a model request has completed"""
+
+    event: str = RunEvent.model_request_completed.value
+    model: Optional[str] = None
+    model_provider: Optional[str] = None
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+    time_to_first_token: Optional[float] = None
+    reasoning_tokens: Optional[int] = None
+    cache_read_tokens: Optional[int] = None
+    cache_write_tokens: Optional[int] = None
+
+
+@dataclass
+class CompressionStartedEvent(BaseAgentRunEvent):
+    """Event sent when tool result compression is about to start"""
+
+    event: str = RunEvent.compression_started.value
+
+
+@dataclass
+class CompressionCompletedEvent(BaseAgentRunEvent):
+    """Event sent when tool result compression has completed"""
+
+    event: str = RunEvent.compression_completed.value
+    tool_results_compressed: Optional[int] = None
+    original_size: Optional[int] = None
+    compressed_size: Optional[int] = None
+
+
+@dataclass
+class CompactionStartedEvent(BaseAgentRunEvent):
+    """Event sent when conversation compaction is about to start"""
+
+    event: str = RunEvent.compaction_started.value
+
+
+@dataclass
+class CompactionCompletedEvent(BaseAgentRunEvent):
+    """Event sent when conversation compaction has completed"""
+
+    event: str = RunEvent.compaction_completed.value
+    messages_compacted: Optional[int] = None
+    tokens_before: Optional[int] = None
+    tokens_after: Optional[int] = None
+    archived: Optional[bool] = None
+
+
+@dataclass
+class FollowupsStartedEvent(BaseAgentRunEvent):
+    event: str = RunEvent.followups_started.value
+
+
+@dataclass
+class FollowupsCompletedEvent(BaseAgentRunEvent):
+    event: str = RunEvent.followups_completed.value
+    followups: Optional[List[str]] = None
+
+
+@dataclass
 class CustomEvent(BaseAgentRunEvent):
     event: str = RunEvent.custom_event.value
+    # tool_call_id for ToolExecution
+    tool_call_id: Optional[str] = None
 
     def __init__(self, **kwargs):
         # Store arbitrary attributes directly on the instance
@@ -407,6 +566,7 @@ RunOutputEvent = Union[
     PostHookCompletedEvent,
     ReasoningStartedEvent,
     ReasoningStepEvent,
+    ReasoningContentDeltaEvent,
     ReasoningCompletedEvent,
     MemoryUpdateStartedEvent,
     MemoryUpdateCompletedEvent,
@@ -414,12 +574,26 @@ RunOutputEvent = Union[
     SessionSummaryCompletedEvent,
     ToolCallStartedEvent,
     ToolCallCompletedEvent,
+    ToolCallErrorEvent,
     ParserModelResponseStartedEvent,
     ParserModelResponseCompletedEvent,
     OutputModelResponseStartedEvent,
     OutputModelResponseCompletedEvent,
+    ModelRequestStartedEvent,
+    ModelRequestCompletedEvent,
+    CompressionStartedEvent,
+    CompressionCompletedEvent,
+    CompactionStartedEvent,
+    CompactionCompletedEvent,
+    FollowupsStartedEvent,
+    FollowupsCompletedEvent,
     CustomEvent,
 ]
+
+# Cached union members for isinstance checks: rebuilding
+# tuple(get_args(RunOutputEvent)) per streamed chunk is measurable on the hot
+# event-dispatch path.
+RUN_OUTPUT_EVENT_TYPES = get_args(RunOutputEvent)
 
 
 # Map event string to dataclass
@@ -439,6 +613,7 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.post_hook_completed.value: PostHookCompletedEvent,
     RunEvent.reasoning_started.value: ReasoningStartedEvent,
     RunEvent.reasoning_step.value: ReasoningStepEvent,
+    RunEvent.reasoning_content_delta.value: ReasoningContentDeltaEvent,
     RunEvent.reasoning_completed.value: ReasoningCompletedEvent,
     RunEvent.memory_update_started.value: MemoryUpdateStartedEvent,
     RunEvent.memory_update_completed.value: MemoryUpdateCompletedEvent,
@@ -446,10 +621,19 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.session_summary_completed.value: SessionSummaryCompletedEvent,
     RunEvent.tool_call_started.value: ToolCallStartedEvent,
     RunEvent.tool_call_completed.value: ToolCallCompletedEvent,
+    RunEvent.tool_call_error.value: ToolCallErrorEvent,
     RunEvent.parser_model_response_started.value: ParserModelResponseStartedEvent,
     RunEvent.parser_model_response_completed.value: ParserModelResponseCompletedEvent,
     RunEvent.output_model_response_started.value: OutputModelResponseStartedEvent,
     RunEvent.output_model_response_completed.value: OutputModelResponseCompletedEvent,
+    RunEvent.model_request_started.value: ModelRequestStartedEvent,
+    RunEvent.model_request_completed.value: ModelRequestCompletedEvent,
+    RunEvent.compression_started.value: CompressionStartedEvent,
+    RunEvent.compression_completed.value: CompressionCompletedEvent,
+    RunEvent.compaction_started.value: CompactionStartedEvent,
+    RunEvent.compaction_completed.value: CompactionCompletedEvent,
+    RunEvent.followups_started.value: FollowupsStartedEvent,
+    RunEvent.followups_completed.value: FollowupsCompletedEvent,
     RunEvent.custom_event.value: CustomEvent,
 }
 
@@ -489,7 +673,9 @@ class RunOutput:
     model: Optional[str] = None
     model_provider: Optional[str] = None
     messages: Optional[List[Message]] = None
-    metrics: Optional[Metrics] = None
+    metrics: Optional[RunMetrics] = None
+    # What compaction did to this run's context, when it ran.
+    compaction: Optional["CompactionRecord"] = None
     additional_input: Optional[List[Message]] = None
 
     tools: Optional[List[ToolExecution]] = None
@@ -503,18 +689,56 @@ class RunOutput:
     citations: Optional[Citations] = None
     references: Optional[List[MessageReferences]] = None
 
+    followups: Optional[List[str]] = None
+
     metadata: Optional[Dict[str, Any]] = None
+    session_state: Optional[Dict[str, Any]] = None
 
     created_at: int = field(default_factory=lambda: int(time()))
 
     events: Optional[List[RunOutputEvent]] = None
 
     status: RunStatus = RunStatus.running
+    # Queue-attempt generation stamp: set by the queue worker when attempt N
+    # claims this run. Terminal writes carry their attempt and are fenced
+    # against a NEWER stored value, so a presumed-dead attempt's late write
+    # cannot clobber its successor. None outside durable-queue execution.
+    queue_attempt: Optional[int] = None
+    # For a CANCELLED run, where it was when cancelled (see CancellationStage).
+    # None on runs written before the field existed and on shutdown
+    # interrupts: consumers treat None as unknown.
+    cancellation_stage: Optional[CancellationStage] = None
+
+    # User control flow (HITL) requirements to continue a run when paused, in order of arrival
+    requirements: Optional[list[RunRequirement]] = None
+
+    # Checkpoint coordinate: index into messages at the most recent checkpoint write.
+    # Set when checkpoint="tool-batch" (or any future non-default level) persists mid-run state.
+    last_checkpoint_at_message_index: Optional[int] = None
+
+    # Fork lineage. Distinct from parent_run_id (which carries team-member / workflow-step
+    # parentage).
+    forked_from_run_id: Optional[str] = None
+    forked_from_message_index: Optional[int] = None
+
+    # Branching lineage: the source session_id this run was originally created in
+    # (set when a session is forked; preserved across nested forks).
+    forked_from_session_id: Optional[str] = None
+
+    # Regeneration lineage: the run_id of the immediate predecessor this run was
+    # regenerated from. Walk the chain via repeated lookups if you need full history.
+    regenerated_from: Optional[str] = None
 
     # === FOREIGN KEY RELATIONSHIPS ===
     # These fields establish relationships to parent workflow/step structures
     # and should be treated as foreign keys for data integrity
     workflow_step_id: Optional[str] = None  # FK: Points to StepOutput.step_id
+
+    @property
+    def active_requirements(self) -> list[RunRequirement]:
+        if not self.requirements:
+            return []
+        return [requirement for requirement in self.requirements if not requirement.is_resolved()]
 
     @property
     def is_paused(self):
@@ -536,39 +760,57 @@ class RunOutput:
     def tools_awaiting_external_execution(self):
         return [t for t in self.tools if t.external_execution_required] if self.tools else []
 
+    # Fields hand-serialized in to_dict below; nulled on a shallow copy before
+    # asdict so their (deep, expensive) recursive serialization never runs.
+    _HAND_SERIALIZED_FIELDS = (
+        "messages",
+        "metrics",
+        "compaction",
+        "tools",
+        "metadata",
+        "images",
+        "videos",
+        "audio",
+        "files",
+        "response_audio",
+        "input",
+        "citations",
+        "events",
+        "additional_input",
+        "reasoning_steps",
+        "reasoning_messages",
+        "references",
+        "requirements",
+        "followups",
+    )
+
     def to_dict(self) -> Dict[str, Any]:
-        _dict = {
-            k: v
-            for k, v in asdict(self).items()
-            if v is not None
-            and k
-            not in [
-                "messages",
-                "tools",
-                "metadata",
-                "images",
-                "videos",
-                "audio",
-                "files",
-                "response_audio",
-                "input",
-                "citations",
-                "events",
-                "additional_input",
-                "reasoning_steps",
-                "reasoning_messages",
-                "references",
-            ]
-        }
+        # Serialize a shallow copy with the hand-serialized fields nulled:
+        # asdict would otherwise deep-serialize them (messages, events, media)
+        # only for the dict comprehension to throw that work away.
+        light_copy = copy(self)
+        for field_name in self._HAND_SERIALIZED_FIELDS:
+            setattr(light_copy, field_name, None)
+        if light_copy.content and isinstance(light_copy.content, BaseModel):
+            # Re-serialized below via model_dump under the same truthiness
+            # condition; asdict would deep-copy it here for nothing
+            light_copy.content = None
+        _dict = {k: v for k, v in asdict(light_copy).items() if v is not None}
 
         if self.metrics is not None:
-            _dict["metrics"] = self.metrics.to_dict() if isinstance(self.metrics, Metrics) else self.metrics
+            _dict["metrics"] = self.metrics.to_dict() if isinstance(self.metrics, RunMetrics) else self.metrics
+
+        if self.compaction is not None:
+            _dict["compaction"] = self.compaction.to_dict() if hasattr(self.compaction, "to_dict") else self.compaction
 
         if self.events is not None:
             _dict["events"] = [e.to_dict() for e in self.events]
 
         if self.status is not None:
             _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status
+
+        if self.cancellation_stage is not None:
+            _dict["cancellation_stage"] = getattr(self.cancellation_stage, "value", self.cancellation_stage)
 
         if self.messages is not None:
             _dict["messages"] = [m.to_dict() for m in self.messages]
@@ -587,6 +829,9 @@ class RunOutput:
 
         if self.references is not None:
             _dict["references"] = [r.model_dump() for r in self.references]
+
+        if self.followups is not None:
+            _dict["followups"] = self.followups
 
         if self.images is not None:
             _dict["images"] = []
@@ -643,6 +888,9 @@ class RunOutput:
                 else:
                     _dict["tools"].append(tool)
 
+        if self.requirements is not None:
+            _dict["requirements"] = [req.to_dict() if hasattr(req, "to_dict") else req for req in self.requirements]
+
         if self.input is not None:
             _dict["input"] = self.input.to_dict()
 
@@ -653,8 +901,8 @@ class RunOutput:
 
         try:
             _dict = self.to_dict()
-        except Exception:
-            logger.error("Failed to convert response to json", exc_info=True)
+        except Exception as e:
+            log_error(f"Failed to convert response to json: {str(e)}")
             raise
 
         if indent is None:
@@ -668,7 +916,17 @@ class RunOutput:
             data = data.pop("run")
 
         events = data.pop("events", None)
-        events = [run_output_event_from_dict(event) for event in events] if events else None
+        final_events = []
+        for event in events or []:
+            if "agent_id" in event:
+                event = run_output_event_from_dict(event)
+            else:
+                # Use the factory from response.py for agent events
+                from agno.run.team import team_run_output_event_from_dict
+
+                event = team_run_output_event_from_dict(event)
+            final_events.append(event)
+        events = final_events
 
         messages = data.pop("messages", None)
         messages = [Message.from_dict(message) for message in messages] if messages else None
@@ -679,20 +937,23 @@ class RunOutput:
         tools = data.pop("tools", [])
         tools = [ToolExecution.from_dict(tool) for tool in tools] if tools else None
 
-        images = data.pop("images", [])
-        images = [Image.model_validate(image) for image in images] if images else None
+        # Handle requirements
+        requirements_data = data.pop("requirements", None)
+        requirements: Optional[List[RunRequirement]] = None
+        if requirements_data is not None:
+            requirements_list: List[RunRequirement] = []
+            for item in requirements_data:
+                if isinstance(item, RunRequirement):
+                    requirements_list.append(item)
+                elif isinstance(item, dict):
+                    requirements_list.append(RunRequirement.from_dict(item))
+            requirements = requirements_list if requirements_list else None
 
-        videos = data.pop("videos", [])
-        videos = [Video.model_validate(video) for video in videos] if videos else None
-
-        audio = data.pop("audio", [])
-        audio = [Audio.model_validate(audio) for audio in audio] if audio else None
-
-        files = data.pop("files", [])
-        files = [File.model_validate(file) for file in files] if files else None
-
-        response_audio = data.pop("response_audio", None)
-        response_audio = Audio.model_validate(response_audio) if response_audio else None
+        images = reconstruct_images(data.pop("images", []))
+        videos = reconstruct_videos(data.pop("videos", []))
+        audio = reconstruct_audio_list(data.pop("audio", []))
+        files = reconstruct_files(data.pop("files", []))
+        response_audio = reconstruct_response_audio(data.pop("response_audio", None))
 
         input_data = data.pop("input", None)
         input_obj = None
@@ -700,8 +961,13 @@ class RunOutput:
             input_obj = RunInput.from_dict(input_data)
 
         metrics = data.pop("metrics", None)
-        if metrics:
-            metrics = Metrics(**metrics)
+        metrics = RunMetrics.from_dict(metrics) if metrics else None
+
+        compaction = data.pop("compaction", None)
+        if compaction:
+            from agno.compaction.types import CompactionRecord
+
+            compaction = CompactionRecord.from_dict(compaction)
 
         additional_input = data.pop("additional_input", None)
 
@@ -720,9 +986,26 @@ class RunOutput:
         if references is not None:
             references = [MessageReferences.model_validate(reference) for reference in references]
 
+        # Filter data to only include fields that are actually defined in the RunOutput dataclass
+        from dataclasses import fields
+
+        if "cancellation_stage" in data:
+            data["cancellation_stage"] = CancellationStage.coerce(data["cancellation_stage"])
+        # Stored runs carry the status as its string value; readers expect the enum, so a value
+        # that is not one of ours is left as is rather than rejected.
+        if isinstance(data.get("status"), str):
+            try:
+                data["status"] = RunStatus(data["status"])
+            except ValueError:
+                pass
+
+        supported_fields = {f.name for f in fields(cls)}
+        filtered_data = {k: v for k, v in data.items() if k in supported_fields}
+
         return cls(
             messages=messages,
             metrics=metrics,
+            compaction=compaction,
             citations=citations,
             tools=tools,
             images=images,
@@ -736,7 +1019,8 @@ class RunOutput:
             reasoning_steps=reasoning_steps,
             reasoning_messages=reasoning_messages,
             references=references,
-            **data,
+            requirements=requirements,
+            **filtered_data,
         )
 
     def get_content_as_string(self, **kwargs) -> str:
@@ -749,4 +1033,5 @@ class RunOutput:
         elif isinstance(self.content, BaseModel):
             return self.content.model_dump_json(exclude_none=True, **kwargs)
         else:
+            kwargs.setdefault("ensure_ascii", False)
             return json.dumps(self.content, **kwargs)

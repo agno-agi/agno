@@ -81,7 +81,7 @@ class UnionFieldResponse(BaseModel):
 
 def test_structured_response():
     structured_output_agent = Agent(
-        model=Gemini(id="gemini-2.0-flash"),
+        model=Gemini(id="gemini-flash-latest"),
         description="You help people write movie scripts.",
         output_schema=SimpleMovieScript,
     )
@@ -97,7 +97,7 @@ def test_structured_response():
 
 def test_structured_response_with_dict_fields():
     structured_output_agent = Agent(
-        model=Gemini(id="gemini-2.0-flash"),
+        model=Gemini(id="gemini-flash-latest"),
         description="You help people write movie scripts.",
         output_schema=MovieScriptWithDict,
     )
@@ -111,7 +111,7 @@ def test_structured_response_with_dict_fields():
 
 def test_structured_response_with_nested_fields():
     structured_output_agent = Agent(
-        model=Gemini(id="gemini-2.0-flash"),
+        model=Gemini(id="gemini-flash-latest"),
         description="You help people write movie scripts.",
         output_schema=MovieScriptWithNested,
     )
@@ -127,7 +127,7 @@ def test_structured_response_with_nested_fields():
 
 def test_structured_response_with_enum_fields():
     structured_output_agent = Agent(
-        model=Gemini(id="gemini-2.0-flash"),
+        model=Gemini(id="gemini-flash-latest"),
         description="You help generate recipe names and ratings.",
         output_schema=Recipe,
     )
@@ -140,7 +140,7 @@ def test_structured_response_with_enum_fields():
 def test_structured_response_with_union_field_types():
     """Test structured output with Union types that exercise our union handling logic"""
     structured_output_agent = Agent(
-        model=Gemini(id="gemini-2.0-flash"),
+        model=Gemini(id="gemini-flash-latest"),
         description="You return data with flexible union-typed fields.",
         output_schema=UnionFieldResponse,
     )

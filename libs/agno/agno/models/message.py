@@ -5,8 +5,9 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
+import agno.utils.log
 from agno.media import Audio, File, Image, Video
-from agno.models.metrics import Metrics
+from agno.metrics import MessageMetrics
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 
@@ -42,6 +43,9 @@ class Citations(BaseModel):
     # Raw citations from the model
     raw: Optional[Any] = None
 
+    # Search queries used to retrieve the citations
+    search_queries: Optional[List[str]] = None
+
     # URLs of the citations.
     urls: Optional[List[UrlCitation]] = None
 
@@ -59,6 +63,9 @@ class Message(BaseModel):
     role: str
     # The contents of the message.
     content: Optional[Union[List[Any], str]] = None
+    # Compressed content of the message
+    compressed_content: Optional[str] = None
+
     # An optional name for the participant.
     # Provides the model information to differentiate between participants of the same role.
     name: Optional[str] = None
@@ -103,12 +110,19 @@ class Message(BaseModel):
     add_to_agent_memory: bool = True
     # This flag is enabled when a message is fetched from the agent's memory.
     from_history: bool = False
-    # Metrics for the message.
-    metrics: Metrics = Field(default_factory=Metrics)
+    # Metrics for the message. Defaults to empty MessageMetrics; populated on assistant messages.
+    metrics: MessageMetrics = Field(default_factory=MessageMetrics)
     # The references added to the message for RAG
     references: Optional[MessageReferences] = None
     # The Unix timestamp the message was created.
     created_at: int = Field(default_factory=lambda: int(time()))
+    # When True, the message will be sent to the Model but not persisted afterwards.
+    temporary: bool = False
+    # Status of the run when this message was the persisted checkpoint boundary.
+    # Used by checkpoint="tool-batch" so clients can show resumable message boundaries
+    # without a separate checkpoint table.
+    checkpoint_status: Optional[str] = None
+    checkpoint_created_at: Optional[int] = None
 
     model_config = ConfigDict(extra="allow", populate_by_name=True, arbitrary_types_allowed=True)
 
@@ -117,11 +131,19 @@ class Message(BaseModel):
         if isinstance(self.content, str):
             return self.content
         if isinstance(self.content, list):
-            if len(self.content) > 0 and isinstance(self.content[0], dict) and "text" in self.content[0]:
+            if len(self.content) == 0:
+                return ""
+            if isinstance(self.content[0], dict) and "text" in self.content[0]:
                 return self.content[0].get("text", "")
             else:
-                return json.dumps(self.content)
+                return json.dumps(self.content, ensure_ascii=False)
         return ""
+
+    def get_content(self, use_compressed_content: bool = False) -> Optional[Union[List[Any], str]]:
+        """Return tool result content to send to API"""
+        if use_compressed_content and self.compressed_content is not None:
+            return self.compressed_content
+        return self.content
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Message":
@@ -130,8 +152,11 @@ class Message(BaseModel):
             reconstructed_images = []
             for i, img_data in enumerate(data["images"]):
                 if isinstance(img_data, dict):
-                    # If content is base64, decode it back to bytes
-                    if "content" in img_data and isinstance(img_data["content"], str):
+                    # Check for media_reference FIRST
+                    if "media_reference" in img_data and isinstance(img_data["media_reference"], dict):
+                        # Reference before base64: a row carrying both keeps the pointer, url and filepath included.
+                        reconstructed_images.append(Image(**img_data))
+                    elif "content" in img_data and isinstance(img_data["content"], str):
                         reconstructed_images.append(
                             Image.from_base64(
                                 img_data["content"],
@@ -141,7 +166,6 @@ class Message(BaseModel):
                             )
                         )
                     else:
-                        # Regular image (filepath/url)
                         reconstructed_images.append(Image(**img_data))
                 else:
                     reconstructed_images.append(img_data)
@@ -152,8 +176,10 @@ class Message(BaseModel):
             reconstructed_audio = []
             for i, aud_data in enumerate(data["audio"]):
                 if isinstance(aud_data, dict):
-                    # If content is base64, decode it back to bytes
-                    if "content" in aud_data and isinstance(aud_data["content"], str):
+                    if "media_reference" in aud_data and isinstance(aud_data["media_reference"], dict):
+                        # Reference before base64: a row carrying both keeps the pointer, url and filepath included.
+                        reconstructed_audio.append(Audio(**aud_data))
+                    elif "content" in aud_data and isinstance(aud_data["content"], str):
                         reconstructed_audio.append(
                             Audio.from_base64(
                                 aud_data["content"],
@@ -176,8 +202,10 @@ class Message(BaseModel):
             reconstructed_videos = []
             for i, vid_data in enumerate(data["videos"]):
                 if isinstance(vid_data, dict):
-                    # If content is base64, decode it back to bytes
-                    if "content" in vid_data and isinstance(vid_data["content"], str):
+                    if "media_reference" in vid_data and isinstance(vid_data["media_reference"], dict):
+                        # Reference before base64: a row carrying both keeps the pointer, url and filepath included.
+                        reconstructed_videos.append(Video(**vid_data))
+                    elif "content" in vid_data and isinstance(vid_data["content"], str):
                         reconstructed_videos.append(
                             Video.from_base64(
                                 vid_data["content"],
@@ -197,8 +225,10 @@ class Message(BaseModel):
             reconstructed_files = []
             for i, file_data in enumerate(data["files"]):
                 if isinstance(file_data, dict):
-                    # If content is base64, decode it back to bytes
-                    if "content" in file_data and isinstance(file_data["content"], str):
+                    if "media_reference" in file_data and isinstance(file_data["media_reference"], dict):
+                        # Reference before base64: a row carrying both keeps the pointer, url and filepath included.
+                        reconstructed_files.append(File(**file_data))
+                    elif "content" in file_data and isinstance(file_data["content"], str):
                         reconstructed_files.append(
                             File.from_base64(
                                 file_data["content"],
@@ -218,7 +248,10 @@ class Message(BaseModel):
         if "audio_output" in data and data["audio_output"]:
             aud_data = data["audio_output"]
             if isinstance(aud_data, dict):
-                if "content" in aud_data and isinstance(aud_data["content"], str):
+                if "media_reference" in aud_data and isinstance(aud_data["media_reference"], dict):
+                    # Reference before base64: a row carrying both keeps the pointer, url and filepath included.
+                    data["audio_output"] = Audio(**aud_data)
+                elif "content" in aud_data and isinstance(aud_data["content"], str):
                     data["audio_output"] = Audio.from_base64(
                         aud_data["content"],
                         id=aud_data.get("id"),
@@ -234,7 +267,10 @@ class Message(BaseModel):
         if "image_output" in data and data["image_output"]:
             img_data = data["image_output"]
             if isinstance(img_data, dict):
-                if "content" in img_data and isinstance(img_data["content"], str):
+                if "media_reference" in img_data and isinstance(img_data["media_reference"], dict):
+                    # Reference before base64: a row carrying both keeps the pointer, url and filepath included.
+                    data["image_output"] = Image(**img_data)
+                elif "content" in img_data and isinstance(img_data["content"], str):
                     data["image_output"] = Image.from_base64(
                         img_data["content"],
                         id=img_data.get("id"),
@@ -247,7 +283,10 @@ class Message(BaseModel):
         if "video_output" in data and data["video_output"]:
             vid_data = data["video_output"]
             if isinstance(vid_data, dict):
-                if "content" in vid_data and isinstance(vid_data["content"], str):
+                if "media_reference" in vid_data and isinstance(vid_data["media_reference"], dict):
+                    # Reference before base64: a row carrying both keeps the pointer, url and filepath included.
+                    data["video_output"] = Video(**vid_data)
+                elif "content" in vid_data and isinstance(vid_data["content"], str):
                     data["video_output"] = Video.from_base64(
                         vid_data["content"],
                         id=vid_data.get("id"),
@@ -256,6 +295,14 @@ class Message(BaseModel):
                     )
                 else:
                     data["video_output"] = Video(**vid_data)
+
+        # Handle metrics deserialization, convert dict to MessageMetrics
+        if "metrics" in data:
+            if isinstance(data["metrics"], dict):
+                data["metrics"] = MessageMetrics.from_dict(data["metrics"])
+            elif not isinstance(data["metrics"], MessageMetrics):
+                # Remove invalid/None values so Pydantic default factory creates empty MessageMetrics
+                data.pop("metrics")
 
         return cls(**data)
 
@@ -266,6 +313,7 @@ class Message(BaseModel):
             "content": self.content,
             "reasoning_content": self.reasoning_content,
             "from_history": self.from_history,
+            "compressed_content": self.compressed_content,
             "stop_after_tool_call": self.stop_after_tool_call,
             "role": self.role,
             "name": self.name,
@@ -276,6 +324,8 @@ class Message(BaseModel):
             "tool_calls": self.tool_calls,
             "redacted_reasoning_content": self.redacted_reasoning_content,
             "provider_data": self.provider_data,
+            "checkpoint_status": self.checkpoint_status,
+            "checkpoint_created_at": self.checkpoint_created_at,
         }
         # Filter out None and empty collections
         message_dict = {
@@ -315,14 +365,22 @@ class Message(BaseModel):
             "created_at": self.created_at,
         }
 
-    def log(self, metrics: bool = True, level: Optional[str] = None):
+    def log(self, metrics: bool = True, level: Optional[str] = None, use_compressed_content: bool = False):
         """Log the message to the console
 
         Args:
             metrics (bool): Whether to log the metrics.
             level (str): The level to log the message at. One of debug, info, warning, or error.
                 Defaults to debug.
+            use_compressed_content (bool): Whether to use compressed content.
         """
+        # Everything below builds strings for the sink to discard when debug is
+        # off (the default level logs via log_debug, which checks the same
+        # flag), including a terminal-size syscall. Read the flag off the
+        # module so runtime toggles are honored.
+        if level is None and not agno.utils.log.debug_on:
+            return
+
         _logger = log_debug
         if level == "info":
             _logger = log_info
@@ -348,10 +406,13 @@ class Message(BaseModel):
         if self.reasoning_content:
             _logger(f"<reasoning>\n{self.reasoning_content}\n</reasoning>")
         if self.content:
-            if isinstance(self.content, str) or isinstance(self.content, list):
-                _logger(self.content)
-            elif isinstance(self.content, dict):
-                _logger(json.dumps(self.content, indent=2))
+            if use_compressed_content and self.compressed_content:
+                _logger("Compressed content:\n" + self.compressed_content)
+            else:
+                if isinstance(self.content, str) or isinstance(self.content, list):
+                    _logger(self.content)
+                elif isinstance(self.content, dict):
+                    _logger(json.dumps(self.content, indent=2, ensure_ascii=False))
         if self.tool_calls:
             tool_calls_list = ["Tool Calls:"]
             for tool_call in self.tool_calls:
@@ -389,7 +450,7 @@ class Message(BaseModel):
             _logger(f"Files added: {len(self.files)}")
 
         metrics_header = " TOOL METRICS " if self.role == "tool" else " METRICS "
-        if metrics and self.metrics is not None and self.metrics != Metrics():
+        if metrics and self.metrics is not None and self.metrics != MessageMetrics():
             _logger(metrics_header, center=True, symbol="*")
 
             # Token metrics
@@ -412,20 +473,15 @@ class Message(BaseModel):
                 _logger(f"* Tokens:                      {', '.join(token_metrics)}")
 
             # Time related metrics
-            if self.metrics.duration is not None and self.metrics.duration > 0:
-                _logger(f"* Duration:                    {self.metrics.duration:.4f}s")
-            if self.metrics.output_tokens and self.metrics.duration and self.metrics.duration > 0:
-                _logger(
-                    f"* Tokens per second:           {self.metrics.output_tokens / self.metrics.duration:.4f} tokens/s"
-                )
+            duration = None
+            if self.metrics.timer is not None and self.metrics.timer.elapsed is not None:
+                duration = self.metrics.timer.elapsed
+            if duration is not None and duration > 0:
+                _logger(f"* Duration:                    {duration:.4f}s")
+            if self.metrics.output_tokens and duration and duration > 0:
+                _logger(f"* Tokens per second:           {self.metrics.output_tokens / duration:.4f} tokens/s")
             if self.metrics.time_to_first_token is not None and self.metrics.time_to_first_token > 0:
                 _logger(f"* Time to first token:         {self.metrics.time_to_first_token:.4f}s")
-
-            # Non-generic metrics
-            if self.metrics.provider_metrics:
-                _logger(f"* Provider metrics:            {self.metrics.provider_metrics}")
-            if self.metrics.additional_metrics:
-                _logger(f"* Additional metrics:          {self.metrics.additional_metrics}")
 
             _logger(metrics_header, center=True, symbol="*")
 

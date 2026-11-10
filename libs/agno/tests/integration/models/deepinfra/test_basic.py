@@ -82,7 +82,7 @@ def test_with_memory():
     assert "John" in response2.content
     assert "Smith" in response2.content
 
-    messages = agent.get_messages_for_session()
+    messages = agent.get_session_messages()
     assert len(messages) == 5
     assert [m.role for m in messages] == ["system", "user", "assistant", "user", "assistant"]
 
@@ -114,6 +114,7 @@ def test_history():
         model=DeepInfra(id="meta-llama/Llama-2-70b-chat-hf"),
         db=SqliteDb(db_file="tmp/deepinfra/test_basic.db"),
         add_history_to_context=True,
+        store_history_messages=True,
         telemetry=False,
     )
     run_output = agent.run("Hello")

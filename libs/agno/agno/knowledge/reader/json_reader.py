@@ -1,6 +1,5 @@
 import asyncio
 import json
-from io import BytesIO
 from pathlib import Path
 from typing import IO, Any, List, Optional, Union
 from uuid import uuid4
@@ -10,21 +9,23 @@ from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyT
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
-from agno.utils.log import log_info
+from agno.utils.log import log_debug, log_error
 
 
 class JSONReader(Reader):
     """Reader for JSON files"""
 
-    chunk: bool = False
-
-    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = FixedSizeChunking(), **kwargs):
-        super().__init__(chunking_strategy=chunking_strategy, **kwargs)
+    def __init__(self, chunk: bool = True, chunking_strategy: Optional[ChunkingStrategy] = None, **kwargs):
+        if chunking_strategy is None:
+            chunk_size = kwargs.get("chunk_size", 5000)
+            chunking_strategy = FixedSizeChunking(chunk_size=chunk_size)
+        super().__init__(chunk=chunk, chunking_strategy=chunking_strategy, **kwargs)
 
     @classmethod
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+    def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for JSON readers."""
         return [
+            ChunkingStrategyType.CODE_CHUNKER,
             ChunkingStrategyType.FIXED_SIZE_CHUNKER,
             ChunkingStrategyType.AGENTIC_CHUNKER,
             ChunkingStrategyType.DOCUMENT_CHUNKER,
@@ -33,28 +34,41 @@ class JSONReader(Reader):
         ]
 
     @classmethod
-    def get_supported_content_types(self) -> List[ContentType]:
+    def get_supported_content_types(cls) -> List[ContentType]:
         return [ContentType.JSON]
 
     def read(self, path: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
+        documents = self._read_documents(path, name)
+        if not self.chunk:
+            return documents
+        try:
+            chunked_documents = []
+            for document in documents:
+                chunked_documents.extend(self.chunk_document(document))
+            return chunked_documents
+        except Exception as e:
+            log_error(f"Error reading: {path}: {str(e)}")
+            raise
+
+    def _read_documents(self, path: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
+        """Read and parse JSON without applying a chunking strategy."""
         try:
             if isinstance(path, Path):
                 if not path.exists():
                     raise FileNotFoundError(f"Could not find file: {path}")
-                log_info(f"Reading: {path}")
-                json_name = name or path.name.split(".")[0]
-                json_contents = json.loads(path.read_text(self.encoding or "utf-8"))
-
-            elif isinstance(path, BytesIO):
-                json_name = name or path.name.split(".")[0]
-                log_info(f"Reading uploaded file: {json_name}")
+                log_debug(f"Reading: {path}")
+                json_name = name or path.stem
+                json_contents = json.loads(path.read_text(encoding=self.encoding or "utf-8"))
+            elif hasattr(path, "seek") and hasattr(path, "read"):
+                log_debug(f"Reading uploaded file: {getattr(path, 'name', 'BytesIO')}")
+                stream_name = getattr(path, "name", None)
+                json_name = name or (stream_name.split(".")[0] if isinstance(stream_name, str) else "json_file")
                 path.seek(0)
                 json_contents = json.load(path)
-
             else:
-                raise ValueError("Unsupported file type. Must be Path or BytesIO.")
+                raise ValueError("Unsupported file type. Must be Path or file-like object.")
 
-            if isinstance(json_contents, dict):
+            if not isinstance(json_contents, list):
                 json_contents = [json_contents]
 
             documents = [
@@ -62,26 +76,24 @@ class JSONReader(Reader):
                     name=json_name,
                     id=str(uuid4()),
                     meta_data={"page": page_number},
-                    content=json.dumps(content),
+                    content=json.dumps(content, ensure_ascii=False),
                 )
                 for page_number, content in enumerate(json_contents, start=1)
             ]
-            if self.chunk:
-                chunked_documents = []
-                for document in documents:
-                    chunked_documents.extend(self.chunk_document(document))
-                return chunked_documents
             return documents
-        except Exception:
+        except (FileNotFoundError, ValueError, json.JSONDecodeError):
+            raise
+        except Exception as e:
+            log_error(f"Error reading: {path}: {str(e)}")
             raise
 
     async def async_read(self, path: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
-        """Asynchronously read JSON files.
-
-        Args:
-            path (Union[Path, IO[Any]]): Path to a JSON file or a file-like object
-
-        Returns:
-            List[Document]: List of documents from the JSON file
-        """
-        return await asyncio.to_thread(self.read, path, name)
+        """Read JSON off the event loop and await the configured chunking strategy."""
+        documents = await asyncio.to_thread(self._read_documents, path, name)
+        if not self.chunk:
+            return documents
+        try:
+            return await self.chunk_documents_async(documents)
+        except Exception as e:
+            log_error(f"Error reading: {path}: {str(e)}")
+            raise

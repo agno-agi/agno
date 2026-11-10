@@ -1,8 +1,9 @@
 import asyncio
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import httpx
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb.base import VectorDb
@@ -66,45 +67,136 @@ class LightRag(VectorDb):
         """Check if a document with the given ID exists"""
         return False
 
-    def content_hash_exists(self, content_hash: str) -> bool:
-        """Check if content with the given hash exists"""
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        """Check if content with the given hash exists.
+
+        Always False: returning True would block the ``insert_file_bytes`` / ``insert_text`` upload path.
+        """
+        if user_id is not None:
+            log_warning(
+                "Per-user isolation is not supported in LightRAG. The LightRAG server owns these chunks, "
+                "so user_id is ignored."
+            )
         return False
 
-    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """Insert documents into the vector database"""
-        pass
+        if user_id is not None:
+            log_warning(
+                "Per-user isolation is not supported in LightRAG. The LightRAG server owns these chunks, "
+                "so user_id is ignored."
+            )
 
     async def async_insert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """Async insert documents into the vector database"""
-        pass
+        if user_id is not None:
+            log_warning(
+                "Per-user isolation is not supported in LightRAG. The LightRAG server owns these chunks, "
+                "so user_id is ignored."
+            )
 
-    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """Upsert documents into the vector database"""
-        pass
+        if user_id is not None:
+            log_warning(
+                "Per-user isolation is not supported in LightRAG. The LightRAG server owns these chunks, "
+                "so user_id is ignored."
+            )
 
-    def delete_by_content_id(self, content_id: str) -> None:
-        """Delete documents by content ID"""
-        pass
+    def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
+        """
+        Delete documents by content ID. Not supported for LightRag - use ``delete_by_external_id``.
 
-    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+        Args:
+            content_id (str): The content ID to delete
+            user_id (Optional[str]): Ignored - LightRAG does not support per-user isolation.
+
+        Returns:
+            bool: False as this operation is not supported
+        """
+        if user_id is not None:
+            log_warning(
+                "Per-user isolation is not supported in LightRAG. The LightRAG server owns these chunks, "
+                "so user_id is ignored."
+            )
+        log_warning("LightRag.delete_by_content_id() not supported - use delete_by_external_id instead.")
+        return False
+
+    async def async_upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """Async upsert documents into the vector database"""
-        pass
+        if user_id is not None:
+            log_warning(
+                "Per-user isolation is not supported in LightRAG. The LightRAG server owns these chunks, "
+                "so user_id is ignored."
+            )
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
-        result = asyncio.run(self.async_search(query, limit=limit, filters=filters))
+    def search(
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
+    ) -> List[Document]:
+        """
+        Returns relevant documents matching the query.
+
+        Args:
+            query (str): The query string to search for.
+            limit (int): The maximum number of documents to return. Defaults to 5.
+            filters (Optional[Dict[str, Any]]): Filters to apply to the search. Defaults to None.
+            user_id (Optional[str]): Ignored - LightRAG does not support per-user isolation.
+
+        Returns:
+            List[Document]: A list of relevant documents matching the query.
+        """
+        result = asyncio.run(self.async_search(query, limit=limit, filters=filters, user_id=user_id))
         return result if result is not None else []
 
     async def async_search(
-        self, query: str, limit: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
+        self,
+        query: str,
+        limit: Optional[int] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[List[Document]]:
         mode: str = "hybrid"  # Default mode, can be "local", "global", or "hybrid"
+        if filters is not None:
+            log_warning("Filters are not supported in LightRAG. No filters will be applied.")
+
+        if user_id is not None:
+            log_warning(
+                "Per-user isolation is not supported in LightRAG. The LightRAG server owns these chunks, "
+                "so results are not scoped to the caller."
+            )
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
                     f"{self.server_url}/query",
-                    json={"query": query, "mode": "hybrid"},
+                    json={"query": query, "mode": "hybrid", "include_references": True},
                     headers=self._get_headers(),
                 )
 
@@ -114,16 +206,13 @@ class LightRag(VectorDb):
                 return self._format_lightrag_response(result, query, mode)
 
         except httpx.RequestError as e:
-            log_error(f"HTTP Request Error: {type(e).__name__}: {str(e)}")
+            log_error(f"HTTP Request Error: {str(e)}")
             return []
         except httpx.HTTPStatusError as e:
-            log_error(f"HTTP Status Error: {e.response.status_code} - {e.response.text}")
+            log_error(f"HTTP Status Error: {str(e)}")
             return []
         except Exception as e:
-            log_error(f"Unexpected error during LightRAG server search: {type(e).__name__}: {str(e)}")
-            import traceback
-
-            log_error(f"Full traceback: {traceback.format_exc()}")
+            log_error(f"Unexpected error during LightRAG server search: {str(e)}")
             return None
 
     def drop(self) -> None:
@@ -173,7 +262,7 @@ class LightRag(VectorDb):
         try:
             return asyncio.run(self.async_delete_by_external_id(external_id))
         except Exception as e:
-            log_error(f"Error in sync delete_by_external_id: {e}")
+            log_error(f"Error in sync delete_by_external_id: {str(e)}")
             return False
 
     async def async_delete_by_external_id(self, external_id: str) -> bool:
@@ -191,7 +280,7 @@ class LightRag(VectorDb):
                 response.raise_for_status()
                 return True
         except Exception as e:
-            log_error(f"Error deleting document {external_id}: {e}")
+            log_error(f"Error deleting document {external_id}: {str(e)}")
             return False
 
     # We use this method when content is coming from unsupported file types that LightRAG can't process
@@ -301,9 +390,6 @@ class LightRag(VectorDb):
 
         Args:
             query: The search query string
-            num_documents: Number of documents to retrieve (currently unused by LightRAG)
-            mode: Query mode - "local", "global", or "hybrid"
-            lightrag_server_url: URL of the LightRAG server
 
         Returns:
             List of retrieved documents or None if search fails
@@ -317,7 +403,7 @@ class LightRag(VectorDb):
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
                     f"{self.server_url}/query",
-                    json={"query": query, "mode": "hybrid"},
+                    json={"query": query, "mode": "hybrid", "include_references": True},
                     headers=self._get_headers(),
                 )
 
@@ -327,16 +413,13 @@ class LightRag(VectorDb):
                 return self._format_lightrag_response(result, query, mode)
 
         except httpx.RequestError as e:
-            log_error(f"HTTP Request Error: {type(e).__name__}: {str(e)}")
+            log_error(f"HTTP Request Error: {str(e)}")
             return None
         except httpx.HTTPStatusError as e:
-            log_error(f"HTTP Status Error: {e.response.status_code} - {e.response.text}")
+            log_error(f"HTTP Status Error: {str(e)}")
             return None
         except Exception as e:
-            log_error(f"Unexpected error during LightRAG server search: {type(e).__name__}: {str(e)}")
-            import traceback
-
-            log_error(f"Full traceback: {traceback.format_exc()}")
+            log_error(f"Unexpected error during LightRAG server search: {str(e)}")
             return None
 
     def _format_lightrag_response(self, result: Any, query: str, mode: str) -> List[Document]:
@@ -344,10 +427,11 @@ class LightRag(VectorDb):
         # LightRAG server returns a dict with 'response' key, but we expect a list of documents
         # Convert the response to the expected format
         if isinstance(result, dict) and "response" in result:
-            # Wrap the response in a Document object
-            return [
-                Document(content=result["response"], meta_data={"source": "lightrag", "query": query, "mode": mode})
-            ]
+            meta_data = {"source": "lightrag", "query": query, "mode": mode}
+            # Preserve references from LightRAG response for document citations
+            if "references" in result:
+                meta_data["references"] = result["references"]
+            return [Document(content=result["response"], meta_data=meta_data)]
         elif isinstance(result, list):
             # Convert list items to Document objects
             documents = []

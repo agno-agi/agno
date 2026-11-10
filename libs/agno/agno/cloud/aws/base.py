@@ -3,7 +3,7 @@ from typing import Any, Optional
 from pydantic import BaseModel, ConfigDict
 
 from agno.cloud.aws.s3.api_client import AwsApiClient
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_error, log_warning
 
 
 class AwsResource(BaseModel):
@@ -72,7 +72,7 @@ class AwsResource(BaseModel):
 
         aws_region_env = getenv("AWS_REGION")
         if aws_region_env is not None:
-            logger.debug(f"{'AWS_REGION'}: {aws_region_env}")
+            log_debug(f"{'AWS_REGION'}: {aws_region_env}")
             self.aws_region = aws_region_env
         return self.aws_region
 
@@ -84,7 +84,7 @@ class AwsResource(BaseModel):
 
         aws_profile_env = getenv("AWS_PROFILE")
         if aws_profile_env is not None:
-            logger.debug(f"{'AWS_PROFILE'}: {aws_profile_env}")
+            log_debug(f"{'AWS_PROFILE'}: {aws_profile_env}")
             self.aws_profile = aws_profile_env
         return self.aws_profile
 
@@ -95,7 +95,7 @@ class AwsResource(BaseModel):
         return self.aws_client
 
     def _read(self, aws_client: AwsApiClient) -> Any:
-        logger.warning(f"@_read method not defined for {self.get_resource_name()}")
+        log_warning(f"@_read method not defined for {self.get_resource_name()}")
         return True
 
     def read(self, aws_client: Optional[AwsApiClient] = None) -> Any:
@@ -119,7 +119,7 @@ class AwsResource(BaseModel):
         return True if _resource is not None else False
 
     def _create(self, aws_client: AwsApiClient) -> bool:
-        logger.warning(f"@_create method not defined for {self.get_resource_name()}")
+        log_warning(f"@_create method not defined for {self.get_resource_name()}")
         return True
 
     def create(self, aws_client: Optional[AwsApiClient] = None) -> bool:
@@ -143,16 +143,16 @@ class AwsResource(BaseModel):
 
         # Step 4: Run post create steps
         if self.resource_created:
-            logger.debug(f"Running post-create for {self.get_resource_type()}: {self.get_resource_name()}")
+            log_debug(f"Running post-create for {self.get_resource_type()}: {self.get_resource_name()}")
             return self.post_create(client)
-        logger.error(f"Failed to create {self.get_resource_type()}: {self.get_resource_name()}")
+        log_error(f"Failed to create {self.get_resource_type()}: {self.get_resource_name()}")
         return self.resource_created
 
     def post_create(self, aws_client: AwsApiClient) -> bool:
         return True
 
     def _update(self, aws_client: AwsApiClient) -> Any:
-        logger.warning(f"@_update method not defined for {self.get_resource_name()}")
+        log_warning(f"@_update method not defined for {self.get_resource_name()}")
         return True
 
     def update(self, aws_client: Optional[AwsApiClient] = None) -> bool:
@@ -174,16 +174,16 @@ class AwsResource(BaseModel):
         # Step 3: Run post update steps
         if self.resource_updated:
             print(f"{self.get_resource_type()}: {self.get_resource_name()} updated")
-            logger.debug(f"Running post-update for {self.get_resource_type()}: {self.get_resource_name()}")
+            log_debug(f"Running post-update for {self.get_resource_type()}: {self.get_resource_name()}")
             return self.post_update(client)
-        logger.error(f"Failed to update {self.get_resource_type()}: {self.get_resource_name()}")
+        log_error(f"Failed to update {self.get_resource_type()}: {self.get_resource_name()}")
         return self.resource_updated
 
     def post_update(self, aws_client: AwsApiClient) -> bool:
         return True
 
     def _delete(self, aws_client: AwsApiClient) -> Any:
-        logger.warning(f"@_delete method not defined for {self.get_resource_name()}")
+        log_warning(f"@_delete method not defined for {self.get_resource_name()}")
         return True
 
     def delete(self, aws_client: Optional[AwsApiClient] = None) -> bool:
@@ -205,9 +205,9 @@ class AwsResource(BaseModel):
         # Step 3: Run post delete steps
         if self.resource_deleted:
             print(f"{self.get_resource_type()}: {self.get_resource_name()} deleted")
-            logger.debug(f"Running post-delete for {self.get_resource_type()}: {self.get_resource_name()}.")
+            log_debug(f"Running post-delete for {self.get_resource_type()}: {self.get_resource_name()}.")
             return self.post_delete(client)
-        logger.error(f"Failed to delete {self.get_resource_type()}: {self.get_resource_name()}")
+        log_error(f"Failed to delete {self.get_resource_type()}: {self.get_resource_name()}")
         return self.resource_deleted
 
     def post_delete(self, aws_client: AwsApiClient) -> bool:

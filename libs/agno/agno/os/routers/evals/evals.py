@@ -2,20 +2,27 @@ import logging
 from copy import deepcopy
 from typing import List, Optional, Union, cast
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from agno.agent.agent import Agent
+from agno.agent import Agent, RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.evals import EvalFilterType, EvalType
+from agno.exceptions import AgnoError
 from agno.models.utils import get_model
-from agno.os.auth import get_authentication_dependency
+from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
+from agno.os.middleware.user_scope import apply_scope_to_kwargs, get_scoped_user_id
 from agno.os.routers.evals.schemas import (
     DeleteEvalRunsRequest,
     EvalRunInput,
     EvalSchema,
     UpdateEvalRunRequest,
 )
-from agno.os.routers.evals.utils import run_accuracy_eval, run_performance_eval, run_reliability_eval
+from agno.os.routers.evals.utils import (
+    run_accuracy_eval,
+    run_agent_as_judge_eval,
+    run_performance_eval,
+    run_reliability_eval,
+)
 from agno.os.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
@@ -27,16 +34,47 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import get_agent_by_id, get_db, get_team_by_id
-from agno.team.team import Team
+from agno.os.utils import AgnoHTTPException, get_agent_by_id, get_db, get_team_by_id
+from agno.remote.base import RemoteDb
+from agno.team import RemoteTeam, Team
+from agno.utils.log import log_warning
 
 logger = logging.getLogger(__name__)
 
 
+async def _require_eval_target_run_access(request: Request, *, resource_type: str, resource_id: str) -> None:
+    """Refuse an eval whose caller may not RUN its target agent or team.
+
+    Mirrors the ``require_resource_access(<family>, "run", ...)`` dependency on the run routes:
+    dormant when authorization is off, decided by the configured provider (scope, managed roles,
+    ReBAC) otherwise, and a denial is written to the decision trail so the audit shows what
+    actually blocked the request. The target comes from the request body, not the path, which is
+    why the run routes' path-based dependency cannot cover this endpoint."""
+    if not getattr(request.state, "authorization_enabled", False):
+        return
+    from agno.os.auth import acheck_resource_access
+    from agno.os.authz.audit import arecord_decision
+
+    if await acheck_resource_access(request, resource_id, resource_type, "run"):
+        return
+    await arecord_decision(
+        request,
+        allowed=False,
+        target=f"{request.method} /eval-runs {resource_type}/{resource_id}",
+        principal=getattr(request.state, "user_id", None),
+        required_scopes=[f"{resource_type}:{resource_id}:run"],
+        scopes=list(getattr(request.state, "scopes", None) or []),
+        claims=getattr(request.state, "claims", None),
+        reason="resource_access_denied",
+    )
+    singular = "agent" if resource_type == "agents" else "team"
+    raise HTTPException(status_code=403, detail=f"Access denied to run this {singular}")
+
+
 def get_eval_router(
-    dbs: dict[str, Union[BaseDb, AsyncBaseDb]],
-    agents: Optional[List[Agent]] = None,
-    teams: Optional[List[Team]] = None,
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
+    agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
+    teams: Optional[List[Union[Team, RemoteTeam]]] = None,
     settings: AgnoAPISettings = AgnoAPISettings(),
 ) -> APIRouter:
     """Create eval router with comprehensive OpenAPI documentation for agent/team evaluation endpoints."""
@@ -56,9 +94,9 @@ def get_eval_router(
 
 def attach_routes(
     router: APIRouter,
-    dbs: dict[str, Union[BaseDb, AsyncBaseDb]],
-    agents: Optional[List[Agent]] = None,
-    teams: Optional[List[Team]] = None,
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
+    agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
+    teams: Optional[List[Union[Team, RemoteTeam]]] = None,
 ) -> APIRouter:
     @router.get(
         "/eval-runs",
@@ -104,19 +142,40 @@ def attach_routes(
         },
     )
     async def get_eval_runs(
+        request: Request,
         agent_id: Optional[str] = Query(default=None, description="Agent ID"),
         team_id: Optional[str] = Query(default=None, description="Team ID"),
         workflow_id: Optional[str] = Query(default=None, description="Workflow ID"),
         model_id: Optional[str] = Query(default=None, description="Model ID"),
         filter_type: Optional[EvalFilterType] = Query(default=None, description="Filter type", alias="type"),
         eval_types: Optional[List[EvalType]] = Depends(parse_eval_types_filter),
-        limit: Optional[int] = Query(default=20, description="Number of eval runs to return"),
-        page: Optional[int] = Query(default=1, description="Page number"),
+        limit: Optional[int] = Query(default=20, description="Number of eval runs to return", ge=1),
+        page: Optional[int] = Query(default=1, description="Page number", ge=0),
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
-        sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
+        sort_order: Optional[SortOrder] = Query(default=SortOrder.DESC, description="Sort order (asc or desc)"),
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        table: Optional[str] = Query(default=None, description="The database table to use"),
     ) -> PaginatedResponse[EvalSchema]:
-        db = get_db(dbs, db_id)
+        db = await get_db(dbs, db_id, table)
+
+        scope = apply_scope_to_kwargs(request)
+
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await db.get_eval_runs(
+                limit=limit,
+                page=page,
+                sort_by=sort_by,
+                sort_order=sort_order.value if sort_order else None,
+                agent_id=agent_id,
+                team_id=team_id,
+                workflow_id=workflow_id,
+                model_id=model_id,
+                eval_types=eval_types,
+                filter_type=filter_type.value if filter_type else None,
+                headers=headers,
+            )
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
@@ -132,6 +191,7 @@ def attach_routes(
                 eval_type=eval_types,
                 filter_type=filter_type,
                 deserialize=False,
+                **scope,
             )
         else:
             eval_runs, total_count = db.get_eval_runs(  # type: ignore
@@ -146,6 +206,7 @@ def attach_routes(
                 eval_type=eval_types,
                 filter_type=filter_type,
                 deserialize=False,
+                **scope,
             )
 
         return PaginatedResponse(
@@ -196,15 +257,23 @@ def attach_routes(
         },
     )
     async def get_eval_run(
+        request: Request,
         eval_run_id: str,
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        table: Optional[str] = Query(default=None, description="Table to query eval run from"),
     ) -> EvalSchema:
-        db = get_db(dbs, db_id)
+        db = await get_db(dbs, db_id, table)
+        scope = apply_scope_to_kwargs(request)
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await db.get_eval_run(eval_run_id=eval_run_id, db_id=db_id, table=table, headers=headers)
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            eval_run = await db.get_eval_run(eval_run_id=eval_run_id, deserialize=False)
+            eval_run = await db.get_eval_run(eval_run_id=eval_run_id, deserialize=False, **scope)
         else:
-            eval_run = db.get_eval_run(eval_run_id=eval_run_id, deserialize=False)
+            eval_run = db.get_eval_run(eval_run_id=eval_run_id, deserialize=False, **scope)
         if not eval_run:
             raise HTTPException(status_code=404, detail=f"Eval run with id '{eval_run_id}' not found")
 
@@ -222,16 +291,30 @@ def attach_routes(
         },
     )
     async def delete_eval_runs(
+        http_request: Request,
         request: DeleteEvalRunsRequest,
         db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
+        table: Optional[str] = Query(default=None, description="Table to use for deletion"),
     ) -> None:
         try:
-            db = get_db(dbs, db_id)
+            db = await get_db(dbs, db_id, table)
+            scope = apply_scope_to_kwargs(http_request)
+            if isinstance(db, RemoteDb):
+                auth_token = get_auth_token_from_request(http_request)
+                headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+                return await db.delete_eval_runs(
+                    eval_run_ids=request.eval_run_ids, db_id=db_id, table=table, headers=headers
+                )
+
             if isinstance(db, AsyncBaseDb):
                 db = cast(AsyncBaseDb, db)
-                await db.delete_eval_runs(eval_run_ids=request.eval_run_ids)
+                await db.delete_eval_runs(eval_run_ids=request.eval_run_ids, **scope)
             else:
-                db.delete_eval_runs(eval_run_ids=request.eval_run_ids)
+                db.delete_eval_runs(eval_run_ids=request.eval_run_ids, **scope)
+        except HTTPException:
+            raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to delete eval runs: {e}")
 
@@ -274,17 +357,33 @@ def attach_routes(
         },
     )
     async def update_eval_run(
+        http_request: Request,
         eval_run_id: str,
         request: UpdateEvalRunRequest,
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        table: Optional[str] = Query(default=None, description="Table to use for rename operation"),
     ) -> EvalSchema:
         try:
-            db = get_db(dbs, db_id)
+            db = await get_db(dbs, db_id, table)
+            scope = apply_scope_to_kwargs(http_request)
+            if isinstance(db, RemoteDb):
+                auth_token = get_auth_token_from_request(http_request)
+                headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+                return await db.update_eval_run(
+                    eval_run_id=eval_run_id, name=request.name, db_id=db_id, table=table, headers=headers
+                )
+
             if isinstance(db, AsyncBaseDb):
                 db = cast(AsyncBaseDb, db)
-                eval_run = await db.rename_eval_run(eval_run_id=eval_run_id, name=request.name, deserialize=False)
+                eval_run = await db.rename_eval_run(
+                    eval_run_id=eval_run_id, name=request.name, deserialize=False, **scope
+                )
             else:
-                eval_run = db.rename_eval_run(eval_run_id=eval_run_id, name=request.name, deserialize=False)
+                eval_run = db.rename_eval_run(eval_run_id=eval_run_id, name=request.name, deserialize=False, **scope)
+        except HTTPException:
+            raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to rename eval run: {e}")
 
@@ -300,7 +399,7 @@ def attach_routes(
         operation_id="run_eval",
         summary="Execute Evaluation",
         description=(
-            "Run evaluation tests on agents or teams. Supports accuracy, performance, and reliability evaluations. "
+            "Run evaluation tests on agents or teams. Supports accuracy, agent-as-judge, performance, and reliability evaluations. "
             "Requires either agent_id or team_id, but not both."
         ),
         responses={
@@ -334,18 +433,60 @@ def attach_routes(
         },
     )
     async def run_eval(
+        request: Request,
         eval_run_input: EvalRunInput,
         db_id: Optional[str] = Query(default=None, description="Database ID to use for evaluation"),
+        table: Optional[str] = Query(default=None, description="Table to use for evaluation"),
     ) -> Optional[EvalSchema]:
-        db = get_db(dbs, db_id)
+        db = await get_db(dbs, db_id, table)
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await db.create_eval_run(
+                eval_type=eval_run_input.eval_type,
+                input_text=eval_run_input.input,
+                agent_id=eval_run_input.agent_id,
+                team_id=eval_run_input.team_id,
+                model_id=eval_run_input.model_id,
+                model_provider=eval_run_input.model_provider,
+                expected_output=eval_run_input.expected_output,
+                expected_tool_calls=eval_run_input.expected_tool_calls,
+                num_iterations=eval_run_input.num_iterations,
+                db_id=db_id,
+                table=table,
+                headers=headers,
+            )
+
+        # Resolved before the run: get_scoped_user_id raises 403 and the eval below makes real model calls.
+        creator_user_id = get_scoped_user_id(request) or getattr(request.state, "user_id", None)
 
         if eval_run_input.agent_id and eval_run_input.team_id:
             raise HTTPException(status_code=400, detail="Only one of agent_id or team_id must be provided")
 
+        # An eval RUNS the target with real model calls, so it is gated exactly like the run
+        # endpoints: the caller must hold "run" on that specific agent or team under the
+        # configured provider. The route scope (evals:write) alone says nothing about which
+        # targets the caller may execute, and the body names the target, so this is the only
+        # place the per-resource decision can be made.
+        if eval_run_input.agent_id or eval_run_input.team_id:
+            await _require_eval_target_run_access(
+                request,
+                resource_type="agents" if eval_run_input.agent_id else "teams",
+                resource_id=eval_run_input.agent_id or eval_run_input.team_id,  # type: ignore[arg-type]
+            )
+
         if eval_run_input.agent_id:
-            agent = get_agent_by_id(agent_id=eval_run_input.agent_id, agents=agents)
+            # create_fresh: the eval mutates the resolved agent (e.g. agent.model below), so
+            # it must run on a per-request deep_copy, never the shared singleton instance.
+            agent = get_agent_by_id(agent_id=eval_run_input.agent_id, agents=agents, create_fresh=True)
             if not agent:
                 raise HTTPException(status_code=404, detail=f"Agent with id '{eval_run_input.agent_id}' not found")
+            if isinstance(agent, RemoteAgent):
+                log_warning("Evaluation against remote agents are not supported yet")
+                return None
+            if not isinstance(agent, Agent):
+                log_warning("Evaluation against external framework agents is not supported yet")
+                return None
 
             default_model = None
             if (
@@ -356,19 +497,24 @@ def attach_routes(
             ):
                 default_model = deepcopy(agent.model)
                 if eval_run_input.model_id != agent.model.id or eval_run_input.model_provider != agent.model.provider:
-                    model = get_model(
-                        model_id=eval_run_input.model_id.lower(),
-                        model_provider=eval_run_input.model_provider.lower(),
-                    )
+                    model_provider = eval_run_input.model_provider.lower()
+                    model_id = eval_run_input.model_id.lower()
+                    model_string = f"{model_provider}:{model_id}"
+                    model = get_model(model_string)
                     agent.model = model
 
             team = None
 
         elif eval_run_input.team_id:
-            team = get_team_by_id(team_id=eval_run_input.team_id, teams=teams)
+            # create_fresh: mirror the agent path -- eval runs must not share the singleton.
+            team = get_team_by_id(team_id=eval_run_input.team_id, teams=teams, create_fresh=True)
             if not team:
                 raise HTTPException(status_code=404, detail=f"Team with id '{eval_run_input.team_id}' not found")
+            if isinstance(team, RemoteTeam):
+                log_warning("Evaluation against remote teams are not supported yet")
+                return None
 
+            # If model_id/model_provider specified, override team's model temporarily
             default_model = None
             if (
                 hasattr(team, "model")
@@ -376,13 +522,13 @@ def attach_routes(
                 and eval_run_input.model_id is not None
                 and eval_run_input.model_provider is not None
             ):
-                default_model = deepcopy(team.model)
+                default_model = deepcopy(team.model)  # Save original
                 if eval_run_input.model_id != team.model.id or eval_run_input.model_provider != team.model.provider:
-                    model = get_model(
-                        model_id=eval_run_input.model_id.lower(),
-                        model_provider=eval_run_input.model_provider.lower(),
-                    )
-                    team.model = model
+                    model_provider = eval_run_input.model_provider.lower()
+                    model_id = eval_run_input.model_id.lower()
+                    model_string = f"{model_provider}:{model_id}"
+                    model = get_model(model_string)
+                    team.model = model  # Override temporarily
 
             agent = None
 
@@ -390,20 +536,58 @@ def attach_routes(
             raise HTTPException(status_code=400, detail="One of agent_id or team_id must be provided")
 
         # Run the evaluation
+        eval_run: Optional[EvalSchema] = None
         if eval_run_input.eval_type == EvalType.ACCURACY:
-            return await run_accuracy_eval(
+            if isinstance(agent, RemoteAgent) or isinstance(team, RemoteTeam):
+                # TODO: Handle remote evaluation
+                log_warning("Evaluation against remote agents are not supported yet")
+                return None
+            eval_run = await run_accuracy_eval(
                 eval_run_input=eval_run_input, db=db, agent=agent, team=team, default_model=default_model
             )
 
+        elif eval_run_input.eval_type == EvalType.AGENT_AS_JUDGE:
+            eval_run = await run_agent_as_judge_eval(
+                eval_run_input=eval_run_input,
+                db=db,
+                agent=agent,
+                team=team,
+                default_model=default_model,  # type: ignore
+            )
+
         elif eval_run_input.eval_type == EvalType.PERFORMANCE:
-            return await run_performance_eval(
+            if isinstance(agent, RemoteAgent) or isinstance(team, RemoteTeam):
+                # TODO: Handle remote evaluation
+                log_warning("Evaluation against remote agents are not supported yet")
+                return None
+            eval_run = await run_performance_eval(
                 eval_run_input=eval_run_input, db=db, agent=agent, team=team, default_model=default_model
             )
 
         else:
-            return await run_reliability_eval(
+            if isinstance(agent, RemoteAgent) or isinstance(team, RemoteTeam):
+                # TODO: Handle remote evaluation
+                log_warning("Evaluation against remote agents are not supported yet")
+                return None
+            eval_run = await run_reliability_eval(
                 eval_run_input=eval_run_input, db=db, agent=agent, team=team, default_model=default_model
             )
+
+        # Attribute the created run to the caller. Best-effort: the eval run is
+        # already persisted, so a backend that can't stamp the owner (e.g. a
+        # custom Db without update_eval_run_user_id) must not fail the request.
+        if eval_run is not None:
+            if creator_user_id is not None:
+                try:
+                    if isinstance(db, AsyncBaseDb):
+                        await db.update_eval_run_user_id(eval_run_id=eval_run.id, user_id=creator_user_id)
+                    else:
+                        db.update_eval_run_user_id(eval_run_id=eval_run.id, user_id=creator_user_id)
+                    eval_run.user_id = creator_user_id
+                except Exception as e:
+                    log_warning(f"Could not set owner on eval run {eval_run.id}: {e}")
+
+        return eval_run
 
     return router
 
@@ -411,8 +595,8 @@ def attach_routes(
 def parse_eval_types_filter(
     eval_types: Optional[str] = Query(
         default=None,
-        description="Comma-separated eval types (accuracy,performance,reliability)",
-        examples=["accuracy,performance"],
+        description="Comma-separated eval types (accuracy,agent_as_judge,performance,reliability)",
+        examples=["accuracy,agent_as_judge,performance,reliability"],
     ),
 ) -> Optional[List[EvalType]]:
     """Parse comma-separated eval types into EvalType enums for filtering evaluation runs."""

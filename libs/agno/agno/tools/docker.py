@@ -4,7 +4,7 @@ import sys
 from typing import Any, Dict, List, Optional, Union
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_error, log_warning, logger
 
 if sys.version_info >= (3, 12):
     # Apply more comprehensive monkey patch for Python 3.12 compatibility
@@ -24,7 +24,7 @@ if sys.version_info >= (3, 12):
                 valid_kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters}
                 return original_load_config(*args, **valid_kwargs)
             except Exception as e:
-                logger.warning(f"Error in patched_load_config: {e}")
+                log_warning(f"Error in patched_load_config: {str(e)}")
                 return {}
 
         # Replace the original function with our patched version
@@ -46,7 +46,7 @@ if sys.version_info >= (3, 12):
 
         logger.info("Applied comprehensive compatibility patch for Docker client on Python 3.12")
     except Exception as e:
-        logger.warning(f"Failed to apply Docker client compatibility patch: {e}")
+        log_warning(f"Failed to apply Docker client compatibility patch: {str(e)}")
 
 try:
     import docker
@@ -73,8 +73,8 @@ class DockerTools(Toolkit):
 
             self.client.ping()
             logger.info("Successfully connected to Docker daemon")
-        except Exception as e:
-            logger.error(f"Error connecting to Docker: {e}")
+        except Exception:
+            logger.exception("Error connecting to Docker")
 
         tools: List[Any] = [
             # Container management
@@ -128,7 +128,7 @@ class DockerTools(Toolkit):
         # Check if any socket exists
         socket_exists = any(os.path.exists(path) for path in socket_paths)
         if not socket_exists:
-            logger.error("Docker socket not found. Is Docker installed and running?")
+            log_error("Docker socket not found. Is Docker installed and running?")
             raise ValueError(
                 "Docker socket not found. Please make sure Docker is installed and running.\n"
                 "On macOS: Start Docker Desktop application.\n"
@@ -175,7 +175,7 @@ class DockerTools(Toolkit):
             return json.dumps(container_list, indent=2)
         except DockerException as e:
             error_msg = f"Error listing containers: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg
 
     def start_container(self, container_id: str) -> str:
@@ -194,7 +194,7 @@ class DockerTools(Toolkit):
             return f"Container {container_id} started successfully"
         except DockerException as e:
             error_msg = f"Error starting container: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg
 
     def stop_container(self, container_id: str, timeout: int = 10) -> str:
@@ -214,7 +214,7 @@ class DockerTools(Toolkit):
             return f"Container {container_id} stopped successfully"
         except DockerException as e:
             error_msg = f"Error stopping container: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg
 
     def remove_container(self, container_id: str, force: bool = False, volumes: bool = False) -> str:
@@ -235,7 +235,7 @@ class DockerTools(Toolkit):
             return f"Container {container_id} removed successfully"
         except DockerException as e:
             error_msg = f"Error removing container: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg
 
     def get_container_logs(self, container_id: str, tail: int = 100, stream: bool = False) -> str:
@@ -261,7 +261,7 @@ class DockerTools(Toolkit):
             return "No logs found"
         except DockerException as e:
             error_msg = f"Error getting container logs: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg
 
     def inspect_container(self, container_id: str) -> str:
@@ -279,7 +279,7 @@ class DockerTools(Toolkit):
             return json.dumps(container.attrs, indent=2)
         except DockerException as e:
             error_msg = f"Error inspecting container: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg
 
     def run_container(
@@ -333,7 +333,7 @@ class DockerTools(Toolkit):
             return f"Container started with ID: {container.id}"
         except DockerException as e:
             error_msg = f"Error running container: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg
 
     def exec_in_container(self, container_id: str, command: str) -> str:
@@ -361,7 +361,7 @@ class DockerTools(Toolkit):
                 return f"Command failed with exit code {exit_code}: {output_str}"
         except DockerException as e:
             error_msg = f"Error executing command in container: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg
 
     def list_images(self) -> str:
@@ -389,7 +389,7 @@ class DockerTools(Toolkit):
             return json.dumps(image_list, indent=2)
         except DockerException as e:
             error_msg = f"Error listing images: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg  # type: ignore
 
     def pull_image(self, image_name: str, tag: str = "latest") -> str:
@@ -415,7 +415,7 @@ class DockerTools(Toolkit):
             return f"Image {image_name}:{tag} pulled successfully"
         except Exception as e:
             error_msg = f"Error pulling image: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg
 
     def remove_image(self, image_id: str, force: bool = False) -> str:
@@ -436,7 +436,7 @@ class DockerTools(Toolkit):
             return f"Image {image_id} not found"
         except DockerException as e:
             error_msg = f"Error removing image: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg
 
     def build_image(self, path: str, tag: str, dockerfile: str = "Dockerfile", rm: bool = True) -> str:
@@ -457,7 +457,7 @@ class DockerTools(Toolkit):
             return f"Image built successfully with ID: {image.id}"
         except DockerException as e:
             error_msg = f"Error building image: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg
 
     def tag_image(self, image_id: str, repository: str, tag: Optional[str] = None) -> str:
@@ -478,7 +478,7 @@ class DockerTools(Toolkit):
             return f"Image {image_id} tagged as {repository}:{tag or 'latest'}"
         except DockerException as e:
             error_msg = f"Error tagging image: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg
 
     def inspect_image(self, image_id: str) -> str:
@@ -496,7 +496,7 @@ class DockerTools(Toolkit):
             return json.dumps(image.attrs, indent=2)
         except DockerException as e:
             error_msg = f"Error inspecting image: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg
 
     def list_volumes(self) -> str:
@@ -524,7 +524,7 @@ class DockerTools(Toolkit):
             return json.dumps(volume_list, indent=2)
         except DockerException as e:
             error_msg = f"Error listing volumes: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg
 
     def create_volume(self, volume_name: str, driver: str = "local", labels: Optional[Dict[str, str]] = None) -> str:
@@ -544,7 +544,7 @@ class DockerTools(Toolkit):
             return f"Volume {volume_name} created successfully"
         except DockerException as e:
             error_msg = f"Error creating volume: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg
 
     def remove_volume(self, volume_name: str, force: bool = False) -> str:
@@ -564,7 +564,7 @@ class DockerTools(Toolkit):
             return f"Volume {volume_name} removed successfully"
         except DockerException as e:
             error_msg = f"Error removing volume: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg
 
     def inspect_volume(self, volume_name: str) -> str:
@@ -582,7 +582,7 @@ class DockerTools(Toolkit):
             return json.dumps(volume.attrs, indent=2)
         except DockerException as e:
             error_msg = f"Error inspecting volume: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg
 
     def list_networks(self) -> str:
@@ -612,7 +612,7 @@ class DockerTools(Toolkit):
             return json.dumps(network_list, indent=2)
         except DockerException as e:
             error_msg = f"Error listing networks: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg
 
     def create_network(
@@ -635,7 +635,7 @@ class DockerTools(Toolkit):
             return f"Network {network_name} created successfully with ID: {network.id}"
         except DockerException as e:
             error_msg = f"Error creating network: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg
 
     def remove_network(self, network_name: str) -> str:
@@ -654,7 +654,7 @@ class DockerTools(Toolkit):
             return f"Network {network_name} removed successfully"
         except DockerException as e:
             error_msg = f"Error removing network: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg
 
     def inspect_network(self, network_name: str) -> str:
@@ -672,7 +672,7 @@ class DockerTools(Toolkit):
             return json.dumps(network.attrs, indent=2)
         except DockerException as e:
             error_msg = f"Error inspecting network: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg
 
     def connect_container_to_network(self, container_id: str, network_name: str) -> str:
@@ -692,7 +692,7 @@ class DockerTools(Toolkit):
             return f"Container {container_id} connected to network {network_name}"
         except DockerException as e:
             error_msg = f"Error connecting container to network: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg
 
     def disconnect_container_from_network(self, container_id: str, network_name: str) -> str:
@@ -712,5 +712,5 @@ class DockerTools(Toolkit):
             return f"Container {container_id} disconnected from network {network_name}"
         except DockerException as e:
             error_msg = f"Error disconnecting container from network: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg
