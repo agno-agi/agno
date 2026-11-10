@@ -11,6 +11,8 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from sqlalchemy import func, literal, or_, select, union_all
 
+from agno.db.schemas.company import validate_company_details
+
 
 def active_parents(stmt: Any, table: Any, products: Any, projects: Any = None) -> Any:
     """Hide children of archived parents before counting or paging."""
@@ -578,3 +580,58 @@ def update_product_row(
             fields = {**fields, "metadata": {**fields["metadata"], "routine_ids": routine_ids}}
     result = sess.execute(stmt.values(**fields, updated_at=int(time.time())).returning(products)).fetchone()
     return dict(result._mapping) if result else None
+
+
+def initialize_company_details(sess: Any, table: Any, name: str, description: Optional[str]) -> Dict[str, Any]:
+    """Keep one row: configuration fills or updates it until a human edits it, then never overwrites.
+
+    An edit always moves updated_at past created_at, so equal timestamps mean never edited.
+    """
+    validate_company_details({"name": name, "description": description})
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+    insert = pg_insert if sess.bind.dialect.name == "postgresql" else sqlite_insert
+    now = int(time.time())
+    sess.execute(
+        insert(table)
+        .values(id="company", name=name, description=description, created_at=now, updated_at=now)
+        .on_conflict_do_nothing(index_elements=[table.c.id])
+    )
+    current = sess.execute(select(table).where(table.c.id == "company")).one()._mapping
+    if current["created_at"] != current["updated_at"] or (current["name"], current["description"]) == (
+        name,
+        description,
+    ):
+        return dict(current)
+    # Moves both timestamps: they stay equal, and a client holding the old version gets a conflict.
+    stamp = max(now, current["updated_at"] + 1)
+    sess.execute(
+        table.update()
+        .where(
+            table.c.id == "company",
+            table.c.created_at == current["created_at"],
+            table.c.updated_at == current["updated_at"],
+        )
+        .values(name=name, description=description, created_at=stamp, updated_at=stamp)
+    )
+    return dict(sess.execute(select(table).where(table.c.id == "company")).one()._mapping)
+
+
+def update_company_details(
+    sess: Any, table: Any, expected_updated_at: int, fields: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
+    """Reject stale edits atomically, including two edits made within one second."""
+    validate_company_details(fields)
+    if not fields:
+        row = sess.execute(
+            select(table).where(table.c.id == "company", table.c.updated_at == expected_updated_at)
+        ).first()
+    else:
+        row = sess.execute(
+            table.update()
+            .where(table.c.id == "company", table.c.updated_at == expected_updated_at)
+            .values(**fields, updated_at=max(int(time.time()), expected_updated_at + 1))
+            .returning(table)
+        ).first()
+    return dict(row._mapping) if row is not None else None

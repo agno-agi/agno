@@ -368,6 +368,7 @@ class BaseDb(ABC):
         self.learnings_table_name = learnings_table or "agno_learnings"
         self.schedules_table_name = schedules_table or "agno_schedules"
         self.products_table_name = products_table or "agno_company_products"
+        self.company_table_name = self.products_table_name + "_details"
         self.sources_table_name = sources_table or "agno_company_sources"
         self.projects_table_name = projects_table or "agno_company_projects"
         self.tasks_table_name = tasks_table or "agno_company_tasks"
@@ -1926,6 +1927,18 @@ class BaseDb(ABC):
 
     # --- Products (Optional) ---
 
+    def get_company(self) -> Optional[Dict[str, Any]]:
+        """Read the singleton company in this database scope."""
+        raise NotImplementedError("Company details not supported by the configured database")
+
+    def initialize_company(self, name: str = "Company", description: Optional[str] = None) -> Dict[str, Any]:
+        """Seed or refresh unedited company details, retaining human edits."""
+        raise NotImplementedError("Company details not supported by the configured database")
+
+    def update_company(self, expected_updated_at: int, **fields: Any) -> Optional[Dict[str, Any]]:
+        """Compare-and-swap name/description; None means the record changed or is absent."""
+        raise NotImplementedError("Company details not supported by the configured database")
+
     def create_product(self, product_data: Dict[str, Any]) -> Dict[str, Any]:
         """Create a Product; product_data carries its owner and timestamps."""
         raise NotImplementedError("Company products not supported by the configured database")
@@ -2530,6 +2543,10 @@ class BaseDb(ABC):
         """All (role, resource, action, effect) rows whose role is in ``roles``."""
         raise NotImplementedError
 
+    def get_authz_policies_for_resources(self, resources: List[str]) -> List[Tuple[str, str, str, str]]:
+        """All (role, resource, action, effect) rows on ``resources``, whichever role holds them."""
+        raise NotImplementedError("Authorization is not supported by the configured database")
+
     def get_authz_role_policies(self, role: str) -> List[Tuple[str, str, str]]:
         """One role's (resource, action, effect) rows."""
         raise NotImplementedError
@@ -2830,6 +2847,7 @@ class AsyncBaseDb(ABC):
         self.learnings_table_name = learnings_table or "agno_learnings"
         self.schedules_table_name = schedules_table or "agno_schedules"
         self.products_table_name = products_table or "agno_company_products"
+        self.company_table_name = self.products_table_name + "_details"
         self.sources_table_name = sources_table or "agno_company_sources"
         self.projects_table_name = projects_table or "agno_company_projects"
         self.tasks_table_name = tasks_table or "agno_company_tasks"
@@ -4018,6 +4036,18 @@ class AsyncBaseDb(ABC):
 
     # --- Products (Optional) ---
 
+    async def get_company(self) -> Optional[Dict[str, Any]]:
+        """Read the singleton company in this database scope."""
+        raise NotImplementedError("Company details not supported by the configured database")
+
+    async def initialize_company(self, name: str = "Company", description: Optional[str] = None) -> Dict[str, Any]:
+        """Seed or refresh unedited company details, retaining human edits."""
+        raise NotImplementedError("Company details not supported by the configured database")
+
+    async def update_company(self, expected_updated_at: int, **fields: Any) -> Optional[Dict[str, Any]]:
+        """Compare-and-swap name/description; None means the record changed or is absent."""
+        raise NotImplementedError("Company details not supported by the configured database")
+
     async def create_product(self, product_data: Dict[str, Any]) -> Dict[str, Any]:
         """Create a Product; product_data carries its owner and timestamps."""
         raise NotImplementedError("Company products not supported by the configured database")
@@ -4546,6 +4576,10 @@ class AsyncBaseDb(ABC):
     async def get_authz_policies(self, roles: List[str]) -> List[Tuple[str, str, str, str]]:
         """All (role, resource, action, effect) rows whose role is in ``roles``."""
         raise NotImplementedError
+
+    async def get_authz_policies_for_resources(self, resources: List[str]) -> List[Tuple[str, str, str, str]]:
+        """All (role, resource, action, effect) rows on ``resources``, whichever role holds them."""
+        raise NotImplementedError("Authorization is not supported by the configured database")
 
     async def get_authz_role_policies(self, role: str) -> List[Tuple[str, str, str]]:
         """One role's (resource, action, effect) rows."""
