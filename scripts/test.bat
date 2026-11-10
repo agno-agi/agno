@@ -25,9 +25,9 @@ SET AGNO_TEST=%AGNO_DIR%\scripts\test.bat
 IF EXIST "%AGNO_TEST%" (
     ECHO [INFO] Running %AGNO_TEST%
     CALL "%AGNO_TEST%"
-    IF %ERRORLEVEL% NEQ 0 (
-        ECHO [ERROR] %AGNO_TEST% failed with exit code %ERRORLEVEL%
-        EXIT /B %ERRORLEVEL%
+    IF !ERRORLEVEL! NEQ 0 (
+        ECHO [ERROR] %AGNO_TEST% failed with exit code !ERRORLEVEL!
+        EXIT /B !ERRORLEVEL!
     )
 ) ELSE (
     ECHO [ERROR] %AGNO_TEST% does not exist
