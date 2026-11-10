@@ -1,7 +1,7 @@
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Literal, Optional, Tuple, Union
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -271,19 +271,23 @@ class RedisDb(BaseDb):
             Exception: If any error occurs while getting the records.
         """
         try:
-            keys = get_all_keys_for_table(redis_client=self.redis_client, prefix=self.db_prefix, table_type=table_type)
-
-            records = []
-            for key in keys:
-                data = self.redis_client.get(key)
-                if data:
-                    records.append(deserialize_data(data))  # type: ignore
-
-            return records
+            return list(self._iter_records(table_type))
 
         except Exception as e:
             log_error(f"Error getting all records for {table_type}: {str(e)}")
             return []
+
+    def _iter_records(self, table_type: str) -> Iterator[Dict[str, Any]]:
+        """Yield every record for a table type, one GET at a time.
+
+        Raises:
+            Exception: If any error occurs while getting the records.
+        """
+        keys = get_all_keys_for_table(redis_client=self.redis_client, prefix=self.db_prefix, table_type=table_type)
+        for key in keys:
+            data = self.redis_client.get(key)
+            if data:
+                yield deserialize_data(data)  # type: ignore
 
     def _schema_version_key(self, table_name: str) -> str:
         """Key holding the schema version stamp for the given table."""
