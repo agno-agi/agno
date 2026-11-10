@@ -4549,6 +4549,7 @@ def _confirmed_tools(run):
     return json.dumps([{**tool_call.to_dict(), "confirmed": True} for tool_call in run.tools or []])
 
 
+@pytest.mark.asyncio
 async def test_queued_team_member_cannot_continue_outside_its_team(system):
     from agno.company.execution import _call
     from agno.tools import tool
@@ -4588,6 +4589,7 @@ async def test_queued_team_member_cannot_continue_outside_its_team(system):
     assert (await worker.store.get_job(team_run_id))["status"] == "paused"
 
 
+@pytest.mark.asyncio
 async def test_inline_approval_continues_on_a_company_os(system):
     from agno.company.execution import _call
     from agno.tools import tool
@@ -4616,6 +4618,49 @@ async def test_inline_approval_continues_on_a_company_os(system):
     assert stored.queue_attempt is None
     resumed = await client.post(
         f"/agents/writer/runs/{run_id}/continue",
+        data={"session_id": session_id, "stream": "false", "tools": _confirmed_tools(stored)},
+    )
+    assert resumed.status_code == 200, resumed.text
+    assert executed == [True]
+
+
+@pytest.mark.asyncio
+async def test_agent_paused_inside_a_queued_tool_continues_directly(system):
+    from agno.company.execution import _call
+    from agno.tools import tool
+
+    executed, paused = [], []
+
+    @tool(requires_confirmation=True)
+    def approve_action() -> str:
+        """Require approval before performing the action."""
+        executed.append(True)
+        return "done"
+
+    client, db, worker, os, components = system
+    await _call(db, "_create_all_tables")
+    worker._task_execution_provider = os._task_execution_provider
+    agent, team = components["writer"], components["editors"]
+    agent.model, agent.tools = _ToolCallModel("approve_action"), [approve_action]
+    session_id = str(uuid4())
+
+    async def ask_writer() -> str:
+        """Ask the writer to perform the action."""
+        paused.append(await agent.arun("Do it", session_id=session_id))
+        return "asked"
+
+    team.model, team.tools = _ToolCallModel("ask_writer"), [ask_writer]
+    response = await client.post(
+        "/teams/editors/runs",
+        data={"message": "Go", "session_id": str(uuid4()), "stream": "false", "background": "true"},
+    )
+    assert response.status_code == 202, response.text
+    assert (await execute(worker))["status"] == "completed"
+    # The writer's run has no ticket, no marker and no parent: the queued team does not own it.
+    stored = await agent.aget_run_output(paused[0].run_id, session_id)
+    assert stored.status == "PAUSED" and stored.queue_attempt is None and stored.parent_run_id is None
+    resumed = await client.post(
+        f"/agents/writer/runs/{stored.run_id}/continue",
         data={"session_id": session_id, "stream": "false", "tools": _confirmed_tools(stored)},
     )
     assert resumed.status_code == 200, resumed.text
