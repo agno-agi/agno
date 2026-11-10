@@ -228,6 +228,8 @@ async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
         agent_os._initialize_sync_databases()
         await agent_os._initialize_async_databases()
     await agent_os._acheck_sandbox_tables()
+    if agent_os._authz_role_store is not None:
+        await agent_os._authz_role_store._araise_if_former_manager_policies()
 
     yield
 
@@ -738,6 +740,7 @@ class AgentOS:
         from agno.os.manager import OSManager
         from agno.os.manager.manager import _build_manager
 
+        self._manager_catalog_checked: Set[int] = set()
         self._company_manager: Optional[Agent] = None
         self.company_manager_unavailable_reason: Optional[str] = None
         if self.company is not None:
@@ -774,7 +777,7 @@ class AgentOS:
             self.registry.exclude_components([self._company_manager])
             if self._manager is not None:
                 from agno.company.company_manager import _build_company_manager
-                from agno.os.manager.prompts import FOCUSED_EXECUTION_INSTRUCTIONS
+                from agno.os.manager.prompts import COMPANY_COORDINATION_INSTRUCTIONS, FOCUSED_EXECUTION_INSTRUCTIONS
 
                 # A separate member keeps the manager's execution policy off the served
                 # Company Manager, which direct chat and Routines run.
@@ -788,12 +791,21 @@ class AgentOS:
                 assert isinstance(self._manager.team.members, list)
                 self._manager.team.members.append(member)
                 assert isinstance(self._manager.team.instructions, list)
-                self._manager.team.instructions.append(
-                    "Delegate Company Products, Projects, Tasks, Sources, Routines, playbook pages and decisions to "
-                    "Company Manager, including setup requests and questions about their status. Routines are "
-                    "Company schedules: ask Company Manager, not Platform Builder, to create them."
-                )
+                self._manager.team.instructions.append(COMPANY_COORDINATION_INSTRUCTIONS)
             self.agents = [*(self.agents or []), self._company_manager]
+        if self._company_db is not None:
+            from agno.company.details import _company_instructions
+
+            contextual_managers: List[Any] = [self._company_manager]
+            if self._manager is not None:
+                contextual_managers.extend([self._manager.team, self._manager.company_manager])
+            for contextual_manager in contextual_managers:
+                if contextual_manager is not None:
+                    base_instructions = contextual_manager.instructions
+                    contextual_manager.instructions = _company_instructions(
+                        self._company_db,
+                        [base_instructions] if isinstance(base_instructions, str) else list(base_instructions or []),
+                    )
         self._apply_manager_manifest()
 
         self._initialize_agents()
@@ -1083,6 +1095,7 @@ class AgentOS:
             get_filesystem_router(self, settings=self.settings),
         ]
         if self.company is not None:
+            from agno.os.routers.company.details import get_company_details_router
             from agno.os.routers.company.heartbeat import get_heartbeat_router
             from agno.os.routers.company.playbook import get_playbook_router
             from agno.os.routers.company.products import get_products_router
@@ -1090,6 +1103,7 @@ class AgentOS:
             from agno.os.routers.company.runs import get_company_runs_router
             from agno.os.routers.company.tasks import get_tasks_router
 
+            updated_routers.append(get_company_details_router(self))
             updated_routers.append(get_products_router(db=self._company_db, settings=self.settings))
             updated_routers.append(get_heartbeat_router(self))
             updated_routers.append(get_projects_router(db=self._company_db, settings=self.settings))
@@ -2036,7 +2050,7 @@ class AgentOS:
             # The async database lifespan
             lifespans.append(partial(db_lifespan, agent_os=self))
 
-            if self.company is not None and self.company.products:
+            if self.company is not None:
                 from agno.company.bootstrap import _company_lifespan
 
                 lifespans.append(partial(_company_lifespan, agent_os=self))
@@ -2097,7 +2111,7 @@ class AgentOS:
             # Async database initialization lifespan
             lifespans.append(partial(db_lifespan, agent_os=self))  # type: ignore
 
-            if self.company is not None and self.company.products:
+            if self.company is not None:
                 from agno.company.bootstrap import _company_lifespan
 
                 lifespans.append(partial(_company_lifespan, agent_os=self))
@@ -2161,6 +2175,7 @@ class AgentOS:
             get_filesystem_router(self, settings=self.settings),
         ]
         if self.company is not None:
+            from agno.os.routers.company.details import get_company_details_router
             from agno.os.routers.company.heartbeat import get_heartbeat_router
             from agno.os.routers.company.playbook import get_playbook_router
             from agno.os.routers.company.products import get_products_router
@@ -2168,6 +2183,7 @@ class AgentOS:
             from agno.os.routers.company.runs import get_company_runs_router
             from agno.os.routers.company.tasks import get_tasks_router
 
+            routers.append(get_company_details_router(self))
             routers.append(get_products_router(db=self._company_db, settings=self.settings))
             routers.append(get_heartbeat_router(self))
             routers.append(get_projects_router(db=self._company_db, settings=self.settings))

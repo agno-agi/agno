@@ -797,3 +797,48 @@ The README example was not run against live models or harness processes; no
 provider calls were made.
 
 ---
+
+### Manager identity compatibility — 2026-11-06
+
+**Status:** PASS
+
+**Description:** Canonical IDs and legacy URL/grant compatibility; persisted legacy permissions, history, pagination and paused specialist continuation; private specialists and explicit catalog collisions.
+
+**Result:** 355 manager/scope/idempotency tests and 126 run authorization tests passed. PostgreSQL sync/async legacy session pagination and managed-grant revocation passed against a dedicated local database. `manager_discovery.py` passed without model calls. Repository format and validation passed in an isolated current development environment. The preexisting shared environment failed baseline mypy with 189 dependency/type errors; it was not modified. Live model/provider calls were not exercised.
+
+### Internal manager ID separator (2026-11-09)
+
+**Status:** PASS
+
+**Description:** Built-ins now use `super--agent`, `company--manager`, `platform--builder`, and `platform--manager`. Single-hyphen names remain available to user components; original `*-internal` aliases still resolve to the built-ins.
+
+**Result:** 436 manager/run-authorization cases and 14 focused ownership/grant/deny regressions passed. User-owned IDs coexist with the built-ins, preserve their own session history, and neither grant nor deny access to internal managers. Full formatting and validation passed. No model calls were made.
+
+### Manager alias review fixes (2026-11-09)
+
+**Status:** PASS
+
+**Description:** The built-in FGA provider and PublicSurface treat former manager IDs as the current ones, new Routines and policy writes store current IDs, schedule endpoint checks accept either spelling, and each database is checked once for catalog collisions.
+
+**Result:** `manager_discovery.py` and `check_manager_permissions.py` passed without model calls. Manager, authorization, FGA, public config and Routine tests passed, and new Postgres alias tests passed against local pgvector. No model calls were made.
+
+### Former manager IDs removed (2026-11-09)
+
+**Status:** PASS
+
+**Description:** The `*-internal` IDs no longer resolve and stay reserved. Requests that use them get an error naming the new ID, and startup refuses managed-role policies that still use them. Upgrade checked on PostgreSQL by writing with the previous code and reading with this one.
+
+**Result:** `manager_discovery.py` and `check_manager_permissions.py` passed without model calls. Old URLs return 422 with the new ID, new URLs work, an old session can still be continued by its session ID, and old sessions drop out of lists filtered by the new ID. No model calls were made.
+
+---
+
+
+### Public manager IDs and final review — 2026-11-10
+
+**Status:** PASS
+
+**Description:** Canonical IDs are now `superagent`, `company-manager`, `platform-builder` and `platform-manager`. The final combined manager, run-authorization, Company API/Routine, former-ID migration and company-details integration suite passed 636 tests with no skips. It includes synchronous/asynchronous SQLite and disposable PostgreSQL, exact grants and denies, catalog collisions, and IDs generated from component names. Full format and validation scripts passed. Tests used deterministic models; no paid model calls or deployment.
+
+**Result:** Public IDs route correctly; private specialists remain private; former IDs are rejected, and old managed-role policies block startup. Unrelated user IDs retain separate permissions/history. The earlier double-hyphen decision and alias behavior recorded above are superseded.
+
+---
