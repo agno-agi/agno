@@ -1,10 +1,9 @@
 from datetime import date, datetime, timezone
 from textwrap import dedent
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from surrealdb import BlockingHttpSurrealConnection, BlockingWsSurrealConnection, RecordID
 
-from agno.db.base import SessionType
 from agno.db.surrealdb import utils
 from agno.db.surrealdb.models import desurrealize_session, surrealize_dates
 from agno.db.surrealdb.queries import WhereClause
@@ -43,15 +42,24 @@ def get_all_sessions_for_metrics_calculation(
 
     where_clause, where_vars = where.build()
 
-    # Query
+    # Query. Legacy runs, kept on the session record until cleanup_legacy_runs_field(), are reduced in the
+    # database to the fields metrics read, so their output never reaches the process
     query = dedent(f"""
-        SELECT *
+        SELECT *, runs.{{run_id, model, model_provider}} AS runs
         FROM {table}
         {where_clause}
     """)
 
     results = utils.query(client, query, where_vars, dict)
-    return [desurrealize_session(x) for x in results]
+    sessions = [desurrealize_session(x) for x in results]
+    for session in sessions:
+        # A legacy run without a provider counts as "", as it did when legacy runs were read in Python
+        session["runs"] = [
+            {**run, "model_provider": "" if run.get("model_provider") is None else run["model_provider"]}
+            for run in session.get("runs") or []
+            if isinstance(run, dict)
+        ]
+    return sessions
 
 
 def _stored_day(value: Any) -> Optional[date]:
@@ -69,7 +77,7 @@ def _stored_day(value: Any) -> Optional[date]:
 
 
 def get_metrics_calculation_starting_date(
-    client: Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection], table: str, get_sessions: Callable
+    client: Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection], table: str, sessions_table: str
 ) -> Optional[date]:
     """Get the first date for which metrics calculation is needed:
 
@@ -122,16 +130,14 @@ def get_metrics_calculation_starting_date(
     if starting_date is not None:
         return starting_date
 
-    # 2. No metrics records. Return the date of the first recorded session
-    first_session, _ = get_sessions(
-        session_type=SessionType.AGENT,  # this is ignored because of component_id=None and deserialize=False
-        sort_by="created_at",
-        sort_order="asc",
-        limit=1,
-        component_id=None,
-        deserialize=False,
+    # 2. No metrics records. Return the date of the first recorded session, queried directly: get_sessions
+    # attaches every run of the session it returns, which for a long session is its whole history
+    first_session = utils.query(
+        client,
+        f"SELECT created_at FROM {sessions_table} WHERE created_at IS NOT NONE ORDER BY created_at ASC LIMIT 1",
+        {},
+        dict,
     )
-    assert isinstance(first_session, list)
 
     first_session_date = first_session[0]["created_at"] if first_session else None
 
