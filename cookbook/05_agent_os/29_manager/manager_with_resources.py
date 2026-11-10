@@ -2,8 +2,9 @@
 
 Ask it to save a project note or remember how you like answers. Notes are shared
 across users; memory is kept per user. Use the same user id across sessions to
-try memory. The notebook tools share names with the source file tools, so this
-example sets no root; see manager_source.py for source access.
+try memory. The notebook tools share names with the source file tools, and
+AgentOS refuses that combination at startup, so this example sets no root. See
+manager_source.py for source access.
 
 Run:
     .venvs/demo/bin/python cookbook/05_agent_os/29_manager/manager_with_resources.py

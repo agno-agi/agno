@@ -2459,3 +2459,22 @@ def test_name_derived_public_manager_ids_are_reserved(db, name, kind):
     )
     with pytest.raises(ValueError, match="reserved for the manager"):
         AgentOS(db=db, **{kind + "s": [component]}, manager=False, telemetry=False)
+
+
+@pytest.mark.parametrize("name", ["list_files", "read_file", "search_content"])
+def test_application_tool_named_like_a_source_tool_is_refused_with_root(db, workspace, name):
+    from agno.fs import FileSystem
+
+    def tool() -> str:
+        """Application tool."""
+        return "x"
+
+    tool.__name__ = name
+    with pytest.raises(ValueError, match=f"OSManager.tools defines {name}, which OSManager.root also adds"):
+        AgentOS(db=db, manager=OSManager(model=OfflineModel(), tools=[tool], root=workspace), telemetry=False)
+    notes = FileSystem(db=db, namespace="notes")
+    with pytest.raises(ValueError, match="OSManager.tools defines .*read_file"):
+        AgentOS(db=db, manager=OSManager(model=OfflineModel(), tools=[notes.tools()], root=workspace), telemetry=False)
+    # Either one alone is a working configuration.
+    AgentOS(db=db, manager=OSManager(model=OfflineModel(), tools=[tool, notes.tools()]), telemetry=False)
+    AgentOS(db=db, manager=OSManager(model=OfflineModel(), root=workspace), telemetry=False)

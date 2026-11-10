@@ -290,8 +290,9 @@ a replacement targeting Super Agent first. Run access, component discovery
 restrictions) remain separate permissions.
 
 The resources example shares notebook files across users, while learning keeps
-user memory separate. It does not configure a knowledge base or `root`: tools in
-`OSManager(tools=...)` that share a name with the source file tools take precedence.
+user memory separate. It does not configure a knowledge base or `root`. AgentOS
+refuses to start when `root` is set and a tool in `OSManager(tools=...)` is named
+`read_file`, `list_files` or `search_content`, and the notebook has all three.
 
 ## Large tool results
 

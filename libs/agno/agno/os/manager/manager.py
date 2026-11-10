@@ -210,6 +210,23 @@ def _raise_if_reserved_ids(components: List[Any], owned: Sequence[Any] = ()) -> 
         raise ValueError(f"Duplicate IDs reserved for the manager: {', '.join(collisions)}")
 
 
+_SOURCE_TOOL_NAMES = frozenset({"list_files", "read_file", "search_content"})
+
+
+def _raise_if_source_tool_names_taken(tools: Sequence[Any]) -> None:
+    """Refuse application tools that would replace the source file tools on Super Agent."""
+    taken: set = set()
+    for tool in tools:
+        names = getattr(tool, "functions", None)
+        taken |= set(names) if names else {getattr(tool, "name", None) or getattr(tool, "__name__", None)}
+    clash = sorted(str(name) for name in taken & _SOURCE_TOOL_NAMES)
+    if clash:
+        raise ValueError(
+            f"OSManager.tools defines {', '.join(clash)}, which OSManager.root also adds to Super Agent. "
+            "Rename the tool or remove root."
+        )
+
+
 def _diagnostics_tool(agent_os: "AgentOS", required_env: Sequence[str]) -> Any:
     from agno.tools import Toolkit
 
@@ -272,6 +289,8 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
     model = _resolve_model(agent_os, config)
     registry.add_model(model)
     workspace = _resolve_workspace(config)
+    if workspace is not None:
+        _raise_if_source_tool_names_taken(config.tools)
 
     builder = Agent(
         id=BUILDER_ID,
