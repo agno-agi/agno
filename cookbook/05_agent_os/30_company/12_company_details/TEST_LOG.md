@@ -1,6 +1,18 @@
 # Test log
 
-### Chat review follow-up — offline checks (2026-11-10)
+### Current prompts — 97cdd12a87 (2026-11-10)
+
+**Live verification:** NOT RUN. The three historical live results below apply to `c346e021b0`, not this prompt revision. Approval is required before rerunning paid model calls.
+
+**Changes:** Company Manager now uses short sections and saves details when the person states their company's name or description or asks to change them; Products and Routines are created only on request. Super Agent's existing coordination bullet delegates the company's name and description. Disambiguation of statements about another organization now lives only in the sync/async `update_company_details` descriptions. The former customer/partner prohibition is absent from both system prompts intentionally.
+
+**Contract review:** No direct contradiction found between the company-details instructions and tool behaviour. An update can return a confirmation request instead of writing, and the tool description directs that request to `confirm_company_details`. Permissions, automation restrictions, the description cap and version checks remain enforced by the unchanged tool implementation.
+
+**Checks:** Full format and validation scripts passed in the isolated Python 3.12 development environment after pulling `97cdd12a87`. This documentation follow-up leaves its Python files unchanged. Unit/database tests and paid live calls were not rerun; the test results below are historical.
+
+---
+
+### Chat review follow-up — historical offline checks through c346e021b0 (2026-11-10)
 
 **Status:** PASS
 
@@ -12,13 +24,13 @@ The continuation tests also logged a nonfatal `TypeError: '_RoutineResultGuardra
 
 ---
 
-### chat.py configuration — three live phrases (2026-11-10)
+### chat.py configuration — historical live phrases at c346e021b0 (2026-11-10)
 
-**Status:** PASS
+**Status:** PASS on `c346e021b0` only; not rerun against `97cdd12a87`.
 
 **Description:** Real `gpt-5.6-luna` runs through the Super Agent HTTP endpoint, using disposable PostgreSQL schemas and the built-in managers; documentation access and result offloading were disabled. The first two phrases used the same company record in separate conversations; the partner phrase used a fresh, unedited company record. No web-search tools were configured.
 
-**Result:** Final run:
+**Result:** Final run before the prompt rewrite:
 
 | Exact phrase | Observed behaviour |
 | --- | --- |
@@ -26,7 +38,7 @@ The continuation tests also logged a nonfatal `TypeError: '_RoutineResultGuardra
 | “Rename our company to Acme Robotics; keep the description.” | Called `update_company_details`, then `confirm_company_details`, and paused for approval. The saved name remained `Acme` and description remained `Builds warehouse robots.` |
 | “We're working with Acme, they build warehouse robots.” | Completed with no tool calls. Name remained `Company`, description remained null. The reply explicitly treated Acme as a customer or partner, not the user's company. |
 
-Earlier live iterations exposed an unnecessary confirmation after a successful initial save, an acknowledged-but-unsaved introduction, and a partner company incorrectly saved into the unedited record. Those results led to an explicit successful-save result and clearer own-company routing in the existing prompt lines. One earlier partner check also hit a test-harness event-loop error; separate model clients fixed the harness before rerunning.
+Earlier live iterations exposed an unnecessary confirmation after a successful initial save, an acknowledged-but-unsaved introduction, and a partner company incorrectly saved into the unedited record. Those results led to an explicit successful-save result and the then-current own-company prompt wording. That wording was subsequently replaced by `97cdd12a87`; these outcomes must not be carried forward as evidence for the replacement prompts. One earlier partner check also hit a test-harness event-loop error; separate model clients fixed the harness before rerunning.
 
 The final live rename was not approved; approval/rejection and continuation were verified with deterministic offline tests. No UI walkthrough, hosted deployment or merge. These are observed live outcomes, not a guarantee that every future ambiguous phrase will be classified correctly.
 
