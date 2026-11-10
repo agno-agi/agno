@@ -577,6 +577,13 @@ class AsyncSqliteDb(AsyncBaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
 
+        elif table_type == "company":
+            return await self._get_or_create_table(
+                table_name=self.company_table_name,
+                table_type="company",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+
         elif table_type == "products":
             return await self._get_or_create_table(
                 table_name=self.products_table_name,
@@ -5396,6 +5403,10 @@ class AsyncSqliteDb(AsyncBaseDb):
         table = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
         return await authz_sql.aget_policies(self.db_engine, table, roles)
 
+    async def get_authz_policies_for_resources(self, resources: List[str]) -> List[Tuple[str, str, str, str]]:
+        table = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        return await authz_sql.aget_policies_for_resources(self.db_engine, table, resources)
+
     async def get_authz_role_policies(self, role: str) -> List[Tuple[str, str, str]]:
         table = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
         return await authz_sql.aget_role_policies(self.db_engine, table, role)
@@ -5769,6 +5780,34 @@ class AsyncSqliteDb(AsyncBaseDb):
                 await sess.execute(stmt.values(deleted_at=None, updated_at=int(time.time())).returning(table))
             ).fetchone()
             return dict(result._mapping) if result else None
+
+    # --- Company details ---
+
+    async def get_company(self) -> Optional[Dict[str, Any]]:
+        table = await self._get_table(table_type="company")
+        if table is None:
+            return None
+        async with self.async_session_factory() as sess:
+            row = (await sess.execute(select(table).where(table.c.id == "company"))).first()
+            return dict(row._mapping) if row is not None else None
+
+    async def initialize_company(self, name: str = "Company", description: Optional[str] = None) -> Dict[str, Any]:
+        from agno.db.sql.company import initialize_company_details
+
+        table = await self._get_table(table_type="company", create_table_if_not_found=True)
+        if table is None:
+            raise RuntimeError("Company details table is unavailable after provisioning")
+        async with self.async_session_factory() as sess, sess.begin():
+            return await sess.run_sync(lambda sync: initialize_company_details(sync, table, name, description))
+
+    async def update_company(self, expected_updated_at: int, **fields: Any) -> Optional[Dict[str, Any]]:
+        from agno.db.sql.company import update_company_details
+
+        table = await self._get_table(table_type="company")
+        if table is None:
+            return None
+        async with self.async_session_factory() as sess, sess.begin():
+            return await sess.run_sync(lambda sync: update_company_details(sync, table, expected_updated_at, fields))
 
     # --- Products ---
 
