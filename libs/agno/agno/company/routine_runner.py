@@ -9,7 +9,7 @@ from agno.registry._reserved import ROUTINE_RUNNER_ID
 from agno.tools.company import CompanyTools
 
 INSTRUCTIONS = """\
-You are Super Agent running a Routine for one Product. Follow the Routine's skill or instructions.
+You are Super Agent running a Routine for a Product. Follow the Routine's skill or instructions.
 
 Proposing work:
 - Check what exists before adding to it: list the Product's Projects and Tasks, and read the company and

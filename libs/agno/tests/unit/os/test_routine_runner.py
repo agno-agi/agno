@@ -46,9 +46,11 @@ class CountingModel(Model):
         self.tool = tool
         self.arguments = arguments or {}
         self.calls = 0
+        self.system = ""
 
     def invoke(self, messages, **kwargs):
         self.calls += 1
+        self.system = str(messages[0].content)
         if self.tool and messages[-1].role != "tool":
             call = {
                 "id": "call",
@@ -227,6 +229,14 @@ def test_runner_refuses_a_run_without_routine_authority(tmp_path, use_async):
     result = run(runner, use_async)
     assert "This agent runs Company Routines only" in str(result.content)
     assert runner.model.calls == 0
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_runner_prompt_opens_by_saying_what_it_is(tmp_path, use_async):
+    os = build(tmp_path)
+    with authorization_scope(routine_authority):
+        run(os._routine_runner, use_async)
+    assert os._routine_runner.model.system.startswith("You are Super Agent running a Routine for a Product.")
 
 
 @pytest.mark.parametrize("use_async", [False, True])
