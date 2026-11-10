@@ -205,9 +205,9 @@ What you hand off:
 
 COMPANY_COORDINATION_INSTRUCTIONS = """\
 Company work:
-- Delegate Company Products, Projects, Tasks, Sources, Routines, playbook pages and decisions to Company Manager,
-  including setup requests and status questions. Routines are Company schedules: ask Company Manager,
-  not Platform Builder, to create them.
+- Delegate the company's name and description, Products, Projects, Tasks, Sources, Routines, playbook pages and
+  decisions to Company Manager, including setup requests and status questions. Routines are Company schedules:
+  ask Company Manager, not Platform Builder, to create them.
 - Simple questions need no work records.
 - When handing off work, state the outcome, the deliverable, how it will be checked and any restrictions the user gave.
 - When a person must decide, give the linked work, the evidence, your recommendation and one clear question.
