@@ -105,6 +105,32 @@ TeamMember = Union["Agent", "Team"]
 _SCHEDULE_TARGET_TYPES = ("agent", "team", "workflow")
 
 
+def _clean_id(value: Any) -> Any:
+    """An id as it was meant: without surrounding whitespace or invisible format characters.
+
+    Models sometimes send an id with a trailing space or a stray direction mark. Nothing else is
+    changed, so an id that still does not resolve is reported as sent.
+    """
+    import unicodedata
+
+    if not isinstance(value, str):
+        return value
+    return "".join(ch for ch in value if unicodedata.category(ch) != "Cf").strip()
+
+
+def _not_found(identifier: str, noun: str = "Component") -> str:
+    """Not-found message naming the id, and the stray characters when it has any."""
+    import re
+
+    message = f"{noun} not found: {identifier}"
+    clean = re.match(r"[A-Za-z0-9_.-]+", identifier)
+    stray = identifier[clean.end() :] if clean is not None else ""
+    # A display name may hold spaces and words. Anything else after the id is noise from the caller.
+    if re.search(r"[^A-Za-z0-9 _.-]", stray):
+        message += f" (the id sent has {stray!r} after {clean.group(0)!r}; send it exactly as listed)"  # type: ignore[union-attr]
+    return message
+
+
 def _refuse_external_agent(component: Any, label: str) -> None:
     """Teams and workflows delegate to Agents; a stored external adapter runs only on its own."""
     from agno.agents.base import BaseExternalAgent
@@ -1615,9 +1641,9 @@ class StudioTools(Toolkit):
             # raw traceback instead of the capability envelope.
             return None, None, self._error_from_exception(exc, "Failed to read component")
         if row is None:
-            return None, None, error_result("component_not_found", f"Component not found: {identifier}")
+            return None, None, error_result("component_not_found", _not_found(identifier))
         if not self._visible_to(row, actor):
-            return None, None, error_result("component_not_found", f"Component not found: {identifier}")
+            return None, None, error_result("component_not_found", _not_found(identifier))
         return row, resolved_id, None
 
     @classmethod
@@ -2016,6 +2042,7 @@ class StudioTools(Toolkit):
             steps, context flags). 'tools' lists exactly what is stored: a
             single function stays a single function, never its whole toolkit.
         """
+        component_id = _clean_id(component_id)
         version = _version_or_latest(version)
         actor = _actor_id(_agno_run_context)
         code_tiers = (
@@ -2114,6 +2141,7 @@ class StudioTools(Toolkit):
             label, created_at, is_current}. Versions are immutable and never
             renumbered; deleted drafts leave a gap.
         """
+        component_id = _clean_id(component_id)
         row, resolved_id, err = self._component_row(component_id, _actor_id(_agno_run_context))
         if err is not None:
             return err
@@ -3022,6 +3050,7 @@ class StudioTools(Toolkit):
             str: StudioResult JSON; data is {id, component_type, version|draft_version, stage}.
         """
 
+        agent_id = _clean_id(agent_id)
         warnings: List[str] = []
 
         def mutate(agent, replaced_keys):
@@ -3117,6 +3146,7 @@ class StudioTools(Toolkit):
             str: StudioResult JSON; data is {id, component_type, version|draft_version, stage}.
         """
 
+        team_id = _clean_id(team_id)
         warnings: List[str] = []
 
         def mutate(team, replaced_keys):
@@ -3211,6 +3241,8 @@ class StudioTools(Toolkit):
             str: StudioResult JSON; data is {id, component_type, version|draft_version, stage}.
         """
 
+        workflow_id = _clean_id(workflow_id)
+
         def mutate(workflow, replaced_keys):
             if name is not None:
                 workflow.name = name
@@ -3290,6 +3322,7 @@ class StudioTools(Toolkit):
         # `version` names the draft to publish, so 0 reads as omitted. The
         # expected_current_version guard beside it does NOT: 0 is its "nothing is
         # live yet" spelling and stays a guard.
+        component_id = _clean_id(component_id)
         coerced_version = _version_or_latest(version)
         # This one moves the live pointer, so a caller whose argument was
         # reinterpreted hears about it on the envelope, not only in a debug log.
@@ -3310,7 +3343,7 @@ class StudioTools(Toolkit):
         try:
             configs = self.db.list_configs(component_id, include_config=False)
             if not configs:
-                return error_result("component_not_found", f"Component not found: {component_id}")
+                return error_result("component_not_found", _not_found(component_id))
             target = version
             already_published = False
             if target is None:
@@ -3416,6 +3449,7 @@ class StudioTools(Toolkit):
         Returns:
             str: StudioResult JSON; data is {id, version}.
         """
+        component_id = _clean_id(component_id)
         db_err = self._require_db()
         if db_err is not None:
             return db_err
@@ -3461,7 +3495,7 @@ class StudioTools(Toolkit):
         except NotImplementedError:
             return None
         if row is None:
-            return error_result("component_not_found", f"Component not found: {component_id}")
+            return error_result("component_not_found", _not_found(component_id))
         return None
 
     def _redact_dependents(self, component_id: str, actor: Optional[str], verb: str) -> str:
@@ -3502,6 +3536,7 @@ class StudioTools(Toolkit):
         Returns:
             str: StudioResult JSON; data is {id, version}.
         """
+        component_id = _clean_id(component_id)
         db_err = self._require_db()
         if db_err is not None:
             return db_err
@@ -3557,6 +3592,7 @@ class StudioTools(Toolkit):
         Returns:
             str: StudioResult JSON; data is {id}; warnings report side effects.
         """
+        component_id = _clean_id(component_id)
         db_err = self._require_db()
         if db_err is not None:
             return db_err
@@ -3570,7 +3606,7 @@ class StudioTools(Toolkit):
                     # An archived row is withdrawn from every other user, so it is
                     # never visible across owners: the refusal is the plain 404.
                     if not self._visible_to(archived_row, actor):
-                        return error_result("component_not_found", f"Component not found: {component_id}")
+                        return error_result("component_not_found", _not_found(component_id))
                     return ok_result("already_archived", id=component_id)
                 try:
                     resolved = None
@@ -3587,7 +3623,7 @@ class StudioTools(Toolkit):
                         "invalid_request",
                         f"Archive requires the exact id: '{component_id}' resolves to '{resolved}'.",
                     )
-                return error_result("component_not_found", f"Component not found: {component_id}")
+                return error_result("component_not_found", _not_found(component_id))
             denied = self._check_component_access(component_id, _actor_id(_agno_run_context), "archive")
             if denied is not None:
                 return self._denied_error(denied)
@@ -3621,7 +3657,7 @@ class StudioTools(Toolkit):
                 cascade_stats=cascade_stats,
             )
             if not archived:
-                return error_result("component_not_found", f"Component not found: {component_id}")
+                return error_result("component_not_found", _not_found(component_id))
             warnings: List[str] = []
             disabled = cascade_stats.get("schedules_disabled", 0)
             if disabled:
@@ -3652,6 +3688,7 @@ class StudioTools(Toolkit):
         Returns:
             str: StudioResult JSON; data is {id}.
         """
+        component_id = _clean_id(component_id)
         db_err = self._require_db()
         if db_err is not None:
             return db_err
@@ -3670,7 +3707,7 @@ class StudioTools(Toolkit):
                 return self._denied_error(denied)
             if self.db.get_component(component_id, user_id=actor) is not None:
                 return error_result("invalid_request", f"Component is not archived: {component_id}")
-            return error_result("component_not_found", f"Component not found: {component_id}")
+            return error_result("component_not_found", _not_found(component_id))
         except Exception as e:
             return self._error_from_exception(e, "Failed to restore component")
 
@@ -3696,6 +3733,7 @@ class StudioTools(Toolkit):
             valid: true} on success; validation_failed carries the exact
             problem otherwise.
         """
+        component_id = _clean_id(component_id)
         version = _version_or_latest(version)
         row, resolved_id, err = self._component_row(component_id, _actor_id(_agno_run_context))
         if err is not None:
@@ -3825,7 +3863,7 @@ class StudioTools(Toolkit):
         require_permission(f"{component_type}s", "run", resolved_id, run_context)
         actor = _actor_id(run_context)
         if not self._pin_allowed(resolved_id, version, row, actor):
-            return error_result("component_not_found", f"Component not found: {identifier}")
+            return error_result("component_not_found", _not_found(identifier))
         # The preview dispatches the component directly rather than through the
         # runner's run tools, so it carries the same dispatch lineage and
         # refusals itself -- otherwise a pinned version would be the one door
@@ -3904,7 +3942,7 @@ class StudioTools(Toolkit):
         await arequire_permission(f"{component_type}s", "run", resolved_id, run_context)
         actor = _actor_id(run_context)
         if not await asyncio.to_thread(self._pin_allowed, resolved_id, version, row, actor):
-            return error_result("component_not_found", f"Component not found: {identifier}")
+            return error_result("component_not_found", _not_found(identifier))
         # The preview dispatches the component directly rather than through the
         # runner's run tools, so it carries the same dispatch lineage and
         # refusals itself -- otherwise a pinned version would be the one door
@@ -4499,6 +4537,7 @@ class StudioTools(Toolkit):
             str: StudioResult JSON; data carries {id, name, cron, target_type,
             target_id, endpoint, timezone, enabled, next_run_at, runs_as}.
         """
+        target_id = _clean_id(target_id)
         from agno.db.schemas.scheduler import build_run_endpoint
 
         actor = _actor_id(_agno_run_context)
