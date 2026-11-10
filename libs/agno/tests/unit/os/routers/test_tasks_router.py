@@ -55,7 +55,7 @@ def transition(client, path, target):
     return client.post(path + "/transitions", json=body)
 
 
-def test_cancelled_project_rejects_task_status_move_over_http(client):
+def test_cancelled_project_allows_task_cancellation_but_not_restart_over_http(client):
     product_id = client.post("/company/products", json={"name": "Rejected plan"}).json()["id"]
     project = client.post("/company/projects", json={"product_id": product_id, "name": "Draft"}).json()
     task = client.post(
@@ -67,11 +67,14 @@ def test_cancelled_project_rejects_task_status_move_over_http(client):
     assert response.status_code == 200, response.text
 
     response = transition(client, "/company/tasks/" + task["id"], "cancelled")
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "cancelled"
+    response = transition(client, "/company/tasks/" + task["id"], "ready")
     assert response.status_code == 409
     assert "cancelled Project" in response.json()["detail"]
     stored = client.get("/company/tasks/" + task["id"]).json()
-    assert stored["status"] == "backlog"
-    assert stored["transitions"] == task["transitions"]
+    assert stored["status"] == "cancelled"
+    assert [entry["target"] for entry in stored["transitions"]] == ["cancelled"]
 
 
 def reserve_run(client, path, user_id=None):
