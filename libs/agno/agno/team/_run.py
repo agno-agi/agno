@@ -11,6 +11,8 @@ from typing import (
     TYPE_CHECKING,
     Any,
     AsyncIterator,
+    Awaitable,
+    Callable,
     Dict,
     Iterator,
     List,
@@ -6006,6 +6008,11 @@ def _backfill_approval_to_requirements(
                 f"and tool call '{tool_call_id}' matches no stored requirement of this run. "
                 "The run remains paused."
             )
+        old_te = getattr(old_req, "tool_execution", None)
+        if getattr(old_te, "confirmation_id", None) is not None and getattr(old_te, "confirmation_id") != getattr(
+            te, "confirmation_id", None
+        ):
+            raise RunNotContinuableError("Resend the current confirmation exactly as issued")
         if id(old_req) in matched:
             raise RunNotContinuableError(
                 f"Cannot continue run {run_id}: two payload requirements both resolve to the stored "
@@ -6740,6 +6747,7 @@ async def _aroute_requirements_to_members_stream(
     member_results: List[str],
     run_context: Optional[RunContext] = None,
     stream_events: bool = False,
+    on_confirmation_claim: Optional[Callable[[], Awaitable[None]]] = None,
 ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
     """Route member requirements back to the appropriate member agents (async, streaming).
 
@@ -6774,6 +6782,8 @@ async def _aroute_requirements_to_members_stream(
         # Forward team's run_context state to the member so dependencies and
         # session_state remain accessible to member tools after continue_run.
         member_continue_kwargs = _member_continue_kwargs_from_run_context(run_context)
+        if on_confirmation_claim is not None:
+            member_continue_kwargs["_on_confirmation_claim"] = on_confirmation_claim
 
         # A remote member's run is kept by the AgentOS that ran it, so it is continued by its run id
         if member_run_output is not None and not isinstance(member, BaseRemote):
@@ -7595,6 +7605,11 @@ def continue_run_dispatch(
             raise RunNotFoundError(f"No runs found for run ID {run_id}")
 
     run_response = cast(TeamRunOutput, run_response)
+
+    if run_response.status != RunStatus.paused and any(
+        getattr(r.tool_execution, "confirmation_id", None) for r in _normalize_requirements_payload(requirements or [])
+    ):
+        raise RunNotContinuableError("This confirmation is no longer waiting for a decision")
 
     if run_response.status == RunStatus.cancelled:
         raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
@@ -8842,6 +8857,12 @@ async def _acontinue_run_background_stream(
     # run_id). Keep a loaded object for status persistence, but leave the
     # caller shape passed to _acontinue_run_stream unchanged.
     persist_run = run_response if run_response is not None else stored_run
+    ordered_confirmation = any(
+        r.tool_execution and r.tool_execution.confirmation_id and r.tool_execution.requires_confirmation
+        for r in getattr(stored_run, "requirements", None) or []
+    ) or any(
+        getattr(r.tool_execution, "confirmation_id", None) for r in _normalize_requirements_payload(requirements or [])
+    )
 
     # A fork/regenerate executes under a new run id. A run-id-only continue of
     # a completed run auto-forks downstream, while a cancelled run is refused.
@@ -8850,7 +8871,7 @@ async def _acontinue_run_background_stream(
         RunStatus.completed,
         RunStatus.cancelled,
     )
-    if persist_run is not None and take_over_in_place:
+    if persist_run is not None and take_over_in_place and not ordered_confirmation:
         persist_run.status = RunStatus.pending
         storage_run = await abuild_offloaded_storage_copy(team, persist_run, session_id) or persist_run
         team_session.upsert_run(run_response=storage_run)
@@ -8861,12 +8882,11 @@ async def _acontinue_run_background_stream(
     # Pre-register only an in-place takeover. Forks and auto-forks are keyed by
     # a new run id downstream; fabricating PENDING under the source key would
     # corrupt the original run's reconnect state.
-    if take_over_in_place:
+    if take_over_in_place and not ordered_confirmation:
         with contextlib.suppress(Exception):
             # Fail-open: a Redis blip must not strand an accepted run.
             await get_event_stream().register_run(_run_id, RunStatus.pending)
 
-    if take_over_in_place:
         log_info(f"Background continue-run stream {_run_id} persisted with PENDING status")
 
     # 2. Create queue for forwarding SSE strings to the caller
@@ -8887,14 +8907,25 @@ async def _acontinue_run_background_stream(
         # run_response is not updated on the run_id-only path, so the terminal
         # buffer status below reads this instead.
         final_output: Optional[TeamRunOutput] = None
+        ordered_started = False
 
-        async def _dispatch_sse(event: Any) -> None:
-            """Buffer and fan out an event, then hand it to the original client."""
+        async def on_confirmation_claim() -> None:
+            nonlocal ordered_started
+            if not ordered_started:
+                ordered_started = True
+                await amark_continue_stream_running(_run_id, component=team, session_id=session_id, user_id=user_id)
+
+        if ordered_confirmation:
+            kwargs["_on_confirmation_claim"] = on_confirmation_claim
+
+        async def _dispatch_sse(event: Any, publish: bool = True) -> None:
+            """Send an event to the requester, optionally publishing it to the stream."""
             event_index: Optional[int] = None
-            try:
-                event_index = await event_stream.add_event(_run_id, event)
-            except Exception:
-                log_warning(f"Failed to buffer event for continue-run {_run_id}")
+            if publish:
+                try:
+                    event_index = await event_stream.add_event(_run_id, event)
+                except Exception:
+                    log_warning(f"Failed to buffer event for continue-run {_run_id}")
 
             sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=_run_id)
 
@@ -8909,10 +8940,10 @@ async def _acontinue_run_background_stream(
 
             # Transition to RUNNING now that a slot is held (atomic helper).
             # persist_run covers the run-ID-only continue (loaded above).
-            if persist_run is not None and take_over_in_place:
+            if persist_run is not None and take_over_in_place and not ordered_confirmation:
                 persist_run.status = RunStatus.running
                 await apersist_run_transition(team, "team", session_id, persist_run, user_id=user_id)
-            if take_over_in_place:
+            if take_over_in_place and not ordered_confirmation:
                 # Reopen a prior PAUSED stream atomically, seed any expired
                 # event index from durable history, and then mark it RUNNING.
                 await amark_continue_stream_running(_run_id, component=team, session_id=session_id, user_id=user_id)
@@ -8943,7 +8974,6 @@ async def _acontinue_run_background_stream(
                 if isinstance(event, TeamRunOutput):
                     final_output = event
                     continue
-
                 await _dispatch_sse(event)
 
         except asyncio.CancelledError:
@@ -8987,7 +9017,7 @@ async def _acontinue_run_background_stream(
             producer_terminal = RunStatus.cancelled if take_over_in_place else None
             try:
                 cancelled_run: Optional[TeamRunOutput] = None
-                if take_over_in_place:
+                if take_over_in_place and not ordered_confirmation:
                     cancelled_run = run_response
                 if take_over_in_place and cancelled_run is None:
                     # HITL continues arrive with run_response=None: load the
@@ -9019,7 +9049,12 @@ async def _acontinue_run_background_stream(
                     restore_status = (
                         status_before_takeover if status_before_takeover is not None else prior_object_status
                     )
-                    if take_over_in_place and persist_run is not None and restore_status is not None:
+                    if (
+                        take_over_in_place
+                        and not ordered_confirmation
+                        and persist_run is not None
+                        and restore_status is not None
+                    ):
                         # Read before mutating: with cache_session, persist_run
                         # can be the same object as the cached session entry.
                         fresh_session = cast(
@@ -9063,7 +9098,7 @@ async def _acontinue_run_background_stream(
                 # PENDING/RUNNING. Forks and concurrent terminal writers keep
                 # the source run unchanged.
                 try:
-                    if take_over_in_place and persist_run is not None:
+                    if take_over_in_place and not ordered_confirmation and persist_run is not None:
                         fresh_session = cast(
                             Optional[TeamSession],
                             await _aread_session(team, session_id=session_id, user_id=user_id),
@@ -9103,7 +9138,8 @@ async def _acontinue_run_background_stream(
                         run_id=_run_id, session_id=session_id, team_id=team.id, team_name=team.name
                     )
                 await _dispatch_sse(
-                    create_team_run_error_event(error_source, error=str(e), error_type=error_type_of(e))
+                    create_team_run_error_event(error_source, error=str(e), error_type=error_type_of(e)),
+                    publish=not (ordered_confirmation and refused),
                 )
             except Exception:
                 log_warning(f"Failed to emit error event for continue-run {_run_id}")
@@ -9118,75 +9154,78 @@ async def _acontinue_run_background_stream(
             except Exception:
                 log_warning(f"Failed to signal primary queue for continue-run {_run_id} completion")
 
-            # Mark the run terminal in the distributed event stream and wake
-            # all tails. The source key must keep the source run's status when
-            # the continue produced a fork with a different run id.
-            try:
-                if isinstance(producer_error, RunNotContinuableError):
-                    refused_status = _as_run_status(
-                        status_before_takeover if status_before_takeover is not None else prior_object_status
-                    )
-                    if isinstance(refused_status, RunStatus) and refused_status not in (
-                        RunStatus.running,
-                        RunStatus.pending,
-                    ):
-                        final_status = refused_status
+            if not ordered_confirmation or (ordered_started and not isinstance(producer_error, RunNotContinuableError)):
+                # Mark the run terminal in the distributed event stream and wake
+                # all tails. The source key must keep the source run's status when
+                # the continue produced a fork with a different run id.
+                try:
+                    if isinstance(producer_error, RunNotContinuableError):
+                        refused_status = _as_run_status(
+                            status_before_takeover if status_before_takeover is not None else prior_object_status
+                        )
+                        if isinstance(refused_status, RunStatus) and refused_status not in (
+                            RunStatus.running,
+                            RunStatus.pending,
+                        ):
+                            final_status = refused_status
+                        else:
+                            final_status = RunStatus.paused
+                    elif producer_terminal is not None:
+                        final_status = producer_terminal
+                    elif producer_error is not None:
+                        final_status = RunStatus.error
+                    elif not take_over_in_place:
+                        # Explicit fork/regenerate and run-id auto-fork execute
+                        # under a different id. Use stored authority, never the
+                        # stale caller object or the fork output.
+                        source_status = _as_run_status(
+                            status_before_takeover if status_before_takeover is not None else prior_object_status
+                        )
+                        if isinstance(source_status, RunStatus) and source_status in (
+                            RunStatus.completed,
+                            RunStatus.paused,
+                            RunStatus.cancelled,
+                            RunStatus.error,
+                        ):
+                            final_status = source_status
+                        else:
+                            final_status = RunStatus.completed
                     else:
-                        final_status = RunStatus.paused
-                elif producer_terminal is not None:
-                    final_status = producer_terminal
-                elif producer_error is not None:
-                    final_status = RunStatus.error
-                elif not take_over_in_place:
-                    # Explicit fork/regenerate and run-id auto-fork execute
-                    # under a different id. Use stored authority, never the
-                    # stale caller object or the fork output.
-                    source_status = _as_run_status(
-                        status_before_takeover if status_before_takeover is not None else prior_object_status
-                    )
-                    if isinstance(source_status, RunStatus) and source_status in (
-                        RunStatus.completed,
-                        RunStatus.paused,
-                        RunStatus.cancelled,
-                        RunStatus.error,
-                    ):
-                        final_status = source_status
-                    else:
-                        final_status = RunStatus.completed
-                else:
-                    # final_output covers run-id-only calls. Fall back to the
-                    # in-memory persisted object, then the exact durable row,
-                    # so a chained HITL pause is never advertised COMPLETED.
-                    produced_status: Union[RunStatus, str, None] = None
-                    if final_output is not None and getattr(final_output, "run_id", None) == _run_id:
-                        produced_status = final_output.status
-                    if produced_status is None and run_response is not None:
-                        produced_status = run_response.status
-                    if produced_status is None and persist_run is not None:
-                        produced_status = persist_run.status
-                    produced_status = _as_run_status(produced_status)
-                    if not isinstance(produced_status, RunStatus) or produced_status in (
-                        RunStatus.pending,
-                        RunStatus.running,
-                    ):
-                        with contextlib.suppress(Exception):
-                            lookup_session = await _aread_or_create_session(
-                                team, session_id=session_id, user_id=user_id
-                            )
-                            produced_status = _as_run_status(getattr(_get_session_run(lookup_session), "status", None))
-                    if isinstance(produced_status, RunStatus) and produced_status in (
-                        RunStatus.completed,
-                        RunStatus.paused,
-                        RunStatus.cancelled,
-                        RunStatus.error,
-                    ):
-                        final_status = produced_status
-                    else:
-                        final_status = RunStatus.completed
+                        # final_output covers run-id-only calls. Fall back to the
+                        # in-memory persisted object, then the exact durable row,
+                        # so a chained HITL pause is never advertised COMPLETED.
+                        produced_status: Union[RunStatus, str, None] = None
+                        if final_output is not None and getattr(final_output, "run_id", None) == _run_id:
+                            produced_status = final_output.status
+                        if produced_status is None and run_response is not None:
+                            produced_status = run_response.status
+                        if produced_status is None and persist_run is not None:
+                            produced_status = persist_run.status
+                        produced_status = _as_run_status(produced_status)
+                        if not isinstance(produced_status, RunStatus) or produced_status in (
+                            RunStatus.pending,
+                            RunStatus.running,
+                        ):
+                            with contextlib.suppress(Exception):
+                                lookup_session = await _aread_or_create_session(
+                                    team, session_id=session_id, user_id=user_id
+                                )
+                                produced_status = _as_run_status(
+                                    getattr(_get_session_run(lookup_session), "status", None)
+                                )
+                        if isinstance(produced_status, RunStatus) and produced_status in (
+                            RunStatus.completed,
+                            RunStatus.paused,
+                            RunStatus.cancelled,
+                            RunStatus.error,
+                        ):
+                            final_status = produced_status
+                        else:
+                            final_status = RunStatus.completed
 
-                await asyncio.shield(event_stream.complete_run(_run_id, final_status))
-            except (Exception, asyncio.CancelledError):
-                log_warning(f"Failed to mark continue-run {_run_id} as completed in event stream")
+                    await asyncio.shield(event_stream.complete_run(_run_id, final_status))
+                except (Exception, asyncio.CancelledError):
+                    log_warning(f"Failed to mark continue-run {_run_id} as completed in event stream")
 
     task = asyncio.create_task(_background_producer())
     _background_tasks.add(task)
@@ -9482,6 +9521,12 @@ async def _acontinue_run(
                         raise RunNotFoundError(f"No runs found for run ID {run_id}")
 
                 run_response = cast(TeamRunOutput, run_response)
+
+                if run_response.status != RunStatus.paused and any(
+                    getattr(r.tool_execution, "confirmation_id", None)
+                    for r in _normalize_requirements_payload(requirements or [])
+                ):
+                    raise RunNotContinuableError("This confirmation is no longer waiting for a decision")
 
                 if run_response.status == RunStatus.cancelled:
                     raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
@@ -9920,6 +9965,10 @@ async def _acontinue_run_stream(
     from agno.team._tools import _aget_learning_tools, _check_and_refresh_mcp_tools, _determine_tools_for_model
     from agno.utils.events import create_team_run_continued_event
 
+    on_confirmation_claim = kwargs.pop("_on_confirmation_claim", None)
+    if not callable(on_confirmation_claim):
+        on_confirmation_claim = None
+
     log_debug(f"Team Continue Run Stream: {run_response.run_id if run_response else run_id}", center=True)
 
     team_session: Optional[TeamSession] = None
@@ -9969,6 +10018,12 @@ async def _acontinue_run_stream(
                         raise RunNotFoundError(f"No runs found for run ID {run_id}")
 
                 run_response = cast(TeamRunOutput, run_response)
+
+                if run_response.status != RunStatus.paused and any(
+                    getattr(r.tool_execution, "confirmation_id", None)
+                    for r in _normalize_requirements_payload(requirements or [])
+                ):
+                    raise RunNotContinuableError("This confirmation is no longer waiting for a decision")
 
                 if run_response.status == RunStatus.cancelled:
                     raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
@@ -10122,6 +10177,7 @@ async def _acontinue_run_stream(
                             member_results=member_results,
                             run_context=run_context,
                             stream_events=stream_events,
+                            on_confirmation_claim=on_confirmation_claim,
                         ):
                             yield event
                     except Exception:

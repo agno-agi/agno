@@ -195,6 +195,12 @@ class Agent:
     # Can also be a callable factory that returns a list of tools at runtime.
     tools: Optional[Union[List[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]] = None
 
+    # Present one confirmation at a time; rejection cancels the remaining batch.
+    # Requires atomic run updates. Ordinary calls keep their batch semantics.
+    sequential_tool_confirmations: bool = False
+    # Select eligible original call IDs from confirmation snapshots and RunContext.
+    # Reattach this callable when rebuilding the Agent; the pending queue persists.
+    confirmation_policy: Optional[Callable] = None
     # Maximum number of tool calls allowed.
     tool_call_limit: Optional[int] = None
     # Controls which (if any) tool is called by the model.
@@ -461,6 +467,8 @@ class Agent:
         skills: Optional[Skills] = None,
         metadata: Optional[Dict[str, Any]] = None,
         tools: Optional[Union[Sequence[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]] = None,
+        sequential_tool_confirmations: bool = False,
+        confirmation_policy: Optional[Callable] = None,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
@@ -639,6 +647,8 @@ class Agent:
             for tool in concrete_tools:
                 raise_if_component_tool(tool, "Agent", "To let this agent delegate to another agent, use a Team.")
             self.tools = concrete_tools
+        self.sequential_tool_confirmations = sequential_tool_confirmations
+        self.confirmation_policy = confirmation_policy
         self.tool_call_limit = tool_call_limit
         self.tool_choice = tool_choice
         self.tool_hooks = tool_hooks
