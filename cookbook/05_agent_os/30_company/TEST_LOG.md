@@ -426,3 +426,24 @@ with the `status` filter.
 SQLite and with `COMPANY_DB=postgres`, with no model calls.
 
 ---
+
+### Current manager ID in Company cookbooks (2026-11-09)
+
+**Status:** PASS
+
+**Description:** `05_company_manager.py` and `10_weekly_product_review.py --check` address Company Manager as `company--manager`, and the weekly Routine schedule stores that endpoint. `10_customer_feedback/company_os.py` uses the same executor ID.
+
+**Result:** Both checks passed with no model calls. `company_os.py` was compiled but not served.
+
+---
+
+
+### 10_weekly_product_review.py — public manager ID (2026-11-10)
+
+**Status:** PASS
+
+**Description:** Ran `--check` with the canonical `company-manager` ID. The Routine targets `/agents/company-manager/runs`; no model calls were made.
+
+**Result:** Offline configuration check passed. The combined 636-test regression suite also covers Company Routine authorization and restrictions.
+
+---

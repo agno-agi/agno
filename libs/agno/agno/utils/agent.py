@@ -1299,6 +1299,8 @@ async def aexecute_instructions(
     """Execute the instructions function."""
     import inspect
 
+    # Callable objects may provide an asynchronous counterpart for I/O-bound context.
+    instructions = getattr(instructions, "__acall__", instructions)
     signature = inspect.signature(instructions)
     instruction_args: Dict[str, Any] = {}
 

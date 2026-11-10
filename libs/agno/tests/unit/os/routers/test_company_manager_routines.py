@@ -55,10 +55,10 @@ SCOPES = [
     "schedules:read",
     "schedules:write",
     "sessions:read",
-    "agents:company-manager-internal:read",
-    "teams:os-manager-internal:read",
-    "agents:company-manager-internal:run",
-    "teams:os-manager-internal:run",
+    "agents:company-manager:read",
+    "teams:superagent:read",
+    "agents:company-manager:run",
+    "teams:superagent:run",
 ]
 
 

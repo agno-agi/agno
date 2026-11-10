@@ -98,7 +98,7 @@ if __name__ == "__main__":
             _agno_run_context=context,
         )
         with TestClient(agent_os.get_app()) as client:
-            response = client.get("/agents/company-manager-internal")
+            response = client.get("/agents/company-manager")
             assert response.status_code == 200
             assert len(client.get("/company/sources").json()["data"]) == 1
             assert len(client.get("/company/routines").json()["data"]) == 1
