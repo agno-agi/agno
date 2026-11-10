@@ -5,7 +5,7 @@ import os
 import threading
 import time
 from dataclasses import replace
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -1701,3 +1701,38 @@ async def test_repository_marker_pin_published_at_commit(store, tmp_path, monkey
     assert committed["metadata"]["sandbox"]["checkpoint"]
     persisted, _, _ = await rows(store)
     assert persisted["run_data"]["metadata"]["sandbox"]["repository"] == marker
+
+
+async def test_a_native_permission_request_of_a_closed_day_reopens_the_day(store):
+    from agno.db.utils import build_aggregate_metrics_row
+
+    await seed(store)
+    state = await claim(store)
+    await store.aset_computer(state.lease, computer(state))
+    totals = await store._table("aggregate_metrics", store.db.aggregate_metrics_table_name)
+    # The seeded run's day as a finished calculation leaves it: completed, at version 1
+    day = datetime.fromtimestamp(1, tz=timezone.utc).date()
+    await store._transaction(
+        lambda c: c.execute(
+            insert(totals).values({**build_aggregate_metrics_row([], "daily", day, completed=True), "version": 1})
+        )
+    )
+    tool = {"tool_call_id": "tool", "tool_name": "Bash", "requires_confirmation": True}
+    request = {
+        "tool_call_id": "tool",
+        "owner": "owner",
+        "digest": "digest",
+        "native": {},
+        "expires_at": int(time.time()) + 60,
+        "requirement": {"tool_execution": tool},
+    }
+    try:
+        await store._anative_hitl_event(state.lease, {"event": "RunPaused", "external_agent_request": request})
+        reopened = await store._transaction(
+            lambda c: c.execute(
+                select(totals.c.completed, totals.c.version).where(totals.c.aggregation_period == "daily")
+            ).all()
+        )
+        assert [tuple(row) for row in reopened] == [(False, 2)]
+    finally:
+        await store._transaction(lambda c: totals.drop(c))
