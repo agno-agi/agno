@@ -12,6 +12,7 @@ from agno.company import CompanyManager
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, CompanyConfig, OSManager
+from agno.os.manager.prompts import COMPANY_INSTRUCTIONS
 from agno.registry import Registry
 from agno.registry._reserved import COMPANY_MANAGER_ID
 from agno.run import RunContext
@@ -36,11 +37,13 @@ def test_company_manager_assembly_and_model_precedence(tmp_path, manager):
     assert pm not in registry.agents and not registry.tools
     assert sum(agent is pm for agent in os._agents) == 1
     if manager:
-        member = next(m for m in os.manager.members if m.id == COMPANY_MANAGER_ID)
-        assert member is not pm and member not in os._agents and member not in registry.agents
-        assert member.model is override and member.tools[0] is not pm.tools[0]
-        delegation = os.manager.instructions.base[-1]
-        assert "Routines" in delegation and "Tasks" in delegation and "not Platform Builder" in delegation
+        # Super Agent holds its own CompanyTools and has no Company Manager member.
+        assert all(m.id != COMPANY_MANAGER_ID for m in os.manager.members)
+        leader_tools = [t for t in os.manager.tools if isinstance(t, CompanyTools)]
+        assert len(leader_tools) == 1 and leader_tools[0] is not pm.tools[0]
+        assert "summarize_company_product" not in leader_tools[0].functions
+        assert "refresh_company_product" not in leader_tools[0].functions
+        assert COMPANY_INSTRUCTIONS in os.manager.instructions.base
     os.resync(os.get_app())
     assert pm not in registry.agents and not registry.tools
     tools = pm.tools[0]

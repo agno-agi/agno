@@ -775,37 +775,11 @@ class AgentOS:
             if self.registry is None:
                 self.registry = Registry()
             self.registry.exclude_components([self._company_manager])
-            if self._manager is not None:
-                from agno.company.company_manager import _build_company_manager
-                from agno.os.manager.prompts import COMPANY_COORDINATION_INSTRUCTIONS, FOCUSED_EXECUTION_INSTRUCTIONS
-
-                # A separate member keeps the manager's execution policy off the served
-                # Company Manager, which direct chat and Routines run.
-                member = _build_company_manager(self, self._company_manager.model)
-                assert member is not None
-                member.tool_call_limit = self._manager.config.member_tool_call_limit
-                assert isinstance(member.instructions, str)
-                member.instructions = [member.instructions, FOCUSED_EXECUTION_INSTRUCTIONS]
-                self.registry.exclude_components([member])
-                self._manager.company_manager = member
-                assert isinstance(self._manager.team.members, list)
-                self._manager.team.members.append(member)
-                assert isinstance(self._manager.team.instructions, list)
-                self._manager.team.instructions.append(COMPANY_COORDINATION_INSTRUCTIONS)
             self.agents = [*(self.agents or []), self._company_manager]
-        if self._company_db is not None:
+            from agno.company.company_manager import INSTRUCTIONS
             from agno.company.details import _company_instructions
 
-            contextual_managers: List[Any] = [self._company_manager]
-            if self._manager is not None:
-                contextual_managers.extend([self._manager.team, self._manager.company_manager])
-            for contextual_manager in contextual_managers:
-                if contextual_manager is not None:
-                    base_instructions = contextual_manager.instructions
-                    contextual_manager.instructions = _company_instructions(
-                        self._company_db,
-                        [base_instructions] if isinstance(base_instructions, str) else list(base_instructions or []),
-                    )
+            self._company_manager.instructions = _company_instructions(self._company_db, [INSTRUCTIONS])
         self._apply_manager_manifest()
 
         self._initialize_agents()
@@ -1442,7 +1416,7 @@ class AgentOS:
                     self._prepare_sandboxed_agent(entry, self.db)
 
         # Manager specialists need normal initialization, but are not served agents.
-        agents_to_initialize = [*self._agents, *(self._manager.agents if self._manager else [])]
+        agents_to_initialize = [*self._agents, *([self._manager.builder] if self._manager else [])]
         if not agents_to_initialize:
             return
 

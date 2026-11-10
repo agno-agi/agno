@@ -29,7 +29,6 @@ from agno.registry._reserved import (
     COMPANY_MANAGER_ID,
     LEGACY_PRODUCT_MANAGER_ID,
     MANAGER_TEAM_ID,
-    OPERATOR_ID,
 )
 from agno.run import RunContext
 from agno.run.authorization import AUTHORIZATION_KEY, current_authorization
@@ -203,11 +202,8 @@ def test_owned_resolution_serving_and_resync(tmp_path, enabled):
         "/agents/" + COMPANY_MANAGER_ID + "/runs"
     )
     if enabled:
-        members = [member for member in os.manager.members if member.id == COMPANY_MANAGER_ID]
-        assert len(members) == 1 and members[0] is not pm
-        assert all(agent is not members[0] for agent in os._agents)
-    for cid in (BUILDER_ID, OPERATOR_ID):
-        assert all(agent.id != cid for agent in os._agents)
+        assert all(member.id != COMPANY_MANAGER_ID for member in os.manager.members)
+    assert all(agent.id != BUILDER_ID for agent in os._agents)
     for kind, cid in (("agent", COMPANY_MANAGER_ID), ("team", MANAGER_TEAM_ID)):
         with pytest.raises(ValueError):
             _executor(os.registry, kind, cid)
@@ -231,7 +227,7 @@ def test_wrong_type_and_reserved_registry_fallback_are_refused(tmp_path):
     [
         ("team", MANAGER_TEAM_ID),
         ("agent", BUILDER_ID),
-        ("agent", OPERATOR_ID),
+        ("agent", "platform-manager-internal"),
         ("agent", LEGACY_PRODUCT_MANAGER_ID),
     ],
 )

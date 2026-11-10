@@ -22,7 +22,7 @@ from agno.os.authz.run_context import request_authorization, restore_authorizati
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider
 from agno.os.job_queue import QueueWorker, aenqueue_ticket
 from agno.registry import Registry
-from agno.registry._reserved import MANAGER_TEAM_ID, OPERATOR_ID
+from agno.registry._reserved import BUILDER_ID, MANAGER_TEAM_ID
 from agno.run import RunContext
 from agno.run.authorization import (
     AUTHORIZATION_HEADER,
@@ -550,7 +550,7 @@ def test_manager_run_discovery_and_session_permissions_remain_separate(tmp_path)
     assert client.get(f"/sessions/{other.session_id}", headers=session_headers).status_code == 404
 
 
-def _operator_permission_os(tmp_path, scopes, identity="jwt", tool="read_file", arguments=None, delegated=False):
+def _leader_permission_os(tmp_path, scopes, identity="jwt", tool="read_file", arguments=None):
     root = tmp_path / "source"
     root.mkdir()
     (root / "example.py").write_text("READABLE_SOURCE_SENTINEL = 42\n")
@@ -566,17 +566,10 @@ def _operator_permission_os(tmp_path, scopes, identity="jwt", tool="read_file", 
         db=SqliteDb(db_file=str(tmp_path / "db.sqlite")),
         authorization=auth,
         user_isolation=True,
-        manager=OSManager(model=ScriptedModel(), root=root),
+        manager=OSManager(model=ScriptedModel(tool, arguments or {}), root=root),
         telemetry=False,
     )
-    operator = next(m for m in os.manager.members if m.id == OPERATOR_ID)
-    operator.model = ScriptedModel(tool, arguments or {})
-    path = f"/agents/{OPERATOR_ID}/runs"
-    if delegated:
-        os.manager.model = ScriptedModel(
-            "delegate_task_to_member", {"member_id": OPERATOR_ID, "task": "Execute the tool"}
-        )
-        path = f"/teams/{MANAGER_TEAM_ID}/runs"
+    path = f"/teams/{MANAGER_TEAM_ID}/runs"
     if identity == "pat":
         from agno.db.schemas.service_accounts import ServiceAccount
         from agno.os.service_accounts import generate_token
@@ -598,14 +591,14 @@ def _operator_permission_os(tmp_path, scopes, identity="jwt", tool="read_file", 
     [
         ("read_file", {"path": "example.py"}, "filesystem:read", "READABLE_SOURCE_SENTINEL"),
         ("run_diagnostics", {}, "config:read", "checks"),
-        ("get_platform_metrics", {}, "agent_os:admin", "window_days"),
+        ("get_run_activity", {}, "agent_os:admin", "window_days"),
     ],
 )
-def test_operator_action_grants(tmp_path, identity, allowed, tool, args, grant, marker):
+def test_leader_action_grants(tmp_path, identity, allowed, tool, args, grant, marker):
     scopes = [f"teams:{MANAGER_TEAM_ID}:run"]
     if allowed:
         scopes.append(grant)
-    os, client, path, request_headers = _operator_permission_os(tmp_path, scopes, identity, tool, args, delegated=True)
+    os, client, path, request_headers = _leader_permission_os(tmp_path, scopes, identity, tool, args)
     response = client.post(path, headers=request_headers, data={"message": "Execute", "stream": "false"})
     assert response.status_code == 200, response.text
     content = response.json()["content"]
@@ -620,7 +613,7 @@ def test_operator_action_grants(tmp_path, identity, allowed, tool, args, grant, 
 @pytest.mark.parametrize("scope", ["filesystem:read", "agent_os:admin"])
 def test_even_authorized_source_reads_cannot_read_credential_files(tmp_path, scope):
     scopes = [f"teams:{MANAGER_TEAM_ID}:run", scope]
-    os, client, path, h = _operator_permission_os(tmp_path, scopes, arguments={"path": ".env"}, delegated=True)
+    os, client, path, h = _leader_permission_os(tmp_path, scopes, arguments={"path": ".env"})
     response = client.post(path, headers=h, data={"message": "Read", "stream": "false"})
     assert response.status_code == 200
     assert "SECRET_SENTINEL_NEVER_RETURN" not in response.text
@@ -629,7 +622,7 @@ def test_even_authorized_source_reads_cannot_read_credential_files(tmp_path, sco
 
 @pytest.mark.parametrize("mode", ["missing", "malformed", "expired", "wrong_audience"])
 def test_invalid_credentials_cannot_start_manager(tmp_path, mode):
-    os, client, _, _ = _operator_permission_os(tmp_path, [])
+    os, client, _, _ = _leader_permission_os(tmp_path, [])
     claims = {"sub": "alice", "aud": "test", "scopes": ["agent_os:admin"], "exp": int(time.time()) + 300}
     h = {}
     if mode == "malformed":
@@ -774,23 +767,23 @@ def test_ordinary_runner_cannot_dispatch_private_manager_member(tmp_path, allowe
     from agno.tools.studio_runner import StudioRunnerTools
 
     os = make_os(tmp_path, ScriptedModel())
-    operator = next(member for member in os.manager.members if member.id == OPERATOR_ID)
-    operator.model = ScriptedModel("run_diagnostics")
+    builder = next(member for member in os.manager.members if member.id == BUILDER_ID)
+    builder.model = ScriptedModel("list_models")
     legacy = Agent(
         id="legacy",
-        model=ScriptedModel("run_agent", {"agent_id": OPERATOR_ID, "message": "Diagnose"}),
-        tools=[StudioRunnerTools(db=os.db, include_agents=[operator])],
+        model=ScriptedModel("run_agent", {"agent_id": BUILDER_ID, "message": "List models"}),
+        tools=[StudioRunnerTools(db=os.db, include_agents=[builder])],
     )
     os.agents.append(legacy)
     app = os.get_app()
     os.resync(app)
-    scopes = ["agents:legacy:run"] + (["config:read"] if allowed else [])
+    scopes = ["agents:legacy:run"] + (["registry:read"] if allowed else [])
     response = TestClient(app).post(
-        "/agents/legacy/runs", headers=headers(scopes), data={"message": "Diagnose", "stream": "false"}
+        "/agents/legacy/runs", headers=headers(scopes), data={"message": "List models", "stream": "false"}
     )
     assert response.status_code == 200, response.text
     assert "not found" in response.json()["content"]
-    assert operator.model.calls == 0
+    assert builder.model.calls == 0
 
 
 @pytest.mark.parametrize("use_async", [False, True])
@@ -878,7 +871,7 @@ def test_lazy_tool_work_keeps_authority_without_leaking_it(manager_owned, allowe
             observed.append(current_authorization().enforce_tools)
 
     fn = Function.from_callable(avalues if use_async else values)
-    fn._agent = Agent(id=OPERATOR_ID if manager_owned else "ordinary")
+    fn._agent = Agent(id=BUILDER_ID if manager_owned else "ordinary")
     caller = authority(["registry:read"] if allowed else [])
     caller.enforce_tools = False
     with authorization_scope(lambda: caller):
@@ -1025,7 +1018,7 @@ def test_authorization_scope_preserves_post_hook_result_mutations(use_async, man
         fc.result = "post-hook result"
 
     fn = Function(name="answer", entrypoint=answer, post_hook=post_hook)
-    fn._agent = Agent(id=OPERATOR_ID if manager_owned else "ordinary")
+    fn._agent = Agent(id=BUILDER_ID if manager_owned else "ordinary")
     caller = authority([])
     caller.enforce_tools = False
     with authorization_scope(lambda: caller):
@@ -1110,18 +1103,18 @@ def test_schedule_metadata_edit_preserves_execution_authority(tmp_path, changes)
 
 
 @pytest.mark.parametrize(
-    "tool,arguments,component_id,permission,expected",
+    "tool,arguments,permission,expected",
     [
-        ("list_agents", {}, MANAGER_TEAM_ID, "agents:visible:read", "visible"),
-        ("list_teams", {}, MANAGER_TEAM_ID, "teams:visible:read", "visible"),
-        ("list_workflows", {}, MANAGER_TEAM_ID, "workflows:visible:read", "visible"),
-        ("read_file", {"path": "public.txt"}, OPERATOR_ID, "filesystem:read", "source content"),
-        ("list_files", {}, OPERATOR_ID, "filesystem:read", "public.txt"),
-        ("search_content", {"query": "source content"}, OPERATOR_ID, "filesystem:read", "public.txt"),
+        ("list_agents", {}, "agents:visible:read", "visible"),
+        ("list_teams", {}, "teams:visible:read", "visible"),
+        ("list_workflows", {}, "workflows:visible:read", "visible"),
+        ("read_file", {"path": "public.txt"}, "filesystem:read", "source content"),
+        ("list_files", {}, "filesystem:read", "public.txt"),
+        ("search_content", {"query": "source content"}, "filesystem:read", "public.txt"),
     ],
 )
 @pytest.mark.parametrize("allowed", [True, False])
-def test_manager_tools_with_async_managed_roles(tmp_path, tool, arguments, component_id, permission, expected, allowed):
+def test_manager_tools_with_async_managed_roles(tmp_path, tool, arguments, permission, expected, allowed):
     from agno.db.sqlite import AsyncSqliteDb
     from agno.os.authz.native_engine import NativePolicyEngine
     from agno.team import Team
@@ -1154,17 +1147,13 @@ def test_manager_tools_with_async_managed_roles(tmp_path, tool, arguments, compo
             verification_keys=[SECRET], algorithm="HS256", audience="test", db=policy_db, roles_claim="roles"
         ),
     )
-    if component_id == OPERATOR_ID:
-        os.manager.model = ScriptedModel(
-            "delegate_task_to_member", {"member_id": OPERATOR_ID, "task": "Read the source"}
-        )
     response = TestClient(os.get_app()).post(
         f"/teams/{MANAGER_TEAM_ID}/runs", headers=headers([]), data={"message": "run", "stream": "false"}
     )
     assert response.status_code == 200, response.text
     content = response.json()["content"]
     assert "synchronously against an async database" not in content
-    if tool.startswith("list_") and component_id == MANAGER_TEAM_ID:
+    if tool in ("list_agents", "list_teams", "list_workflows"):
         listing_family = tool.removeprefix("list_")
         listing = json.loads(content)
         assert [item["id"] for item in listing[listing_family]] == (["visible"] if allowed else [])

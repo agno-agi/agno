@@ -369,18 +369,17 @@ def test_custom_admin_scope_controls_who_can_edit(tmp_path):
 
 
 class CompanyEditModel(Model):
-    """Script delegation/edit calls and echo fresh context without a provider."""
+    """Script details edit calls and echo fresh context without a provider."""
 
-    def __init__(self, delegate=False, company_name="Acme"):
+    def __init__(self, company_name="Acme"):
         super().__init__(id="offline-company-edit", provider="test")
-        self.delegate = delegate
         self.company_name = company_name
 
     def invoke(self, messages, *args, **kwargs):
         start = max(i for i, message in enumerate(messages) if message.role == "user")
         results = [message for message in messages[start + 1 :] if message.role == "tool"]
         if results:
-            if not self.delegate and results[-1].tool_name == "update_company_details":
+            if results[-1].tool_name == "update_company_details":
                 try:
                     pending = json.loads(results[-1].content)
                 except (ValueError, TypeError):
@@ -406,12 +405,8 @@ class CompanyEditModel(Model):
         if "What does our company do?" in str(messages[start].content):
             context = "\n".join(str(message.content) for message in messages if message.role == "system")
             return ModelResponse(role="assistant", content=context, response_usage=MessageMetrics())
-        name = "delegate_task_to_member" if self.delegate else "update_company_details"
-        arguments = (
-            {"member_id": "company-manager", "task": "Our company is Acme. We build warehouse robots."}
-            if self.delegate
-            else {"name": self.company_name, "description": "We build warehouse robots."}
-        )
+        name = "update_company_details"
+        arguments = {"name": self.company_name, "description": "We build warehouse robots."}
         return ModelResponse(
             role="assistant",
             tool_calls=[
@@ -441,13 +436,13 @@ class CompanyEditModel(Model):
 
 
 @pytest.mark.parametrize("can_write", [False, True])
-def test_chat_delegates_details_edit_with_caller_permissions_and_fresh_context(tmp_path, can_write):
+def test_chat_edits_details_with_caller_permissions_and_fresh_context(tmp_path, can_write):
     from agno.os import OSManager
 
     db_path = str(tmp_path / "chat.db")
     db = SqliteDb(db_file=db_path)
     auth = Authorization(verification_keys=[SECRET], algorithm="HS256", audience="details-test")
-    manager = OSManager(model=CompanyEditModel(delegate=True), access_docs=False, offload_tool_results=False)
+    manager = OSManager(model=CompanyEditModel(), access_docs=False, offload_tool_results=False)
     company = CompanyConfig(model=CompanyEditModel(), name="Initial", description="Initial description")
     os = AgentOS(db=db, manager=manager, company=company, authorization=auth, telemetry=False)
     scopes = ["teams:superagent:run", "agents:company-manager:run", "company:read"]
@@ -505,12 +500,15 @@ def test_replacing_details_requires_real_confirmation_through_superagent(tmp_pat
     original = db.update_company(initial["updated_at"], name="Acme", description="We build warehouse robots.")
     os = AgentOS(
         db=db,
-        manager=OSManager(model=CompanyEditModel(delegate=True), access_docs=False, offload_tool_results=False),
+        manager=OSManager(
+            model=CompanyEditModel(company_name="Acme Robotics"), access_docs=False, offload_tool_results=False
+        ),
         company=CompanyConfig(model=CompanyEditModel(company_name="Acme Robotics")),
         authorization=Authorization(verification_keys=[SECRET], algorithm="HS256", audience="details-test"),
         telemetry=False,
     )
-    scopes = ["teams:superagent:run", "agents:company-manager:run", "company:read", "company:write"]
+    # Super Agent edits the details itself: no grant on the Company Manager agent is needed.
+    scopes = ["teams:superagent:run", "company:read", "company:write"]
     with TestClient(os.get_app()) as client:
         response = client.post(
             "/teams/superagent/runs",
