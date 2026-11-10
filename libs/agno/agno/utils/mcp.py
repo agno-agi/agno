@@ -1,19 +1,20 @@
 import asyncio
+import base64
 import json
-from typing import TYPE_CHECKING, Any, Dict, Optional, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol, runtime_checkable
 from uuid import uuid4
 
 from agno.utils.log import log_debug, log_error, log_exception
 
 try:
     from mcp.shared.exceptions import MCPError
-    from mcp.types import CallToolResult, EmbeddedResource, ImageContent, TextContent
+    from mcp.types import AudioContent, CallToolResult, EmbeddedResource, ImageContent, TextContent
     from mcp.types import Tool as MCPTool
 except ModuleNotFoundError:
     raise ImportError("`mcp` not installed. Please install using `pip install 'mcp>=2.1.0,<3.0.0'`")
 
 
-from agno.media import Image
+from agno.media import Audio, Image
 from agno.tools.function import ToolResult
 
 
@@ -52,6 +53,7 @@ def get_default_toolkit_name(
     command: Optional[str] = None,
     server_params: Optional[Any] = None,
     fallback: str = "MCPTools",
+    recorded: bool = False,
 ) -> str:
     """Derive a stable toolkit name from MCP connection parameters.
 
@@ -62,23 +64,26 @@ def get_default_toolkit_name(
     transports, from the command for stdio, or from the equivalent fields of
     ``server_params``. Query strings and fragments are dropped from URLs so
     credentials passed as query parameters never end up in the toolkit name.
+    With ``recorded=True`` the name is the one tool calls record: a URL is reduced
+    to its host, and a command to its executable and the package or script it runs.
 
     Returns ``fallback`` when no connection parameters are available (e.g. the
     toolkit wraps an existing session).
     """
     target: Optional[str] = None
     if url:
-        target = _strip_url_for_name(url)
+        target = _strip_url_for_name(url, keep_path=not recorded)
     elif command:
-        target = command
+        target = _strip_command_for_name(command.split()) if recorded else command
     elif server_params is not None:
         params_url = getattr(server_params, "url", None)
         params_command = getattr(server_params, "command", None)
         if params_url:
-            target = _strip_url_for_name(params_url)
+            target = _strip_url_for_name(params_url, keep_path=not recorded)
         elif params_command:
             args = getattr(server_params, "args", None) or []
-            target = " ".join([str(params_command), *(str(arg) for arg in args)])
+            parts = [str(params_command), *(str(arg) for arg in args)]
+            target = _strip_command_for_name(parts) if recorded else " ".join(parts)
 
     if not target:
         return fallback
@@ -92,19 +97,89 @@ def get_default_toolkit_name(
     return f"mcp_{slug}"[:64]
 
 
-def _strip_url_for_name(url: str) -> str:
+def _strip_url_for_name(url: str, keep_path: bool = True) -> str:
     """Reduce a URL to scheme-less host + path, dropping userinfo, query and fragment.
 
     Everything that can carry credentials (``user:pass@`` userinfo, query
     parameters, fragments) is removed so it can never leak into the toolkit
-    name, which surfaces in registry listings and persisted configs.
+    name, which surfaces in registry listings and persisted configs. With
+    ``keep_path=False`` the path is dropped too: some servers take the key as
+    a path segment (``mcp.zapier.com/api/mcp/s/<key>/mcp``).
     """
     remainder = url.split("://", 1)[-1]
     remainder = remainder.split("?", 1)[0].split("#", 1)[0]
     authority, slash, path = remainder.partition("/")
     if "@" in authority:
         authority = authority.rsplit("@", 1)[-1]
-    return authority + slash + path
+    return authority + slash + path if keep_path else authority
+
+
+# Subcommand words a runner takes before the package or image it runs
+# (`docker run`, `uv run`, `npm exec`, `pnpm dlx`, `pipx run`, `bun x`, `deno run`)
+_RUNNER_SUBCOMMANDS = ("run", "exec", "dlx", "x")
+
+# Flags each runner reads the next argument for, so that argument is not the package
+_DOCKER_VALUE_FLAGS = frozenset(
+    "-e --env --env-file -v --volume --mount -p --publish --name --network --net -w --workdir -u --user"
+    " --entrypoint -l --label --platform --pull -h --hostname --add-host --device --gpus --cap-add"
+    " --cap-drop --security-opt --tmpfs -m --memory --cpus --restart --runtime".split()
+)
+_UV_VALUE_FLAGS = frozenset(
+    "--with --with-requirements --with-editable --from --python -p --index --index-url --default-index"
+    " --extra-index-url --directory --project --env-file".split()
+)
+_NPM_VALUE_FLAGS = frozenset("-p --package --registry --cache --userconfig --_auth --otp --key".split())
+_VALUE_FLAGS_BY_EXECUTABLE = {
+    "docker": _DOCKER_VALUE_FLAGS,
+    "uv": _UV_VALUE_FLAGS,
+    "uvx": _UV_VALUE_FLAGS,
+    "npx": _NPM_VALUE_FLAGS,
+    "npm": _NPM_VALUE_FLAGS,
+    "pnpm": _NPM_VALUE_FLAGS,
+    "yarn": _NPM_VALUE_FLAGS,
+    "bun": _NPM_VALUE_FLAGS,
+    "pipx": frozenset("--spec --python --pip-args --index-url".split()),
+    "python": frozenset("-W -X".split()),
+    "python3": frozenset("-W -X".split()),
+    "node": frozenset("-r --require --import --loader -C --conditions".split()),
+    "deno": frozenset("-c --config --import-map --lock --cert --location".split()),
+    "java": frozenset("-cp -classpath --class-path".split()),
+    "ruby": frozenset("-I -r".split()),
+}
+
+
+def _strip_command_for_name(parts: List[str]) -> str:
+    """Reduce a command to its executable name + the first argument that is not a flag.
+
+    That argument is the package, script or image the executable runs. Flags, the
+    values of flags the runner is known to read a value for (``docker run -e NAME``,
+    ``uv run --with dep``), ``KEY=value`` pairs and every argument after the package
+    are dropped, so tokens and connection strings passed on the command line never
+    end up in the name. Any other executable is the server itself, so only its name
+    is kept: its first argument is one of the server's own, and can be a secret. The
+    value of an unknown flag placed before the package (``--token ghp_x pkg``) is
+    taken for the package and kept.
+    """
+    if not parts:
+        return ""
+    executable = parts[0].replace("\\", "/").rsplit("/", 1)[-1]
+    value_flags = _VALUE_FLAGS_BY_EXECUTABLE.get(executable.lower().split(".", 1)[0])
+    if value_flags is None:
+        return executable
+    args = parts[2:] if len(parts) > 1 and parts[1] in _RUNNER_SUBCOMMANDS else parts[1:]
+    package = ""
+    skip_next = False
+    for part in args:
+        if skip_next:
+            skip_next = False
+        elif part.startswith("-"):
+            skip_next = part in value_flags
+        elif "=" not in part:
+            package = part
+            break
+    if "://" in package:
+        package = _strip_url_for_name(package, keep_path=False)
+    return f"{executable} {package}"
 
 
 def _is_fastmcp_client(session: Any) -> bool:
@@ -114,6 +189,14 @@ def _is_fastmcp_client(session: Any) -> bool:
     except ModuleNotFoundError:
         return False
     return isinstance(session, Client)
+
+
+def _audio_format_from_mime_type(mime_type: Optional[str]) -> Optional[str]:
+    if not mime_type:
+        return None
+
+    subtype = mime_type.partition("/")[2].split(";", 1)[0].lower()
+    return {"mpeg": "mp3", "x-wav": "wav"}.get(subtype, subtype or None)
 
 
 async def ping_session(session: MCPSession) -> None:
@@ -193,6 +276,7 @@ def get_entrypoint_for_tool(
             # Process the result content
             response_str = ""
             images = []
+            audios = []
 
             for content_item in result.content:
                 if isinstance(content_item, TextContent):
@@ -213,8 +297,6 @@ def get_entrypoint_for_tool(
                             mime_type = parsed_json.get("mimeType", "image/png")
 
                             if image_data and isinstance(image_data, str):
-                                import base64
-
                                 image_bytes: Optional[bytes]
                                 try:
                                     image_bytes = base64.b64decode(image_data)
@@ -243,8 +325,6 @@ def get_entrypoint_for_tool(
                     image_data = getattr(content_item, "data", None)
 
                     if image_data and isinstance(image_data, str):
-                        import base64
-
                         try:
                             image_data = base64.b64decode(image_data)
                         except Exception as e:
@@ -255,10 +335,35 @@ def get_entrypoint_for_tool(
                         id=str(uuid4()),
                         url=getattr(content_item, "url", None),
                         content=image_data,
-                        mime_type=getattr(content_item, "mime_type", "image/png"),
+                        mime_type=getattr(content_item, "mime_type", None),
                     )
                     images.append(img_artifact)
                     response_str += "Image has been generated and added to the response.\n"
+                elif isinstance(content_item, AudioContent):
+                    # Handle standard MCP AudioContent
+                    audio_data = getattr(content_item, "data", None)
+                    audio_bytes: Optional[bytes] = None
+
+                    if audio_data and isinstance(audio_data, str):
+                        try:
+                            audio_bytes = base64.b64decode(audio_data)
+                        except Exception as e:
+                            log_debug(f"Failed to decode base64 audio data: {e}")
+
+                    # Undecodable audio must not discard content already collected from this result
+                    if audio_bytes:
+                        mime_type = getattr(content_item, "mime_type", None)
+                        audio_artifact = Audio(
+                            id=str(uuid4()),
+                            content=audio_bytes,
+                            format=_audio_format_from_mime_type(mime_type),
+                            mime_type=mime_type,
+                        )
+                        audios.append(audio_artifact)
+                        response_str += "Audio has been generated and added to the response.\n"
+                    else:
+                        response_str += "[Audio content could not be decoded]\n"
+
                 elif isinstance(content_item, EmbeddedResource):
                     # Handle embedded resources
                     response_str += f"[Embedded resource: {content_item.resource.model_dump_json(by_alias=True)}]\n"
@@ -273,6 +378,7 @@ def get_entrypoint_for_tool(
                 content=response_str.strip(),
                 metadata=_build_mcp_metadata(result),
                 images=images if images else None,
+                audios=audios if audios else None,
             )
 
         # Execute the MCP tool call

@@ -66,14 +66,19 @@ class LlamaOpenAI(OpenAILike):
                 )
         return super()._get_client_params()
 
-    def _format_message(self, message: Message) -> Dict[str, Any]:
+    def _format_message(self, message: Message, compress_tool_results: bool = False) -> Dict[str, Any]:
         """
         Format a message into the format expected by Llama API.
 
+        The base class calls this with compress_tool_results as a positional
+        argument, so the override must accept it even though the Llama
+        formatter does not use it.
+
         Args:
             message (Message): The message to format.
+            compress_tool_results (bool): Accepted for signature compatibility.
 
         Returns:
             Dict[str, Any]: The formatted message.
         """
-        return format_message(message, openai_like=True)
+        return format_message(message, openai_like=True, compress_tool_results=compress_tool_results)

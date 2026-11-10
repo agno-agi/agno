@@ -9,7 +9,13 @@ from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
-from agno.vectordb.base import VectorDb, aembed_before_replace, embed_before_replace, is_rate_limit_error, raise_embedding_failures
+from agno.vectordb.base import (
+    VectorDb,
+    aembed_before_replace,
+    embed_before_replace,
+    is_rate_limit_error,
+    raise_embedding_failures,
+)
 
 try:
     from acouchbase.bucket import AsyncBucket
@@ -618,6 +624,7 @@ class CouchbaseSearch(VectorDb):
                     id=doc_id,
                     name=value["name"],
                     content=value["content"],
+                    embedder=self.embedder,
                     meta_data=value["meta_data"],
                     embedding=value["embedding"],
                     content_id=value.get("content_id"),
@@ -1407,6 +1414,7 @@ class CouchbaseSearch(VectorDb):
                             id=doc_id,
                             name=value.get("name"),
                             content=value.get("content", ""),
+                            embedder=self.embedder,
                             meta_data=value.get("meta_data", {}),
                             embedding=value.get("embedding", []),
                         )

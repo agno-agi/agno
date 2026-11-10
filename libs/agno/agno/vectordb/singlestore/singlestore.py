@@ -20,7 +20,13 @@ from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.vectordb.base import VectorDb, aembed_before_replace, embed_before_replace, is_rate_limit_error, raise_embedding_failures
+from agno.vectordb.base import (
+    VectorDb,
+    aembed_before_replace,
+    embed_before_replace,
+    is_rate_limit_error,
+    raise_embedding_failures,
+)
 from agno.vectordb.distance import Distance
 
 
@@ -202,7 +208,7 @@ class SingleStore(VectorDb):
         Validating if the document exists or not
 
         Args:
-            document (Document): Document to validate
+            content_hash (str): Content hash to look for in the scoped bucket
             user_id (Optional[str]): Scope the check to this owner's rows. None scopes to the
                 shared bucket (user_id IS NULL) alone, matching what _delete_by_content_hash clears.
         """

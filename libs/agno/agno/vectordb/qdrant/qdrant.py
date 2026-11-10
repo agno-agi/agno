@@ -76,7 +76,7 @@ class Qdrant(VectorDb):
             timeout (Optional[float]): Request timeout (REST: default 5s, gRPC: unlimited).
             host (Optional[str]): Qdrant host (default: "localhost" if not specified).
             path (Optional[str]): Path for local persistence (QdrantLocal).
-            reranker (Optional[Reranker]): Optional reranker for result refinement.
+            reranker (Optional[Reranker]): Optional reranker for result refinement. Deprecated: pass the reranker to Knowledge instead.
             search_type (SearchType): Whether to use vector, keyword or hybrid search.
             dense_vector_name (str): Dense vector name.
             sparse_vector_name (str): Sparse vector name.
@@ -600,6 +600,13 @@ class Qdrant(VectorDb):
             await asyncio.to_thread(self._delete_by_content_hash, content_hash, user_id)
         await self.async_insert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
 
+    def _dense_vector(self, vector: Any) -> Optional[List[float]]:
+        """Named-vector searches return a mapping, so pull the dense vector out of it."""
+        if isinstance(vector, dict):
+            dense = vector.get(self.dense_vector_name)
+            return list(dense) if dense is not None else None
+        return vector
+
     def search(
         self,
         query: str,
@@ -821,7 +828,7 @@ class Qdrant(VectorDb):
                     meta_data=result.payload["meta_data"],
                     content=result.payload["content"],
                     embedder=self.embedder,
-                    embedding=result.vector,  # type: ignore
+                    embedding=self._dense_vector(result.vector),
                     usage=result.payload.get("usage"),
                     content_id=result.payload.get("content_id"),
                 )

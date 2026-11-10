@@ -9,6 +9,7 @@ selection) and passes them back verbatim.
 from typing import Any, Dict, List, Optional, Union
 
 from agno.agent.agent import Agent
+from agno.agents.base import BaseExternalAgent
 from agno.remote.base import BaseRemote
 from agno.run.agent import RunOutput
 from agno.run.requirement import RunRequirement
@@ -112,7 +113,7 @@ async def continue_paused_run(
 
 
 async def cancel_component_run(
-    component: Union[Agent, Team, Workflow], run_id: str, auth_token: Optional[str] = None
+    component: Union[Agent, BaseExternalAgent, Team, Workflow], run_id: str, auth_token: Optional[str] = None
 ) -> None:
     """Request cancellation of ``run_id`` on the component that owns it.
 

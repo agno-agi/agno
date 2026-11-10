@@ -16,6 +16,70 @@ No tests recorded yet.
 
 ---
 
+## 09_archive/filters
+
+### filtering_elasticsearch.py
+
+**Status:** PASS
+
+**Description:** Every metadata filter form against Elasticsearch 9.1.0, index `filtering-cv`: equality on a string, a number and a date string; list and `$in`; numeric and date ranges; two ANDed filters; and a filter matching nothing. Five sample CVs with `user_id`, `document_type`, `year` and `published_on` metadata.
+
+**Result:** All nine filters returned the expected documents. Equality on `published_on="2024-01-15"` matched morgan_lee (this form previously matched nothing, before date detection was turned off), and the date range `gte 2024-07-01` correctly returned casey_jordan, jordan_mitchell and taylor_brooks while excluding the January 2024 and 2023 CVs. The agent, given `knowledge_filters={"user_id": "jordan_mitchell"}`, answered only from his CV.
+
+---
+
+## 09_archive/vector_dbs
+
+### elasticsearch_db.py
+
+**Status:** PASS
+
+**Description:** Sync ingestion and retrieval against Elasticsearch 9.1.0 on localhost:9200, index `recipe`. Thai recipes PDF, default vector search.
+
+**Result:** 14 chunks upserted, retrieval returned the curry recipe and the agent answered from it.
+
+---
+
+### async_elasticsearch_db.py
+
+**Status:** PASS
+
+**Description:** Async ingestion and retrieval, index `recipe_async`. Also exercises `async_close()`.
+
+**Result:** 14 chunks upserted, vector search returned 10 documents, Tom Kha Gai answered from them. No unclosed-connector warning on exit.
+
+---
+
+### elasticsearch_db_hybrid_search.py
+
+**Status:** PASS
+
+**Description:** `search_type=hybrid` on index `recipe_hybrid`, which uses the default `boost` strategy rather than `rrf`.
+
+**Result:** 14 chunks upserted, hybrid search returned 10 documents. Confirms the boost strategy works on a basic licence, which `rrf` does not.
+
+---
+
+### async_elasticsearch_db_with_batch_embedder.py
+
+**Status:** PASS
+
+**Description:** `OpenAIEmbedder(enable_batch=True)` on index `recipes_batch`, so the async path uses `async_get_embeddings_batch_and_usage` for the whole batch.
+
+**Result:** Batch embedding ran ("Getting embeddings and usage for 1 texts in batches of 100 (async)"), upsert succeeded, and the agent answered from the retrieved chunk.
+
+---
+
+### elasticsearch_db_cloud.py
+
+**Status:** NOT RUN
+
+**Description:** Elastic Cloud connection paths - `cloud_id`+`api_key`, `url`+`api_key`, and `url`+`basic_auth` with `ca_certs`.
+
+**Result:** Not executed - needs a hosted Elastic Cloud deployment, which this environment has none. Verified that without `ELASTIC_CLOUD_ID`/`ELASTIC_API_KEY` it exits with an actionable message rather than a stack trace. The adapter's own handling of these arguments is covered by unit tests.
+
+---
+
 ## 04_advanced/07_per_user_isolation
 
 ### check_cookbook_pattern.py
@@ -65,6 +129,16 @@ No tests recorded yet.
 **Description:** Couchbase on localhost, bucket/scope/collection created by the example, FTS index over a keyword-mapped `user_id` field. Includes a 3-second wait for FTS indexing.
 
 **Result:** Alice 2 results, Bob 2, admin 3. All assertions passed; the agent did not state Bob's salary.
+
+---
+
+### elasticsearch_db.py
+
+**Status:** PASS
+
+**Description:** Elasticsearch 9.1.0 on localhost:9200, index `per_user_isolation_demo`. `user_id` keyword field scoped with `term` OR `must_not exists`, applied inside the `knn` clause so the scope pre-filters.
+
+**Result:** Alice 2 results, Bob 2, admin 3. All assertions passed. Alice's agent, asked for Bob's salary, retrieved nothing of his and answered that it did not know.
 
 ---
 

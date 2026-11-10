@@ -12,10 +12,11 @@ Example prompts to try:
 Run `uv pip install google-genai agno` to install the necessary dependencies.
 """
 
+from pathlib import Path
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.models.gemini import GeminiTools
-from agno.utils.media import save_base64_data
 
 # ---------------------------------------------------------------------------
 # Create Agent
@@ -38,7 +39,6 @@ if __name__ == "__main__":
     if response and response.videos:
         for video in response.videos:
             if video.content:
-                save_base64_data(
-                    base64_data=str(video.content),
-                    output_path=f"tmp/cat_driving_{video.id}.mp4",
-                )
+                output_path = Path(f"tmp/cat_driving_{video.id}.mp4")
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_bytes(video.content)

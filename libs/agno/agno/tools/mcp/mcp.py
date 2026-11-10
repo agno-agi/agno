@@ -20,9 +20,13 @@ if TYPE_CHECKING:
 try:
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import get_default_environment
+    from mcp.types import ListToolsResult, PaginatedRequestParams
 except ModuleNotFoundError:
     raise ImportError("`mcp` not installed. Please install using `pip install 'mcp>=2.1.0,<3.0.0'`")
 
+
+# Match the default bound on automatic discovery through fastmcp's Client.
+_MCP_TOOL_PAGINATION_MAX_PAGES = 250
 
 _FASTMCP_INSTALL_HINT = (
     "`fastmcp` not installed. MCPTools builds its connections with it. "
@@ -310,9 +314,13 @@ class MCPTools(Toolkit):
         stop_after_tool_call_tools = kwargs.pop("stop_after_tool_call_tools", None)
         show_result_tools = kwargs.pop("show_result_tools", None)
 
-        super().__init__(
-            name=name or get_default_toolkit_name(url=url, command=command, server_params=server_params),
-            **kwargs,
+        default_name = get_default_toolkit_name(url=url, command=command, server_params=server_params)
+        super().__init__(name=name or default_name, **kwargs)
+        # A default name keeps the command's arguments and the URL's path, which can hold
+        # credentials, so tool calls record the same name without them (see recorded_name)
+        self._default_name = default_name
+        self._default_recorded_name = get_default_toolkit_name(
+            url=url, command=command, server_params=server_params, recorded=True
         )
 
         if url is not None:
@@ -445,6 +453,15 @@ class MCPTools(Toolkit):
     @property
     def initialized(self) -> bool:
         return self._initialized
+
+    @property
+    def recorded_name(self) -> str:
+        """The toolkit name each tool call records, sent in run events and kept in metrics.
+
+        The toolkit's own name, except a default one: that is recorded with a URL's host
+        only, or a command's executable and the package or script it runs only.
+        """
+        return self._default_recorded_name if self.name == self._default_name else self.name
 
     @property
     def _session_creation_lock(self) -> asyncio.Lock:
@@ -889,7 +906,17 @@ class MCPTools(Toolkit):
             listed = await self.session.list_tools()
             # fastmcp's Client yields a plain list; a user-supplied ClientSession
             # yields a ListToolsResult carrying .tools.
-            available_tools = listed if isinstance(listed, list) else listed.tools
+            available_tools = list(listed if isinstance(listed, list) else listed.tools)
+            if isinstance(listed, ListToolsResult):
+                # Collect all pages before validating filters or changing the registry.
+                page_count = 1
+                while listed.next_cursor is not None:
+                    if page_count >= _MCP_TOOL_PAGINATION_MAX_PAGES:
+                        raise RuntimeError(f"MCP tools/list reached the page limit ({_MCP_TOOL_PAGINATION_MAX_PAGES})")
+                    # Cursors are opaque: empty or repeated values may still advance the listing.
+                    listed = await self.session.list_tools(params=PaginatedRequestParams(cursor=listed.next_cursor))
+                    available_tools.extend(listed.tools)
+                    page_count += 1
 
             self._check_tools_filters(
                 available_tools=[tool.name for tool in available_tools],

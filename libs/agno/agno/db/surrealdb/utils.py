@@ -89,3 +89,13 @@ def query_one(
             raise ValueError(f"Expected single record, got {len(response)} records: {response}")
     else:
         raise ValueError(f"Unexpected response type: {type(response)}")
+
+
+def is_transaction_conflict(error: Exception) -> bool:
+    """Whether a database error is SurrealDB's transaction conflict ("This transaction can be retried")."""
+    return "can be retried" in str(error)
+
+
+def database_error(error: Exception) -> Exception:
+    """The database's own error for an error the query helper raised, which it raises as the context of its own."""
+    return error.__context__ if isinstance(error.__context__, Exception) else error

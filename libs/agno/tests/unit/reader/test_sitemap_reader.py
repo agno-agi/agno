@@ -162,6 +162,37 @@ def test_is_sitemap_url():
     assert is_sitemap_url("https://x.com/sitemap/page") is False
 
 
+@pytest.mark.parametrize("extension", ["html", "htm"])
+@pytest.mark.parametrize("directory", ["/", "/docs/"])
+def test_canonicalization_preserves_non_index_filenames(extension, directory):
+    path = f"{directory}myindex.{extension}"
+    url = f"https://example.com{path}?v=1#section"
+    assert canonical_page_url(url) == f"https://example.com{path}?v=1"
+    assert canonical_page_name(url) == f"example.com{path}?v=1"
+
+
+@pytest.mark.parametrize("extension", ["html", "htm"])
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_sitemap_preserves_pages_with_non_index_filenames(extension, asynchronous):
+    urls = [f"https://example.com/docs/myindex.{extension}", "https://example.com/docs/my"]
+    routes = {
+        "https://example.com/sitemap.xml": (urlset_xml(*urls), "application/xml"),
+        urls[0]: ("First page content", "text/plain"),
+        urls[1]: ("Second page content", "text/plain"),
+    }
+    reader = make_reader(chunk=False)
+    with mock_site(routes) as requested:
+        if asynchronous:
+            documents = asyncio.run(reader.async_read("https://example.com/sitemap.xml"))
+        else:
+            documents = reader.read("https://example.com/sitemap.xml")
+
+    assert [document.id for document in documents] == urls
+    assert [document.name for document in documents] == [url.removeprefix("https://") for url in urls]
+    assert [document.content for document in documents] == ["First page content", "Second page content"]
+    assert all(url in requested for url in urls)
+
+
 # ----------------------------------------------------------------------
 # Discovery
 # ----------------------------------------------------------------------
@@ -252,6 +283,40 @@ def test_gzipped_sitemap_parsed():
     assert len(documents) == 1
     assert documents[0].meta_data["url"] == "https://example.com/p1"
     assert documents[0].meta_data["source"] == "sitemap"
+
+
+@pytest.mark.parametrize(
+    "invalid_gzip",
+    [
+        b"\x1f\x8b",
+        gzip.compress(b"<urlset/>", mtime=0)[:-1],
+        # A gzip header followed by a reserved DEFLATE block type
+        b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x07",
+    ],
+    ids=["truncated-header", "truncated-trailer", "invalid-deflate"],
+)
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_invalid_gzip_sitemap_tries_next_candidate(invalid_gzip, asynchronous):
+    # A gzipped body that does not decompress is not a sitemap; the next candidate is tried
+    routes = {
+        "https://example.com/sitemap.xml.gz": (invalid_gzip, "application/gzip"),
+        "https://example.com/sitemap.xml": (urlset_xml("https://example.com/page-a"), "application/xml"),
+        "https://example.com/page-a": (html_page("A", "Alpha content"), "text/html"),
+    }
+    reader = make_reader()
+    with mock_site(routes) as requested:
+        if asynchronous:
+            documents = asyncio.run(reader.async_read("https://example.com/sitemap.xml.gz"))
+        else:
+            documents = reader.read("https://example.com/sitemap.xml.gz")
+
+    assert "https://example.com/sitemap.xml.gz" in requested
+    assert "https://example.com/sitemap.xml" in requested
+    assert len(documents) == 1
+    assert documents[0].content == "Alpha content"
+    assert documents[0].meta_data["url"] == "https://example.com/page-a"
+    assert documents[0].meta_data["source"] == "sitemap"
+    assert "discovery_incomplete" not in documents[0].meta_data
 
 
 def test_nested_index_cycle_terminates():
@@ -504,8 +569,8 @@ def test_source_header_lands_in_first_chunk_only():
         documents = reader.read("https://example.com/sitemap.xml")
 
     assert len(documents) >= 2
-    # FixedSizeChunking collapses whitespace, so the header's newlines become spaces
-    assert documents[0].content.startswith("# Page A Source: https://example.com/a ")
+    # FixedSizeChunking collapses repeated newlines, so the header's blank line becomes a single newline
+    assert documents[0].content.startswith("# Page A\nSource: https://example.com/a\n")
     for later in documents[1:]:
         assert "# Page A" not in later.content
         assert "Source:" not in later.content
@@ -595,6 +660,41 @@ def test_failed_index_child_marks_documents_discovery_incomplete():
     assert all(doc.meta_data.get("discovery_incomplete") is True for doc in documents), (
         "every document must carry the incomplete-discovery flag so the insert path suppresses pruning"
     )
+
+
+@pytest.mark.parametrize(
+    "invalid_gzip",
+    [
+        b"\x1f\x8b",
+        gzip.compress(b"<urlset/>", mtime=0)[:-1],
+        # A gzip header followed by a reserved DEFLATE block type
+        b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x07",
+    ],
+    ids=["truncated-header", "truncated-trailer", "invalid-deflate"],
+)
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_invalid_gzip_index_child_preserves_healthy_pages(invalid_gzip, asynchronous):
+    routes = {
+        "https://example.com/sitemap.xml": (
+            sitemapindex_xml("https://example.com/sitemap-a.xml", "https://example.com/sitemap-b.xml.gz"),
+            "application/xml",
+        ),
+        "https://example.com/sitemap-a.xml": (urlset_xml("https://example.com/page-a"), "application/xml"),
+        # sitemap-b.xml.gz does not decompress: an entire shard is missing from this read
+        "https://example.com/sitemap-b.xml.gz": (invalid_gzip, "application/gzip"),
+        "https://example.com/page-a": (html_page("A", "Alpha content"), "text/html"),
+    }
+    reader = make_reader()
+    with mock_site(routes):
+        if asynchronous:
+            documents = asyncio.run(reader.async_read("https://example.com/sitemap.xml"))
+        else:
+            documents = reader.read("https://example.com/sitemap.xml")
+
+    assert len(documents) == 1
+    assert documents[0].content == "Alpha content"
+    assert documents[0].meta_data["url"] == "https://example.com/page-a"
+    assert documents[0].meta_data["discovery_incomplete"] is True
 
 
 def test_complete_discovery_carries_no_incomplete_flag():

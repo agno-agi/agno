@@ -71,7 +71,6 @@ class CalComTools(Toolkit):
 
         Args:
             utc_time: UTC time string
-            user_timezone: User's timezone (e.g., 'Asia/Kolkata')
 
         Returns:
             str: Formatted time in user's timezone
@@ -106,8 +105,6 @@ class CalComTools(Toolkit):
         Args:
             start_date: Start date in YYYY-MM-DD format
             end_date: End date in YYYY-MM-DD format
-            user_timezone: User's timezone
-            event_type_id: Optional specific event type ID
 
         Returns:
             str: Available slots or error message
@@ -214,7 +211,6 @@ class CalComTools(Toolkit):
             booking_uid: Booking UID to reschedule
             new_start_time: New start time in YYYY-MM-DDTHH:MM:SSZ format
             reason: Reason for rescheduling
-            user_timezone: User's timezone
 
         Returns:
             str: Rescheduling confirmation or error message

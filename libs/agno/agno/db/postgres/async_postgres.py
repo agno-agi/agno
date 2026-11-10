@@ -1,24 +1,48 @@
+import asyncio
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union, cast
 from uuid import uuid4
+
+from packaging import version as packaging_version
 
 if TYPE_CHECKING:
     from agno.run.status_persist import RunPersistOutcome
     from agno.tracing.schemas import Span, Trace
 
-from agno.db.base import AsyncBaseDb, SessionType
+from agno.db.base import _UNSET_UPDATED_AT, AsyncBaseDb, SessionType
 from agno.db.migrations.manager import MigrationManager
-from agno.db.postgres.schemas import get_table_schema_definition
+from agno.db.postgres.engine import _engine_options
+from agno.db.postgres.schemas import default_sandbox_table_name, get_table_schema_definition
 from agno.db.postgres.utils import (
-    abulk_upsert_metrics,
+    METRICS_IN_LIST_LIMIT,
+    METRICS_STALE_KEYS_LIMIT,
+    abulk_upsert_aggregate_metrics_rows,
+    abulk_upsert_component_metrics,
     acreate_schema,
     ais_table_available,
     ais_valid_table,
     apply_sorting,
-    calculate_date_metrics,
-    fetch_all_sessions_data,
-    get_dates_to_calculate_metrics_for,
+    areopen_metrics_day,
+    areopen_metrics_days_from,
+    areopen_metrics_month,
+    aupsert_aggregate_metrics_row,
+    build_component_metrics_legacy_runs_table,
+    build_component_metrics_run,
+    build_component_metrics_runs_query,
+    build_component_metrics_totals_queries,
+    build_metrics_by_owner_queries,
+    is_foreign_key_violation,
+    is_lock_not_available,
+)
+from agno.db.schemas.authz import (
+    AUTHZ_AUDIT,
+    AUTHZ_DECISIONS,
+    AUTHZ_GROUPING,
+    AUTHZ_POLICY,
+    AUTHZ_ROLES,
+    AUTHZ_TABLE_NAME_ATTRS,
+    AUTHZ_USERS,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -27,18 +51,48 @@ from agno.db.schemas.service_accounts import (
     resolve_service_account_sort_column,
     validate_service_account_update,
 )
+from agno.db.sql import authz as authz_sql
 from agno.db.utils import (
+    AGGREGATE_METRICS_COUNT_COLUMNS,
     HISTORY_SKIP_STATUSES,
+    METRICS_BATCH_SIZE,
+    METRICS_LOCK_SECONDS,
+    METRICS_REFRESH_ID,
+    METRICS_STOPPED_ERROR,
+    METRICS_TOKEN_FIELDS,
     SessionRunObjectCache,
+    add_metrics_month_totals,
+    aggregate_metrics_rows_to_write,
+    bound_index_name,
+    build_aggregate_metrics_month_rows,
+    build_aggregate_metrics_rows,
+    build_component_metrics_totals,
+    build_metrics_by_owner,
+    build_metrics_from_aggregate_metrics,
     build_single_run_row,
+    calculate_date_component_metrics,
+    component_metrics_rows_to_write,
+    database_error_message,
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
     filter_context_runs,
-    json_serializer,
+    get_months_to_calculate_metrics_for,
     learning_search_patterns,
+    list_metrics_totals_models,
+    merge_metrics_totals,
     merge_runs_table_with_legacy_blob,
-    metrics_starting_date_from_days,
+    metrics_calculation_enabled,
+    metrics_day_completed,
+    metrics_day_to_reopen,
+    metrics_days_since_last_calculation,
+    metrics_full_months,
+    metrics_month_end,
+    metrics_nested_run_ids,
+    metrics_refresh_status,
+    metrics_remote_member_team_session_ids,
+    metrics_versions,
+    resolve_metrics_fields,
     table_schema_mismatch_error,
     validate_pagination,
 )
@@ -48,7 +102,7 @@ from agno.run.team import TeamRunOutput
 from agno.run.workflow import WorkflowRunOutput
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.utils.string import sanitize_postgres_string, sanitize_postgres_strings
+from agno.utils.string import generate_id, sanitize_postgres_string, sanitize_postgres_strings
 
 try:
     from sqlalchemy import (
@@ -62,13 +116,17 @@ try:
         case,
         distinct,
         func,
+        literal,
+        null,
         or_,
+        tuple_,
+        union,
         update,
     )
     from sqlalchemy import cast as sa_cast
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.dialects.postgresql import TIMESTAMP
-    from sqlalchemy.exc import ProgrammingError
+    from sqlalchemy.exc import DBAPIError, ProgrammingError
     from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
     from sqlalchemy.schema import Column, MetaData
     from sqlalchemy.sql.expression import select, text
@@ -93,7 +151,18 @@ def _db_epoch() -> Any:
     return sa_cast(func.floor(func.extract("epoch", func.now())), BigInteger)
 
 
+def _db_clock_epoch() -> Any:
+    """Postgres wall-clock time as an integer epoch, for a heartbeat late in a long transaction.
+
+    _db_epoch is the transaction's start time, so a heartbeat written at the end of a long transaction would date
+    itself back by the transaction's length.
+    """
+    return sa_cast(func.floor(func.extract("epoch", func.clock_timestamp())), BigInteger)
+
+
 class AsyncPostgresDb(AsyncBaseDb):
+    serializes_sessions: bool = True
+
     def __init__(
         self,
         id: Optional[str] = None,
@@ -104,6 +173,9 @@ class AsyncPostgresDb(AsyncBaseDb):
         runs_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
+        component_metrics_table: Optional[str] = None,
+        aggregate_metrics_table: Optional[str] = None,
+        metrics_refreshes_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         traces_table: Optional[str] = None,
@@ -112,12 +184,17 @@ class AsyncPostgresDb(AsyncBaseDb):
         components_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
         schedules_table: Optional[str] = None,
+        products_table: Optional[str] = None,
+        sources_table: Optional[str] = None,
+        projects_table: Optional[str] = None,
+        tasks_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
         job_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
         service_accounts_table: Optional[str] = None,
         create_schema: bool = True,
+        sandbox_table: Optional[str] = None,
     ):
         """
         Async interface for interacting with a PostgreSQL database.
@@ -145,6 +222,10 @@ class AsyncPostgresDb(AsyncBaseDb):
             runs_table (Optional[str]): Name of the table to store the runs of each session.
             memory_table (Optional[str]): Name of the table to store memories.
             metrics_table (Optional[str]): Name of the table to store metrics.
+            component_metrics_table (Optional[str]): Name of the table to store the metrics of each agent, team and
+                workflow.
+            aggregate_metrics_table (Optional[str]): Name of the table to store the metrics of each user.
+            metrics_refreshes_table (Optional[str]): Name of the table to store the metrics refreshes.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge content.
             traces_table (Optional[str]): Name of the table to store run traces.
@@ -153,21 +234,47 @@ class AsyncPostgresDb(AsyncBaseDb):
             components_table (Optional[str]): Name of the table to store components.
             learnings_table (Optional[str]): Name of the table to store learnings.
             schedules_table (Optional[str]): Name of the table to store cron schedules.
+            products_table (Optional[str]): Name of the table to store Company Products.
+            projects_table (Optional[str]): Name of the table to store Company Projects.
+            tasks_table (Optional[str]): Name of the table to store Company Tasks.
             schedule_runs_table (Optional[str]): Name of the table to store schedule run history.
             job_table (Optional[str]): Name of the table to store durable background run jobs.
             create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
                 Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
+            sandbox_table (Optional[str]): Name of the table to store sandbox session leases and recovery state.
+                Defaults to "<session_table>_sandbox_bindings"; it serves exactly one session table.
 
         Raises:
             ValueError: If neither db_url nor db_engine is provided.
             ValueError: If none of the tables are provided.
         """
+        _engine: Optional[AsyncEngine] = db_engine
+        if _engine is None and db_url is not None:
+            _engine = create_async_engine(
+                db_url,
+                **_engine_options(),
+            )
+        if _engine is None:
+            raise ValueError("One of db_url or db_engine must be provided")
+
+        self.db_url: Optional[str] = db_url
+        self.db_engine: AsyncEngine = _engine
+        if id is None:
+            # Match the synchronous adapter so persisted references survive a
+            # restart or resolve on another replica using the same connection.
+            base_seed = db_url or str(self.db_engine.url)
+            schema_suffix = db_schema if db_schema is not None else "ai"
+            id = generate_id(f"{base_seed}#{schema_suffix}")
+
         super().__init__(
             id=id,
             session_table=session_table,
             runs_table=runs_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
+            component_metrics_table=component_metrics_table,
+            aggregate_metrics_table=aggregate_metrics_table,
+            metrics_refreshes_table=metrics_refreshes_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
             traces_table=traces_table,
@@ -176,29 +283,24 @@ class AsyncPostgresDb(AsyncBaseDb):
             components_table=components_table,
             learnings_table=learnings_table,
             schedules_table=schedules_table,
+            products_table=products_table,
+            sources_table=sources_table,
+            projects_table=projects_table,
+            tasks_table=tasks_table,
             schedule_runs_table=schedule_runs_table,
             job_table=job_table,
             approvals_table=approvals_table,
             auth_tokens_table=auth_tokens_table,
             service_accounts_table=service_accounts_table,
         )
+        if metrics_table is not None:
+            log_warning("metrics_table is deprecated; use component_metrics_table and aggregate_metrics_table.")
 
-        _engine: Optional[AsyncEngine] = db_engine
-        if _engine is None and db_url is not None:
-            _engine = create_async_engine(
-                db_url,
-                pool_pre_ping=True,
-                pool_recycle=3600,
-                json_serializer=json_serializer,
-            )
-        if _engine is None:
-            raise ValueError("One of db_url or db_engine must be provided")
-
-        self.db_url: Optional[str] = db_url
-        self.db_engine: AsyncEngine = _engine
         self.db_schema: str = db_schema if db_schema is not None else "ai"
         self.metadata: MetaData = MetaData(schema=self.db_schema)
         self.create_schema: bool = create_schema
+        # The bindings table has a foreign key to one session table, so each gets its own.
+        self.sandbox_table_name: str = sandbox_table or default_sandbox_table_name(self.session_table_name)
 
         # Initialize database session factory
         self.async_session_factory = async_sessionmaker(
@@ -211,8 +313,60 @@ class AsyncPostgresDb(AsyncBaseDb):
         # contract. Per adapter instance, so it can never serve runs across
         # databases.
         self._run_object_cache = SessionRunObjectCache()
-        # Zero means never refreshed; get_metrics uses this to refresh lazily, at most once per minute
+        # Zero means never refreshed; get_metrics uses this to refresh lazily, at most once per minute.
+        # stop_metrics_refresh_on_read sets it to infinity, so reads never calculate
         self._metrics_refreshed_at: float = 0.0
+        # Reads warn once that the deprecated metrics table is served until a first calculate_metrics has finished
+        self._deprecated_metrics_logged: bool = False
+        # The days whose metrics a write could not reopen, retried by the next write
+        self._metrics_days_not_reopened: Set[date] = set()
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize the database connection and table-name overrides."""
+        data = super().to_dict()
+        data.update(
+            {
+                "type": "async_postgres",
+                "db_url": self.db_url,
+                "db_schema": self.db_schema,
+                "sandbox_table": self.sandbox_table_name,
+            }
+        )
+        return data
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "AsyncPostgresDb":
+        """Reconstruct a native async database with its table-name overrides."""
+        return cls(
+            id=data.get("id"),
+            db_url=data.get("db_url"),
+            db_schema=data.get("db_schema"),
+            session_table=data.get("session_table"),
+            runs_table=data.get("runs_table"),
+            memory_table=data.get("memory_table"),
+            metrics_table=data.get("metrics_table"),
+            component_metrics_table=data.get("component_metrics_table"),
+            aggregate_metrics_table=data.get("aggregate_metrics_table"),
+            metrics_refreshes_table=data.get("metrics_refreshes_table"),
+            eval_table=data.get("eval_table"),
+            knowledge_table=data.get("knowledge_table"),
+            traces_table=data.get("traces_table"),
+            spans_table=data.get("spans_table"),
+            versions_table=data.get("versions_table"),
+            components_table=data.get("components_table"),
+            learnings_table=data.get("learnings_table"),
+            schedules_table=data.get("schedules_table"),
+            products_table=data.get("products_table"),
+            sources_table=data.get("sources_table"),
+            projects_table=data.get("projects_table"),
+            tasks_table=data.get("tasks_table"),
+            schedule_runs_table=data.get("schedule_runs_table"),
+            job_table=data.get("job_table"),
+            approvals_table=data.get("approvals_table"),
+            auth_tokens_table=data.get("auth_tokens_table"),
+            service_accounts_table=data.get("service_accounts_table"),
+            sandbox_table=data.get("sandbox_table"),
+        )
 
     async def close(self) -> None:
         """Close database connections and dispose of the connection pool.
@@ -243,6 +397,9 @@ class AsyncPostgresDb(AsyncBaseDb):
             (self.runs_table_name, "runs"),
             (self.memory_table_name, "memories"),
             (self.metrics_table_name, "metrics"),
+            (self.component_metrics_table_name, "component_metrics"),
+            (self.aggregate_metrics_table_name, "aggregate_metrics"),
+            (self.metrics_refreshes_table_name, "metrics_refreshes"),
             (self.eval_table_name, "evals"),
             (self.knowledge_table_name, "knowledge"),
             (self.versions_table_name, "versions"),
@@ -283,6 +440,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 db_schema=self.db_schema,
                 schedules_table_name=self.schedules_table_name,
                 session_table_name=self.session_table_name,
+                runs_table_name=self.runs_table_name,
             ).copy()
 
             # Register FK parent tables on the metadata first, so SQLAlchemy
@@ -349,6 +507,9 @@ class AsyncPostgresDb(AsyncBaseDb):
             # Composite indexes
             for idx_config in schema_composite_indexes:
                 idx_name = f"idx_{table_name}_{'_'.join(idx_config['columns'])}"
+                if table_type == "component_metrics":
+                    # Named after the session table, so a long session table name would push it past 63 bytes
+                    idx_name = bound_index_name(type(self).__name__, idx_name)
                 table.append_constraint(Index(idx_name, *idx_config["columns"]))
 
             # Partial unique indexes
@@ -375,10 +536,10 @@ class AsyncPostgresDb(AsyncBaseDb):
             if not await self.table_exists(table_name):
                 async with self.db_engine.begin() as conn:
                     await conn.run_sync(table.create, checkfirst=True)
-                log_debug(f"Successfully created table '{table_name}'")
+                log_debug(f"Created table {self.db_schema}.{table_name}")
                 table_created = True
             else:
-                log_debug(f"Table '{self.db_schema}.{table_name}' already exists, skipping creation")
+                log_debug(f"Table {self.db_schema}.{table_name} already exists", log_level=2)
 
             # Create indexes
             for idx in table.indexes:
@@ -405,17 +566,32 @@ class AsyncPostgresDb(AsyncBaseDb):
                 # Also store the schema version for the created table
                 latest_schema_version = MigrationManager(self).latest_schema_version
                 await self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
-                log_info(
-                    f"Successfully stored version {latest_schema_version.public} in database for table {table_name}"
+                log_debug(
+                    f"Stored schema version {latest_schema_version.public}: {self.db_schema}.{table_name}", log_level=2
                 )
 
             return table
 
         except Exception as e:
-            log_error(f"Could not create table {self.db_schema}.{table_name}: {str(e)}")
+            # Concurrent CREATE TABLE may lose the catalog's uniqueness race.
+            # The caller still receives the exception and decides whether it can
+            # resolve the winner; an existing winner is not a database outage.
+            cause = getattr(e, "orig", e)
+            sqlstate = getattr(cause, "sqlstate", getattr(cause, "pgcode", None))
+            if sqlstate in ("42P07", "23505") and await self.table_exists(table_name):
+                log_debug(f"Concurrent table creation: {self.db_schema}.{table_name}", log_level=2)
+            else:
+                log_error(f"Could not create table {self.db_schema}.{table_name}: {str(e)}")
             raise
 
     async def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
+        if table_type == "transcripts":
+            return await self._get_or_create_table(
+                table_name=self.transcripts_table_name,
+                table_type="transcripts",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+
         if table_type == "sessions":
             self.session_table = await self._get_or_create_table(
                 table_name=self.session_table_name,
@@ -447,6 +623,30 @@ class AsyncPostgresDb(AsyncBaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.metrics_table
+
+        if table_type == "component_metrics":
+            self.component_metrics_table = await self._get_or_create_table(
+                table_name=self.component_metrics_table_name,
+                table_type="component_metrics",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.component_metrics_table
+
+        if table_type == "aggregate_metrics":
+            self.aggregate_metrics_table = await self._get_or_create_table(
+                table_name=self.aggregate_metrics_table_name,
+                table_type="aggregate_metrics",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.aggregate_metrics_table
+
+        if table_type == "metrics_refreshes":
+            self.metrics_refreshes_table = await self._get_or_create_table(
+                table_name=self.metrics_refreshes_table_name,
+                table_type="metrics_refreshes",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.metrics_refreshes_table
 
         if table_type == "evals":
             self.eval_table = await self._get_or_create_table(
@@ -499,6 +699,41 @@ class AsyncPostgresDb(AsyncBaseDb):
             )
             return self.learnings_table
 
+        if table_type == "sources":
+            return await self._get_or_create_table(
+                table_name=self.sources_table_name,
+                table_type="sources",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+
+        if table_type == "company":
+            return await self._get_or_create_table(
+                table_name=self.company_table_name,
+                table_type="company",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+
+        if table_type == "products":
+            return await self._get_or_create_table(
+                table_name=self.products_table_name,
+                table_type="products",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+
+        if table_type == "projects":
+            return await self._get_or_create_table(
+                table_name=self.projects_table_name,
+                table_type="projects",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+
+        if table_type == "tasks":
+            return await self._get_or_create_table(
+                table_name=self.tasks_table_name,
+                table_type="tasks",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+
         if table_type == "schedules":
             self.schedules_table = await self._get_or_create_table(
                 table_name=self.schedules_table_name,
@@ -522,6 +757,14 @@ class AsyncPostgresDb(AsyncBaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.job_table
+
+        if table_type == "sandbox_bindings":
+            self.sandbox_table = await self._get_or_create_table(
+                table_name=self.sandbox_table_name,
+                table_type="sandbox_bindings",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.sandbox_table
 
         if table_type == "tool_results":
             self.tool_results_table = await self._get_or_create_table(
@@ -554,6 +797,13 @@ class AsyncPostgresDb(AsyncBaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.service_accounts_table
+
+        if table_type in AUTHZ_TABLE_NAME_ATTRS:
+            return await self._get_or_create_table(
+                table_name=getattr(self, AUTHZ_TABLE_NAME_ATTRS[table_type]),
+                table_type=table_type,
+                create_table_if_not_found=create_table_if_not_found,
+            )
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -813,6 +1063,73 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_error(f"Exception reading from runs table: {str(e)}")
             return None
 
+    async def cancel_pending_run(
+        self,
+        run_id: str,
+        *,
+        session_id: str,
+        reason: str,
+        user_id: Optional[str] = None,
+        expected_status: str = "PENDING",
+    ) -> bool:
+        """Cancel an observed Pending or Running run; concurrent status changes win."""
+        from agno.db.sql.runs import cancel_pending_run_statement
+
+        table = await self._get_table(table_type="runs")
+        if table is None:
+            return False
+        # The stored created_at, which dates the run
+        statement = cancel_pending_run_statement(
+            table, "postgresql", run_id, session_id, reason, user_id, expected_status
+        ).returning(table.c.created_at)
+        async with self.async_session_factory() as sess, sess.begin():
+            cancelled_run = (await sess.execute(statement)).first()
+            if cancelled_run is None:
+                return False
+            await self._reopen_metrics_days(sess, [cancelled_run.created_at])
+            return True
+
+    async def update_run_if_matches(
+        self,
+        run_id: str,
+        session_id: str,
+        expected: Dict[str, Any],
+        fields: Dict[str, Any],
+        user_id: Optional[str] = None,
+    ) -> bool:
+        """Apply ``fields`` to a stored run only while it still matches ``expected``, as one atomic step.
+
+        ``expected`` maps "status" and dotted paths into the run's data to the values they must hold. A
+        paused run is handed over to its continuation this way: a repeated or stale writer finds the run
+        changed and writes nothing. Returns whether the run was updated.
+        """
+        from agno.db.sql.runs import apply_run_fields, run_matches
+
+        try:
+            table = await self._get_table(table_type="runs")
+            if table is None:
+                return False
+            async with self.async_session_factory() as sess, sess.begin():
+                result = await sess.execute(
+                    select(table.c.run_data, table.c.status, table.c.created_at)
+                    .where(table.c.run_id == run_id, table.c.session_id == session_id)
+                    .where((table.c.user_id == user_id) | table.c.user_id.is_(None))
+                    .with_for_update()
+                )
+                row = result.fetchone()
+                if row is None or row[0] is None or not run_matches(dict(row[0]), row[1], expected):
+                    return False
+                run, status = apply_run_fields(dict(row[0]), fields)
+                values: Dict[str, Any] = {"run_data": sanitize_postgres_strings(run), "updated_at": int(time.time())}
+                if status is not None:
+                    values["status"] = status
+                await sess.execute(update(table).where(table.c.run_id == run_id).values(**values))
+                await self._reopen_metrics_days(sess, [row[2]])
+                return True
+        except Exception as e:
+            log_warning(f"Error conditionally updating run {run_id}: {e}")
+            raise
+
     async def upsert_run(
         self,
         run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
@@ -854,29 +1171,23 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess:
                 async with sess.begin():
-                    # Backfill a monotonic run_index when the run arrives without one
-                    # (e.g. a background/continue save that couldn't resolve its position).
-                    # A NULL index has no position and breaks ORDER BY run_index. ON CONFLICT
-                    # preserves the existing index, so this only sets it on a genuine insert.
-                    if row.get("run_index") is None:
-                        # Serialize same-session backfills: under READ COMMITTED two
-                        # concurrent max-reads can both see the same MAX and land
-                        # duplicate indexes. The advisory lock is transaction-scoped
-                        # (released at COMMIT/ROLLBACK) and keyed on session_id, so
-                        # only same-session backfilling inserts queue behind it.
+                    # A new run always lands after the session's existing rows.
+                    # The advisory lock serializes same-session inserts around MAX+1.
+                    await sess.execute(
+                        text("SELECT pg_advisory_xact_lock(hashtext('agno_run_index'), hashtext(:sid))"),
+                        {"sid": session_id},
+                    )
+                    current_max = (
                         await sess.execute(
-                            text("SELECT pg_advisory_xact_lock(hashtext('agno_run_index'), hashtext(:sid))"),
-                            {"sid": session_id},
+                            select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
                         )
-                        current_max = (
-                            await sess.execute(
-                                select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
-                            )
-                        ).scalar()
-                        row["run_index"] = (current_max + 1) if current_max is not None else 0
+                    ).scalar()
+                    next_index = (current_max + 1) if current_max is not None else 0
+                    provided_index = row.get("run_index")
+                    row["run_index"] = next_index if provided_index is None else max(provided_index, next_index)
 
                     stmt = postgresql.insert(runs_table).values(**row)
-                    stmt = stmt.on_conflict_do_update(
+                    stmt = stmt.on_conflict_do_update(  # type: ignore
                         index_elements=["run_id"],
                         set_=dict(
                             status=stmt.excluded.status,
@@ -888,8 +1199,10 @@ class AsyncPostgresDb(AsyncBaseDb):
                             # that was stored as NULL (COALESCE keeps the existing value if set).
                             run_index=func.coalesce(runs_table.c.run_index, stmt.excluded.run_index),
                         ),
-                    )
-                    await sess.execute(stmt)
+                    ).returning(runs_table.c.created_at)
+                    # The stored created_at, which a resumed run keeps
+                    created_at: int = (await sess.execute(stmt)).scalar_one()
+                    await self._reopen_metrics_days(sess, [created_at])
 
         except Exception as e:
             log_error(f"Exception upserting run to runs table: {str(e)}")
@@ -975,35 +1288,34 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_error(f"Exception reading from runs table: {str(e)}")
             return [] if deserialize else ([], 0)
 
-    async def _ascrub_run_ids_from_legacy_blob(self, run_ids: List[str]) -> None:
-        """Async variant of the legacy-blob scrub. See postgres.py for rationale."""
-        if not run_ids:
-            return
-        try:
-            sessions_table = await self._get_table(table_type="sessions")
-            if sessions_table is None or "runs" not in sessions_table.c:
-                return
-            stmt = text(
-                f"""
-                UPDATE {sessions_table.name}
-                SET runs = COALESCE(
-                    (SELECT jsonb_agg(elem)
-                     FROM jsonb_array_elements(runs) elem
-                     WHERE elem->>'run_id' <> ALL(:ids)),
-                    '[]'::jsonb
-                )
-                WHERE runs IS NOT NULL
-                  AND jsonb_typeof(runs) = 'array'
-                  AND EXISTS (
-                      SELECT 1 FROM jsonb_array_elements(runs) elem
-                      WHERE elem->>'run_id' = ANY(:ids)
-                  )
-                """
+    async def _ascrub_run_ids_from_legacy_blob(self, run_ids: List[str], sess: Any, sessions_table: Any) -> bool:
+        """Async variant of the legacy-blob scrub. Runs inside the caller's transaction.
+
+        Returns True if any legacy blob held one of ``run_ids``.
+        """
+        if not run_ids or sessions_table is None or "runs" not in sessions_table.c:
+            return False
+        # Quote through the dialect so mixed-case schema or table names resolve; run_ids are bound params.
+        table_ref = sess.get_bind().dialect.identifier_preparer.format_table(sessions_table)
+        stmt = text(
+            f"""
+            UPDATE {table_ref}
+            SET runs = COALESCE(
+                (SELECT jsonb_agg(elem)
+                 FROM jsonb_array_elements(runs) elem
+                 WHERE elem->>'run_id' <> ALL(:ids)),
+                '[]'::jsonb
             )
-            async with self.async_session_factory() as sess, sess.begin():
-                await sess.execute(stmt, {"ids": list(run_ids)})
-        except Exception:
-            log_debug("legacy-runs scrub failed; the primary delete still succeeded", exc_info=True)
+            WHERE runs IS NOT NULL
+              AND jsonb_typeof(runs) = 'array'
+              AND EXISTS (
+                  SELECT 1 FROM jsonb_array_elements(runs) elem
+                  WHERE elem->>'run_id' = ANY(:ids)
+              )
+            """
+        )
+        result = await sess.execute(stmt, {"ids": list(run_ids)})
+        return (result.rowcount or 0) > 0
 
     async def delete_run(self, run_id: str) -> bool:
         """Delete a single run from the runs table.
@@ -1012,23 +1324,27 @@ class AsyncPostgresDb(AsyncBaseDb):
             run_id (str): The ID of the run to delete.
 
         Returns:
-            bool: True if the run was deleted, False otherwise.
+            bool: True if the run was removed from the runs table or a legacy blob, False otherwise.
         """
         try:
             table = await self._get_table(table_type="runs")
-            if table is None:
-                return False
-
+            sessions_table = await self._get_table(table_type="sessions")
             async with self.async_session_factory() as sess, sess.begin():
-                result = await sess.execute(table.delete().where(table.c.run_id == run_id))
-                deleted = result.rowcount > 0  # type: ignore
-
-            await self._ascrub_run_ids_from_legacy_blob([run_id])
-            return deleted
+                deleted = False
+                if table is not None:
+                    result = await sess.execute(table.delete().where(table.c.run_id == run_id))
+                    deleted = result.rowcount > 0  # type: ignore
+                scrubbed = await self._ascrub_run_ids_from_legacy_blob([run_id], sess, sessions_table)
+            return deleted or scrubbed
 
         except Exception as e:
+            if is_foreign_key_violation(e):
+                # The sandbox bindings table references the run a turn holds; the run stays
+                # until that turn ends, or until its session is deleted.
+                log_warning(f"Run {run_id} was not deleted: an active sandbox turn still holds it")
+                return False
             log_error(f"Error deleting run: {str(e)}")
-            return False
+            raise e
 
     async def delete_runs(self, run_ids: List[str]) -> None:
         """Delete all given runs from the runs table.
@@ -1038,19 +1354,44 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="runs")
-            if table is None:
-                return
-
+            sessions_table = await self._get_table(table_type="sessions")
             async with self.async_session_factory() as sess, sess.begin():
-                result = await sess.execute(table.delete().where(table.c.run_id.in_(run_ids)))
-
-            await self._ascrub_run_ids_from_legacy_blob(list(run_ids))
-            log_debug(f"Successfully deleted {result.rowcount} runs")  # type: ignore
+                if table is not None:
+                    result = await sess.execute(table.delete().where(table.c.run_id.in_(run_ids)))
+                    log_debug(f"Successfully deleted {result.rowcount} runs")  # type: ignore
+                await self._ascrub_run_ids_from_legacy_blob(list(run_ids), sess, sessions_table)
 
         except Exception as e:
+            if is_foreign_key_violation(e):
+                # One statement, so none of the runs were deleted.
+                log_warning("Runs were not deleted: an active sandbox turn still holds one of them")
+                return
             log_error(f"Error deleting runs: {str(e)}")
+            raise e
 
     # -- Session methods --
+    async def reassign_session_owner(self, session_id: str, *, previous_user_id: str, user_id: Optional[str]) -> bool:
+        """Transfer only an idle session with the observed owner, without rewriting history."""
+        table = await self._get_table(table_type="sessions")
+        runs = await self._get_table(table_type="runs")
+        if table is None or runs is None:
+            return False
+        active = select(runs.c.run_id).where(
+            runs.c.session_id == session_id, runs.c.status.in_(["PENDING", "RUNNING", "PAUSED"])
+        )
+        statement = (
+            table.update()
+            .where(table.c.session_id == session_id, table.c.user_id == previous_user_id, ~active.exists())
+            .values(user_id=user_id, updated_at=int(time.time()))
+            .returning(table.c.created_at)
+        )
+        async with self.async_session_factory() as sess, sess.begin():
+            reassigned_session = (await sess.execute(statement)).first()
+            if reassigned_session is None:
+                return False
+            await self._reopen_metrics_days(sess, [reassigned_session.created_at])
+            return True
+
     async def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         """
         Delete a session from the database.
@@ -1070,8 +1411,10 @@ class AsyncPostgresDb(AsyncBaseDb):
             if table is None:
                 return False
             runs_table = await self._get_table(table_type="runs")
+            transcripts_table = await self._get_table(table_type="transcripts")
 
             async with self.async_session_factory() as sess, sess.begin():
+                sandbox_leftovers = await self._collect_sandbox_leftovers(sess, [session_id])
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
                 if user_id is not None:
                     delete_stmt = delete_stmt.where(table.c.user_id == user_id)
@@ -1084,11 +1427,17 @@ class AsyncPostgresDb(AsyncBaseDb):
                 # Also delete the runs belonging to the session
                 if runs_table is not None:
                     await sess.execute(runs_table.delete().where(runs_table.c.session_id == session_id))
+                # And external-agent transcripts, which also hold the conversation verbatim.
+                if transcripts_table is not None:
+                    await sess.execute(
+                        transcripts_table.delete().where(transcripts_table.c.agno_session_id == session_id)
+                    )
 
                 log_debug(f"Successfully deleted session with session_id: {session_id} in table {table.name}")
 
             # Cascade offloaded tool results after the session delete commits.
             await self._cascade_tool_results([session_id])
+            await self._release_sandbox_leftovers(sandbox_leftovers)
             # A deleted session's deserialized history must not stay resident.
             self._run_object_cache.drop_session(session_id)
             return True
@@ -1113,6 +1462,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             if table is None:
                 return
             runs_table = await self._get_table(table_type="runs")
+            transcripts_table = await self._get_table(table_type="transcripts")
 
             async with self.async_session_factory() as sess, sess.begin():
                 # The ids a user_id-scoped delete is allowed to touch. The
@@ -1128,6 +1478,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 # to protect, so it also cleans up after a session whose row
                 # is already gone.
                 cascade_ids = session_ids if user_id is None else deletable_ids
+                sandbox_leftovers = await self._collect_sandbox_leftovers(sess, deletable_ids)
 
                 delete_stmt = table.delete().where(table.c.session_id.in_(deletable_ids))
                 result = await sess.execute(delete_stmt)
@@ -1138,16 +1489,50 @@ class AsyncPostgresDb(AsyncBaseDb):
                     if user_id is not None:
                         runs_delete_stmt = runs_delete_stmt.where(runs_table.c.user_id == user_id)
                     await sess.execute(runs_delete_stmt)
+                # And external-agent transcripts, which also hold the conversation verbatim.
+                if transcripts_table is not None:
+                    await sess.execute(
+                        transcripts_table.delete().where(transcripts_table.c.agno_session_id.in_(cascade_ids))
+                    )
 
             log_debug(f"Successfully deleted {result.rowcount} sessions")  # type: ignore
 
             # Cascade offloaded tool results after the session delete commits.
             await self._cascade_tool_results(cascade_ids)
+            await self._release_sandbox_leftovers(sandbox_leftovers)
             for deleted_id in cascade_ids:
                 self._run_object_cache.drop_session(deleted_id)
 
         except Exception as e:
             log_error(f"Error deleting sessions: {str(e)}")
+
+    async def _collect_sandbox_leftovers(self, sess: Any, session_ids: List[str]) -> List[Any]:
+        """Read what deleting these sessions would orphan in a sandbox, before the cascade drops their bindings.
+
+        A savepoint keeps a failed read from rolling back the delete itself.
+        """
+        collected = []
+        for coordinator in list(getattr(self, "sandbox_coordinators", None) or []):
+            try:
+                async with sess.begin_nested():
+                    leftovers = await sess.run_sync(
+                        lambda sync, c=coordinator: c.collect_deleted_sessions(sync.connection(), session_ids)
+                    )
+                collected.append((coordinator, leftovers))
+            except Exception as e:
+                log_warning(f"Could not read sandbox resources of deleted sessions: {e}")
+        return collected
+
+    @staticmethod
+    async def _release_sandbox_leftovers(collected: List[Any]) -> None:
+        """Remove deleted sessions' sandbox computers and checkpoints, after the delete commits."""
+        for coordinator, leftovers in collected:
+            if not leftovers:
+                continue
+            try:
+                await coordinator.arelease_deleted_sessions(leftovers)
+            except Exception as e:
+                log_warning(f"Could not remove sandbox resources of deleted sessions: {e}")
 
     async def _cascade_tool_results(self, session_ids: List[str]) -> None:
         """Cascade result offloading on session delete: read the index rows,
@@ -1294,7 +1679,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             session_id (str): ID of the session to read.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
             session_type (Optional[SessionType]): Type of session to read. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
             runs_limit (Optional[int]): If set, attach only the most recent ``runs_limit``
                 runs instead of the full history. For a fully-migrated session this is an
                 indexed ``ORDER BY run_index DESC LIMIT`` query; for a session that still
@@ -1393,6 +1778,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
         include_runs: bool = True,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """
         Get all sessions in the given table. Can filter by user_id and entity_id.
@@ -1412,7 +1798,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             page (Optional[int]): The page number to return. Defaults to None.
             sort_by (Optional[str]): The field to sort by. Defaults to None.
             sort_order (Optional[str]): The sort order. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the sessions. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
 
         Returns:
             Union[List[Session], Tuple[List[Dict], int]]:
@@ -1422,6 +1808,9 @@ class AsyncPostgresDb(AsyncBaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        from agno.db.session_filters import normalize_session_filter, session_filter_to_sqlalchemy
+
+        filter_expr = normalize_session_filter(filter_expr)
         validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="sessions")
@@ -1431,6 +1820,9 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
+
+                if filter_expr is not None:
+                    stmt = stmt.where(session_filter_to_sqlalchemy(filter_expr, table))
 
                 # Filtering
                 if user_id is not None:
@@ -1664,6 +2056,17 @@ class AsyncPostgresDb(AsyncBaseDb):
             # it on write would lose history for sessions not yet migrated to the runs table.
 
             async with self.async_session_factory() as sess, sess.begin():
+                reopen_session_ids = await self._get_metrics_reopen_session_ids(
+                    sess,
+                    table,
+                    [
+                        {
+                            "session_id": session_dict.get("session_id"),
+                            "created_at": session_dict.get("created_at"),
+                            **values,
+                        }
+                    ],
+                )
                 stmt = postgresql.insert(table).values(
                     session_id=session_dict.get("session_id"),
                     created_at=session_dict.get("created_at"),
@@ -1680,6 +2083,8 @@ class AsyncPostgresDb(AsyncBaseDb):
                 if row is None:
                     return None
                 session_dict = dict(row._mapping)
+                if session_dict["session_id"] in reopen_session_ids:
+                    await self._reopen_metrics_days(sess, [session_dict["created_at"]])
 
             log_debug(f"Upserted session with id '{session_dict.get('session_id')}'")
 
@@ -1699,9 +2104,6 @@ class AsyncPostgresDb(AsyncBaseDb):
     # -- Memory methods --
     async def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None):
         """Delete a user memory from the database.
-
-        Returns:
-            bool: True if deletion was successful, False otherwise.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -1820,7 +2222,7 @@ class AsyncPostgresDb(AsyncBaseDb):
 
         Args:
             memory_id (str): The ID of the memory to get.
-            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
             user_id (Optional[str]): The ID of the user to filter by.
 
         Returns:
@@ -1881,7 +2283,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
-            deserialize (Optional[bool]): Whether to serialize the memories. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
 
         Returns:
             Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
@@ -2036,7 +2438,7 @@ class AsyncPostgresDb(AsyncBaseDb):
 
         Args:
             memory (UserMemory): The user memory to upsert.
-            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
 
         Returns:
             Optional[Union[UserMemory, Dict[str, Any]]]:
@@ -2113,193 +2515,1015 @@ class AsyncPostgresDb(AsyncBaseDb):
             return None
 
     # -- Metrics methods --
-    async def _get_all_sessions_for_metrics_calculation(
-        self, start_timestamp: Optional[int] = None, end_timestamp: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
-        """
-        Get all sessions of all types (agent, team, workflow) as raw dictionaries.
-
-         Args:
-            start_timestamp (Optional[int]): The start timestamp to filter by. Defaults to None.
-            end_timestamp (Optional[int]): The end timestamp to filter by. Defaults to None.
-
-        Returns:
-            List[Dict[str, Any]]: List of session dictionaries with session_type field.
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            table = await self._get_table(table_type="sessions")
-            if table is None:
-                return []
-            runs_table = await self._get_table(table_type="runs")
-
-            columns = [
-                table.c.session_id,
-                table.c.user_id,
-                table.c.session_data,
-                table.c.created_at,
-                table.c.session_type,
-            ]
-            # Include the legacy runs column if it still exists, to count not yet migrated runs
-            if "runs" in table.c:
-                columns.append(table.c.runs)
-
-            stmt = select(*columns)
-
-            if start_timestamp is not None:
-                stmt = stmt.where(table.c.created_at >= start_timestamp)
-            if end_timestamp is not None:
-                stmt = stmt.where(table.c.created_at <= end_timestamp)
-
-            async with self.async_session_factory() as sess:
-                result = await sess.execute(stmt)
-                records = result.fetchall()
-                sessions = [dict(record._mapping) for record in records]
-
-                # Attach lightweight run info (model and provider) from the runs table
-                if runs_table is not None and sessions:
-                    session_ids = [s["session_id"] for s in sessions]
-                    runs_stmt = select(
-                        runs_table.c.session_id,
-                        runs_table.c.run_data["model"].astext.label("model"),
-                        runs_table.c.run_data["model_provider"].astext.label("model_provider"),
-                    ).where(runs_table.c.session_id.in_(session_ids))
-
-                    runs_result = await sess.execute(runs_stmt)
-                    runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
-                    for session_id, model, model_provider in runs_result.fetchall():
-                        runs_by_session.setdefault(session_id, []).append(
-                            {"model": model, "model_provider": model_provider}
-                        )
-
-                    for s in sessions:
-                        runs_data = runs_by_session.get(s["session_id"], [])
-                        if runs_data or not s.get("runs"):
-                            s["runs"] = runs_data
-
-                return sessions
-
-        except Exception as e:
-            log_error(f"Exception reading from sessions table: {str(e)}")
-            return []
-
-    async def _get_metrics_calculation_starting_date(self, table: Table) -> Optional[date]:
-        """Get the first date for which metrics calculation is needed:
-
-        1. If there are metrics records, return the date of the first day without a complete metrics record.
-        2. If there are no metrics records, return the date of the first recorded session.
-        3. If there are no metrics records and no sessions records, return None.
+    async def _reopen_metrics_days(self, sess: Any, created_ats: Sequence[Optional[int]]) -> None:
+        """Reopen the metrics of each day a write changed, in the write's transaction, so the next calculation
+        rebuilds it. A day it could not reopen is retried by the next write.
 
         Args:
-            table (Table): The table to get the starting date for.
+            sess (Any): The session of the write.
+            created_ats (Sequence[Optional[int]]): The stored created_at of each run or session the write changed.
+        """
+        # Sorted, so two writers reopening the same days lock them in the same order
+        days = sorted(
+            {day for created_at in created_ats if (day := metrics_day_to_reopen(created_at)) is not None}
+            | self._metrics_days_not_reopened
+        )
+        if not days:
+            return
+        try:
+            async with sess.begin_nested():
+                # Looked up only when a day reopens, the table loaded on the write's own connection: a lookup
+                # through another session would not run in the write's transaction. None when no day was calculated yet
+                aggregate_metrics_table = self._get_cached_table("aggregate_metrics", self.aggregate_metrics_table_name)
+                if aggregate_metrics_table is None:
+                    if not await ais_table_available(
+                        session=sess, table_name=self.aggregate_metrics_table_name, db_schema=self.db_schema
+                    ):
+                        self._metrics_days_not_reopened.clear()
+                        return
+                    if not await ais_valid_table(
+                        db_engine=self.db_engine,
+                        table_name=self.aggregate_metrics_table_name,
+                        table_type="aggregate_metrics",
+                        db_schema=self.db_schema,
+                    ):
+                        raise table_schema_mismatch_error(
+                            f"{self.db_schema}.{self.aggregate_metrics_table_name}", table_type="aggregate_metrics"
+                        )
+
+                    def load_table(sync_session: Any) -> Table:
+                        return Table(
+                            self.aggregate_metrics_table_name,
+                            self.metadata,
+                            schema=self.db_schema,
+                            autoload_with=sync_session.connection(),
+                        )
+
+                    async with self._resolve_lock_async:
+                        aggregate_metrics_table = await sess.run_sync(load_table)
+                        self._store_resolved_table(
+                            "aggregate_metrics", self.aggregate_metrics_table_name, aggregate_metrics_table
+                        )
+                for day in days:
+                    await areopen_metrics_day(session=sess, table=aggregate_metrics_table, day=day)
+            self._metrics_days_not_reopened.difference_update(days)
+        except Exception as e:
+            self._metrics_days_not_reopened.update(days)
+            log_warning(
+                f"Could not reopen the metrics of {', '.join(str(day) for day in days)}: {database_error_message(e)}"
+            )
+
+    async def _get_metrics_reopen_session_ids(
+        self, sess: Any, table: Table, session_records: List[Dict[str, Any]]
+    ) -> Set[str]:
+        """Get the id of each session the given rows add, move to another owner or component, or give other
+        compaction metrics."""
+        written_session_ids = [record["session_id"] for record in session_records]
+        stored_sessions: Dict[str, Any] = {}
+        for start in range(0, len(written_session_ids), METRICS_IN_LIST_LIMIT):
+            stored_stmt = select(
+                table.c.session_id,
+                table.c.user_id,
+                table.c.agent_id,
+                table.c.team_id,
+                table.c.workflow_id,
+                table.c.created_at,
+                table.c.session_data["compaction_metrics"].label("compaction_metrics"),
+            ).where(table.c.session_id.in_(written_session_ids[start : start + METRICS_IN_LIST_LIMIT]))
+            stored_sessions_result = await sess.execute(stored_stmt)
+            stored_sessions.update((row.session_id, row) for row in stored_sessions_result.fetchall())
+        session_ids: Set[str] = set()
+        for record in session_records:
+            stored_session = stored_sessions.get(record["session_id"])
+            if (
+                stored_session is None
+                or any(
+                    record[column] != getattr(stored_session, column)
+                    for column in ["user_id", "agent_id", "team_id", "workflow_id"]
+                    if column in record
+                )
+                or (
+                    "session_data" in record
+                    and (record["session_data"] if isinstance(record["session_data"], dict) else {}).get(
+                        "compaction_metrics"
+                    )
+                    != stored_session.compaction_metrics
+                )
+            ):
+                session_ids.add(record["session_id"])
+        return session_ids
+
+    async def _get_metrics_table(self, table_type: str, table_name: str) -> Optional[Table]:
+        """Get a metrics table, creating it on first use."""
+        try:
+            return await self._get_table(table_type=table_type, create_table_if_not_found=True)
+        except Exception as exc:
+            # Another replica may have completed the first-time DDL meanwhile.
+            cause = getattr(exc, "orig", exc)
+            sqlstate = getattr(cause, "sqlstate", getattr(cause, "pgcode", None))
+            if sqlstate not in ("42P07", "23505") or not await self.table_exists(table_name):
+                raise
+            self._invalidate_table_cache(table_name)
+            return await self._get_table(table_type=table_type)
+
+    async def _get_metrics_refresh_row(self, refreshes_table: Table) -> Tuple[Optional[Dict[str, Any]], int]:
+        """Get the row of the metrics refreshes table, and the locked_at at or before which its lock is stale, by the
+        database's clock."""
+        stale_lock_threshold = _db_epoch() - METRICS_LOCK_SECONDS
+        async with self.async_session_factory() as sess:
+            result = await sess.execute(
+                select(refreshes_table, stale_lock_threshold.label("stale_lock_threshold")).where(
+                    refreshes_table.c.id == METRICS_REFRESH_ID
+                )
+            )
+            row = result.mappings().first()
+            if row is None:
+                # Before the first refresh there is no lock to judge stale
+                return None, 0
+        refresh_row = dict(row)
+        return refresh_row, refresh_row.pop("stale_lock_threshold")
+
+    async def _claim_metrics_refresh(self, refreshes_table: Table, worker_id: str) -> Optional[Dict[str, Any]]:
+        """Claim the row of the metrics refreshes table, so one process calculates metrics at a time.
+
+        Args:
+            refreshes_table (Table): The metrics refreshes table.
+            worker_id (str): The id of this calculation, which heartbeats and releases the claim.
 
         Returns:
-            Optional[date]: The starting date for which metrics calculation is needed.
+            Optional[Dict[str, Any]]: The claimed row, with when the last calculation finished and its fingerprint.
+                None when another process holds it.
         """
-        async with self.async_session_factory() as sess:
-            # resume at the earliest incomplete day after the latest completed one, otherwise the
-            # day after that one: a day holding a completed row was rebuilt after it ended, so an
-            # incomplete row sharing it belongs to an owner whose sessions have gone and can never
-            # be rebuilt
-            latest_completed = (
-                await sess.execute(select(func.max(table.c.date)).where(table.c.completed.is_(True)))
-            ).scalar()
-
-            incomplete_stmt = select(func.min(table.c.date)).where(table.c.completed.is_(False))
-            if latest_completed is not None:
-                incomplete_stmt = incomplete_stmt.where(table.c.date > latest_completed)
-            earliest_incomplete = (await sess.execute(incomplete_stmt)).scalar()
-
-            starting_date = metrics_starting_date_from_days(latest_completed, earliest_incomplete)
-            if starting_date is not None:
-                return starting_date
-
-        # 2. No metrics records. Return the date of the first recorded session.
-        first_session, _ = await self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
-
-        first_session_date = first_session[0]["created_at"] if first_session else None  # type: ignore[index]
-
-        # 3. No metrics records and no sessions records. Return None.
-        if first_session_date is None:
+        now = _db_epoch()
+        try:
+            async with self.async_session_factory() as sess, sess.begin():
+                # The holder's calculation keeps the row locked while it writes a day, so this returns instead of
+                # waiting for it
+                await sess.execute(text("SET LOCAL lock_timeout = '1s'"))
+                # One statement, so two processes never both find the row free
+                stmt = postgresql.insert(refreshes_table).values(
+                    id=METRICS_REFRESH_ID, locked_by=worker_id, locked_at=now, started_at=now, status="running"
+                )
+                stmt = stmt.on_conflict_do_update(  # type: ignore
+                    index_elements=["id"],
+                    set_=dict(locked_by=worker_id, locked_at=now, started_at=now, status="running", error=None),
+                    # A stale lock is taken over: the process that held it stopped
+                    where=or_(
+                        refreshes_table.c.locked_by.is_(None),
+                        refreshes_table.c.locked_at <= now - METRICS_LOCK_SECONDS,
+                    ),
+                ).returning(*refreshes_table.c)
+                row = (await sess.execute(stmt)).fetchone()
+                return dict(row._mapping) if row is not None else None
+        except DBAPIError as exc:
+            if not is_lock_not_available(exc):
+                raise
             return None
 
-        return datetime.fromtimestamp(first_session_date, tz=timezone.utc).date()
+    async def _mark_metrics_refresh_rebuild(self, refreshes_table: Table) -> bool:
+        """Write a mark no fingerprint equals on the row of the metrics refreshes table, so the next calculation
+        rebuilds yesterday and today. False when a calculation kept the row locked through every try."""
+        for _ in range(3):
+            try:
+                async with self.async_session_factory() as sess, sess.begin():
+                    # A calculation keeps the row locked while it writes a day, and lets it go between days
+                    await sess.execute(text("SET LOCAL lock_timeout = '1s'"))
+                    await sess.execute(
+                        update(refreshes_table)
+                        .where(refreshes_table.c.id == METRICS_REFRESH_ID)
+                        .values(fingerprint=["rebuild", uuid4().hex])
+                    )
+                return True
+            except DBAPIError as exc:
+                if not is_lock_not_available(exc):
+                    raise
+        return False
 
-    async def calculate_metrics(self) -> Optional[list[dict]]:
-        """Calculate metrics for all dates without complete metrics.
+    async def _heartbeat_metrics_refresh(self, sess: Any, refreshes_table: Table, worker_id: str) -> bool:
+        """Refresh locked_at for this worker's metrics refresh. False when another process took it over."""
+        result = await sess.execute(
+            update(refreshes_table)
+            .where(refreshes_table.c.id == METRICS_REFRESH_ID, refreshes_table.c.locked_by == worker_id)
+            .values(locked_at=_db_clock_epoch())
+        )
+        return result.rowcount > 0
+
+    async def _release_metrics_refresh(
+        self,
+        refreshes_table: Table,
+        worker_id: Optional[str],
+        error: Optional[str] = None,
+        fingerprint: Optional[List[Any]] = None,
+        stopped: bool = False,
+        claimed_fingerprint: Optional[List[Any]] = None,
+    ) -> None:
+        """Release the row of the metrics refreshes table: completed, with the fingerprint, without an error, failed
+        with one, and as the last completed refresh left it when the calculation stopped.
+
+        Args:
+            refreshes_table (Table): The metrics refreshes table.
+            worker_id (Optional[str]): The id of the calculation that claimed the row. None writes the row only while
+                no process holds it, and creates it before any refresh.
+            error (Optional[str]): The error the calculation failed with. None when it completed.
+            fingerprint (Optional[List[Any]]): The fingerprint of yesterday and today, stored once it completed.
+            stopped (bool): Whether the calculation stopped before it finished.
+            claimed_fingerprint (Optional[List[Any]]): The fingerprint of the claimed row. A rebuild that marked
+                another one since keeps its mark.
+        """
+        values: Dict[str, Any] = {"locked_by": None, "locked_at": None}
+        if stopped:
+            # The days it did not reach stay open for the next calculation; a first one that stopped has none to show
+            values.update(
+                status=case((refreshes_table.c.finished_at.is_not(None), "completed"), else_="failed"),
+                error=case((refreshes_table.c.finished_at.is_not(None), None), else_=METRICS_STOPPED_ERROR),
+            )
+        elif error is None:
+            values.update(status="completed", error=None, finished_at=_db_epoch())
+            # A rebuild that marked the fingerprint after the claim keeps its mark, so the next calculation rebuilds
+            # yesterday and today. No fingerprint is stored as NULL, which a claim of NULL compares equal to
+            values["fingerprint"] = case(
+                (
+                    refreshes_table.c.fingerprint.is_distinct_from(claimed_fingerprint),
+                    refreshes_table.c.fingerprint,
+                ),
+                else_=null() if fingerprint is None else literal(fingerprint, refreshes_table.c.fingerprint.type),
+            )
+        else:
+            values.update(status="failed", error=error)
+        try:
+            async with self.async_session_factory() as sess, sess.begin():
+                if worker_id is None:
+                    # Before any refresh there is no row to update
+                    await sess.execute(
+                        postgresql.insert(refreshes_table)
+                        .values(id=METRICS_REFRESH_ID, started_at=_db_epoch(), status="failed", error=error)
+                        .on_conflict_do_update(
+                            index_elements=["id"], set_=values, where=refreshes_table.c.locked_by.is_(None)
+                        )
+                    )
+                else:
+                    await sess.execute(
+                        update(refreshes_table)
+                        .where(refreshes_table.c.id == METRICS_REFRESH_ID, refreshes_table.c.locked_by == worker_id)
+                        .values(**values)
+                    )
+        except Exception as e:
+            log_debug(f"Error releasing metrics refresh: {e}")
+
+    async def _get_metrics_fingerprint(
+        self, sess: Any, sessions_table: Table, runs_table: Optional[Table], yesterday: date
+    ) -> Optional[List[Any]]:
+        """Get the count and update times of the sessions and runs of yesterday and today. None while one of them was
+        updated in the current second, which a second update in that same second would leave unchanged."""
+        start_timestamp = int(datetime.combine(yesterday, datetime.min.time()).replace(tzinfo=timezone.utc).timestamp())
+        current_time = int(time.time())
+        fingerprint: List[Any] = [yesterday.isoformat()]
+        for source_table in [sessions_table, runs_table]:
+            if source_table is None:
+                continue
+            count, total_updated_at, latest_updated_at = (
+                await sess.execute(
+                    select(
+                        func.count(), func.sum(source_table.c.updated_at), func.max(source_table.c.updated_at)
+                    ).where(source_table.c.created_at >= start_timestamp)
+                )
+            ).one()
+            if latest_updated_at is not None and latest_updated_at >= current_time:
+                return None
+            fingerprint.extend([count, int(total_updated_at or 0)])
+        return fingerprint
+
+    async def _get_metrics_dates_to_calculate(
+        self,
+        aggregate_metrics_table: Table,
+        sessions_table: Table,
+        runs_table: Optional[Table],
+        refresh_row: Dict[str, Any],
+        rebuild_from: Optional[date] = None,
+    ) -> Tuple[List[date], Optional[List[Any]]]:
+        """Get the days whose metrics a calculation rebuilds, and the fingerprint of yesterday and today.
+
+        Args:
+            aggregate_metrics_table (Table): The aggregate metrics table.
+            sessions_table (Table): The sessions table.
+            runs_table (Optional[Table]): The runs table.
+            refresh_row (Dict[str, Any]): The row of the metrics refreshes table, from _claim_metrics_refresh.
+            rebuild_from (Optional[date]): The first day of a rebuild.
 
         Returns:
-            Optional[list[dict]]: The calculated metrics.
+            Tuple[List[date], Optional[List[Any]]]: The days, oldest first, and the fingerprint to keep on the row of
+                the metrics refreshes table.
+        """
+        today = datetime.now(timezone.utc).date()
+        yesterday = today - timedelta(days=1)
+        dates_to_process: Set[date] = set()
+        async with self.async_session_factory() as sess:
+            fingerprint = await self._get_metrics_fingerprint(sess, sessions_table, runs_table, yesterday)
+            first_calculation = refresh_row["finished_at"] is None
+            # Yesterday and today, when their sessions or runs changed since the last calculation
+            if first_calculation or fingerprint is None or fingerprint != refresh_row["fingerprint"]:
+                dates_to_process.update([yesterday, today])
+
+            # Every earlier day still open: not yet completed, or reopened by a write since
+            open_days_result = await sess.execute(
+                select(aggregate_metrics_table.c.date).where(
+                    aggregate_metrics_table.c.aggregation_period == "daily",
+                    aggregate_metrics_table.c.user_id == "",
+                    aggregate_metrics_table.c.completed.is_(False),
+                    aggregate_metrics_table.c.date < yesterday,
+                )
+            )
+            dates_to_process.update(open_days_result.scalars().all())
+            # Every earlier day from the day before the last calculation finished, whose writes reopened nothing while
+            # it was yesterday or today
+            if not first_calculation:
+                dates_to_process.update(metrics_days_since_last_calculation(refresh_row["finished_at"], yesterday))
+
+            # Until a first calculation has finished, every day with a session or a run not yet completed; with
+            # rebuild_from, every day with one from that date on. Only days with data, so one session dated long ago
+            # never builds every empty day since
+            if first_calculation or rebuild_from is not None:
+                day_stmts = [
+                    select(func.floor(source_table.c.created_at / 86400).label("day")).distinct()
+                    for source_table in [sessions_table, runs_table]
+                    if source_table is not None
+                ]
+                completed_days: Set[date] = set()
+                if first_calculation:
+                    completed_days_result = await sess.execute(
+                        select(aggregate_metrics_table.c.date).where(
+                            aggregate_metrics_table.c.aggregation_period == "daily",
+                            aggregate_metrics_table.c.user_id == "",
+                            aggregate_metrics_table.c.completed.is_(True),
+                        )
+                    )
+                    completed_days = set(completed_days_result.scalars().all())
+                for (day,) in (await sess.execute(union(*day_stmts))).fetchall():
+                    data_date = date(1970, 1, 1) + timedelta(days=int(cast(Any, day)))
+                    # A rebuild takes every day with data from its first day, completed or not
+                    rebuilt = rebuild_from is not None and data_date >= rebuild_from
+                    if data_date <= today and (rebuilt or (first_calculation and data_date not in completed_days)):
+                        dates_to_process.add(data_date)
+
+        return sorted(dates_to_process), fingerprint
+
+    async def _get_open_metrics_months(self, aggregate_metrics_table: Table) -> List[date]:
+        """Get the first day of every month before the current one whose month row is still open: not completed yet,
+        or reopened by a day a calculation rebuilt before it stopped."""
+        current_month = datetime.now(timezone.utc).date().replace(day=1)
+        async with self.async_session_factory() as sess:
+            result = await sess.execute(
+                select(aggregate_metrics_table.c.date).where(
+                    aggregate_metrics_table.c.aggregation_period == "monthly",
+                    aggregate_metrics_table.c.user_id == "",
+                    aggregate_metrics_table.c.completed.is_(False),
+                    aggregate_metrics_table.c.date < current_month,
+                )
+            )
+            return list(result.scalars().all())
+
+    async def _get_metrics_parent_runs(
+        self, sess: Any, runs_table: Table, parent_run_ids: List[str]
+    ) -> List[Dict[str, Any]]:
+        """Get the stored runs that started the given runs, and the runs that started those, up to the whole run."""
+        parent_runs: List[Dict[str, Any]] = []
+        seen_run_ids: Set[str] = set()
+        while parent_run_ids:
+            seen_run_ids.update(parent_run_ids)
+            for start in range(0, len(parent_run_ids), METRICS_IN_LIST_LIMIT):
+                parents_stmt = select(
+                    runs_table.c.run_id,
+                    runs_table.c.run_type,
+                    runs_table.c.agent_id,
+                    runs_table.c.team_id,
+                    runs_table.c.workflow_id,
+                    runs_table.c.parent_run_id,
+                ).where(runs_table.c.run_id.in_(parent_run_ids[start : start + METRICS_IN_LIST_LIMIT]))
+                parents_result = await sess.execute(parents_stmt)
+                parent_runs.extend(dict(record._mapping) for record in parents_result.fetchall())
+            parent_run_ids = sorted(
+                {run["parent_run_id"] for run in parent_runs if run.get("parent_run_id")} - seen_run_ids
+            )
+        return parent_runs
+
+    async def _write_aggregate_metrics_rows(
+        self,
+        sess: Any,
+        aggregate_metrics_table: Table,
+        aggregate_metrics_rows: List[Dict[str, Any]],
+        rows_changed: bool,
+        read_version: Optional[int],
+    ) -> None:
+        """Write a period's rows of the aggregate metrics table, from build_aggregate_metrics_rows, in its transaction:
+        the user rows, then the everyone row, which is completed only while it still has the version read before the
+        period's rows."""
+        period, period_date = aggregate_metrics_rows[0]["aggregation_period"], aggregate_metrics_rows[0]["date"]
+        # Server-side cursor, so a period of many users is read a batch at a time and never holds the event loop
+        stored_rows_result = await sess.stream(
+            select(aggregate_metrics_table).where(
+                aggregate_metrics_table.c.aggregation_period == period, aggregate_metrics_table.c.date == period_date
+            )
+        )
+        stored_rows: List[Dict[str, Any]] = []
+        while True:
+            batch = await stored_rows_result.fetchmany(METRICS_BATCH_SIZE)
+            if not batch:
+                break
+            stored_rows.extend(dict(record._mapping) for record in batch)
+        everyone_row, changed_rows, stale_user_ids = aggregate_metrics_rows_to_write(
+            aggregate_metrics_rows, stored_rows, rows_changed
+        )
+        for start in range(0, len(stale_user_ids), METRICS_IN_LIST_LIMIT):
+            await sess.execute(
+                aggregate_metrics_table.delete().where(
+                    aggregate_metrics_table.c.aggregation_period == period,
+                    aggregate_metrics_table.c.date == period_date,
+                    aggregate_metrics_table.c.user_id.in_(stale_user_ids[start : start + METRICS_IN_LIST_LIMIT]),
+                )
+            )
+        # Written a batch at a time, so binding a period of many users never holds the event loop
+        for start in range(0, len(changed_rows), METRICS_BATCH_SIZE):
+            await abulk_upsert_aggregate_metrics_rows(
+                session=sess,
+                table=aggregate_metrics_table,
+                aggregate_metrics_rows=changed_rows[start : start + METRICS_BATCH_SIZE],
+            )
+        if everyone_row is not None:
+            await aupsert_aggregate_metrics_row(
+                session=sess,
+                table=aggregate_metrics_table,
+                aggregate_metrics_row=everyone_row,
+                read_version=read_version,
+            )
+
+    async def _calculate_date_metrics(
+        self,
+        table: Table,
+        aggregate_metrics_table: Table,
+        sessions_table: Table,
+        runs_table: Optional[Table],
+        date_to_process: date,
+        legacy_run_rows: List[Any],
+        legacy_run_rows_by_id: Dict[str, Any],
+        refreshes_table: Table,
+        worker_id: str,
+        should_stop: Optional[Callable[[], bool]] = None,
+    ) -> bool:
+        """Rebuild one day's component and aggregate metrics rows in one transaction. False when nothing was written."""
+        start_timestamp = int(
+            datetime.combine(date_to_process, datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+        )
+        end_timestamp = int(
+            datetime.combine(date_to_process + timedelta(days=1), datetime.min.time())
+            .replace(tzinfo=timezone.utc)
+            .timestamp()
+        )
+        # Each day is its own transaction, so a day that fails never holds back the rows of the days before it
+        async with self.async_session_factory() as sess, sess.begin():
+            # Read before the day's runs, so a run written while they are read moves it
+            read_version = (
+                await sess.execute(
+                    select(aggregate_metrics_table.c.version).where(
+                        aggregate_metrics_table.c.aggregation_period == "daily",
+                        aggregate_metrics_table.c.date == date_to_process,
+                        aggregate_metrics_table.c.user_id == "",
+                    )
+                )
+            ).scalar()
+
+            sessions_stmt = select(
+                sessions_table.c.session_id,
+                sessions_table.c.session_type,
+                sessions_table.c.user_id,
+                sessions_table.c.agent_id,
+                sessions_table.c.team_id,
+                sessions_table.c.workflow_id,
+                sessions_table.c.metadata,
+                sessions_table.c.session_data["compaction_metrics"].label("compaction_metrics"),
+            ).where(sessions_table.c.created_at >= start_timestamp, sessions_table.c.created_at < end_timestamp)
+            sessions_result = await sess.execute(sessions_stmt)
+            sessions = [dict(record._mapping) for record in sessions_result.fetchall()]
+
+            runs: List[Dict[str, Any]] = []
+            stored_run_ids: Set[str] = set()
+            if runs_table is not None:
+                # JIT compiling this query costs more than reading a day of runs
+                await sess.execute(text("SET LOCAL jit = off"))
+                run_rows = (
+                    await sess.execute(build_component_metrics_runs_query(runs_table, start_timestamp, end_timestamp))
+                ).fetchall()
+                for start in range(0, len(run_rows), METRICS_BATCH_SIZE):
+                    # Checked between batches too, so a stop never waits for the whole of a large day
+                    if should_stop is not None and should_stop():
+                        return False
+                    runs.extend(
+                        build_component_metrics_run(record) for record in run_rows[start : start + METRICS_BATCH_SIZE]
+                    )
+                    await asyncio.sleep(0)  # yield control between batches
+            # A legacy run migrated to the runs table since the legacy runs were read is among the day's runs, and
+            # is counted from there
+            day_run_ids = {run["run_id"] for run in runs}
+            runs.extend(
+                build_component_metrics_run(record) for record in legacy_run_rows if record.run_id not in day_run_ids
+            )
+            nested_run_ids = metrics_nested_run_ids(runs)
+
+            # A run started by a run of another day, such as a member run after midnight, names that run's
+            # agent, team or workflow as its parent, read from the legacy runs of the rebuild or the runs table
+            day_run_ids = {run["run_id"] for run in runs if run.get("run_id")}
+            parent_run_ids = sorted({run["parent_run_id"] for run in runs if run.get("parent_run_id")} - day_run_ids)
+            parent_runs = [
+                dict(legacy_run_rows_by_id[run_id]._mapping)
+                for run_id in parent_run_ids
+                if run_id in legacy_run_rows_by_id
+            ]
+            parent_run_ids = [run_id for run_id in parent_run_ids if run_id not in legacy_run_rows_by_id]
+            # A nested run also stored as a legacy run of its own is counted from that run, whatever day it is on
+            stored_run_ids.update(run_id for run_id in nested_run_ids if run_id in legacy_run_rows_by_id)
+
+            if runs_table is not None:
+                # A nested run also stored as a run of its own is counted from that row, whatever day it is on
+                run_ids = sorted(nested_run_ids)
+                for start in range(0, len(run_ids), METRICS_IN_LIST_LIMIT):
+                    stored_stmt = select(runs_table.c.run_id).where(
+                        runs_table.c.run_id.in_(run_ids[start : start + METRICS_IN_LIST_LIMIT])
+                    )
+                    stored_ids_result = await sess.execute(stored_stmt)
+                    stored_run_ids.update(record.run_id for record in stored_ids_result.fetchall())
+
+                # A remote member's run after midnight is named by its team's run of the day before
+                team_session_ids = sorted(metrics_remote_member_team_session_ids(runs))
+                for start in range(0, len(team_session_ids), METRICS_IN_LIST_LIMIT):
+                    team_runs_stmt = build_component_metrics_runs_query(
+                        runs_table, start_timestamp - 86400, start_timestamp
+                    ).where(runs_table.c.session_id.in_(team_session_ids[start : start + METRICS_IN_LIST_LIMIT]))
+                    # Server-side cursor, so many team runs are read a batch at a time and never hold the event loop
+                    team_runs_result = await sess.stream(team_runs_stmt)
+                    team_runs: List[Dict[str, Any]] = []
+                    while True:
+                        batch = await team_runs_result.fetchmany(METRICS_BATCH_SIZE)
+                        if not batch:
+                            break
+                        team_runs.extend(build_component_metrics_run(record) for record in batch)
+                    parent_runs.extend(team_runs)
+                    parent_run_ids.extend(run["parent_run_id"] for run in team_runs if run.get("parent_run_id"))
+
+                parent_runs.extend(await self._get_metrics_parent_runs(sess, runs_table, parent_run_ids))
+
+            # Server-side cursor, so a day of many rows is read a batch at a time and never holds the event loop
+            stored_rows_result = await sess.stream(
+                select(table).where(table.c.aggregation_period == "daily", table.c.date == date_to_process)
+            )
+            stored_rows: List[Dict[str, Any]] = []
+            while True:
+                batch = await stored_rows_result.fetchmany(METRICS_BATCH_SIZE)
+                if not batch:
+                    break
+                stored_rows.extend(dict(record._mapping) for record in batch)
+
+            def build_day_rows() -> Tuple[
+                List[Dict[str, Any]], List[Tuple[str, str, str, str, str]], List[Dict[str, Any]]
+            ]:
+                records = calculate_date_component_metrics(date_to_process, sessions, runs, stored_run_ids, parent_runs)
+                changed_rows, stale_keys = component_metrics_rows_to_write(records, stored_rows)
+                aggregate_metrics_rows = build_aggregate_metrics_rows(
+                    records, "daily", date_to_process, metrics_day_completed(date_to_process)
+                )
+                return changed_rows, stale_keys, aggregate_metrics_rows
+
+            # Added up in a thread, so a day of many runs never holds the event loop
+            changed_rows, stale_keys, aggregate_metrics_rows = await asyncio.to_thread(build_day_rows)
+
+            # Checked in the transaction of the rows, so a process whose lock went stale never overwrites the rows of
+            # the process that took the refresh over
+            if not await self._heartbeat_metrics_refresh(sess, refreshes_table, worker_id):
+                return False
+            for start in range(0, len(stale_keys), METRICS_STALE_KEYS_LIMIT):
+                await sess.execute(
+                    table.delete().where(
+                        table.c.aggregation_period == "daily",
+                        table.c.date == date_to_process,
+                        tuple_(
+                            table.c.user_id,
+                            table.c.component_type,
+                            table.c.component_id,
+                            table.c.parent_component_id,
+                            table.c.root_component_id,
+                        ).in_(stale_keys[start : start + METRICS_STALE_KEYS_LIMIT]),
+                    )
+                )
+            # Written a batch at a time, so binding a day of many rows never holds the event loop
+            for start in range(0, len(changed_rows), METRICS_BATCH_SIZE):
+                await abulk_upsert_component_metrics(
+                    session=sess,
+                    table=table,
+                    component_metrics_records=changed_rows[start : start + METRICS_BATCH_SIZE],
+                )
+
+            # Written last, in the day's transaction, so its version never moves without the rows it tells of
+            await self._write_aggregate_metrics_rows(
+                sess,
+                aggregate_metrics_table,
+                aggregate_metrics_rows,
+                rows_changed=bool(changed_rows or stale_keys),
+                read_version=read_version,
+            )
+            if changed_rows or stale_keys:
+                # Reopened with the day, so a calculation that stops before its months leaves the month for the next
+                await areopen_metrics_month(
+                    session=sess, table=aggregate_metrics_table, month_start=date_to_process.replace(day=1)
+                )
+            return True
+
+    async def _calculate_month_metrics(
+        self, table: Table, aggregate_metrics_table: Table, month_start: date, refreshes_table: Table, worker_id: str
+    ) -> bool:
+        """Rebuild the month rows of the aggregate metrics table from the component metrics rows of the month's days, in
+        one transaction. False when another process took the refresh over, and nothing was written."""
+        async with self.async_session_factory() as sess, sess.begin():
+            read_version = (
+                await sess.execute(
+                    select(aggregate_metrics_table.c.version).where(
+                        aggregate_metrics_table.c.aggregation_period == "monthly",
+                        aggregate_metrics_table.c.date == month_start,
+                        aggregate_metrics_table.c.user_id == "",
+                    )
+                )
+            ).scalar()
+            # Server-side cursor, so a month of many rows is added up a batch at a time instead of held whole
+            stored_rows_result = await sess.stream(
+                select(table).where(
+                    table.c.aggregation_period == "daily",
+                    table.c.date >= month_start,
+                    table.c.date <= metrics_month_end(month_start),
+                )
+            )
+            per_owner: Dict[Tuple[str, str, str, str, str], Dict[str, Any]] = {}
+            while True:
+                batch = await stored_rows_result.fetchmany(METRICS_BATCH_SIZE)
+                if not batch:
+                    break
+                await asyncio.to_thread(
+                    add_metrics_month_totals, per_owner, [dict(record._mapping) for record in batch]
+                )
+
+            # Checked in the transaction of the rows, so a process whose lock went stale never overwrites the rows of
+            # the process that took the refresh over
+            if not await self._heartbeat_metrics_refresh(sess, refreshes_table, worker_id):
+                return False
+            # Added up per owner and component over the month, so a user of several days is one user of the month
+            await self._write_aggregate_metrics_rows(
+                sess,
+                aggregate_metrics_table,
+                await asyncio.to_thread(build_aggregate_metrics_month_rows, month_start, per_owner),
+                rows_changed=False,
+                read_version=read_version,
+            )
+            return True
+
+    async def calculate_metrics(self, rebuild_from: Optional[date] = None) -> Optional[list[dict]]:
+        """Calculate metrics for every day that changed since the last calculation.
+
+        One process calculates at a time, whichever process or replica it runs in: the others return at once,
+        having read nothing.
+
+        Args:
+            rebuild_from (Optional[date]): Also rebuild every day from this date to today, as after a release that
+                changed how metrics are counted.
+
+        Returns:
+            Optional[list[dict]]: The metrics of the days calculated, or of today when nothing changed, as get_metrics
+                returns them. None when another process is calculating them.
 
         Raises:
             Exception: If an error occurs during metrics calculation.
         """
         try:
-            # Stamp first so failed runs are throttled too instead of retried on every read
-            self._metrics_refreshed_at = time.time()
-
-            table = await self._get_table(table_type="metrics", create_table_if_not_found=True)
-            if table is None:
+            calculated_dates = await self.calculate_metrics_dates(rebuild_from=rebuild_from)
+            if calculated_dates is None:
                 return None
-
-            starting_date = await self._get_metrics_calculation_starting_date(table)
-
-            if starting_date is None:
-                log_info("No session data found. Won't calculate metrics.")
-                return None
-
-            dates_to_process = get_dates_to_calculate_metrics_for(starting_date)
-            if not dates_to_process:
-                log_info("Metrics already calculated for all relevant dates.")
-                return None
-
-            start_timestamp = int(
-                datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
-            )
-            end_timestamp = int(
-                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
-                .replace(tzinfo=timezone.utc)
-                .timestamp()
-            )
-
-            sessions = await self._get_all_sessions_for_metrics_calculation(
-                start_timestamp=start_timestamp, end_timestamp=end_timestamp
-            )
-
-            all_sessions_data = fetch_all_sessions_data(
-                sessions=sessions, dates_to_process=dates_to_process, start_timestamp=start_timestamp
-            )
-            if not all_sessions_data:
-                log_info("No new session data found. Won't calculate metrics.")
-                return None
-
-            results = []
-            metrics_records = []
-
-            for date_to_process in dates_to_process:
-                date_key = date_to_process.isoformat()
-                sessions_for_date = all_sessions_data.get(date_key, {})
-
-                # Skip dates with no sessions
-                if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
-                    continue
-
-                # One record per distinct user_id, plus an empty-string bucket for unowned sessions
-                metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
-
-            if metrics_records:
-                async with self.async_session_factory() as sess, sess.begin():
-                    results = await abulk_upsert_metrics(session=sess, table=table, metrics_records=metrics_records)
-
-            log_debug("Updated metrics calculations")
-
-            return results
+            if not calculated_dates:
+                # A refresh that changed no day answers with today's metrics
+                calculated_dates = [datetime.now(timezone.utc).date()]
+            metrics, _ = await self._get_metrics_rows(calculated_dates[0], calculated_dates[-1], None)
+            return [metric for metric in metrics if metric["date"] in calculated_dates]
 
         except Exception as e:
             log_error(f"Exception refreshing metrics: {str(e)}")
             raise e
+
+    async def calculate_metrics_dates(
+        self, should_stop: Optional[Callable[[], bool]] = None, rebuild_from: Optional[date] = None
+    ) -> Optional[List[date]]:
+        """Calculate metrics for every day that changed since the last calculation, as calculate_metrics does,
+        without reading back the metrics of those days.
+
+        Args:
+            should_stop (Optional[Callable[[], bool]]): Checked before each day and month, and between a day's
+                batches. Once it returns True, the calculation releases the refresh and stops; the next one continues
+                from the first day still open.
+            rebuild_from (Optional[date]): Also rebuild every day from this date to today.
+
+        Returns:
+            Optional[List[date]]: The days calculated, oldest first. None when another process is calculating them.
+
+        Raises:
+            Exception: If an error occurs during metrics calculation.
+        """
+        table = await self._get_metrics_table("component_metrics", self.component_metrics_table_name)
+        aggregate_metrics_table = await self._get_metrics_table("aggregate_metrics", self.aggregate_metrics_table_name)
+        refreshes_table = await self._get_metrics_table("metrics_refreshes", self.metrics_refreshes_table_name)
+        sessions_table = await self._get_table(table_type="sessions")
+        if table is None or aggregate_metrics_table is None or refreshes_table is None or sessions_table is None:
+            log_debug("No session data found. Won't calculate metrics.")
+            return []
+        runs_table = await self._get_table(table_type="runs")
+
+        if rebuild_from is not None:
+            # Reopened as a write reopens a day, before the claim, so a calculation another process is running
+            # leaves them to the next one
+            try:
+                # A transaction of its own, without locking the refresh row, so it never waits on a day's calculation
+                async with self.async_session_factory() as sess, sess.begin():
+                    await areopen_metrics_days_from(
+                        session=sess, table=aggregate_metrics_table, starting_date=rebuild_from
+                    )
+                # Yesterday and today are picked by the fingerprint, so it is marked for the next one too
+                if not await self._mark_metrics_refresh_rebuild(refreshes_table):
+                    return None
+            except Exception as e:
+                # Failed before the claim, so the refresh status shows it
+                await self._release_metrics_refresh(
+                    refreshes_table,
+                    None,
+                    error=database_error_message(e),
+                )
+                raise
+
+        worker_id = str(uuid4())
+        # Claimed before anything is read, so a process that finds another calculating reads nothing
+        refresh_row = await self._claim_metrics_refresh(refreshes_table, worker_id)
+        if refresh_row is None:
+            return None
+
+        try:
+            dates_to_process, fingerprint = await self._get_metrics_dates_to_calculate(
+                aggregate_metrics_table, sessions_table, runs_table, refresh_row, rebuild_from
+            )
+
+            legacy_run_rows_by_day: Dict[date, List[Any]] = {}
+            legacy_run_rows_by_id: Dict[str, Any] = {}
+            # Read once for every day until the v3.0.0 migration is stamped: no index finds one day's legacy runs
+            if dates_to_process and packaging_version.parse(
+                await self.get_latest_schema_version(self.session_table_name)
+            ) < packaging_version.parse("3.0.0"):
+                start_timestamp = int(
+                    datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+                )
+                end_timestamp = int(
+                    datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+                    .replace(tzinfo=timezone.utc)
+                    .timestamp()
+                )
+                legacy_runs_table = build_component_metrics_legacy_runs_table(
+                    sessions_table, runs_table, start_timestamp, end_timestamp
+                )
+                if legacy_runs_table is not None:
+                    async with self.async_session_factory() as sess, sess.begin():
+                        # JIT compiling this query costs more than reading a day of runs
+                        await sess.execute(text("SET LOCAL jit = off"))
+                        # Planned for every row, not a cursor's first: the whole result is always read
+                        await sess.execute(text("SET LOCAL cursor_tuple_fraction = 1.0"))
+                        legacy_runs_result = await sess.stream(
+                            build_component_metrics_runs_query(legacy_runs_table, start_timestamp, end_timestamp)
+                        )
+                        while True:
+                            batch = await legacy_runs_result.fetchmany(METRICS_BATCH_SIZE)
+                            if not batch:
+                                break
+                            for record in batch:
+                                legacy_run_day = datetime.fromtimestamp(record.created_at, tz=timezone.utc).date()
+                                legacy_run_rows_by_day.setdefault(legacy_run_day, []).append(record)
+                                legacy_run_rows_by_id[record.run_id] = record
+                            await asyncio.sleep(0)  # yield control between batches
+                        if not await self._heartbeat_metrics_refresh(sess, refreshes_table, worker_id):
+                            return None
+                    # A legacy run is dated on its own day, which may hold no session or run of the tables
+                    today = datetime.now(timezone.utc).date()
+                    dates_to_process = sorted(
+                        set(dates_to_process)
+                        | {
+                            day
+                            for day in legacy_run_rows_by_day
+                            if day <= today
+                            and (
+                                refresh_row["finished_at"] is None or (rebuild_from is not None and day >= rebuild_from)
+                            )
+                        }
+                    )
+
+            calculated_dates: List[date] = []
+            for date_to_process in dates_to_process:
+                if should_stop is not None and should_stop():
+                    await self._release_metrics_refresh(refreshes_table, worker_id, stopped=True)
+                    return None
+                if not await self._calculate_date_metrics(
+                    table,
+                    aggregate_metrics_table,
+                    sessions_table,
+                    runs_table,
+                    date_to_process,
+                    legacy_run_rows_by_day.get(date_to_process, []),
+                    legacy_run_rows_by_id,
+                    refreshes_table,
+                    worker_id,
+                    should_stop,
+                ):
+                    if should_stop is not None and should_stop():
+                        await self._release_metrics_refresh(refreshes_table, worker_id, stopped=True)
+                    return None
+                calculated_dates.append(date_to_process)
+
+            # A month row is read only once completed, so a month is built only once its last day can be completed
+            month_starts = sorted(
+                month_start
+                for month_start in set(get_months_to_calculate_metrics_for(calculated_dates))
+                | set(await self._get_open_metrics_months(aggregate_metrics_table))
+                if metrics_day_completed(metrics_month_end(month_start))
+            )
+            for month_start in month_starts:
+                if should_stop is not None and should_stop():
+                    await self._release_metrics_refresh(refreshes_table, worker_id, stopped=True)
+                    return None
+                if not await self._calculate_month_metrics(
+                    table, aggregate_metrics_table, month_start, refreshes_table, worker_id
+                ):
+                    return None
+
+        except Exception as e:
+            await self._release_metrics_refresh(refreshes_table, worker_id, error=database_error_message(e))
+            raise
+        except asyncio.CancelledError:
+            # Cancelled, as on shutdown: the refresh is released so the next process need not wait for its lock
+            # to go stale
+            await self._release_metrics_refresh(refreshes_table, worker_id, stopped=True)
+            raise
+
+        await self._release_metrics_refresh(
+            refreshes_table, worker_id, fingerprint=fingerprint, claimed_fingerprint=refresh_row["fingerprint"]
+        )
+
+        if not calculated_dates:
+            log_debug("Metrics already calculated for all relevant dates.")
+            return []
+
+        log_debug("Updated metrics calculations")
+        return calculated_dates
+
+    def stop_metrics_refresh_on_read(self) -> None:
+        """Stop calculating metrics before a read, for a database whose metrics are calculated in the background."""
+        self._metrics_refreshed_at = float("inf")
+
+    async def _get_metrics_by_owner(
+        self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
+    ) -> Tuple[List[dict], Optional[int]]:
+        """Get the metrics of each user and day from the component metrics, in the shape of the metrics table."""
+        table = await self._get_table(table_type="component_metrics")
+        if table is None:
+            return [], None
+
+        queries = build_metrics_by_owner_queries(table, starting_date, ending_date, user_id)
+        async with self.async_session_factory() as sess, sess.begin():
+            rows_by_query = {name: (await sess.execute(query)).fetchall() for name, query in queries.items()}
+            if not rows_by_query["totals"]:
+                return [], None
+
+            # Get the latest updated_at, scoped to the same user filter
+            latest_stmt = select(func.max(table.c.updated_at))
+            if user_id is not None:
+                latest_stmt = latest_stmt.where(table.c.user_id == user_id)
+            latest_updated_at = (await sess.execute(latest_stmt)).scalar()
+
+        return build_metrics_by_owner(rows_by_query["totals"], rows_by_query["model_metrics"]), latest_updated_at
+
+    async def _get_aggregate_metrics_rows(
+        self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
+    ) -> Tuple[List[dict], Optional[int]]:
+        """Get the day rows of the aggregate metrics table in the shape of the metrics table: the everyone rows for
+        ``""``, one user's rows for a name, and every user's rows for ``None``."""
+        aggregate_metrics_table = await self._get_table(table_type="aggregate_metrics")
+        if aggregate_metrics_table is None:
+            return [], None
+
+        filters = [aggregate_metrics_table.c.aggregation_period == "daily"]
+        if starting_date:
+            filters.append(aggregate_metrics_table.c.date >= starting_date)
+        if ending_date:
+            filters.append(aggregate_metrics_table.c.date <= ending_date)
+        filters.append(
+            aggregate_metrics_table.c.user_id != "" if user_id is None else aggregate_metrics_table.c.user_id == user_id
+        )
+        # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row. A day whose
+        # only run is a regenerated one has its tokens but no count
+        filters.append(
+            or_(
+                *[
+                    aggregate_metrics_table.c[column] > 0
+                    for column in AGGREGATE_METRICS_COUNT_COLUMNS
+                    if column != "users_count"
+                ],
+                aggregate_metrics_table.c.total_tokens > 0,
+            )
+        )
+        # Only what build_metrics_from_aggregate_metrics reads, so the maps of timings are never decoded
+        columns = [
+            aggregate_metrics_table.c[column]
+            for column in [
+                "date",
+                "user_id",
+                *AGGREGATE_METRICS_COUNT_COLUMNS,
+                *[field for field in METRICS_TOKEN_FIELDS if field in aggregate_metrics_table.c],
+                "token_details",
+                "model_metrics",
+                "created_at",
+                "updated_at",
+            ]
+        ]
+        async with self.async_session_factory() as sess:
+            result = await sess.execute(
+                select(*columns)
+                .where(*filters)
+                .order_by(aggregate_metrics_table.c.date, aggregate_metrics_table.c.user_id)
+            )
+            rows = result.mappings().all()
+            if not rows:
+                return [], None
+
+            # Get the latest updated_at, scoped to the same user filter
+            latest_updated_at = (
+                await sess.execute(
+                    select(func.max(aggregate_metrics_table.c.updated_at)).where(
+                        aggregate_metrics_table.c.aggregation_period == "daily",
+                        aggregate_metrics_table.c.user_id != ""
+                        if user_id is None
+                        else aggregate_metrics_table.c.user_id == user_id,
+                    )
+                )
+            ).scalar()
+        return build_metrics_from_aggregate_metrics(rows), latest_updated_at
+
+    async def _get_metrics_rows(
+        self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
+    ) -> Tuple[List[dict], Optional[int]]:
+        """Get the metrics of each user and day, as get_metrics returns them once the first calculate_metrics has
+        finished: a user's from that user's rows, the runs with no user from their component metrics rows."""
+        if user_id == "":
+            return await self._get_metrics_by_owner(starting_date, ending_date, user_id)
+        metrics, latest_updated_at = await self._get_aggregate_metrics_rows(starting_date, ending_date, user_id)
+        if user_id is not None:
+            return metrics, latest_updated_at
+
+        unowned_metrics, unowned_updated_at = await self._get_metrics_by_owner(starting_date, ending_date, "")
+        latest_updated_at = max(
+            (updated_at for updated_at in [latest_updated_at, unowned_updated_at] if updated_at is not None),
+            default=None,
+        )
+        return sorted(metrics + unowned_metrics, key=lambda x: (x["date"], x["user_id"] or "")), latest_updated_at
+
+    async def _metrics_calculated(self, refreshes_table: Optional[Table]) -> bool:
+        """Whether the first calculate_metrics has finished, so reads take the metrics tables over agno_metrics."""
+        refresh_row = (await self._get_metrics_refresh_row(refreshes_table))[0] if refreshes_table is not None else None
+        return refresh_row is not None and refresh_row["finished_at"] is not None
+
+    async def _has_deprecated_metrics(self) -> bool:
+        """Whether the deprecated metrics table has rows, which reads serve until a first build has finished."""
+        table = await self._get_table(table_type="metrics")
+        if table is None:
+            return False
+        async with self.async_session_factory() as sess, sess.begin():
+            return (await sess.execute(select(table.c.id).limit(1))).first() is not None
+
+    async def _refresh_metrics_before_read(self) -> None:
+        """Calculate metrics before a read, at most once per minute per process, unless metrics calculation is turned
+        off or the deprecated metrics table is served until a first calculate_metrics has finished. Another process
+        calculating them holds the metrics refresh, so the read goes on at once."""
+        if time.time() - self._metrics_refreshed_at < 60:
+            return
+        # Stamp first so failed runs are throttled too instead of retried on every read
+        self._metrics_refreshed_at = time.time()
+        try:
+            if not metrics_calculation_enabled():
+                return
+            # A first build reads every run, so a read runs one only when the deprecated metrics table has no rows to
+            # serve meanwhile
+            if (
+                not await self._metrics_calculated(await self._get_table(table_type="metrics_refreshes"))
+                and await self._has_deprecated_metrics()
+            ):
+                return
+            await self.calculate_metrics_dates()
+        except Exception as e:
+            log_warning(f"Could not refresh metrics before reading them: {str(e)}")
 
     async def get_metrics(
         self,
@@ -2309,8 +3533,9 @@ class AsyncPostgresDb(AsyncBaseDb):
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
-        Metrics are refreshed lazily, at most once per minute per process, so results
-        stay current even on deployments where nothing calls the refresh endpoint.
+        Metrics are read from the aggregate metrics and component metrics once the first calculate_metrics has finished,
+        and from the deprecated metrics table until then. They are refreshed first, at most once per minute per
+        process, unless stop_metrics_refresh_on_read was called.
 
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
@@ -2324,15 +3549,11 @@ class AsyncPostgresDb(AsyncBaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            # Refresh at most once per minute per process: recalculating the current
-            # day scans all of today's sessions, too costly for every read.
-            if time.time() - self._metrics_refreshed_at >= 60:
-                try:
-                    await self.calculate_metrics()
-                except Exception as e:
-                    log_warning(f"Could not refresh metrics before reading them: {str(e)}")
+            await self._refresh_metrics_before_read()
+            if await self._metrics_calculated(await self._get_table(table_type="metrics_refreshes")):
+                return await self._get_metrics_rows(starting_date, ending_date, user_id)
 
-            table = await self._get_table(table_type="metrics", create_table_if_not_found=True)
+            table = await self._get_table(table_type="metrics")
             if table is None:
                 return [], None
 
@@ -2363,11 +3584,236 @@ class AsyncPostgresDb(AsyncBaseDb):
                 if row_dict.get("user_id") == "":
                     row_dict["user_id"] = None
                 rows.append(row_dict)
+
+            if not self._deprecated_metrics_logged:
+                self._deprecated_metrics_logged = True
+                log_warning(
+                    f"{self.metrics_table_name} is no longer updated and is served until a first build; "
+                    "call calculate_metrics() once to build the new metrics tables."
+                )
             return rows, latest_updated_at
 
         except Exception as e:
-            log_warning(f"Exception getting metrics: {str(e)}")
+            log_error(f"Exception getting metrics: {str(e)}")
+            raise e
+
+    async def get_metrics_by_date(
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+    ) -> Tuple[List[dict], Optional[int]]:
+        """Get the metrics of every user, one row per day, matching the given date range.
+
+        Read from the everyone rows of the aggregate metrics once the first calculate_metrics has finished, and from the
+        deprecated metrics table until then. They are refreshed first, as get_metrics does.
+
+        Args:
+            starting_date (Optional[date]): The starting date to filter metrics by.
+            ending_date (Optional[date]): The ending date to filter metrics by.
+
+        Returns:
+            Tuple[List[dict], Optional[int]]: A tuple containing the metrics and the timestamp of the latest update.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            await self._refresh_metrics_before_read()
+            if await self._metrics_calculated(await self._get_table(table_type="metrics_refreshes")):
+                return await self._get_aggregate_metrics_rows(starting_date, ending_date, "")
+            return await super().get_metrics_by_date(starting_date, ending_date)
+
+        except Exception as e:
+            log_error(f"Exception getting metrics: {str(e)}")
+            raise e
+
+    async def get_metrics_refresh_status(self) -> Optional[Dict[str, Any]]:
+        """Get the status of the most recent calculate_metrics, from the metrics refreshes table.
+
+        Returns:
+            Optional[Dict[str, Any]]: The status ('running', 'completed' or 'failed'), when it started and finished,
+                and its error. None before the first calculation.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            refreshes_table = await self._get_table(table_type="metrics_refreshes")
+            if refreshes_table is None:
+                return None
+            return metrics_refresh_status(*await self._get_metrics_refresh_row(refreshes_table))
+
+        except Exception as e:
+            log_error(f"Exception getting metrics refresh status: {str(e)}")
+            raise e
+
+    async def _get_component_metrics_totals_by_date(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str],
+        fields: List[str],
+        use_month_rows: bool = False,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """Total the component metrics of the given date range, every day from one period.
+
+        Args:
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with
+                no user.
+            fields (List[str]): The columns to total.
+            use_month_rows (bool): Total a calendar month inside the date range from its month aggregate metrics row, as
+                one date.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each date, and when they were last updated.
+        """
+        aggregate_metrics_table = await self._get_table(table_type="aggregate_metrics")
+        # Every owner is read from the everyone rows and a user from the user's rows; the runs with no user have no
+        # aggregate metrics row of their own, so they are read from their component rows
+        table = await self._get_table(table_type="component_metrics") if user_id == "" else aggregate_metrics_table
+        if aggregate_metrics_table is None or table is None:
             return [], None
+
+        # The component metrics table keeps day rows only, so the runs with no user are read day by day
+        full_months = metrics_full_months(starting_date, ending_date) if use_month_rows and user_id != "" else []
+        month_starts: Sequence[date] = []
+        rows_by_query = {}
+        async with self.async_session_factory() as sess, sess.begin():
+            # One snapshot for every query of the read, so a rebuild committing between them is never half seen
+            await sess.connection(execution_options={"isolation_level": "REPEATABLE READ"})
+            if full_months:
+                # Only a completed month's row stands for its days; an open one, reopened by a day rebuilt since
+                # or not yet built, is read from its days
+                month_starts_result = await sess.execute(
+                    select(aggregate_metrics_table.c.date).where(
+                        aggregate_metrics_table.c.aggregation_period == "monthly",
+                        aggregate_metrics_table.c.user_id == "",
+                        aggregate_metrics_table.c.completed.is_(True),
+                        # The full months follow each other, so a range finds them however long the window is
+                        aggregate_metrics_table.c.date.between(full_months[0], full_months[-1]),
+                    )
+                )
+                month_starts = month_starts_result.scalars().all()
+            queries = build_component_metrics_totals_queries(
+                table, starting_date, ending_date, user_id or "", fields, month_starts=month_starts
+            )
+            for name, query in queries.items():
+                rows_by_query[name] = (await sess.execute(query)).fetchall()
+        return build_component_metrics_totals(fields, rows_by_query)
+
+    async def get_component_metrics(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """Get the component metrics totals of each day in the given date range.
+
+        For every owner, each day is read from its everyone row; for one owner, from its rows. A read never calculates
+        them: calculate_metrics does.
+
+        Args:
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with
+                no user.
+            fields (Optional[List[str]]): The columns to total. ``None`` totals all.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each day, and when they were last updated.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            fields = resolve_metrics_fields(fields)
+            metrics, latest_updated_at = await self._get_component_metrics_totals_by_date(
+                starting_date, ending_date, user_id, fields
+            )
+            return [list_metrics_totals_models(day_totals) for day_totals in metrics], latest_updated_at
+
+        except Exception as e:
+            log_error(f"Exception getting component metrics: {str(e)}")
+            raise e
+
+    async def get_metrics_totals(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[Dict[str, Any], Optional[int]]:
+        """Get the component metrics totals of the whole given date range.
+
+        A calendar month inside the date range that has month rows is read from them, and every other day as
+        get_component_metrics reads it.
+
+        Args:
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with
+                no user.
+            fields (Optional[List[str]]): The columns to total. ``None`` totals all.
+
+        Returns:
+            Tuple[Dict[str, Any], Optional[int]]: The totals of the date range, and when they were last updated.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            fields = resolve_metrics_fields(fields)
+            totals, latest_updated_at = await self._get_component_metrics_totals_by_date(
+                starting_date, ending_date, user_id, fields, use_month_rows=True
+            )
+            return list_metrics_totals_models(merge_metrics_totals(totals, fields)), latest_updated_at
+
+        except Exception as e:
+            log_error(f"Exception getting metrics totals: {str(e)}")
+            raise e
+
+    async def get_metrics_versions(self, starting_date: date, ending_date: date) -> Optional[Dict[str, int]]:
+        """Get the version of every everyone row of a day or a month of the aggregate metrics in the given date range.
+
+        Metrics are refreshed first, as get_metrics refreshes them.
+
+        Args:
+            starting_date (date): The first day of the date range.
+            ending_date (date): The last day of the date range.
+
+        Returns:
+            Optional[Dict[str, int]]: The version of each everyone row, keyed by its aggregation period and date. The
+                same again only while no calculation wrote a row of the date range. ``None`` until the first
+                calculate_metrics has finished, or without an aggregate metrics table: a read would find no rows to
+                total.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            await self._refresh_metrics_before_read()
+            table = await self._get_table(table_type="aggregate_metrics")
+            if table is None or not await self._metrics_calculated(
+                await self._get_table(table_type="metrics_refreshes")
+            ):
+                return None
+
+            async with self.async_session_factory() as sess, sess.begin():
+                result = await sess.execute(
+                    select(table.c.aggregation_period, table.c.date, table.c.version).where(
+                        table.c.user_id == "",
+                        table.c.date.between(starting_date, ending_date),
+                    )
+                )
+                rows = result.fetchall()
+            return metrics_versions(rows)
+
+        except Exception as e:
+            log_error(f"Exception getting metrics versions: {str(e)}")
+            raise e
 
     # -- Knowledge methods --
     async def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
@@ -2684,7 +4130,7 @@ class AsyncPostgresDb(AsyncBaseDb):
 
         Args:
             eval_run_id (str): The ID of the eval run to get.
-            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval run. Defaults to True.
             user_id (Optional[str]): If set, only return the run if owned by this user.
 
         Returns:
@@ -2747,7 +4193,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             model_id (Optional[str]): The ID of the model to filter by.
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
-            deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
             user_id (Optional[str]): If set, only return runs owned by this user.
 
         Returns:
@@ -4263,7 +5709,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             raise
 
     async def update_schedule(
-        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+        self, schedule_id: str, user_id: Optional[str] = None, *, preserve_updated_at: bool = False, **kwargs: Any
     ) -> Optional[Dict[str, Any]]:
         from agno.db.schemas.scheduler import validate_schedule_update
 
@@ -4276,7 +5722,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             table = await self._get_table(table_type="schedules")
             if table is None:
                 return None
-            kwargs["updated_at"] = int(time.time())
+            if not preserve_updated_at:
+                kwargs["updated_at"] = int(time.time())
             async with self.async_session_factory() as sess:
                 async with sess.begin():
                     stmt = table.update().where(table.c.id == schedule_id)
@@ -4329,6 +5776,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         rows and generic rows whose endpoint is the component's run endpoint,
         across owners, and records the system reason in disabled_reason.
         """
+        from sqlalchemy import literal
+
         from agno.db.schemas.scheduler import build_run_endpoint
 
         try:
@@ -4351,7 +5800,15 @@ class AsyncPostgresDb(AsyncBaseDb):
                             ),
                             table.c.enabled.is_(True),
                         )
-                        .values(enabled=False, disabled_reason=reason, updated_at=int(time.time()))
+                        # An archive cascade is not a user edit, so a Company routine keeps its last-edit time.
+                        .values(
+                            enabled=False,
+                            disabled_reason=reason,
+                            updated_at=case(
+                                (table.c.managed_by == "company", table.c.updated_at),
+                                else_=literal(int(time.time()), table.c.updated_at.type),
+                            ),
+                        )
                     )
             return int(getattr(result, "rowcount", 0) or 0)
         except Exception as e:
@@ -4428,21 +5885,54 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_debug(f"Error claiming schedule: {e}")
             return None
 
-    async def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
+    async def release_schedule(
+        self,
+        schedule_id: str,
+        next_run_at: Optional[int] = None,
+        *,
+        worker_id: Optional[str] = None,
+        locked_at: Optional[int] = None,
+        preserve_updated_at: bool = False,
+    ) -> bool:
         try:
             table = await self._get_table(table_type="schedules")
             if table is None:
                 return False
-            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None, "updated_at": int(time.time())}
-            if next_run_at is not None:
-                updates["next_run_at"] = next_run_at
+            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None}
+            if not preserve_updated_at:
+                updates["updated_at"] = int(time.time())
+            # A cron may be cleared while this claim is running. Never re-arm
+            # an on-demand schedule using the executor's older schedule snapshot.
+            updates["next_run_at"] = case(
+                (table.c.cron_expr == "", None),
+                else_=next_run_at if next_run_at is not None else table.c.next_run_at,
+            )
+            statement = table.update().where(table.c.id == schedule_id)
+            if worker_id is not None:
+                statement = statement.where(table.c.locked_by == worker_id)
+            if locked_at is not None:
+                statement = statement.where(table.c.locked_at == locked_at)
             async with self.async_session_factory() as sess:
                 async with sess.begin():
-                    result = await sess.execute(table.update().where(table.c.id == schedule_id).values(**updates))
+                    result = await sess.execute(statement.values(**updates))
                     return result.rowcount > 0  # type: ignore[attr-defined]
         except Exception as e:
             log_debug(f"Error releasing schedule: {e}")
             return False
+
+    async def delete_schedule_runs(self, schedule_id: str, *, before: int) -> int:
+        """Expire only completed history for the selected schedule."""
+        table = await self._get_table(table_type="schedule_runs")
+        if table is None:
+            return 0
+        statement = (
+            table.delete()
+            .where(table.c.schedule_id == schedule_id, table.c.completed_at < before)
+            .returning(table.c.id)
+        )
+        async with self.async_session_factory() as sess, sess.begin():
+            result = await sess.execute(statement)
+            return len(result.scalars().all())
 
     async def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
         try:
@@ -4485,6 +5975,31 @@ class AsyncPostgresDb(AsyncBaseDb):
         except Exception as e:
             log_debug(f"Error getting schedule run: {e}")
             return None
+
+    async def get_latest_schedule_runs(self, schedule_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Fetch one most recent run per schedule, without per-schedule queries."""
+        if not schedule_ids:
+            return {}
+        table = await self._get_table(table_type="schedule_runs")
+        if table is None:
+            return {}
+        ranked = (
+            select(
+                table,
+                func.row_number()
+                .over(
+                    partition_by=table.c.schedule_id,
+                    order_by=(table.c.triggered_at.desc(), table.c.created_at.desc(), table.c.id.desc()),
+                )
+                .label("position"),
+            )
+            .where(table.c.schedule_id.in_(schedule_ids))
+            .subquery()
+        )
+        stmt = select(*(ranked.c[column.name] for column in table.columns)).where(ranked.c.position == 1)
+        async with self.async_session_factory() as sess:
+            result = await sess.execute(stmt)
+            return {row._mapping["schedule_id"]: dict(row._mapping) for row in result.fetchall()}
 
     async def get_schedule_runs(
         self,
@@ -4533,9 +6048,10 @@ class AsyncPostgresDb(AsyncBaseDb):
         expected_attempt: Optional[int] = None,
         user_id: Optional[str] = None,
         content_if_absent: Optional[str] = None,
+        session_data: Optional[Dict[str, Any]] = None,
     ) -> "RunPersistOutcome":
         """Atomically patch fields of ONE run - ported to the denormalized
-        runs table (v3.0). Same signature and typed-outcome contract as the
+        runs table (v3.0). Same typed-outcome contract as the
         session-JSON original; the implementation is now a single row-locked
         UPDATE on agno_runs instead of a session-blob rewrite, which is the
         shape the P1 fencing design always wanted.
@@ -4545,6 +6061,9 @@ class AsyncPostgresDb(AsyncBaseDb):
         reclaimed job's later attempt owns the row). Terminal guard: a
         completed/cancelled run is never rewritten to a different status.
         The indexed ``status`` column is kept in sync with run_data.
+        Optional session_data replaces session metadata in the same transaction,
+        only after the run fence accepts the write. A failed session write rolls
+        back the run update as well.
         Exceptions PROPAGATE - a DB failure must never read as a
         fallback-permitting outcome.
         """
@@ -4560,11 +6079,16 @@ class AsyncPostgresDb(AsyncBaseDb):
             runs_table = await self._get_table(table_type="runs")
             if runs_table is None:
                 return RunPersistOutcome.MISSING
+            sessions_table = None
+            if session_data is not None:
+                sessions_table = await self._get_table(table_type="sessions")
+                if sessions_table is None:
+                    raise RuntimeError("Cannot persist run metadata without its session table")
             async with self.async_session_factory() as sess:
                 async with sess.begin():
                     row = (
                         await sess.execute(
-                            select(runs_table.c.run_data, runs_table.c.status)
+                            select(runs_table.c.run_data, runs_table.c.status, runs_table.c.created_at)
                             .where(runs_table.c.run_id == run_id)
                             .where(runs_table.c.session_id == session_id)
                             .where((runs_table.c.user_id == user_id) | (runs_table.c.user_id.is_(None)))
@@ -4601,6 +6125,17 @@ class AsyncPostgresDb(AsyncBaseDb):
                     if fields.get("status") is not None:
                         values["status"] = fields["status"]
                     await sess.execute(update(runs_table).where(runs_table.c.run_id == run_id).values(**values))
+                    await self._reopen_metrics_days(sess, [row[2]])
+                    if sessions_table is not None:
+                        session_write = await sess.execute(
+                            update(sessions_table)
+                            .where(sessions_table.c.session_id == session_id)
+                            .where((sessions_table.c.user_id == user_id) | sessions_table.c.user_id.is_(None))
+                            .values(session_data=sanitize_postgres_strings(session_data), updated_at=int(time.time()))
+                            .returning(sessions_table.c.session_id)
+                        )
+                        if session_write.scalar_one_or_none() is None:
+                            raise RuntimeError("Cannot persist run metadata without its owned session")
                     return RunPersistOutcome.UPDATED
         except Exception as e:
             log_warning(f"Error updating run in runs table: {e}")
@@ -4653,10 +6188,13 @@ class AsyncPostgresDb(AsyncBaseDb):
                             postgresql.insert(runs_table)
                             .values(**row)
                             .on_conflict_do_nothing(index_elements=["run_id"])
-                            .returning(runs_table.c.run_id)
+                            .returning(runs_table.c.created_at)
                         )
                         inserted = (await sess.execute(stmt)).fetchone()
-                        return inserted is not None
+                        if inserted is None:
+                            return False
+                        await self._reopen_metrics_days(sess, [inserted.created_at])
+                        return True
             except IntegrityError:
                 # FK violation: no session row yet - caller creates it and retries
                 return None
@@ -4724,13 +6262,43 @@ class AsyncPostgresDb(AsyncBaseDb):
                     postgresql.insert(table)
                     .values(**values)
                     .on_conflict_do_nothing(index_elements=["session_id"])
-                    .returning(table.c.session_id)
+                    .returning(table.c.created_at)
                 )
-                result = await sess.execute(stmt)
-                return result.fetchone() is not None
+                inserted = (await sess.execute(stmt)).fetchone()
+                if inserted is None:
+                    return False
+                await self._reopen_metrics_days(sess, [inserted.created_at])
+                return True
         except Exception as e:
             log_warning(f"Error inserting session if absent (caller falls back): {e}")
             return None
+
+    async def ensure_jobs_table(self) -> None:
+        """Prepare durable queue storage before polling or accepting continuations.
+
+        Stores without this optional hook retain lazy initialization. Propagate
+        provisioning failures so the worker can report unavailable storage.
+        """
+        try:
+            table = await self._get_table(table_type="jobs", create_table_if_not_found=True)
+        except Exception as exc:
+            # Another replica may have completed the first-time DDL meanwhile.
+            cause = getattr(exc, "orig", exc)
+            sqlstate = getattr(cause, "sqlstate", getattr(cause, "pgcode", None))
+            if sqlstate not in ("42P07", "23505") or not await self.table_exists(self.job_table_name):
+                raise
+            self._invalidate_table_cache(self.job_table_name)
+            table = await self._get_table(table_type="jobs")
+        if table is None:
+            raise RuntimeError("Job queue table is unavailable after provisioning")
+
+    async def _q_next_session_seq(self, sess: Any, table: Any, job: Dict[str, Any]) -> int:
+        """Lock the ticket's session and sequence it after every live ticket there."""
+        from agno.job_queue.session import next_session_seq_query, session_claim_lock_key
+
+        lock_key = session_claim_lock_key(table.fullname, job)
+        await sess.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": lock_key})
+        return (await sess.execute(next_session_seq_query(table, job))).scalar_one()
 
     async def enqueue_job(self, job: Dict[str, Any], max_depth: int = 0) -> Dict[str, Any]:
         """Insert an accepted run job.
@@ -4743,6 +6311,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         from sqlalchemy.exc import IntegrityError
 
+        from agno.job_queue.session import with_session_seq
+
         table = await self._get_table(table_type="jobs", create_table_if_not_found=True)
         if table is None:
             raise RuntimeError("Failed to get or create job queue table")
@@ -4751,9 +6321,12 @@ class AsyncPostgresDb(AsyncBaseDb):
         # empty-header submit into an IntegrityError -> 500
         if not job.get("idempotency_key"):
             job = {**job, "idempotency_key": None}
+        serialized = (job.get("payload") or {}).get("serialize_session") is True
         try:
             async with self.async_session_factory() as sess:
                 async with sess.begin():
+                    if serialized:
+                        await sess.connection(execution_options={"isolation_level": "READ COMMITTED"})
                     # Idempotency FIRST: resubmitting an already-accepted job
                     # must return the existing run even when the queue is full
                     if job.get("idempotency_key"):
@@ -4771,6 +6344,10 @@ class AsyncPostgresDb(AsyncBaseDb):
                         queued = (await sess.execute(count_stmt)).scalar() or 0
                         if queued >= max_depth:
                             return {"accepted": False, "reason": "queue_full", "job": None}
+                    if serialized:
+                        # Under the session lock a new ticket sorts after every live ticket of its
+                        # session, so execution follows store acceptance, not wall-clock seconds.
+                        job = with_session_seq(job, await self._q_next_session_seq(sess, table, job))
                     await sess.execute(table.insert().values(**job))
             return {"accepted": True, "reason": None, "job": job}
         except IntegrityError:
@@ -4804,6 +6381,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         jobs only on matching workers; deployment_id=None degenerates to
         claiming only unstamped jobs.
         """
+        from agno.job_queue.session import session_claim_condition, session_claim_lock_key
+
         try:
             table = await self._get_table(table_type="jobs")
             if table is None:
@@ -4812,10 +6391,13 @@ class AsyncPostgresDb(AsyncBaseDb):
             stale = now - lock_grace_seconds
             async with self.async_session_factory() as sess:
                 async with sess.begin():
-                    subq = (
-                        select(table.c.id)
+                    # The session predicate and lock recheck rely on per-statement snapshots.
+                    await sess.connection(execution_options={"isolation_level": "READ COMMITTED"})
+                    candidate_query = (
+                        select(table)
                         .where(
                             table.c.available_at <= now,
+                            session_claim_condition(table),
                             or_(table.c.deployment_id.is_(None), table.c.deployment_id == deployment_id),
                             or_(
                                 table.c.status == "queued",
@@ -4826,14 +6408,33 @@ class AsyncPostgresDb(AsyncBaseDb):
                                 ),
                             ),
                         )
-                        .order_by(table.c.created_at.asc())
+                        .order_by(table.c.created_at.asc(), table.c.id.asc())
                         .limit(1)
                         .with_for_update(skip_locked=True)
-                        .scalar_subquery()
                     )
+                    candidate_row = (await sess.execute(candidate_query)).mappings().first()
+                    if candidate_row is None:
+                        return None
+                    candidate = candidate_row["id"]
+                    if (candidate_row["payload"] or {}).get("serialize_session") is True:
+                        # A concurrent claim of another ticket in this session may have committed
+                        # after the candidate scan; recheck under the session lock.
+                        lock_key = session_claim_lock_key(table.fullname, dict(candidate_row))
+                        locked: Any = (
+                            await sess.execute(text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": lock_key})
+                        ).scalar_one()
+                        if not locked:
+                            return None
+                        eligible = (
+                            await sess.execute(
+                                select(table.c.id).where(table.c.id == candidate, session_claim_condition(table))
+                            )
+                        ).first()
+                        if eligible is None:
+                            return None
                     stmt = (
                         update(table)
-                        .where(table.c.id == subq)
+                        .where(table.c.id == candidate)
                         .values(
                             status="running",
                             locked_by=worker_id,
@@ -5140,6 +6741,20 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_warning(f"Job queue store: get_job failed for job {job_id}: {e}")
             return None
 
+    async def session_blocker(self, job_id: str) -> Optional[str]:
+        """The id of the ticket a queued serialized job waits behind, or None."""
+        from agno.job_queue.session import is_serialized, live_session_jobs_query, session_blocker
+
+        job = await self.get_job(job_id)
+        if job is None or job["status"] != "queued" or not is_serialized(job):
+            return None
+        table = await self._get_table(table_type="jobs")
+        if table is None:
+            return None
+        async with self.async_session_factory() as sess:
+            rows = (await sess.execute(live_session_jobs_query(table, job))).mappings().all()
+        return session_blocker(job, [dict(row) for row in rows])
+
     async def count_queued_jobs(self) -> int:
         try:
             table = await self._get_table(table_type="jobs")
@@ -5159,7 +6774,12 @@ class AsyncPostgresDb(AsyncBaseDb):
         page: int = 1,
         sort_by: Optional[str] = "created_at",
         sort_order: Optional[str] = "desc",
+        *,
+        session_id: Optional[Union[str, List[str]]] = None,
+        user_id: Optional[str] = None,
+        raise_on_error: bool = False,
     ) -> Tuple[List[Dict[str, Any]], int]:
+        """List jobs, propagating read errors when raise_on_error is True."""
         try:
             table = await self._get_table(table_type="jobs")
             if table is None:
@@ -5168,6 +6788,11 @@ class AsyncPostgresDb(AsyncBaseDb):
             if status is not None:
                 statuses = [status] if isinstance(status, str) else list(status)
                 stmt = stmt.where(table.c.status.in_(statuses))
+            if session_id is not None:
+                session_ids = [session_id] if isinstance(session_id, str) else list(session_id)
+                stmt = stmt.where(table.c.session_id.in_(session_ids))
+            if user_id is not None:
+                stmt = stmt.where(table.c.user_id == user_id)
             count_stmt = select(func.count()).select_from(stmt.alias())
             stmt = apply_sorting(stmt, table, sort_by, sort_order)
             # Deterministic tiebreaker: timestamps are epoch seconds, so ties
@@ -5179,12 +6804,19 @@ class AsyncPostgresDb(AsyncBaseDb):
                 result = await sess.execute(stmt)
                 return [dict(row._mapping) for row in result.fetchall()], total_count
         except Exception as e:
-            log_warning(f"Job queue store: list_jobs failed (status={status!r}): {e}")
+            log_warning(
+                f"Job queue store: list_jobs failed (status={status!r}, session_id={session_id!r}, "
+                f"user_id={user_id!r}): {e}"
+            )
+            if raise_on_error:
+                raise
             return [], 0
 
     async def requeue_job(self, job_id: str) -> bool:
         """Operator requeue for a terminally failed/cancelled job: grants
         exactly one more execution by raising max_attempts to attempt + 1."""
+        from agno.job_queue.session import is_serialized, with_session_seq
+
         try:
             table = await self._get_table(table_type="jobs")
             if table is None:
@@ -5192,20 +6824,37 @@ class AsyncPostgresDb(AsyncBaseDb):
             now = _db_epoch()
             async with self.async_session_factory() as sess:
                 async with sess.begin():
-                    result = await sess.execute(
-                        update(table)
-                        .where(table.c.id == job_id, table.c.status.in_(["failed", "cancelled"]))
-                        .values(
-                            status="queued",
-                            max_attempts=table.c.attempt + 1,
-                            available_at=now,
-                            locked_by=None,
-                            locked_at=None,
-                            completed_at=None,
-                            updated_at=now,
+                    await sess.connection(execution_options={"isolation_level": "READ COMMITTED"})
+                    row = (
+                        (
+                            await sess.execute(
+                                select(table)
+                                .where(table.c.id == job_id, table.c.status.in_(["failed", "cancelled"]))
+                                .with_for_update()
+                            )
                         )
+                        .mappings()
+                        .first()
                     )
-                    return (result.rowcount or 0) > 0  # type: ignore[attr-defined]
+                    if row is None:
+                        return False
+                    values: Dict[str, Any] = dict(
+                        status="queued",
+                        max_attempts=row["attempt"] + 1,
+                        available_at=now,
+                        locked_by=None,
+                        locked_at=None,
+                        completed_at=None,
+                        updated_at=now,
+                    )
+                    job = dict(row)
+                    if is_serialized(job):
+                        # A requeued ticket rejoins its session behind every live turn.
+                        values["payload"] = with_session_seq(job, await self._q_next_session_seq(sess, table, job))[
+                            "payload"
+                        ]
+                    await sess.execute(update(table).where(table.c.id == job_id).values(**values))
+                    return True
         except Exception as e:
             log_error(f"Job queue store: requeue failed for job {job_id}: {e}")
             return False
@@ -5407,8 +7056,11 @@ class AsyncPostgresDb(AsyncBaseDb):
                 results = (await sess.execute(stmt)).fetchall()
                 return [dict(row._mapping) for row in results], total
         except Exception as e:
-            log_debug(f"Error listing approvals: {e}")
-            return [], 0
+            # Raise rather than return an empty page: the continue-run approval gate reads
+            # "no pending approval" as permission to continue, so a failed read must not
+            # look like one.
+            log_error(f"Error listing approvals: {e}")
+            raise e
 
     async def update_approval(
         self, approval_id: str, expected_status: Optional[str] = None, **kwargs: Any
@@ -5700,3 +7352,1133 @@ class AsyncPostgresDb(AsyncBaseDb):
         except Exception as e:
             log_debug(f"Error deleting service account: {e}")
             return False
+
+    # --- Authorization ---
+    # Async twins of the sync Postgres authz delegations: each resolves its table via the
+    # normal schema-aware _get_table path (created on first use, honouring configured
+    # schema/table-name overrides) and delegates to the shared agno.db.sql.authz async
+    # functions over this backend's AsyncEngine.
+
+    async def get_authz_policies(self, roles: List[str]) -> List[Tuple[str, str, str, str]]:
+        table = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        return await authz_sql.aget_policies(self.db_engine, table, roles)
+
+    async def get_authz_policies_for_resources(self, resources: List[str]) -> List[Tuple[str, str, str, str]]:
+        table = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        return await authz_sql.aget_policies_for_resources(self.db_engine, table, resources)
+
+    async def get_authz_role_policies(self, role: str) -> List[Tuple[str, str, str]]:
+        table = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        return await authz_sql.aget_role_policies(self.db_engine, table, role)
+
+    async def set_authz_role_policies(self, role: str, rows: List[Tuple[str, str, str]]) -> None:
+        table = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        await authz_sql.aset_role_policies(self.db_engine, table, role, rows)
+
+    async def upsert_authz_policy(self, *, role: str, resource: str, action: str, effect: str) -> None:
+        table = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        await authz_sql.aupsert_policy(
+            self.db_engine, table, role=role, resource=resource, action=action, effect=effect
+        )
+
+    async def delete_authz_policy(
+        self, *, role: str, resource: Optional[str] = None, action: Optional[str] = None
+    ) -> None:
+        table = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        await authz_sql.adelete_policy(self.db_engine, table, role=role, resource=resource, action=action)
+
+    async def get_authz_direct_roles(self, subject: str) -> List[str]:
+        table = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return await authz_sql.aget_direct_roles(self.db_engine, table, subject)
+
+    async def get_authz_direct_roles_many(self, subjects: List[str]) -> Dict[str, List[str]]:
+        table = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return await authz_sql.aget_direct_roles_many(self.db_engine, table, subjects)
+
+    async def list_authz_role_subjects(self, role: str) -> List[str]:
+        table = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return await authz_sql.aget_role_subjects(self.db_engine, table, role)
+
+    async def authz_name_is_role(self, name: str) -> bool:
+        policy = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        grouping = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return await authz_sql.aname_is_role(self.db_engine, policy, grouping, name)
+
+    async def assign_authz_role(self, subject: str, role: str) -> None:
+        table = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        await authz_sql.aassign_role(self.db_engine, table, subject, role)
+
+    async def unassign_authz_role(self, subject: str, role: str) -> None:
+        table = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        await authz_sql.aunassign_role(self.db_engine, table, subject, role)
+
+    async def replace_authz_subject_roles(self, subject: str, role: str) -> None:
+        table = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        await authz_sql.areplace_subject_roles(self.db_engine, table, subject, role)
+
+    async def list_authz_roles(self) -> List[str]:
+        policy = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        grouping = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return await authz_sql.alist_roles(self.db_engine, policy, grouping)
+
+    async def delete_authz_role(self, role: str) -> None:
+        policy = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        grouping = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        meta = await self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
+        await authz_sql.adelete_role(self.db_engine, policy, grouping, meta, role)
+
+    async def get_authz_role_meta(self, slug: str) -> Optional[Dict[str, Any]]:
+        table = await self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
+        return await authz_sql.aget_role_meta(self.db_engine, table, slug)
+
+    async def list_authz_role_meta(self) -> List[Dict[str, Any]]:
+        table = await self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
+        return await authz_sql.alist_role_meta(self.db_engine, table)
+
+    async def upsert_authz_role_meta(self, slug: str, values: Dict[str, Any]) -> None:
+        table = await self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
+        await authz_sql.aupsert_role_meta(self.db_engine, table, slug, values)
+
+    async def delete_authz_role_meta(self, slug: str) -> None:
+        table = await self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
+        await authz_sql.adelete_role_meta(self.db_engine, table, slug)
+
+    async def get_authz_user(self, user_id: str) -> Optional[Dict[str, Any]]:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return await authz_sql.aget_user(self.db_engine, table, user_id)
+
+    async def list_authz_users(
+        self,
+        limit: int = 1000,
+        offset: int = 0,
+        include_disabled: bool = True,
+        search: Optional[str] = None,
+        sort_by: str = "created_at",
+        order: str = "desc",
+    ) -> List[Dict[str, Any]]:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return await authz_sql.alist_users(
+            self.db_engine, table, limit, offset, include_disabled, search, sort_by, order
+        )
+
+    async def count_authz_users(self, include_disabled: bool = True, search: Optional[str] = None) -> int:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return await authz_sql.acount_users(self.db_engine, table, include_disabled, search)
+
+    async def count_authz_users_by_status(self) -> Dict[str, int]:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return await authz_sql.acount_users_by_status(self.db_engine, table)
+
+    async def list_authz_user_ids(self, include_disabled: bool = True) -> List[str]:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return await authz_sql.alist_user_ids(self.db_engine, table, include_disabled)
+
+    async def count_authz_users_by_day(
+        self, starting_at: Optional[int] = None, ending_before: Optional[int] = None
+    ) -> List[Dict[str, int]]:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return await authz_sql.acount_users_by_day(self.db_engine, table, starting_at, ending_before)
+
+    async def upsert_authz_user(self, user_id: str, values: Dict[str, Any]) -> None:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        await authz_sql.aupsert_user(self.db_engine, table, user_id, values)
+
+    async def set_authz_user_disabled(self, user_id: str, disabled: bool) -> None:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        await authz_sql.aset_user_disabled(self.db_engine, table, user_id, disabled)
+
+    async def delete_authz_user(self, user_id: str) -> None:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        await authz_sql.adelete_user(self.db_engine, table, user_id)
+
+    async def is_authz_user_disabled(self, user_id: str) -> bool:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return await authz_sql.ais_user_disabled(self.db_engine, table, user_id)
+
+    async def record_authz_audit_event(self, values: Dict[str, Any]) -> None:
+        table = await self._get_table(table_type=AUTHZ_AUDIT, create_table_if_not_found=True)
+        await authz_sql.arecord_event(self.db_engine, table, values)
+
+    async def record_authz_decision(self, values: Dict[str, Any]) -> None:
+        table = await self._get_table(table_type=AUTHZ_DECISIONS, create_table_if_not_found=True)
+        await authz_sql.arecord_event(self.db_engine, table, values)
+
+    async def read_authz_audit_events(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        search: Optional[str] = None,
+        sort_by: str = "created_at",
+        order: str = "desc",
+        decisions: bool = False,
+    ) -> List[Dict[str, Any]]:
+        table_type = AUTHZ_DECISIONS if decisions else AUTHZ_AUDIT
+        columns = ["actor", "action", "target"]
+        table = await self._get_table(table_type=table_type, create_table_if_not_found=True)
+        return await authz_sql.aread_events(
+            self.db_engine, table, limit, offset, search, sort_by, order, search_columns=columns
+        )
+
+    async def count_authz_audit_events(self, search: Optional[str] = None, decisions: bool = False) -> int:
+        table_type = AUTHZ_DECISIONS if decisions else AUTHZ_AUDIT
+        columns = ["actor", "action", "target"]
+        table = await self._get_table(table_type=table_type, create_table_if_not_found=True)
+        return await authz_sql.acount_events(self.db_engine, table, search, search_columns=columns)
+
+    # --- External agent transcripts ---
+
+    async def append_transcript_entries(
+        self,
+        framework: str,
+        project_key: str,
+        session_id: str,
+        entries: List[Dict[str, Any]],
+        agno_session_id: str,
+        subpath: Optional[str] = None,
+    ) -> None:
+        if not entries:
+            return
+        from sqlalchemy.dialects.postgresql import insert as transcript_insert
+
+        from agno.db.transcripts import transcript_lock_id, transcript_rows
+
+        table = await self._get_table("transcripts", create_table_if_not_found=True)
+        if table is None:
+            raise RuntimeError("Could not create transcript table")
+        stmt = transcript_insert(table).on_conflict_do_nothing(
+            index_elements=["framework", "project_key", "session_id", "subpath", "entry_uuid"]
+        )
+        async with self.async_session_factory() as sess, sess.begin():
+            await sess.execute(
+                select(func.pg_advisory_xact_lock(transcript_lock_id(framework, project_key, session_id, subpath)))
+            )
+            previous = await sess.execute(
+                select(func.max(table.c.position)).where(
+                    table.c.framework == framework,
+                    table.c.project_key == project_key,
+                    table.c.session_id == session_id,
+                    table.c.subpath == (subpath or ""),
+                )
+            )
+            rows = transcript_rows(
+                framework, project_key, session_id, subpath, agno_session_id, entries, previous.scalar() or 0
+            )
+            await sess.execute(stmt, rows)
+
+    async def get_transcript_entries(
+        self, framework: str, project_key: str, session_id: str, subpath: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        import json
+
+        table = await self._get_table("transcripts")
+        if table is None:
+            return []
+        stmt = (
+            select(table.c.entry)
+            .where(
+                table.c.framework == framework,
+                table.c.project_key == project_key,
+                table.c.session_id == session_id,
+                table.c.subpath == (subpath or ""),
+            )
+            .order_by(table.c.position)
+        )
+        async with self.async_session_factory() as sess:
+            result = await sess.execute(stmt)
+            return [json.loads(row[0]) for row in result.fetchall()]
+
+    async def list_transcript_sessions(self, framework: str, project_key: str) -> List[Dict[str, Any]]:
+        table = await self._get_table("transcripts")
+        if table is None:
+            return []
+        stmt = (
+            select(table.c.session_id, func.max(table.c.created_at).label("mtime"))
+            .where(table.c.framework == framework, table.c.project_key == project_key, table.c.subpath == "")
+            .group_by(table.c.session_id)
+        )
+        async with self.async_session_factory() as sess:
+            result = await sess.execute(stmt)
+            return [dict(row._mapping) for row in result.fetchall()]
+
+    async def list_transcript_subpaths(self, framework: str, project_key: str, session_id: str) -> List[str]:
+        table = await self._get_table("transcripts")
+        if table is None:
+            return []
+        stmt = (
+            select(table.c.subpath)
+            .where(
+                table.c.framework == framework,
+                table.c.project_key == project_key,
+                table.c.session_id == session_id,
+                table.c.subpath != "",
+            )
+            .distinct()
+            .order_by(table.c.subpath)
+        )
+        async with self.async_session_factory() as sess:
+            result = await sess.execute(stmt)
+            return [row[0] for row in result.fetchall()]
+
+    async def delete_transcript(
+        self, framework: str, project_key: str, session_id: str, subpath: Optional[str] = None
+    ) -> None:
+        table = await self._get_table("transcripts")
+        if table is None:
+            return
+        stmt = table.delete().where(
+            table.c.framework == framework, table.c.project_key == project_key, table.c.session_id == session_id
+        )
+        if subpath is not None:
+            stmt = stmt.where(table.c.subpath == subpath)
+        async with self.async_session_factory() as sess, sess.begin():
+            await sess.execute(stmt)
+
+    # --- Sources ---
+
+    async def create_source(self, source_data: Dict[str, Any], reuse: bool = False) -> Dict[str, Any]:
+        from agno.db.sql.company import create_company_source
+
+        table = await self._get_table(table_type="sources", create_table_if_not_found=True)
+        products = await self._get_table(table_type="products", create_table_if_not_found=True)
+        if table is None or products is None:
+            raise RuntimeError("Failed to get or create Company tables")
+        async with self.async_session_factory() as sess, sess.begin():
+            return await sess.run_sync(create_company_source, products, table, source_data, reuse)
+
+    async def get_source(
+        self, source_id: str, user_id: Optional[str] = None, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        table = await self._get_table(table_type="sources")
+        if table is None:
+            return None
+        stmt = select(table).where(table.c.id == source_id)
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        if not include_deleted:
+            stmt = stmt.where(table.c.deleted_at.is_(None))
+        async with self.async_session_factory() as sess:
+            result = (await sess.execute(stmt)).fetchone()
+            return dict(result._mapping) if result else None
+
+    async def get_sources(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        include_deleted: bool = False,
+        product_id: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        if limit < 1 or page < 1:
+            raise ValueError("limit and page must be positive")
+        table = await self._get_table(table_type="sources")
+        if table is None:
+            return [], 0
+        from agno.db.sql.company import active_parents
+
+        products = await self._get_table(table_type="products", create_table_if_not_found=True)
+        stmt = active_parents(select(table), table, products)
+        if product_id is not None:
+            stmt = stmt.where(table.c.product_id == product_id)
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        if not include_deleted:
+            stmt = stmt.where(table.c.deleted_at.is_(None))
+        async with self.async_session_factory() as sess:
+            total = (await sess.execute(select(func.count()).select_from(stmt.subquery()))).scalar() or 0
+            stmt = stmt.order_by(table.c.created_at.desc(), table.c.id.desc()).limit(limit).offset((page - 1) * limit)
+            rows = (await sess.execute(stmt)).fetchall()
+            return [dict(row._mapping) for row in rows], total
+
+    async def update_source(
+        self, source_id: str, user_id: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
+        from agno.db.schemas.sources import validate_source_fields
+
+        table = await self._get_table(table_type="sources")
+        if table is None:
+            return None
+        stmt = table.update().where(table.c.id == source_id, table.c.deleted_at.is_(None))
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        async with self.async_session_factory() as sess, sess.begin():
+            condition = stmt.whereclause
+            assert condition is not None
+            existing = (await sess.execute(select(table).where(condition).with_for_update())).mappings().first()
+            if existing is None:
+                return None
+            candidate = {**{key: existing[key] for key in ("type", "reference", "credential_ref", "config")}, **fields}
+            if "config" not in fields and isinstance(candidate.get("config"), dict):
+                candidate["config"] = {key: value for key, value in candidate["config"].items() if key != "metadata"}
+            # Unchanged legacy references need not satisfy a newly introduced URL rule.
+            if "reference" not in fields and candidate["type"] == existing["type"]:
+                candidate.pop("reference", None)
+            validate_source_fields(candidate)
+            result = (
+                await sess.execute(stmt.values(**fields, updated_at=int(time.time())).returning(table))
+            ).fetchone()
+            return dict(result._mapping) if result else None
+
+    async def delete_source(self, source_id: str, user_id: Optional[str] = None) -> bool:
+        table = await self._get_table(table_type="sources")
+        if table is None:
+            return False
+        stmt = table.update().where(table.c.id == source_id, table.c.deleted_at.is_(None))
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        now = int(time.time())
+        async with self.async_session_factory() as sess, sess.begin():
+            result = (await sess.execute(stmt.values(deleted_at=now, updated_at=now).returning(table.c.id))).fetchone()
+            return result is not None
+
+    async def restore_source(self, source_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        table = await self._get_table(table_type="sources")
+        if table is None:
+            return None
+        stmt = table.update().where(table.c.id == source_id, table.c.deleted_at.is_not(None))
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        async with self.async_session_factory() as sess, sess.begin():
+            result = (
+                await sess.execute(stmt.values(deleted_at=None, updated_at=int(time.time())).returning(table))
+            ).fetchone()
+            return dict(result._mapping) if result else None
+
+    # --- Company details ---
+
+    async def get_company(self) -> Optional[Dict[str, Any]]:
+        table = await self._get_table(table_type="company")
+        if table is None:
+            return None
+        async with self.async_session_factory() as sess:
+            row = (await sess.execute(select(table).where(table.c.id == "company"))).first()
+            return dict(row._mapping) if row is not None else None
+
+    async def initialize_company(self, name: str = "Company", description: Optional[str] = None) -> Dict[str, Any]:
+        from agno.db.sql.company import initialize_company_details
+
+        table = await self._get_table(table_type="company", create_table_if_not_found=True)
+        if table is None:
+            raise RuntimeError("Company details table is unavailable after provisioning")
+        async with self.async_session_factory() as sess, sess.begin():
+            return await sess.run_sync(lambda sync: initialize_company_details(sync, table, name, description))
+
+    async def update_company(self, expected_updated_at: int, **fields: Any) -> Optional[Dict[str, Any]]:
+        from agno.db.sql.company import update_company_details
+
+        table = await self._get_table(table_type="company")
+        if table is None:
+            return None
+        async with self.async_session_factory() as sess, sess.begin():
+            return await sess.run_sync(lambda sync: update_company_details(sync, table, expected_updated_at, fields))
+
+    # --- Products ---
+
+    async def create_product(self, product_data: Dict[str, Any]) -> Dict[str, Any]:
+        from agno.db.schemas.products import product_metadata
+
+        product_data = {**product_data, "metadata": product_metadata(product_data.get("metadata"))}
+        table = await self._get_table(table_type="products", create_table_if_not_found=True)
+        if table is None:
+            raise RuntimeError("Failed to get or create products table")
+        async with self.async_session_factory() as sess, sess.begin():
+            result = (await sess.execute(table.insert().values(**product_data).returning(table))).one()
+            return dict(result._mapping)
+
+    async def get_product(
+        self, product_id: str, user_id: Optional[str] = None, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        table = await self._get_table(table_type="products")
+        if table is None:
+            return None
+        stmt = select(table).where(table.c.id == product_id)
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        if not include_deleted:
+            stmt = stmt.where(table.c.deleted_at.is_(None))
+        async with self.async_session_factory() as sess:
+            result = (await sess.execute(stmt)).fetchone()
+            return dict(result._mapping) if result else None
+
+    async def get_products(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        include_deleted: bool = False,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        from agno.db.schemas.products import company_sort
+
+        sort_by, sort_order = company_sort(sort_by, sort_order)
+        if limit < 1 or page < 1:
+            raise ValueError("limit and page must be positive")
+        table = await self._get_table(table_type="products")
+        if table is None:
+            return [], 0
+        stmt = select(table)
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        if not include_deleted:
+            stmt = stmt.where(table.c.deleted_at.is_(None))
+        async with self.async_session_factory() as sess:
+            total = (await sess.execute(select(func.count()).select_from(stmt.subquery()))).scalar() or 0
+            column = (
+                func.coalesce(table.c.updated_at, table.c.created_at) if sort_by == "updated_at" else table.c.created_at
+            )
+            order = column.asc() if sort_order == "asc" else column.desc()
+            tie = table.c.id.asc() if sort_order == "asc" else table.c.id.desc()
+            stmt = stmt.order_by(order, tie).limit(limit).offset((page - 1) * limit)
+            rows = (await sess.execute(stmt)).fetchall()
+            return [dict(row._mapping) for row in rows], total
+
+    async def update_product(
+        self, product_id: str, user_id: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
+        from agno.db.schemas.products import product_metadata, validate_product_fields
+        from agno.db.sql.company import update_product_row
+
+        validate_product_fields(fields)
+        if "metadata" in fields:
+            fields["metadata"] = product_metadata(fields["metadata"])
+        table = await self._get_table(table_type="products")
+        if table is None:
+            return None
+        async with self.async_session_factory() as sess, sess.begin():
+            return await sess.run_sync(update_product_row, table, product_id, user_id, fields)
+
+    async def get_product_counts(self, product_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        from agno.db.sql.company import product_counts
+
+        if not product_ids:
+            return {}
+        products = await self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = await self._get_table(table_type="projects", create_table_if_not_found=True)
+        tasks = await self._get_table(table_type="tasks", create_table_if_not_found=True)
+        async with self.async_session_factory() as sess:
+            return await sess.run_sync(product_counts, products, projects, tasks, product_ids)
+
+    async def delete_product(self, product_id: str, user_id: Optional[str] = None) -> bool:
+        from agno.db.sql.company import archive_product
+
+        table = await self._get_table(table_type="products")
+        if table is None:
+            return False
+        products = table
+        projects = await self._get_table(table_type="projects", create_table_if_not_found=True)
+        tasks = await self._get_table(table_type="tasks", create_table_if_not_found=True)
+        async with self.async_session_factory() as sess, sess.begin():
+            return await sess.run_sync(archive_product, products, projects, tasks, product_id, user_id)
+
+    async def restore_product(self, product_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        from agno.db.sql.company import restore_product
+
+        table = await self._get_table(table_type="products")
+        if table is None:
+            return None
+        products = table
+        projects = await self._get_table(table_type="projects", create_table_if_not_found=True)
+        tasks = await self._get_table(table_type="tasks", create_table_if_not_found=True)
+        async with self.async_session_factory() as sess, sess.begin():
+            return await sess.run_sync(restore_product, products, projects, tasks, product_id, user_id)
+
+    # --- Projects ---
+
+    async def create_project(self, project_data: Dict[str, Any], reuse: bool = False) -> Dict[str, Any]:
+        from agno.db.sql.company import lock_product
+
+        table = await self._get_table(table_type="projects", create_table_if_not_found=True)
+        if table is None:
+            raise RuntimeError("Failed to get or create projects table")
+        products = await self._get_table(table_type="products", create_table_if_not_found=True)
+        async with self.async_session_factory() as sess, sess.begin():
+            await sess.run_sync(lock_product, products, project_data["product_id"])
+            if reuse:
+                existing = (await sess.execute(select(table).where(table.c.id == project_data["id"]))).first()
+                if existing is not None:
+                    if existing._mapping["product_id"] != project_data["product_id"]:
+                        raise ValueError("Project identity belongs to another Product")
+                    return dict(existing._mapping)
+            result = (await sess.execute(table.insert().values(**project_data).returning(table))).one()
+            return dict(result._mapping)
+
+    async def get_project(
+        self, project_id: str, user_id: Optional[str] = None, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        table = await self._get_table(table_type="projects")
+        if table is None:
+            return None
+        stmt = select(table).where(table.c.id == project_id)
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        if not include_deleted:
+            stmt = stmt.where(table.c.deleted_at.is_(None))
+        async with self.async_session_factory() as sess:
+            result = (await sess.execute(stmt)).fetchone()
+            return dict(result._mapping) if result else None
+
+    async def get_projects(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        include_deleted: bool = False,
+        product_id: Optional[str] = None,
+        status: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        from agno.db.schemas.products import company_sort
+        from agno.db.sql.company import active_parents
+
+        sort_by, sort_order = company_sort(sort_by, sort_order)
+        if limit < 1 or page < 1:
+            raise ValueError("limit and page must be positive")
+        table = await self._get_table(table_type="projects")
+        if table is None:
+            return [], 0
+        products = await self._get_table(table_type="products", create_table_if_not_found=True)
+        stmt = active_parents(select(table), table, products)
+        if product_id is not None:
+            stmt = stmt.where(table.c.product_id == product_id)
+        if status is not None:
+            stmt = stmt.where(table.c.status == status)
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        if not include_deleted:
+            stmt = stmt.where(table.c.deleted_at.is_(None))
+        async with self.async_session_factory() as sess:
+            total = (await sess.execute(select(func.count()).select_from(stmt.subquery()))).scalar() or 0
+            column = (
+                func.coalesce(table.c.updated_at, table.c.created_at) if sort_by == "updated_at" else table.c.created_at
+            )
+            order = column.asc() if sort_order == "asc" else column.desc()
+            tie = table.c.id.asc() if sort_order == "asc" else table.c.id.desc()
+            stmt = stmt.order_by(order, tie).limit(limit).offset((page - 1) * limit)
+            rows = (await sess.execute(stmt)).fetchall()
+            return [dict(row._mapping) for row in rows], total
+
+    async def update_project(
+        self, project_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
+        from agno.db.schemas.projects import validate_project_fields
+        from agno.db.sql.company import lock_child
+
+        validate_project_fields(fields)
+        table = await self._get_table(table_type="projects")
+        if table is None:
+            return None
+        stmt = table.update().where(table.c.id == project_id, table.c.deleted_at.is_(None))
+        if expected_status is not None:
+            stmt = stmt.where(table.c.status == expected_status)
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        products = await self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = await self._get_table(table_type="projects", create_table_if_not_found=True)
+        async with self.async_session_factory() as sess, sess.begin():
+            await sess.run_sync(lock_child, products, projects, table, project_id)
+            result = (
+                await sess.execute(stmt.values(**fields, updated_at=int(time.time())).returning(table))
+            ).fetchone()
+            return dict(result._mapping) if result else None
+
+    async def get_project_counts(self, project_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        from agno.db.sql.company import project_counts
+
+        if not project_ids:
+            return {}
+        products = await self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = await self._get_table(table_type="projects", create_table_if_not_found=True)
+        tasks = await self._get_table(table_type="tasks", create_table_if_not_found=True)
+        async with self.async_session_factory() as sess:
+            return await sess.run_sync(project_counts, products, projects, tasks, project_ids)
+
+    async def delete_project(
+        self, project_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None
+    ) -> bool:
+        from agno.db.sql.company import archive_project
+
+        table = await self._get_table(table_type="projects")
+        if table is None:
+            return False
+        products = await self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = table
+        tasks = await self._get_table(table_type="tasks", create_table_if_not_found=True)
+        async with self.async_session_factory() as sess, sess.begin():
+            return await sess.run_sync(archive_project, products, projects, tasks, project_id, user_id, updated_before)
+
+    async def restore_project(self, project_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        from agno.db.sql.company import restore_project
+
+        table = await self._get_table(table_type="projects")
+        if table is None:
+            return None
+        products = await self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = table
+        tasks = await self._get_table(table_type="tasks", create_table_if_not_found=True)
+        async with self.async_session_factory() as sess, sess.begin():
+            return await sess.run_sync(restore_project, products, projects, tasks, project_id, user_id)
+
+    async def transition_project(
+        self,
+        project_id: str,
+        target: str,
+        reason: str,
+        user_id: Optional[str] = None,
+        accepted_by: Optional[str] = None,
+        expected_updated_at: Optional[int] = _UNSET_UPDATED_AT,
+        auto_accept: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Apply a lifecycle transition only if the observed state still matches."""
+        from agno.db.schemas.projects import project_transition_fields
+        from agno.db.schemas.tasks import _acceptance_count
+        from agno.db.sql.company import lock_child, open_project_tasks
+
+        table = await self._get_table(table_type="projects")
+        if table is None:
+            return None
+        tasks_table = await self._get_table(table_type="tasks") if target == "done" else None
+        tasks = tasks_table if auto_accept else None
+        stmt = select(table).where(table.c.id == project_id, table.c.deleted_at.is_(None))
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        products = await self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = await self._get_table(table_type="projects", create_table_if_not_found=True)
+        async with self.async_session_factory() as sess, sess.begin():
+            await sess.run_sync(lock_child, products, projects, table, project_id)
+            if auto_accept is not None:
+                if target != "done" or expected_updated_at is _UNSET_UPDATED_AT or products is None or tasks is None:
+                    raise ValueError("Automatic completion requires expected_updated_at and a Project with Tasks")
+                task_histories: Sequence[Optional[List[Dict[str, Any]]]] = (
+                    (
+                        await sess.execute(
+                            select(tasks.c.transitions).where(tasks.c.routine_id == auto_accept["routine_id"])
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                project_histories: Sequence[Optional[List[Dict[str, Any]]]] = (
+                    (await sess.execute(select(table.c.transitions).where(table.c.id != project_id))).scalars().all()
+                )
+                if (
+                    _acceptance_count(
+                        list(task_histories) + list(project_histories), auto_accept["routine_id"], auto_accept["policy"]
+                    )
+                    >= auto_accept["max_acceptances"]
+                ):
+                    raise ValueError("Routine acceptance limit reached")
+            row = (await sess.execute(stmt)).fetchone()
+            if row is None:
+                return None
+            existing = dict(row._mapping)
+            open_tasks = []
+            if tasks_table is not None:
+                open_query = open_project_tasks(tasks_table, project_id)
+                open_tasks = [dict(task._mapping) for task in (await sess.execute(open_query)).fetchall()]
+            fields = project_transition_fields(existing, target, reason, accepted_by, tasks=open_tasks)
+            if auto_accept is not None:
+                fields["transitions"][-1]["auto_accept"] = auto_accept
+            update = table.update().where(
+                table.c.id == project_id,
+                table.c.deleted_at.is_(None),
+                table.c.status == existing["status"],
+                table.c.transitions == existing["transitions"],
+            )
+            if tasks_table is not None:
+                update = update.where(~open_query.exists())
+            if expected_updated_at is not _UNSET_UPDATED_AT:
+                update = update.where(table.c.updated_at == expected_updated_at)
+            if user_id is not None:
+                update = update.where(table.c.user_id == user_id)
+            result = (await sess.execute(update.values(**fields).returning(table))).fetchone()
+            return dict(result._mapping) if result else None
+
+    async def add_product_routine(self, product_id: str, schedule_id: str) -> Dict[str, Any]:
+        """Append a schedule id under the existing hierarchy write lock."""
+        from agno.db.sql.company import link_product_routine
+
+        table = await self._get_table(table_type="products", create_table_if_not_found=True)
+        if table is None:
+            raise RuntimeError("Products table unavailable")
+        async with self.async_session_factory() as sess, sess.begin():
+            return await sess.run_sync(link_product_routine, table, product_id, schedule_id)
+
+    # --- Tasks ---
+
+    async def create_task(self, task_data: Dict[str, Any]) -> Dict[str, Any]:
+        from agno.db.sql.company import existing_task_proposal, lock_product, require_project
+
+        table = await self._get_table(table_type="tasks", create_table_if_not_found=True)
+        if table is None:
+            raise RuntimeError("Failed to get or create tasks table")
+        products = await self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = await self._get_table(table_type="projects", create_table_if_not_found=True)
+        async with self.async_session_factory() as sess, sess.begin():
+            await sess.run_sync(lock_product, products, task_data["product_id"])
+            await sess.run_sync(require_project, projects, task_data.get("project_id"), task_data["product_id"])
+            proposal = await sess.run_sync(existing_task_proposal, table, task_data)
+            if proposal is not None:
+                return proposal
+            await sess.run_sync(
+                require_project,
+                projects,
+                task_data.get("project_id"),
+                task_data["product_id"],
+                task_data.get("status", "backlog"),
+            )
+            if task_data.get("dedupe_key") is not None:
+                from sqlalchemy.dialects.postgresql import insert
+
+                stmt = (
+                    insert(table)
+                    .values(**task_data)
+                    .on_conflict_do_nothing(index_elements=[table.c.product_id, table.c.dedupe_key])
+                    .returning(table)
+                )
+                result = (await sess.execute(stmt)).fetchone()
+                if result is None:
+                    existing = select(table).where(
+                        table.c.product_id == task_data["product_id"],
+                        table.c.dedupe_key == task_data["dedupe_key"],
+                    )
+                    result = (await sess.execute(existing)).one()
+                return dict(result._mapping)
+            result = (await sess.execute(table.insert().values(**task_data).returning(table))).one()
+            return dict(result._mapping)
+
+    async def get_task(
+        self, task_id: str, user_id: Optional[str] = None, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        table = await self._get_table(table_type="tasks")
+        if table is None:
+            return None
+        stmt = select(table).where(table.c.id == task_id)
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        if not include_deleted:
+            stmt = stmt.where(table.c.deleted_at.is_(None))
+        async with self.async_session_factory() as sess:
+            result = (await sess.execute(stmt)).fetchone()
+            return dict(result._mapping) if result else None
+
+    async def get_tasks(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        include_deleted: bool = False,
+        product_id: Optional[str] = None,
+        status: Optional[str] = None,
+        project_id: Optional[str] = None,
+        failed: Optional[bool] = None,
+        session_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        from agno.db.schemas.products import company_sort
+        from agno.db.sql.company import active_parents
+
+        sort_by, sort_order = company_sort(sort_by, sort_order)
+        if limit < 1 or page < 1:
+            raise ValueError("limit and page must be positive")
+        table = await self._get_table(table_type="tasks")
+        if table is None:
+            return [], 0
+        products = await self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = await self._get_table(table_type="projects", create_table_if_not_found=True)
+        stmt = active_parents(select(table), table, products, projects)
+        if failed is not None:
+            result_status = table.c.result["status"].as_string()
+            stmt = stmt.where(
+                and_(table.c.status == "in_progress", result_status.in_(["ERROR", "CANCELLED"]))
+                if failed
+                else or_(
+                    table.c.status != "in_progress",
+                    result_status.is_(None),
+                    result_status.not_in(["ERROR", "CANCELLED"]),
+                )
+            )
+        if session_id is not None:
+            stmt = stmt.where(table.c.session_id == session_id)
+        if product_id is not None:
+            stmt = stmt.where(table.c.product_id == product_id)
+        if status is not None:
+            stmt = stmt.where(table.c.status == status)
+        if project_id is not None:
+            stmt = stmt.where(table.c.project_id == project_id)
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        if not include_deleted:
+            stmt = stmt.where(table.c.deleted_at.is_(None))
+        async with self.async_session_factory() as sess:
+            total = (await sess.execute(select(func.count()).select_from(stmt.subquery()))).scalar() or 0
+            column = (
+                func.coalesce(table.c.updated_at, table.c.created_at) if sort_by == "updated_at" else table.c.created_at
+            )
+            order = column.asc() if sort_order == "asc" else column.desc()
+            tie = table.c.id.asc() if sort_order == "asc" else table.c.id.desc()
+            stmt = stmt.order_by(order, tie).limit(limit).offset((page - 1) * limit)
+            rows = (await sess.execute(stmt)).fetchall()
+            return [dict(row._mapping) for row in rows], total
+
+    async def update_task(
+        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
+        from agno.db.schemas.tasks import validate_task_fields
+        from agno.db.sql.company import lock_child, require_project
+
+        validate_task_fields(fields)
+        table = await self._get_table(table_type="tasks")
+        if table is None:
+            return None
+        stmt = table.update().where(table.c.id == task_id, table.c.deleted_at.is_(None))
+        if set(fields) - {"title", "brief"}:
+            stmt = stmt.where(table.c.status == "backlog")
+        if expected_status is not None:
+            stmt = stmt.where(table.c.status == expected_status)
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        products = await self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = await self._get_table(table_type="projects", create_table_if_not_found=True)
+        async with self.async_session_factory() as sess, sess.begin():
+            await sess.run_sync(lock_child, products, projects, table, task_id)
+            product_id = (await sess.execute(select(table.c.product_id).where(table.c.id == task_id))).scalar()
+            if product_id is not None and fields.get("project_id") is not None:
+                await sess.run_sync(require_project, projects, fields["project_id"], product_id, "backlog")
+            result = (
+                await sess.execute(stmt.values(**fields, updated_at=int(time.time())).returning(table))
+            ).fetchone()
+            return dict(result._mapping) if result else None
+
+    async def delete_task(
+        self, task_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None
+    ) -> bool:
+        from agno.db.sql.company import lock_child
+
+        table = await self._get_table(table_type="tasks")
+        if table is None:
+            return False
+        stmt = table.update().where(table.c.id == task_id, table.c.deleted_at.is_(None))
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        if updated_before is not None:
+            stmt = stmt.where(
+                table.c.status.in_(["done", "cancelled"]),
+                func.coalesce(table.c.updated_at, table.c.created_at) < updated_before,
+            )
+        now = int(time.time())
+        products = await self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = await self._get_table(table_type="projects", create_table_if_not_found=True)
+        async with self.async_session_factory() as sess, sess.begin():
+            await sess.run_sync(lock_child, products, projects, table, task_id)
+            result = (await sess.execute(stmt.values(deleted_at=now, updated_at=now).returning(table.c.id))).fetchone()
+            return result is not None
+
+    async def restore_task(self, task_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        from agno.db.sql.company import lock_child, task_restore_fields
+
+        table = await self._get_table(table_type="tasks")
+        if table is None:
+            return None
+        stmt = table.update().where(table.c.id == task_id, table.c.deleted_at.is_not(None))
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        products = await self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = await self._get_table(table_type="projects", create_table_if_not_found=True)
+        async with self.async_session_factory() as sess, sess.begin():
+            await sess.run_sync(lock_child, products, projects, table, task_id, restoring=True)
+            existing = (await sess.execute(select(table).where(table.c.id == task_id))).mappings().first()
+            if existing is None:
+                return None
+            result = (
+                await sess.execute(stmt.values(**task_restore_fields(dict(existing))).returning(table))
+            ).fetchone()
+            return dict(result._mapping) if result else None
+
+    async def start_task_run(
+        self,
+        task_id: str,
+        attempt: int,
+        expected_transitions: List[Dict[str, Any]],
+        user_id: Optional[str] = None,
+        run_db_id: Optional[str] = None,
+        session_user_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        from agno.db.schemas.tasks import task_run_fields
+
+        table = await self._get_table(table_type="tasks")
+        if table is None:
+            return None
+        async with self.async_session_factory() as sess, sess.begin():
+            row = (
+                await sess.execute(select(table).where(table.c.id == task_id, table.c.deleted_at.is_(None)))
+            ).fetchone()
+            if row is None:
+                return None
+            existing = dict(row._mapping)
+            if existing["transitions"] != expected_transitions:
+                return None
+            fields = task_run_fields(existing, attempt, user_id, run_db_id, session_user_id)
+            stmt = (
+                table.update()
+                .where(
+                    table.c.id == task_id,
+                    table.c.deleted_at.is_(None),
+                    table.c.transitions == expected_transitions,
+                    table.c.status == existing["status"],
+                )
+                .values(**fields)
+                .returning(table)
+            )
+            row = (await sess.execute(stmt)).fetchone()
+            return dict(row._mapping) if row else None
+
+    async def complete_task_run(
+        self,
+        task_id: str,
+        job_id: str,
+        result: Dict[str, Any],
+        expected_transitions: Optional[List[Dict[str, Any]]] = None,
+        checkout: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        from sqlalchemy import JSON, or_
+
+        from agno.db.schemas.tasks import task_transition_fields
+
+        table = await self._get_table(table_type="tasks")
+        if table is None:
+            return None
+        async with self.async_session_factory() as sess, sess.begin():
+            row = (
+                await sess.execute(
+                    select(table).where(
+                        table.c.id == task_id,
+                        table.c.job_id == job_id,
+                        table.c.deleted_at.is_(None),
+                        table.c.status == "in_progress",
+                        or_(table.c.result.is_(None), table.c.result == JSON.NULL),
+                    )
+                )
+            ).fetchone()
+            if row is None:
+                return None
+            existing = dict(row._mapping)
+            if expected_transitions is not None and existing["transitions"] != expected_transitions:
+                return None
+            fields: Dict[str, Any] = (
+                task_transition_fields(existing, "in_review", "Execution completed; human review required")
+                if result.get("status") == "COMPLETED"
+                else {"updated_at": int(time.time())}
+            )
+            if checkout is not None:
+                fields["metadata"] = {**(existing.get("metadata") or {}), "checkout": checkout}
+            stmt = (
+                table.update()
+                .where(
+                    table.c.id == task_id,
+                    table.c.job_id == job_id,
+                    table.c.deleted_at.is_(None),
+                    table.c.status == "in_progress",
+                    or_(table.c.result.is_(None), table.c.result == JSON.NULL),
+                    table.c.transitions == existing["transitions"],
+                )
+                .values(**fields, result=result)
+                .returning(table)
+            )
+            row = (await sess.execute(stmt)).fetchone()
+            return dict(row._mapping) if row else None
+
+    async def count_company_acceptances(
+        self, routine_id: str, policy: str, exclude_task_id: str, user_id: Optional[str] = None
+    ) -> int:
+        """Count accepted Tasks and completed Projects, including archived records."""
+        from agno.db.schemas.tasks import _acceptance_count
+
+        table = await self._get_table(table_type="tasks")
+        projects = await self._get_table(table_type="projects")
+        if table is None:
+            return 0
+        stmt = select(table.c.transitions).where(table.c.routine_id == routine_id, table.c.id != exclude_task_id)
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        async with self.async_session_factory() as sess:
+            histories: Sequence[Optional[List[Dict[str, Any]]]] = (await sess.execute(stmt)).scalars().all()
+            if projects is not None:
+                project_stmt = select(projects.c.transitions)
+                if user_id is not None:
+                    project_stmt = project_stmt.where(projects.c.user_id == user_id)
+                histories = list(histories) + list((await sess.execute(project_stmt)).scalars().all())
+        return _acceptance_count(histories, routine_id, policy)
+
+    async def transition_task(
+        self,
+        task_id: str,
+        target: str,
+        reason: str,
+        user_id: Optional[str] = None,
+        accepted_by: Optional[str] = None,
+        executor_type: Optional[str] = None,
+        executor_id: Optional[str] = None,
+        expected_updated_at: Optional[int] = _UNSET_UPDATED_AT,
+        auto_accept: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Apply a lifecycle transition only if the observed state still matches."""
+        from agno.db.schemas.tasks import _acceptance_count, task_transition_fields
+        from agno.db.sql.company import lock_child, require_project
+
+        table = await self._get_table(table_type="tasks")
+        if table is None:
+            return None
+        stmt = select(table).where(table.c.id == task_id, table.c.deleted_at.is_(None))
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        products = await self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = await self._get_table(table_type="projects", create_table_if_not_found=True)
+        async with self.async_session_factory() as sess, sess.begin():
+            if auto_accept is not None:
+                await sess.run_sync(lock_child, products, projects, table, task_id)
+                if expected_updated_at is _UNSET_UPDATED_AT or products is None:
+                    raise ValueError("Automatic acceptance requires expected_updated_at and a Product")
+                prior: Sequence[Optional[List[Dict[str, Any]]]] = (
+                    (
+                        await sess.execute(
+                            select(table.c.transitions).where(
+                                table.c.routine_id == auto_accept["routine_id"], table.c.id != task_id
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                if projects is not None:
+                    prior = list(prior) + list((await sess.execute(select(projects.c.transitions))).scalars().all())
+                if (
+                    _acceptance_count(prior, auto_accept["routine_id"], auto_accept["policy"])
+                    >= auto_accept["max_acceptances"]
+                ):
+                    raise ValueError("Routine acceptance limit reached")
+            row = (await sess.execute(stmt)).fetchone()
+            if row is None:
+                return None
+            existing = dict(row._mapping)
+            fields = task_transition_fields(existing, target, reason, accepted_by, executor_type, executor_id)
+            if auto_accept is not None:
+                fields["transitions"][-1]["auto_accept"] = auto_accept
+            else:
+                await sess.run_sync(lock_child, products, projects, table, task_id)
+            if existing["status"] in {"done", "cancelled"}:
+                # Reopened work must not land in a completed or cancelled Project.
+                await sess.run_sync(require_project, projects, existing["project_id"], existing["product_id"], target)
+            update = table.update().where(
+                table.c.id == task_id,
+                table.c.deleted_at.is_(None),
+                table.c.status == existing["status"],
+                table.c.transitions == existing["transitions"],
+            )
+            if expected_updated_at is not _UNSET_UPDATED_AT:
+                update = update.where(table.c.updated_at == expected_updated_at)
+            if user_id is not None:
+                update = update.where(table.c.user_id == user_id)
+            result = (await sess.execute(update.values(**fields).returning(table))).fetchone()
+            return dict(result._mapping) if result else None

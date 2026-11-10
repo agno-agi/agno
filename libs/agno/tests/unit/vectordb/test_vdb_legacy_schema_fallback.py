@@ -97,6 +97,16 @@ def _make_opensearch():
     return db, "_owner_field_is_exact", db._require_owner_field
 
 
+def _make_elasticsearch():
+    pytest.importorskip("elasticsearch")
+    from agno.vectordb.elasticsearch import Elasticsearch
+
+    db = Elasticsearch(index_name="t", dimension=DIM, embedder=StubEmbedder())
+    # The gate inspects the live mapping, so the client must never reach a real cluster.
+    db._client = MagicMock()
+    return db, "_owner_field_is_exact", db._require_owner_field
+
+
 BACKENDS = {
     "pgvector": _make_pgvector,
     "clickhouse": _make_clickhouse,
@@ -105,6 +115,7 @@ BACKENDS = {
     "redis": _make_redis,
     "weaviate": _make_weaviate,
     "opensearch": _make_opensearch,
+    "elasticsearch": _make_elasticsearch,
 }
 
 

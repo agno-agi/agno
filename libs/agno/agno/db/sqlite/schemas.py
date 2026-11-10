@@ -2,13 +2,24 @@
 
 from typing import Any
 
+from agno.db.schemas.authz import AUTHZ_TABLE_SCHEMAS
 from agno.db.schemas.mcp_oauth import MCP_OAUTH_TABLE_SCHEMAS
 
 try:
-    from sqlalchemy.types import JSON, BigInteger, Boolean, Date, String
+    from sqlalchemy.types import JSON, BigInteger, Boolean, Date, Integer, String, Text
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
+
+COMPANY_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "name": {"type": String, "nullable": False},
+    "description": {"type": Text, "nullable": True},
+    # Framework- or application-owned; PATCH /company/details cannot write it.
+    "metadata": {"type": JSON, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False},
+    "updated_at": {"type": BigInteger, "nullable": False},
+}
 
 SESSION_TABLE_SCHEMA = {
     "session_id": {"type": String, "primary_key": True, "nullable": False},
@@ -144,6 +155,102 @@ METRICS_TABLE_SCHEMA = {
     ],
 }
 
+COMPONENT_METRICS_TABLE_SCHEMA = {
+    "aggregation_period": {"type": String, "primary_key": True, "nullable": False},
+    "date": {"type": Date, "primary_key": True, "nullable": False},
+    # Owner of this row. Empty string for runs with no user, since SQLite treats NULLs as distinct
+    "user_id": {"type": String, "primary_key": True, "nullable": False, "default": ""},
+    "component_type": {"type": String, "primary_key": True, "nullable": False},
+    "component_id": {"type": String, "primary_key": True, "nullable": False},
+    "parent_component_id": {"type": String, "primary_key": True, "nullable": False, "default": ""},
+    "root_component_id": {"type": String, "primary_key": True, "nullable": False, "default": ""},
+    "sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "input_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "output_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "reasoning_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "status_metrics": {"type": JSON, "nullable": False, "default": {}},
+    "model_metrics": {"type": JSON, "nullable": False, "default": {}},
+    "tool_metrics": {"type": JSON, "nullable": False, "default": {}},
+    "duration_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_duration_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_duration_ms": {"type": BigInteger, "nullable": True},
+    "duration_buckets": {"type": JSON, "nullable": False, "default": {}},
+    "time_to_first_token_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_time_to_first_token_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_time_to_first_token_ms": {"type": BigInteger, "nullable": True},
+    "time_to_first_token_buckets": {"type": JSON, "nullable": False, "default": {}},
+    "model_calls_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_model_call_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_model_call_ms": {"type": BigInteger, "nullable": True},
+    "model_call_buckets": {"type": JSON, "nullable": False, "default": {}},
+    "additional_metrics": {"type": JSON, "nullable": False, "default": {}},
+    "token_details": {"type": JSON, "nullable": False, "default": {}},
+    "created_at": {"type": BigInteger, "nullable": False},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "__composite_indexes__": [
+        # One user's rows of a date range
+        {"name": "user_id_date", "columns": ["user_id", "date"]},
+    ],
+}
+
+AGGREGATE_METRICS_TABLE_SCHEMA = {
+    "aggregation_period": {"type": String, "primary_key": True, "nullable": False},
+    "date": {"type": Date, "primary_key": True, "nullable": False},
+    # Owner of this row. Empty string for the everyone row, which counts every run, runs with no user included.
+    # Not NULL, since SQLite treats NULLs as distinct
+    "user_id": {"type": String, "primary_key": True, "nullable": False, "default": ""},
+    "agent_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "team_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "workflow_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "root_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "agent_sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "team_sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "workflow_sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "users_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "input_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "output_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "reasoning_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "status_metrics": {"type": JSON, "nullable": False, "default": {}},
+    "model_metrics": {"type": JSON, "nullable": False, "default": {}},
+    "tool_metrics": {"type": JSON, "nullable": False, "default": {}},
+    "duration_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_duration_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_duration_ms": {"type": BigInteger, "nullable": True},
+    "duration_buckets": {"type": JSON, "nullable": False, "default": {}},
+    "time_to_first_token_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_time_to_first_token_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_time_to_first_token_ms": {"type": BigInteger, "nullable": True},
+    "time_to_first_token_buckets": {"type": JSON, "nullable": False, "default": {}},
+    "model_calls_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_model_call_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_model_call_ms": {"type": BigInteger, "nullable": True},
+    "model_call_buckets": {"type": JSON, "nullable": False, "default": {}},
+    "additional_metrics": {"type": JSON, "nullable": False, "default": {}},
+    "token_details": {"type": JSON, "nullable": False, "default": {}},
+    # The agno version that built the row
+    "metrics_version": {"type": String, "nullable": False},
+    "created_at": {"type": BigInteger, "nullable": False},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "completed": {"type": Boolean, "nullable": False, "default": False},
+    "version": {"type": Integer, "nullable": False, "default": 1},
+}
+
+METRICS_REFRESHES_TABLE_SCHEMA = {
+    # One row, which one refresh of the metrics tables at a time holds
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "locked_by": {"type": String, "nullable": True},
+    "locked_at": {"type": BigInteger, "nullable": True},  # heartbeat-refreshed
+    "started_at": {"type": BigInteger, "nullable": False},
+    "finished_at": {"type": BigInteger, "nullable": True},  # of the last refresh that completed
+    # running | completed | failed
+    "status": {"type": String, "nullable": False},
+    "error": {"type": Text, "nullable": True},
+    "fingerprint": {"type": JSON, "nullable": True},
+}
+
 TRACE_TABLE_SCHEMA = {
     "trace_id": {"type": String, "primary_key": True, "nullable": False},
     "name": {"type": String, "nullable": False},
@@ -250,6 +357,74 @@ LEARNINGS_TABLE_SCHEMA = {
     "metadata": {"type": JSON, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
+}
+
+
+SOURCES_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True},
+    "product_id": {"type": String, "nullable": False, "index": True},
+    "reference": {"type": Text, "nullable": False},
+    "type": {"type": String, "nullable": False},
+    "credential_ref": {"type": String, "nullable": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
+    "config": {"type": JSON, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "deleted_at": {"type": BigInteger, "nullable": True},
+}
+
+PRODUCTS_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True},
+    "name": {"type": String, "nullable": False, "index": True},
+    "purpose": {"type": Text, "nullable": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
+    "metadata": {"type": JSON, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "deleted_at": {"type": BigInteger, "nullable": True},
+}
+
+TASKS_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True},
+    "product_id": {"type": String, "nullable": False, "index": True},
+    "project_id": {"type": String, "nullable": True, "index": True},
+    "title": {"type": String, "nullable": False, "index": True},
+    "brief": {"type": Text, "nullable": True},
+    "status": {"type": String, "nullable": False, "index": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
+    "executor_type": {"type": String, "nullable": True},
+    "executor_id": {"type": String, "nullable": True},
+    "accepted_by": {"type": String, "nullable": True},
+    "accepted_at": {"type": BigInteger, "nullable": True},
+    "session_id": {"type": String, "nullable": True, "index": True},
+    "job_id": {"type": String, "nullable": True, "index": True},
+    "evidence": {"type": JSON, "nullable": True},
+    "result": {"type": JSON, "nullable": True},
+    "origin": {"type": String, "nullable": True},
+    "routine_id": {"type": String, "nullable": True},
+    "dedupe_key": {"type": String, "nullable": True},
+    "transitions": {"type": JSON, "nullable": True},
+    "metadata": {"type": JSON, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "deleted_at": {"type": BigInteger, "nullable": True},
+    "_unique_constraints": [
+        {"name": "uq_company_task_evidence", "columns": ["product_id", "dedupe_key"]},
+    ],
+}
+
+PROJECTS_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True},
+    "name": {"type": String, "nullable": False, "index": True},
+    "outcome": {"type": Text, "nullable": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
+    "transitions": {"type": JSON, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "deleted_at": {"type": BigInteger, "nullable": True},
+    "product_id": {"type": String, "nullable": False, "index": True},
+    "status": {"type": String, "nullable": False, "index": True},
+    "target_date": {"type": BigInteger, "nullable": True},
 }
 
 
@@ -419,6 +594,48 @@ TOOL_RESULTS_TABLE_SCHEMA = {
 }
 
 
+TRANSCRIPTS_TABLE_SCHEMA = {
+    "framework": {"type": String, "primary_key": True, "nullable": False},
+    "project_key": {"type": String, "primary_key": True, "nullable": False},
+    "session_id": {"type": String, "primary_key": True, "nullable": False},
+    # Empty for the main transcript, so the unique constraint below also covers it.
+    "subpath": {"type": String, "primary_key": True, "nullable": False},
+    "position": {"type": BigInteger, "primary_key": True, "nullable": False},
+    "entry_uuid": {"type": String, "nullable": True},
+    "entry": {"type": String, "nullable": False},
+    "agno_session_id": {"type": String, "nullable": False, "index": True},
+    "created_at": {"type": BigInteger, "nullable": False},
+    "_unique_constraints": [
+        {"name": "uq_entry_uuid", "columns": ["framework", "project_key", "session_id", "subpath", "entry_uuid"]},
+    ],
+}
+
+
+COMPACTIONS_TABLE_SCHEMA = {
+    "compaction_id": {"type": String, "primary_key": True, "nullable": False},
+    "session_id": {"type": String, "nullable": False},
+    # The run that produced this fold. A record is an immutable fact about one
+    # run, so resuming that run resolves the fold it actually saw.
+    "run_id": {"type": String, "nullable": True},
+    "user_id": {"type": String, "nullable": True},
+    # Anchors are message ids, never indexes: history is rebuilt from stored runs
+    # each run, so a position means something different every time.
+    "first_kept_message_id": {"type": String, "nullable": True},
+    "summary": {"type": String, "nullable": True},
+    # The folded transcript, verbatim. Null when the backend or the caller opted
+    # out: the summary still stands, only recoverability is lost.
+    "archived_messages": {"type": String, "nullable": True},
+    "messages_compacted": {"type": BigInteger, "nullable": True},
+    "tokens_before": {"type": BigInteger, "nullable": True},
+    "tokens_after": {"type": BigInteger, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False},
+    "__composite_indexes__": [
+        # Resolving the fold in force, and session cleanup.
+        {"name": "compactions_session_created_at", "columns": ["session_id", "created_at"]},
+    ],
+}
+
+
 def get_table_schema_definition(
     table_type: str,
     traces_table_name: str = "agno_traces",
@@ -451,6 +668,9 @@ def get_table_schema_definition(
         # "runs" is handled by _get_run_table_schema above (needs session_table_name)
         "evals": EVAL_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
+        "component_metrics": COMPONENT_METRICS_TABLE_SCHEMA,
+        "aggregate_metrics": AGGREGATE_METRICS_TABLE_SCHEMA,
+        "metrics_refreshes": METRICS_REFRESHES_TABLE_SCHEMA,
         "memories": USER_MEMORY_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
         "traces": TRACE_TABLE_SCHEMA,
@@ -460,11 +680,19 @@ def get_table_schema_definition(
         "component_links": COMPONENT_LINKS_TABLE_SCHEMA,
         "learnings": LEARNINGS_TABLE_SCHEMA,
         "schedules": SCHEDULE_TABLE_SCHEMA,
+        "company": COMPANY_TABLE_SCHEMA,
+        "products": PRODUCTS_TABLE_SCHEMA,
+        "sources": SOURCES_TABLE_SCHEMA,
+        "projects": PROJECTS_TABLE_SCHEMA,
+        "tasks": TASKS_TABLE_SCHEMA,
         "tool_results": TOOL_RESULTS_TABLE_SCHEMA,
+        "compactions": COMPACTIONS_TABLE_SCHEMA,
+        "transcripts": TRANSCRIPTS_TABLE_SCHEMA,
         "approvals": APPROVAL_TABLE_SCHEMA,
         "auth_tokens": AUTH_TOKEN_TABLE_SCHEMA,
         "service_accounts": SERVICE_ACCOUNT_TABLE_SCHEMA,
         **MCP_OAUTH_TABLE_SCHEMAS,
+        **AUTHZ_TABLE_SCHEMAS,
     }
     schema = schemas.get(table_type, {})
 
