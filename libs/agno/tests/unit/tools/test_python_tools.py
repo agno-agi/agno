@@ -7,6 +7,40 @@ import pytest
 from agno.tools.python import PythonTools
 
 
+@pytest.mark.parametrize("namespace_name", ["safe_globals", "safe_locals"])
+@pytest.mark.parametrize("initial", [{}, {"seed": 7}])
+def test_explicit_execution_namespace_is_preserved(temp_dir, namespace_name, initial):
+    namespace = initial.copy()
+    tools = PythonTools(base_dir=temp_dir, **{namespace_name: namespace})
+    assert getattr(tools, namespace_name) is namespace
+
+
+def test_empty_shared_namespace_supports_functions_and_persists_results(temp_dir):
+    namespace = {}
+    tools = PythonTools(base_dir=temp_dir, safe_globals=namespace, safe_locals=namespace)
+
+    result = tools.run_python_code("value = 7\ndef double():\n    return value * 2\nresult = double()", "result")
+
+    assert result == "14"
+    assert namespace["result"] == 14
+    assert tools.run_python_code("result = double() + 1", "result") == "15"
+    assert namespace["result"] == 15
+
+
+@pytest.mark.parametrize("execution", ["code", "save_and_run", "file"])
+def test_empty_globals_do_not_fall_back_to_tool_module(temp_dir, execution):
+    tools = PythonTools(base_dir=temp_dir, safe_globals={}, safe_locals={})
+    code = "result = 'log_debug' in globals()"
+    if execution == "code":
+        result = tools.run_python_code(code, "result")
+    elif execution == "save_and_run":
+        result = tools.save_to_file_and_run("namespace.py", code, "result")
+    else:
+        (temp_dir / "namespace.py").write_text(code, encoding="utf-8")
+        result = tools.run_python_file_return_variable("namespace.py", "result")
+    assert result == "False"
+
+
 @pytest.fixture
 def temp_dir():
     with tempfile.TemporaryDirectory() as tmpdirname:
