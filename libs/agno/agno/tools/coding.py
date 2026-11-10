@@ -502,8 +502,13 @@ class CodingTools(Toolkit):
 
             contents = resolved_path.read_text(encoding="utf-8")
 
-            # Count occurrences
-            count = contents.count(old_text)
+            # Count every start position: str.count() skips overlapping matches,
+            # which can make an ambiguous edit appear unique.
+            count = 0
+            match_start = contents.find(old_text)
+            while match_start != -1:
+                count += 1
+                match_start = contents.find(old_text, match_start + 1)
 
             if count == 0:
                 return (
