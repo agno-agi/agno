@@ -14,7 +14,7 @@ from agno.models.response import ModelResponse
 from agno.os import AgentOS, CompanyConfig, OSManager
 from agno.os.authz.provider import AuthorizationContext
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider
-from agno.registry._reserved import BUILDER_ID, MANAGER_TEAM_ID
+from agno.registry._reserved import BUILDER_ID, MANAGER_TEAM_ID, ROUTINE_RUNNER_ID
 from agno.run.authorization import RunAuthorization, authorization_scope
 from agno.tools.agentos import AgentOSTools
 from agno.tools.company import CompanyTools
@@ -235,3 +235,38 @@ def test_confirmed_company_edit_is_refused_without_its_permission(platform, use_
             result = os.manager.continue_run(run_response=paused, user_id="alice")
     assert "Permission required: company:write" in str(result.content), result.content
     assert company_records(os) == before
+
+
+ROUTINE_WRITE = ["products:write", "schedules:write", "routines:write"]
+SUPER_AGENT_ROUTINE = {
+    "product_id": "{product}",
+    "name": "review",
+    "executor_type": "team",
+    "executor_id": MANAGER_TEAM_ID,
+    "instructions": "Review the Product.",
+}
+
+
+def routine_names(os):
+    return sorted(row["name"] for row in os.db.get_schedules()[0] if row.get("managed_by") == "company")
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_routine_tool_needs_the_runner_not_super_agent(platform, use_async):
+    # The Routine API checks the component that runs. For Super Agent that is the Routine runner.
+    os, ids = platform
+    before = routine_names(os)
+    scopes = [*ROUTINE_WRITE, f"agents:{ROUTINE_RUNNER_ID}:run"]
+    result = run_tool(os, ids, "create_product_routine", SUPER_AGENT_ROUTINE, scopes, use_async)
+    assert "Permission required" not in str(result.content), result.content
+    assert routine_names(os) == sorted([*before, ids["product"] + ".review"])
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_routine_tool_is_refused_with_super_agent_and_no_runner(platform, use_async):
+    os, ids = platform
+    before = routine_names(os)
+    scopes = [*ROUTINE_WRITE, *RUN_ONLY]
+    result = run_tool(os, ids, "create_product_routine", SUPER_AGENT_ROUTINE, scopes, use_async)
+    assert f"Permission required: agents:{ROUTINE_RUNNER_ID}:run" in str(result.content), result.content
+    assert routine_names(os) == before

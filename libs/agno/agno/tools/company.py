@@ -121,6 +121,16 @@ def _chat_sources(sources, agent, team, run_context):
         )
 
 
+def _run_target(endpoint):
+    """Resource, action and component id of the run permission a Routine's endpoint needs."""
+    from agno.db.schemas.scheduler import RUN_ENDPOINT_RE
+
+    target = RUN_ENDPOINT_RE.fullmatch(endpoint)
+    if target is None:
+        raise ValueError("Routine executor must be a run endpoint")
+    return target.group(1), "run", target.group(2)
+
+
 def _routine_declaration(name, executor_type, executor_id, template, instructions, cron_expr, timezone, enabled=True):
     return Routine.model_validate(
         dict(
@@ -278,7 +288,8 @@ class CompanyTools(Toolkit):
                 raise ValueError(refusal)
             authority = _authority(run_context)
             if authority is not None:
-                authority.require(routine.executor_type + "s", "run", routine.executor_id)
+                # The Routine API checks the component that runs, which for Super Agent is the Routine runner.
+                authority.require(*_run_target(fields["endpoint"]))
             if archived_endpoint_refusal(self._schedule_db, fields["endpoint"], user_id=self._scoped_user(run_context)):
                 raise ValueError("Routine executor is archived; restore the component first")
 
@@ -293,7 +304,7 @@ class CompanyTools(Toolkit):
                 raise ValueError(refusal)
             authority = _authority(run_context)
             if authority is not None:
-                await authority.arequire(routine.executor_type + "s", "run", routine.executor_id)
+                await authority.arequire(*_run_target(fields["endpoint"]))
             if await aarchived_endpoint_refusal(
                 self._schedule_db, fields["endpoint"], user_id=self._scoped_user(run_context)
             ):
