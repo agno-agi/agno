@@ -7331,7 +7331,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 existing["product_id"],
                 target if target == "ready" or existing["status"] in {"done", "cancelled"} else None,
                 reject_proposed=target == "ready",
-                reject_cancelled=True,
+                reject_cancelled=target != "cancelled",
             )
             update = table.update().where(
                 table.c.id == task_id,

@@ -434,7 +434,7 @@ async def _check_task(worker: Any, job: Dict[str, Any]) -> None:
     if db is None:
         raise ValueError("Company is unavailable for this queued Task")
     current = await _call(db, "get_task", task_id)
-    if current is not None:
+    if current is not None and not (job.get("payload") or {}).get("continue"):
         reason = await _project_run_block(db, current)
         if reason:
             raise _TaskRunRefused(reason)

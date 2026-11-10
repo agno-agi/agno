@@ -705,8 +705,10 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
                         reason,
                         expected_updated_at=task["updated_at"],
                     )
-                expected = isinstance(exc, _AutomationSkip) or (
-                    denied and task is not None and task["status"] == "backlog"
+                expected = (
+                    isinstance(exc, _AutomationSkip)
+                    or (denied and task is not None and task["status"] == "backlog")
+                    or (isinstance(exc, ValueError) and reason == "Cannot change Task status in a cancelled Project")
                 )
                 outcomes.append(
                     {"task_id": candidate["id"], "status": "skipped" if expected else "failed", "reason": reason}
@@ -861,8 +863,12 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
         )
         if not completing:
             project = await _manager_call(manager, "get_project", task["project_id"])
-            if project and project["status"] == "proposed":
-                raise _AutomationSkip("Project approval is required before automatic Task acceptance")
+            if project and project["status"] in {"proposed", "cancelled"}:
+                raise _AutomationSkip(
+                    "Project approval is required before automatic Task acceptance"
+                    if project["status"] == "proposed"
+                    else "Cannot accept Task work in a cancelled Project"
+                )
         # Avoid Source IO for exhausted policies. The transaction repeats this
         # check under the Product lock, so concurrent acceptances remain bounded.
         if (
@@ -1035,7 +1041,10 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
                     detail = response.json().get("detail", response.text)
                 except ValueError:
                     detail = response.text
-                if response.status_code == 409 and detail == "The previous Task run is still active":
+                if response.status_code == 409 and detail in {
+                    "The previous Task run is still active",
+                    "Cannot start Task work in a cancelled Project",
+                }:
                     raise _AutomationSkip(detail)
                 raise HTTPException(response.status_code, detail)
             result = response.json()

@@ -563,6 +563,63 @@ async def test_executing_attempt_blocks_leaving_in_progress(system, status):
 
 
 @pytest.mark.asyncio
+async def test_paused_task_run_can_continue_after_project_cancellation(system, monkeypatch):
+    from agno.tools import tool
+
+    client, db, worker, _, components = system
+    agent = components["writer"]
+    calls = {"model": 0, "tool": 0}
+
+    @tool(requires_confirmation=True, stop_after_tool_call=True)
+    def confirm_qa() -> str:
+        """Confirm this draft."""
+        calls["tool"] += 1
+        return "confirmed"
+
+    agent.tools = [confirm_qa]
+
+    def invoke(*args, **kwargs):
+        calls["model"] += 1
+        if calls["model"] == 1:
+            return ModelResponse(
+                role="assistant",
+                tool_calls=[
+                    {"id": "qa-call", "type": "function", "function": {"name": "confirm_qa", "arguments": "{}"}}
+                ],
+                response_usage=MessageMetrics(),
+            )
+        return ModelResponse(role="assistant", content="done", response_usage=MessageMetrics())
+
+    monkeypatch.setattr(agent.model, "invoke", invoke)
+    task = await accepted(client)
+    path = f"/company/tasks/{task['id']}"
+    started = await client.post(path + "/runs")
+    assert started.status_code == 202, started.text
+    run_id = started.json()["run_id"]
+    assert (await execute(worker))["status"] == "paused"
+    run = await agent.aget_run_output(run_id, task["session_id"])
+    assert run is not None
+    cancelled = await client.post(
+        f"/company/projects/{task['project_id']}/transitions", json={"target": "cancelled", "reason": "Cancel"}
+    )
+    assert cancelled.status_code == 200, cancelled.text
+    confirmed_tools = [{**item, "confirmed": True} for item in run.to_dict().get("tools", [])]
+    resumed = await client.post(
+        f"/agents/writer/runs/{run_id}/continue",
+        data={
+            "session_id": task["session_id"],
+            "background": "true",
+            "stream": "false",
+            "tools": json.dumps(confirmed_tools),
+        },
+    )
+    assert resumed.status_code == 202, resumed.text
+    assert (await execute(worker))["status"] == "completed"
+    assert calls["tool"] == 1
+    assert (await client.get(path)).json()["status"] == "in_review"
+
+
+@pytest.mark.asyncio
 async def test_registry_recheck_and_retired_executor(system):
     client, db, worker, os, _ = system
     value = await accepted(client)
@@ -1581,8 +1638,8 @@ async def routine_proposal(
 
 @pytest.mark.asyncio
 async def test_auto_accept_waits_for_project_approval_without_failure_streak(system, tmp_path):
-    from agno.company.execution import _call
     from agno.company.automation_history import aautomation_failures
+    from agno.company.execution import _call
 
     client, db, _, _, _ = system
     task, _, _ = await routine_proposal(
@@ -3083,7 +3140,7 @@ async def test_cheap_check_failure_skips_source_io(system, tmp_path, monkeypatch
     for _ in range(3):
         await _call(db, "update_schedule", schedule["id"], next_run_at=0)
         result = await tick(executor, db)
-        assert "project_active" in result["output"]["tasks"][0]["reason"]
+        assert "cancelled Project" in result["output"]["tasks"][0]["reason"]
     read.assert_not_called()
 
 

@@ -137,7 +137,7 @@ async def test_postgres_transition_hides_archived_or_other_owner_task(db):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("initial_status", ["backlog", "ready"])
-async def test_cancelled_project_freezes_task_status(db, initial_status):
+async def test_cancelled_project_allows_task_cleanup_only(db, initial_status):
     m = manager(db)
     product = await call(m.create, name="Rejected plan")
     project = await call(m.create_project, product_id=product["id"], name="Draft")
@@ -154,11 +154,32 @@ async def test_cancelled_project_freezes_task_status(db, initial_status):
         )
     await call(m.transition_project, project_id=project["id"], target="cancelled", reason="Reject")
 
+    blocked_target = "ready" if initial_status == "backlog" else "backlog"
     with pytest.raises(ValueError, match="cancelled Project"):
-        await call(m.transition_task, task_id=task["id"], target="cancelled", reason="Stop")
+        await call(
+            m.transition_task,
+            task_id=task["id"],
+            target=blocked_target,
+            reason="Restart",
+            **({"executor_type": "agent", "executor_id": "writer"} if blocked_target == "ready" else {}),
+        )
     stored = await call(m.get_task, task["id"])
     assert stored["status"] == initial_status
     assert stored["transitions"] == task["transitions"]
+
+    cleaned = await call(m.transition_task, task_id=task["id"], target="cancelled", reason="Stop")
+    assert cleaned["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_proposed_project_allows_backlog_task_cancellation(db):
+    m = manager(db)
+    product = await call(m.create, name="Draft plan")
+    project = await call(m.create_project, product_id=product["id"], name="Draft")
+    task = await call(m.create_task, product_id=product["id"], project_id=project["id"], title="Work")
+
+    cancelled = await call(m.transition_task, task_id=task["id"], target="cancelled", reason="Stop")
+    assert cancelled["status"] == "cancelled"
 
 
 @pytest.mark.asyncio
