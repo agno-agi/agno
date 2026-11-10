@@ -1,4 +1,5 @@
 import json
+import warnings
 from collections.abc import AsyncIterator
 from dataclasses import asdict, dataclass
 from os import getenv
@@ -70,6 +71,23 @@ class HuggingFace(Model):
     client: Optional[InferenceClient] = None
     async_client: Optional[AsyncInferenceClient] = None
 
+    def __post_init__(self):
+        super().__post_init__()
+        if self.max_retries is not None:
+            warnings.warn(
+                "HuggingFace.max_retries is deprecated and ignored: InferenceClient has no retry setting. "
+                "Use retries=... instead.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+        if self.default_query is not None:
+            warnings.warn(
+                "HuggingFace.default_query is deprecated and ignored: InferenceClient cannot attach query "
+                "parameters to a request. Put them in base_url instead.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+
     def get_client_params(self) -> Dict[str, Any]:
         self.api_key = self.api_key or getenv("HF_TOKEN")
         if not self.api_key:
@@ -82,12 +100,8 @@ class HuggingFace(Model):
             _client_params["base_url"] = self.base_url
         if self.timeout is not None:
             _client_params["timeout"] = self.timeout
-        if self.max_retries is not None:
-            _client_params["max_retries"] = self.max_retries
         if self.default_headers is not None:
-            _client_params["default_headers"] = self.default_headers
-        if self.default_query is not None:
-            _client_params["default_query"] = self.default_query
+            _client_params["headers"] = self.default_headers
         if self.client_params is not None:
             _client_params.update(self.client_params)
         return _client_params
@@ -130,8 +144,6 @@ class HuggingFace(Model):
             Dict[str, Any]: A dictionary of keyword arguments for inference model client requests.
         """
         _request_params: Dict[str, Any] = {}
-        if self.store is not None:
-            _request_params["store"] = self.store
         if self.frequency_penalty is not None:
             _request_params["frequency_penalty"] = self.frequency_penalty
         if self.logit_bias is not None:
@@ -152,7 +164,7 @@ class HuggingFace(Model):
             _request_params["top_logprobs"] = self.top_logprobs
         if self.top_p is not None:
             _request_params["top_p"] = self.top_p
-        if tools is not None:
+        if tools:
             _request_params["tools"] = tools
             if tool_choice is None:
                 _request_params["tool_choice"] = "auto"
@@ -160,6 +172,11 @@ class HuggingFace(Model):
                 _request_params["tool_choice"] = tool_choice
         if self.request_params is not None:
             _request_params.update(self.request_params)
+
+        if self.store is not None:
+            # chat_completion() has no `store` argument; the OpenAI-compatible backends read it
+            # from the request body. An extra_body the caller wrote themselves wins.
+            _request_params["extra_body"] = {"store": self.store, **(_request_params.get("extra_body") or {})}
 
         if _request_params:
             log_debug(f"Calling {self.provider} with request parameters: {_request_params}", log_level=2)
@@ -381,8 +398,7 @@ class HuggingFace(Model):
             List[Dict[str, Any]]: The built tool calls.
         """
         tool_calls: List[Dict[str, Any]] = []
-        for tool_call in tool_calls_data:
-            _tool_call = tool_call[0]
+        for _tool_call in tool_calls_data:
             _index = _tool_call.index
             _tool_call_id = _tool_call.id
             _tool_call_type = _tool_call.type
@@ -462,7 +478,7 @@ class HuggingFace(Model):
             if response_delta_message.content is not None:
                 model_response.content = response_delta_message.content
             if response_delta_message.tool_calls is not None and len(response_delta_message.tool_calls) > 0:
-                model_response.tool_calls = [response_delta_message.tool_calls]  # type: ignore
+                model_response.tool_calls = response_delta_message.tool_calls  # type: ignore
         if response_delta.usage is not None:
             model_response.response_usage = self._get_metrics(response_delta)
 

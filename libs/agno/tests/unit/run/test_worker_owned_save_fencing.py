@@ -174,3 +174,27 @@ class TestChokePointWiring:
         agent = SimpleNamespace(db=db)
         sync_upsert_run(agent, make_run(), session_id=SESSION_ID)
         db.upsert_run.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sync", [False, True])
+async def test_worker_session_metadata_requires_prepared_row(sync):
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from agno.run.agent import RunOutput
+    from agno.run.concurrency import worker_managed_execution
+    from agno.run.status_persist import RunPersistOutcome, apersist_worker_owned_run, persist_worker_owned_run
+
+    db = SimpleNamespace(
+        update_run_in_session=MagicMock(return_value=RunPersistOutcome.MISSING),
+        append_run_to_session_if_absent=MagicMock(return_value=True),
+    )
+    with worker_managed_execution("missing", "worker", 1):
+        with pytest.raises(RuntimeError, match="prepared worker run"):
+            if sync:
+                persist_worker_owned_run(db, RunOutput(run_id="missing"), "s", session_data={"sdk_id": "new"})
+            else:
+                await apersist_worker_owned_run(db, RunOutput(run_id="missing"), "s", session_data={"sdk_id": "new"})
+    db.append_run_to_session_if_absent.assert_not_called()
+    assert db.update_run_in_session.call_args.kwargs["session_data"] == {"sdk_id": "new"}

@@ -44,6 +44,7 @@ from agno.os.schema import (
     McpInfo,
     Model,
     NotFoundResponse,
+    QueueCapabilities,
     TeamSummaryResponse,
     UnauthenticatedResponse,
     ValidationErrorResponse,
@@ -210,6 +211,7 @@ def get_base_router(
             session=os._get_session_config(),
             memory=os._get_memory_config(),
             learning=os._get_learning_config(),
+            company=os._get_company_config(),
             filesystem=os._get_filesystem_config(
                 user_id=get_scoped_user_id(request) or getattr(request.state, "user_id", None),
                 agents=agents_in_scope,
@@ -221,6 +223,18 @@ def get_base_router(
             teams=team_summaries,
             workflows=workflow_summaries,
             traces=os._get_traces_config(),
+            queue=QueueCapabilities(
+                durable=bool(os.queue is not None and os.queue.durable),
+                queue_per_session=bool(
+                    os.queue is not None
+                    and os.queue.durable
+                    and getattr(
+                        getattr(request.app.state, "queue_worker", None),
+                        "queue_per_session",
+                        os.queue.queue_per_session,
+                    )
+                ),
+            ),
             interfaces=[
                 InterfaceResponse(type=interface.type, version=interface.version, route=interface.prefix)
                 for interface in os.interfaces
@@ -280,6 +294,12 @@ def get_info_router(os: "AgentOS") -> APIRouter:
             provider = os._get_mcp_auth_provider()
             if provider is not None:
                 mcp_oauth = McpOAuthInfo(**describe_mcp_auth(provider))
+        # The transport path is configurable, so report the one this deployment actually
+        # serves -- a client builds the card and tool-runner URLs from it.
+        mcp_config = getattr(os, "mcp_config", None)
+        mcp_path = (mcp_config.path if mcp_config is not None else None) or "/mcp"
+        # The runner is served only when the MCP server is on AND it is not switched off.
+        mcp_tool_run_endpoint = mcp_enabled and (mcp_config is None or mcp_config.tool_run_endpoint)
         return InfoResponse(
             os_id=os.id or "Unnamed OS",
             name=os.name,
@@ -288,7 +308,12 @@ def get_info_router(os: "AgentOS") -> APIRouter:
             agent_count=len(public_selection["agents"] if public_selection is not None else os.agents or []),
             team_count=len(public_selection["teams"] if public_selection is not None else os.teams or []),
             workflow_count=len(public_selection["workflows"] if public_selection is not None else os.workflows or []),
-            mcp=McpInfo(enabled=mcp_enabled, path="/mcp" if mcp_enabled else None, oauth=mcp_oauth),
+            mcp=McpInfo(
+                enabled=mcp_enabled,
+                path=mcp_path if mcp_enabled else None,
+                oauth=mcp_oauth,
+                tool_run_endpoint=mcp_tool_run_endpoint,
+            ),
             auth_mode=get_effective_auth_mode(
                 settings=os.settings,
                 authorization=os.authorization,

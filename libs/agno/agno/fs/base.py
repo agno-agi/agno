@@ -115,7 +115,7 @@ class BaseFS(ABC):
         ...
 
     @abstractmethod
-    def delete(self, namespace: str, path: str, *, user_id: str = "") -> bool:
+    def delete(self, namespace: str, path: str, *, user_id: str = "", expected_version: Optional[int] = None) -> bool:
         """Delete a file. Returns ``True`` if it existed. Idempotent."""
         ...
 
@@ -294,9 +294,14 @@ class BaseFS(ABC):
         """Async variant of ``list``."""
         return await asyncio.to_thread(self.list, namespace, directory, **partition_kwargs(self.list, user_id))
 
-    async def adelete(self, namespace: str, path: str, *, user_id: str = "") -> bool:
+    async def adelete(
+        self, namespace: str, path: str, *, user_id: str = "", expected_version: Optional[int] = None
+    ) -> bool:
         """Async variant of ``delete``."""
-        return await asyncio.to_thread(self.delete, namespace, path, **partition_kwargs(self.delete, user_id))
+        kwargs = partition_kwargs(self.delete, user_id)
+        if expected_version is not None:
+            kwargs["expected_version"] = expected_version
+        return await asyncio.to_thread(self.delete, namespace, path, **kwargs)
 
     async def aappend(
         self,

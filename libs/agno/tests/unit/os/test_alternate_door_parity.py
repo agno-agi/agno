@@ -18,6 +18,7 @@ were missing:
 import json
 from types import SimpleNamespace
 from typing import Any, List, Optional
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -141,18 +142,17 @@ class TestMcpCancelDoorTombstonesTicket:
 
 
 class TestA2ACancelDelegatesToService:
-    """The A2A tasks:cancel handlers must route through the shared cancel
-    service (which owns the ticket tombstone), not call acancel_run direct."""
+    """Cancelling an A2A task must route through the shared cancel service
+    (which owns the ticket tombstone), not call acancel_run direct."""
 
     @staticmethod
-    def _build_client(monkeypatch, recorded: List[Any]):
+    async def _cancel(monkeypatch, recorded: List[Any], entity_type: str, entity_id: str, run_id: str) -> None:
         pytest.importorskip("a2a", reason="a2a-sdk not installed")
-        from fastapi import FastAPI
-        from fastapi.routing import APIRouter
-        from fastapi.testclient import TestClient
+        from a2a.server.agent_execution import RequestContext
+        from a2a.server.context import ServerCallContext
 
         from agno.agent import Agent
-        from agno.os.interfaces.a2a.router import attach_routes
+        from agno.os.interfaces.a2a.executor import A2AExecutor
         from agno.team import Team
 
         async def recording_cancel(component, run_id):
@@ -162,32 +162,22 @@ class TestA2ACancelDelegatesToService:
 
         agent = Agent(id="a2a-agent", name="A2A Agent")
         team = Team(id="a2a-team", name="A2A Team", members=[agent])
-        app = FastAPI()
-        app.include_router(attach_routes(APIRouter(), agents=[agent], teams=[team]))
-        return TestClient(app)
+        executor = A2AExecutor(entity_type=entity_type, entity_id=entity_id, agents=[agent], teams=[team])
+        event_queue = SimpleNamespace(enqueue_event=AsyncMock())
+        await executor.cancel(RequestContext(ServerCallContext(), task_id=run_id, context_id="ctx-1"), event_queue)
 
-    def test_agent_cancel_routes_through_service(self, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_agent_cancel_routes_through_service(self, monkeypatch):
         recorded: List[Any] = []
-        client = self._build_client(monkeypatch, recorded)
+        await self._cancel(monkeypatch, recorded, "agent", "a2a-agent", "run-42")
 
-        resp = client.post(
-            "/agents/a2a-agent/v1/tasks:cancel",
-            json={"id": "req-1", "params": {"id": "run-42", "contextId": "ctx-1"}},
-        )
-
-        assert resp.status_code == 200
         assert [(getattr(c, "id", None), r) for c, r in recorded] == [("a2a-agent", "run-42")]
 
-    def test_team_cancel_routes_through_service(self, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_team_cancel_routes_through_service(self, monkeypatch):
         recorded: List[Any] = []
-        client = self._build_client(monkeypatch, recorded)
+        await self._cancel(monkeypatch, recorded, "team", "a2a-team", "run-43")
 
-        resp = client.post(
-            "/teams/a2a-team/v1/tasks:cancel",
-            json={"id": "req-2", "params": {"id": "run-43", "contextId": "ctx-2"}},
-        )
-
-        assert resp.status_code == 200
         assert [(getattr(c, "id", None), r) for c, r in recorded] == [("a2a-team", "run-43")]
 
 

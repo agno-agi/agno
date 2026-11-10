@@ -211,7 +211,7 @@ class AccuracyEval:
             try:
                 from agno.models.openai import OpenAIChat
 
-                model = OpenAIChat(id="o4-mini")
+                model = OpenAIChat(id="gpt-5.6-terra")
             except (ModuleNotFoundError, ImportError) as e:
                 logger.exception(e)
                 raise EvalError(

@@ -5,7 +5,7 @@ from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
 
 try:
-    from sqlalchemy import Engine, create_engine
+    from sqlalchemy import URL, Engine, create_engine
     from sqlalchemy.inspection import inspect
     from sqlalchemy.orm import Session, sessionmaker
     from sqlalchemy.sql.expression import text
@@ -36,10 +36,16 @@ class SQLTools(Toolkit):
         if _engine is None and db_url is not None:
             _engine = create_engine(db_url)
         elif user and password and host and port and dialect:
-            if schema is not None:
-                _engine = create_engine(f"{dialect}://{user}:{password}@{host}:{port}/{schema}")
-            else:
-                _engine = create_engine(f"{dialect}://{user}:{password}@{host}:{port}")
+            _engine = create_engine(
+                URL.create(
+                    drivername=dialect,
+                    username=user,
+                    password=password,
+                    host=host,
+                    port=port,
+                    database=schema,
+                )
+            )
 
         if _engine is None:
             raise ValueError("Could not build the database connection")
