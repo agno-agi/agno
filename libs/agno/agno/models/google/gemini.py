@@ -55,6 +55,7 @@ try:
         GoogleSearch,
         GoogleSearchRetrieval,
         GroundingMetadata,
+        HttpOptions,
         Operation,
         Part,
         Retrieval,
@@ -210,6 +211,15 @@ class Gemini(Model):
 
         if self.client_params:
             client_params.update(self.client_params)
+
+        if not vertexai and not getenv("GOOGLE_GENAI_API_VERSION"):
+            http_options = client_params.get("http_options")
+            if http_options is None or isinstance(http_options, dict):
+                options = dict(http_options or {})
+                options["api_version"] = options.get("api_version") or "v1beta"
+                client_params["http_options"] = options
+            elif isinstance(http_options, HttpOptions) and http_options.api_version is None:
+                client_params["http_options"] = http_options.model_copy(update={"api_version": "v1beta"})
 
         client_params = inject_agno_client_header(client_params)
 
