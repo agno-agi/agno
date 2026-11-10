@@ -28,6 +28,7 @@ from agno.db.mongo.utils import (
     areopen_metrics_month,
     aupsert_aggregate_metrics_row,
     build_component_metrics_legacy_runs_projection,
+    build_component_metrics_legacy_session,
     build_component_metrics_runs_projection,
     build_metrics_by_owner_projection,
     build_metrics_days_pipeline,
@@ -2323,7 +2324,12 @@ class AsyncMongoDb(AsyncBaseDb):
         legacy_runs_by_day: Dict[date, List[Dict[str, Any]]] = {}
         legacy_runs_by_id: Dict[str, Dict[str, Any]] = {}
         while True:
-            sessions = await cursor.to_list(length=METRICS_BATCH_SIZE)
+            sessions: List[Dict[str, Any]] = []
+            # A session at a time, so a JSON string read whole is reduced before the next session is read
+            async for session in cursor:
+                sessions.append(build_component_metrics_legacy_session(session))
+                if len(sessions) == METRICS_BATCH_SIZE:
+                    break
             if not sessions:
                 break
             legacy_runs = [

@@ -469,7 +469,8 @@ def merge_runs_table_with_legacy_blob(
         table_runs: Rows fetched from the runs table (in insertion order —
             adapters sort by ``run_index`` then ``created_at``).
         legacy_runs: The raw value of the legacy ``runs`` column (may be a
-            list, a JSON-encoded string, or ``None``).
+            list, a JSON-encoded string, or ``None``; anything that is not a
+            list holds no runs).
 
     Returns:
         Merged list of run dicts in chronological insertion order. Empty if
@@ -482,7 +483,8 @@ def merge_runs_table_with_legacy_blob(
             log_warning("Could not parse legacy runs blob during merge; ignoring it")
             legacy_runs = None
 
-    if not legacy_runs:
+    # A legacy value that is not a list (e.g. "5") holds no runs
+    if not isinstance(legacy_runs, list) or not legacy_runs:
         return list(table_runs)
 
     # Index the table rows by run_id so we can substitute in O(1) while
@@ -1094,6 +1096,9 @@ _METRICS_BUCKET_BOUNDS_MS = (
 
 # Rows a rebuild reads at a time, so a day or a month of many rows is never held or decoded in one step.
 METRICS_BATCH_SIZE = 1000
+
+# Stored bytes a rebuild reads at a time on Redis and Valkey, so batches of records of megabytes are never held at once.
+METRICS_BATCH_BYTES = 1_000_000
 
 # A lock goes stale 300 s after its last heartbeat by the database's clock, and every day heartbeats it, so a process
 # that stopped while holding the metrics refresh never holds it longer.

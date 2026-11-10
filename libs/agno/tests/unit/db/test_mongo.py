@@ -1,3 +1,4 @@
+import json
 from datetime import date
 from unittest.mock import MagicMock, Mock, patch
 
@@ -6,6 +7,7 @@ import pytest
 from agno.db.migrations.manager import MigrationManager
 from agno.db.mongo import MongoDb
 from agno.db.mongo.utils import (
+    build_component_metrics_legacy_runs,
     build_component_metrics_legacy_runs_projection,
     build_component_metrics_runs_projection,
 )
@@ -152,6 +154,39 @@ def test_metrics_runs_projections_keep_session_id():
     assert build_component_metrics_legacy_runs_projection()["session_id"] == 1
 
 
+def test_metrics_legacy_runs_count_runs_stored_as_json_string():
+    """Legacy runs stored as a JSON string, as before v2.1.1, count like legacy runs stored as an array."""
+    db = _db()
+    sessions_collection = Mock()
+    created_at = 1790000000
+    # As the projection reads them: an array keeps its runs' fields, a JSON string is read whole
+    sessions_collection.find.return_value.batch_size.return_value = iter(
+        [
+            {
+                "session_id": "s1",
+                "user_id": "u1",
+                "created_at": created_at,
+                "runs": [{"run_id": "r1", "agent_id": "a1", "created_at": created_at}],
+                "runs_json": None,
+            },
+            {
+                "session_id": "s2",
+                "user_id": "u1",
+                "created_at": created_at,
+                "runs_json": json.dumps([{"run_id": "r2", "agent_id": "a1", "created_at": created_at}]),
+            },
+        ]
+    )
+
+    _, legacy_runs_by_id = db._get_metrics_legacy_runs(sessions_collection, None, created_at, created_at + 1)
+
+    assert sorted(legacy_runs_by_id) == ["r1", "r2"]
+    assert legacy_runs_by_id["r2"]["session_id"] == "s2"
+    assert build_component_metrics_legacy_runs_projection()["runs_json"] == {
+        "$cond": [{"$eq": [{"$type": "$runs"}, "string"]}, "$runs", None]
+    }
+
+
 def test_metrics_runs_projection_keeps_what_tool_metrics_count():
     """A run keeps of its tool calls only what tool_metrics counts, never their arguments or result, and of its
     messages the tool call each answers, which a forked run's copied tool calls are found by."""
@@ -170,6 +205,28 @@ def test_metrics_runs_projection_keeps_what_tool_metrics_count():
     ]:
         assert projection[f"run_data.{field}"] == 1
     assert not any(field.startswith(("run_data.tools.tool_args", "run_data.tools.result")) for field in projection)
+
+
+def test_metrics_legacy_runs_json_string_keeps_what_tool_metrics_count():
+    """A legacy run stored as a JSON string keeps what the projection keeps of the same run stored as an array, never
+    its tool calls' arguments or result, or its messages' content."""
+    created_at = 1790000000
+    run = {
+        "run_id": "r1",
+        "agent_id": "a1",
+        "created_at": created_at,
+        "tools": [{"tool_call_id": "c1", "tool_name": "search", "tool_args": {"query": "q"}, "result": "result"}],
+        "messages": [{"role": "tool", "tool_call_id": "c1", "content": "result"}],
+    }
+    assert build_component_metrics_legacy_runs(json.dumps([run])) == [
+        {
+            "run_id": "r1",
+            "agent_id": "a1",
+            "created_at": created_at,
+            "tools": [{"tool_call_id": "c1", "tool_name": "search"}],
+            "messages": [{"role": "tool", "tool_call_id": "c1"}],
+        }
+    ]
 
 
 def test_component_metrics_totals_read_tool_metrics():

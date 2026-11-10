@@ -6,7 +6,7 @@ from typing import Any, Callable, Dict, List, Optional, Union
 from agno.db.base import SessionType
 from agno.db.schemas.evals import EvalRunRecord
 from agno.db.schemas.knowledge import KnowledgeRow
-from agno.db.utils import METRICS_REFRESH_ID, build_aggregate_metrics_row, get_sort_value
+from agno.db.utils import METRICS_NESTED_RUN_KEYS, METRICS_REFRESH_ID, build_aggregate_metrics_row, get_sort_value
 from agno.session import Session
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
@@ -412,6 +412,93 @@ def deserialize_metrics_date(value: Any) -> Any:
 
 
 # -- Component metrics utils --
+
+
+def _build_component_metrics_tool_calls(run_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Each tool call of a stored run with only what tool_metrics counts, skipping those a forked run copied, never its
+    arguments or result."""
+    # The id of each tool call answered in the first messages, the ones a forked run copied from the run it was forked
+    # from
+    copied_tool_call_ids = {
+        message["tool_call_id"]
+        for message in (run_data.get("messages") or [])[: run_data.get("forked_from_message_index") or 0]
+        if isinstance(message, dict) and message.get("role") == "tool" and message.get("tool_call_id")
+    }
+    return [
+        {
+            "toolkit": tool_call.get("toolkit"),
+            "tool_name": tool_call.get("tool_name"),
+            "tool_call_error": tool_call.get("tool_call_error"),
+            "requires_confirmation": tool_call.get("requires_confirmation"),
+            "confirmed": tool_call.get("confirmed"),
+            "requires_user_input": tool_call.get("requires_user_input"),
+            "external_execution_required": tool_call.get("external_execution_required"),
+            "metrics": {"duration": (tool_call.get("metrics") or {}).get("duration")},
+        }
+        for tool_call in run_data.get("tools") or []
+        if isinstance(tool_call, dict) and tool_call.get("tool_call_id") not in copied_tool_call_ids
+    ]
+
+
+def _build_component_metrics_run_data(run_data: Dict[str, Any]) -> Dict[str, Any]:
+    """The run_data of a stored run, or of a run nested inside it, with only what component metrics count."""
+    trimmed: Dict[str, Any] = {
+        "run_id": run_data.get("run_id"),
+        "agent_id": run_data.get("agent_id"),
+        "team_id": run_data.get("team_id"),
+        "session_id": run_data.get("session_id"),
+        "parent_run_id": run_data.get("parent_run_id"),
+        "metrics": run_data.get("metrics"),
+        "model": run_data.get("model"),
+        "model_provider": run_data.get("model_provider"),
+        "forked_from_session_id": run_data.get("forked_from_session_id"),
+        # Only each request's duration, skipping messages carried over from an earlier run: those from history,
+        # and those a forked run copied from the run it was forked from
+        "messages": [
+            {"role": "assistant", "metrics": {"duration": message["metrics"]["duration"]}}
+            for message in (run_data.get("messages") or [])[run_data.get("forked_from_message_index") or 0 :]
+            if isinstance(message, dict)
+            and message.get("role") == "assistant"
+            and not message.get("from_history")
+            and (message.get("metrics") or {}).get("duration") is not None
+        ],
+        "tools": _build_component_metrics_tool_calls(run_data),
+    }
+    for key in METRICS_NESTED_RUN_KEYS:
+        nested = run_data.get(key)
+        # A workflow agent's run is stored as the run itself, the other nested runs in lists
+        if isinstance(nested, dict):
+            trimmed[key] = _build_component_metrics_run_data(nested)
+        elif isinstance(nested, list) and nested:
+            trimmed[key] = [
+                _build_component_metrics_run_data(nested_run) for nested_run in nested if isinstance(nested_run, dict)
+            ]
+    return trimmed
+
+
+def build_component_metrics_run(run: Dict[str, Any]) -> Dict[str, Any]:
+    """Build a run with only what component metrics count from a record of the runs table.
+
+    Args:
+        run (Dict[str, Any]): The run, as stored.
+
+    Returns:
+        Dict[str, Any]: The run, with the run_data calculate_date_component_metrics reads: no message content, and of
+            the tool calls only what tool_metrics counts.
+    """
+    return {
+        "run_id": run.get("run_id"),
+        "session_id": run.get("session_id"),
+        "run_type": run.get("run_type"),
+        "agent_id": run.get("agent_id"),
+        "team_id": run.get("team_id"),
+        "workflow_id": run.get("workflow_id"),
+        "user_id": run.get("user_id"),
+        "parent_run_id": run.get("parent_run_id"),
+        "status": run.get("status"),
+        "run_data": _build_component_metrics_run_data(run.get("run_data") or {}),
+        "created_at": run.get("created_at"),
+    }
 
 
 def component_metrics_record_id(row: Dict[str, Any]) -> str:

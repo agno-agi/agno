@@ -23,6 +23,7 @@ from agno.db.mongo.utils import (
     apply_pagination,
     apply_sorting,
     build_component_metrics_legacy_runs_projection,
+    build_component_metrics_legacy_session,
     build_component_metrics_runs_projection,
     build_metrics_by_owner_projection,
     build_metrics_days_pipeline,
@@ -2118,7 +2119,10 @@ class MongoDb(BaseDb):
         legacy_runs_by_day: Dict[date, List[Dict[str, Any]]] = {}
         legacy_runs_by_id: Dict[str, Dict[str, Any]] = {}
         while True:
-            sessions = list(islice(cursor, METRICS_BATCH_SIZE))
+            # A session at a time, so a JSON string read whole is reduced before the next session is read
+            sessions = [
+                build_component_metrics_legacy_session(session) for session in islice(cursor, METRICS_BATCH_SIZE)
+            ]
             if not sessions:
                 break
             legacy_runs = [

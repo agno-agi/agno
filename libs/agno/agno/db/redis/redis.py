@@ -3,7 +3,7 @@ import time
 from datetime import date, datetime, timedelta, timezone
 from functools import partial
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Literal, Optional, Sequence, Set, Tuple, Union
 from uuid import uuid4
 
 from packaging import version as packaging_version
@@ -48,6 +48,7 @@ from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
     AGGREGATE_METRICS_COUNT_COLUMNS,
     COMPONENT_METRICS_KEY_COLUMNS,
+    METRICS_BATCH_BYTES,
     METRICS_BATCH_SIZE,
     METRICS_LOCK_SECONDS,
     METRICS_REFRESH_ID,
@@ -1735,6 +1736,29 @@ class RedisDb(BaseDb):
         except Exception as e:
             log_debug(f"Error releasing metrics refresh: {e}")
 
+    def _get_metrics_key_batches(self, keys: List[Any]) -> Iterator[List[Any]]:
+        """Split the given keys of sessions or runs into the batches a metrics calculation reads at once.
+
+        Batches are capped by the stored size of their values, read with STRLEN, not by their count: a session still
+        holding legacy runs, or a run with a long output, can be megabytes, so a fixed number could not be held at
+        once. A value larger than the cap is read alone.
+        """
+        for batch_start in range(0, len(keys), METRICS_BATCH_SIZE):
+            batch_keys = keys[batch_start : batch_start + METRICS_BATCH_SIZE]
+            pipeline = self.redis_client.pipeline(transaction=False)
+            for key in batch_keys:
+                pipeline.strlen(key)
+            batch: List[Any] = []
+            batch_bytes = 0
+            for key, size in zip(batch_keys, pipeline.execute()):
+                if batch and batch_bytes + size > METRICS_BATCH_BYTES:
+                    yield batch
+                    batch, batch_bytes = [], 0
+                batch.append(key)
+                batch_bytes += size
+            if batch:
+                yield batch
+
     def _get_metrics_index_state(self, worker_id: str, force: bool = False) -> Optional[Dict[str, Any]]:
         """Get the state of the sorted sets that list the sessions and runs by created_at, indexing every session and
         run first when they were never indexed, when the v3 migration copied runs since, or when forced.
@@ -1761,13 +1785,10 @@ class RedisDb(BaseDb):
         for table_type in ["sessions", "runs"]:
             keys = get_all_keys_for_table(redis_client=self.redis_client, prefix=self.db_prefix, table_type=table_type)
             key_prefix = generate_redis_key(prefix=self.db_prefix, table_type=table_type, key_id="")
-            for batch_start in range(0, len(keys), METRICS_BATCH_SIZE):
+            for batch in self._get_metrics_key_batches(keys):
                 if not self._heartbeat_metrics_refresh(worker_id):
                     return None
-                batch_keys = [
-                    key.decode() if isinstance(key, bytes) else str(key)
-                    for key in keys[batch_start : batch_start + METRICS_BATCH_SIZE]
-                ]
+                batch_keys = [key.decode() if isinstance(key, bytes) else str(key) for key in batch]
                 pipeline = self.redis_client.pipeline(transaction=False)
                 for key in batch_keys:
                     pipeline.get(key)
@@ -2013,11 +2034,11 @@ class RedisDb(BaseDb):
         keys = get_all_keys_for_table(redis_client=self.redis_client, prefix=self.db_prefix, table_type="sessions")
         legacy_runs_by_day: Dict[date, List[Dict[str, Any]]] = {}
         legacy_runs_by_id: Dict[str, Dict[str, Any]] = {}
-        for batch_start in range(0, len(keys), METRICS_BATCH_SIZE):
+        for batch_keys in self._get_metrics_key_batches(keys):
             if not self._heartbeat_metrics_refresh(worker_id):
                 return None
             pipeline = self.redis_client.pipeline(transaction=False)
-            for key in keys[batch_start : batch_start + METRICS_BATCH_SIZE]:
+            for key in batch_keys:
                 pipeline.get(key)
             legacy_runs: List[Dict[str, Any]] = []
             for data in pipeline.execute():
@@ -2063,15 +2084,22 @@ class RedisDb(BaseDb):
             start_timestamp,
             f"({metrics_day_start(date_to_process + timedelta(days=1))}",
         )
+        keys = [
+            generate_redis_key(
+                prefix=self.db_prefix,
+                table_type=table_type,
+                key_id=record_id.decode() if isinstance(record_id, bytes) else str(record_id),
+            )
+            for record_id in record_ids
+        ]
         records: List[Dict[str, Any]] = []
-        for batch_start in range(0, len(record_ids), METRICS_BATCH_SIZE):  # type: ignore[arg-type]
+        for batch_keys in self._get_metrics_key_batches(keys):
             # Checked between batches too, so a stop never waits for the whole of a large day
             if should_stop is not None and should_stop():
                 return None
             pipeline = self.redis_client.pipeline(transaction=False)
-            for record_id in record_ids[batch_start : batch_start + METRICS_BATCH_SIZE]:  # type: ignore[index]
-                record_id = record_id.decode() if isinstance(record_id, bytes) else str(record_id)
-                pipeline.get(generate_redis_key(prefix=self.db_prefix, table_type=table_type, key_id=record_id))
+            for key in batch_keys:
+                pipeline.get(key)
             records.extend(build_record(deserialize_data(data)) for data in pipeline.execute() if data)
         return records
 
@@ -2083,14 +2111,21 @@ class RedisDb(BaseDb):
         run_ids = self.redis_client.zrangebyscore(
             generate_created_at_index_key(self.db_prefix, "runs"), end_timestamp - 86400, f"({end_timestamp}"
         )
+        keys = [
+            generate_redis_key(
+                prefix=self.db_prefix,
+                table_type="runs",
+                key_id=run_id.decode() if isinstance(run_id, bytes) else str(run_id),
+            )
+            for run_id in run_ids
+        ]
         team_runs: List[Dict[str, Any]] = []
-        for batch_start in range(0, len(run_ids), METRICS_BATCH_SIZE):  # type: ignore[arg-type]
+        for batch_keys in self._get_metrics_key_batches(keys):
             if should_stop is not None and should_stop():
                 return None
             pipeline = self.redis_client.pipeline(transaction=False)
-            for run_id in run_ids[batch_start : batch_start + METRICS_BATCH_SIZE]:  # type: ignore[index]
-                run_id = run_id.decode() if isinstance(run_id, bytes) else str(run_id)
-                pipeline.get(generate_redis_key(prefix=self.db_prefix, table_type="runs", key_id=run_id))
+            for key in batch_keys:
+                pipeline.get(key)
             team_runs.extend(
                 build_component_metrics_run(run)
                 for run in (deserialize_data(data) for data in pipeline.execute() if data)
@@ -2104,10 +2139,13 @@ class RedisDb(BaseDb):
         seen_run_ids: Set[str] = set()
         while parent_run_ids:
             seen_run_ids.update(parent_run_ids)
-            for batch_start in range(0, len(parent_run_ids), METRICS_BATCH_SIZE):
+            keys = [
+                generate_redis_key(prefix=self.db_prefix, table_type="runs", key_id=run_id) for run_id in parent_run_ids
+            ]
+            for batch_keys in self._get_metrics_key_batches(keys):
                 pipeline = self.redis_client.pipeline(transaction=False)
-                for run_id in parent_run_ids[batch_start : batch_start + METRICS_BATCH_SIZE]:
-                    pipeline.get(generate_redis_key(prefix=self.db_prefix, table_type="runs", key_id=run_id))
+                for key in batch_keys:
+                    pipeline.get(key)
                 parent_runs.extend(
                     build_component_metrics_run(deserialize_data(data)) for data in pipeline.execute() if data
                 )

@@ -216,6 +216,28 @@ def test_calculate_metrics_matches_the_stored_sessions_and_runs(db):
     assert totals == {"root_runs_count": 7, "cache_read_tokens": 51}
 
 
+def test_calculate_metrics_reads_sessions_and_runs_in_batches_capped_by_size(db, monkeypatch):
+    """Ensure sessions and runs read in batches capped by their stored size, here one record per batch, are all
+    counted"""
+    _seed(db)
+    monkeypatch.setattr("agno.db.redis.redis.METRICS_BATCH_BYTES", 1)
+    monkeypatch.setattr("agno.db.redis.redis.METRICS_BATCH_SIZE", 2)
+    get_metrics_key_batches = db._get_metrics_key_batches
+    batches: List[List[Any]] = []
+
+    def recorded_batches(keys):
+        for batch in get_metrics_key_batches(keys):
+            batches.append(batch)
+            yield batch
+
+    monkeypatch.setattr(db, "_get_metrics_key_batches", recorded_batches)
+
+    db.calculate_metrics()
+
+    assert len(batches) > 1 and all(len(batch) == 1 for batch in batches)
+    assert _stored_counts(db) == _ground_truth(db)
+
+
 def test_calculate_metrics_rebuilds_a_reopened_day(db):
     """Ensure a paused run resumed after its day closed reopens the day, and the next calculation counts it
     completed"""
