@@ -1,5 +1,25 @@
 # Test log
 
+### company_details.py — chat editing follow-up (2026-11-10)
+
+**Status:** PASS
+
+**Description:** Ran the offline persistence example against a disposable local PostgreSQL 18 container. No model calls.
+
+**Result:** Saved identity survived configuration reseeding and a stale write was rejected. The company-details database suite passed 32 cases across sync/async SQLite and PostgreSQL, including tool edits, partial updates, clearing descriptions, reopening storage and conflicts.
+
+---
+
+### chat.py — app construction only (2026-11-10)
+
+**Status:** PASS
+
+**Description:** Loaded the example with `runpy.run_path` and verified that it constructs an AgentOS app against disposable PostgreSQL. Did not start the server or send a live model request.
+
+**Result:** App construction passed. Separate deterministic offline HTTP tests verify Super Agent delegation to Company Manager, caller permission enforcement, saved values in new conversations and restart persistence. Live-model interpretation and the UI chat walkthrough remain unverified.
+
+---
+
 ### company_details.py
 
 **Status:** PASS

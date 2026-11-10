@@ -1,5 +1,6 @@
 """Company details REST permissions, conflict behavior and manager context."""
 
+import json
 import time
 
 import jwt
@@ -7,6 +8,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agno.db.sqlite import SqliteDb
+from agno.models.base import Model
+from agno.models.message import MessageMetrics
+from agno.models.response import ModelResponse
 from agno.os import AgentOS, Authorization, CompanyConfig
 
 SECRET = "company-details-offline-test-key-32-characters"
@@ -362,3 +366,108 @@ def test_custom_admin_scope_controls_who_can_edit(tmp_path):
     assert client.get("/company/details/access", headers=headers(["platform:admin"])).json() == {"can_edit": True}
     assert client.patch("/company/details", json=body, headers=headers(["platform:admin"])).status_code == 200
     db.close()
+
+
+class CompanyEditModel(Model):
+    """Script delegation/edit calls and echo fresh context without a provider."""
+
+    def __init__(self, delegate=False):
+        super().__init__(id="offline-company-edit", provider="test")
+        self.delegate = delegate
+
+    def invoke(self, messages, *args, **kwargs):
+        start = max(i for i, message in enumerate(messages) if message.role == "user")
+        results = [message for message in messages[start + 1 :] if message.role == "tool"]
+        if results:
+            return ModelResponse(role="assistant", content=str(results[-1].content), response_usage=MessageMetrics())
+        if "What does our company do?" in str(messages[start].content):
+            context = "\n".join(str(message.content) for message in messages if message.role == "system")
+            return ModelResponse(role="assistant", content=context, response_usage=MessageMetrics())
+        name = "delegate_task_to_member" if self.delegate else "update_company_details"
+        arguments = (
+            {"member_id": "company-manager", "task": "Our company is Acme. We build warehouse robots."}
+            if self.delegate
+            else {"changes": {"name": "Acme", "description": "We build warehouse robots."}}
+        )
+        return ModelResponse(
+            role="assistant",
+            tool_calls=[
+                {
+                    "id": "edit-details",
+                    "type": "function",
+                    "function": {"name": name, "arguments": json.dumps(arguments)},
+                }
+            ],
+            response_usage=MessageMetrics(),
+        )
+
+    async def ainvoke(self, *args, **kwargs):
+        return self.invoke(*args, **kwargs)
+
+    def invoke_stream(self, *args, **kwargs):
+        yield self.invoke(*args, **kwargs)
+
+    async def ainvoke_stream(self, *args, **kwargs):
+        yield self.invoke(*args, **kwargs)
+
+    def _parse_provider_response(self, response, **kwargs):
+        return response
+
+    def _parse_provider_response_delta(self, response):
+        return response
+
+
+@pytest.mark.parametrize("can_write", [False, True])
+def test_chat_delegates_details_edit_with_caller_permissions_and_fresh_context(tmp_path, can_write):
+    from agno.os import OSManager
+
+    db_path = str(tmp_path / "chat.db")
+    db = SqliteDb(db_file=db_path)
+    auth = Authorization(verification_keys=[SECRET], algorithm="HS256", audience="details-test")
+    manager = OSManager(model=CompanyEditModel(delegate=True), access_docs=False, offload_tool_results=False)
+    company = CompanyConfig(model=CompanyEditModel(), name="Initial", description="Initial description")
+    os = AgentOS(db=db, manager=manager, company=company, authorization=auth, telemetry=False)
+    scopes = ["teams:superagent:run", "agents:company-manager:run", "company:read"]
+    if can_write:
+        scopes.append("company:write")
+    with TestClient(os.get_app()) as client:
+        initial = db.get_company()
+        response = client.post(
+            "/teams/superagent/runs",
+            headers=headers(scopes),
+            data={
+                "message": "Our company is Acme. We build warehouse robots.",
+                "stream": "false",
+                "session_id": "introduction",
+            },
+        )
+        assert response.status_code == 200, response.text
+        if not can_write:
+            assert db.get_company() == initial
+            assert "company:write" in response.json()["content"]
+            db.close()
+            return
+        saved = db.get_company()
+        assert (saved["name"], saved["description"]) == ("Acme", "We build warehouse robots.")
+        assert "Acme" in response.json()["content"]
+        assert "We build warehouse robots." in response.json()["content"]
+        for path in ("/teams/superagent/runs", "/agents/company-manager/runs"):
+            fresh = client.post(
+                path,
+                headers=headers(scopes),
+                data={
+                    "message": "What does our company do?",
+                    "stream": "false",
+                    "session_id": "new-" + path.split("/")[2],
+                },
+            )
+            assert fresh.status_code == 200, fresh.text
+            assert '"name": "Acme", "description": "We build warehouse robots."' in fresh.json()["content"]
+    db.close()
+    fresh_db = SqliteDb(db_file=db_path)
+    restarted = AgentOS(
+        db=fresh_db, company=CompanyConfig(name="Deployment", description="Changed config"), telemetry=False
+    )
+    with TestClient(restarted.get_app()):
+        assert fresh_db.get_company() == saved
+    fresh_db.close()
