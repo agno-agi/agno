@@ -1,9 +1,10 @@
 """Validation and portable predicates for advanced session searches."""
 
+import json
 import math
 import re
 from types import SimpleNamespace
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from agno.db.filter_converter import MAX_FILTER_DEPTH, filter_expr_to_sqlalchemy
 from agno.utils.dttm import parse_datetime_utc
@@ -20,6 +21,16 @@ SESSION_FILTER_FIELDS: Dict[str, Dict[str, Any]] = {
         ("workflow_id", "Workflow ID"),
     ]
 }
+SESSION_FILTER_FIELDS["summary"] = {"label": "Session Summary", "type": "string", "operators": ["CONTAINS"]}
+SESSION_FILTER_FIELDS["run_content"] = {"label": "Conversation", "type": "string", "operators": ["CONTAINS"]}
+# Fields read from a property of a JSON column rather than from a column of their own.
+JSON_SESSION_FIELDS: Dict[str, Tuple[str, str]] = {
+    "session_name": ("session_data", "session_name"),
+    "summary": ("summary", "summary"),
+}
+# What run_content searches: each run's final answer and the input it was given, not the system
+# prompt or tool traffic, which repeat across runs and would match nearly every session.
+RUN_CONTENT_PATHS: Tuple[Tuple[str, ...], ...] = (("content",), ("input", "input_content"))
 SESSION_FILTER_FIELDS["session_type"] = {
     "label": "Session Type",
     "type": "enum",
@@ -84,42 +95,85 @@ def session_filter_to_sqlalchemy(
     collation: Optional[str] = None,
     session_name_column: Any = None,
     backslash_like: bool = False,
+    json_property: Optional[Callable[..., Any]] = None,
+    runs_table: Any = None,
 ) -> Any:
-    """Use native columns and the session-name JSON property for SQL filtering on a normalized filter.
+    """Use native columns and JSON properties for SQL filtering on a normalized filter.
 
     ``collation`` forces case-sensitive string comparison where the database default is case-insensitive.
-    ``session_name_column`` replaces the generic JSON accessor for dialects without MySQL/Postgres JSON functions.
+    ``json_property(column, *path)`` replaces the generic JSON accessor for dialects without MySQL/Postgres
+    JSON functions; ``session_name_column`` overrides it for the session name only.
     ``backslash_like`` escapes LIKE wildcards with a backslash instead of an ESCAPE clause the dialect may reject.
+    ``runs_table`` holds the runs that ``run_content`` searches; without it no run content matches.
     """
-    columns = {key: table.c[key] for key in SESSION_FILTER_FIELDS if key != "session_name"}
-    if session_name_column is None:
-        session_name_column = table.c.session_data["session_name"].as_string()
-    columns["session_name"] = session_name_column
+    from sqlalchemy import exists, false, literal, or_, select
+
+    accessor = json_property or _json_text
+    columns = {
+        key: table.c[key] for key in SESSION_FILTER_FIELDS if key not in JSON_SESSION_FIELDS and key != "run_content"
+    }
+    for key, (column, name) in JSON_SESSION_FIELDS.items():
+        columns[key] = accessor(table.c[column], name)
+    if session_name_column is not None:
+        columns["session_name"] = session_name_column
     if collation is not None:
-        for key, field in SESSION_FILTER_FIELDS.items():
-            if field["type"] != "datetime":
+        for key in columns:
+            if SESSION_FILTER_FIELDS[key]["type"] != "datetime":
                 columns[key] = columns[key].collate(collation)
     view = SimpleNamespace(c=columns)
+
+    def run_content(value: str) -> Any:
+        if runs_table is None:
+            return false()
+        texts = [accessor(runs_table.c.run_data, *path) for path in RUN_CONTENT_PATHS]
+        matches = or_(*[_like(text, "CONTAINS", value, backslash_like) for text in texts])
+        return exists(select(literal(1)).where(runs_table.c.session_id == table.c.session_id, matches))
+
+    return _to_sqlalchemy(expression, view, backslash_like, run_content)
+
+
+def _json_text(column: Any, *path: str) -> Any:
+    return (column[path[0]] if len(path) == 1 else column[path]).as_string()
+
+
+def _like(column: Any, op: str, value: Any, backslash_like: bool) -> Any:
+    """Case-insensitive CONTAINS/STARTSWITH with LIKE wildcards in the value escaped."""
+    from sqlalchemy import func
+
+    lowered = str(value).lower()
     if backslash_like:
-        return _backslash_like_filter(expression, view)
-    return filter_expr_to_sqlalchemy(expression, view, set(SESSION_FILTER_FIELDS))
+        escaped = re.sub(r"([\\%_])", r"\\\1", lowered)
+        return func.lower(column).like(("" if op == "STARTSWITH" else "%") + escaped + "%")
+    if op == "STARTSWITH":
+        return func.lower(column).startswith(lowered, autoescape=True)
+    return func.lower(column).contains(lowered, autoescape=True)
 
 
-def _backslash_like_filter(expression: Dict[str, Any], view: Any) -> Any:
-    """Build the clause with CONTAINS/STARTSWITH as plain LIKE using the default backslash escape."""
-    from sqlalchemy import and_, func, not_, or_
+def _to_sqlalchemy(expression: Dict[str, Any], view: Any, backslash_like: bool, run_content: Callable) -> Any:
+    from sqlalchemy import and_, not_, or_
 
     op = expression["op"]
     if op in ("AND", "OR"):
-        clauses = [_backslash_like_filter(c, view) for c in expression["conditions"]]
+        clauses = [_to_sqlalchemy(c, view, backslash_like, run_content) for c in expression["conditions"]]
         return and_(*clauses) if op == "AND" else or_(*clauses)
     if op == "NOT":
-        return not_(_backslash_like_filter(expression["condition"], view))
-    if op in ("CONTAINS", "STARTSWITH"):
-        escaped = re.sub(r"([\\%_])", r"\\\1", str(expression["value"]).lower())
-        pattern = ("" if op == "STARTSWITH" else "%") + escaped + "%"
-        return func.lower(view.c[expression["key"]]).like(pattern)
-    return filter_expr_to_sqlalchemy(expression, view, set(SESSION_FILTER_FIELDS))
+        return not_(_to_sqlalchemy(expression["condition"], view, backslash_like, run_content))
+    if expression["key"] == "run_content":
+        return run_content(expression["value"])
+    if backslash_like and op in ("CONTAINS", "STARTSWITH"):
+        return _like(view.c[expression["key"]], op, expression["value"], True)
+    return filter_expr_to_sqlalchemy(expression, view, set(view.c))
+
+
+def mentions_run_content(expression: Optional[Dict[str, Any]]) -> bool:
+    """True when a normalized filter searches run content anywhere in its tree."""
+    if expression is None:
+        return False
+    if expression["op"] in ("AND", "OR"):
+        return any(mentions_run_content(c) for c in expression["conditions"])
+    if expression["op"] == "NOT":
+        return mentions_run_content(expression["condition"])
+    return expression["key"] == "run_content"
 
 
 def session_filter_to_mongo(expression: Dict[str, Any], negate: bool = False) -> Dict[str, Any]:
@@ -135,7 +189,9 @@ def session_filter_to_mongo(expression: Dict[str, Any], negate: bool = False) ->
     if op == "NOT":
         return session_filter_to_mongo(expression["condition"], not negate)
     key = expression["key"]
-    field = "session_data.session_name" if key == "session_name" else key
+    if key == "run_content":
+        raise ValueError("Run content lives outside the session document; search it through the portable fallback")
+    field = ".".join(JSON_SESSION_FIELDS[key]) if key in JSON_SESSION_FIELDS else key
     condition: Any
     if op == "IN":
         condition = {"$nin" if negate else "$in": expression["values"]}
@@ -169,10 +225,21 @@ def _evaluate_session_filter(session: Dict[str, Any], expression: Optional[Dict[
         result = _evaluate_session_filter(session, expression["condition"])
         return None if result is None else not result
     key = expression["key"]
-    actual = session.get(key)
-    if key == "session_name" and actual is None:
+    if key == "run_content":
+        # EXISTS semantics: a session without matching runs is False, never unknown.
+        needle = expression["value"].lower()
+        return any(needle in text.lower() for run in session.get("runs") or [] for text in _run_texts(run))
+    if key in JSON_SESSION_FIELDS:
         # SurrealDB renames write a top-level session_name; other adapters keep it in session_data.
-        actual = (session.get("session_data") or {}).get("session_name")
+        actual = session.get(key) if key == "session_name" else None
+        if actual is None:
+            column, name = JSON_SESSION_FIELDS[key]
+            container = session.get(column)
+            actual = container.get(name) if isinstance(container, dict) else None
+        if not isinstance(actual, str):
+            return None
+    else:
+        actual = session.get(key)
     if actual is None:
         return None
     if op == "IN":
@@ -193,3 +260,17 @@ def _evaluate_session_filter(session: Dict[str, Any], expression: Optional[Dict[
     if op == "CONTAINS":
         return value.lower() in actual.lower()
     return actual.lower().startswith(value.lower())
+
+
+def _run_texts(run: Any) -> List[str]:
+    data = run if isinstance(run, dict) else run.to_dict() if hasattr(run, "to_dict") else {}
+    texts = []
+    for path in RUN_CONTENT_PATHS:
+        value: Any = data
+        for part in path:
+            value = value.get(part) if isinstance(value, dict) else None
+        if isinstance(value, str):
+            texts.append(value)
+        elif value is not None:
+            texts.append(json.dumps(value, default=str))
+    return texts

@@ -89,3 +89,67 @@ async def test_postgres_session_search(use_async):
             with db.db_engine.begin() as connection:
                 connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
             db.db_engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_postgres_searches_summary_and_run_content(use_async):
+    from agno.session.summary import SessionSummary
+
+    schema = "session_recall_" + uuid4().hex
+    db = (
+        AsyncPostgresDb(db_url="postgresql+psycopg_async://ai:ai@localhost:5532/ai", db_schema=schema)
+        if use_async
+        else PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai", db_schema=schema)
+    )
+
+    async def resolve(value):
+        return await value if inspect.isawaitable(value) else value
+
+    try:
+        from agno.run.agent import RunInput, RunOutput
+
+        for session in [
+            AgentSession(
+                session_id="billing",
+                agent_id="support",
+                created_at=100,
+                summary=SessionSummary(summary="Fixed the 100% billing export"),
+            ),
+            AgentSession(session_id="other", agent_id="support", created_at=200),
+            AgentSession(session_id="bare", agent_id="support", created_at=300),
+        ]:
+            await resolve(db.upsert_session(session))
+        run = RunOutput(
+            run_id="r1",
+            session_id="other",
+            agent_id="support",
+            input=RunInput(input_content="The S3 export failed with AccessDenied"),
+            content={"status": "investigating"},
+        )
+        await resolve(db.upsert_run(run, session_id="other", run_index=0))
+
+        async def ids(filter_expr):
+            rows, _ = await resolve(db.search_sessions(filter_expr=filter_expr))
+            return sorted(row["session_id"] for row in rows)
+
+        assert await ids({"op": "CONTAINS", "key": "summary", "value": "BILLING"}) == ["billing"]
+        assert await ids({"op": "CONTAINS", "key": "summary", "value": "%"}) == ["billing"]
+        assert await ids({"op": "CONTAINS", "key": "run_content", "value": "accessdenied"}) == ["other"]
+        # Structured output is searched as its JSON text.
+        assert await ids({"op": "CONTAINS", "key": "run_content", "value": "investigating"}) == ["other"]
+        assert await ids({"op": "CONTAINS", "key": "run_content", "value": "%"}) == []
+        # NOT EXISTS: sessions without a matching run are plain non-matches, so the negation keeps them.
+        assert await ids({"op": "NOT", "condition": {"op": "CONTAINS", "key": "run_content", "value": "s3"}}) == [
+            "bare",
+            "billing",
+        ]
+    finally:
+        if use_async:
+            async with db.db_engine.begin() as connection:
+                await connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+            await db.db_engine.dispose()
+        else:
+            with db.db_engine.begin() as connection:
+                connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+            db.db_engine.dispose()

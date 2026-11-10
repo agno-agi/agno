@@ -447,7 +447,7 @@ def _truncate(text: str, limit: int = 200) -> str:
 
 
 def _extract_session_preview(session: Union[AgentSession, Any], num_runs: int = 3) -> Dict[str, Any]:
-    """Extract session_id, created_at, and per-run user/assistant previews."""
+    """Extract session_id, created_at, any name and summary, and per-run user/assistant previews."""
     runs_preview: List[Dict[str, str]] = []
     for run in (session.runs or [])[:num_runs]:
         user_text = ""
@@ -465,11 +465,129 @@ def _extract_session_preview(session: Union[AgentSession, Any], num_runs: int = 
                 break
         if user_text or assistant_text:
             runs_preview.append({"user": user_text, "assistant": assistant_text})
-    return {
+    preview: Dict[str, Any] = {
         "session_id": session.session_id,
         "created_at": str(session.created_at) if session.created_at else None,
-        "runs": runs_preview,
     }
+    session_name = (session.session_data or {}).get("session_name")
+    if session_name:
+        preview["session_name"] = session_name
+    if session.summary is not None and session.summary.summary:
+        preview["summary"] = session.summary.summary
+    preview["runs"] = runs_preview
+    return preview
+
+
+def _recall_filter(
+    component_key: str,
+    component_id: Optional[str],
+    query: Optional[str],
+    since: Optional[str],
+    until: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    """Validated session filter for a recall search, or None when the caller asked for the recency listing.
+
+    Raises ValueError for a date the filter cannot parse.
+    """
+    from agno.db.session_filters import normalize_session_filter
+
+    conditions: List[Dict[str, Any]] = []
+    if query:
+        conditions.append(
+            {
+                "op": "OR",
+                "conditions": [
+                    {"op": "CONTAINS", "key": key, "value": query} for key in ("session_name", "summary", "run_content")
+                ],
+            }
+        )
+    if since:
+        conditions.append(
+            {
+                "op": "OR",
+                "conditions": [
+                    {"op": "GTE", "key": "updated_at", "value": since},
+                    {"op": "GTE", "key": "created_at", "value": since},
+                ],
+            }
+        )
+    if until:
+        conditions.append({"op": "LTE", "key": "created_at", "value": until})
+    if not conditions:
+        return None
+    if component_id is not None:
+        conditions.append({"op": "EQ", "key": component_key, "value": component_id})
+    return normalize_session_filter({"op": "AND", "conditions": conditions})
+
+
+def _format_search_results(
+    sessions: Any,
+    session_type: type,
+    current_session_id: Optional[str],
+    num_runs: int,
+    require_runs: bool,
+) -> str:
+    import json
+
+    results: List[Dict[str, Any]] = []
+    for session in sessions or []:
+        if isinstance(session, dict):
+            session = session_type.from_dict(session)  # type: ignore[attr-defined]
+        if not isinstance(session, session_type):
+            continue
+        if require_runs and not session.runs:  # type: ignore[attr-defined]
+            continue
+        if current_session_id and session.session_id == current_session_id:  # type: ignore[attr-defined]
+            continue
+        results.append(_extract_session_preview(session, num_runs=num_runs))
+    return json.dumps(results, ensure_ascii=False)
+
+
+def _format_past_session(
+    session: Any,
+    session_type: type,
+    component_key: str,
+    component_id: Optional[str],
+    num_runs: Optional[int],
+    start: int,
+    max_chars: Optional[int],
+) -> str:
+    """Render a slice of a session's runs as User/Assistant lines, refusing another component's session."""
+    if session is None or not isinstance(session, session_type) or not session.runs:  # type: ignore[attr-defined]
+        return "Session not found."
+    owner = getattr(session, component_key, None)
+    if component_id is not None and owner is not None and owner != component_id:
+        return "Session not found."
+
+    if num_runs is not None and num_runs < 0:
+        # Models often express "the last N runs" as a negative count.
+        start, num_runs = num_runs, None
+    runs = session.runs  # type: ignore[attr-defined]
+    total = len(runs)
+    first = start if start >= 0 else max(total + start, 0)
+    selected = runs[start:] if num_runs is None else runs[start:][:num_runs]
+
+    lines: List[str] = [f"Session: {session.session_id}"]  # type: ignore[attr-defined]
+    if session.created_at:  # type: ignore[attr-defined]
+        lines.append(f"Created: {session.created_at}")  # type: ignore[attr-defined]
+    if selected:
+        lines.append(f"Runs {first + 1}-{first + len(selected)} of {total}")
+    lines.append("")
+
+    for run in selected:
+        for msg in run.messages or []:
+            if msg.role not in ("user", "assistant"):
+                continue
+            text = _get_message_text(msg)
+            if text:
+                role_label = "User" if msg.role == "user" else "Assistant"
+                lines.append(f"{role_label}: {text}")
+                lines.append("")
+
+    output = "\n".join(lines)
+    if max_chars is not None and len(output) > max_chars:
+        output = output[:max_chars] + "\n... (truncated; read fewer runs or pass a later start)"
+    return output
 
 
 def get_search_past_sessions_function(
@@ -484,36 +602,45 @@ def get_search_past_sessions_function(
     _limit = num_past_sessions_to_search if num_past_sessions_to_search is not None else 20
     _num_runs = num_past_session_runs_in_search if num_past_session_runs_in_search is not None else 3
 
-    def search_past_sessions() -> str:
-        """List previous chat sessions with short previews.
-        Use read_past_session to read the full conversation for a specific session.
+    def search_past_sessions(
+        query: Optional[str] = None, since: Optional[str] = None, until: Optional[str] = None
+    ) -> str:
+        """Find previous sessions. With no arguments, list the most recent ones.
+        Use read_past_session to read the conversation for a specific session.
+
+        Args:
+            query: Text to find in session names, summaries, or what was said in the conversation.
+            since: Only sessions active on or after this ISO 8601 date or time.
+            until: Only sessions started on or before this ISO 8601 date or time.
 
         Returns:
-            str: JSON list of session previews with session_id, created_at, and runs (user/assistant pairs).
+            str: JSON list of session previews with session_id, created_at, any name and summary,
+                and runs (user/assistant pairs).
         """
         import json
 
         if agent.db is None:
             return json.dumps([])
 
-        agent.db = cast(BaseDb, agent.db)
-        selected_sessions = agent.db.get_sessions(
-            session_type=SessionType.AGENT,
-            limit=_limit,
-            user_id=user_id,
-            sort_by="created_at",
-            sort_order="desc",
+        db = cast(BaseDb, agent.db)
+        try:
+            expression = _recall_filter("agent_id", agent.id, query, since, until)
+        except ValueError as exc:
+            return json.dumps({"error": str(exc)})
+        if expression is None:
+            sessions: Any = db.get_sessions(
+                session_type=SessionType.AGENT,
+                limit=_limit,
+                user_id=user_id,
+                component_id=agent.id,
+                sort_by="created_at",
+                sort_order="desc",
+            )
+            return _format_search_results(sessions, AgentSession, current_session_id, _num_runs, require_runs=True)
+        sessions, _ = db.search_sessions(
+            filter_expr=expression, session_type=SessionType.AGENT, user_id=user_id, limit=_limit
         )
-
-        results: List[Dict[str, Any]] = []
-        for session in selected_sessions:
-            if not isinstance(session, AgentSession) or not session.runs:
-                continue
-            if current_session_id and session.session_id == current_session_id:
-                continue
-            results.append(_extract_session_preview(session, num_runs=_num_runs))
-
-        return json.dumps(results, ensure_ascii=False)
+        return _format_search_results(sessions, AgentSession, current_session_id, _num_runs, require_runs=False)
 
     return search_past_sessions
 
@@ -531,44 +658,52 @@ async def aget_search_past_sessions_function(
     _limit = num_past_sessions_to_search if num_past_sessions_to_search is not None else 20
     _num_runs = num_past_session_runs_in_search if num_past_session_runs_in_search is not None else 3
 
-    async def search_past_sessions() -> str:
-        """List previous chat sessions with short previews.
-        Use read_past_session to read the full conversation for a specific session.
+    async def search_past_sessions(
+        query: Optional[str] = None, since: Optional[str] = None, until: Optional[str] = None
+    ) -> str:
+        """Find previous sessions. With no arguments, list the most recent ones.
+        Use read_past_session to read the conversation for a specific session.
+
+        Args:
+            query: Text to find in session names, summaries, or what was said in the conversation.
+            since: Only sessions active on or after this ISO 8601 date or time.
+            until: Only sessions started on or before this ISO 8601 date or time.
 
         Returns:
-            str: JSON list of session previews with session_id, created_at, and runs (user/assistant pairs).
+            str: JSON list of session previews with session_id, created_at, any name and summary,
+                and runs (user/assistant pairs).
         """
         import json
 
         if agent.db is None:
             return json.dumps([])
 
+        try:
+            expression = _recall_filter("agent_id", agent.id, query, since, until)
+        except ValueError as exc:
+            return json.dumps({"error": str(exc)})
+        if expression is None:
+            kwargs: Dict[str, Any] = dict(
+                session_type=SessionType.AGENT,
+                limit=_limit,
+                user_id=user_id,
+                component_id=agent.id,
+                sort_by="created_at",
+                sort_order="desc",
+            )
+            if _init.has_async_db(agent):
+                sessions: Any = await agent.db.get_sessions(**kwargs)  # type: ignore
+            else:
+                sessions = agent.db.get_sessions(**kwargs)
+            return _format_search_results(sessions, AgentSession, current_session_id, _num_runs, require_runs=True)
+        search: Dict[str, Any] = dict(
+            filter_expr=expression, session_type=SessionType.AGENT, user_id=user_id, limit=_limit
+        )
         if _init.has_async_db(agent):
-            selected_sessions = await agent.db.get_sessions(  # type: ignore
-                session_type=SessionType.AGENT,
-                limit=_limit,
-                user_id=user_id,
-                sort_by="created_at",
-                sort_order="desc",
-            )
+            sessions, _ = await agent.db.search_sessions(**search)  # type: ignore
         else:
-            selected_sessions = agent.db.get_sessions(
-                session_type=SessionType.AGENT,
-                limit=_limit,
-                user_id=user_id,
-                sort_by="created_at",
-                sort_order="desc",
-            )
-
-        results: List[Dict[str, Any]] = []
-        for session in selected_sessions:  # type: ignore
-            if not isinstance(session, AgentSession) or not session.runs:
-                continue
-            if current_session_id and session.session_id == current_session_id:
-                continue
-            results.append(_extract_session_preview(session, num_runs=_num_runs))
-
-        return json.dumps(results, ensure_ascii=False)
+            sessions, _ = agent.db.search_sessions(**search)  # type: ignore
+        return _format_search_results(sessions, AgentSession, current_session_id, _num_runs, require_runs=False)
 
     return Function.from_callable(search_past_sessions, name="search_past_sessions")
 
@@ -579,13 +714,17 @@ def get_read_past_session_function(
 ) -> Callable:
     """Factory for read_past_session tool."""
 
-    def read_past_session(session_id: str, num_runs: Optional[int] = None) -> str:
-        """Read the full conversation from a previous session.
+    def read_past_session(
+        session_id: str, num_runs: Optional[int] = None, start: int = 0, max_chars: Optional[int] = 20000
+    ) -> str:
+        """Read the conversation from a previous session, or part of it.
         Use search_past_sessions first to find relevant sessions.
 
         Args:
             session_id: The session ID to read (from search results).
-            num_runs: Maximum number of runs to include. Default: all runs.
+            num_runs: Maximum number of runs to include, counted from start. Negative reads the last runs.
+            start: Index of the first run to include. Negative counts from the end, so -5 reads the last five.
+            max_chars: Truncate the transcript after this many characters.
 
         Returns:
             str: The conversation formatted as User/Assistant message pairs.
@@ -593,34 +732,9 @@ def get_read_past_session_function(
         if agent.db is None:
             return "No database configured."
 
-        agent.db = cast(BaseDb, agent.db)
-        session = agent.db.get_session(
-            session_id=session_id,
-            session_type=SessionType.AGENT,
-            user_id=user_id,
-        )
-
-        if session is None or not isinstance(session, AgentSession) or not session.runs:
-            return "Session not found."
-
-        lines: List[str] = []
-        lines.append(f"Session: {session.session_id}")
-        if session.created_at:
-            lines.append(f"Created: {session.created_at}")
-        lines.append("")
-
-        runs = session.runs if num_runs is None else session.runs[:num_runs]
-        for run in runs:
-            for msg in run.messages or []:
-                if msg.role not in ("user", "assistant"):
-                    continue
-                text = _get_message_text(msg)
-                if text:
-                    role_label = "User" if msg.role == "user" else "Assistant"
-                    lines.append(f"{role_label}: {text}")
-                    lines.append("")
-
-        return "\n".join(lines) if lines else "No messages found in session."
+        db = cast(BaseDb, agent.db)
+        session = db.get_session(session_id=session_id, session_type=SessionType.AGENT, user_id=user_id)
+        return _format_past_session(session, AgentSession, "agent_id", agent.id, num_runs, start, max_chars)
 
     return read_past_session
 
@@ -632,13 +746,17 @@ async def aget_read_past_session_function(
     """Async factory for read_past_session tool."""
     from agno.agent import _init
 
-    async def read_past_session(session_id: str, num_runs: Optional[int] = None) -> str:
-        """Read the full conversation from a previous session.
+    async def read_past_session(
+        session_id: str, num_runs: Optional[int] = None, start: int = 0, max_chars: Optional[int] = 20000
+    ) -> str:
+        """Read the conversation from a previous session, or part of it.
         Use search_past_sessions first to find relevant sessions.
 
         Args:
             session_id: The session ID to read (from search results).
-            num_runs: Maximum number of runs to include. Default: all runs.
+            num_runs: Maximum number of runs to include, counted from start. Negative reads the last runs.
+            start: Index of the first run to include. Negative counts from the end, so -5 reads the last five.
+            max_chars: Truncate the transcript after this many characters.
 
         Returns:
             str: The conversation formatted as User/Assistant message pairs.
@@ -658,27 +776,6 @@ async def aget_read_past_session_function(
                 session_type=SessionType.AGENT,
                 user_id=user_id,
             )
-
-        if session is None or not isinstance(session, AgentSession) or not session.runs:
-            return "Session not found."
-
-        lines: List[str] = []
-        lines.append(f"Session: {session.session_id}")
-        if session.created_at:
-            lines.append(f"Created: {session.created_at}")
-        lines.append("")
-
-        runs = session.runs if num_runs is None else session.runs[:num_runs]
-        for run in runs:
-            for msg in run.messages or []:
-                if msg.role not in ("user", "assistant"):
-                    continue
-                text = _get_message_text(msg)
-                if text:
-                    role_label = "User" if msg.role == "user" else "Assistant"
-                    lines.append(f"{role_label}: {text}")
-                    lines.append("")
-
-        return "\n".join(lines) if lines else "No messages found in session."
+        return _format_past_session(session, AgentSession, "agent_id", agent.id, num_runs, start, max_chars)
 
     return Function.from_callable(read_past_session, name="read_past_session")

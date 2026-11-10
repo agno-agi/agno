@@ -73,6 +73,8 @@ except ImportError:
 
 
 class AsyncSqliteDb(AsyncBaseDb):
+    searches_run_content = True
+
     def __init__(
         self,
         db_file: Optional[str] = None,
@@ -1637,7 +1639,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 stmt = select(table)
 
                 if filter_expr is not None:
-                    stmt = stmt.where(session_filter_to_sqlalchemy(filter_expr, table))
+                    stmt = stmt.where(session_filter_to_sqlalchemy(filter_expr, table, runs_table=runs_table))
 
                 # Filtering
                 if user_id is not None:

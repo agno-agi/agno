@@ -280,77 +280,89 @@ def _search_past_sessions_function(
 ) -> Function:
     """Factory for search_past_sessions tool for Team."""
 
-    from agno.agent._default_tools import _extract_session_preview
+    from agno.agent._default_tools import _format_search_results, _recall_filter
     from agno.team._init import _has_async_db
 
     _limit = num_past_sessions_to_search if num_past_sessions_to_search is not None else 20
     _num_runs = num_past_session_runs_in_search if num_past_session_runs_in_search is not None else 3
 
-    def search_past_sessions() -> str:
-        """List previous chat sessions with short previews.
-        Use read_past_session to read the full conversation for a specific session.
-
-        Returns:
-            str: JSON list of session previews with session_id, created_at, and runs (user/assistant pairs).
-        """
-        if team.db is None:
-            return json.dumps([])
-
-        team.db = cast(BaseDb, team.db)
-        selected_sessions = team.db.get_sessions(
+    def _listing_kwargs() -> Dict[str, Any]:
+        return dict(
             session_type=SessionType.TEAM,
             limit=_limit,
             user_id=user_id,
+            component_id=team.id,
             sort_by="created_at",
             sort_order="desc",
         )
 
-        results: list = []
-        for session in selected_sessions:
-            if not isinstance(session, TeamSession) or not session.runs:
-                continue
-            if current_session_id and session.session_id == current_session_id:
-                continue
-            results.append(_extract_session_preview(session, num_runs=_num_runs))
+    def search_past_sessions(
+        query: Optional[str] = None, since: Optional[str] = None, until: Optional[str] = None
+    ) -> str:
+        """Find previous sessions. With no arguments, list the most recent ones.
+        Use read_past_session to read the conversation for a specific session.
 
-        return json.dumps(results, ensure_ascii=False)
-
-    async def asearch_past_sessions() -> str:
-        """List previous chat sessions with short previews.
-        Use read_past_session to read the full conversation for a specific session.
+        Args:
+            query: Text to find in session names, summaries, or what was said in the conversation.
+            since: Only sessions active on or after this ISO 8601 date or time.
+            until: Only sessions started on or before this ISO 8601 date or time.
 
         Returns:
-            str: JSON list of session previews with session_id, created_at, and runs (user/assistant pairs).
+            str: JSON list of session previews with session_id, created_at, any name and summary,
+                and runs (user/assistant pairs).
         """
         if team.db is None:
             return json.dumps([])
 
+        db = cast(BaseDb, team.db)
+        try:
+            expression = _recall_filter("team_id", team.id, query, since, until)
+        except ValueError as exc:
+            return json.dumps({"error": str(exc)})
+        if expression is None:
+            sessions: Any = db.get_sessions(**_listing_kwargs())
+            return _format_search_results(sessions, TeamSession, current_session_id, _num_runs, require_runs=True)
+        sessions, _ = db.search_sessions(
+            filter_expr=expression, session_type=SessionType.TEAM, user_id=user_id, limit=_limit
+        )
+        return _format_search_results(sessions, TeamSession, current_session_id, _num_runs, require_runs=False)
+
+    async def asearch_past_sessions(
+        query: Optional[str] = None, since: Optional[str] = None, until: Optional[str] = None
+    ) -> str:
+        """Find previous sessions. With no arguments, list the most recent ones.
+        Use read_past_session to read the conversation for a specific session.
+
+        Args:
+            query: Text to find in session names, summaries, or what was said in the conversation.
+            since: Only sessions active on or after this ISO 8601 date or time.
+            until: Only sessions started on or before this ISO 8601 date or time.
+
+        Returns:
+            str: JSON list of session previews with session_id, created_at, any name and summary,
+                and runs (user/assistant pairs).
+        """
+        if team.db is None:
+            return json.dumps([])
+
+        try:
+            expression = _recall_filter("team_id", team.id, query, since, until)
+        except ValueError as exc:
+            return json.dumps({"error": str(exc)})
+        if expression is None:
+            if _has_async_db(team):
+                sessions: Any = await cast(AsyncBaseDb, team.db).get_sessions(**_listing_kwargs())  # type: ignore
+            else:
+                sessions = team.db.get_sessions(**_listing_kwargs())  # type: ignore
+            return _format_search_results(sessions, TeamSession, current_session_id, _num_runs, require_runs=True)
+        search: Dict[str, Any] = dict(
+            filter_expr=expression, session_type=SessionType.TEAM, user_id=user_id, limit=_limit
+        )
         if _has_async_db(team):
-            selected_sessions = await cast(AsyncBaseDb, team.db).get_sessions(  # type: ignore
-                session_type=SessionType.TEAM,
-                limit=_limit,
-                user_id=user_id,
-                sort_by="created_at",
-                sort_order="desc",
-            )
+            sessions, _ = await cast(AsyncBaseDb, team.db).search_sessions(**search)
         else:
-            selected_sessions = team.db.get_sessions(  # type: ignore
-                session_type=SessionType.TEAM,
-                limit=_limit,
-                user_id=user_id,
-                sort_by="created_at",
-                sort_order="desc",
-            )
-
-        results: list = []
-        for session in selected_sessions:
-            if not isinstance(session, TeamSession) or not session.runs:
-                continue
-            if current_session_id and session.session_id == current_session_id:
-                continue
-            results.append(_extract_session_preview(session, num_runs=_num_runs))
-
-        return json.dumps(results, ensure_ascii=False)
+            sessions, _ = team.db.search_sessions(**search)  # type: ignore
+        return _format_search_results(sessions, TeamSession, current_session_id, _num_runs, require_runs=False)
 
     if async_mode and _has_async_db(team):
         return Function.from_callable(asearch_past_sessions, name="search_past_sessions")
@@ -364,16 +376,20 @@ def _read_past_session_function(
 ) -> Function:
     """Factory for read_past_session tool for Team."""
 
-    from agno.agent._default_tools import _get_message_text
+    from agno.agent._default_tools import _format_past_session
     from agno.team._init import _has_async_db
 
-    def read_past_session(session_id: str, num_runs: Optional[int] = None) -> str:
-        """Read the full conversation from a previous session.
+    def read_past_session(
+        session_id: str, num_runs: Optional[int] = None, start: int = 0, max_chars: Optional[int] = 20000
+    ) -> str:
+        """Read the conversation from a previous session, or part of it.
         Use search_past_sessions first to find relevant sessions.
 
         Args:
             session_id: The session ID to read (from search results).
-            num_runs: Maximum number of runs to include. Default: all runs.
+            num_runs: Maximum number of runs to include, counted from start. Negative reads the last runs.
+            start: Index of the first run to include. Negative counts from the end, so -5 reads the last five.
+            max_chars: Truncate the transcript after this many characters.
 
         Returns:
             str: The conversation formatted as User/Assistant message pairs.
@@ -381,42 +397,21 @@ def _read_past_session_function(
         if team.db is None:
             return "No database configured."
 
-        team.db = cast(BaseDb, team.db)
-        session = team.db.get_session(
-            session_id=session_id,
-            session_type=SessionType.TEAM,
-            user_id=user_id,
-        )
+        db = cast(BaseDb, team.db)
+        session = db.get_session(session_id=session_id, session_type=SessionType.TEAM, user_id=user_id)
+        return _format_past_session(session, TeamSession, "team_id", team.id, num_runs, start, max_chars)
 
-        if session is None or not isinstance(session, TeamSession) or not session.runs:
-            return "Session not found."
-
-        lines: list = []
-        lines.append(f"Session: {session.session_id}")
-        if session.created_at:
-            lines.append(f"Created: {session.created_at}")
-        lines.append("")
-
-        runs = session.runs if num_runs is None else session.runs[:num_runs]
-        for run in runs:
-            for msg in run.messages or []:
-                if msg.role not in ("user", "assistant"):
-                    continue
-                text = _get_message_text(msg)
-                if text:
-                    role_label = "User" if msg.role == "user" else "Assistant"
-                    lines.append(f"{role_label}: {text}")
-                    lines.append("")
-
-        return "\n".join(lines) if lines else "No messages found in session."
-
-    async def aread_past_session(session_id: str, num_runs: Optional[int] = None) -> str:
-        """Read the full conversation from a previous session.
+    async def aread_past_session(
+        session_id: str, num_runs: Optional[int] = None, start: int = 0, max_chars: Optional[int] = 20000
+    ) -> str:
+        """Read the conversation from a previous session, or part of it.
         Use search_past_sessions first to find relevant sessions.
 
         Args:
             session_id: The session ID to read (from search results).
-            num_runs: Maximum number of runs to include. Default: all runs.
+            num_runs: Maximum number of runs to include, counted from start. Negative reads the last runs.
+            start: Index of the first run to include. Negative counts from the end, so -5 reads the last five.
+            max_chars: Truncate the transcript after this many characters.
 
         Returns:
             str: The conversation formatted as User/Assistant message pairs.
@@ -436,28 +431,7 @@ def _read_past_session_function(
                 session_type=SessionType.TEAM,
                 user_id=user_id,
             )
-
-        if session is None or not isinstance(session, TeamSession) or not session.runs:
-            return "Session not found."
-
-        lines: list = []
-        lines.append(f"Session: {session.session_id}")
-        if session.created_at:
-            lines.append(f"Created: {session.created_at}")
-        lines.append("")
-
-        runs = session.runs if num_runs is None else session.runs[:num_runs]
-        for run in runs:
-            for msg in run.messages or []:
-                if msg.role not in ("user", "assistant"):
-                    continue
-                text = _get_message_text(msg)
-                if text:
-                    role_label = "User" if msg.role == "user" else "Assistant"
-                    lines.append(f"{role_label}: {text}")
-                    lines.append("")
-
-        return "\n".join(lines) if lines else "No messages found in session."
+        return _format_past_session(session, TeamSession, "team_id", team.id, num_runs, start, max_chars)
 
     if async_mode and _has_async_db(team):
         return Function.from_callable(aread_past_session, name="read_past_session")

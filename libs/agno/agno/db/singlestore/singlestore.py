@@ -57,6 +57,8 @@ except ImportError:
 
 
 class SingleStoreDb(BaseDb):
+    searches_run_content = True
+
     def __init__(
         self,
         id: Optional[str] = None,
@@ -1143,10 +1145,13 @@ class SingleStoreDb(BaseDb):
 
                 if filter_expr is not None:
                     # SingleStore lacks JSON_UNQUOTE, COLLATE on columns, and LIKE ... ESCAPE; utf8mb4_bin is case-sensitive.
-                    name_column = func.JSON_EXTRACT_STRING(table.c.session_data, "session_name")
                     stmt = stmt.where(
                         session_filter_to_sqlalchemy(
-                            filter_expr, table, session_name_column=name_column, backslash_like=True
+                            filter_expr,
+                            table,
+                            backslash_like=True,
+                            json_property=lambda column, *path: func.JSON_EXTRACT_STRING(column, *path),
+                            runs_table=runs_table,
                         )
                     )
 

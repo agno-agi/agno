@@ -15,6 +15,7 @@ Examples for session state management, chat history, and session persistence.
 - `session_state_manual_update.py` - Manually update session state.
 - `session_state_multiple_users.py` - Session state with multiple users.
 - `search_past_sessions.py` - Search and read previous sessions (two-step pattern).
+- `search_past_sessions_by_topic.py` - Find a past session by topic or thread and read only part of it.
 - `session_summary.py` - Enable session summaries for context compression.
 
 ## Prerequisites

@@ -18,6 +18,7 @@ class _EmptySessionsDb:
         session_type: SessionType,
         limit: Optional[int] = None,
         user_id: Optional[str] = None,
+        component_id: Optional[str] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> list[Any]:
@@ -87,6 +88,7 @@ class _MockDbWithSessions:
         session_type: SessionType,
         limit: Optional[int] = None,
         user_id: Optional[str] = None,
+        component_id: Optional[str] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> list[Any]:

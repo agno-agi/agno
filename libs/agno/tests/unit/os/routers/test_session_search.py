@@ -92,6 +92,8 @@ def test_schema_is_not_captured_as_session_id(db):
         "workflow_id",
         "created_at",
         "updated_at",
+        "summary",
+        "run_content",
     }
     assert response.json()["logical_operators"] == ["AND", "OR", "NOT"]
     labels = {field["key"]: field["label"] for field in response.json()["fields"]}
@@ -244,16 +246,22 @@ def test_postgres_uses_json_name_and_epoch_dates():
     from sqlalchemy import BigInteger, Column, MetaData, Table, select
     from sqlalchemy.dialects import postgresql
 
-    from agno.db.session_filters import SESSION_FILTER_FIELDS, normalize_session_filter, session_filter_to_sqlalchemy
+    from agno.db.session_filters import (
+        JSON_SESSION_FIELDS,
+        SESSION_FILTER_FIELDS,
+        normalize_session_filter,
+        session_filter_to_sqlalchemy,
+    )
 
     table = Table(
         "sessions",
         MetaData(),
         Column("session_data", postgresql.JSONB),
+        Column("summary", postgresql.JSONB),
         *[
             Column(key, BigInteger if key.endswith("_at") else postgresql.TEXT)
             for key in SESSION_FILTER_FIELDS
-            if key != "session_name"
+            if key not in JSON_SESSION_FIELDS and key != "run_content"
         ],
     )
     expression = normalize_session_filter(
@@ -275,16 +283,17 @@ def test_mysql_compares_strings_case_sensitively():
     from sqlalchemy import JSON, BigInteger, Column, MetaData, String, Table, select
     from sqlalchemy.dialects import mysql
 
-    from agno.db.session_filters import SESSION_FILTER_FIELDS, session_filter_to_sqlalchemy
+    from agno.db.session_filters import JSON_SESSION_FIELDS, SESSION_FILTER_FIELDS, session_filter_to_sqlalchemy
 
     table = Table(
         "sessions",
         MetaData(),
         Column("session_data", JSON),
+        Column("summary", JSON),
         *[
             Column(key, BigInteger if key.endswith("_at") else String(128))
             for key in SESSION_FILTER_FIELDS
-            if key != "session_name"
+            if key not in JSON_SESSION_FIELDS and key != "run_content"
         ],
     )
     expression = {
@@ -657,34 +666,45 @@ def test_singlestore_filter_uses_supported_sql():
     from sqlalchemy import JSON, BigInteger, Column, MetaData, String, Table, func, select
     from sqlalchemy.dialects import mysql
 
-    from agno.db.session_filters import SESSION_FILTER_FIELDS, session_filter_to_sqlalchemy
+    from agno.db.session_filters import JSON_SESSION_FIELDS, SESSION_FILTER_FIELDS, session_filter_to_sqlalchemy
 
     table = Table(
         "sessions",
         MetaData(),
         Column("session_data", JSON),
+        Column("summary", JSON),
         *[
             Column(key, BigInteger if key.endswith("_at") else String(128))
             for key in SESSION_FILTER_FIELDS
-            if key != "session_name"
+            if key not in JSON_SESSION_FIELDS and key != "run_content"
         ],
     )
+    runs = Table("runs", MetaData(), Column("session_id", String(64)), Column("run_data", JSON))
     expression = {
         "op": "AND",
         "conditions": [
             eq("user_id", "alice"),
             {"op": "NOT", "condition": {"op": "CONTAINS", "key": "session_name", "value": "100%_\\"}},
             {"op": "STARTSWITH", "key": "agent_id", "value": "sup"},
+            {"op": "CONTAINS", "key": "summary", "value": "billing"},
+            {"op": "CONTAINS", "key": "run_content", "value": "denied"},
         ],
     }
-    name_column = func.JSON_EXTRACT_STRING(table.c.session_data, "session_name")
     compiled = (
         select(table)
-        .where(session_filter_to_sqlalchemy(expression, table, session_name_column=name_column, backslash_like=True))
+        .where(
+            session_filter_to_sqlalchemy(
+                expression,
+                table,
+                backslash_like=True,
+                json_property=lambda column, *path: func.JSON_EXTRACT_STRING(column, *path),
+                runs_table=runs,
+            )
+        )
         .compile(dialect=mysql.dialect())
     )
     sql = str(compiled)
-    assert "JSON_EXTRACT_STRING" in sql
+    assert "JSON_EXTRACT_STRING" in sql and "EXISTS" in sql
     assert "JSON_UNQUOTE" not in sql and "ESCAPE" not in sql and "COLLATE" not in sql
     assert "%100\\%\\_\\\\%" in compiled.params.values()
     assert "sup%" in compiled.params.values()

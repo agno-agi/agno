@@ -105,6 +105,7 @@ def _db_epoch() -> Any:
 
 
 class AsyncPostgresDb(AsyncBaseDb):
+    searches_run_content = True
     serializes_sessions: bool = True
 
     def __init__(
@@ -1706,7 +1707,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 stmt = select(table)
 
                 if filter_expr is not None:
-                    stmt = stmt.where(session_filter_to_sqlalchemy(filter_expr, table))
+                    stmt = stmt.where(session_filter_to_sqlalchemy(filter_expr, table, runs_table=runs_table))
 
                 # Filtering
                 if user_id is not None:

@@ -112,3 +112,12 @@
 **Result:** Completed successfully in 23s.
 
 ---
+
+### search_past_sessions_by_topic.py
+
+**Status:** PASS
+**Tier:** untagged
+**Description:** Seeds a billing-export session (two runs) and an onboarding session, then asks the agent to recall by topic and to read only the end of a session. Tested 2026-11-10 with .venvs/demo/bin/python and gpt-5.6-luna, without session summaries. The agent called `search_past_sessions(query="IAM role")`, which matched the conversation itself, and answered with what was suspected. It then called `read_past_session(start=-1, num_runs=1)` and quoted only the last question.
+**Result:** Completed successfully.
+
+---

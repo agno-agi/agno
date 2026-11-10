@@ -58,6 +58,8 @@ except ImportError:
 
 
 class MySQLDb(BaseDb):
+    searches_run_content = True
+
     def __init__(
         self,
         id: Optional[str] = None,
@@ -1090,7 +1092,9 @@ class MySQLDb(BaseDb):
 
                 if filter_expr is not None:
                     # Binary collation keeps string comparisons case-sensitive, matching other SQL backends.
-                    stmt = stmt.where(session_filter_to_sqlalchemy(filter_expr, table, collation="utf8mb4_bin"))
+                    stmt = stmt.where(
+                        session_filter_to_sqlalchemy(filter_expr, table, collation="utf8mb4_bin", runs_table=runs_table)
+                    )
 
                 # Filtering
                 if user_id is not None:

@@ -302,6 +302,9 @@ def _fk_dependencies_for(db: Any, table_type: str) -> List[Tuple[str, str]]:
 class BaseDb(ABC):
     """Base abstract class for all our Database implementations."""
 
+    # Whether get_sessions(filter_expr=...) can search run content natively.
+    searches_run_content: bool = False
+
     # We assume the database to be up to date with the 2.0.0 release
     default_schema_version = "2.0.0"
 
@@ -621,7 +624,11 @@ class BaseDb(ABC):
         """
         from inspect import signature
 
-        from agno.db.session_filters import matches_session_filter, normalize_session_filter
+        from agno.db.session_filters import (
+            matches_session_filter,
+            mentions_run_content,
+            normalize_session_filter,
+        )
 
         if page < 1 or limit < 1:
             raise ValueError("Page and limit must be positive")
@@ -632,12 +639,14 @@ class BaseDb(ABC):
         query: Dict[str, Any] = dict(
             session_type=session_type, user_id=user_id, sort_by=sort_by, sort_order=sort_order, deserialize=False
         )
-        if expression is None or "filter_expr" in parameters:
+        searches_runs = mentions_run_content(expression)
+        native_ok = "filter_expr" in parameters and (not searches_runs or self.searches_run_content)
+        if expression is None or native_ok:
             native: Dict[str, Any] = {"filter_expr": expression} if expression is not None else {}
             result = self.get_sessions(**query, **native, limit=limit, page=page)
             return cast(Tuple[List[Dict[str, Any]], int], result)
         # One unpaginated read gives a consistent snapshot and avoids rescanning adapters that page in memory.
-        skip_runs = "include_runs" in parameters
+        skip_runs = "include_runs" in parameters and not searches_runs
         run_options: Dict[str, Any] = {"include_runs": False} if skip_runs else {}
         result = self.get_sessions(**query, **run_options)
         sessions, _ = cast(Tuple[List[Dict[str, Any]], int], result)
@@ -2740,6 +2749,9 @@ class BaseDb(ABC):
 class AsyncBaseDb(ABC):
     """Base abstract class for all our async database implementations."""
 
+    # Whether get_sessions(filter_expr=...) can search run content natively.
+    searches_run_content: bool = False
+
     def __init__(
         self,
         id: Optional[str] = None,
@@ -3016,7 +3028,11 @@ class AsyncBaseDb(ABC):
         """
         from inspect import signature
 
-        from agno.db.session_filters import matches_session_filter, normalize_session_filter
+        from agno.db.session_filters import (
+            matches_session_filter,
+            mentions_run_content,
+            normalize_session_filter,
+        )
 
         if page < 1 or limit < 1:
             raise ValueError("Page and limit must be positive")
@@ -3027,12 +3043,14 @@ class AsyncBaseDb(ABC):
         query: Dict[str, Any] = dict(
             session_type=session_type, user_id=user_id, sort_by=sort_by, sort_order=sort_order, deserialize=False
         )
-        if expression is None or "filter_expr" in parameters:
+        searches_runs = mentions_run_content(expression)
+        native_ok = "filter_expr" in parameters and (not searches_runs or self.searches_run_content)
+        if expression is None or native_ok:
             native: Dict[str, Any] = {"filter_expr": expression} if expression is not None else {}
             result = await self.get_sessions(**query, **native, limit=limit, page=page)
             return cast(Tuple[List[Dict[str, Any]], int], result)
         # One unpaginated read gives a consistent snapshot and avoids rescanning adapters that page in memory.
-        skip_runs = "include_runs" in parameters
+        skip_runs = "include_runs" in parameters and not searches_runs
         run_options: Dict[str, Any] = {"include_runs": False} if skip_runs else {}
         result = await self.get_sessions(**query, **run_options)
         sessions, _ = cast(Tuple[List[Dict[str, Any]], int], result)
