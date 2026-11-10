@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 pytest.importorskip("google.genai")
+from google.genai.types import HttpOptions
 
 from agno.exceptions import ModelProviderError
 from agno.media import File, Image, Video
@@ -40,6 +41,7 @@ def test_gemini_get_client_without_credentials_vertexai():
         _, kwargs = mock_client_cls.call_args
         assert "credentials" not in kwargs
         assert kwargs["vertexai"] is True
+        assert "api_version" not in kwargs["http_options"]
 
 
 def test_gemini_get_client_ai_studio_mode():
@@ -56,6 +58,50 @@ def test_gemini_get_client_ai_studio_mode():
         assert "credentials" not in kwargs
         assert "api_key" in kwargs
         assert kwargs.get("vertexai") is not True
+
+
+@pytest.mark.parametrize(
+    ("client_params", "expected_version"),
+    [
+        (None, "v1beta"),
+        ({"http_options": {"headers": {"custom-header": "value"}}}, "v1beta"),
+        ({"http_options": {"api_version": None}}, "v1beta"),
+        ({"http_options": HttpOptions(headers={"custom-header": "value"})}, "v1beta"),
+        ({"http_options": {"api_version": "v1"}}, "v1"),
+        ({"http_options": HttpOptions(api_version="v1")}, "v1"),
+    ],
+)
+def test_gemini_developer_api_version(client_params, expected_version):
+    model = Gemini(api_key="test-key", client_params=client_params)
+
+    with patch("agno.models.google.gemini.genai.Client") as mock_client_cls:
+        model.get_client()
+
+    options = mock_client_cls.call_args.kwargs["http_options"]
+    assert (options["api_version"] if isinstance(options, dict) else options.api_version) == expected_version
+
+
+def test_gemini_developer_api_respects_environment_version(monkeypatch):
+    monkeypatch.setenv("GOOGLE_GENAI_API_VERSION", "v1")
+    model = Gemini(api_key="test-key")
+
+    with patch("agno.models.google.gemini.genai.Client") as mock_client_cls:
+        model.get_client()
+
+    assert "api_version" not in mock_client_cls.call_args.kwargs["http_options"]
+
+
+def test_gemini_developer_version_does_not_change_shared_vertex_options():
+    options = {"headers": {"custom-header": "value"}}
+
+    with patch("agno.models.google.gemini.genai.Client") as mock_client_cls:
+        Gemini(api_key="test-key", client_params={"http_options": options}).get_client()
+        Gemini(
+            vertexai=True, project_id="test-project", location="test-location", client_params={"http_options": options}
+        ).get_client()
+
+    assert "api_version" not in options
+    assert "api_version" not in mock_client_cls.call_args.kwargs["http_options"]
 
 
 def test_gemini_formats_unexpected_error_message_with_type_when_message_empty():
