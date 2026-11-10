@@ -3,7 +3,7 @@ import threading
 from abc import ABC, abstractmethod
 from datetime import date, datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union, cast
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -311,6 +311,9 @@ class BaseDb(ABC):
         runs_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
+        component_metrics_table: Optional[str] = None,
+        aggregate_metrics_table: Optional[str] = None,
+        metrics_refreshes_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         traces_table: Optional[str] = None,
@@ -353,6 +356,34 @@ class BaseDb(ABC):
             self.runs_table_name = "agno_runs"
         self.memory_table_name = memory_table or "agno_memories"
         self.metrics_table_name = metrics_table or "agno_metrics"
+        # Named after a custom session table, so two databases sharing one schema never rebuild each other's metrics.
+        # On PostgreSQL a name over 63 bytes keeps its suffix and is shortened with a digest, so no two tables share it
+        from agno.db.utils import bound_index_name
+
+        if component_metrics_table:
+            self.component_metrics_table_name = component_metrics_table
+        elif session_table and session_table != "agno_sessions":
+            self.component_metrics_table_name = bound_index_name(
+                type(self).__name__, session_table, "_component_metrics"
+            )
+        else:
+            self.component_metrics_table_name = "agno_component_metrics"
+        if aggregate_metrics_table:
+            self.aggregate_metrics_table_name = aggregate_metrics_table
+        elif session_table and session_table != "agno_sessions":
+            self.aggregate_metrics_table_name = bound_index_name(
+                type(self).__name__, session_table, "_aggregate_metrics"
+            )
+        else:
+            self.aggregate_metrics_table_name = "agno_aggregate_metrics"
+        if metrics_refreshes_table:
+            self.metrics_refreshes_table_name = metrics_refreshes_table
+        elif session_table and session_table != "agno_sessions":
+            self.metrics_refreshes_table_name = bound_index_name(
+                type(self).__name__, session_table, "_metrics_refreshes"
+            )
+        else:
+            self.metrics_refreshes_table_name = "agno_metrics_refreshes"
         self.eval_table_name = eval_table or "agno_eval_runs"
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
         self.trace_table_name = traces_table or "agno_traces"
@@ -446,13 +477,15 @@ class BaseDb(ABC):
         """
         Serialize common DB fields (table names + id). Subclasses may extend this.
         """
-        return {
+        config = {
             "id": self.id,
             "session_table": self.session_table_name,
             "job_table": self.job_table_name,
             "runs_table": self.runs_table_name,
             "memory_table": self.memory_table_name,
-            "metrics_table": self.metrics_table_name,
+            "component_metrics_table": self.component_metrics_table_name,
+            "aggregate_metrics_table": self.aggregate_metrics_table_name,
+            "metrics_refreshes_table": self.metrics_refreshes_table_name,
             "eval_table": self.eval_table_name,
             "knowledge_table": self.knowledge_table_name,
             "traces_table": self.trace_table_name,
@@ -477,6 +510,11 @@ class BaseDb(ABC):
             "mcp_oauth_refresh_tokens_table": self.mcp_oauth_refresh_tokens_table_name,
             "mcp_oauth_keys_table": self.mcp_oauth_keys_table_name,
         }
+        # The deprecated metrics_table is kept only when it was renamed, so loading a database that never set it does
+        # not warn
+        if self.metrics_table_name != "agno_metrics":
+            config["metrics_table"] = self.metrics_table_name
+        return config
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "BaseDb":
@@ -488,6 +526,9 @@ class BaseDb(ABC):
             runs_table=data.get("runs_table"),
             memory_table=data.get("memory_table"),
             metrics_table=data.get("metrics_table"),
+            component_metrics_table=data.get("component_metrics_table"),
+            aggregate_metrics_table=data.get("aggregate_metrics_table"),
+            metrics_refreshes_table=data.get("metrics_refreshes_table"),
             eval_table=data.get("eval_table"),
             knowledge_table=data.get("knowledge_table"),
             traces_table=data.get("traces_table"),
@@ -861,7 +902,61 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def calculate_metrics(self) -> Optional[Any]:
+    def calculate_metrics(self, rebuild_from: Optional[date] = None) -> Optional[Any]:
+        raise NotImplementedError
+
+    def calculate_metrics_dates(
+        self, should_stop: Optional[Callable[[], bool]] = None, rebuild_from: Optional[date] = None
+    ) -> Optional[List[date]]:
+        """Calculate metrics as calculate_metrics does, returning only the days calculated, and stop between days or
+        a day's batches once should_stop returns True."""
+        raise NotImplementedError
+
+    def stop_metrics_refresh_on_read(self) -> None:
+        """Stop calculating metrics before a read, for a database whose metrics are calculated in the background."""
+        return None
+
+    def get_metrics_by_date(
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """The metrics of every user, one row per day, and when they were last updated."""
+        from agno.db.utils import aggregate_metrics_by_date
+
+        metrics, latest_updated_at = self.get_metrics(starting_date=starting_date, ending_date=ending_date)
+        return aggregate_metrics_by_date(metrics), latest_updated_at
+
+    # --- Component Metrics (Optional) ---
+    # ``user_id`` works as in get_metrics: ``None`` totals every owner, a name that user's rows, ``""`` unowned rows.
+
+    def get_component_metrics(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """The component metrics totals of each day in the date range, and when they were last updated."""
+        raise NotImplementedError
+
+    def get_metrics_totals(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[Dict[str, Any], Optional[int]]:
+        """The component metrics totals of the whole date range, and when they were last updated."""
+        raise NotImplementedError
+
+    def get_metrics_versions(self, starting_date: date, ending_date: date) -> Optional[Dict[str, int]]:
+        """The version of each everyone aggregate metrics row in the date range, ``None`` until a first calculation."""
+        raise NotImplementedError
+
+    def get_metrics_refresh_status(self) -> Optional[Dict[str, Any]]:
+        """The status of the most recent calculate_metrics, shared by every process: 'running', 'completed' or
+        'failed', when it started and finished, and its error. ``None`` before the first one."""
         raise NotImplementedError
 
     # --- Knowledge ---
@@ -2747,6 +2842,9 @@ class AsyncBaseDb(ABC):
         runs_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
+        component_metrics_table: Optional[str] = None,
+        aggregate_metrics_table: Optional[str] = None,
+        metrics_refreshes_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         traces_table: Optional[str] = None,
@@ -2781,6 +2879,34 @@ class AsyncBaseDb(ABC):
             self.runs_table_name = "agno_runs"
         self.memory_table_name = memory_table or "agno_memories"
         self.metrics_table_name = metrics_table or "agno_metrics"
+        # Named after a custom session table, so two databases sharing one schema never rebuild each other's metrics.
+        # On PostgreSQL a name over 63 bytes keeps its suffix and is shortened with a digest, so no two tables share it
+        from agno.db.utils import bound_index_name
+
+        if component_metrics_table:
+            self.component_metrics_table_name = component_metrics_table
+        elif session_table and session_table != "agno_sessions":
+            self.component_metrics_table_name = bound_index_name(
+                type(self).__name__, session_table, "_component_metrics"
+            )
+        else:
+            self.component_metrics_table_name = "agno_component_metrics"
+        if aggregate_metrics_table:
+            self.aggregate_metrics_table_name = aggregate_metrics_table
+        elif session_table and session_table != "agno_sessions":
+            self.aggregate_metrics_table_name = bound_index_name(
+                type(self).__name__, session_table, "_aggregate_metrics"
+            )
+        else:
+            self.aggregate_metrics_table_name = "agno_aggregate_metrics"
+        if metrics_refreshes_table:
+            self.metrics_refreshes_table_name = metrics_refreshes_table
+        elif session_table and session_table != "agno_sessions":
+            self.metrics_refreshes_table_name = bound_index_name(
+                type(self).__name__, session_table, "_metrics_refreshes"
+            )
+        else:
+            self.metrics_refreshes_table_name = "agno_metrics_refreshes"
         self.eval_table_name = eval_table or "agno_eval_runs"
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
         self.trace_table_name = traces_table or "agno_traces"
@@ -2826,12 +2952,14 @@ class AsyncBaseDb(ABC):
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize common async database configuration and table overrides."""
-        return {
+        config = {
             "id": self.id,
             "session_table": self.session_table_name,
             "runs_table": self.runs_table_name,
             "memory_table": self.memory_table_name,
-            "metrics_table": self.metrics_table_name,
+            "component_metrics_table": self.component_metrics_table_name,
+            "aggregate_metrics_table": self.aggregate_metrics_table_name,
+            "metrics_refreshes_table": self.metrics_refreshes_table_name,
             "eval_table": self.eval_table_name,
             "knowledge_table": self.knowledge_table_name,
             "traces_table": self.trace_table_name,
@@ -2850,6 +2978,11 @@ class AsyncBaseDb(ABC):
             "auth_tokens_table": self.auth_tokens_table_name,
             "service_accounts_table": self.service_accounts_table_name,
         }
+        # The deprecated metrics_table is kept only when it was renamed, so loading a database that never set it does
+        # not warn
+        if self.metrics_table_name != "agno_metrics":
+            config["metrics_table"] = self.metrics_table_name
+        return config
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "AsyncBaseDb":
@@ -2860,6 +2993,9 @@ class AsyncBaseDb(ABC):
             runs_table=data.get("runs_table"),
             memory_table=data.get("memory_table"),
             metrics_table=data.get("metrics_table"),
+            component_metrics_table=data.get("component_metrics_table"),
+            aggregate_metrics_table=data.get("aggregate_metrics_table"),
+            metrics_refreshes_table=data.get("metrics_refreshes_table"),
             eval_table=data.get("eval_table"),
             knowledge_table=data.get("knowledge_table"),
             traces_table=data.get("traces_table"),
@@ -3197,7 +3333,61 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def calculate_metrics(self) -> Optional[Any]:
+    async def calculate_metrics(self, rebuild_from: Optional[date] = None) -> Optional[Any]:
+        raise NotImplementedError
+
+    async def calculate_metrics_dates(
+        self, should_stop: Optional[Callable[[], bool]] = None, rebuild_from: Optional[date] = None
+    ) -> Optional[List[date]]:
+        """Calculate metrics as calculate_metrics does, returning only the days calculated, and stop between days or
+        a day's batches once should_stop returns True."""
+        raise NotImplementedError
+
+    def stop_metrics_refresh_on_read(self) -> None:
+        """Stop calculating metrics before a read, for a database whose metrics are calculated in the background."""
+        return None
+
+    async def get_metrics_by_date(
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """The metrics of every user, one row per day, and when they were last updated."""
+        from agno.db.utils import aggregate_metrics_by_date
+
+        metrics, latest_updated_at = await self.get_metrics(starting_date=starting_date, ending_date=ending_date)
+        return aggregate_metrics_by_date(metrics), latest_updated_at
+
+    # --- Component Metrics (Optional) ---
+    # See the BaseDb component metrics methods for the ``user_id`` semantics.
+
+    async def get_component_metrics(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """The component metrics totals of each day in the date range, and when they were last updated."""
+        raise NotImplementedError
+
+    async def get_metrics_totals(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[Dict[str, Any], Optional[int]]:
+        """The component metrics totals of the whole date range, and when they were last updated."""
+        raise NotImplementedError
+
+    async def get_metrics_versions(self, starting_date: date, ending_date: date) -> Optional[Dict[str, int]]:
+        """The version of each everyone aggregate metrics row in the date range, ``None`` until a first calculation."""
+        raise NotImplementedError
+
+    async def get_metrics_refresh_status(self) -> Optional[Dict[str, Any]]:
+        """The status of the most recent calculate_metrics, shared by every process: 'running', 'completed' or
+        'failed', when it started and finished, and its error. ``None`` before the first one."""
         raise NotImplementedError
 
     # --- Knowledge ---
