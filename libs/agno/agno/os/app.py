@@ -748,9 +748,11 @@ class AgentOS:
                     "Company Manager, including setup requests. Routines are Company schedules: ask Company "
                     "Manager, not Platform Builder, to create them. When a person asks to start a Task a person "
                     "already accepted, call start_company_task by itself: the Task runs in its own session and the "
-                    "tool's reply is the receipt. For the state of a Task or its run, call get_company_task_status "
-                    "instead of waiting. Never accept, review or complete Tasks yourself, and never run a Task's "
-                    "executor directly with the run tools."
+                    "tool's reply is the receipt. When a person answers a finished Task's question, decides between "
+                    "its options or revises it, call continue_company_task by itself with their words. For the "
+                    "state, result or evidence of a Task, call get_company_task_status instead of waiting. Never "
+                    "accept, review or complete Tasks yourself, and never run a Task's executor directly with the "
+                    "run tools."
                 )
             self.agents = [*(self.agents or []), self._company_manager]
         if self._company_db is not None:
@@ -765,6 +767,8 @@ class AgentOS:
                     contextual_manager.instructions = _company_instructions(
                         self._company_db,
                         [base_instructions] if isinstance(base_instructions, str) else list(base_instructions or []),
+                        # Super Agent hears about Tasks its conversations started; the managers do not.
+                        task_updates=self._manager is not None and contextual_manager is self._manager.team,
                     )
         self._apply_manager_manifest()
 

@@ -107,7 +107,12 @@ async def _reserve_task(db: Any, job: Dict[str, Any]) -> Optional[Dict[str, Any]
             run_db_id=payload["company_run_db_id"],
             session_user_id=job.get("user_id"),
             **({"requested_from": payload["company_requested_from"]} if payload.get("company_requested_from") else {}),
+            **({"follow_up": payload["company_follow_up"]} if payload.get("company_follow_up") else {}),
         )
+        if reserved is not None:
+            from agno.company.events import notify_task_changed
+
+            notify_task_changed()
         task = reserved or await _call(db, "get_task", task["id"])
     if (
         task is None
@@ -334,13 +339,18 @@ async def _reconcile_task_run(
     await _cancel_ticketless_pending_run(run_db, task, run, caller, worker, is_admin=is_admin)
     if run["status"] not in {"COMPLETED", "ERROR", "CANCELLED"}:
         return False
+    from agno.company.evidence import with_evidence
+
     data = run.get("run_data") or {}
-    result = {
-        "run_id": run["run_id"],
-        "status": run["status"],
-        "content": data.get("content"),
-        "content_type": data.get("content_type"),
-    }
+    result = with_evidence(
+        {
+            "run_id": run["run_id"],
+            "status": run["status"],
+            "content": data.get("content"),
+            "content_type": data.get("content_type"),
+        },
+        data,
+    )
     checkout = None
     if run["status"] == "COMPLETED":
         from agno.company.sandbox import _is_sandboxed, _project_checkout
@@ -365,6 +375,10 @@ async def _reconcile_task_run(
         expected_transitions=task["transitions"],
         **({"checkout": checkout} if checkout is not None else {}),
     )
+    if updated is not None:
+        from agno.company.events import notify_task_changed
+
+        notify_task_changed()
     return updated is not None
 
 
@@ -386,6 +400,7 @@ async def _enqueue_ticket(worker: Any, job: Dict[str, Any]) -> Dict[str, Any]:
             "company_run_db_id": submission["run_db_id"],
             "company_started_by": submission.get("started_by"),
             **({"company_requested_from": submission["requested_from"]} if submission.get("requested_from") else {}),
+            **({"company_follow_up": submission["follow_up"]} if submission.get("follow_up") else {}),
         },
     }
     try:
@@ -481,9 +496,11 @@ async def _project_run(worker: Any, job: Dict[str, Any], status: str, error: Opt
             raise ValueError("Completed Task run is not durably readable")
         data = output.to_dict()
         result = {key: data.get(key) for key in ("run_id", "status", "content", "content_type")}
+        from agno.company.evidence import with_evidence
         from agno.company.sandbox import _project_checkout
 
         checkout, result = await _project_checkout(db, task, component, data, result)
+        result = with_evidence(result, data)
     await _call(
         db,
         "complete_task_run",
@@ -493,6 +510,9 @@ async def _project_run(worker: Any, job: Dict[str, Any], status: str, error: Opt
         expected_transitions=task["transitions"],
         **({"checkout": checkout} if checkout is not None else {}),
     )
+    from agno.company.events import notify_task_changed
+
+    notify_task_changed()
 
 
 async def _project_run_before_settle(
@@ -533,7 +553,13 @@ async def _reservation_recorded(worker: Any, job: Dict[str, Any]) -> bool:
     return task is not None and task.get("job_id") == job["id"]
 
 
-async def _task_input(manager: Any, task: Dict[str, Any], *, accepted_execution: bool = False) -> str:
+async def _task_input(
+    manager: Any,
+    task: Dict[str, Any],
+    *,
+    accepted_execution: bool = False,
+    follow_up: Optional[Dict[str, Any]] = None,
+) -> str:
     pages = []
     # Both namespaces have company-wide read visibility. No Source credentials,
     # Product metadata, other Tasks or caller-supplied runtime state are forwarded.
@@ -565,8 +591,25 @@ async def _task_input(manager: Any, task: Dict[str, Any], *, accepted_execution:
                 "This is execution, not a request to acknowledge or propose the Task. "
                 "Preserve the brief's scope and restrictions; acceptance grants no additional permissions. "
                 "If instructions conflict or the work cannot be completed within those bounds, "
-                "report the precise blocker and what remains undone."
+                "report the precise blocker and what remains undone. "
+                "State what you checked and how. If a person must decide before you can continue, "
+                "end with your recommendation and the one question they need to answer."
+                + (
+                    " This continues the same Task: act on follow_up, a person's reply to previous_result."
+                    if follow_up is not None
+                    else ""
+                )
             ),
+        }
+    if follow_up is not None:
+        # A person's reply to the previous attempt. The session holds the earlier turns;
+        # the previous result is repeated so executors without session history still see it.
+        previous = task.get("result") or {}
+        content = previous.get("content")
+        payload["follow_up"] = {key: follow_up.get(key) for key in ("message", "from", "in_reply_to_attempt")}
+        payload["previous_result"] = {
+            "status": previous.get("status"),
+            "content": content[:4000] if isinstance(content, str) else content,
         }
     return json.dumps(payload, ensure_ascii=False)
 

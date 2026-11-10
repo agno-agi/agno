@@ -302,3 +302,19 @@ class TaskRunCreate(BaseModel):
             if self.executor_type is None or self.executor_id is None or not self.executor_id.strip():
                 raise ValueError("A direct start requires an executor type and id")
         return self
+
+
+class TaskContinue(BaseModel):
+    """A person's reply to a Task's latest attempt; it continues the same Task and worker session."""
+
+    model_config = ConfigDict(extra="forbid")
+    message: str = Field(..., min_length=1, max_length=20000)
+    # The attempt being answered. A reply to an older attempt is refused as superseded.
+    in_reply_to_attempt: Optional[int] = Field(None, ge=1, strict=True)
+
+    @field_validator("message")
+    @classmethod
+    def validate_message(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("A reply needs a message")
+        return value

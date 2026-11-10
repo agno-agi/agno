@@ -2,11 +2,11 @@
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Dict, Optional, Union
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional, Union
 from urllib.parse import quote, unquote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import JSONResponse, Response, StreamingResponse
 
 from agno.company.execution import (
     _call,
@@ -27,11 +27,11 @@ from agno.company.execution import (
 )
 from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.db.schemas.tasks import task_next_attempt, task_run_fields, task_run_id
+from agno.db.schemas.tasks import TASK_STATUS_MEANING, task_next_attempt, task_run_fields, task_run_id
 from agno.os.auth import get_authentication_dependency
 from agno.os.job_queue import ticket_status_to_api, validate_seam_input
 from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id
-from agno.os.routers.company.schema import TaskRunCreate
+from agno.os.routers.company.schema import TaskContinue, TaskRunCreate
 from agno.os.routers.run_permissions import _require_endpoint_permission
 from agno.os.schema import PaginatedResponse, PaginationInfo
 
@@ -51,6 +51,8 @@ class _StartCaller:
     require_accept: Callable[[str], Awaitable[None]]
     # The conversation that asked for the run, recorded on its Task attempt.
     requested_from: Optional[Dict[str, str]] = None
+    # A person's reply that the run continues from: message, sender and the attempt it answers.
+    follow_up: Optional[Dict[str, Any]] = None
 
     @classmethod
     def from_request(cls, request: Request) -> "_StartCaller":
@@ -74,6 +76,7 @@ class _StartCaller:
         authority: Any,
         user_id: Optional[str],
         requested_from: Optional[Dict[str, str]] = None,
+        follow_up: Optional[Dict[str, Any]] = None,
     ) -> "_StartCaller":
         """A caller acting through a run's authority instead of an HTTP request, as a Super Agent tool does."""
         from dataclasses import replace
@@ -104,6 +107,7 @@ class _StartCaller:
             authorization_enabled=authority is not None,
             require_accept=require_accept,
             requested_from=requested_from,
+            follow_up=follow_up,
         )
 
 
@@ -155,6 +159,71 @@ async def _run_route(
         return Response(response.content, status_code=response.status_code, media_type="application/json")
     finally:
         _task_transport.reset(token)
+
+
+_STATUS_MEANING = TASK_STATUS_MEANING
+
+
+def _task_state(value: Dict[str, Any], ticket: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """What a person needs to know about a Task now, from saved state only. Never waits on the worker."""
+    from agno.os.job_queue import ticket_status_to_api
+
+    attempts = [entry for entry in value.get("transitions") or [] if entry.get("attempt")]
+    latest: Dict[str, Any] = attempts[-1] if attempts else {}
+    state: Dict[str, Any] = {
+        "task_id": value["id"],
+        "title": value.get("title"),
+        "status": value["status"],
+        "meaning": _STATUS_MEANING.get(value["status"], value["status"]),
+        "executor": value.get("executor_id"),
+        "attempt": latest.get("attempt"),
+        "run_id": value.get("job_id"),
+        "started_by": latest.get("started_by"),
+        "requested_from": latest.get("requested_from"),
+        "follow_up": latest.get("follow_up"),
+    }
+    if ticket is not None:
+        state["run_status"] = ticket_status_to_api(ticket["status"])
+        if ticket["status"] == "paused":
+            state["waiting_on"] = "A person must approve or answer the paused run before it continues."
+    result = value.get("result") or {}
+    if result and result.get("run_id") == value.get("job_id"):
+        content = result.get("content")
+        evidence = result.get("evidence") or []
+        state["run_status"] = result.get("status") or state.get("run_status")
+        state["result"] = {
+            "content": content[:1500] if isinstance(content, str) else content,
+            "evidence": [{key: item.get(key) for key in ("kind", "name", "input", "error")} for item in evidence[:10]],
+            "evidence_count": len(evidence),
+            **({"evidence_note": result["evidence_note"]} if result.get("evidence_note") else {}),
+        }
+    return state
+
+
+async def _task_event_stream(
+    read: Callable[[], Awaitable[List[Dict[str, Any]]]],
+    disconnected: Callable[[], Awaitable[bool]],
+    wait: Callable[[float], Awaitable[None]],
+    interval: float = 5,
+    keep_alive: float = 15,
+) -> AsyncIterator[str]:
+    """Emit each Task's state when it first appears or changes, until the client goes away."""
+    import json
+
+    sent: Dict[str, Any] = {}
+    quiet = 0.0
+    while not await disconnected():
+        for state in await read():
+            if state != sent.get(state["task_id"]):
+                sent[state["task_id"]] = state
+                quiet = 0.0
+                yield f"event: task\ndata: {json.dumps(state, ensure_ascii=False, default=str)}\n\n"
+        started = asyncio.get_running_loop().time()
+        await wait(interval)
+        quiet += asyncio.get_running_loop().time() - started
+        if quiet >= keep_alive:
+            quiet = 0.0
+            yield ": keep-alive\n\n"
 
 
 class _TaskStarter:
@@ -219,15 +288,68 @@ class _TaskStarter:
             raise HTTPException(409, "A Task session must stay in its original executor database")
         return run_db
 
-    async def task_message(self, value: Dict[str, Any]) -> str:
+    async def task_message(self, value: Dict[str, Any], follow_up: Optional[Dict[str, Any]] = None) -> str:
         try:
-            return await _task_input(self.manager, value, accepted_execution=True)
+            return await _task_input(self.manager, value, accepted_execution=True, follow_up=follow_up)
         except LookupError as exc:
             raise HTTPException(404, str(exc))
         except ValueError as exc:
             raise HTTPException(409, str(exc))
         except NotImplementedError:
             raise HTTPException(503, "Company wiki is not supported by the configured database")
+
+    async def state(self, value: Dict[str, Any], app: Any) -> Dict[str, Any]:
+        queue = getattr(getattr(app, "state", None), "queue_worker", None)
+        ticket = await queue.store.get_job(value["job_id"]) if value.get("job_id") and queue is not None else None
+        return _task_state(value, ticket)
+
+    async def continue_task(
+        self,
+        task_id: str,
+        caller: _StartCaller,
+        message: str,
+        in_reply_to_attempt: Optional[int] = None,
+    ) -> Response:
+        """Start the next attempt of a Task from a person's reply to its latest attempt, on the same session.
+
+        A repeated reply joins the attempt it started. A reply to an older attempt, to a finished
+        or cancelled Task, or while an attempt is still running is refused and starts nothing.
+        """
+        value = await self.task(task_id)
+        attempts = [entry for entry in value.get("transitions") or [] if entry.get("attempt")]
+        if not attempts:
+            raise HTTPException(409, "This Task has not run yet. Start it instead of replying.")
+        latest = attempts[-1]
+        answering = in_reply_to_attempt if in_reply_to_attempt is not None else latest["attempt"]
+        pending = _pending_task_attempt(value)
+        replied = latest.get("follow_up") or {}
+        duplicate = pending is not None and replied.get("in_reply_to_attempt") == answering
+        if not duplicate:
+            if answering != latest["attempt"]:
+                raise HTTPException(
+                    409, f"Attempt {answering} was superseded by attempt {latest['attempt']}; reply to the latest one."
+                )
+            if value["status"] in ("done", "cancelled"):
+                raise HTTPException(409, f"The Task is {value['status']}; it cannot continue.")
+            if pending is not None:
+                raise HTTPException(409, "The current attempt is still running. Reply once it has finished.")
+            result = value.get("result") or {}
+            finished = value["status"] == "in_review" or (
+                value["status"] == "in_progress"
+                and result.get("run_id") == value.get("job_id")
+                and result.get("status") in ("ERROR", "CANCELLED")
+            )
+            if not finished:
+                raise HTTPException(409, "Only a Task whose latest attempt has finished can continue.")
+        caller.follow_up = {"message": message, "from": caller.resolve_user(), "in_reply_to_attempt": answering}
+        response = await self.submit(task_id, caller, None, value, None)
+        if response.status_code < 300:
+            # Two different replies race for the same deterministic attempt; only the first one continues.
+            current = await self.task(task_id)
+            started = [entry for entry in current.get("transitions") or [] if entry.get("attempt")][-1]
+            if (started.get("follow_up") or {}).get("message") != message:
+                raise HTTPException(409, "Another reply already continued this Task.")
+        return response
 
     async def submit(
         self,
@@ -392,7 +514,7 @@ class _TaskStarter:
         owner = _task_session_owner(value, component)
         await _prepare_task_session(run_db, value, owner)
         if message is None:
-            message = await self.task_message(value)
+            message = await self.task_message(value, caller.follow_up)
         # Apply the ordinary run route's schema check before mutating the Task.
         # Rejected input must not consume an attempt or leave phantom active work.
         validate_seam_input(component, message)
@@ -409,6 +531,7 @@ class _TaskStarter:
                 "run_db_id": run_db.id,
                 "started_by": started_by,
                 "requested_from": caller.requested_from,
+                "follow_up": caller.follow_up,
             }
         )
         try:
@@ -664,6 +787,47 @@ def get_company_runs_router(os: Any) -> APIRouter:
                 if ticket is None or ticket["status"] in {"completed", "failed", "cancelled"}:
                     await _reconcile_task_run(db, original_db, value, run, owner, worker=queue)
         return response
+
+    @router.post("/tasks/{task_id}/continue", status_code=202)
+    async def continue_route(task_id: str, request: Request, body: TaskContinue, _: bool = Depends(auth)):
+        try:
+            return await starter.continue_task(
+                task_id, _StartCaller.from_request(request), body.message, body.in_reply_to_attempt
+            )
+        except _TaskRunUnavailable as exc:
+            raise HTTPException(503, str(exc)) from exc
+        except _TaskRunConflict as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @router.get("/events")
+    async def events(
+        request: Request,
+        task_id: List[str] = Query(..., min_length=1, max_length=50),
+        _: bool = Depends(auth),
+    ):
+        """Stream Task state changes as server-sent events: the current state first, then each change.
+
+        A change on this replica arrives at once; others are read back every few seconds, so the
+        stream needs no shared broker and a reconnecting client always starts from the current state.
+        """
+        from agno.company.events import wait_for_task_change
+
+        get_scoped_user_id(request)
+
+        async def read() -> List[Dict[str, Any]]:
+            states = []
+            for identifier in dict.fromkeys(task_id):
+                try:
+                    states.append(await starter.state(await task(identifier), request.app))
+                except HTTPException as exc:
+                    states.append({"task_id": identifier, "error": exc.detail})
+            return states
+
+        return StreamingResponse(
+            _task_event_stream(read, request.is_disconnected, wait_for_task_change),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     @router.get("/attention")
     async def attention(request: Request, product_id: Optional[str] = None, _: bool = Depends(auth)):

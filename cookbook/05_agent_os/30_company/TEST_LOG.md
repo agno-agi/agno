@@ -467,3 +467,21 @@ SQLite and with `COMPANY_DB=postgres`, with no model calls.
 **Result:** The seeded Task id was printed after startup. "Start the task" returned the receipt with the run id, and the Task moved to in progress with the requesting session recorded in `requested_from`. The scripted rerun matched the earlier one: receipt 3.3s, status 4.6s and an unrelated answer 1.6s while the Task ran, then In review.
 
 ---
+
+### 14_continue_tasks_from_chat.py (2026-11-10)
+
+**Status:** PASS
+
+**Description:** Live run with `gpt-5.6-luna` for Super Agent and an `investigator` Agent executor with two read tools and one write tool, local PostgreSQL and the durable queue. Super Agent starts the accepted Task; the run is read back from the Task; Super Agent is asked for an update; the person answers the worker's question from chat.
+
+**Result:** Attempt 1 reached In review with a finding, the checks it ran, a recommended option and a question, and changed nothing. Its result recorded the two read tool calls with their output as evidence. "Any update?" answered with the finding and the options in 4.9s. "Go with your recommended option" continued the Task in 2.6s as attempt 2, which recorded the reply as `follow_up`, ran on the same worker session, applied the change with the write tool and recorded that call in its evidence. Super Agent passed an expanded form of the reply ("Go with your recommended option: switch the nightly export to billing-export-new") rather than the exact words. A first version gave the worker only read tools, so attempt 2 reported it could not apply the fix.
+
+### 14_continue_tasks_from_chat.py --serve (2026-11-10)
+
+**Status:** PASS
+
+**Description:** Served mode, driven over HTTP: subscribe to `GET /company/events?task_id=<seeded id>`, then ask Super Agent to start the Task.
+
+**Result:** The stream sent the current state (`ready`) on connect, `in_progress`/`RUNNING` right after the start, and `in_review`/`COMPLETED` with two evidence items when the run finished, with no client polling.
+
+---
