@@ -447,3 +447,23 @@ SQLite and with `COMPANY_DB=postgres`, with no model calls.
 **Result:** Offline configuration check passed. The combined 636-test regression suite also covers Company Routine authorization and restrictions.
 
 ---
+
+### 05_super_agent_company.py and 10_weekly_product_review.py: Company work through Super Agent (2026-11-10)
+
+**Status:** PASS
+
+**Description:** `05_company_manager.py` is renamed `05_super_agent_company.py`. It builds AgentOS with `OSManager` and `CompanyConfig`, takes the `CompanyTools` from Super Agent, and calls them with a trusted run context: company details, a Product with an intake Routine naming team `superagent`, a Project, a Backlog proposal, a status update and a decision. It checks that Super Agent has no `refresh_company_product` or `summarize_company_product`, that `GET /agents` does not list `superagent-routines`, that `/teams/superagent` has one member, `platform-builder`, and that the Routine shows `target_type` `team` and `target_id` `superagent` with stored endpoint `/agents/superagent-routines/runs`. Ran `10_weekly_product_review.py --check` and `--check --with-os-manager`; both assert the same endpoint and targets.
+
+**Result:** All passed with a placeholder `OPENAI_API_KEY`. No model calls were made.
+
+---
+
+### Other offline Company examples (2026-11-10)
+
+**Status:** PASS
+
+**Description:** Ran `01_manage_products.py`, `02_manage_projects.py`, `03_manage_tasks.py`, `04_manage_playbook.py`, `06_execute_tasks.py`, `07_cascading_archive.py` (SQLite and `--postgres`), `07_heartbeat.py`, `08_custom_routines.py`, `09_task_session_ownership.py`, `11_disabled_routine.py`, `12_task_board.py` and `09_sandboxed_engineers.py --config-only` against local PostgreSQL and Redis.
+
+**Result:** All exited 0 and printed their success lines. The logged 409 responses are the refusals the examples check. `09_sandboxed_engineers.py` with an executor needs Docker sandboxes and live models and was not run. No model calls were made.
+
+---

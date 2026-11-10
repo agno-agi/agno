@@ -142,3 +142,13 @@ on Backlog Tasks were treated as suggestions, not acceptance; state and job
 records determined whether work was authorized.
 
 ---
+
+### company_os.py: Routine names Super Agent (2026-11-10)
+
+**Status:** PASS
+
+**Description:** The `review-feedback` Routine names team `superagent`. Loaded the module with `runpy` against local PostgreSQL in a disposable schema, without serving it, and rehydrated the Product. The schema was dropped afterwards.
+
+**Result:** The stored schedule endpoint is `/agents/superagent-routines/runs` with `target_type` `team` and `target_id` `superagent`. The UI walkthrough, Routine runs and Task execution need live models and were not run. No model calls were made.
+
+---

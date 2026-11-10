@@ -1,14 +1,13 @@
-"""Serve an AgentOS with an OS manager, a notebook, memory and source access.
+"""Serve an AgentOS with an OS manager, a notebook and memory.
 
-Ask it to save a project note, remember how you like answers, or explain
-basic_manager.py. Notes are shared across users; memory is kept per user.
-Use the same user id across sessions to try memory.
+Ask it to save a project note or remember how you like answers. Notes are shared
+across users; memory is kept per user. Use the same user id across sessions to
+try memory. The notebook tools share names with the source file tools, so this
+example sets no root; see manager_source.py for source access.
 
 Run:
     .venvs/demo/bin/python cookbook/05_agent_os/29_manager/manager_with_resources.py
 """
-
-from pathlib import Path
 
 from agno.db.sqlite import SqliteDb
 from agno.fs import FileSystem
@@ -43,8 +42,6 @@ agent_os = AgentOS(
         model=model,
         tools=[notes.tools()],
         learning=memory,
-        # Platform Manager reads this directory in tools mode; env and credential files are excluded.
-        root=Path(__file__).parent,
         instructions=notes.instructions(),
     ),
 )

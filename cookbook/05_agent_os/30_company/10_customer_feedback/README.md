@@ -1,6 +1,6 @@
 # Customer feedback in the AgentOS UI
 
-Company Manager reviews local Markdown feedback with `gpt-6.1-sol`, proposes
+A Super Agent Routine reviews local Markdown feedback with `gpt-6.1-sol`, proposes
 Projects and evidence-backed Backlog Tasks, and leaves acceptance to you.
 After approval, Feedback Analyst writes a product brief and regression test plan.
 Its complete response is saved on the Task for review. This example produces
@@ -9,8 +9,7 @@ and access to the application repository.
 
 ## Start
 
-Run from the Agno repository root using this checkout, which includes support for
-built-in Company Manager Routines. The sample feedback is synthetic.
+Run from the Agno repository root using this checkout. The sample feedback is synthetic.
 
 ```bash
 # If the development environment does not exist:
@@ -65,7 +64,8 @@ reads the same `feedback/` folder.
    criteria, regression cases and open questions. Mark it **Done** only after
    you have reviewed it.
 
-Company Manager handles discovery. Feedback Analyst executes accepted Tasks;
+The Routine names team `superagent` and runs on Super Agent's restricted Routine
+runner, which can only propose work. Feedback Analyst executes accepted Tasks;
 the built-in managers cannot be selected as business Task executors.
 `auto_accept=False` keeps discovery from authorizing execution.
 
