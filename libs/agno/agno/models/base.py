@@ -149,6 +149,11 @@ class Model(ABC):
     supports_native_structured_outputs: bool = False
     # True if the Model requires a json_schema for structured outputs (e.g. LMStudio)
     supports_json_schema_outputs: bool = False
+    # True if the Model returns native reasoning content. Reasoning detection normally
+    # infers this from the id, which a gateway or router client cannot expose because its
+    # id is an opaque alias and the upstream model is chosen per request. Such a client
+    # sets this itself instead.
+    supports_native_reasoning: bool = False
 
     # Controls which (if any) function is called by the model.
     # "none" means the model will not call a function and instead generates a message.
