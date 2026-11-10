@@ -22,6 +22,82 @@ if TYPE_CHECKING:
 
 LEGACY_METRICS_INDEX = "date_1_aggregation_period_1"
 INDEX_NOT_FOUND = 27  # MongoDB's IndexNotFound error code
+# Session id bytes per runs query in a metrics refresh: one $in over every id can overflow the 16 MB query document
+METRICS_SESSION_ID_BATCH_BYTES = 4_000_000
+
+
+def get_metrics_sessions_pipeline(query: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Aggregation reading the sessions a metrics refresh needs.
+
+    Legacy ``runs`` are reduced to each run's model and provider in the database, so the
+    legacy field is never loaded into memory.
+    """
+    return [
+        {"$match": query},
+        {
+            "$project": {
+                "session_id": 1,
+                "user_id": 1,
+                "session_data": 1,
+                "created_at": 1,
+                "session_type": 1,
+                "legacy_runs": {
+                    "$map": {
+                        "input": {"$cond": [{"$isArray": "$runs"}, "$runs", []]},
+                        "as": "run",
+                        # A missing provider counts as "", as it did when legacy runs were read in Python
+                        "in": {"model": "$$run.model", "model_provider": {"$ifNull": ["$$run.model_provider", ""]}},
+                    }
+                },
+                # Before v2.1.1 the runs were stored as a JSON string, which can only be decoded in Python
+                "legacy_runs_is_json": {"$eq": [{"$type": "$runs"}, "string"]},
+            }
+        },
+    ]
+
+
+def get_json_legacy_session_ids(
+    sessions: List[Dict[str, Any]], runs_by_session: Dict[str, List[Dict[str, Any]]]
+) -> List[str]:
+    """Sessions whose legacy runs are a JSON string and still needed: migrated runs supersede the legacy field."""
+    return [
+        s["session_id"]
+        for s in sessions
+        if s.pop("legacy_runs_is_json", False) and not runs_by_session.get(s["session_id"])
+    ]
+
+
+def get_json_legacy_runs_query(session_ids: List[str]) -> Dict[str, Any]:
+    """Query for the given sessions' legacy runs stored as a non-empty JSON string."""
+    return {"session_id": {"$in": session_ids}, "runs": {"$type": "string", "$ne": ""}}
+
+
+def decode_legacy_runs(runs_json: str) -> List[Dict[str, Any]]:
+    """Reduce legacy runs stored as a JSON string to model and provider, like the pipeline does for arrays."""
+    runs = json.loads(runs_json)
+    return [run_model_and_provider(run) for run in (runs if isinstance(runs, list) else []) if isinstance(run, dict)]
+
+
+def run_model_and_provider(run: Dict[str, Any]) -> Dict[str, Any]:
+    """A run's model and provider, with a missing provider as "" like legacy runs."""
+    provider = run.get("model_provider")
+    return {"model": run.get("model"), "model_provider": "" if provider is None else provider}
+
+
+def iter_session_id_batches(session_ids: List[str], max_bytes: int = METRICS_SESSION_ID_BATCH_BYTES):
+    """Split session ids into batches whose $in fits well within the 16 MB query document."""
+    batch: List[str] = []
+    batch_bytes = 0
+    for session_id in session_ids:
+        # Each $in element also costs a few bytes of BSON framing
+        size = len(session_id.encode()) + 16
+        if batch and batch_bytes + size > max_bytes:
+            yield batch
+            batch, batch_bytes = [], 0
+        batch.append(session_id)
+        batch_bytes += size
+    if batch:
+        yield batch
 
 
 # -- DB util methods --
