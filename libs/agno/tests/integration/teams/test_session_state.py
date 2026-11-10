@@ -1,8 +1,10 @@
+import uuid
 from typing import Any, Dict, Optional
 
 from agno.agent.agent import Agent
 from agno.models.openai.chat import OpenAIChat
 from agno.run import RunContext
+from agno.run.team import TeamRunEvent
 from agno.team.team import Team
 
 
@@ -345,3 +347,49 @@ def test_add_session_state_to_context(shared_db):
     assert "'shopping_list': ['oranges']" in response.messages[0].content
 
     assert "oranges" in response.content.lower()
+
+
+async def test_session_state_in_team_run_completed_event_stream_async(shared_db):
+    """TeamRunCompletedEvent emitted over the async streaming path must carry
+    session_state reflecting the final state after tool mutations, mirroring the
+    existing agent behavior. Regression test for the case where session_state
+    was None on the team completion event because run_response.session_state
+    was never re-pointed at the run_context dict after _asetup_session
+    reassigned it inside the async flow."""
+
+    async def async_add_item(run_context: RunContext, item: str) -> str:
+        """Add an item to the shopping list (async)."""
+        run_context.session_state["shopping_list"].append(item)
+        return f"The shopping list is now {run_context.session_state['shopping_list']}"
+
+    session_id = str(uuid.uuid4())
+    team = Team(
+        db=shared_db,
+        session_id=session_id,
+        session_state={"shopping_list": ["bananas"]},
+        members=[],
+        tools=[async_add_item],
+        instructions="You help manage shopping lists. You MUST call async_add_item to add items.",
+        markdown=True,
+    )
+
+    events: Dict[str, Any] = {}
+    async for event in team.arun("Add oranges to my shopping list", stream=True, stream_events=True):
+        key = getattr(event, "event", None)
+        if key is None:
+            continue
+        events.setdefault(key, []).append(event)
+
+    assert TeamRunEvent.run_completed.value in events, "Should receive TeamRunCompleted event"
+    run_completed_event = events[TeamRunEvent.run_completed.value][0]
+
+    assert run_completed_event.session_state is not None, "TeamRunCompletedEvent should have session_state"
+    assert isinstance(run_completed_event.session_state, dict), "session_state should be a dict"
+    assert "shopping_list" in run_completed_event.session_state, "shopping_list key should be present"
+    assert "bananas" in run_completed_event.session_state.get("shopping_list", []), "Initial item should be preserved"
+    assert len(run_completed_event.session_state.get("shopping_list", [])) == 2, (
+        "Shopping list should have 2 items after tool call"
+    )
+    assert "oranges" in run_completed_event.session_state["shopping_list"], (
+        "Shopping list should contain the item added by the tool"
+    )
