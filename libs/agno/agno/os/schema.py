@@ -1,8 +1,9 @@
+import json
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, Generic, List, Literal, Optional, TypeVar, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SerializerFunctionWrapHandler, field_validator, model_serializer
 
 from agno.agent import Agent
 from agno.agent.factory import AgentFactory
@@ -12,6 +13,7 @@ from agno.db.base import SessionType
 from agno.db.utils import detect_session_type
 from agno.os.config import (
     ChatConfig,
+    CompanySectionConfig,
     EvalsConfig,
     KnowledgeConfig,
     LearningConfig,
@@ -23,6 +25,7 @@ from agno.os.config import (
 )
 from agno.os.scopes import split_scope
 from agno.os.utils import extract_input_media, get_run_input, get_session_name, to_utc_datetime
+from agno.run.base import CancellationStage
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.factory import TeamFactory
 from agno.team.remote import RemoteTeam
@@ -32,54 +35,85 @@ from agno.workflow.remote import RemoteWorkflow
 from agno.workflow.workflow import Workflow
 
 
-class BadRequestResponse(BaseModel):
-    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Bad request", "error_code": "BAD_REQUEST"}})
+class ErrorResponse(BaseModel):
+    """Body of a non-validation error (4xx/5xx that carry a string ``detail``).
 
-    detail: str = Field(..., description="Error detail message")
-    error_code: Optional[str] = Field(None, description="Error code for categorization")
+    Mirrors what ``agno.os.app._error_body`` actually emits: ``detail`` is always present;
+    ``error_id``/``error_type`` appear only when the error carries an identity
+    (``AgnoError``/``AgnoHTTPException`` subclasses), and a plain ``HTTPException`` (or the
+    auth middleware) yields ``detail`` alone. There is deliberately no ``error_code`` field:
+    no handler has ever emitted one, so documenting it advertised a key clients never receive.
+    """
 
-
-class NotFoundResponse(BaseModel):
-    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Not found", "error_code": "NOT_FOUND"}})
-
-    detail: str = Field(..., description="Error detail message")
-    error_code: Optional[str] = Field(None, description="Error code for categorization")
-
-
-class UnauthorizedResponse(BaseModel):
-    model_config = ConfigDict(
-        json_schema_extra={"example": {"detail": "Unauthorized access", "error_code": "UNAUTHORIZED"}}
+    detail: str = Field(..., description="Human-readable error message")
+    error_id: Optional[str] = Field(
+        None, description="Stable identifier for the specific error, present only when the error carries one"
+    )
+    error_type: Optional[str] = Field(
+        None, description="Category of the error, present only when the error carries one"
     )
 
-    detail: str = Field(..., description="Error detail message")
-    error_code: Optional[str] = Field(None, description="Error code for categorization")
+
+class BadRequestResponse(ErrorResponse):
+    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Bad request"}})
 
 
-class UnauthenticatedResponse(BaseModel):
-    model_config = ConfigDict(
-        json_schema_extra={"example": {"detail": "Unauthenticated access", "error_code": "UNAUTHENTICATED"}}
-    )
+class NotFoundResponse(ErrorResponse):
+    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Not found"}})
 
-    detail: str = Field(..., description="Error detail message")
-    error_code: Optional[str] = Field(None, description="Error code for categorization")
+
+class UnauthorizedResponse(ErrorResponse):
+    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Unauthorized access"}})
+
+
+class UnauthenticatedResponse(ErrorResponse):
+    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Unauthenticated access"}})
+
+
+class InternalServerErrorResponse(ErrorResponse):
+    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Internal server error"}})
+
+
+class ValidationErrorDetail(BaseModel):
+    """One field-level error inside a 422 body, matching FastAPI's default shape."""
+
+    loc: List[Union[str, int]] = Field(..., description="Path to the offending field, e.g. ['body', 'endpoint']")
+    msg: str = Field(..., description="Human-readable error message")
+    type: str = Field(..., description="Error type identifier, e.g. 'value_error' or 'missing'")
 
 
 class ValidationErrorResponse(BaseModel):
+    """422 body. Two runtime shapes share this status code, and the same endpoint can
+    return either, so ``detail`` is typed as their union:
+
+    - FastAPI's request-validation handler emits a **list** of field-level errors (built-in
+      coercion errors and custom-validator ``ValueError``s alike).
+    - A route that raises ``HTTPException(status_code=422, detail="...")`` for a semantic
+      check (e.g. an invalid cron expression) emits a **string** through the HTTPException
+      handler.
+    """
+
     model_config = ConfigDict(
-        json_schema_extra={"example": {"detail": "Validation error", "error_code": "VALIDATION_ERROR"}}
+        json_schema_extra={
+            "example": {
+                "detail": [
+                    {
+                        "type": "value_error",
+                        "loc": ["body", "endpoint"],
+                        "msg": "Value error, Endpoint must be a path, not a full URL",
+                    }
+                ]
+            }
+        }
     )
 
-    detail: str = Field(..., description="Error detail message")
-    error_code: Optional[str] = Field(None, description="Error code for categorization")
-
-
-class InternalServerErrorResponse(BaseModel):
-    model_config = ConfigDict(
-        json_schema_extra={"example": {"detail": "Internal server error", "error_code": "INTERNAL_SERVER_ERROR"}}
+    detail: Union[str, List[ValidationErrorDetail]] = Field(
+        ...,
+        description=(
+            "A single message for an explicitly raised 422, or a list of field-level errors "
+            "for a request-validation failure"
+        ),
     )
-
-    detail: str = Field(..., description="Error detail message")
-    error_code: Optional[str] = Field(None, description="Error code for categorization")
 
 
 class ScopeItem(BaseModel):
@@ -158,6 +192,81 @@ def _extract_model(entity: Any) -> Optional[Model]:
     return Model(id=model_id, provider=provider)
 
 
+class FileSystemSummary(BaseModel):
+    backend_type: str = Field(..., description="Filesystem backend type")
+    db_id: Optional[str] = Field(None, description="Database identifier for a database-backed filesystem")
+    db_schema: Optional[str] = Field(None, description="Database schema containing filesystem rows")
+    table_name: Optional[str] = Field(None, description="Database table containing filesystem rows")
+    namespace: str = Field(
+        ...,
+        description="Canonical namespace resolved for the caller; placeholders remain when identity is unavailable",
+    )
+    user_isolation: bool = Field(..., description="Whether the namespace is partitioned by user identity")
+    max_file_bytes: int = Field(..., description="Maximum UTF-8 bytes per file")
+    max_namespace_bytes: int = Field(..., description="Maximum bytes across the namespace")
+
+
+class FileSystemAgent(BaseModel):
+    id: str = Field(..., description="ID of an agent using this filesystem namespace")
+    access: Literal["full", "read_only"] = Field(
+        default="full",
+        description="Agent access to this namespace. Omitted for full access; tool-specific restrictions still apply.",
+    )
+
+    @model_serializer(mode="wrap")
+    def _serialize_access(self, handler: SerializerFunctionWrapHandler):  # type: ignore[no-untyped-def]
+        # Leave the return type unspecified so OpenAPI retains this model's fields.
+        data = handler(self)
+        if self.access == "full":
+            data.pop("access", None)
+        return data
+
+
+class FileSystemNamespace(FileSystemSummary):
+    agents: List[FileSystemAgent] = Field(..., description="Agents using this filesystem namespace and their access")
+
+
+class FileSystemConfig(BaseModel):
+    namespaces: List[FileSystemNamespace] = Field(
+        default_factory=list,
+        description="Filesystem namespaces with their backend details, limits, and linked agents",
+    )
+
+
+def _extract_filesystem(filesystem: Any, agent: Any, user_id: Optional[str] = None) -> FileSystemSummary:
+    """Describe one of the agent's filesystems, with its namespace resolved for the caller."""
+    # Partitioned by the run's user, or isolated by a namespace naming the user.
+    user_isolation = bool(filesystem.user_scoped) or "user_id" in filesystem._placeholders
+    filesystem = filesystem.resolve(user_id=user_id, agent_id=agent.id)
+    backend = filesystem.backend
+    backend_db = getattr(backend, "db", None)
+    if backend_db is not None or hasattr(backend, "db_engine"):
+        backend_type = "db"
+    elif hasattr(backend, "root"):
+        backend_type = "local"
+    else:
+        backend_type = type(backend).__name__
+    return FileSystemSummary(
+        backend_type=backend_type,
+        db_id=getattr(backend_db, "id", None),
+        db_schema=getattr(backend, "db_schema", None),
+        table_name=getattr(backend, "table_name", None),
+        namespace=filesystem.namespace,
+        user_isolation=user_isolation,
+        max_file_bytes=filesystem.max_file_bytes,
+        max_namespace_bytes=filesystem.max_namespace_bytes,
+    )
+
+
+def _builtin_component_metadata(component: Any) -> Optional[Dict[str, Any]]:
+    """Expose framework identity without publishing arbitrary metadata in summaries."""
+    from agno.registry._reserved import is_framework_owned
+
+    if is_framework_owned(component):
+        return {"_agno": {"internal": True, "id": component.id}}
+    return None
+
+
 class AgentSummaryResponse(BaseModel):
     id: Optional[str] = Field(None, description="Unique identifier for the agent")
     name: Optional[str] = Field(None, description="Name of the agent")
@@ -165,12 +274,19 @@ class AgentSummaryResponse(BaseModel):
     db_id: Optional[str] = Field(None, description="Database identifier")
     model: Optional[Model] = Field(None, description="Model used by the agent")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+    sandboxed: bool = False
 
     @classmethod
     def from_agent(cls, agent: Union[Agent, AgentProtocol, RemoteAgent, AgentFactory]) -> "AgentSummaryResponse":
+        from agno.agents.base import BaseExternalAgent
+
         agent_db = getattr(agent, "db", None)
-        framework = getattr(agent, "framework", None)
-        metadata = {"framework": framework} if framework else None
+        # Built-in adapters expose sdk. The framework fallback is only for third-party adapters that
+        # satisfy AgentProtocol structurally and predate the rename; drop it with the framework alias.
+        sdk = getattr(agent, "sdk", None) or getattr(agent, "framework", None)
+        metadata = _builtin_component_metadata(agent)
+        if sdk:
+            metadata = {**(metadata or {}), "sdk": sdk}
         if isinstance(agent, AgentFactory):
             return cls(
                 id=agent.id,
@@ -186,6 +302,7 @@ class AgentSummaryResponse(BaseModel):
             db_id=agent_db.id if agent_db else None,
             model=_extract_model(agent),
             metadata=metadata,
+            sandboxed=isinstance(agent, BaseExternalAgent) and agent.sandbox is not None,
         )
 
 
@@ -196,6 +313,9 @@ class TeamSummaryResponse(BaseModel):
     db_id: Optional[str] = Field(None, description="Database identifier")
     mode: Optional[str] = Field(None, description="Team execution mode (coordinate, route, broadcast, tasks)")
     model: Optional[Model] = Field(None, description="Model used by the team leader")
+
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Framework component metadata")
+    sandboxed: bool = False
 
     @classmethod
     def from_team(cls, team: Union[Team, RemoteTeam, TeamFactory]) -> "TeamSummaryResponse":
@@ -216,6 +336,7 @@ class TeamSummaryResponse(BaseModel):
             db_id=db_id,
             mode=mode,
             model=_extract_model(team),
+            metadata=_builtin_component_metadata(team),
         )
 
 
@@ -229,6 +350,7 @@ class WorkflowSummaryResponse(BaseModel):
     is_component: bool = Field(False, description="Whether this workflow was created via Builder")
     current_version: Optional[int] = Field(None, description="Current published version number")
     stage: Optional[str] = Field(None, description="Stage of the loaded config (draft/published)")
+    sandboxed: bool = False
 
     @classmethod
     def from_workflow(
@@ -280,6 +402,15 @@ class McpInfo(BaseModel):
     oauth: Optional[McpOAuthInfo] = Field(
         None, description="OAuth discovery details when the MCP endpoint is OAuth-protected, null otherwise"
     )
+    tool_run_endpoint: bool = Field(
+        False,
+        description=(
+            "Whether this deployment serves the plain-HTTP tool runner at "
+            "`{path}/server/tools/{tool_name}/run`. False both when the MCP server is off and "
+            "when it is on with `MCPConfig(tool_run_endpoint=False)`, so a client can tell upfront "
+            "whether running a tool is possible instead of discovering it on the call."
+        ),
+    )
 
 
 class InfoResponse(BaseModel):
@@ -287,6 +418,7 @@ class InfoResponse(BaseModel):
 
     os_id: str = Field(..., description="Unique identifier for the OS instance")
     name: Optional[str] = Field(None, description="Name of the OS instance")
+    os_version: str = Field(..., description="Version of this AgentOS instance")
     agno_version: str = Field(..., description="Version of the agno framework")
     agent_count: int = Field(0, description="Number of agents registered in the OS")
     team_count: int = Field(0, description="Number of teams registered in the OS")
@@ -299,6 +431,46 @@ class InfoResponse(BaseModel):
             "when enabled, is described separately under `mcp.oauth`."
         ),
     )
+    user_isolation: bool = Field(
+        False,
+        description=(
+            "Whether per-user data isolation is switched on for this OS instance. Read it together "
+            "with `auth_mode`: under `jwt` the token names the user, so a client sends nothing extra. "
+            "Under `none` or `security_key` the OS cannot tell who a request is for, so a client that "
+            "wants each user to see only their own data sends that user's id as `user_id` on every "
+            "request, reads included, not only on runs."
+        ),
+    )
+
+
+class QueueCapabilities(BaseModel):
+    """Deployment-level background-run capabilities: what a client may rely on
+    when deciding whether to render queue-aware UI (e.g. a chat tray).
+
+    Reported as EFFECTIVE behavior, not raw settings: queue_per_session is
+    true only when a durable queue actually enforces the per-session gate -
+    a queue_per_session flag without durable=True, or with a custom store
+    that does not serialize sessions, gates nothing and is reported false. Readable by any authenticated caller (deployment
+    capability, not operator data - the admin-scoped /queue surface stays
+    the only view of actual jobs).
+
+    Both fields describe submissions the durable queue can carry. A
+    background submission the queue cannot carry (media uploads, payloads
+    plain JSON cannot store, factory-backed or off-registry components)
+    executes in-process on the accepting replica, outside the gate and
+    without durability, and the server logs each such bypass; the client
+    still receives 202 PENDING. A caller that sends those knows it is
+    sending them; the capability does not change per submission."""
+
+    durable: bool = Field(
+        ...,
+        description="Accepted background runs survive crashes and deploys (ticketed queue with a worker)",
+    )
+    queue_per_session: bool = Field(
+        ...,
+        description="Same-session background submissions execute at most one at a time, FIFO by submission; "
+        "false when no durable queue enforces the gate",
+    )
 
 
 class ConfigResponse(BaseModel):
@@ -307,7 +479,10 @@ class ConfigResponse(BaseModel):
     os_id: str = Field(..., description="Unique identifier for the OS instance")
     name: Optional[str] = Field(None, description="Name of the OS instance")
     description: Optional[str] = Field(None, description="Description of the OS instance")
-    available_models: Optional[List[str]] = Field(None, description="List of available models")
+    available_models: List[Model] = Field(
+        default_factory=list,
+        description="Unique models (id + provider) in use by agents and teams in this OS",
+    )
     os_database: Optional[str] = Field(None, description="ID of the database used for the OS instance")
     databases: List[str] = Field(..., description="List of database IDs used by the components of the OS instance")
     chat: Optional[ChatConfig] = Field(None, description="Chat configuration")
@@ -320,14 +495,26 @@ class ConfigResponse(BaseModel):
     metrics: Optional[MetricsConfig] = Field(None, description="Metrics configuration")
     memory: Optional[MemoryConfig] = Field(None, description="Memory configuration")
     learning: Optional[LearningConfig] = Field(None, description="Learning configuration")
+    company: Optional[CompanySectionConfig] = Field(None, description="Company configuration")
+    filesystem: Optional[FileSystemConfig] = Field(None, description="Filesystem configuration")
     knowledge: Optional[KnowledgeConfig] = Field(None, description="Knowledge configuration")
     evals: Optional[EvalsConfig] = Field(None, description="Evaluations configuration")
     traces: Optional[TracesConfig] = Field(None, description="Traces configuration")
+    # Optional for CLIENT compatibility (the SDK parses this same schema, and
+    # older servers omit the field); the server always populates it.
+    queue: Optional[QueueCapabilities] = Field(None, description="Background-run queue capabilities")
 
     agents: List[AgentSummaryResponse] = Field(..., description="List of registered agents")
     teams: List[TeamSummaryResponse] = Field(..., description="List of registered teams")
     workflows: List[WorkflowSummaryResponse] = Field(..., description="List of registered workflows")
     interfaces: List[InterfaceResponse] = Field(..., description="List of available interfaces")
+
+    @model_serializer(mode="wrap")
+    def _serialize_config(self, handler: SerializerFunctionWrapHandler) -> Dict[str, Any]:
+        data = handler(self)
+        # Clients use an explicit null to hide Company when it is not configured.
+        data.setdefault("company", None)
+        return data
 
 
 class ModelResponse(BaseModel):
@@ -340,6 +527,17 @@ class WorkflowRunRequest(BaseModel):
     input: Dict[str, Any] = Field(..., description="Input parameters for the workflow run")
     user_id: Optional[str] = Field(None, description="User identifier for the workflow run")
     session_id: Optional[str] = Field(None, description="Session identifier for context persistence")
+
+
+def _agent_metadata(
+    metadata: Optional[Dict[str, Any]], agent_data: Optional[Dict[str, Any]]
+) -> Optional[Dict[str, Any]]:
+    """Expose the persisted adapter identity without changing stored user metadata.
+    A malformed agent_data (not a mapping) means no label rather than a failed read."""
+    sdk = (agent_data.get("sdk") or agent_data.get("framework")) if isinstance(agent_data, dict) else None
+    if isinstance(sdk, str) and sdk:
+        return {**(metadata or {}), "sdk": sdk}
+    return dict(metadata) if metadata is not None else None
 
 
 class SessionSchema(BaseModel):
@@ -395,7 +593,9 @@ class SessionSchema(BaseModel):
             session_summary=summary,
             metrics=metrics,
             total_tokens=total_tokens,
-            metadata=session.get("metadata"),
+            metadata=_agent_metadata(session.get("metadata"), session.get("agent_data"))
+            if session_type_str == SessionType.AGENT.value
+            else session.get("metadata"),
         )
 
 
@@ -456,7 +656,7 @@ class AgentSessionDetailSchema(BaseModel):
             if session.session_data
             else None,
             metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,  # type: ignore
-            metadata=session.metadata,
+            metadata=_agent_metadata(session.metadata, session.agent_data),
             chat_history=[message.to_dict() for message in session.get_chat_history()],
             created_at=to_utc_datetime(created_at),
             updated_at=to_utc_datetime(updated_at),
@@ -539,18 +739,30 @@ class WorkflowSessionDetailSchema(BaseModel):
         )
 
 
+# One text for the three run schemas, built from the enum so it cannot drift
+# from the members a client may receive
+CANCELLATION_STAGE_DESCRIPTION = (
+    "For CANCELLED runs, where the run was when it was cancelled: "
+    + ", ".join(member.value for member in CancellationStage)
+    + ". Absent means unknown."
+)
+
+
 class RunSchema(BaseModel):
     run_id: str = Field(..., description="Unique identifier for the run")
+    run_index: Optional[int] = Field(None, description="0-based position of the run in its session")
     parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
     agent_id: Optional[str] = Field(None, description="Agent ID that executed this run")
     user_id: Optional[str] = Field(None, description="User ID associated with the run")
     status: Optional[str] = Field(None, description="Run status (PENDING, RUNNING, COMPLETED, ERROR, etc.)")
+    cancellation_stage: Optional[str] = Field(None, description=CANCELLATION_STAGE_DESCRIPTION)
     run_input: Optional[str] = Field(None, description="Input provided to the run")
     content: Optional[Union[str, dict]] = Field(None, description="Output content from the run")
     run_response_format: Optional[str] = Field(None, description="Format of the response (text/json)")
     reasoning_content: Optional[str] = Field(None, description="Reasoning content if reasoning was enabled")
     reasoning_steps: Optional[List[dict]] = Field(None, description="List of reasoning steps")
     metrics: Optional[dict] = Field(None, description="Performance and usage metrics")
+    metadata: Optional[dict] = Field(None, description="Run metadata, including sdk for external agent sessions")
     messages: Optional[List[dict]] = Field(None, description="Message history for the run")
     tools: Optional[List[dict]] = Field(None, description="Tools used in the run")
     events: Optional[List[dict]] = Field(None, description="Events generated during the run")
@@ -588,9 +800,17 @@ class RunSchema(BaseModel):
     )
 
     @classmethod
-    def from_dict(cls, run_dict: Dict[str, Any]) -> "RunSchema":
+    def from_dict(cls, run_dict: Dict[str, Any], *, session: Optional[Dict[str, Any]] = None) -> "RunSchema":
         run_input = get_run_input(run_dict)
         run_response_format = "text" if run_dict.get("content_type", "str") == "str" else "json"
+        agent_data = None
+        # Member/step runs must not inherit another agent's session identity.
+        if (
+            session is not None
+            and detect_session_type(session) == SessionType.AGENT.value
+            and run_dict.get("agent_id") in (None, session.get("agent_id"))
+        ):
+            agent_data = session.get("agent_data")
 
         return cls(
             run_id=run_dict.get("run_id", ""),
@@ -598,12 +818,14 @@ class RunSchema(BaseModel):
             agent_id=run_dict.get("agent_id", ""),
             user_id=run_dict.get("user_id", ""),
             status=run_dict.get("status"),
+            cancellation_stage=run_dict.get("cancellation_stage"),
             run_input=run_input,
             content=run_dict.get("content", ""),
             run_response_format=run_response_format,
             reasoning_content=run_dict.get("reasoning_content", ""),
             reasoning_steps=run_dict.get("reasoning_steps", []),
             metrics=run_dict.get("metrics", {}),
+            metadata=_agent_metadata(run_dict.get("metadata"), agent_data),
             messages=[message for message in run_dict.get("messages", [])] if run_dict.get("messages") else None,
             tools=[tool for tool in run_dict.get("tools", [])] if run_dict.get("tools") else None,
             events=[event for event in run_dict["events"]] if run_dict.get("events") else None,
@@ -627,11 +849,62 @@ class RunSchema(BaseModel):
         )
 
 
+_RUN_PREVIEW_CHARS = 280
+
+
+class SessionRunPreviewSchema(BaseModel):
+    """Lightweight session-run listing entry: the shape a queue tray or
+    session sidebar polls for. Deliberately excludes messages, events, media,
+    metrics and step results - the full shapes stay on the default listing
+    and the single-run endpoint. Previews are truncated to 280 characters."""
+
+    run_id: str = Field(..., description="Unique identifier for the run")
+    run_index: Optional[int] = Field(None, description="0-based position of the run in its session")
+    parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
+    agent_id: Optional[str] = Field(None, description="Agent ID, when this is an agent run")
+    team_id: Optional[str] = Field(None, description="Team ID, when this is a team run")
+    workflow_id: Optional[str] = Field(None, description="Workflow ID, when this is a workflow run")
+    user_id: Optional[str] = Field(None, description="User ID associated with the run")
+    status: Optional[str] = Field(
+        None, description="Run status (PENDING, RUNNING, PAUSED, COMPLETED, CANCELLED, ERROR, REGENERATED)"
+    )
+    run_input: Optional[str] = Field(None, description="Input preview, truncated")
+    content_preview: Optional[str] = Field(None, description="Output content preview, truncated")
+    created_at: Optional[datetime] = Field(None, description="Run creation timestamp")
+
+    @classmethod
+    def _preview(cls, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        # Structured output (output_schema) previews as JSON, matching the full listing's content.
+        text = value if isinstance(value, str) else json.dumps(value, default=str)
+        return text[:_RUN_PREVIEW_CHARS]
+
+    @classmethod
+    def from_run(cls, run: Any) -> "SessionRunPreviewSchema":
+        return cls(
+            run_id=run.run_id,
+            run_index=getattr(run, "run_index", None),
+            parent_run_id=getattr(run, "parent_run_id", None),
+            agent_id=getattr(run, "agent_id", None),
+            team_id=getattr(run, "team_id", None),
+            workflow_id=getattr(run, "workflow_id", None),
+            user_id=getattr(run, "user_id", None),
+            status=getattr(run, "status", None),
+            run_input=cls._preview(getattr(run, "run_input", None)),
+            content_preview=cls._preview(getattr(run, "content", None)),
+            created_at=getattr(run, "created_at", None),
+        )
+
+
 class TeamRunSchema(BaseModel):
     run_id: str = Field(..., description="Unique identifier for the team run")
+    run_index: Optional[int] = Field(None, description="0-based position of the run in its session")
     parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
     team_id: Optional[str] = Field(None, description="Team ID that executed this run")
+    user_id: Optional[str] = Field(None, description="User ID associated with the run")
     status: Optional[str] = Field(None, description="Run status (PENDING, RUNNING, COMPLETED, ERROR, etc.)")
+    cancellation_stage: Optional[str] = Field(None, description=CANCELLATION_STAGE_DESCRIPTION)
     content: Optional[Union[str, dict]] = Field(None, description="Output content from the team run")
     reasoning_content: Optional[str] = Field(None, description="Reasoning content if reasoning was enabled")
     reasoning_steps: Optional[List[dict]] = Field(None, description="List of reasoning steps")
@@ -682,7 +955,9 @@ class TeamRunSchema(BaseModel):
             run_id=run_dict.get("run_id", ""),
             parent_run_id=run_dict.get("parent_run_id", ""),
             team_id=run_dict.get("team_id", ""),
+            user_id=run_dict.get("user_id"),
             status=run_dict.get("status"),
+            cancellation_stage=run_dict.get("cancellation_stage"),
             run_input=run_input,
             content=run_dict.get("content", ""),
             run_response_format=run_response_format,
@@ -714,6 +989,7 @@ class TeamRunSchema(BaseModel):
 
 class WorkflowRunSchema(BaseModel):
     run_id: str = Field(..., description="Unique identifier for the workflow run")
+    run_index: Optional[int] = Field(None, description="0-based position of the run in its session")
     run_input: Optional[str] = Field(None, description="Input provided to the workflow")
     events: Optional[List[dict]] = Field(None, description="Events generated during the workflow")
     workflow_id: Optional[str] = Field(None, description="Workflow ID that was executed")
@@ -721,6 +997,7 @@ class WorkflowRunSchema(BaseModel):
     content: Optional[Union[str, dict]] = Field(None, description="Output content from the workflow")
     content_type: Optional[str] = Field(None, description="Type of content returned")
     status: Optional[str] = Field(None, description="Status of the workflow run")
+    cancellation_stage: Optional[str] = Field(None, description=CANCELLATION_STAGE_DESCRIPTION)
     step_results: Optional[list[dict]] = Field(None, description="Results from each workflow step")
     step_executor_runs: Optional[list[dict]] = Field(None, description="Executor runs for each step")
     step_requirements: Optional[list[dict]] = Field(
@@ -756,6 +1033,7 @@ class WorkflowRunSchema(BaseModel):
             content=run_response.get("content", ""),
             content_type=run_response.get("content_type", ""),
             status=run_response.get("status", ""),
+            cancellation_stage=run_response.get("cancellation_stage"),
             metrics=run_response.get("metrics", {}),
             step_results=run_response.get("step_results", []),
             step_executor_runs=run_response.get("step_executor_runs", []),
@@ -786,7 +1064,7 @@ class SortOrder(str, Enum):
 
 
 class PaginationInfo(BaseModel):
-    page: int = Field(0, description="Current page number (0-indexed)", ge=0)
+    page: int = Field(0, description="Current page number (1-indexed)", ge=0)
     limit: int = Field(20, description="Number of items per page", ge=1)
     total_pages: int = Field(0, description="Total number of pages", ge=0)
     total_count: int = Field(0, description="Total count of items", ge=0)
@@ -800,10 +1078,53 @@ class PaginatedResponse(BaseModel, Generic[T]):
     meta: PaginationInfo = Field(..., description="Pagination metadata")
 
 
+class RunsPageInfo(BaseModel):
+    limit: int = Field(..., description="Maximum number of items in this page", ge=1)
+    total_count: int = Field(..., description="Total count of items matching the filters", ge=0)
+    has_more: bool = Field(..., description="Whether more items exist beyond this page in the paging direction")
+    oldest_run_index: Optional[int] = Field(
+        None, description="Oldest top-level run_index on this page; pass it as before_run_index for the older page"
+    )
+    newest_run_index: Optional[int] = Field(
+        None, description="Newest top-level run_index on this page; pass it as after_run_index for the newer page"
+    )
+
+
+class RunsPage(BaseModel, Generic[T]):
+    """Wrapper for cursor-paginated responses; callers page with a boundary taken from ``data``."""
+
+    data: List[T] = Field(..., description="List of items for the current page")
+    meta: RunsPageInfo = Field(..., description="Pagination metadata")
+
+
 class ComponentType(str, Enum):
     AGENT = "agent"
     TEAM = "team"
     WORKFLOW = "workflow"
+
+
+class ComponentGuard(BaseModel):
+    """Optional compare-and-set guard for component writes.
+
+    When present, each non-None field is checked against the stored state and
+    the write is rejected with 409 on mismatch. None fields skip that half of
+    the check; omitting the guard keeps the write last-writer-wins.
+    """
+
+    latest_version: Optional[int] = Field(None, description="Expected latest config version")
+    current_version: Optional[int] = Field(
+        None, description="Expected current (published) version; 0 expects the component to have none yet"
+    )
+
+    @field_validator("latest_version", "current_version", mode="before")
+    @classmethod
+    def _reject_boolean_versions(cls, value: Any) -> Any:
+        # Lax coercion would read JSON false as 0, and 0 now means "no live
+        # version": a boolean is not a version number, so it is refused rather
+        # than silently satisfying (or failing) the guard.
+        if isinstance(value, bool):
+            raise ValueError("version guards must be integers, not booleans")
+        return value
 
 
 class ComponentCreate(BaseModel):
@@ -826,11 +1147,14 @@ class ComponentResponse(BaseModel):
     component_id: str
     component_type: ComponentType
     name: Optional[str] = None
+    user_id: Optional[str] = None
     description: Optional[str] = None
     current_version: Optional[int] = None
     metadata: Optional[Dict[str, Any]] = None
     created_at: int
     updated_at: Optional[int] = None
+    # Set only on archived (soft-deleted) rows, so a mixed list can label them.
+    deleted_at: Optional[int] = None
 
 
 class ConfigCreate(BaseModel):
@@ -841,6 +1165,7 @@ class ConfigCreate(BaseModel):
     notes: Optional[str] = Field(None, description="Optional notes")
     links: Optional[List[Dict[str, Any]]] = Field(None, description="Optional links to child components")
     set_current: bool = Field(True, description="Set as current version")
+    guard: Optional[ComponentGuard] = Field(None, description="Optional compare-and-set guard")
 
 
 class ComponentConfigResponse(BaseModel):
@@ -860,6 +1185,7 @@ class ComponentUpdate(BaseModel):
     component_type: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
     current_version: Optional[int] = None
+    guard: Optional[ComponentGuard] = None
 
 
 class ConfigUpdate(BaseModel):
@@ -868,6 +1194,24 @@ class ConfigUpdate(BaseModel):
     stage: Optional[str] = None
     notes: Optional[str] = None
     links: Optional[List[Dict[str, Any]]] = None
+    guard: Optional[ComponentGuard] = None
+
+
+class SetCurrentRequest(BaseModel):
+    """Body for set-current. Optional: an empty POST keeps working."""
+
+    guard: Optional[ComponentGuard] = Field(None, description="Optional compare-and-set guard")
+
+
+class ComponentDeleteRequest(BaseModel):
+    """Body for delete. Optional: a bodyless DELETE keeps working.
+
+    Delete also accepts the guard as an ``expected_current_version`` query
+    param; this shape exists so the guard reads the same as on every other
+    guarded component route instead of being silently ignored here.
+    """
+
+    guard: Optional[ComponentGuard] = Field(None, description="Optional compare-and-set guard")
 
 
 class RegistryResourceType(str, Enum):
@@ -881,9 +1225,12 @@ class RegistryResourceType(str, Enum):
     FUNCTION = "function"
     AGENT = "agent"
     TEAM = "team"
+    WORKFLOW = "workflow"
     KNOWLEDGE = "knowledge"
     MEMORY_MANAGER = "memory_manager"
     SESSION_SUMMARY_MANAGER = "session_summary_manager"
+    LEARNING = "learning"
+    SANDBOX = "sandbox"
 
 
 class CallableMetadata(BaseModel):
@@ -1017,3 +1364,4 @@ class RegistryContentResponse(BaseModel):
     id: Optional[str] = None
     description: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+    sandboxed: bool = False

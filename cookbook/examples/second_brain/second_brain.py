@@ -112,7 +112,7 @@ second_brain = Agent(
 agent_os = AgentOS(
     db=db,
     tracing=True,
-    mcp_server=True,
+    mcp=True,
     agents=[second_brain],
 )
 app = agent_os.get_app()

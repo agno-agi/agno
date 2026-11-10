@@ -263,7 +263,7 @@ def test_search(mock_pinecone_db, mock_embedder):
 
     # Check that index.query was called with the right arguments
     mock_pinecone_db.index.query.assert_called_with(
-        vector=[0.1] * 1024, top_k=2, namespace=TEST_NAMESPACE, filter=None, include_values=None, include_metadata=True
+        vector=[0.1] * 1024, top_k=2, namespace=TEST_NAMESPACE, filter=None, include_values=False, include_metadata=True
     )
 
     # Check the results
@@ -411,7 +411,7 @@ async def test_async_search(mock_pinecone_db):
         results = await mock_pinecone_db.async_search(query)
 
         assert results == expected_results
-        mock_to_thread.assert_called_once_with(mock_pinecone_db.search, query, 5, None, None, None)
+        mock_to_thread.assert_called_once_with(mock_pinecone_db.search, query, 5, None, None, None, None)
 
 
 @pytest.mark.asyncio

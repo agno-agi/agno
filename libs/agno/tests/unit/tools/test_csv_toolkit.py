@@ -5,6 +5,46 @@ import pytest
 from agno.tools.csv_toolkit import CsvTools
 
 
+@pytest.mark.parametrize(
+    ("constructor_limit", "requested_limit", "expected_row_count"),
+    [
+        (None, 0, 0),
+        (1, 0, 0),
+        (0, 0, 0),
+        (1, None, 1),
+        (0, None, 0),
+        (None, None, 3),
+        (0, 2, 2),
+        (None, -1, 2),
+    ],
+    ids=[
+        "explicit-zero-unbounded-default",
+        "explicit-zero-positive-default",
+        "explicit-zero-zero-default",
+        "none-uses-positive-default",
+        "none-uses-zero-default",
+        "none-with-unbounded-default",
+        "positive-overrides-zero-default",
+        "negative-preserves-slice",
+    ],
+)
+def test_read_csv_file_respects_explicit_zero_and_row_limit_fallback(
+    tmp_path, constructor_limit, requested_limit, expected_row_count
+):
+    csv_path = tmp_path / "people.csv"
+    csv_path.write_text("name,age\nAlice,30\nBob,40\nCara,50\n", encoding="utf-8")
+    tools = CsvTools(csvs=[csv_path], row_limit=constructor_limit, enable_query_csv_file=False)
+
+    rows = json.loads(tools.read_csv_file("people", row_limit=requested_limit))
+
+    all_rows = [
+        {"name": "Alice", "age": "30"},
+        {"name": "Bob", "age": "40"},
+        {"name": "Cara", "age": "50"},
+    ]
+    assert rows == all_rows[:expected_row_count]
+
+
 def test_read_csv_file_preserves_non_ascii_content(tmp_path):
     csv_path = tmp_path / "people.csv"
     csv_path.write_text("name,city\nJosé,São Paulo\n李雷,北京\n", encoding="utf-8")

@@ -52,7 +52,6 @@ cookbook/07_knowledge/
 |   |-- 01_basic_rag.py            Traditional RAG with context injection
 |   |-- 02_agentic_rag.py          Agent-driven search decisions
 |   |-- 03_loading_content.py      All source types: file, URL, text, topics
-|   +-- 04_choosing_components.md  Decision guide
 |
 |-- 02_building_blocks/        Core components
 |   |-- 01_chunking_strategies.py  Side-by-side comparison

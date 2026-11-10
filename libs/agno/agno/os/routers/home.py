@@ -1,50 +1,30 @@
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict
 
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
 
 
 def get_home_router(os: "AgentOS") -> APIRouter:
+    """Create the root landing route: a tiny, stable response for anyone hitting the bare URL.
+
+    Points visitors at the real endpoints: /docs (when enabled) for exploration,
+    /info for machine-readable metadata, /health for probes. Not part of the API
+    contract, so it is excluded from the OpenAPI schema.
+    """
     router = APIRouter(tags=["Home"])
 
-    @router.get(
-        "/",
-        operation_id="get_api_info",
-        summary="API Information",
-        description=(
-            "Get basic information about this AgentOS API instance, including:\n\n"
-            "- API metadata and version\n"
-            "- Available capabilities overview\n"
-            "- Links to key endpoints and documentation"
-        ),
-        responses={
-            200: {
-                "description": "API information retrieved successfully",
-                "content": {
-                    "application/json": {
-                        "examples": {
-                            "home": {
-                                "summary": "Example home response",
-                                "value": {
-                                    "name": "AgentOS API",
-                                    "id": "demo-os",
-                                    "version": "1.0.0",
-                                },
-                            }
-                        }
-                    }
-                },
-            }
-        },
-    )
-    async def get_api_info():
-        """Get basic API information and available capabilities"""
-        return {
-            "name": "AgentOS API",
-            "id": os.id or "agno-agentos",
-            "version": os.version or "1.0.0",
+    @router.get("/", include_in_schema=False)
+    async def home() -> JSONResponse:
+        payload: Dict[str, str] = {
+            "name": os.name or "AgentOS",
+            "health": "/health",
+            "info": "/info",
         }
+        if os.settings.docs_enabled:
+            payload["docs"] = "/docs"
+        return JSONResponse(payload)
 
     return router

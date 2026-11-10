@@ -59,7 +59,7 @@ def standalone_tool(
 def main():
     # Create an agent with both toolkit and standalone tool
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
         tools=[FileOperationsToolkit(), standalone_tool],
         instructions="You are a helpful assistant that can manage files and services.",
         markdown=True,

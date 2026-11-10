@@ -28,7 +28,7 @@ knowledge_base.insert(
 )
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     knowledge=knowledge_base,
     search_knowledge=True,
     instructions=[

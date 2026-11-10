@@ -23,16 +23,8 @@ uv pip install -U cohere ddgs duckdb yfinance agno
 
 ### 4. Run basic Agent
 
-- Streaming on
-
 ```shell
-python cookbook/92_models/cohere/basic_stream.py
-```
-
-- Streaming off
-
-```shell
-python cookbook/92_models/cohere/basic.py
+python cookbook/90_models/cohere/basic.py
 ```
 
 ### 5. Run Agent with Tools
@@ -40,29 +32,29 @@ python cookbook/92_models/cohere/basic.py
 - DuckDuckGo Search
 
 ```shell
-python cookbook/92_models/cohere/tool_use.py
+python cookbook/90_models/cohere/tool_use.py
 ```
 
 ### 6. Run Agent that returns structured output
 
 ```shell
-python cookbook/92_models/cohere/structured_output.py
+python cookbook/90_models/cohere/structured_output.py
 ```
 
 ### 7. Run Agent that uses storage
 
 ```shell
-python cookbook/92_models/cohere/storage.py
+python cookbook/90_models/cohere/db.py
 ```
 
 ### 8. Run Agent that uses knowledge
 
 ```shell
-python cookbook/92_models/cohere/knowledge.py
+python cookbook/90_models/cohere/knowledge.py
 ```
 
 ### 9. Run Agent that uses memory
 
 ```shell
-python cookbook/92_models/cohere/memory.py
+python cookbook/90_models/cohere/memory.py
 ```

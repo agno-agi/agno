@@ -15,7 +15,7 @@ from pathlib import Path
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
-from agno.os import AgentOS, MCPServerConfig
+from agno.os import AgentOS, MCPConfig
 from agno.run import RunStatus
 from agno.tools.sql import SQLTools
 from sqlalchemy import create_engine, event, text
@@ -113,7 +113,7 @@ agent_os = AgentOS(
     id="metrics-desk",
     db=db,
     agents=[analyst],
-    mcp_server=MCPServerConfig(tools=[ask_metrics], enable_builtin_tools=False),
+    mcp=MCPConfig(tools=[ask_metrics], default_tools=False),
 )
 app = agent_os.get_app()
 

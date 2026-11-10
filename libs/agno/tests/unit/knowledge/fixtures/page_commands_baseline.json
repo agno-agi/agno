@@ -1,0 +1,280 @@
+{
+  "source": "docs-agent b0a464b (command implementation unchanged from #14 490099f)",
+  "corpus": {
+    "/index.md": "# Welcome\n\nStart here.\n",
+    "/quickstart.md": "# Quickstart\n\n```python\nfrom agno.agent import Agent\nagent = Agent()\n```\n",
+    "/concepts.md": "# Concepts overview page\n\nSee the sub-pages.\n",
+    "/concepts/agents.md": "# Agents\n\nAn Agent has a model.\nUse enable_agentic_memory=True to remember.\n",
+    "/concepts/agents/tools.md": "# Tools\n\nAgents call tools.\n",
+    "/concepts/teams.md": "# Teams\n\nA Team coordinates agents.\n",
+    "/examples/basic.md": "# Basic example\n\nagent = Agent(model=OpenAIChat())\n",
+    "/i18n/unicode.md": "# \u00dcn\u00efc\u00f6d\u00e9\n\nna\u00efve caf\u00e9 \u2014 \u65e5\u672c\u8a9e\n",
+    "/empty.md": ""
+  },
+  "commands": [
+    {
+      "command": "",
+      "output": "Supported commands (read-only, no pipes, stateless):\n  ls [dir|file ...]                     list a directory (or show that a file exists)\n  tree [dir] [-L depth]                 directory tree\n  find [dir] [-name <glob>]             list files, optionally filtered by name glob\n  rg [-i] [-l] [-c] [-w] [-F] [-C n] [-A n] [-B n] <pattern> [path ...]\n                                        regex search (grep is an alias; -r is accepted)\n  cat <file> ...                        full file contents\n  head [-n N] <file> ...                first N lines (default 10)\n  tail [-n N] <file> ...                last N lines (default 10)\n  wc [-l] <file> ...                    line (and word/char) counts\nPaths may omit the .md extension: `cat /concepts/agents` works."
+    },
+    {
+      "command": "cat /empty",
+      "output": "==> /empty.md <==\n"
+    },
+    {
+      "command": "cat /quickstart",
+      "output": "==> /quickstart.md <==\n# Quickstart\n\n```python\nfrom agno.agent import Agent\nagent = Agent()\n```\n"
+    },
+    {
+      "command": "cat /quickstart | head",
+      "output": "pipes and command chaining are not supported; run one command per call.\n\nSupported commands (read-only, no pipes, stateless):\n  ls [dir|file ...]                     list a directory (or show that a file exists)\n  tree [dir] [-L depth]                 directory tree\n  find [dir] [-name <glob>]             list files, optionally filtered by name glob\n  rg [-i] [-l] [-c] [-w] [-F] [-C n] [-A n] [-B n] <pattern> [path ...]\n                                        regex search (grep is an alias; -r is accepted)\n  cat <file> ...                        full file contents\n  head [-n N] <file> ...                first N lines (default 10)\n  tail [-n N] <file> ...                last N lines (default 10)\n  wc [-l] <file> ...                    line (and word/char) counts\nPaths may omit the .md extension: `cat /concepts/agents` works."
+    },
+    {
+      "command": "find / -name '*.rst'",
+      "output": "find: no files matching '*.rst' under /"
+    },
+    {
+      "command": "find / -name '*agent*'",
+      "output": "/concepts/agents.md"
+    },
+    {
+      "command": "find /concepts",
+      "output": "/concepts/agents.md\n/concepts/agents/tools.md\n/concepts/teams.md"
+    },
+    {
+      "command": "find /concepts -type f -name 'agents.md'",
+      "output": "/concepts/agents.md"
+    },
+    {
+      "command": "find /nope -name x",
+      "output": "find: /nope: no such directory"
+    },
+    {
+      "command": "grep -r Agents /concepts",
+      "output": "[2 matching lines in 2 files]\n/concepts/agents.md:1:# Agents\n/concepts/agents/tools.md:3:Agents call tools."
+    },
+    {
+      "command": "head -1 /concepts/agents",
+      "output": "==> /concepts/agents.md <==\n# Agents"
+    },
+    {
+      "command": "head -n -3 /quickstart",
+      "output": "-n expects a non-negative number"
+    },
+    {
+      "command": "head -n 1 /quickstart /nope /concepts/agents",
+      "output": "==> /quickstart.md <==\n# Quickstart\n\n/nope: no such file. Use ls/tree to explore, or rg to search.\n\n==> /concepts/agents.md <==\n# Agents"
+    },
+    {
+      "command": "head -n abc /quickstart",
+      "output": "-n expects a number, got 'abc'"
+    },
+    {
+      "command": "head -n1 /concepts/agents",
+      "output": "==> /concepts/agents.md <==\n# Agents"
+    },
+    {
+      "command": "ls",
+      "output": "concepts.md\nconcepts/\nempty.md\nexamples/\ni18n/\nindex.md\nquickstart.md"
+    },
+    {
+      "command": "ls -la /concepts",
+      "output": "agents.md\nagents/\nteams.md\n/concepts.md"
+    },
+    {
+      "command": "ls /",
+      "output": "concepts.md\nconcepts/\nempty.md\nexamples/\ni18n/\nindex.md\nquickstart.md"
+    },
+    {
+      "command": "ls /concepts",
+      "output": "agents.md\nagents/\nteams.md\n/concepts.md"
+    },
+    {
+      "command": "ls /nope",
+      "output": "/nope: no such file or directory"
+    },
+    {
+      "command": "ls /quickstart",
+      "output": "/quickstart.md"
+    },
+    {
+      "command": "ls /quickstart.md",
+      "output": "/quickstart.md"
+    },
+    {
+      "command": "rg \"unbalanced /",
+      "output": "parse error: No closing quotation\n\nSupported commands (read-only, no pipes, stateless):\n  ls [dir|file ...]                     list a directory (or show that a file exists)\n  tree [dir] [-L depth]                 directory tree\n  find [dir] [-name <glob>]             list files, optionally filtered by name glob\n  rg [-i] [-l] [-c] [-w] [-F] [-C n] [-A n] [-B n] <pattern> [path ...]\n                                        regex search (grep is an alias; -r is accepted)\n  cat <file> ...                        full file contents\n  head [-n N] <file> ...                first N lines (default 10)\n  tail [-n N] <file> ...                last N lines (default 10)\n  wc [-l] <file> ...                    line (and word/char) counts\nPaths may omit the .md extension: `cat /concepts/agents` works."
+    },
+    {
+      "command": "rg '(' /",
+      "output": "rg: invalid regex '(': missing ) at position 1"
+    },
+    {
+      "command": "rg -- Agents /concepts",
+      "output": "[2 matching lines in 2 files]\n/concepts/agents.md:1:# Agents\n/concepts/agents/tools.md:3:Agents call tools."
+    },
+    {
+      "command": "rg --glob '*.md' Agent /concepts",
+      "output": "[3 matching lines in 2 files]\n/concepts/agents.md:1:# Agents\n/concepts/agents.md:3:An Agent has a model.\n/concepts/agents/tools.md:3:Agents call tools."
+    },
+    {
+      "command": "rg --ignore-case \"AGENTS\" /concepts",
+      "output": "[3 matching lines in 3 files]\n/concepts/agents.md:1:# Agents\n/concepts/agents/tools.md:3:Agents call tools.\n/concepts/teams.md:3:A Team coordinates agents."
+    },
+    {
+      "command": "rg --type md Agent /concepts",
+      "output": "[3 matching lines in 2 files]\n/concepts/agents.md:1:# Agents\n/concepts/agents.md:3:An Agent has a model.\n/concepts/agents/tools.md:3:Agents call tools."
+    },
+    {
+      "command": "rg --type=md Agent /concepts",
+      "output": "[3 matching lines in 2 files]\n/concepts/agents.md:1:# Agents\n/concepts/agents.md:3:An Agent has a model.\n/concepts/agents/tools.md:3:Agents call tools."
+    },
+    {
+      "command": "rg -A 1 \"has a model\" /concepts",
+      "output": "[1 matching lines in 1 files]\n/concepts/agents.md:3:An Agent has a model.\n/concepts/agents.md-4-Use enable_agentic_memory=True to remember.\n--"
+    },
+    {
+      "command": "rg -B 1 \"has a model\" /concepts",
+      "output": "[1 matching lines in 1 files]\n/concepts/agents.md-2-\n/concepts/agents.md:3:An Agent has a model.\n--"
+    },
+    {
+      "command": "rg -C 1 \"has a model\" /concepts",
+      "output": "[1 matching lines in 1 files]\n/concepts/agents.md-2-\n/concepts/agents.md:3:An Agent has a model.\n/concepts/agents.md-4-Use enable_agentic_memory=True to remember.\n--"
+    },
+    {
+      "command": "rg -C x foo /",
+      "output": "-C expects a number, got 'x'"
+    },
+    {
+      "command": "rg -C1 'has a model' /concepts",
+      "output": "[1 matching lines in 1 files]\n/concepts/agents.md-2-\n/concepts/agents.md:3:An Agent has a model.\n/concepts/agents.md-4-Use enable_agentic_memory=True to remember.\n--"
+    },
+    {
+      "command": "rg -F 'Agent()' /",
+      "output": "[1 matching lines in 1 files]\n/quickstart.md:5:agent = Agent()"
+    },
+    {
+      "command": "rg -Q foo /",
+      "output": "rg: unsupported flag -Q (supported: -i -l -c -w -F -n -r -C/-A/-B n, -e PATTERN)"
+    },
+    {
+      "command": "rg -e Agents /concepts",
+      "output": "[2 matching lines in 2 files]\n/concepts/agents.md:1:# Agents\n/concepts/agents/tools.md:3:Agents call tools."
+    },
+    {
+      "command": "rg -i",
+      "output": "usage: rg [-i] [-l] [-c] [-C n] <pattern> [path ...]"
+    },
+    {
+      "command": "rg -ic agent /concepts/agents",
+      "output": "[4 matching lines in 2 files]\n/concepts/agents.md:3\n/concepts/agents/tools.md:1"
+    },
+    {
+      "command": "rg -il 'overview|agents' /concepts",
+      "output": "[4 matching lines in 4 files]\n/concepts.md\n/concepts/agents.md\n/concepts/agents/tools.md\n/concepts/teams.md"
+    },
+    {
+      "command": "rg -il agent /concepts",
+      "output": "[5 matching lines in 3 files]\n/concepts/agents.md\n/concepts/agents/tools.md\n/concepts/teams.md"
+    },
+    {
+      "command": "rg -l \"\u65e5\u672c\u8a9e\" /",
+      "output": "[1 matching lines in 1 files]\n/i18n/unicode.md"
+    },
+    {
+      "command": "rg -w Agent /concepts",
+      "output": "[1 matching lines in 1 files]\n/concepts/agents.md:3:An Agent has a model."
+    },
+    {
+      "command": "rg agents /concepts -i",
+      "output": "[3 matching lines in 3 files]\n/concepts/agents.md:1:# Agents\n/concepts/agents/tools.md:3:Agents call tools.\n/concepts/teams.md:3:A Team coordinates agents."
+    },
+    {
+      "command": "rg enable_agentic_memory /",
+      "output": "[1 matching lines in 1 files]\n/concepts/agents.md:4:Use enable_agentic_memory=True to remember."
+    },
+    {
+      "command": "rg foo /nope",
+      "output": "rg: /nope: no such file or directory"
+    },
+    {
+      "command": "rg zzz-not-here /",
+      "output": "rg: no matches for 'zzz-not-here'"
+    },
+    {
+      "command": "rm -rf /",
+      "output": "unsupported command: 'rm'\n\nSupported commands (read-only, no pipes, stateless):\n  ls [dir|file ...]                     list a directory (or show that a file exists)\n  tree [dir] [-L depth]                 directory tree\n  find [dir] [-name <glob>]             list files, optionally filtered by name glob\n  rg [-i] [-l] [-c] [-w] [-F] [-C n] [-A n] [-B n] <pattern> [path ...]\n                                        regex search (grep is an alias; -r is accepted)\n  cat <file> ...                        full file contents\n  head [-n N] <file> ...                first N lines (default 10)\n  tail [-n N] <file> ...                last N lines (default 10)\n  wc [-l] <file> ...                    line (and word/char) counts\nPaths may omit the .md extension: `cat /concepts/agents` works."
+    },
+    {
+      "command": "tail -n +3 /concepts/agents",
+      "output": "==> /concepts/agents.md <==\nAn Agent has a model.\nUse enable_agentic_memory=True to remember."
+    },
+    {
+      "command": "tail -n 0 /concepts/agents",
+      "output": "==> /concepts/agents.md <==\n"
+    },
+    {
+      "command": "tail -n 1 /concepts/agents",
+      "output": "==> /concepts/agents.md <==\nUse enable_agentic_memory=True to remember."
+    },
+    {
+      "command": "tail -n 2 /concepts/agents",
+      "output": "==> /concepts/agents.md <==\nAn Agent has a model.\nUse enable_agentic_memory=True to remember."
+    },
+    {
+      "command": "tail -n+2 /concepts/agents",
+      "output": "==> /concepts/agents.md <==\n\nAn Agent has a model.\nUse enable_agentic_memory=True to remember."
+    },
+    {
+      "command": "tree / -L 1",
+      "output": "/\n  concepts.md\n  concepts/\n  empty.md\n  examples/\n  i18n/\n  index.md\n  quickstart.md"
+    },
+    {
+      "command": "tree /concepts",
+      "output": "/concepts\n  agents.md\n  agents/\n    tools.md\n  teams.md"
+    },
+    {
+      "command": "tree /nope",
+      "output": "/nope: no such directory"
+    },
+    {
+      "command": "tree /quickstart.md",
+      "output": "/quickstart.md"
+    },
+    {
+      "command": "wc -l /concepts/agents",
+      "output": "      4 /concepts/agents.md"
+    },
+    {
+      "command": "wc -l /nope",
+      "output": "/nope: no such file. Use ls/tree to explore, or rg to search."
+    },
+    {
+      "command": "cat /concepts/agents",
+      "output": "==> /concepts/agents.md <==\n# Agents\n\nAn Agent has a model.\nUse enable_agentic_memory=True to remember.\n"
+    },
+    {
+      "command": "ls /",
+      "output": "concepts.md\nconcepts/\nempty.md\nexamples/\ni18n/\nindex.md\nquickstart.md"
+    },
+    {
+      "command": "tail -n +2 /concepts/agents.md",
+      "output": "==> /concepts/agents.md <==\n\nAn Agent has a model.\nUse enable_agentic_memory=True to remember."
+    },
+    {
+      "command": "cat /missing",
+      "output": "/missing: no such file. Use ls/tree to explore, or rg to search."
+    },
+    {
+      "command": "",
+      "output": "Supported commands (read-only, no pipes, stateless):\n  ls [dir|file ...]                     list a directory (or show that a file exists)\n  tree [dir] [-L depth]                 directory tree\n  find [dir] [-name <glob>]             list files, optionally filtered by name glob\n  rg [-i] [-l] [-c] [-w] [-F] [-C n] [-A n] [-B n] <pattern> [path ...]\n                                        regex search (grep is an alias; -r is accepted)\n  cat <file> ...                        full file contents\n  head [-n N] <file> ...                first N lines (default 10)\n  tail [-n N] <file> ...                last N lines (default 10)\n  wc [-l] <file> ...                    line (and word/char) counts\nPaths may omit the .md extension: `cat /concepts/agents` works."
+    },
+    {
+      "command": "cat a | head",
+      "output": "pipes and command chaining are not supported; run one command per call.\n\nSupported commands (read-only, no pipes, stateless):\n  ls [dir|file ...]                     list a directory (or show that a file exists)\n  tree [dir] [-L depth]                 directory tree\n  find [dir] [-name <glob>]             list files, optionally filtered by name glob\n  rg [-i] [-l] [-c] [-w] [-F] [-C n] [-A n] [-B n] <pattern> [path ...]\n                                        regex search (grep is an alias; -r is accepted)\n  cat <file> ...                        full file contents\n  head [-n N] <file> ...                first N lines (default 10)\n  tail [-n N] <file> ...                last N lines (default 10)\n  wc [-l] <file> ...                    line (and word/char) counts\nPaths may omit the .md extension: `cat /concepts/agents` works."
+    },
+    {
+      "command": "rm /a",
+      "output": "unsupported command: 'rm'\n\nSupported commands (read-only, no pipes, stateless):\n  ls [dir|file ...]                     list a directory (or show that a file exists)\n  tree [dir] [-L depth]                 directory tree\n  find [dir] [-name <glob>]             list files, optionally filtered by name glob\n  rg [-i] [-l] [-c] [-w] [-F] [-C n] [-A n] [-B n] <pattern> [path ...]\n                                        regex search (grep is an alias; -r is accepted)\n  cat <file> ...                        full file contents\n  head [-n N] <file> ...                first N lines (default 10)\n  tail [-n N] <file> ...                last N lines (default 10)\n  wc [-l] <file> ...                    line (and word/char) counts\nPaths may omit the .md extension: `cat /concepts/agents` works."
+    }
+  ]
+}

@@ -47,7 +47,7 @@ async def main() -> None:
         command="uvx",
         args=["mcp-server-time"],
         mode=ContextMode.tools,
-        model=OpenAIResponses(id="gpt-5.4-mini"),
+        model=OpenAIResponses(id="gpt-5.6-luna"),
     )
 
     # ------------------------------------------------------------------

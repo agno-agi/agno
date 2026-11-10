@@ -9,10 +9,25 @@ from pydantic import BaseModel
 from agno.db.base import SessionType
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
-from agno.models.response import ToolExecution
-from agno.run.agent import RunOutput, RunOutputEvent
-from agno.run.team import TeamRunOutput, TeamRunOutputEvent
+from agno.run.agent import (
+    RunCancelledEvent,
+    RunCompletedEvent,
+    RunErrorEvent,
+    RunOutput,
+    RunOutputEvent,
+    RunPausedEvent,
+    RunStartedEvent,
+)
+from agno.run.base import RunStatus
+from agno.run.requirement import RunRequirement
+from agno.run.team import BaseTeamRunEvent, TeamRunOutput, TeamRunOutputEvent
+from agno.run.team import RunCancelledEvent as TeamRunCancelledEvent
+from agno.run.team import RunCompletedEvent as TeamRunCompletedEvent
+from agno.run.team import RunErrorEvent as TeamRunErrorEvent
+from agno.run.team import RunPausedEvent as TeamRunPausedEvent
+from agno.run.team import RunStartedEvent as TeamRunStartedEvent
 from agno.run.workflow import WorkflowRunOutput, WorkflowRunOutputEvent
+from agno.utils.log import log_warning
 
 if TYPE_CHECKING:
     from fastapi import UploadFile
@@ -40,12 +55,14 @@ if TYPE_CHECKING:
         ConfigResponse,
         PaginatedResponse,
         RunSchema,
+        RunsPage,
         SessionSchema,
         TeamRunSchema,
         TeamSessionDetailSchema,
         WorkflowRunSchema,
         WorkflowSessionDetailSchema,
     )
+    from agno.tools.component import ComponentTool
 
 
 @dataclass
@@ -60,7 +77,6 @@ class RemoteDb:
     eval_table_name: Optional[str] = None
     traces_table_name: Optional[str] = None
     spans_table_name: Optional[str] = None
-    culture_table_name: Optional[str] = None
 
     @classmethod
     def from_config(
@@ -129,6 +145,9 @@ class RemoteDb:
         )
 
     # SESSIONS
+    async def search_sessions(self, **kwargs: Any) -> "PaginatedResponse[SessionSchema]":
+        return await self.client.asearch_sessions(**kwargs)
+
     async def get_sessions(self, **kwargs: Any) -> "PaginatedResponse[SessionSchema]":
         return await self.client.get_sessions(**kwargs)
 
@@ -139,7 +158,10 @@ class RemoteDb:
 
     async def get_session_runs(
         self, session_id: str, **kwargs: Any
-    ) -> List[Union["RunSchema", "TeamRunSchema", "WorkflowRunSchema"]]:
+    ) -> Union[
+        "List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]",
+        "RunsPage[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]",
+    ]:
         return await self.client.get_session_runs(session_id, **kwargs)
 
     async def create_session(
@@ -403,13 +425,18 @@ class BaseRemote:
             base_url: Base URL for remote instance (e.g., "http://localhost:7777")
             timeout: Request timeout in seconds (default: 60)
             protocol: Communication protocol - "agentos" (default) or "a2a"
-            a2a_protocol: For A2A protocol only - Whether to use JSON-RPC or REST protocol.
+            a2a_protocol: Deprecated. For A2A protocol, the protocol is negotiated from the Agent Card.
             config_ttl: Time-to-live for cached config in seconds (default: 300)
         """
         self.base_url = base_url.rstrip("/")
         self.timeout: float = timeout
         self.protocol = protocol
         self.a2a_protocol = a2a_protocol
+        if protocol == "a2a" and a2a_protocol != "rest":
+            log_warning(
+                "The `a2a_protocol` argument is deprecated and will be removed in a future release. "
+                "The protocol is negotiated from the Agent Card instead."
+            )
         self.config_ttl: float = config_ttl
         self._cached_config = None
         self._cached_agent_card = None
@@ -423,6 +450,30 @@ class BaseRemote:
             self.a2a_client = self.get_a2a_client()
         else:
             raise ValueError(f"Invalid protocol: {protocol}")
+
+    def as_tool(
+        self,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        title: Optional[str] = None,
+        annotations: Optional[Dict[str, Any]] = None,
+    ) -> "ComponentTool":
+        """Publish this remote component as a tool with its own model-facing name,
+        description, title, and behaviour annotations, for surfaces that turn components into tools -- today the AgentOS
+        MCP server: ``MCPConfig(tools=[remote.as_tool(name=..., description=...)])``.
+        Every override is optional. A remote component's id comes from the remote
+        deployment, so ``name=`` is how the local deployment renames the published
+        tool without touching that id (which remains the continue_run handle and the
+        scope segment).
+
+        ``title`` is the human-facing display name; ``annotations`` are MCP behaviour
+        hints (``readOnlyHint``, ``destructiveHint``, ``idempotentHint``,
+        ``openWorldHint``) merged over the publishing surface's defaults -- see
+        :mod:`agno.tools.annotations`.
+        """
+        from agno.tools.component import ComponentTool
+
+        return ComponentTool(component=self, name=name, description=description, title=title, annotations=annotations)
 
     def get_os_client(self) -> "AgentOSClient":
         """Get an AgentOSClient for fetching remote configuration.
@@ -454,7 +505,6 @@ class BaseRemote:
         return A2AClient(
             base_url=self.base_url,
             timeout=int(self.timeout),
-            protocol=self.a2a_protocol,
         )
 
     @property
@@ -513,10 +563,89 @@ class BaseRemote:
             return {"Authorization": f"Bearer {auth_token}"}
         return None
 
+    async def _with_run_output(
+        self, event_stream: AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]
+    ) -> AsyncIterator[Any]:
+        """Yield the remote events, then the RunOutput or TeamRunOutput a caller asked for with yield_run_output, when
+        the run completes, pauses, fails or is cancelled, as a local agent or team yields it."""
+        # The status each event that ends a run leaves it in
+        final_statuses = {
+            RunCompletedEvent: RunStatus.completed,
+            RunPausedEvent: RunStatus.paused,
+            RunErrorEvent: RunStatus.error,
+            RunCancelledEvent: RunStatus.cancelled,
+            TeamRunCompletedEvent: RunStatus.completed,
+            TeamRunPausedEvent: RunStatus.paused,
+            TeamRunErrorEvent: RunStatus.error,
+            TeamRunCancelledEvent: RunStatus.cancelled,
+        }
+        # The run's own events carry the first event's run_id; a sub-team's or member's events carry their own
+        run_id = None
+        # The model the run's own started event names, which no event that ends a run carries
+        model = model_provider = None
+        run_output: Optional[Union[RunOutput, TeamRunOutput]] = None
+        try:
+            async for event in event_stream:
+                if run_output is not None:
+                    # The run has ended: read the rest, so the remote finishes writing it
+                    if final_statuses.get(type(event)) is not None and event.run_id == run_id:
+                        # A cancelled run's tokens arrive in the completed event sent after it; the status stays
+                        metrics = getattr(event, "metrics", None)
+                        member_responses = getattr(event, "member_responses", None)
+                        if metrics is not None:
+                            run_output.metrics = metrics
+                        if member_responses and isinstance(run_output, TeamRunOutput):
+                            run_output.member_responses = member_responses
+                    continue
+                yield event
+                run_id = run_id or event.run_id
+                if isinstance(event, (RunStartedEvent, TeamRunStartedEvent)) and event.run_id == run_id:
+                    model, model_provider = event.model or None, event.model_provider or None
+                status = final_statuses.get(type(event))
+                if status is not None and event.run_id == run_id:
+                    if isinstance(event, BaseTeamRunEvent):
+                        run_output = TeamRunOutput(
+                            run_id=event.run_id,
+                            session_id=event.session_id,
+                            team_id=event.team_id,
+                            team_name=event.team_name,
+                            model=model,
+                            model_provider=model_provider,
+                            content=event.content,
+                            content_type=getattr(event, "content_type", "str"),
+                            tools=getattr(event, "tools", None),
+                            requirements=getattr(event, "requirements", None),
+                            metrics=getattr(event, "metrics", None),
+                            member_responses=getattr(event, "member_responses", None) or [],
+                            metadata=getattr(event, "metadata", None),
+                            status=status,
+                        )
+                    else:
+                        run_output = RunOutput(
+                            run_id=event.run_id,
+                            session_id=event.session_id,
+                            agent_id=event.agent_id,
+                            agent_name=event.agent_name,
+                            model=model,
+                            model_provider=model_provider,
+                            content=event.content,
+                            content_type=getattr(event, "content_type", "str"),
+                            tools=event.tools,
+                            requirements=getattr(event, "requirements", None),
+                            metrics=getattr(event, "metrics", None),
+                            metadata=getattr(event, "metadata", None),
+                            status=status,
+                        )
+            if run_output is not None:
+                yield run_output
+        finally:
+            # Close the remote stream when the caller stops reading it early
+            await event_stream.aclose()  # type: ignore[attr-defined]
+
     def get_agent_card(self) -> Optional["AgentCard"]:
         """Get agent card for A2A protocol agents, cached with TTL.
 
-        Fetches the agent card from the standard /.well-known/agent.json endpoint
+        Fetches the agent card from the standard /.well-known/agent-card.json endpoint
         to populate agent metadata (name, description, etc.) for A2A agents.
 
         Returns None for non-A2A protocols or if the server doesn't support agent cards.
@@ -543,7 +672,7 @@ class BaseRemote:
     async def aget_agent_card(self) -> Optional["AgentCard"]:
         """Get agent card for A2A protocol agents, cached with TTL.
 
-        Fetches the agent card from the standard /.well-known/agent.json endpoint
+        Fetches the agent card from the standard /.well-known/agent-card.json endpoint
         to populate agent metadata (name, description, etc.) for A2A agents.
 
         Returns None for non-A2A protocols or if the server doesn't support agent cards.
@@ -603,12 +732,15 @@ class BaseRemote:
         self,
         run_id: str,
         stream: Optional[bool] = None,
-        updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
     ) -> Union[RunOutput, TeamRunOutput, WorkflowRunOutput]:
         raise NotImplementedError("acontinue_run method must be implemented by the subclass")
 
     @abstractmethod
-    async def acancel_run(self, run_id: str) -> bool:
+    async def acancel_run(self, run_id: str, auth_token: Optional[str] = None) -> bool:
+        """Cancel ``run_id`` on the remote OS; ``auth_token`` is the caller's bearer,
+        forwarded so a protected downstream accepts the call. Surfaces pass it as a
+        keyword, so implementations must accept the parameter."""
         raise NotImplementedError("cancel_run method must be implemented by the subclass")

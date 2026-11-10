@@ -29,7 +29,7 @@ from agno.run.workflow import (
 )
 from agno.tools import tool
 from agno.workflow.step import Step
-from agno.workflow.types import OnReject, StepInput, StepOutput
+from agno.workflow.types import HumanReview, OnReject, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 from rich.console import Console
 from rich.prompt import Prompt
@@ -66,7 +66,7 @@ def create_plan(project: str, tasks: str) -> str:
 
 planner_agent = Agent(
     name="PlannerAgent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[create_plan],
     instructions=(
         "You create project plans. Use the create_plan tool EXACTLY ONCE. "
@@ -92,7 +92,7 @@ def finalize_plan(plan: str) -> str:
 
 reviewer_agent = Agent(
     name="ReviewerAgent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[finalize_plan],
     instructions=(
         "You review and finalize project plans. Use the finalize_plan tool EXACTLY ONCE "
@@ -113,36 +113,42 @@ workflow = Workflow(
         Step(
             name="gather_requirements",
             executor=gather_requirements,
-            requires_user_input=True,
-            user_input_message="Provide project details:",
-            user_input_schema=[
-                {
-                    "name": "project_name",
-                    "field_type": "text",
-                    "description": "Project name",
-                    "required": True,
-                },
-                {
-                    "name": "scope",
-                    "field_type": "text",
-                    "description": "Project scope",
-                    "required": True,
-                },
-            ],
+            human_review=HumanReview(
+                requires_user_input=True,
+                user_input_message="Provide project details:",
+                user_input_schema=[
+                    {
+                        "name": "project_name",
+                        "field_type": "text",
+                        "description": "Project name",
+                        "required": True,
+                    },
+                    {
+                        "name": "scope",
+                        "field_type": "text",
+                        "description": "Project scope",
+                        "required": True,
+                    },
+                ],
+            ),
         ),
         Step(
             name="generate_plan",
             agent=planner_agent,
-            requires_confirmation=True,
-            confirmation_message="Ready to generate the project plan. Proceed?",
+            human_review=HumanReview(
+                requires_confirmation=True,
+                confirmation_message="Ready to generate the project plan. Proceed?",
+            ),
         ),
         Step(
             name="review_plan",
             agent=reviewer_agent,
-            requires_output_review=True,
-            output_review_message="Review the finalized plan before publishing.",
-            on_reject=OnReject.retry,
-            hitl_max_retries=2,
+            human_review=HumanReview(
+                requires_output_review=True,
+                output_review_message="Review the finalized plan before publishing.",
+                on_reject=OnReject.retry,
+                max_retries=2,
+            ),
         ),
     ],
     telemetry=False,

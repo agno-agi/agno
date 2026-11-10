@@ -6,7 +6,6 @@ from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.sqlite.schemas import get_table_schema_definition
 from agno.utils.log import log_debug, log_error, log_warning
 
@@ -72,8 +71,6 @@ def is_table_available(session: Session, table_name: str, db_schema: Optional[st
         # SQLite uses sqlite_master instead of information_schema
         exists_query = text("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = :table")
         exists = session.execute(exists_query, {"table": table_name}).scalar() is not None
-        if not exists:
-            log_debug(f"Table {table_name} {'exists' if exists else 'does not exist'}")
         return exists
     except Exception as e:
         log_error(f"Error checking if table exists: {str(e)}")
@@ -91,8 +88,6 @@ async def ais_table_available(session: AsyncSession, table_name: str, db_schema:
     try:
         exists_query = text("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = :table")
         exists = (await session.execute(exists_query, {"table": table_name})).scalar() is not None
-        if not exists:
-            log_debug(f"Table {table_name} {'exists' if exists else 'does not exist'}")
         return exists
     except Exception as e:
         log_error(f"Error checking if table exists: {str(e)}")
@@ -109,7 +104,10 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str) -> bool:
         table_type (str): Type of table to get expected schema
 
     Returns:
-        bool: True if table has all expected columns, False otherwise
+        bool: True if table has all expected columns, False if expected columns are missing
+
+    Raises:
+        Any error from inspecting the table, so a failed inspection is not read as a stale schema.
     """
     try:
         expected_table_schema = get_table_schema_definition(table_type)
@@ -129,7 +127,7 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str) -> bool:
         return True
     except Exception as e:
         log_error(f"Error validating table schema for {table_name}: {str(e)}")
-        return False
+        raise
 
 
 async def ais_valid_table(db_engine: AsyncEngine, table_name: str, table_type: str) -> bool:
@@ -142,7 +140,10 @@ async def ais_valid_table(db_engine: AsyncEngine, table_name: str, table_type: s
         table_type (str): Type of table to get expected schema
 
     Returns:
-        bool: True if table has all expected columns, False otherwise
+        bool: True if table has all expected columns, False if expected columns are missing
+
+    Raises:
+        Any error from inspecting the table, so a failed inspection is not read as a stale schema.
     """
     try:
         expected_table_schema = get_table_schema_definition(table_type)
@@ -161,7 +162,7 @@ async def ais_valid_table(db_engine: AsyncEngine, table_name: str, table_type: s
 
     except Exception as e:
         log_error(f"Error validating table schema for {table_name}: {str(e)}")
-        return False
+        raise
 
 
 def _get_table_columns(conn, table_name: str) -> set[str]:
@@ -194,12 +195,12 @@ def bulk_upsert_metrics(session: Session, table: Table, metrics_records: list[di
     update_columns = {
         col.name: stmt.excluded[col.name]
         for col in table.columns
-        if col.name not in ["id", "date", "created_at", "aggregation_period"]
+        if col.name not in ["id", "date", "created_at", "aggregation_period", "user_id"]
     }
 
-    stmt = stmt.on_conflict_do_update(index_elements=["date", "aggregation_period"], set_=update_columns).returning(  # type: ignore
-        table
-    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["user_id", "date", "aggregation_period"], set_=update_columns
+    ).returning(table)  # type: ignore
     result = session.execute(stmt, metrics_records)
     results = [row._mapping for row in result.fetchall()]
     session.commit()
@@ -227,12 +228,12 @@ async def abulk_upsert_metrics(session: AsyncSession, table: Table, metrics_reco
     update_columns = {
         col.name: stmt.excluded[col.name]
         for col in table.columns
-        if col.name not in ["id", "date", "created_at", "aggregation_period"]
+        if col.name not in ["id", "date", "created_at", "aggregation_period", "user_id"]
     }
 
-    stmt = stmt.on_conflict_do_update(index_elements=["date", "aggregation_period"], set_=update_columns).returning(  # type: ignore
-        table
-    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["user_id", "date", "aggregation_period"], set_=update_columns
+    ).returning(table)  # type: ignore
     result = await session.execute(stmt, metrics_records)
     results = [dict(row._mapping) for row in result.fetchall()]
     await session.commit()
@@ -240,91 +241,110 @@ async def abulk_upsert_metrics(session: AsyncSession, table: Table, metrics_reco
     return results  # type: ignore
 
 
-def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
-    """Calculate metrics for the given single date.
+def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[dict]:
+    """Calculate metrics for the given single date, bucketed per user.
 
     Args:
         date_to_process (date): The date to calculate metrics for.
         sessions_data (dict): The sessions data to calculate metrics for.
 
     Returns:
-        dict: The calculated metrics.
+        List[dict]: One metrics record per user_id seen on this date. Sessions without a
+            user_id aggregate under the empty-string owner.
     """
-    metrics = {
-        "users_count": 0,
-        "agent_sessions_count": 0,
-        "team_sessions_count": 0,
-        "workflow_sessions_count": 0,
-        "agent_runs_count": 0,
-        "team_runs_count": 0,
-        "workflow_runs_count": 0,
-    }
-    token_metrics = {
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "total_tokens": 0,
-        "audio_total_tokens": 0,
-        "audio_input_tokens": 0,
-        "audio_output_tokens": 0,
-        "cache_read_tokens": 0,
-        "cache_write_tokens": 0,
-        "reasoning_tokens": 0,
-    }
-    model_counts: Dict[str, int] = {}
+
+    def _empty_metric_record() -> Dict[str, Any]:
+        return {
+            "users_count": 0,
+            "agent_sessions_count": 0,
+            "team_sessions_count": 0,
+            "workflow_sessions_count": 0,
+            "agent_runs_count": 0,
+            "team_runs_count": 0,
+            "workflow_runs_count": 0,
+            "token_metrics": {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "audio_total_tokens": 0,
+                "audio_input_tokens": 0,
+                "audio_output_tokens": 0,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "reasoning_tokens": 0,
+            },
+            "model_counts": {},
+        }
 
     session_types = [
         ("agent", "agent_sessions_count", "agent_runs_count"),
         ("team", "team_sessions_count", "team_runs_count"),
         ("workflow", "workflow_sessions_count", "workflow_runs_count"),
     ]
-    all_user_ids = set()
+
+    per_user: Dict[str, Dict[str, Any]] = {}
 
     for session_type, sessions_count_key, runs_count_key in session_types:
         sessions = sessions_data.get(session_type, []) or []
-        metrics[sessions_count_key] = len(sessions)
 
         for session in sessions:
-            if session.get("user_id"):
-                all_user_ids.add(session["user_id"])
+            bucket_key = session.get("user_id") or ""
+            bucket = per_user.setdefault(bucket_key, _empty_metric_record())
+            bucket[sessions_count_key] += 1
 
             # Parse runs from JSON string
             if runs := session.get("runs", []):
                 runs = json.loads(runs) if isinstance(runs, str) else runs
-                metrics[runs_count_key] += len(runs)
+                bucket[runs_count_key] += len(runs)
                 for run in runs:
                     if model_id := run.get("model"):
                         model_provider = run.get("model_provider", "")
-                        model_counts[f"{model_id}:{model_provider}"] = (
-                            model_counts.get(f"{model_id}:{model_provider}", 0) + 1
-                        )
+                        key = f"{model_id}:{model_provider}"
+                        bucket["model_counts"][key] = bucket["model_counts"].get(key, 0) + 1
 
             # Parse session_data from JSON string
             session_data = session.get("session_data") or {}
             if isinstance(session_data, str):
                 session_data = json.loads(session_data)
             session_metrics = session_data.get("session_metrics") or {}
-            for field in token_metrics:
-                token_metrics[field] += session_metrics.get(field, 0)
+            for field in bucket["token_metrics"]:
+                bucket["token_metrics"][field] += session_metrics.get(field, 0)
 
-    model_metrics = []
-    for model, count in model_counts.items():
-        model_id, model_provider = model.rsplit(":", 1)
-        model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
-
-    metrics["users_count"] = len(all_user_ids)
     current_time = int(time.time())
+    completed = date_to_process < datetime.now(timezone.utc).date()
 
-    return {
-        "id": str(uuid4()),
-        "date": date_to_process,
-        "completed": date_to_process < datetime.now(timezone.utc).date(),
-        "token_metrics": token_metrics,
-        "model_metrics": model_metrics,
-        "created_at": current_time,
-        "updated_at": current_time,
-        "aggregation_period": "daily",
-        **metrics,
-    }
+    records: List[dict] = []
+    for user_id, bucket in per_user.items():
+        model_metrics = []
+        for model, count in bucket["model_counts"].items():
+            model_id, model_provider = model.rsplit(":", 1)
+            model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
+
+        # The unowned bucket has no user to count, so summing rows still gives the distinct user count.
+        users_count = 0 if user_id == "" else 1
+
+        records.append(
+            {
+                "id": str(uuid4()),
+                "date": date_to_process,
+                "completed": completed,
+                "token_metrics": bucket["token_metrics"],
+                "model_metrics": model_metrics,
+                "created_at": current_time,
+                "updated_at": current_time,
+                "aggregation_period": "daily",
+                "user_id": user_id,
+                "users_count": users_count,
+                "agent_sessions_count": bucket["agent_sessions_count"],
+                "team_sessions_count": bucket["team_sessions_count"],
+                "workflow_sessions_count": bucket["workflow_sessions_count"],
+                "agent_runs_count": bucket["agent_runs_count"],
+                "team_runs_count": bucket["team_runs_count"],
+                "workflow_runs_count": bucket["workflow_runs_count"],
+            }
+        )
+
+    return records
 
 
 def fetch_all_sessions_data(
@@ -378,64 +398,3 @@ def get_dates_to_calculate_metrics_for(starting_date: date) -> list[date]:
     if days_diff <= 0:
         return []
     return [starting_date + timedelta(days=x) for x in range(days_diff)]
-
-
-# -- Cultural Knowledge util methods --
-def serialize_cultural_knowledge_for_db(cultural_knowledge: CulturalKnowledge) -> str:
-    """Serialize a CulturalKnowledge object for database storage.
-
-    Converts the model's separate content, categories, and notes fields
-    into a single JSON string for the database content column.
-    SQLite requires JSON to be stored as strings.
-
-    Args:
-        cultural_knowledge (CulturalKnowledge): The cultural knowledge object to serialize.
-
-    Returns:
-        str: A JSON string containing content, categories, and notes.
-    """
-    content_dict: Dict[str, Any] = {}
-    if cultural_knowledge.content is not None:
-        content_dict["content"] = cultural_knowledge.content
-    if cultural_knowledge.categories is not None:
-        content_dict["categories"] = cultural_knowledge.categories
-    if cultural_knowledge.notes is not None:
-        content_dict["notes"] = cultural_knowledge.notes
-
-    return json.dumps(content_dict) if content_dict else None  # type: ignore
-
-
-def deserialize_cultural_knowledge_from_db(db_row: Dict[str, Any]) -> CulturalKnowledge:
-    """Deserialize a database row to a CulturalKnowledge object.
-
-    The database stores content as a JSON dict containing content, categories, and notes.
-    This method extracts those fields and converts them back to the model format.
-
-    Args:
-        db_row (Dict[str, Any]): The database row as a dictionary.
-
-    Returns:
-        CulturalKnowledge: The cultural knowledge object.
-    """
-    # Extract content, categories, and notes from the JSON content field
-    content_json = db_row.get("content", {}) or {}
-
-    if isinstance(content_json, str):
-        content_json = json.loads(content_json) if content_json else {}
-
-    return CulturalKnowledge.from_dict(
-        {
-            "id": db_row.get("id"),
-            "name": db_row.get("name"),
-            "summary": db_row.get("summary"),
-            "content": content_json.get("content"),
-            "categories": content_json.get("categories"),
-            "notes": content_json.get("notes"),
-            "metadata": db_row.get("metadata"),
-            "input": db_row.get("input"),
-            "created_at": db_row.get("created_at"),
-            "updated_at": db_row.get("updated_at"),
-            "agent_id": db_row.get("agent_id"),
-            "team_id": db_row.get("team_id"),
-        }
-    )

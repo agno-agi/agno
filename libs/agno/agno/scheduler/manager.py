@@ -6,8 +6,47 @@ import time
 from typing import Any, Dict, List, Literal, Optional
 from uuid import uuid4
 
-from agno.db.schemas.scheduler import Schedule, ScheduleRun
+from agno.db.schemas.scheduler import (
+    INTERNAL_SCHEDULER_USER_ID,
+    Schedule,
+    ScheduleRun,
+    _require_mutable_schedule,
+    _schedule_endpoint_targets,
+)
+from agno.run.authorization import (
+    arequire_schedule_target,
+    current_authorization,
+    require_schedule_target,
+    stamp_authorization,
+)
 from agno.utils.log import log_debug, log_warning
+
+
+def _schedule_payload(payload: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Drop acceptance grants from direct Python writes; only human routes issue them.
+
+    Company HTTP handlers persist through their own adapter calls after checking
+    and stamping authority, so they do not use this manager payload boundary.
+    """
+    if payload is not None:
+        payload = {key: value for key, value in payload.items() if key != "_agno_company_acceptance"}
+    return stamp_authorization(payload)
+
+
+def _schedule_timing_updates(existing: Schedule, updates: Dict[str, Any]) -> None:
+    """Validate cadence edits and replace the deadline derived from the old cadence."""
+    if not {"cron_expr", "timezone"}.intersection(updates) and updates.get("enabled") is not True:
+        return
+    from agno.scheduler.cron import next_run_for, validate_cron_expr, validate_timezone
+
+    cron = updates.get("cron_expr", existing.cron_expr)
+    timezone = updates.get("timezone", existing.timezone)
+    if not isinstance(cron, str) or not validate_cron_expr(cron):
+        raise ValueError(f"Invalid cron expression: {cron}")
+    if not isinstance(timezone, str) or not validate_timezone(timezone):
+        raise ValueError(f"Invalid timezone: {timezone}")
+    updates["next_run_at"] = next_run_for(cron, timezone) if updates.get("enabled", existing.enabled) else None
+
 
 # Valid DB method names for the scheduler
 SchedulerDbMethod = Literal[
@@ -23,6 +62,7 @@ SchedulerDbMethod = Literal[
     "update_schedule_run",
     "get_schedule_run",
     "get_schedule_runs",
+    "stamp_schedule_provenance",
 ]
 
 
@@ -41,8 +81,9 @@ class ScheduleManager:
 
     def close(self) -> None:
         """Shut down the internal thread pool (if created)."""
-        if self._pool is not None:
-            self._pool.shutdown(wait=False)
+        pool = getattr(self, "_pool", None)
+        if pool is not None:
+            pool.shutdown(wait=False)
             self._pool = None
 
     def __del__(self) -> None:
@@ -64,6 +105,19 @@ class ScheduleManager:
                 # No running loop — safe to use asyncio.run directly
                 return asyncio.run(fn(*args, **kwargs))
         return fn(*args, **kwargs)
+
+    def stamp_provenance(self, schedule_id: str, **provenance: Any) -> bool:
+        """Stamp provenance columns on a schedule, over the sync/async bridge.
+
+        Callers reached the adapter directly and caught NotImplementedError,
+        which is invisible to an async adapter: the coroutine is built, never
+        awaited, and the write silently does not happen while the caller is
+        told it did.
+        """
+        try:
+            return bool(self._call("stamp_schedule_provenance", schedule_id, **provenance))
+        except NotImplementedError:
+            return False
 
     async def _acall(self, method_name: SchedulerDbMethod, *args: Any, **kwargs: Any) -> Any:
         """Async call a DB method."""
@@ -114,6 +168,9 @@ class ScheduleManager:
         max_retries: int = 0,
         retry_delay_seconds: int = 60,
         if_exists: str = "raise",
+        user_id: Optional[str] = None,
+        provenance: Optional[Dict[str, str]] = None,
+        enabled_on_create: bool = True,
     ) -> Schedule:
         """Create a new schedule.
 
@@ -123,65 +180,88 @@ class ScheduleManager:
                 ``"skip"`` returns the existing schedule unchanged,
                 ``"update"`` overwrites the existing schedule with the
                 supplied values.
+            user_id: Owner of the schedule; names are unique per owner. ``None``
+                leaves it unowned and the executor fires it unscoped.
+            enabled_on_create: Enabled state written with the insert itself, so a new
+                schedule is never visible to the poller as enabled before it is turned off.
+                An existing schedule keeps its stored state, including under
+                ``if_exists="update"``; use enable/disable to change it.
         """
-        from agno.scheduler.cron import compute_next_run, validate_cron_expr, validate_timezone
+        from agno.scheduler.cron import next_run_for, validate_cron_expr, validate_timezone
+
+        require_schedule_target(endpoint, method)
 
         if if_exists not in ("raise", "skip", "update"):
             raise ValueError(f"if_exists must be 'raise', 'skip', or 'update', got '{if_exists}'")
+
+        # Control-plane provenance rides the insert itself, so a managed
+        # schedule is never observable as an unmanaged row between two writes.
+        allowed_provenance = {"managed_by", "target_type", "target_id", "created_by_run_id", "created_by_session_id"}
+        if provenance is not None and not set(provenance) <= allowed_provenance:
+            raise ValueError(f"provenance may only carry {sorted(allowed_provenance)}, got {sorted(provenance)}")
+
+        # A blank or sentinel owner would be rejected by the route on every fire
+        if user_id is not None and (not user_id.strip() or user_id == INTERNAL_SCHEDULER_USER_ID):
+            raise ValueError(f"'{user_id}' is not a usable schedule owner")
 
         if not validate_cron_expr(cron):
             raise ValueError(f"Invalid cron expression: {cron}")
         if not validate_timezone(timezone):
             raise ValueError(f"Invalid timezone: {timezone}")
 
-        existing = self._to_schedule(self._call("get_schedule_by_name", name))
+        existing = self._to_schedule(self._call("get_schedule_by_name", name, user_id=user_id))
         if existing is not None:
             if if_exists == "skip":
                 log_debug(f"Schedule '{name}' already exists, skipping")
                 return existing
             if if_exists == "update":
+                _require_mutable_schedule(existing.id)
                 log_debug(f"Schedule '{name}' already exists, updating")
-                next_run_at = compute_next_run(cron, timezone)
+                next_run_at = next_run_for(cron, timezone)
                 updated = self._to_schedule(
                     self._call(
                         "update_schedule",
                         existing.id,
+                        user_id=user_id,
                         cron_expr=cron,
                         endpoint=endpoint,
                         method=method.upper(),
                         description=description,
-                        payload=payload,
+                        payload=_schedule_payload(payload),
                         timezone=timezone,
                         timeout_seconds=timeout_seconds,
                         max_retries=max_retries,
                         retry_delay_seconds=retry_delay_seconds,
                         next_run_at=next_run_at,
+                        **_schedule_endpoint_targets(existing.managed_by, endpoint),
                     )
                 )
                 return updated or existing
             raise ValueError(f"Schedule with name '{name}' already exists")
 
-        next_run_at = compute_next_run(cron, timezone)
+        next_run_at = next_run_for(cron, timezone)
         now = int(time.time())
 
         schedule = Schedule(
             id=str(uuid4()),
+            user_id=user_id,
             name=name,
             description=description,
             method=method.upper(),
             endpoint=endpoint,
-            payload=payload,
+            payload=_schedule_payload(payload),
             cron_expr=cron,
             timezone=timezone,
             timeout_seconds=timeout_seconds,
             max_retries=max_retries,
             retry_delay_seconds=retry_delay_seconds,
-            enabled=True,
+            enabled=enabled_on_create,
             next_run_at=next_run_at,
             locked_by=None,
             locked_at=None,
             created_at=now,
             updated_at=None,
+            **(provenance or {}),
         )
 
         result = self._to_schedule(self._call("create_schedule", schedule.to_dict()))
@@ -190,38 +270,116 @@ class ScheduleManager:
         log_debug(f"Schedule '{name}' created (id={result.id}, cron={cron})")
         return result
 
-    def list(self, enabled: Optional[bool] = None, limit: int = 100, page: int = 1) -> List[Schedule]:
-        """List all schedules."""
-        result = self._call("get_schedules", enabled=enabled, limit=limit, page=page)
+    def list(
+        self, enabled: Optional[bool] = None, limit: int = 100, page: int = 1, user_id: Optional[str] = None
+    ) -> List[Schedule]:
+        """List a single page of schedules (DB errors yield an empty list).
+
+        Use list_all() to enumerate every schedule and surface DB errors.
+        ``user_id`` scopes the listing to one owner.
+        """
+        result = self._call("get_schedules", enabled=enabled, limit=limit, page=page, user_id=user_id)
         # get_schedules returns (schedules_list, total_count) tuple
         schedules_data = result[0] if isinstance(result, tuple) else result
         return self._to_schedule_list(schedules_data)
 
-    def get(self, schedule_id: str) -> Optional[Schedule]:
+    def list_all(
+        self, enabled: Optional[bool] = None, user_id: Optional[str] = None, *, raise_on_error: bool = True
+    ) -> List[Schedule]:
+        """List every schedule, paging through the full catalog.
+
+        With raise_on_error=True (the default) the DB re-raises failures and
+        raises when the schedules table is unavailable (database error or table
+        never created), instead of masquerading as an empty catalog.
+
+        Db subclasses whose get_schedules does not accept raise_on_error will
+        raise TypeError here; that is expected for this strict API.
+
+        Args:
+            enabled: Optional filter on the enabled flag.
+            user_id: Scopes the listing to one owner.
+            raise_on_error: Forwarded to the DB. When False, DB errors yield
+                an empty or partial result, matching list().
+        """
+        schedules: List[Schedule] = []
+        page = 1
+        page_size = 100
+        while True:
+            result = self._call(
+                "get_schedules",
+                enabled=enabled,
+                limit=page_size,
+                page=page,
+                user_id=user_id,
+                raise_on_error=raise_on_error,
+            )
+            if not isinstance(result, tuple):
+                # Legacy third-party Dbs may return a bare list: treat it as complete
+                return self._to_schedule_list(result)
+            # A (None, total) result means no rows; normalize so the short-page
+            # check below matches list()'s tolerance instead of raising on len(None).
+            rows = result[0] or []
+            schedules.extend(self._to_schedule_list(rows))
+            # Stop on a short page; totals can shift mid-sweep, so total_count is
+            # not reconciled against the row count
+            if len(rows) < page_size:
+                return schedules
+            page += 1
+
+    def get(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Schedule]:
         """Get a schedule by ID."""
-        return self._to_schedule(self._call("get_schedule", schedule_id))
+        return self._to_schedule(self._call("get_schedule", schedule_id, user_id=user_id))
 
-    def update(self, schedule_id: str, **kwargs: Any) -> Optional[Schedule]:
-        """Update a schedule."""
-        return self._to_schedule(self._call("update_schedule", schedule_id, **kwargs))
+    def update(self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any) -> Optional[Schedule]:
+        """Update a schedule. ``user_id`` filters the row, it does not reassign the owner."""
+        _require_mutable_schedule(schedule_id)
+        if current_authorization() is None and not {
+            "payload",
+            "endpoint",
+            "method",
+            "cron_expr",
+            "timezone",
+            "enabled",
+        }.intersection(kwargs):
+            return self._to_schedule(self._call("update_schedule", schedule_id, user_id=user_id, **kwargs))
+        existing = self.get(schedule_id, user_id=user_id)
+        if existing is None:
+            return None
+        _schedule_timing_updates(existing, kwargs)
+        if "endpoint" in kwargs:
+            kwargs.update(_schedule_endpoint_targets(existing.managed_by, kwargs["endpoint"]))
+        if current_authorization() is not None or {"payload", "method", "endpoint"}.intersection(kwargs):
+            require_schedule_target(kwargs.get("endpoint", existing.endpoint), kwargs.get("method", existing.method))
+        if current_authorization() is not None or {"payload", "method"}.intersection(kwargs):
+            # Caller payloads cannot mint acceptance grants. Metadata-only changes
+            # retain the trusted stored grant while refreshing ordinary run authority.
+            kwargs["payload"] = (
+                _schedule_payload(kwargs["payload"]) if "payload" in kwargs else stamp_authorization(existing.payload)
+            )
+        return self._to_schedule(self._call("update_schedule", schedule_id, user_id=user_id, **kwargs))
 
-    def delete(self, schedule_id: str) -> bool:
+    def delete(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
         """Delete a schedule."""
-        return self._call("delete_schedule", schedule_id)
+        _require_mutable_schedule(schedule_id)
+        return self._call("delete_schedule", schedule_id, user_id=user_id)
 
-    def enable(self, schedule_id: str) -> Optional[Schedule]:
+    def enable(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Schedule]:
         """Enable a schedule and compute next run."""
-        schedule = self._to_schedule(self._call("get_schedule", schedule_id))
+        _require_mutable_schedule(schedule_id)
+        schedule = self._to_schedule(self._call("get_schedule", schedule_id, user_id=user_id))
         if schedule is None:
             return None
-        from agno.scheduler.cron import compute_next_run
+        from agno.scheduler.cron import next_run_for
 
-        next_run_at = compute_next_run(schedule.cron_expr, schedule.timezone)
-        return self._to_schedule(self._call("update_schedule", schedule_id, enabled=True, next_run_at=next_run_at))
+        next_run_at = next_run_for(schedule.cron_expr, schedule.timezone)
+        return self._to_schedule(
+            self._call("update_schedule", schedule_id, user_id=user_id, enabled=True, next_run_at=next_run_at)
+        )
 
-    def disable(self, schedule_id: str) -> Optional[Schedule]:
+    def disable(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Schedule]:
         """Disable a schedule."""
-        return self._to_schedule(self._call("update_schedule", schedule_id, enabled=False))
+        _require_mutable_schedule(schedule_id)
+        return self._to_schedule(self._call("update_schedule", schedule_id, user_id=user_id, enabled=False))
 
     def trigger(self, schedule_id: str) -> None:
         """Manually trigger a schedule.
@@ -236,9 +394,11 @@ class ScheduleManager:
             "SchedulePoller.trigger() with a running executor."
         )
 
-    def get_runs(self, schedule_id: str, limit: int = 20, page: int = 1) -> List[ScheduleRun]:
+    def get_runs(
+        self, schedule_id: str, limit: int = 20, page: int = 1, user_id: Optional[str] = None
+    ) -> List[ScheduleRun]:
         """Get run history for a schedule."""
-        result = self._call("get_schedule_runs", schedule_id, limit=limit, page=page)
+        result = self._call("get_schedule_runs", schedule_id, limit=limit, page=page, user_id=user_id)
         # get_schedule_runs returns (runs_list, total_count) tuple
         runs_data = result[0] if isinstance(result, tuple) else result
         return self._to_run_list(runs_data)
@@ -258,6 +418,9 @@ class ScheduleManager:
         max_retries: int = 0,
         retry_delay_seconds: int = 60,
         if_exists: str = "raise",
+        user_id: Optional[str] = None,
+        provenance: Optional[Dict[str, str]] = None,
+        enabled_on_create: bool = True,
     ) -> Schedule:
         """Async create a new schedule.
 
@@ -267,65 +430,88 @@ class ScheduleManager:
                 ``"skip"`` returns the existing schedule unchanged,
                 ``"update"`` overwrites the existing schedule with the
                 supplied values.
+            user_id: Owner of the schedule; names are unique per owner. ``None``
+                leaves it unowned and the executor fires it unscoped.
+            enabled_on_create: Enabled state written with the insert itself, so a new
+                schedule is never visible to the poller as enabled before it is turned off.
+                An existing schedule keeps its stored state, including under
+                ``if_exists="update"``; use enable/disable to change it.
         """
-        from agno.scheduler.cron import compute_next_run, validate_cron_expr, validate_timezone
+        from agno.scheduler.cron import next_run_for, validate_cron_expr, validate_timezone
+
+        await arequire_schedule_target(endpoint, method)
 
         if if_exists not in ("raise", "skip", "update"):
             raise ValueError(f"if_exists must be 'raise', 'skip', or 'update', got '{if_exists}'")
+
+        # Control-plane provenance rides the insert itself, so a managed
+        # schedule is never observable as an unmanaged row between two writes.
+        allowed_provenance = {"managed_by", "target_type", "target_id", "created_by_run_id", "created_by_session_id"}
+        if provenance is not None and not set(provenance) <= allowed_provenance:
+            raise ValueError(f"provenance may only carry {sorted(allowed_provenance)}, got {sorted(provenance)}")
+
+        # A blank or sentinel owner would be rejected by the route on every fire
+        if user_id is not None and (not user_id.strip() or user_id == INTERNAL_SCHEDULER_USER_ID):
+            raise ValueError(f"'{user_id}' is not a usable schedule owner")
 
         if not validate_cron_expr(cron):
             raise ValueError(f"Invalid cron expression: {cron}")
         if not validate_timezone(timezone):
             raise ValueError(f"Invalid timezone: {timezone}")
 
-        existing = self._to_schedule(await self._acall("get_schedule_by_name", name))
+        existing = self._to_schedule(await self._acall("get_schedule_by_name", name, user_id=user_id))
         if existing is not None:
             if if_exists == "skip":
                 log_debug(f"Schedule '{name}' already exists, skipping")
                 return existing
             if if_exists == "update":
+                _require_mutable_schedule(existing.id)
                 log_debug(f"Schedule '{name}' already exists, updating")
-                next_run_at = compute_next_run(cron, timezone)
+                next_run_at = next_run_for(cron, timezone)
                 updated = self._to_schedule(
                     await self._acall(
                         "update_schedule",
                         existing.id,
+                        user_id=user_id,
                         cron_expr=cron,
                         endpoint=endpoint,
                         method=method.upper(),
                         description=description,
-                        payload=payload,
+                        payload=_schedule_payload(payload),
                         timezone=timezone,
                         timeout_seconds=timeout_seconds,
                         max_retries=max_retries,
                         retry_delay_seconds=retry_delay_seconds,
                         next_run_at=next_run_at,
+                        **_schedule_endpoint_targets(existing.managed_by, endpoint),
                     )
                 )
                 return updated or existing
             raise ValueError(f"Schedule with name '{name}' already exists")
 
-        next_run_at = compute_next_run(cron, timezone)
+        next_run_at = next_run_for(cron, timezone)
         now = int(time.time())
 
         schedule = Schedule(
             id=str(uuid4()),
+            user_id=user_id,
             name=name,
             description=description,
             method=method.upper(),
             endpoint=endpoint,
-            payload=payload,
+            payload=_schedule_payload(payload),
             cron_expr=cron,
             timezone=timezone,
             timeout_seconds=timeout_seconds,
             max_retries=max_retries,
             retry_delay_seconds=retry_delay_seconds,
-            enabled=True,
+            enabled=enabled_on_create,
             next_run_at=next_run_at,
             locked_by=None,
             locked_at=None,
             created_at=now,
             updated_at=None,
+            **(provenance or {}),
         )
 
         result = self._to_schedule(await self._acall("create_schedule", schedule.to_dict()))
@@ -334,44 +520,124 @@ class ScheduleManager:
         log_debug(f"Schedule '{name}' created (id={result.id}, cron={cron})")
         return result
 
-    async def alist(self, enabled: Optional[bool] = None, limit: int = 100, page: int = 1) -> List[Schedule]:
-        """Async list all schedules."""
-        result = await self._acall("get_schedules", enabled=enabled, limit=limit, page=page)
+    async def alist(
+        self, enabled: Optional[bool] = None, limit: int = 100, page: int = 1, user_id: Optional[str] = None
+    ) -> List[Schedule]:
+        """Async list a single page of schedules (DB errors yield an empty list).
+
+        Use alist_all() to enumerate every schedule and surface DB errors.
+        ``user_id`` scopes the listing to one owner.
+        """
+        result = await self._acall("get_schedules", enabled=enabled, limit=limit, page=page, user_id=user_id)
         # get_schedules returns (schedules_list, total_count) tuple
         schedules_data = result[0] if isinstance(result, tuple) else result
         return self._to_schedule_list(schedules_data)
 
-    async def aget(self, schedule_id: str) -> Optional[Schedule]:
+    async def alist_all(
+        self, enabled: Optional[bool] = None, user_id: Optional[str] = None, *, raise_on_error: bool = True
+    ) -> List[Schedule]:
+        """Async list every schedule, paging through the full catalog.
+
+        With raise_on_error=True (the default) the DB re-raises failures and
+        raises when the schedules table is unavailable (database error or table
+        never created), instead of masquerading as an empty catalog.
+
+        Db subclasses whose get_schedules does not accept raise_on_error will
+        raise TypeError here; that is expected for this strict API.
+
+        Args:
+            enabled: Optional filter on the enabled flag.
+            user_id: Scopes the listing to one owner.
+            raise_on_error: Forwarded to the DB. When False, DB errors yield
+                an empty or partial result, matching alist().
+        """
+        schedules: List[Schedule] = []
+        page = 1
+        page_size = 100
+        while True:
+            result = await self._acall(
+                "get_schedules",
+                enabled=enabled,
+                limit=page_size,
+                page=page,
+                user_id=user_id,
+                raise_on_error=raise_on_error,
+            )
+            if not isinstance(result, tuple):
+                # Legacy third-party Dbs may return a bare list: treat it as complete
+                return self._to_schedule_list(result)
+            # A (None, total) result means no rows; normalize so the short-page
+            # check below matches list()'s tolerance instead of raising on len(None).
+            rows = result[0] or []
+            schedules.extend(self._to_schedule_list(rows))
+            # Stop on a short page; totals can shift mid-sweep, so total_count is
+            # not reconciled against the row count
+            if len(rows) < page_size:
+                return schedules
+            page += 1
+
+    async def aget(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Schedule]:
         """Async get a schedule by ID."""
-        return self._to_schedule(await self._acall("get_schedule", schedule_id))
+        return self._to_schedule(await self._acall("get_schedule", schedule_id, user_id=user_id))
 
-    async def aupdate(self, schedule_id: str, **kwargs: Any) -> Optional[Schedule]:
-        """Async update a schedule."""
-        return self._to_schedule(await self._acall("update_schedule", schedule_id, **kwargs))
+    async def aupdate(self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any) -> Optional[Schedule]:
+        """Async update a schedule. ``user_id`` filters the row, it does not reassign the owner."""
+        _require_mutable_schedule(schedule_id)
+        if current_authorization() is None and not {
+            "payload",
+            "endpoint",
+            "method",
+            "cron_expr",
+            "timezone",
+            "enabled",
+        }.intersection(kwargs):
+            return self._to_schedule(await self._acall("update_schedule", schedule_id, user_id=user_id, **kwargs))
+        existing = await self.aget(schedule_id, user_id=user_id)
+        if existing is None:
+            return None
+        _schedule_timing_updates(existing, kwargs)
+        if "endpoint" in kwargs:
+            kwargs.update(_schedule_endpoint_targets(existing.managed_by, kwargs["endpoint"]))
+        if current_authorization() is not None or {"payload", "method", "endpoint"}.intersection(kwargs):
+            await arequire_schedule_target(
+                kwargs.get("endpoint", existing.endpoint), kwargs.get("method", existing.method)
+            )
+        if current_authorization() is not None or {"payload", "method"}.intersection(kwargs):
+            # Caller payloads cannot mint acceptance grants. Metadata-only changes
+            # retain the trusted stored grant while refreshing ordinary run authority.
+            kwargs["payload"] = (
+                _schedule_payload(kwargs["payload"]) if "payload" in kwargs else stamp_authorization(existing.payload)
+            )
+        return self._to_schedule(await self._acall("update_schedule", schedule_id, user_id=user_id, **kwargs))
 
-    async def adelete(self, schedule_id: str) -> bool:
+    async def adelete(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
         """Async delete a schedule."""
-        return await self._acall("delete_schedule", schedule_id)
+        _require_mutable_schedule(schedule_id)
+        return await self._acall("delete_schedule", schedule_id, user_id=user_id)
 
-    async def aenable(self, schedule_id: str) -> Optional[Schedule]:
+    async def aenable(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Schedule]:
         """Async enable a schedule."""
-        schedule = self._to_schedule(await self._acall("get_schedule", schedule_id))
+        _require_mutable_schedule(schedule_id)
+        schedule = self._to_schedule(await self._acall("get_schedule", schedule_id, user_id=user_id))
         if schedule is None:
             return None
-        from agno.scheduler.cron import compute_next_run
+        from agno.scheduler.cron import next_run_for
 
-        next_run_at = compute_next_run(schedule.cron_expr, schedule.timezone)
+        next_run_at = next_run_for(schedule.cron_expr, schedule.timezone)
         return self._to_schedule(
-            await self._acall("update_schedule", schedule_id, enabled=True, next_run_at=next_run_at)
+            await self._acall("update_schedule", schedule_id, user_id=user_id, enabled=True, next_run_at=next_run_at)
         )
 
-    async def adisable(self, schedule_id: str) -> Optional[Schedule]:
+    async def adisable(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Schedule]:
         """Async disable a schedule."""
-        return self._to_schedule(await self._acall("update_schedule", schedule_id, enabled=False))
+        _require_mutable_schedule(schedule_id)
+        return self._to_schedule(await self._acall("update_schedule", schedule_id, user_id=user_id, enabled=False))
 
-    async def aget_runs(self, schedule_id: str, limit: int = 20, page: int = 1) -> List[ScheduleRun]:
+    async def aget_runs(
+        self, schedule_id: str, limit: int = 20, page: int = 1, user_id: Optional[str] = None
+    ) -> List[ScheduleRun]:
         """Async get run history for a schedule."""
-        result = await self._acall("get_schedule_runs", schedule_id, limit=limit, page=page)
+        result = await self._acall("get_schedule_runs", schedule_id, limit=limit, page=page, user_id=user_id)
         # get_schedule_runs returns (runs_list, total_count) tuple
         runs_data = result[0] if isinstance(result, tuple) else result
         return self._to_run_list(runs_data)

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -49,11 +50,36 @@ class StubAgent:
         self._emit_output = emit_output
         self.run_count = 0
         self.session_ids = []
+        self.inputs = []
+        self.run_arguments = []
         self.loops = []
 
-    async def arun(self, *, input, stream, stream_events, yield_run_output, session_id):
+    async def arun(
+        self,
+        *,
+        input,
+        stream,
+        stream_events,
+        yield_run_output,
+        session_id,
+        user_id,
+        session_state,
+        dependencies,
+        metadata,
+        knowledge_filters,
+    ):
         self.run_count += 1
         self.session_ids.append(session_id)
+        self.inputs.append(input)
+        self.run_arguments.append(
+            {
+                "user_id": user_id,
+                "session_state": session_state,
+                "dependencies": dependencies,
+                "metadata": metadata,
+                "knowledge_filters": knowledge_filters,
+            }
+        )
         self.loops.append(asyncio.get_running_loop())
         if self._error is not None:
             raise self._error
@@ -775,8 +801,8 @@ def test_suite_disables_eval_spinners(monkeypatch):
 
 
 def test_suite_disables_eval_telemetry(monkeypatch):
-    # The evals await their telemetry POST before returning; on a blackholed
-    # network that burns case-timeout budget after the verdict is computed.
+    # Preserve the suite's existing behavior: internally-created evals do not
+    # emit hidden telemetry when the suite exposes no telemetry option.
     judge_instances, reliability_instances = _install_fake_evals(monkeypatch)
 
     run_cases([_make_case(expected_tool_calls=("search_web",))])
@@ -1292,6 +1318,257 @@ def test_acli_help_returns_0(monkeypatch, capsys):
     assert "--tag" in capsys.readouterr().out
 
 
+class StubMCPTool:
+    """Connectable stub for the mcp_tools runner affordance: records the
+    connect/close/cleanup order and the loop each landed on. `initialized`
+    mirrors the real MCPTools flag acli uses to decide ownership."""
+
+    def __init__(
+        self,
+        connect_error=None,
+        hang=False,
+        pre_initialized=False,
+        leaves_uninitialized=False,
+        close_hang=False,
+        close_swallows_cancel=False,
+    ):
+        self.events = []
+        self.loops = []
+        self.started = asyncio.Event()
+        self.close_started = asyncio.Event()
+        self.initialized = pre_initialized
+        self._connect_error = connect_error
+        self._hang = hang
+        self._leaves_uninitialized = leaves_uninitialized
+        self._close_hang = close_hang
+        self._close_swallows_cancel = close_swallows_cancel
+
+    async def connect(self):
+        self.loops.append(asyncio.get_running_loop())
+        self.started.set()
+        if self._connect_error is not None:
+            raise self._connect_error
+        if self._hang:
+            await asyncio.Event().wait()
+        if not self._leaves_uninitialized:
+            self.initialized = True
+        self.events.append("connect")
+
+    async def close(self):
+        self.loops.append(asyncio.get_running_loop())
+        self.close_started.set()
+        if self._close_hang:
+            await asyncio.Event().wait()
+        if self._close_swallows_cancel:
+            # The real MCPTools.close() ends in `except BaseException: pass`,
+            # so a cancel delivered mid-teardown vanishes inside it.
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                pass
+        self.events.append("close")
+
+    async def _safe_cleanup(self):
+        self.events.append("safe_cleanup")
+
+
+def test_acli_connects_and_closes_mcp_tools_in_its_own_loop(monkeypatch):
+    _install_fake_evals(monkeypatch)
+    tool = StubMCPTool()
+    agent = StubAgent()
+
+    async def main():
+        return await acli([_make_case(agent=agent)], argv=[], mcp_tools=[tool])
+
+    exit_code = asyncio.run(main())
+
+    assert exit_code == 0
+    assert tool.events == ["connect", "close"]
+    # Both calls must land on the loop the cases run in - a session connected
+    # on another loop is unusable from this one.
+    assert tool.loops[0] is agent.loops[0]
+    assert tool.loops[1] is agent.loops[0]
+
+
+def test_acli_mcp_tool_connect_failure_is_fail_soft(monkeypatch, capsys):
+    _install_fake_evals(monkeypatch)
+    failing = StubMCPTool(connect_error=RuntimeError("server unreachable"))
+    working = StubMCPTool()
+
+    exit_code = asyncio.run(acli([_make_case()], argv=[], mcp_tools=[failing, working]))
+
+    # The cases still run and decide the exit code; the tool that never
+    # connected is not closed, but its partial transport state is cleaned so
+    # a later reconnect is not poisoned.
+    assert exit_code == 0
+    assert failing.events == ["safe_cleanup"]
+    assert working.events == ["connect", "close"]
+    assert "server unreachable" in capsys.readouterr().out
+
+
+def test_acli_cancelled_error_from_connect_is_fail_soft(monkeypatch, capsys):
+    # An unreachable server surfaces as CancelledError out of the mcp client's
+    # cancel scopes -- not an Exception. It must be contained like any other
+    # connect failure, not crash the whole eval run.
+    _install_fake_evals(monkeypatch)
+    failing = StubMCPTool(connect_error=asyncio.CancelledError())
+    working = StubMCPTool()
+
+    exit_code = asyncio.run(acli([_make_case()], argv=[], mcp_tools=[failing, working]))
+
+    assert exit_code == 0
+    assert failing.events == ["safe_cleanup"]
+    assert working.events == ["connect", "close"]
+    assert "CancelledError" in capsys.readouterr().out
+
+
+def test_acli_skips_tools_connected_elsewhere(monkeypatch):
+    # A toolkit something else already connected (a server lifespan, the
+    # caller itself) is not acli's to manage: no connect, and above all no
+    # close tearing down a session acli never opened.
+    _install_fake_evals(monkeypatch)
+    shared = StubMCPTool(pre_initialized=True)
+
+    exit_code = asyncio.run(acli([_make_case()], argv=[], mcp_tools=[shared]))
+
+    assert exit_code == 0
+    assert shared.events == []
+
+
+def test_acli_uninitialized_connect_is_not_treated_as_connected(monkeypatch, capsys):
+    # The real connect() can fail-soft and return with initialized=False and a
+    # dead session still attached (initialize() failures). acli must not count
+    # it as connected -- close() would no-op -- and must drop the partial state.
+    _install_fake_evals(monkeypatch)
+    broken = StubMCPTool(leaves_uninitialized=True)
+    working = StubMCPTool()
+
+    exit_code = asyncio.run(acli([_make_case()], argv=[], mcp_tools=[broken, working]))
+
+    assert exit_code == 0
+    assert broken.events == ["connect", "safe_cleanup"]
+    assert working.events == ["connect", "close"]
+    assert "usable session" in capsys.readouterr().out
+
+
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="Task.cancelling() needed to tell a real cancel apart")
+def test_acli_cancel_during_close_still_propagates(monkeypatch):
+    # A host cancel landing while acli releases its tools must not be reported
+    # as a normal exit -- and the remaining tools are still released first.
+    _install_fake_evals(monkeypatch)
+    slow = StubMCPTool(close_hang=True)
+    after = StubMCPTool()
+
+    async def main():
+        task = asyncio.ensure_future(acli([_make_case()], argv=[], mcp_tools=[slow, after]))
+        await slow.close_started.wait()
+        task.cancel()
+        await task
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(main())
+
+    assert after.events == ["connect", "close"]
+
+
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="Task.cancelling() needed to tell a real cancel apart")
+def test_acli_cancel_swallowed_by_close_still_propagates(monkeypatch):
+    # The real MCPTools.close() swallows a delivered cancel entirely, so the
+    # teardown loop never sees a CancelledError -- acli must notice via the
+    # task's cancelling counter, finish releasing, and still exit cancelled.
+    _install_fake_evals(monkeypatch)
+    swallowing = StubMCPTool(close_swallows_cancel=True)
+    after = StubMCPTool()
+
+    async def main():
+        task = asyncio.ensure_future(acli([_make_case()], argv=[], mcp_tools=[swallowing, after]))
+        await swallowing.close_started.wait()
+        task.cancel()
+        await task
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(main())
+
+    assert swallowing.events == ["connect", "close"]  # its close ran to completion
+    assert after.events == ["connect", "close"]  # the rest were still released
+
+
+def test_real_mcp_close_swallows_a_delivered_cancel():
+    # Pins the contract the teardown loop compensates for: close() eats even a
+    # CancelledError raised from its teardown internals and returns normally.
+    pytest.importorskip("mcp")
+    from agno.tools.mcp import MCPTools as RealMCPTools
+
+    tool = RealMCPTools(url="https://docs.example.com/mcp")
+    tool._initialized = True
+
+    class CancellingContext:
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            raise asyncio.CancelledError()
+
+    tool._session_context = CancellingContext()
+
+    asyncio.run(tool.close())  # must not raise
+
+    assert tool.initialized is False
+
+
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="Task.cancelling() needed to tell a real cancel apart")
+def test_acli_genuine_cancellation_still_propagates(monkeypatch):
+    # A host cancelling the acli task mid-connect must not be swallowed by the
+    # connect fail-soft; already-connected tools are still released.
+    _install_fake_evals(monkeypatch)
+    connected = StubMCPTool()
+    hanging = StubMCPTool(hang=True)
+
+    async def main():
+        task = asyncio.ensure_future(acli([_make_case()], argv=[], mcp_tools=[connected, hanging]))
+        await hanging.started.wait()
+        task.cancel()
+        await task
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(main())
+
+    assert connected.events == ["connect", "close"]
+
+
+def test_acli_closes_mcp_tools_when_the_run_raises(monkeypatch):
+    _install_fake_evals(monkeypatch)
+    tool = StubMCPTool()
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError("runner exploded")
+
+    monkeypatch.setattr(suite, "arun_cases", boom)
+
+    with pytest.raises(RuntimeError, match="runner exploded"):
+        asyncio.run(acli([_make_case()], argv=[], mcp_tools=[tool]))
+
+    assert tool.events == ["connect", "close"]
+
+
+def test_acli_list_does_not_connect_mcp_tools(monkeypatch, capsys):
+    _install_fake_evals(monkeypatch)
+    tool = StubMCPTool()
+
+    exit_code = asyncio.run(acli([_make_case(name="listed_case")], argv=["--list"], mcp_tools=[tool]))
+
+    assert exit_code == 0
+    assert "listed_case" in capsys.readouterr().out
+    assert tool.events == []
+
+
+def test_cli_forwards_mcp_tools(monkeypatch, capsys):
+    _install_fake_evals(monkeypatch)
+    tool = StubMCPTool()
+
+    exit_code = cli([_make_case()], argv=[], mcp_tools=[tool])
+
+    assert exit_code == 0
+    assert tool.events == ["connect", "close"]
+
+
 def test_cli_default_timeout_parameter(monkeypatch, capsys):
     _install_fake_evals(monkeypatch)
 
@@ -1527,6 +1804,8 @@ def test_case_positional_construction_unchanged():
     assert case.setup is setup_fn
     assert case.teardown is teardown_fn
     assert case.scorer is None and case.expected is None
+    assert case.session_id is None and case.user_id is None and case.session_state is None
+    assert case.dependencies is None and case.metadata is None and case.knowledge_filters is None
 
 
 def test_case_result_positional_construction_unchanged():
@@ -1562,3 +1841,160 @@ def test_case_and_case_result_type_hints_resolve():
 
     assert typing.get_type_hints(Case)["scorer"] is not None
     assert typing.get_type_hints(CaseResult)["score"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Run arguments (session_id, user_id, session_state, dependencies, metadata, knowledge_filters)
+# and Message input
+# ---------------------------------------------------------------------------
+
+
+def test_session_id_replaces_the_generated_session(monkeypatch):
+    _install_fake_evals(monkeypatch)
+    agent = StubAgent()
+    case = _make_case(agent=agent, session_id="booking-1")
+
+    suite_result = run_cases([case])
+    result = suite_result.results[0]
+
+    assert agent.session_ids == ["booking-1"]
+    assert result.session_id == "booking-1"
+    assert suite_result.to_dict()["cases"][0]["session_id"] == "booking-1"
+
+
+def test_cases_sharing_a_session_id_run_in_the_same_session(monkeypatch):
+    _install_fake_evals(monkeypatch)
+    agent = StubAgent()
+    cases = [
+        _make_case(agent=agent, name="turn_1", session_id="booking-1"),
+        _make_case(agent=agent, name="turn_2", session_id="booking-1"),
+        _make_case(agent=agent, name="unrelated"),
+    ]
+
+    results = run_cases(cases).results
+
+    assert agent.session_ids[:2] == ["booking-1", "booking-1"]
+    assert agent.session_ids[2].startswith("eval-unrelated-")
+    assert [result.session_id for result in results] == agent.session_ids
+
+
+def test_run_arguments_are_forwarded_to_the_run(monkeypatch):
+    _install_fake_evals(monkeypatch)
+    agent = StubAgent()
+    run_arguments = {
+        "user_id": "lead-42",
+        "session_state": {"calendar_id": "cal-1"},
+        "dependencies": {"plan": "pro"},
+        "metadata": {"source": "eval"},
+        "knowledge_filters": {"team": "alpha"},
+    }
+
+    run_cases([_make_case(agent=agent, **run_arguments)])
+
+    assert agent.run_arguments == [run_arguments]
+
+
+def test_run_arguments_default_to_none(monkeypatch):
+    _install_fake_evals(monkeypatch)
+    agent = StubAgent()
+
+    run_cases([_make_case(agent=agent)])
+
+    assert agent.run_arguments == [
+        dict.fromkeys(("user_id", "session_state", "dependencies", "metadata", "knowledge_filters"))
+    ]
+
+
+def test_session_state_is_copied_for_each_run(monkeypatch):
+    # A run writes into the session_state it is handed; the case keeps its declared
+    # state so a second run of the same case starts from it.
+    _install_fake_evals(monkeypatch)
+
+    class MutatingAgent(StubAgent):
+        async def arun(self, *, session_state, **kwargs):
+            async for event in super().arun(session_state=session_state, **kwargs):
+                yield event
+            session_state["contact"]["booked"] = True
+
+    agent = MutatingAgent()
+    case = _make_case(agent=agent, session_state={"contact": {"id": "c-1"}})
+
+    run_cases([case])
+    run_cases([case])
+
+    assert case.session_state == {"contact": {"id": "c-1"}}
+    assert agent.run_arguments[0]["session_state"] is not agent.run_arguments[1]["session_state"]
+
+
+def test_dependencies_are_copied_for_each_run(monkeypatch):
+    # A tool appending to a nested value must not change the case's dict for the next run;
+    # a value deepcopy cannot handle is passed through as the same object.
+    _install_fake_evals(monkeypatch)
+
+    class MutatingAgent(StubAgent):
+        async def arun(self, *, dependencies, **kwargs):
+            async for event in super().arun(dependencies=dependencies, **kwargs):
+                yield event
+            dependencies["notes"].append("hello")
+
+    class Uncopyable:
+        def __deepcopy__(self, memo):
+            raise TypeError("cannot copy")
+
+    agent = MutatingAgent()
+    client = Uncopyable()
+    case = _make_case(agent=agent, dependencies={"notes": [], "client": client})
+
+    run_cases([case])
+    run_cases([case])
+
+    assert case.dependencies == {"notes": [], "client": client}
+    assert [run["dependencies"]["notes"] for run in agent.run_arguments] == [["hello"], ["hello"]]
+    assert agent.run_arguments[0]["dependencies"]["client"] is client
+
+
+def test_team_case_forwards_run_arguments(monkeypatch):
+    _install_fake_evals(monkeypatch)
+    team = StubAgent(id="research-team")
+    case = Case(name="t", team=team, input="q", criteria="c", session_id="booking-1", user_id="lead-42")
+
+    result = run_cases([case]).results[0]
+
+    assert result.session_id == "booking-1"
+    assert team.session_ids == ["booking-1"]
+    assert team.run_arguments[0]["user_id"] == "lead-42"
+
+
+def test_message_input_is_passed_to_the_run_and_its_text_to_the_judge(monkeypatch):
+    from agno.media import Image
+    from agno.models.message import Message
+
+    judge_instances, _ = _install_fake_evals(monkeypatch)
+    agent = StubAgent()
+    message = Message(
+        role="user", content="What colour is this image?", images=[Image(url="https://example.com/red.png")]
+    )
+
+    run_cases([_make_case(agent=agent, input=message)])
+
+    assert agent.inputs == [message]
+    assert judge_instances[0].input == "What colour is this image?"
+
+
+def test_message_input_with_content_parts_gives_the_judge_the_text_parts_only(monkeypatch):
+    # An image-first parts list must not reach the judge as a json dump of the media.
+    from agno.models.message import Message
+
+    judge_instances, _ = _install_fake_evals(monkeypatch)
+    message = Message(
+        role="user",
+        content=[
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}},
+            {"type": "text", "text": "What colour is this image?"},
+            {"type": "text", "text": "One word."},
+        ],
+    )
+
+    run_cases([_make_case(input=message)])
+
+    assert judge_instances[0].input == "What colour is this image?\nOne word."

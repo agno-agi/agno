@@ -9,7 +9,7 @@ using pure JSON-RPC at root "/" endpoint (Google ADK style).
 
 import os
 
-from a2a.types import AgentCapabilities, AgentCard
+from a2a.types import AgentCapabilities, AgentCard, AgentInterface
 from google.adk import Agent
 from google.adk.a2a.utils.agent_to_a2a import to_a2a
 from google.adk.tools import google_search
@@ -26,9 +26,11 @@ agent = Agent(
 agent_card = AgentCard(
     name="facts_agent",
     description="Agent that provides interesting facts.",
-    url="http://localhost:7003",
+    supported_interfaces=[
+        AgentInterface(url="http://localhost:7003", protocol_binding="JSONRPC", protocol_version="1.0")
+    ],
     version="1.0.0",
-    capabilities=AgentCapabilities(streaming=True, push_notifications=False, state_transition_history=False),
+    capabilities=AgentCapabilities(streaming=True, push_notifications=False),
     skills=[],
     default_input_modes=["text/plain"],
     default_output_modes=["text/plain"],

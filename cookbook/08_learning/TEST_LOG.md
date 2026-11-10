@@ -5,7 +5,7 @@ Last updated: 2026-06-12
 ## 2026-06-12: Cookbook refresh and AgentOS demo
 
 Changes in this pass:
-1. Unified all examples on `gpt-5.5` (was `gpt-5.2`, plus two `OpenAIChat`/`gpt-4o` stragglers in `09_decision_logs/`)
+1. Unified all examples on `gpt-5.5` (was `gpt-5.2`, plus two `OpenAIChat`/`gpt-5.6-luna` stragglers in `09_decision_logs/`)
 2. Bumped the Claude quick test to `claude-sonnet-4-6`
 3. README: complete structure tree (was missing 4 folders), added Decision Log store section, added "View Learnings in AgentOS" section
 4. Added `10_demo/`: AgentOS demo with all six learning stores enabled on Postgres + pgvector, a seed script, and the Learning UI walkthrough

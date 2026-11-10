@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 from uuid import uuid4
 
 from agno.run.base import RunStatus
@@ -34,28 +34,84 @@ def _get_first_approval_tool(tools: Optional[List[Any]], requirements: Optional[
 
 
 def _has_approval_requirement(tools: Optional[List[Any]], requirements: Optional[List[Any]] = None) -> bool:
-    """Check if any paused tool execution has approval_type set.
+    """Check if any tool execution has approval_type='required'.
 
     Checks both run_response.tools (agent-level) and run_response.requirements
     (team-level, where member tools are propagated via requirements).
     """
-    tool = _get_first_approval_tool(tools, requirements)
-    return tool is not None and getattr(tool, "approval_type", None) == "required"
+    candidates = list(tools or []) + [getattr(r, "tool_execution", None) for r in requirements or []]
+    # Any required tool counts, not just the first approval tool: an audit tool
+    # called earlier in the run must not hide a later required one.
+    return any(getattr(t, "approval_type", None) == "required" for t in candidates if t is not None)
 
 
 def _stamp_approval_id_on_tools(
     tools: Optional[List[Any]], requirements: Optional[List[Any]], approval_id: str
 ) -> None:
-    """Stamp approval_id on every tool that has approval_type set."""
+    """Stamp approval_id on every required tool that has none yet.
+
+    Audit tools are left alone: they never resolve through a required record, and
+    a shared id would let a lookup by approval_id pick the audit tool instead.
+    """
     if tools:
         for tool in tools:
-            if getattr(tool, "approval_type", None) is not None:
+            if getattr(tool, "approval_type", None) == "required" and getattr(tool, "approval_id", None) is None:
                 tool.approval_id = approval_id
     if requirements:
         for req in requirements:
             te = getattr(req, "tool_execution", None)
-            if te and getattr(te, "approval_type", None) is not None:
+            if te and getattr(te, "approval_type", None) == "required" and getattr(te, "approval_id", None) is None:
                 te.approval_id = approval_id
+
+
+def _unstamped_approval_tools(tools: Optional[List[Any]], requirements: Optional[List[Any]]) -> List[Any]:
+    """Required-approval tools that carry no approval_id yet: the tools raised by the current pause.
+
+    run_response.tools and run_response.requirements accumulate across every pause
+    of a run, so a tool stamped at an earlier pause (and possibly already approved
+    and executed) must not stand in for a tool raised by a later pause.
+    """
+    result: List[Any] = []
+    seen_ids: Set[str] = set()
+    candidates = list(tools or []) + [getattr(r, "tool_execution", None) for r in requirements or []]
+    for t in candidates:
+        if t is None or getattr(t, "approval_type", None) != "required" or getattr(t, "approval_id", None) is not None:
+            continue
+        tcid = getattr(t, "tool_call_id", None)
+        if any(r is t for r in result) or (tcid is not None and tcid in seen_ids):
+            continue
+        result.append(t)
+        if tcid is not None:
+            seen_ids.add(tcid)
+    return result
+
+
+def _is_pending_tool(tool_execution: Any, pending_tools: List[Any]) -> bool:
+    """Whether the tool execution is one of pending_tools, by identity or by tool_call_id.
+
+    After a DB reload, run_response.tools and the requirements hold distinct
+    copies of the same tool call, so identity alone misses the requirement's copy.
+    """
+    tcid = getattr(tool_execution, "tool_call_id", None)
+    return any(
+        p is tool_execution or (tcid is not None and getattr(p, "tool_call_id", None) == tcid) for p in pending_tools
+    )
+
+
+def _belongs_to_current_pause(req: Any, pending_tools: List[Any]) -> bool:
+    """Whether a requirement belongs in the record created for the current pause.
+
+    That is the pending approval tools, plus HITL tools without approval paused
+    in the same turn (still unresolved). Requirements resolved at earlier pauses
+    of the run are left out.
+    """
+    te = getattr(req, "tool_execution", None)
+    if te is None:
+        return False
+    if _is_pending_tool(te, pending_tools):
+        return True
+    is_resolved = getattr(req, "is_resolved", None)
+    return getattr(te, "approval_type", None) is None and callable(is_resolved) and not is_resolved()
 
 
 def _build_approval_dict(
@@ -69,8 +125,15 @@ def _build_approval_dict(
     user_id: Optional[str] = None,
     schedule_id: Optional[str] = None,
     schedule_run_id: Optional[str] = None,
+    pending_tools: Optional[List[Any]] = None,
 ) -> Dict[str, Any]:
-    """Build the approval record dict from run response and context."""
+    """Build the approval record dict from run response and context.
+
+    When pending_tools is given, the record covers only the current pause: the
+    pending approval tools and any unresolved HITL tools paused alongside them,
+    so a record created at a later pause never describes a tool resolved at an
+    earlier one.
+    """
     # Determine source type
     source_type = "agent"
     source_name = agent_name
@@ -86,6 +149,8 @@ def _build_approval_dict(
     if hasattr(run_response, "requirements") and run_response.requirements:
         requirements_data = []
         for req in run_response.requirements:
+            if pending_tools is not None and not _belongs_to_current_pause(req, pending_tools):
+                continue
             if hasattr(req, "to_dict"):
                 requirements_data.append(req.to_dict())
             elif isinstance(req, dict):
@@ -94,7 +159,7 @@ def _build_approval_dict(
     # Find the first approval tool to extract pause_type, tool_name, tool_args
     tools = getattr(run_response, "tools", None)
     requirements = getattr(run_response, "requirements", None)
-    first_tool = _get_first_approval_tool(tools, requirements)
+    first_tool = pending_tools[0] if pending_tools else _get_first_approval_tool(tools, requirements)
 
     pause_type = _get_pause_type(first_tool) if first_tool else "confirmation"
     tool_name = getattr(first_tool, "tool_name", None) if first_tool else None
@@ -102,7 +167,9 @@ def _build_approval_dict(
 
     # Build context with tool names for UI display.
     tool_names: List[str] = []
-    if hasattr(run_response, "requirements") and run_response.requirements:
+    if pending_tools:
+        tool_names = [t.tool_name for t in pending_tools if getattr(t, "tool_name", None)]
+    elif hasattr(run_response, "requirements") and run_response.requirements:
         for req in run_response.requirements:
             te = getattr(req, "tool_execution", None)
             if te and getattr(te, "approval_type", None) is not None:
@@ -175,10 +242,15 @@ def create_approval_from_pause(
     if not _has_approval_requirement(tools, requirements):
         return None
 
-    # Skip if an approval_id is already stamped (avoids duplicates when pause hook fires twice)
-    for t in tools or []:
-        if getattr(t, "approval_type", None) == "required" and getattr(t, "approval_id", None) is not None:
-            return getattr(t, "approval_id", None)
+    # Every required tool already carries a record (the pause hook fired twice):
+    # nothing new to approve. A tool raised by a later pause of the same run has
+    # no approval_id yet and gets a record of its own.
+    pending_tools = _unstamped_approval_tools(tools, requirements)
+    if not pending_tools:
+        for t in reversed(tools or []):
+            if getattr(t, "approval_type", None) == "required" and getattr(t, "approval_id", None) is not None:
+                return getattr(t, "approval_id", None)
+        return None
 
     try:
         approval_data = _build_approval_dict(
@@ -192,6 +264,7 @@ def create_approval_from_pause(
             user_id=user_id,
             schedule_id=schedule_id,
             schedule_run_id=schedule_run_id,
+            pending_tools=pending_tools,
         )
         db.create_approval(approval_data)
         approval_id: str = approval_data["id"]
@@ -231,10 +304,15 @@ async def acreate_approval_from_pause(
     if not _has_approval_requirement(tools, requirements):
         return None
 
-    # Skip if an approval_id is already stamped (avoids duplicates when pause hook fires twice)
-    for t in tools or []:
-        if getattr(t, "approval_type", None) == "required" and getattr(t, "approval_id", None) is not None:
-            return getattr(t, "approval_id", None)
+    # Every required tool already carries a record (the pause hook fired twice):
+    # nothing new to approve. A tool raised by a later pause of the same run has
+    # no approval_id yet and gets a record of its own.
+    pending_tools = _unstamped_approval_tools(tools, requirements)
+    if not pending_tools:
+        for t in reversed(tools or []):
+            if getattr(t, "approval_type", None) == "required" and getattr(t, "approval_id", None) is not None:
+                return getattr(t, "approval_id", None)
+        return None
 
     try:
         approval_data = _build_approval_dict(
@@ -248,6 +326,7 @@ async def acreate_approval_from_pause(
             user_id=user_id,
             schedule_id=schedule_id,
             schedule_run_id=schedule_run_id,
+            pending_tools=pending_tools,
         )
         # Try async first, fall back to sync
         create_fn = getattr(db, "create_approval", None)
@@ -432,10 +511,288 @@ def _collect_all_approval_tools(run_response: Any) -> List[Any]:
     for req in getattr(run_response, "requirements", None) or []:
         te = getattr(req, "tool_execution", None)
         if te and getattr(te, "approval_type", None) is not None:
-            # Avoid duplicates (same tool_call_id already in result)
-            if not any(getattr(r, "tool_call_id", None) == te.tool_call_id for r in result):
+            # Dedupe by object identity: after a DB reload, run_response.tools
+            # and the requirement hold DISTINCT copies of the same tool call,
+            # and the resolution must land on both.
+            if not any(r is te for r in result):
                 result.append(te)
     return result
+
+
+_AMBIGUOUS_OWNER = "__ambiguous_owner__"
+
+
+def _member_run_id_for_tool(run_response: Any, tool: Any) -> Optional[str]:
+    """The member run_id that owns this tool execution, if it came in via a requirement.
+
+    An identity match is authoritative. A value match (tool_call_id + tool_name)
+    that fits requirements of MORE THAN ONE member is ambiguous and returns
+    _AMBIGUOUS_OWNER, so the tool resolves no record and the continue blocks:
+    provider-local tool_call_ids can collide across members, and a wrong owner
+    would let one member's approval execute another member's tool."""
+    value_matches: List[str] = []
+    for req in getattr(run_response, "requirements", None) or []:
+        te = getattr(req, "tool_execution", None)
+        if te is None:
+            continue
+        if te is tool:
+            return getattr(req, "member_run_id", None)
+        if (
+            getattr(te, "tool_call_id", None) is not None
+            and getattr(te, "tool_call_id", None) == getattr(tool, "tool_call_id", None)
+            and getattr(te, "tool_name", None) == getattr(tool, "tool_name", None)
+        ):
+            mid = getattr(req, "member_run_id", None)
+            if mid:
+                value_matches.append(mid)
+    distinct = set(value_matches)
+    if len(distinct) > 1:
+        return _AMBIGUOUS_OWNER
+    if value_matches:
+        return value_matches[0]
+    return None
+
+
+def _record_names_other_tools(record: Optional[Dict[str, Any]], tool: Any) -> bool:
+    """True when the record lists the tool calls it covers and this tool is not among them."""
+    tcid = getattr(tool, "tool_call_id", None)
+    if record is None or tcid is None:
+        return False
+    named = [
+        (r.get("tool_execution") or {}).get("tool_call_id")
+        for r in record.get("requirements") or []
+        if isinstance(r, dict) and isinstance(r.get("tool_execution"), dict)
+    ]
+    named = [n for n in named if n is not None]
+    return bool(named) and tcid not in named
+
+
+def _group_tools_by_approval(db: Any, run_id: str, run_response: Any, tools: List[Any]) -> List[tuple]:
+    """Pair every approval tool with ITS OWN approval record.
+
+    Each paused member creates its own approval record, so one record must not
+    speak for another member's tool. Resolution order per tool:
+      1. the approval_id stamped on the tool execution at pause time,
+      2. the owning member_run_id,
+      3. the run-level lookup (team run_id first, then any member run_id),
+         which serves tools carrying no approval_id and no owning member run.
+    """
+    cache: Dict[str, Optional[Dict[str, Any]]] = {}
+    fallback_used = False
+    fallback: Optional[Dict[str, Any]] = None
+    pairs: List[tuple] = []
+    for tool in tools:
+        record: Optional[Dict[str, Any]] = None
+        aid = getattr(tool, "approval_id", None)
+        if aid:
+            if aid not in cache:
+                try:
+                    cache[aid] = db.get_approval(aid)
+                except (NotImplementedError, Exception):
+                    cache[aid] = None
+            record = cache[aid]
+        mid: Optional[str] = None
+        if record is None:
+            mid = _member_run_id_for_tool(run_response, tool)
+            if mid == _AMBIGUOUS_OWNER:
+                # No record can be paired safely; the continue blocks.
+                pairs.append((tool, None))
+                continue
+            if mid:
+                key = f"run:{mid}"
+                if key not in cache:
+                    cache[key] = _get_approval_for_run(db, mid)
+                # The member run's latest record covers only the calls it names:
+                # once a later call's own record is gone, an earlier call's
+                # approval must not execute it.
+                record = None if _record_names_other_tools(cache[key], tool) else cache[key]
+        if record is None and aid and not mid:
+            # A tool whose stamped record is gone and that owns no member run
+            # resolves within its own run only: a record re-issued under this
+            # run id counts, a sibling member's record never does.
+            key = f"run:{run_id}"
+            if key not in cache:
+                cache[key] = _get_approval_for_run(db, run_id)
+            record = None if _record_names_other_tools(cache[key], tool) else cache[key]
+        if record is None and not aid and not mid:
+            # The run-level lookup serves only tools with no scoped identity.
+            # A tool whose own record is gone stays unresolved: pairing it with
+            # a sibling's record would let that sibling's approval execute it.
+            if not fallback_used:
+                fallback_used = True
+                for rid in _collect_all_run_ids(run_id, run_response):
+                    fallback = _get_approval_for_run(db, rid)
+                    if fallback is not None:
+                        break
+            # A record that names its tool calls covers only those calls: an
+            # approval for one call never executes a different call.
+            record = None if _record_names_other_tools(fallback, tool) else fallback
+        pairs.append((tool, record))
+    return pairs
+
+
+async def _agroup_tools_by_approval(db: Any, run_id: str, run_response: Any, tools: List[Any]) -> List[tuple]:
+    """Async variant of _group_tools_by_approval."""
+    from inspect import iscoroutinefunction
+
+    cache: Dict[str, Optional[Dict[str, Any]]] = {}
+    fallback_used = False
+    fallback: Optional[Dict[str, Any]] = None
+    pairs: List[tuple] = []
+    get_one = getattr(db, "get_approval", None)
+    for tool in tools:
+        record: Optional[Dict[str, Any]] = None
+        aid = getattr(tool, "approval_id", None)
+        if aid and get_one is not None:
+            if aid not in cache:
+                try:
+                    cache[aid] = await get_one(aid) if iscoroutinefunction(get_one) else get_one(aid)
+                except (NotImplementedError, Exception):
+                    cache[aid] = None
+            record = cache[aid]
+        mid: Optional[str] = None
+        if record is None:
+            mid = _member_run_id_for_tool(run_response, tool)
+            if mid == _AMBIGUOUS_OWNER:
+                # No record can be paired safely; the continue blocks.
+                pairs.append((tool, None))
+                continue
+            if mid:
+                key = f"run:{mid}"
+                if key not in cache:
+                    cache[key] = await _aget_approval_for_run(db, mid)
+                # The member run's latest record covers only the calls it names:
+                # once a later call's own record is gone, an earlier call's
+                # approval must not execute it.
+                record = None if _record_names_other_tools(cache[key], tool) else cache[key]
+        if record is None and aid and not mid:
+            # A tool whose stamped record is gone and that owns no member run
+            # resolves within its own run only: a record re-issued under this
+            # run id counts, a sibling member's record never does.
+            key = f"run:{run_id}"
+            if key not in cache:
+                cache[key] = await _aget_approval_for_run(db, run_id)
+            record = None if _record_names_other_tools(cache[key], tool) else cache[key]
+        if record is None and not aid and not mid:
+            # The run-level lookup serves only tools with no scoped identity.
+            # A tool whose own record is gone stays unresolved: pairing it with
+            # a sibling's record would let that sibling's approval execute it.
+            if not fallback_used:
+                fallback_used = True
+                for rid in _collect_all_run_ids(run_id, run_response):
+                    fallback = await _aget_approval_for_run(db, rid)
+                    if fallback is not None:
+                        break
+            # A record that names its tool calls covers only those calls: an
+            # approval for one call never executes a different call.
+            record = None if _record_names_other_tools(fallback, tool) else fallback
+        pairs.append((tool, record))
+    return pairs
+
+
+def _sync_requirements_after_approval(run_response: Any, approval_status: str, only_tool: Any = None) -> None:
+    """Mirror an applied approval resolution onto the RunRequirement objects.
+
+    _apply_approval_to_tools writes ToolExecution fields only, while a
+    requirement's needs_* properties read `answered`, `confirmation` and
+    `external_execution_result`. A requirement counts as answered only when
+    every user-input field carries a value, the same rule as
+    RunRequirement.provide_user_input.
+    """
+    for req in getattr(run_response, "requirements", None) or []:
+        te = getattr(req, "tool_execution", None)
+        if te is None or getattr(te, "approval_type", None) != "required":
+            continue
+        if only_tool is not None and te is not only_tool:
+            continue
+        if approval_status == "approved":
+            if getattr(te, "requires_confirmation", False) and te.confirmed is True:
+                req.confirmation = True
+            if getattr(te, "requires_user_input", False):
+                fields = te.user_input_schema or []
+                if req.user_input_schema is not None and req.user_input_schema is not fields:
+                    by_name = {f.name: f.value for f in fields}
+                    for rf in req.user_input_schema:
+                        if rf.name in by_name:
+                            rf.value = by_name[rf.name]
+                if all(f.value is not None for f in fields):
+                    te.answered = True
+            if getattr(te, "external_execution_required", False) and te.result is not None:
+                req.external_execution_result = te.result
+        elif approval_status == "rejected":
+            if getattr(te, "requires_user_input", False) or getattr(te, "external_execution_required", False):
+                # A rejected tool is routed through the reject lane the
+                # dispatchers already handle: nothing left to answer,
+                # execution refused.
+                te.answered = True
+                te.requires_user_input = False
+                te.external_execution_required = False
+                te.requires_confirmation = True
+                te.confirmed = False
+            if te.confirmed is False:
+                req.confirmation = False
+
+
+def _calls_that_already_ran(run_response: Any) -> List[Any]:
+    """The run's own tool calls that ran at an earlier pause.
+
+    A call counts only when it has a result AND the run's stored messages hold a
+    tool message for it. A continue payload can put a result on a tool execution,
+    but it cannot add a tool message, so a call cannot skip the gate by claiming
+    it ran. External-execution calls never count: a client-supplied result is how
+    they run, so it must still pass the gate.
+    """
+    tool_message_ids = {
+        getattr(m, "tool_call_id", None)
+        for m in getattr(run_response, "messages", None) or []
+        if getattr(m, "role", None) == "tool" and getattr(m, "tool_call_id", None)
+    }
+    return [
+        t
+        for t in getattr(run_response, "tools", None) or []
+        if getattr(t, "result", None) is not None
+        and not getattr(t, "external_execution_required", False)
+        and getattr(t, "tool_call_id", None) in tool_message_ids
+    ]
+
+
+def _is_copy_of(tool: Any, other: Any) -> bool:
+    """Same tool call by id, name and arguments: ids alone can repeat across turns."""
+    return (
+        getattr(tool, "tool_call_id", None) is not None
+        and getattr(tool, "tool_call_id", None) == getattr(other, "tool_call_id", None)
+        and getattr(tool, "tool_name", None) == getattr(other, "tool_name", None)
+        and getattr(tool, "tool_args", None) == getattr(other, "tool_args", None)
+    )
+
+
+def _tools_to_gate(run_response: Any) -> List[Any]:
+    """Required tools this continue still has to resolve.
+
+    Audit tools never get a required record: their record is written after the
+    HITL interaction resolves. Calls that already ran are skipped: there is
+    nothing left to approve, and their record may since have been deleted. That
+    covers the requirement's out-of-date copy of such a call (no result), matched
+    by id, name and arguments. A member's call stays gated, as provider-local
+    tool_call_ids can collide across members.
+    """
+    ran = _calls_that_already_ran(run_response)
+    run_tools = getattr(run_response, "tools", None) or []
+    gated: List[Any] = []
+    for t in _collect_all_approval_tools(run_response):
+        if getattr(t, "approval_type", None) != "required":
+            continue
+        if any(t is r for r in ran):
+            continue
+        is_requirement_copy = not any(t is r for r in run_tools)
+        if (
+            is_requirement_copy
+            and _member_run_id_for_tool(run_response, t) is None
+            and any(_is_copy_of(t, r) for r in ran)
+        ):
+            continue
+        gated.append(t)
+    return gated
 
 
 def _attach_resolved_approval(run_response: Any, approval: Dict[str, Any]) -> None:
@@ -457,29 +814,25 @@ def check_and_apply_approval_resolution(db: Any, run_id: str, run_response: Any)
     if db is None:
         return
 
-    all_approval_tools = _collect_all_approval_tools(run_response)
-    if not any(getattr(t, "approval_type", None) == "required" for t in all_approval_tools):
+    required_tools = _tools_to_gate(run_response)
+    if not required_tools:
         return
 
-    all_run_ids = _collect_all_run_ids(run_id, run_response)
-    approval = None
-    for rid in all_run_ids:
-        approval = _get_approval_for_run(db, rid)
-        if approval is not None:
-            break
-    if approval is None:
+    pairs = _group_tools_by_approval(db, run_id, run_response, required_tools)
+    if any(record is None for _, record in pairs):
         raise RuntimeError(
             "No approval record found for this run. Cannot continue a run that requires external approval."
         )
-
-    status = approval.get("status", "pending")
-    if status == "pending":
+    if any((record or {}).get("status", "pending") == "pending" for _, record in pairs):
         raise RuntimeError("Approval is still pending. Resolve the approval before continuing this run.")
 
-    resolution_data = approval.get("resolution_data")
-    _apply_approval_to_tools(all_approval_tools, status, resolution_data)
+    for tool, record in pairs:
+        assert record is not None
+        _apply_approval_to_tools([tool], record.get("status", "pending"), record.get("resolution_data"))
+        _sync_requirements_after_approval(run_response, record.get("status", "pending"), only_tool=tool)
 
-    _attach_resolved_approval(run_response, approval)
+    # pairs holds only calls this continue runs, so pairs[0] is the current call's record.
+    _attach_resolved_approval(run_response, pairs[0][1])
 
 
 async def acheck_and_apply_approval_resolution(db: Any, run_id: str, run_response: Any) -> None:
@@ -487,30 +840,25 @@ async def acheck_and_apply_approval_resolution(db: Any, run_id: str, run_respons
     if db is None:
         return
 
-    all_approval_tools = _collect_all_approval_tools(run_response)
-    if not any(getattr(t, "approval_type", None) == "required" for t in all_approval_tools):
+    required_tools = _tools_to_gate(run_response)
+    if not required_tools:
         return
 
-    # Search by team run_id first, then fall back to member run_ids
-    all_run_ids = _collect_all_run_ids(run_id, run_response)
-    approval = None
-    for rid in all_run_ids:
-        approval = await _aget_approval_for_run(db, rid)
-        if approval is not None:
-            break
-    if approval is None:
+    pairs = await _agroup_tools_by_approval(db, run_id, run_response, required_tools)
+    if any(record is None for _, record in pairs):
         raise RuntimeError(
             "No approval record found for this run. Cannot continue a run that requires external approval."
         )
-
-    status = approval.get("status", "pending")
-    if status == "pending":
+    if any((record or {}).get("status", "pending") == "pending" for _, record in pairs):
         raise RuntimeError("Approval is still pending. Resolve the approval before continuing this run.")
 
-    resolution_data = approval.get("resolution_data")
-    _apply_approval_to_tools(all_approval_tools, status, resolution_data)
+    for tool, record in pairs:
+        assert record is not None
+        _apply_approval_to_tools([tool], record.get("status", "pending"), record.get("resolution_data"))
+        _sync_requirements_after_approval(run_response, record.get("status", "pending"), only_tool=tool)
 
-    _attach_resolved_approval(run_response, approval)
+    # pairs holds only calls this continue runs, so pairs[0] is the current call's record.
+    _attach_resolved_approval(run_response, pairs[0][1])
 
 
 async def acreate_audit_approval(

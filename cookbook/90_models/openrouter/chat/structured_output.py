@@ -38,7 +38,7 @@ class MovieScript(BaseModel):
 
 # Agent that uses JSON mode
 json_mode_agent = Agent(
-    model=OpenRouter(id="gpt-4o"),
+    model=OpenRouter(id="gpt-5.6-luna"),
     description="You write movie scripts.",
     output_schema=MovieScript,
     use_json_mode=True,

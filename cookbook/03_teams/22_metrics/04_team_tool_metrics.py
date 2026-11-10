@@ -17,7 +17,7 @@ from rich.pretty import pprint
 # ---------------------------------------------------------------------------
 stock_searcher = Agent(
     name="Stock Searcher",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     role="Searches for stock information.",
     tools=[YFinanceTools()],
 )
@@ -27,7 +27,7 @@ stock_searcher = Agent(
 # ---------------------------------------------------------------------------
 team = Team(
     name="Stock Research Team",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     members=[stock_searcher],
     markdown=True,
     show_members_responses=True,

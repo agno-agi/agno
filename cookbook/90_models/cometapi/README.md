@@ -15,7 +15,7 @@ source ~/.venvs/aienv/bin/activate
 
 ### 2. Export your `COMETAPI_KEY`
 
-Get your API key from: https://api.cometapi.com/console/token
+Get your API key from: https://www.cometapi.com/console/
 
 ```shell
 export COMETAPI_KEY=sk-***
@@ -29,89 +29,49 @@ uv pip install -U openai duckduckgo-search duckdb agno
 
 ### 4. Run basic Agent
 
-- Streaming on
-
 ```shell
-python cookbook/92_models/cometapi/basic_stream.py
+python cookbook/90_models/cometapi/basic.py
 ```
 
-- Streaming off
-
-```shell
-python cookbook/92_models/cometapi/basic.py
-```
-
-### 5. Run Async examples
-
-- Basic async
-
-```shell
-python cookbook/92_models/cometapi/async_basic.py
-```
-
-- Async with streaming
-
-```shell
-python cookbook/92_models/cometapi/async_basic_stream.py
-```
-
-### 6. Run Agent with Tools
+### 5. Run Agent with Tools
 
 - DuckDuckGo Search
 
 ```shell
-python cookbook/92_models/cometapi/tool_use.py
+python cookbook/90_models/cometapi/tool_use.py
 ```
 
-- Tool use with streaming
+### 6. Run Agent that returns structured output
 
 ```shell
-python cookbook/92_models/cometapi/tool_use_stream.py
+python cookbook/90_models/cometapi/structured_output.py
 ```
 
-- Async tool use
-
-```shell
-python cookbook/92_models/cometapi/async_tool_use.py
-```
-
-- Async tool use with streaming
-
-```shell
-python cookbook/92_models/cometapi/async_tool_use_stream.py
-```
-
-### 7. Run Agent that returns structured output
-
-```shell
-python cookbook/92_models/cometapi/structured_output.py
-```
-
-### 8. Image analysis examples
+### 7. Image analysis examples
 
 - Basic image analysis
 
 ```shell
-python cookbook/92_models/cometapi/image_agent.py
+python cookbook/90_models/cometapi/image_agent.py
 ```
 
 - Image analysis with memory
 
 ```shell
-python cookbook/92_models/cometapi/image_agent_with_memory.py
+python cookbook/90_models/cometapi/image_agent_with_memory.py
 ```
 
-### 9. Multi-model showcase
+### 8. Multi-model showcase
 
 ```shell
-python cookbook/92_models/cometapi/multi_model.py
+python cookbook/90_models/cometapi/multi_model.py
 ```
 
 ## Available Models
 
 CometAPI provides access to multiple LLM providers through a unified interface. For the most up-to-date list of supported models and pricing information, please visit:
 
-📋 **Official Model List & Pricing**: https://api.cometapi.com/pricing
+📋 **Official Model List & Pricing**: https://www.cometapi.com/pricing/
 
 ### Popular Models (Examples)
 
@@ -120,7 +80,7 @@ CometAPI provides access to multiple LLM providers through a unified interface. 
 - `gpt-5-chat-latest`
 - `chatgpt-4o-latest`
 - `gpt-5-nano`
-- `gpt-4o-mini`
+- `gpt-5.6-luna`
 - `o4-mini-2025-04-16`
 - `o3-pro-2025-06-10`
 
@@ -151,7 +111,7 @@ CometAPI provides access to multiple LLM providers through a unified interface. 
 - `qwen3-30b-a3b`
 - `qwen3-coder-plus-2025-07-22`
 
-> **Note**: Model availability and names may change. Always refer to the [official pricing page](https://api.cometapi.com/pricing) for the most current information.
+> **Note**: Model availability and names may change. Always refer to the [official pricing page](https://www.cometapi.com/pricing/) for the most current information.
 
 ## Error Handling
 
@@ -170,9 +130,9 @@ print(f"Found {len(available_models)} available models")
 
 ### 🔗 Official Links
 - [Website](https://www.cometapi.com/?utm_source=agno&utm_campaign=integration&utm_medium=integration&utm_content=integration)
-- [API Documentation](https://api.cometapi.com/doc)
-- [Model List & Pricing](https://api.cometapi.com/pricing)
-- [Get API Key](https://api.cometapi.com/console/token)
+- [API Documentation](https://apidoc.cometapi.com)
+- [Model List & Pricing](https://www.cometapi.com/pricing/)
+- [Get API Key](https://www.cometapi.com/console/)
 
 ### 👥 Community & Development
 - [GitHub](https://github.com/cometapi-dev)

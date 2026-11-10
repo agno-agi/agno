@@ -24,7 +24,7 @@ if not CEL_AVAILABLE:
 # ---------------------------------------------------------------------------
 editor = Agent(
     name="Editor",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions=(
         "Edit and refine the text. When the text is polished and ready, "
         "include the word DONE at the end of your response."

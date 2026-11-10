@@ -8,7 +8,7 @@ import pytest
 pytest.importorskip("google.genai")
 
 from agno.exceptions import ModelProviderError
-from agno.media import File
+from agno.media import File, Image, Video
 from agno.models.google.gemini import Gemini
 from agno.models.message import Message
 
@@ -269,6 +269,105 @@ class TestFormatMessagesEmptyParts:
         assert len(formatted) == 3
         roles = [msg.role for msg in formatted]
         assert roles == ["user", "model", "user"]
+
+
+def test_format_messages_nests_tool_result_media_in_function_response():
+    model = Gemini(api_key="test-key")
+    messages = [
+        Message(
+            role="tool",
+            content="Document prepared",
+            tool_call_id="call-123",
+            tool_name="read_document_file",
+            images=[Image(content=b"image-bytes", mime_type="image/png")],
+            files=[File(content=b"pdf-bytes", mime_type="application/pdf")],
+        )
+    ]
+
+    formatted, _ = model._format_messages(messages)
+
+    assert len(formatted) == 1
+    assert formatted[0].role == "user"
+    assert len(formatted[0].parts) == 1
+
+    function_response = formatted[0].parts[0].function_response
+    assert function_response is not None
+    assert function_response.name == "read_document_file"
+    assert function_response.response == {"result": "Document prepared"}
+    assert function_response.parts is not None
+    assert [part.inline_data.mime_type for part in function_response.parts if part.inline_data] == [
+        "image/png",
+        "application/pdf",
+    ]
+
+
+def test_format_messages_keeps_unsupported_tool_result_media_as_sibling():
+    model = Gemini(api_key="test-key")
+    messages = [
+        Message(
+            role="tool",
+            content="Video prepared",
+            tool_call_id="call-123",
+            tool_name="render_video",
+            videos=[Video(content=b"video-bytes", mime_type="video/mp4")],
+        )
+    ]
+
+    formatted, _ = model._format_messages(messages)
+
+    assert len(formatted) == 1
+    assert len(formatted[0].parts) == 2
+    assert formatted[0].parts[0].function_response is not None
+    assert formatted[0].parts[0].function_response.parts is None
+    assert formatted[0].parts[1].inline_data is not None
+    assert formatted[0].parts[1].inline_data.mime_type == "video/mp4"
+
+
+def test_format_messages_keeps_tool_result_media_as_sibling_for_legacy_models():
+    model = Gemini(id="gemini-2.5-flash", api_key="test-key")
+    messages = [
+        Message(
+            role="tool",
+            content="Document prepared",
+            tool_call_id="call-123",
+            tool_name="read_document_file",
+            files=[File(content=b"pdf-bytes", mime_type="application/pdf")],
+        )
+    ]
+
+    formatted, _ = model._format_messages(messages)
+
+    assert len(formatted) == 1
+    assert len(formatted[0].parts) == 2
+    assert formatted[0].parts[0].function_response is not None
+    assert formatted[0].parts[0].function_response.parts is None
+    assert formatted[0].parts[1].inline_data is not None
+    assert formatted[0].parts[1].inline_data.mime_type == "application/pdf"
+
+
+def test_format_messages_nests_only_supported_vertex_tool_result_media():
+    model = Gemini(id="gemini-3.5-flash", vertexai=True)
+    messages = [
+        Message(
+            role="tool",
+            content="Media prepared",
+            tool_call_id="call-123",
+            tool_name="render_media",
+            videos=[Video(url="gs://bucket/video.mp4", mime_type="video/mp4")],
+            files=[File(url="gs://bucket/document.pdf", mime_type="application/pdf")],
+        )
+    ]
+
+    formatted, _ = model._format_messages(messages)
+
+    assert len(formatted) == 1
+    assert len(formatted[0].parts) == 2
+    function_response = formatted[0].parts[0].function_response
+    assert function_response is not None
+    assert function_response.parts is not None
+    assert [part.file_data.mime_type for part in function_response.parts if part.file_data] == ["application/pdf"]
+    assert formatted[0].parts[1].file_data is not None
+    assert formatted[0].parts[1].file_data.mime_type == "video/mp4"
 
 
 class TestGeminiTimeout:
@@ -778,3 +877,45 @@ class TestFileSearchToolWiring:
             return  # No tools at all, which is the expected case
         file_search_tools = [t for t in config.tools if getattr(t, "file_search", None) is not None]
         assert len(file_search_tools) == 0
+
+
+def test_generation_config_dict_reaches_request_and_is_not_modified():
+    generation_config = {"temperature": 0.1, "top_k": 5, "max_output_tokens": 256, "seed": 7}
+    model = Gemini(api_key="test-key", generation_config=generation_config)
+
+    config = model.get_request_params()["config"]
+
+    assert config.temperature == 0.1
+    assert config.top_k == 5
+    assert config.max_output_tokens == 256
+    assert config.seed == 7
+    assert generation_config == {"temperature": 0.1, "top_k": 5, "max_output_tokens": 256, "seed": 7}
+
+
+def test_generation_config_object_reaches_request():
+    from google.genai.types import GenerateContentConfig
+
+    model = Gemini(api_key="test-key", generation_config=GenerateContentConfig(temperature=0.3, top_p=0.8))
+
+    config = model.get_request_params()["config"]
+
+    assert config.temperature == 0.3
+    assert config.top_p == 0.8
+
+
+def test_generative_model_kwargs_reach_request():
+    model = Gemini(api_key="test-key", generative_model_kwargs={"temperature": 0.2, "stop_sequences": ["END"]})
+
+    config = model.get_request_params()["config"]
+
+    assert config.temperature == 0.2
+    assert config.stop_sequences == ["END"]
+
+
+def test_explicit_field_still_overrides_generation_config():
+    model = Gemini(api_key="test-key", temperature=0.9, generation_config={"temperature": 0.1, "top_k": 5})
+
+    config = model.get_request_params()["config"]
+
+    assert config.temperature == 0.9
+    assert config.top_k == 5

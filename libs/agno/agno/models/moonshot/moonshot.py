@@ -150,6 +150,12 @@ class MoonShot(OpenAILike):
             filename = Path(urlparse(media.url).path).name
         if not filename:
             filename = "file"
+        # Moonshot's file-extract picks the type from the filename extension and ignores the
+        # tuple's mime type, so an extension-less name is rejected. Supply one from the mime.
+        if not Path(filename).suffix and media.mime_type:
+            guessed = mimetypes.guess_extension(media.mime_type)
+            if guessed:
+                filename += guessed
 
         try:
             data = media.get_content_bytes()
@@ -189,19 +195,18 @@ class MoonShot(OpenAILike):
         """
         import time
 
-        # A previously stored id is a hint, not a guarantee: it may be stale, deleted
-        # server-side, or a foreign id set by the caller. Try it, but fall back to a
-        # fresh upload instead of failing the file outright.
-        if file.id:
+        # The "ms://" prefix marks an id as already uploaded; a stale one just re-uploads.
+        if file.id and file.id.startswith("ms://"):
+            stored_id = file.id[len("ms://") :]
             try:
-                return self.get_client().files.content(file_id=file.id).text
+                return self.get_client().files.content(file_id=stored_id).text
             except Exception:
-                log_warning(f"Stored Moonshot file id '{file.id}' is not retrievable, re-uploading.")
+                log_warning(f"Stored Moonshot file id '{stored_id}' is not retrievable, re-uploading.")
 
         file_id = self._upload_media(file, purpose="file-extract")
         if file_id is None:
             return None
-        file.id = file_id
+        file.id = f"ms://{file_id}"
 
         # Uploads are parsed asynchronously ("created" -> "ok"), and fetching the content
         # of an unparsed file 404s. Mirror OpenAIResponses._create_vector_store: poll the

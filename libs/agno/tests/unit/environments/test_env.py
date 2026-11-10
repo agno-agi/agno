@@ -40,23 +40,42 @@ search_tool_redocumented.__name__ = "search_tool"
 @contextmanager
 def _capture_agno_warnings():
     """caplog can miss the agno logger's records depending on its configuration; a
-    handler attached directly to the logger cannot."""
+    handler attached directly to the logger cannot.
+
+    Attach to all three agno loggers (agent/team/workflow) because ``log_warning``
+    routes through a module-level ``logger`` global that any prior test may have
+    swapped via ``use_team_logger()``/``use_workflow_logger()``. Also pin the
+    global back to ``agent_logger`` for the duration so the warning we're
+    asserting on lands on a captured logger regardless of prior state.
+    """
+    from agno.utils import log as agno_log
+
     records = []
 
     class _Collector(logging.Handler):
         def emit(self, record):
             records.append(record)
 
-    logger = logging.getLogger("agno")
-    handler = _Collector(level=logging.WARNING)
-    previous_level = logger.level
-    logger.addHandler(handler)
-    logger.setLevel(logging.WARNING)
+    logger_names = ("agno", "agno-team", "agno-workflow")
+    loggers = [logging.getLogger(name) for name in logger_names]
+    handlers = []
+    previous_levels = []
+    for lg in loggers:
+        handler = _Collector(level=logging.WARNING)
+        previous_levels.append(lg.level)
+        lg.addHandler(handler)
+        lg.setLevel(logging.WARNING)
+        handlers.append(handler)
+
+    previous_active_logger = agno_log.logger
+    agno_log.logger = agno_log.agent_logger
     try:
         yield records
     finally:
-        logger.removeHandler(handler)
-        logger.setLevel(previous_level)
+        agno_log.logger = previous_active_logger
+        for lg, handler, previous_level in zip(loggers, handlers, previous_levels):
+            lg.removeHandler(handler)
+            lg.setLevel(previous_level)
 
 
 def _env(**overrides) -> Environment:

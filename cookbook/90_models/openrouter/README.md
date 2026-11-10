@@ -32,14 +32,7 @@ The `chat/` folder contains examples using the OpenRouter Chat API.
 ### Basic Usage
 
 ```shell
-# Streaming
-python cookbook/90_models/openrouter/chat/basic_stream.py
-
-# Non-streaming
 python cookbook/90_models/openrouter/chat/basic.py
-
-# Async
-python cookbook/90_models/openrouter/chat/async_basic.py
 ```
 
 ### Tools and Structured Output
@@ -47,9 +40,6 @@ python cookbook/90_models/openrouter/chat/async_basic.py
 ```shell
 # Tool use
 python cookbook/90_models/openrouter/chat/tool_use.py
-
-# Async tool use
-python cookbook/90_models/openrouter/chat/async_tool_use.py
 
 # Structured output
 python cookbook/90_models/openrouter/chat/structured_output.py
@@ -75,9 +65,6 @@ python cookbook/90_models/openrouter/responses/basic.py
 
 # Streaming
 python cookbook/90_models/openrouter/responses/stream.py
-
-# Async
-python cookbook/90_models/openrouter/responses/async_basic.py
 ```
 
 ### Tools and Structured Output

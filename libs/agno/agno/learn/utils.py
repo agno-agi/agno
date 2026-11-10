@@ -22,6 +22,22 @@ DEFAULT_LEARNING_NAMESPACE = "global"
 IDENTITY_KEYED_LEARNING_TYPES = frozenset({"user_profile", "user_memory", "session_context", "entity_memory"})
 
 
+def _user_key_segment(user_id: str) -> str:
+    """Fixed-width digest of the user id for the "user"-namespace entity key.
+
+    The key's other segments (entity_type, entity_id) are underscore-joined free
+    text, so embedding the raw user id would let a crafted user id or entity type
+    shift the segment boundary and collide with another user's key. A fixed-width
+    hex digest cannot contain a separator, and keeps raw user ids (often emails)
+    out of an id that appears in REST URLs and access logs.
+    """
+    from hashlib import sha256
+
+    # str() mirrors the f-string coercion the other stores' keys apply to
+    # non-string user ids, so an int user id degrades identically here.
+    return sha256(str(user_id).encode("utf-8")).hexdigest()[:16]
+
+
 def build_learning_id(
     learning_type: str,
     *,
@@ -40,9 +56,15 @@ def build_learning_id(
 
     This is the single source of truth: the stores' ``_build_*_id`` helpers delegate here.
 
+    Under ``namespace="user"``, the entity_memory id embeds a digest of ``user_id`` so
+    each user's entity graph is physically isolated: two users recording the same
+    entity name and type get distinct rows.
+
     Returns ``None`` for learning types that do not use a deterministic id (e.g.
     ``decision_log``, which keys each entry by its own uuid) or when the identity fields
     required for the id are missing -- callers should fall back to a generated id then.
+    For entity_memory under ``namespace="user"``, ``user_id`` is a required identity
+    field.
     """
     if learning_type == "user_profile":
         return f"user_profile_{user_id}" if user_id else None
@@ -51,10 +73,43 @@ def build_learning_id(
     if learning_type == "session_context":
         return f"session_context_{session_id}" if session_id else None
     if learning_type == "entity_memory":
-        if entity_id and entity_type:
-            return f"entity_{namespace or DEFAULT_LEARNING_NAMESPACE}_{entity_type}_{entity_id}"
-        return None
+        if not (entity_id and entity_type):
+            return None
+        effective_namespace = namespace or DEFAULT_LEARNING_NAMESPACE
+        if effective_namespace == "user":
+            if not user_id:
+                return None
+            return f"entity_user_{_user_key_segment(user_id)}_{entity_type}_{entity_id}"
+        return f"entity_{effective_namespace}_{entity_type}_{entity_id}"
     return None
+
+
+def legacy_entity_learning_id(
+    entity_id: str,
+    entity_type: str,
+    namespace: Optional[str] = None,
+) -> str:
+    """The entity_memory id shape from before the "user" namespace embedded the user.
+
+    Rows written by older versions under ``namespace="user"`` carry this user-less id;
+    the store's write path and the re-key migration use it to find and retire them.
+    For non-"user" namespaces this is identical to ``build_learning_id``'s output.
+    """
+    return f"entity_{namespace or DEFAULT_LEARNING_NAMESPACE}_{entity_type}_{entity_id}"
+
+
+def same_user(left: Any, right: Any) -> bool:
+    """Whether two user ids identify the same user.
+
+    The owner column is a string column, so a non-string user id reads back as its
+    ``str()``. The entity key applies the same coercion (see :func:`build_learning_id`),
+    so ``123`` and ``"123"`` address the same record and must compare equal here too.
+
+    ``None`` means "no owner" and matches nothing, not even another ``None``.
+    """
+    if left is None or right is None:
+        return False
+    return str(left) == str(right)
 
 
 def content_values_text(content: Any) -> str:

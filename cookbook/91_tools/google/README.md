@@ -10,7 +10,7 @@ from agno.models.openai import OpenAIChat
 from agno.tools.google.calendar import GoogleCalendarTools
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[GoogleCalendarTools()],
     add_datetime_to_context=True,
     markdown=True,
@@ -25,7 +25,7 @@ from agno.models.openai import OpenAIChat
 from agno.tools.google.slides import GoogleSlidesTools
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[GoogleSlidesTools()],
     markdown=True,
 )

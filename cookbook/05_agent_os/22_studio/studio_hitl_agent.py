@@ -32,6 +32,11 @@ from agno.tools.user_feedback import UserFeedbackTools
 
 AUTO_INSTRUCTIONS = "Explain reliable research methods in concise steps."
 
+# Components created during a run are OWNED by the run's user: only that user
+# can edit or archive them. Drafts answer component_not_found to other scoped
+# users; published components are readable and runnable platform-wide.
+DEMO_USER_ID = "console-hitl-user"
+
 DB_DIR = Path(__file__).parent / "tmp"
 DB_DIR.mkdir(exist_ok=True)
 
@@ -59,6 +64,10 @@ studio_agent = Agent(
             registry=registry,
             db=db,
             default_model_id="gpt-5.5",
+            # The default pauses only the deletion-shaped tools
+            # (archive_component, delete_version, delete_schedule). Passing a
+            # list REPLACES that default: here creation itself must be
+            # approved, and archives run unprompted.
             requires_confirmation_tools=["create_agent"],
         ),
         UserFeedbackTools(),
@@ -66,14 +75,13 @@ studio_agent = Agent(
     ],
     instructions=[
         "Help the user compose one Agent from registry primitives.",
-        "Call list_tools, list_models, and list_dbs first.",
+        "Call list_tools and list_models first.",
         "If tools are missing, call ask_user with one multi-select question whose "
         "options are exact names returned by list_tools.",
         "If instructions are missing, call get_user_input with one string field.",
         "Do not combine the missing tool and instruction questions in chat.",
-        "Use the exact database id returned by list_dbs when creating the Agent. "
-        "Never pass an empty string or the word 'default' as db_id.",
         "Call create_agent only after both answers are available.",
+        "Leave the new agent as a draft: do not validate, publish, or run it.",
     ],
     db=db,
     markdown=True,
@@ -139,7 +147,10 @@ def resolve_confirmation(requirement: Any, auto: bool) -> bool:
 def run_console_demo(auto: bool = False) -> None:
     """Resolve feedback, input, and confirmation pauses in one run."""
     component_id = f"console-research-buddy-{uuid4().hex[:8]}"
-    run = studio_agent.run(f"Create an agent called '{component_id}'.")
+    run = studio_agent.run(
+        f"Create an agent called '{component_id}'.",
+        user_id=DEMO_USER_ID,
+    )
     observed: list[str] = []
     confirmation_approved: bool | None = None
     rounds = 0
@@ -164,6 +175,7 @@ def run_console_demo(auto: bool = False) -> None:
         run = studio_agent.continue_run(
             run_id=run.run_id,
             requirements=run.requirements,
+            user_id=DEMO_USER_ID,
         )
         rounds += 1
         if rounds > 6:
@@ -188,6 +200,13 @@ def run_console_demo(auto: bool = False) -> None:
         f"Component outcome: {component_id} "
         f"({'created' if component is not None else 'not created'})"
     )
+    if component is not None:
+        # A confirmed create still writes a DRAFT: current_version stays unset
+        # until publish_component promotes version 1.
+        versions = db.list_configs(component_id, include_config=False)
+        print(f"Owner: {component.get('user_id')}")
+        print(f"Stages: {[version.get('stage') for version in versions]}")
+        print(f"Current version: {component.get('current_version')}")
     print(run.content)
 
 

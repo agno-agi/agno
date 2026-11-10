@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from agno.agent import Agent
 from agno.context._utils import answer_from_run
 from agno.context.backend import ContextBackend
 from agno.context.mode import ContextMode
@@ -19,6 +18,7 @@ from agno.context.provider import Answer, ContextProvider, Status
 from agno.run import RunContext
 
 if TYPE_CHECKING:
+    from agno.agent import Agent
     from agno.models.base import Model
 
 
@@ -34,9 +34,17 @@ class WebContextProvider(ContextProvider):
         instructions: str | None = None,
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
+        query_timeout: float | None = None,
         stream_sub_agent_events: bool = True,
     ) -> None:
-        super().__init__(id=id, name=name, mode=mode, model=model, stream_sub_agent_events=stream_sub_agent_events)
+        super().__init__(
+            id=id,
+            name=name,
+            mode=mode,
+            model=model,
+            stream_sub_agent_events=stream_sub_agent_events,
+            query_timeout=query_timeout,
+        )
         self.backend = backend
         self.instructions_text = instructions if instructions is not None else DEFAULT_WEB_INSTRUCTIONS
         self._agent: Agent | None = None
@@ -102,6 +110,10 @@ class WebContextProvider(ContextProvider):
         return self._agent
 
     def _build_agent(self) -> Agent:
+        # Imported here, not at module scope: this module rides along with the page-fetch
+        # backends, and importing a fetch backend must not load the agent package.
+        from agno.agent import Agent
+
         return Agent(
             id=self.id,
             name=self.name,

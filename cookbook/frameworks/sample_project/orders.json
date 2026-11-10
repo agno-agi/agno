@@ -1,0 +1,5 @@
+[
+  {"id": "small", "subtotal": 40},
+  {"id": "boundary", "subtotal": 100},
+  {"id": "large", "subtotal": 125}
+]

@@ -122,13 +122,12 @@ class BrightDataTools(Toolkit):
         except Exception as e:
             return f"Error scraping URL {url}: {e}"
 
-    def get_screenshot(self, agent: Agent, url: str, output_path: str = "screenshot.png") -> ToolResult:
+    def get_screenshot(self, agent: Agent, url: str) -> ToolResult:
         """
         Capture a screenshot of a webpage
 
         Args:
             url (str): URL to screenshot
-            output_path (str): Output path for the screenshot (not used, kept for compatibility)
 
         Returns:
             ToolResult: Contains the screenshot image or error message.

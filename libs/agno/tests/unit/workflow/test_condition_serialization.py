@@ -255,8 +255,9 @@ class TestConditionFromDict:
         condition_false = Condition.from_dict(data_false, registry=registry_with_functions)
         assert condition_false.evaluator is False
 
-    def test_from_dict_raises_without_registry_for_callable_evaluator(self):
-        """Test from_dict raises error when callable evaluator needs registry but none provided."""
+    def test_from_dict_without_registry_builds_evaluator_placeholder_when_lenient(self):
+        """A lenient load without a registry stays constructible; the evaluator
+        placeholder refuses at execution and round-trips the name."""
         data = {
             "type": "Condition",
             "name": "callable-condition",
@@ -265,11 +266,18 @@ class TestConditionFromDict:
             "steps": [],
         }
 
-        with pytest.raises(ValueError, match="Registry required"):
-            Condition.from_dict(data, registry=None)
+        lenient = Condition.from_dict(data, registry=None, strict=False)
 
-    def test_from_dict_raises_for_unknown_evaluator(self, registry_with_functions):
-        """Test from_dict raises error for unknown evaluator function."""
+        assert callable(lenient.evaluator)
+        with pytest.raises(RuntimeError, match="always_true_evaluator"):
+            lenient.evaluator()
+        assert lenient.to_dict()["evaluator"] == "always_true_evaluator"
+
+    def test_from_dict_unknown_evaluator_strict_raises_lenient_builds_placeholder(self, registry_with_functions):
+        """Strict refuses an unresolvable evaluator; lenient builds a callable
+        placeholder that refuses at execution and round-trips the name."""
+        from agno.exceptions import ComponentRehydrationError
+
         data = {
             "type": "Condition",
             "name": "unknown-evaluator-condition",
@@ -278,8 +286,15 @@ class TestConditionFromDict:
             "steps": [],
         }
 
-        with pytest.raises(ValueError, match="not found in registry"):
-            Condition.from_dict(data, registry=registry_with_functions)
+        with pytest.raises(ComponentRehydrationError, match="not found in registry"):
+            Condition.from_dict(data, registry=registry_with_functions, strict=True)
+
+        lenient = Condition.from_dict(data, registry=registry_with_functions, strict=False)
+        assert callable(lenient.evaluator)
+        with pytest.raises(RuntimeError, match="unknown_evaluator"):
+            lenient.evaluator()
+        assert lenient.to_dict()["evaluator"] == "unknown_evaluator"
+        assert lenient.to_dict()["evaluator_type"] == "function"
 
     def test_from_dict_with_multiple_steps(self, registry_with_functions):
         """Test from_dict with multiple nested steps."""

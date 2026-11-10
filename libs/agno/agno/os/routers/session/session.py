@@ -1,17 +1,23 @@
 import logging
 import time
-from typing import Any, Dict, List, Optional, Union, cast
+from typing import Any, Dict, List, Optional, Set, Union, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
+from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.utils import deserialize_session_by_type, resolve_session_type
+from agno.exceptions import AgnoError
+from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.middleware.user_scope import (
     enforce_owner_on_entity,
+    get_scoped_user_id,
     resolve_db_and_scope,
 )
+from agno.os.routers.session.schemas import SESSION_FILTER_SCHEMA, SessionSearchRequest
+from agno.os.routers.traces.schemas import FilterSchemaResponse
 from agno.os.schema import (
     AgentSessionDetailSchema,
     BadRequestResponse,
@@ -22,6 +28,9 @@ from agno.os.schema import (
     PaginatedResponse,
     PaginationInfo,
     RunSchema,
+    RunsPage,
+    RunsPageInfo,
+    SessionRunPreviewSchema,
     SessionSchema,
     SortOrder,
     TeamRunSchema,
@@ -32,17 +41,29 @@ from agno.os.schema import (
     WorkflowRunSchema,
     WorkflowSessionDetailSchema,
 )
-from agno.os.services.sessions import SessionNotFoundError, get_sessions_page
+from agno.os.services.sessions import (
+    InvalidRunCursorError,
+    SessionNotFoundError,
+    get_session_runs_window,
+    get_sessions_page,
+    run_status_matches,
+    search_sessions_page,
+)
 from agno.os.services.sessions import get_session_runs as get_session_runs_from_service
 from agno.os.settings import AgnoAPISettings
+from agno.os.utils import AgnoHTTPException
 from agno.remote.base import RemoteDb
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
+from agno.utils.log import log_debug
+from agno.utils.media_offload import adelete_media_keys, session_media_keys
 
 logger = logging.getLogger(__name__)
 
 
 def get_session_router(
-    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]], settings: AgnoAPISettings = AgnoAPISettings()
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
+    settings: AgnoAPISettings = AgnoAPISettings(),
+    media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
 ) -> APIRouter:
     """Create session router with comprehensive OpenAPI documentation for session management endpoints."""
     session_router = APIRouter(
@@ -56,10 +77,39 @@ def get_session_router(
             500: {"description": "Internal Server Error", "model": InternalServerErrorResponse},
         },
     )
-    return attach_routes(router=session_router, dbs=dbs)
+    return attach_routes(router=session_router, dbs=dbs, media_storage=media_storage)
 
 
-def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]]) -> APIRouter:
+def attach_routes(
+    router: APIRouter,
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
+    media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
+) -> APIRouter:
+    async def _collect_media_keys(db: Any, session_ids: List[str], user_id: Optional[str]) -> List[str]:
+        """Storage keys held by these sessions, read before the rows that name them are gone."""
+        if media_storage is None:
+            return []
+        keys: List[str] = []
+        for session_id in session_ids:
+            get_kwargs: Dict[str, Any] = {"session_id": session_id, "user_id": user_id}
+            try:
+                if isinstance(db, AsyncBaseDb):
+                    session = await db.get_session(**get_kwargs)
+                else:
+                    session = db.get_session(**get_kwargs)
+            except Exception as e:
+                logger.warning(f"Could not read session {session_id} for media deletion: {e}")
+                continue
+            # Scoped to the session it was read from: another session's reference is not ours to delete.
+            keys.extend(session_media_keys(session, [session_id], media_storage))
+        return keys
+
+    async def _delete_media_keys(keys: List[str]) -> None:
+        """Best-effort: the rows are already gone, so a storage failure must not fail the request."""
+        if not keys or media_storage is None:
+            return
+        await adelete_media_keys(keys, media_storage)
+
     @router.get(
         "/sessions",
         response_model=PaginatedResponse[SessionSchema],
@@ -122,6 +172,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     ) -> PaginatedResponse[SessionSchema]:
         try:
             db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=404, detail=f"{e}")
 
@@ -163,6 +215,87 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 limit=limit,
                 total_count=total_count,  # type: ignore
                 total_pages=(total_count + limit - 1) // limit if limit is not None and limit > 0 else 0,  # type: ignore
+            ),
+        )
+
+    @router.get(
+        "/sessions/filter-schema",
+        response_model=FilterSchemaResponse,
+        operation_id="get_sessions_filter_schema",
+        summary="Get Session Filter Schema",
+    )
+    async def get_sessions_filter_schema() -> FilterSchemaResponse:
+        return SESSION_FILTER_SCHEMA
+
+    @router.post(
+        "/sessions/search",
+        response_model=PaginatedResponse[SessionSchema],
+        response_model_exclude_none=True,
+        operation_id="search_sessions",
+        summary="Search Sessions",
+        description="Search session fields with nested AND/OR/NOT expressions, sorting, and pagination.",
+    )
+    async def search_sessions(
+        request: Request,
+        body: SessionSearchRequest,
+        db_id: Optional[str] = Query(default=None),
+        table: Optional[str] = Query(default=None),
+    ) -> PaginatedResponse[SessionSchema]:
+        from httpx import HTTPStatusError
+
+        from agno.db.session_filters import normalize_session_filter
+
+        try:
+            expression = normalize_session_filter(body.filter)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid session search: {exc}") from exc
+        try:
+            db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=404, detail=f"{e}")
+        kwargs: Dict[str, Any] = dict(
+            filter_expr=expression,
+            session_type=body.session_type,
+            user_id=effective_user_id,
+            page=body.page,
+            limit=body.limit,
+            sort_by=body.sort_by,
+            sort_order=body.sort_order,
+        )
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            try:
+                return await db.search_sessions(
+                    **kwargs,
+                    db_id=db_id,
+                    table=table,
+                    headers={"Authorization": f"Bearer {auth_token}"} if auth_token else None,
+                )
+            except HTTPStatusError as e:
+                # Older remote servers predate this endpoint.
+                if e.response.status_code in (404, 405):
+                    raise HTTPException(
+                        status_code=501, detail="The remote AgentOS does not support session search"
+                    ) from e
+                raise
+        try:
+            sessions, total = await search_sessions_page(db, **kwargs)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid session search: {e}")
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
+        except Exception as e:
+            logger.exception("Error searching sessions")
+            raise HTTPException(status_code=500, detail=f"Error searching sessions: {e}")
+        return PaginatedResponse(
+            data=[SessionSchema.from_dict(session) for session in sessions],
+            meta=PaginationInfo(
+                page=body.page,
+                limit=body.limit,
+                total_count=total,
+                total_pages=(total + body.limit - 1) // body.limit,
             ),
         )
 
@@ -223,6 +356,13 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
         db, _ = await resolve_db_and_scope(request, dbs, db_id)
 
+        # Session metadata merges into every run of the session and, on
+        # conflicting keys, wins over call-site metadata -- so a reserved key
+        # persisted here would forge a version stamp or reset the dispatch
+        # lineage from a caller-writable field. Scrub it the way the run-start
+        # routes and the scheduler executor already do.
+        sanitized_metadata = strip_reserved_run_metadata(create_session_request.metadata)
+
         # Get user_id from request state if available (from auth middleware).
         # For non-admin scoped callers the JWT sub wins via enforce_owner below.
         user_id = create_session_request.user_id
@@ -237,7 +377,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 session_id=create_session_request.session_id,
                 session_name=create_session_request.session_name,
                 session_state=create_session_request.session_state,
-                metadata=create_session_request.metadata,
+                metadata=sanitized_metadata,
                 user_id=user_id,
                 agent_id=create_session_request.agent_id,
                 team_id=create_session_request.team_id,
@@ -254,17 +394,51 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         # runs/session_data, and on owner-guarded backends the failed upsert surfaces as a 500.
         # Mirror create_learning / schedules / service-accounts: reject with 409 and steer the
         # caller to PATCH; the stored session is never touched.
+        #
+        # The existence probe must not leak: session_id is a global primary key, so an
+        # unscoped check would let a scoped caller distinguish "another user's session
+        # exists" (409) from "free id" (201). Split the check by visibility:
+        #   - owner-scoped hit  -> the informative 409 the caller is entitled to.
+        #   - not in their scope but the id is taken globally -> a generic 409 that does
+        #     NOT confirm ownership. Same status either way, so no existence oracle, and
+        #     the global-integrity guard (no overwrite / 500) still holds.
+        # For admins / isolation-off, scoped_user_id is None and both checks collapse to
+        # the original unscoped behaviour.
         if create_session_request.session_id is not None:
-            if isinstance(db, AsyncBaseDb):
-                existing_session = await db.get_session(
-                    session_id=session_id, session_type=session_type, deserialize=False
-                )
-            else:
-                existing_session = db.get_session(session_id=session_id, session_type=session_type, deserialize=False)
-            if existing_session is not None:
+            scoped_user_id = get_scoped_user_id(request)
+
+            async def _get(uid: Optional[str]):
+                if isinstance(db, AsyncBaseDb):
+                    return await db.get_session(
+                        session_id=session_id, session_type=session_type, user_id=uid, deserialize=False
+                    )
+                return db.get_session(session_id=session_id, session_type=session_type, user_id=uid, deserialize=False)
+
+            try:
+                owned_session = await _get(scoped_user_id)
+            except AgnoError as e:
+                raise AgnoHTTPException(e)
+            if owned_session is not None:
+                # The caller owns (or, as admin/unscoped, can see) the colliding session:
+                # safe to point them at PATCH, since this reveals nothing they can't read.
                 raise HTTPException(
                     status_code=409,
-                    detail=f"Session with id '{session_id}' already exists. Use PATCH /sessions/{session_id} to update it.",
+                    detail=f"Session with id '{session_id}' already exists. "
+                    f"Use PATCH /sessions/{session_id} to update it.",
+                )
+            try:
+                id_taken = scoped_user_id is not None and await _get(None) is not None
+            except AgnoError as e:
+                raise AgnoHTTPException(e)
+            if id_taken:
+                # The id is taken by another owner. session_id is a global primary key, so
+                # the collision itself is unavoidable (as with any client-chosen unique id),
+                # but the response must not confirm that the session belongs to someone else
+                # or steer to a PATCH the caller can't perform. Refuse generically.
+                raise HTTPException(
+                    status_code=409,
+                    detail="Could not create a session with the supplied session_id. "
+                    "Omit session_id to have one generated, or choose a different one.",
                 )
 
         # Prepare session_data with session_state and session_name
@@ -284,7 +458,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 agent_id=create_session_request.agent_id,
                 user_id=user_id,
                 session_data=session_data if session_data else None,
-                metadata=create_session_request.metadata,
+                metadata=sanitized_metadata,
                 created_at=current_time,
                 updated_at=current_time,
             )
@@ -294,7 +468,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 team_id=create_session_request.team_id,
                 user_id=user_id,
                 session_data=session_data if session_data else None,
-                metadata=create_session_request.metadata,
+                metadata=sanitized_metadata,
                 created_at=current_time,
                 updated_at=current_time,
             )
@@ -304,7 +478,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 workflow_id=create_session_request.workflow_id,
                 user_id=user_id,
                 session_data=session_data if session_data else None,
-                metadata=create_session_request.metadata,
+                metadata=sanitized_metadata,
                 created_at=current_time,
                 updated_at=current_time,
             )
@@ -333,6 +507,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 return TeamSessionDetailSchema.from_session(created_session)  # type: ignore
             else:
                 return WorkflowSessionDetailSchema.from_session(created_session)  # type: ignore
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             logger.exception("Error creating session")
             raise HTTPException(status_code=500, detail=f"Failed to create session: {str(e)}")
@@ -478,16 +654,93 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         else:
             return WorkflowSessionDetailSchema.from_session(session)  # type: ignore
 
+    def _parse_status_filter(status: Optional[List[str]]) -> Optional[Set[str]]:
+        from agno.run.base import RunStatus
+
+        if not status:
+            return None
+        valid = {member.value for member in RunStatus}
+        wanted_statuses = {value.upper() for value in status}
+        unknown = sorted(wanted_statuses - valid)
+        if unknown:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid status value(s) {unknown}; expected one of {sorted(valid)}",
+            )
+        return wanted_statuses
+
+    async def _fetch_session_runs(
+        request: Request,
+        session_id: str,
+        session_type: Optional[SessionType],
+        user_id: Optional[str],
+        created_after: Optional[int],
+        created_before: Optional[int],
+        status: Optional[List[str]],
+        db_id: Optional[str],
+        table: Optional[str],
+    ) -> List[Any]:
+        wanted_statuses = _parse_status_filter(status)
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
+
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            # No limit is passed, so the remote returns every run as a list.
+            remote_runs = await db.get_session_runs(
+                session_id=session_id,
+                session_type=session_type,
+                user_id=effective_user_id,
+                created_after=created_after,
+                created_before=created_before,
+                db_id=db_id,
+                table=table,
+                headers=headers,
+            )
+            runs = remote_runs if isinstance(remote_runs, list) else remote_runs.data
+        else:
+            # Shared with the MCP get_session_runs tool: auto-detection, timestamp
+            # filtering, per-run classification, and sync-db threadpool offload all
+            # live in the service so the two surfaces cannot drift.
+            try:
+                runs = await get_session_runs_from_service(
+                    db,
+                    session_id=session_id,
+                    session_type=session_type,
+                    user_id=effective_user_id,
+                    created_after=created_after,
+                    created_before=created_before,
+                )
+            except SessionNotFoundError:
+                raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
+
+        # Status filter runs AFTER the fetch, identically for both sources: a
+        # RemoteDb cannot be assumed to understand the new param, and a session's
+        # run list is bounded.
+        if wanted_statuses is not None:
+            runs = [r for r in runs if run_status_matches(getattr(r, "status", None), wanted_statuses)]
+        return runs
+
     @router.get(
         "/sessions/{session_id}/runs",
-        response_model=List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
+        response_model=Union[
+            RunsPage[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
+            List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
+        ],
         status_code=200,
         operation_id="get_session_runs",
         summary="Get Session Runs",
         description=(
-            "Retrieve all runs (executions) for a specific session with optional timestamp filtering. "
-            "Runs represent individual interactions or executions within a session. "
-            "Response schema varies based on session type."
+            "Retrieve the runs (executions) for a specific session with optional timestamp and "
+            "status filtering. Repeat the status param to match any of several (case-insensitive; "
+            "e.g. status=PENDING&status=RUNNING&status=PAUSED is the live set a queue tray shows). "
+            "By default all runs are returned as a list. Pass 'limit' to receive a cursor-paginated "
+            "response instead: the newest 'limit' runs, or those before 'before_run_index' or after "
+            "'after_run_index'. Pages count top-level runs; member and step runs come with their parent "
+            "and filters select the top-level runs. For the older page pass meta.oldest_run_index as "
+            "before_run_index; for the newer page pass meta.newest_run_index as after_run_index. Runs are always in chronological order and carry their 'run_index'. "
+            "Response schema varies based on session type. For lightweight entries, use "
+            "GET /sessions/{session_id}/run-previews."
         ),
         response_model_exclude_none=True,
         responses={
@@ -497,102 +750,109 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     "application/json": {
                         "examples": {
                             "completed_run": {
-                                "summary": "Example completed run",
-                                "value": {
-                                    "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
-                                    "parent_run_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
-                                    "agent_id": "basic-agent",
-                                    "user_id": "",
-                                    "run_input": "Which tools do you have access to?",
-                                    "content": "I don't have access to external tools or the internet. However, I can assist you with a wide range of topics by providing information, answering questions, and offering suggestions based on the knowledge I've been trained on. If there's anything specific you need help with, feel free to ask!",
-                                    "run_response_format": "text",
-                                    "reasoning_content": "",
-                                    "metrics": {
-                                        "input_tokens": 82,
-                                        "output_tokens": 56,
-                                        "total_tokens": 138,
-                                        "time_to_first_token": 0.047505500027909875,
-                                        "duration": 4.840060166025069,
-                                    },
-                                    "messages": [
-                                        {
-                                            "content": "<additional_information>\n- Use markdown to format your answers.\n- The current time is 2025-09-08 17:52:10.101003.\n</additional_information>\n\nYou have the capability to retain memories from previous interactions with the user, but have not had any interactions with the user yet.",
-                                            "from_history": False,
-                                            "stop_after_tool_call": False,
-                                            "role": "system",
-                                            "created_at": 1757346730,
+                                "summary": "Example completed run (default list response)",
+                                "value": [
+                                    {
+                                        "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
+                                        "run_index": 0,
+                                        "parent_run_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
+                                        "agent_id": "basic-agent",
+                                        "user_id": "",
+                                        "run_input": "Which tools do you have access to?",
+                                        "content": "I don't have access to external tools or the internet. However, I can assist you with a wide range of topics by providing information, answering questions, and offering suggestions based on the knowledge I've been trained on. If there's anything specific you need help with, feel free to ask!",
+                                        "run_response_format": "text",
+                                        "reasoning_content": "",
+                                        "metrics": {
+                                            "input_tokens": 82,
+                                            "output_tokens": 56,
+                                            "total_tokens": 138,
+                                            "time_to_first_token": 0.047505500027909875,
+                                            "duration": 4.840060166025069,
                                         },
-                                        {
-                                            "content": "Which tools do you have access to?",
-                                            "from_history": False,
-                                            "stop_after_tool_call": False,
-                                            "role": "user",
-                                            "created_at": 1757346730,
-                                        },
-                                        {
-                                            "content": "I don't have access to external tools or the internet. However, I can assist you with a wide range of topics by providing information, answering questions, and offering suggestions based on the knowledge I've been trained on. If there's anything specific you need help with, feel free to ask!",
-                                            "from_history": False,
-                                            "stop_after_tool_call": False,
-                                            "role": "assistant",
-                                            "metrics": {"input_tokens": 82, "output_tokens": 56, "total_tokens": 138},
-                                            "created_at": 1757346730,
-                                        },
-                                    ],
-                                    "tools": None,
-                                    "events": [
-                                        {
-                                            "created_at": 1757346730,
-                                            "event": "RunStarted",
-                                            "agent_id": "basic-agent",
-                                            "agent_name": "Basic Agent",
-                                            "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
-                                            "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
-                                            "model": "gpt-4o",
-                                            "model_provider": "OpenAI",
-                                        },
-                                        {
-                                            "created_at": 1757346733,
-                                            "event": "MemoryUpdateStarted",
-                                            "agent_id": "basic-agent",
-                                            "agent_name": "Basic Agent",
-                                            "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
-                                            "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
-                                        },
-                                        {
-                                            "created_at": 1757346734,
-                                            "event": "MemoryUpdateCompleted",
-                                            "agent_id": "basic-agent",
-                                            "agent_name": "Basic Agent",
-                                            "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
-                                            "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
-                                        },
-                                        {
-                                            "created_at": 1757346734,
-                                            "event": "RunCompleted",
-                                            "agent_id": "basic-agent",
-                                            "agent_name": "Basic Agent",
-                                            "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
-                                            "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
-                                            "content": "I don't have access to external tools or the internet. However, I can assist you with a wide range of topics by providing information, answering questions, and offering suggestions based on the knowledge I've been trained on. If there's anything specific you need help with, feel free to ask!",
-                                            "content_type": "str",
-                                            "metrics": {
-                                                "input_tokens": 82,
-                                                "output_tokens": 56,
-                                                "total_tokens": 138,
-                                                "time_to_first_token": 0.047505500027909875,
-                                                "duration": 4.840060166025069,
+                                        "messages": [
+                                            {
+                                                "content": "<additional_information>\n- Use markdown to format your answers.\n- The current time is 2025-09-08 17:52:10.101003.\n</additional_information>\n\nYou have the capability to retain memories from previous interactions with the user, but have not had any interactions with the user yet.",
+                                                "from_history": False,
+                                                "stop_after_tool_call": False,
+                                                "role": "system",
+                                                "created_at": 1757346730,
                                             },
-                                        },
-                                    ],
-                                    "created_at": "2025-09-08T15:52:10Z",
-                                },
+                                            {
+                                                "content": "Which tools do you have access to?",
+                                                "from_history": False,
+                                                "stop_after_tool_call": False,
+                                                "role": "user",
+                                                "created_at": 1757346730,
+                                            },
+                                            {
+                                                "content": "I don't have access to external tools or the internet. However, I can assist you with a wide range of topics by providing information, answering questions, and offering suggestions based on the knowledge I've been trained on. If there's anything specific you need help with, feel free to ask!",
+                                                "from_history": False,
+                                                "stop_after_tool_call": False,
+                                                "role": "assistant",
+                                                "metrics": {
+                                                    "input_tokens": 82,
+                                                    "output_tokens": 56,
+                                                    "total_tokens": 138,
+                                                },
+                                                "created_at": 1757346730,
+                                            },
+                                        ],
+                                        "tools": None,
+                                        "events": [
+                                            {
+                                                "created_at": 1757346730,
+                                                "event": "RunStarted",
+                                                "agent_id": "basic-agent",
+                                                "agent_name": "Basic Agent",
+                                                "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
+                                                "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
+                                                "model": "gpt-4o",
+                                                "model_provider": "OpenAI",
+                                            },
+                                            {
+                                                "created_at": 1757346733,
+                                                "event": "MemoryUpdateStarted",
+                                                "agent_id": "basic-agent",
+                                                "agent_name": "Basic Agent",
+                                                "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
+                                                "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
+                                            },
+                                            {
+                                                "created_at": 1757346734,
+                                                "event": "MemoryUpdateCompleted",
+                                                "agent_id": "basic-agent",
+                                                "agent_name": "Basic Agent",
+                                                "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
+                                                "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
+                                            },
+                                            {
+                                                "created_at": 1757346734,
+                                                "event": "RunCompleted",
+                                                "agent_id": "basic-agent",
+                                                "agent_name": "Basic Agent",
+                                                "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
+                                                "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
+                                                "content": "I don't have access to external tools or the internet. However, I can assist you with a wide range of topics by providing information, answering questions, and offering suggestions based on the knowledge I've been trained on. If there's anything specific you need help with, feel free to ask!",
+                                                "content_type": "str",
+                                                "metrics": {
+                                                    "input_tokens": 82,
+                                                    "output_tokens": 56,
+                                                    "total_tokens": 138,
+                                                    "time_to_first_token": 0.047505500027909875,
+                                                    "duration": 4.840060166025069,
+                                                },
+                                            },
+                                        ],
+                                        "created_at": "2025-09-08T15:52:10Z",
+                                    }
+                                ],
                             }
                         }
                     }
                 },
             },
-            404: {"description": "Session not found or has no runs", "model": NotFoundResponse},
-            422: {"description": "Invalid session type", "model": ValidationErrorResponse},
+            404: {"description": "Session not found", "model": NotFoundResponse},
+            422: {"description": "Invalid session type or pagination parameters", "model": ValidationErrorResponse},
         },
     )
     async def get_session_runs(
@@ -612,9 +872,42 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             default=None,
             description="Filter runs created before this Unix timestamp (epoch time in seconds)",
         ),
+        status: Optional[List[str]] = Query(
+            default=None,
+            description="Status filter; repeatable to match any of several, case-insensitive "
+            "(PENDING, RUNNING, PAUSED, COMPLETED, CANCELLED, ERROR, REGENERATED)",
+        ),
+        limit: Optional[int] = Query(
+            default=None,
+            description="Maximum number of runs to return. Providing this returns a cursor-paginated response.",
+            ge=1,
+        ),
+        before_run_index: Optional[int] = Query(
+            default=None,
+            description="Return the newest runs with a run_index below this value. Requires 'limit'.",
+            ge=0,
+        ),
+        after_run_index: Optional[int] = Query(
+            default=None,
+            description="Return the oldest runs with a run_index above this value. Requires 'limit'.",
+            ge=0,
+        ),
         db_id: Optional[str] = Query(default=None, description="Database ID to query runs from"),
         table: Optional[str] = Query(default=None, description="Table to query runs from"),
-    ) -> List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]:
+    ) -> Union[
+        RunsPage[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
+        List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
+    ]:
+        if limit is None and (before_run_index is not None or after_run_index is not None):
+            raise HTTPException(status_code=422, detail="before_run_index and after_run_index require limit")
+
+        if limit is None:
+            runs = await _fetch_session_runs(
+                request, session_id, session_type, user_id, created_after, created_before, status, db_id, table
+            )
+            return cast(List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]], runs)
+
+        wanted_statuses = _parse_status_filter(status)
         db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
 
         if isinstance(db, RemoteDb):
@@ -629,22 +922,87 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 db_id=db_id,
                 table=table,
                 headers=headers,
+                status=status,
+                limit=limit,
+                before_run_index=before_run_index,
+                after_run_index=after_run_index,
             )
 
-        # Shared with the MCP get_session_runs tool: auto-detection, timestamp
-        # filtering, per-run classification, and sync-db threadpool offload all
-        # live in the service so the two surfaces cannot drift.
         try:
-            return await get_session_runs_from_service(
+            page = await get_session_runs_window(
                 db,
                 session_id=session_id,
+                limit=limit,
+                before_run_index=before_run_index,
+                after_run_index=after_run_index,
                 session_type=session_type,
                 user_id=effective_user_id,
                 created_after=created_after,
                 created_before=created_before,
+                statuses=wanted_statuses,
             )
         except SessionNotFoundError:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
+        except InvalidRunCursorError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+
+        return RunsPage(
+            data=page.runs,
+            meta=RunsPageInfo(
+                limit=limit,
+                total_count=page.total_count,
+                has_more=page.has_more,
+                oldest_run_index=page.oldest_run_index,
+                newest_run_index=page.newest_run_index,
+            ),
+        )
+
+    @router.get(
+        "/sessions/{session_id}/run-previews",
+        response_model=List[SessionRunPreviewSchema],
+        status_code=200,
+        operation_id="get_session_run_previews",
+        summary="Get Session Run Previews",
+        description=(
+            "Lightweight listing of a session's runs for polling clients such as a queue tray: ids, "
+            "status, timestamps and truncated input/output previews, without messages, events, media "
+            "or metrics. Accepts the same filters as GET /sessions/{session_id}/runs."
+        ),
+        response_model_exclude_none=True,
+        responses={
+            404: {"description": "Session not found", "model": NotFoundResponse},
+            422: {"description": "Invalid session type", "model": ValidationErrorResponse},
+        },
+    )
+    async def get_session_run_previews(
+        request: Request,
+        session_id: str = Path(description="Session ID to get runs from"),
+        session_type: Optional[SessionType] = Query(
+            default=None,
+            description="Session type (agent, team, or workflow). If not provided, auto-detected from session data.",
+            alias="type",
+        ),
+        user_id: Optional[str] = Query(default=None, description="User ID to query runs from"),
+        created_after: Optional[int] = Query(
+            default=None,
+            description="Filter runs created after this Unix timestamp (epoch time in seconds)",
+        ),
+        created_before: Optional[int] = Query(
+            default=None,
+            description="Filter runs created before this Unix timestamp (epoch time in seconds)",
+        ),
+        status: Optional[List[str]] = Query(
+            default=None,
+            description="Status filter; repeatable to match any of several, case-insensitive "
+            "(PENDING, RUNNING, PAUSED, COMPLETED, CANCELLED, ERROR, REGENERATED)",
+        ),
+        db_id: Optional[str] = Query(default=None, description="Database ID to query runs from"),
+        table: Optional[str] = Query(default=None, description="Table to query runs from"),
+    ) -> List[SessionRunPreviewSchema]:
+        runs = await _fetch_session_runs(
+            request, session_id, session_type, user_id, created_after, created_before, status, db_id, table
+        )
+        return [SessionRunPreviewSchema.from_run(r) for r in runs]
 
     @router.get(
         "/sessions/{session_id}/runs/{run_id}",
@@ -736,21 +1094,26 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         # Find the specific run
         # TODO: Move this filtering into the DB layer
         target_run = None
-        for run in runs:
+        target_run_index = None
+        for run_index, run in enumerate(runs):
             if run.get("run_id") == run_id:
                 target_run = run
+                target_run_index = run_index
                 break
 
         if not target_run:
             raise HTTPException(status_code=404, detail=f"Run with ID {run_id} not found in session {session_id}")
 
         # Return the appropriate schema based on run type
+        run_schema: Union[RunSchema, TeamRunSchema, WorkflowRunSchema]
         if target_run.get("workflow_id") is not None:
-            return WorkflowRunSchema.from_dict(target_run)
+            run_schema = WorkflowRunSchema.from_dict(target_run)
         elif target_run.get("team_id") is not None:
-            return TeamRunSchema.from_dict(target_run)
+            run_schema = TeamRunSchema.from_dict(target_run)
         else:
-            return RunSchema.from_dict(target_run)
+            run_schema = RunSchema.from_dict(target_run, session=cast(Dict[str, Any], session))
+        run_schema.run_index = target_run_index
+        return run_schema
 
     @router.delete(
         "/sessions/{session_id}",
@@ -772,8 +1135,17 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         user_id: Optional[str] = Query(default=None, description="User ID to scope deletion to"),
         db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
         table: Optional[str] = Query(default=None, description="Table to use for deletion"),
+        delete_media: bool = Query(
+            default=False, description="Also delete the session's offloaded media from media storage"
+        ),
     ) -> None:
         db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
+
+        if delete_media and media_storage is None:
+            raise HTTPException(status_code=503, detail="Media storage is not configured on AgentOS")
+        if delete_media and isinstance(db, RemoteDb):
+            # The remote owns the rows that name the objects, so the keys cannot be read here.
+            raise HTTPException(status_code=501, detail="Media deletion is not supported for remote databases")
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -787,11 +1159,18 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         # for admins / unscoped callers it falls back to the query param.
         local_kwargs: Dict[str, Any] = {"session_id": session_id, "user_id": effective_user_id}
 
+        if not delete_media and media_storage is not None:
+            log_debug("delete_media=False, keeping any offloaded media, pass delete_media=True to delete it too")
+
+        media_keys = await _collect_media_keys(db, [session_id], effective_user_id) if delete_media else []
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             await db.delete_session(**local_kwargs)
         else:
             db.delete_session(**local_kwargs)
+
+        await _delete_media_keys(media_keys)
 
     @router.delete(
         "/sessions",
@@ -817,11 +1196,20 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         user_id: Optional[str] = Query(default=None, description="User ID to scope deletion to"),
         db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
         table: Optional[str] = Query(default=None, description="Table to use for deletion"),
+        delete_media: bool = Query(
+            default=False, description="Also delete the sessions' offloaded media from media storage"
+        ),
     ) -> None:
         if len(request.session_ids) != len(request.session_types):
             raise HTTPException(status_code=400, detail="Session IDs and session types must have the same length")
 
         db, effective_user_id = await resolve_db_and_scope(http_request, dbs, db_id, table, fallback_user_id=user_id)
+
+        if delete_media and media_storage is None:
+            raise HTTPException(status_code=503, detail="Media storage is not configured on AgentOS")
+        if delete_media and isinstance(db, RemoteDb):
+            # The remote owns the rows that name the objects, so the keys cannot be read here.
+            raise HTTPException(status_code=501, detail="Media deletion is not supported for remote databases")
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(http_request)
@@ -843,11 +1231,18 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             "user_id": effective_user_id,
         }
 
+        if not delete_media and media_storage is not None:
+            log_debug("delete_media=False, keeping any offloaded media, pass delete_media=True to delete it too")
+
+        media_keys = await _collect_media_keys(db, request.session_ids, effective_user_id) if delete_media else []
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             await db.delete_sessions(**local_kwargs)
         else:
             db.delete_sessions(**local_kwargs)
+
+        await _delete_media_keys(media_keys)
 
     @router.post(
         "/sessions/{session_id}/rename",
@@ -1059,6 +1454,10 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
         db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
 
+        # Same scrub as create_session: session metadata wins the merge into
+        # every run of this session, so reserved keys never enter through it.
+        sanitized_metadata = strip_reserved_run_metadata(update_data.metadata)
+
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
@@ -1067,7 +1466,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 session_type=session_type,
                 session_name=update_data.session_name,
                 session_state=update_data.session_state,
-                metadata=update_data.metadata,
+                metadata=sanitized_metadata,
                 summary=update_data.summary,
                 user_id=effective_user_id,
                 db_id=db_id,
@@ -1106,7 +1505,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             existing_session.session_data["session_state"] = update_data.session_state  # type: ignore
 
         if update_data.metadata is not None:
-            existing_session.metadata = update_data.metadata  # type: ignore
+            existing_session.metadata = sanitized_metadata  # type: ignore
 
         if update_data.summary is not None:
             from agno.session.summary import SessionSummary

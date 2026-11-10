@@ -1,23 +1,37 @@
 """
-Standalone usage of Claude Agent SDK with Agno's .run() and .print_response() methods.
+ClaudeAgent: First Run
+=======================
+Run one shipping-policy question and print the answer, run ID and terminal status.
 
-Requirements:
-    pip install claude-agent-sdk
-
-Usage:
-    .venvs/demo/bin/python cookbook/frameworks/claude-agent-sdk/claude_basic.py
+No Agno database is configured. This proves a model round trip, not session
+recovery. Compare claude_native_sdk.py for the same prompt without the Agno adapter.
+Try changing the order amount in the prompt. See README.md for setup.
 """
+
+from pathlib import Path
 
 from agno.agents.claude import ClaudeAgent
 
-# ----- Wrap Claude Agent SDK for Agno -----
+# ---------------------------------------------------------------------------
+# Configure the Example
+# ---------------------------------------------------------------------------
+workspace = Path(__file__).resolve().parents[1] / "sample_project"
+prompt = "Shipping costs 8 dollars below 100 dollars and is free at or above 100 dollars. What is the shipping fee for an order of exactly 100 dollars? Answer in one sentence. Do not use tools."
+
+# ---------------------------------------------------------------------------
+# Create the Agent
+# ---------------------------------------------------------------------------
 agent = ClaudeAgent(
-    name="Claude Assistant",
-    model="claude-sonnet-4-6",
-    max_turns=3,
+    id="claude-basic",
+    model="claude-sonnet-5-5",
+    cwd=str(workspace),
+    tools=[],
+    setting_sources=[],
+    strict_mcp_config=True,
 )
 
-# Use .print_response() just like a native Agno agent
-agent.print_response(
-    "What is quantum computing? Explain in 2-3 sentences.", stream=True
-)
+# ---------------------------------------------------------------------------
+# Run the Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response(prompt, stream=True)

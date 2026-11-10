@@ -32,8 +32,10 @@ knowledge = Knowledge(
         embedder=SentenceTransformerEmbedder(
             id="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
         ),
-        reranker=SentenceTransformerReranker(model="BAAI/bge-reranker-v2-m3"),
     ),
+    # Reranking belongs on Knowledge: it applies to every vector db and can
+    # widen the candidate pool for rerankers that need one.
+    reranker=SentenceTransformerReranker(model="BAAI/bge-reranker-v2-m3"),
 )
 
 for result in search_results:

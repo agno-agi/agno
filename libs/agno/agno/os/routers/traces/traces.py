@@ -5,6 +5,7 @@ from fastapi import Depends, HTTPException, Query, Request
 from fastapi.routing import APIRouter
 
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.exceptions import AgnoError
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.middleware.user_scope import resolve_db_and_scope
 from agno.os.routers.traces.schemas import (
@@ -27,7 +28,7 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import timestamp_to_datetime
+from agno.os.utils import AgnoHTTPException, timestamp_to_datetime
 from agno.remote.base import RemoteDb
 from agno.utils.log import log_error
 
@@ -266,6 +267,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 ),
             )
 
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error retrieving traces: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error retrieving traces: {str(e)}")
@@ -470,6 +473,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
         except HTTPException:
             raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error retrieving trace {trace_id}: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error retrieving trace: {str(e)}")
@@ -626,6 +631,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 ),
             )
 
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error retrieving trace statistics: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error retrieving statistics: {str(e)}")
@@ -806,6 +813,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
         except ValueError as e:
             raise HTTPException(status_code=400, detail=f"Invalid filter expression: {str(e)}")
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error searching traces: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error searching traces: {str(e)}")
