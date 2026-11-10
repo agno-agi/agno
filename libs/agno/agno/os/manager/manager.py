@@ -4,7 +4,7 @@ import asyncio
 import json
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
 
 from agno.agent import Agent
 from agno.agents.base import BaseExternalAgent
@@ -77,8 +77,12 @@ class _ManagerInstructions:
         # recognized as the same component.
         return self
 
-    def _kind_rows(self, kind: str, run_context: Any) -> List[Dict[str, Any]]:
-        """Published components of one kind that the runner admits, without the framework's own."""
+    def _kind_rows(self, kind: str, run_context: Any) -> Tuple[List[Dict[str, Any]], bool]:
+        """Published components of one kind that the runner admits, without the framework's own.
+
+        The second value is True when the stored query returned a full page. Drafts and permissions are
+        filtered after the query, so a full page can hide published components behind it.
+        """
         actor = getattr(run_context, "user_id", None)
         stored, _ = self.runner._list_db_component_rows(kind, limit=_CATALOG_LIMIT + 1, user_id=actor)
         rows: List[Dict[str, Any]] = []
@@ -89,35 +93,36 @@ class _ManagerInstructions:
                 continue
             seen.add(component_id)
             rows.append({**row, "kind": kind})
-        return rows
+        return rows, len(stored) > _CATALOG_LIMIT
 
     @staticmethod
     def _read_check(authority: Any, row: Dict[str, Any]) -> Any:
         return replace(authority.context, resource_type=row["kind"] + "s", resource_id=row["id"], action="read")
 
     @staticmethod
-    def _catalog(rows: List[Dict[str, Any]]) -> List[str]:
-        if not rows:
-            return []
+    def _catalog(rows: List[Dict[str, Any]], more: bool = False) -> List[str]:
         lines = []
         for row in rows[:_CATALOG_LIMIT]:
             description = (row.get("description") or "").strip().split("\n")[0][:120]
             name = row.get("name") or row["id"]
             lines.append(f"- {name} ({row['kind']}, id {row['id']})" + (f": {description}" if description else ""))
-        if len(rows) > _CATALOG_LIMIT:
+        if more or len(rows) > _CATALOG_LIMIT:
             lines.append("More exist: call list_agents, list_teams or list_workflows.")
-        return ["Components you can run:\n" + "\n".join(lines)]
+        return ["Components you can run:\n" + "\n".join(lines)] if lines else []
 
     def __call__(self, run_context: Any = None) -> List[str]:
         base = self.company(run_context) if self.company is not None else list(self.base)
         authority = _caller_authorization(run_context)
         # One entry past the limit shows that more exist. Nothing after it is listed or checked.
         rows: List[Dict[str, Any]] = []
+        more = False
         try:
             for kind in ("agent", "team", "workflow"):
                 if len(rows) > _CATALOG_LIMIT:
                     break
-                for row in self._kind_rows(kind, run_context):
+                found, full_page = self._kind_rows(kind, run_context)
+                more = more or full_page
+                for row in found:
                     if authority is None or authority.provider.check(self._read_check(authority, row)):
                         rows.append(row)
                     if len(rows) > _CATALOG_LIMIT:
@@ -127,17 +132,20 @@ class _ManagerInstructions:
 
             log_warning(f"Component catalog unavailable for this run: {exc}")
             return base
-        return [*base, *self._catalog(rows)]
+        return [*base, *self._catalog(rows, more)]
 
     async def __acall__(self, run_context: Any = None) -> List[str]:
         base = await self.company.__acall__(run_context) if self.company is not None else list(self.base)
         authority = _caller_authorization(run_context)
         rows: List[Dict[str, Any]] = []
+        more = False
         try:
             for kind in ("agent", "team", "workflow"):
                 if len(rows) > _CATALOG_LIMIT:
                     break
-                for row in await asyncio.to_thread(self._kind_rows, kind, run_context):
+                found, full_page = await asyncio.to_thread(self._kind_rows, kind, run_context)
+                more = more or full_page
+                for row in found:
                     if authority is None or await authority.provider.acheck(self._read_check(authority, row)):
                         rows.append(row)
                     if len(rows) > _CATALOG_LIMIT:
@@ -147,7 +155,7 @@ class _ManagerInstructions:
 
             log_warning(f"Component catalog unavailable for this run: {exc}")
             return base
-        return [*base, *self._catalog(rows)]
+        return [*base, *self._catalog(rows, more)]
 
 
 def _resolve_model(agent_os: "AgentOS", config: OSManager) -> Any:

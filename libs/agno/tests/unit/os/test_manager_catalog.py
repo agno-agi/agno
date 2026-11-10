@@ -154,6 +154,66 @@ def test_catalog_shows_only_what_the_caller_may_read(tmp_path, use_async):
     assert catalog(model.system[0]) == ["- allowed (agent, id allowed)"]
 
 
+HINT = "More exist: call list_agents, list_teams or list_workflows."
+
+
+def store_agent(db, component_id, stage):
+    from agno.db.base import ComponentType
+
+    db.create_component_with_config(
+        component_id=component_id,
+        component_type=ComponentType.AGENT,
+        name=component_id,
+        config={"id": component_id, "name": component_id},
+        stage=stage,
+    )
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_catalog_says_more_exist_when_drafts_fill_the_page(tmp_path, use_async):
+    # Drafts are filtered after the query, so a page of newer drafts hides an older published agent.
+    os, model = build(tmp_path)
+    store_agent(os.db, "zz-published", "published")
+    for n in range(_CATALOG_LIMIT + 1):
+        store_agent(os.db, f"draft-{n:02}", "draft")
+    if use_async:
+        asyncio.run(os.manager.arun("hello"))
+    else:
+        os.manager.run("hello")
+    assert catalog(model.system[0]) == [HINT]
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_catalog_says_more_exist_when_unreadable_components_fill_the_page(tmp_path, use_async):
+    os, model = build(tmp_path)
+    store_agent(os.db, "zz-readable", "published")
+    for n in range(_CATALOG_LIMIT + 1):
+        store_agent(os.db, f"hidden-{n:02}", "published")
+    scopes = [f"teams:{MANAGER_TEAM_ID}:run", "agents:zz-readable:read"]
+    caller = RunAuthorization(
+        ScopeAuthorizationProvider(),
+        AuthorizationContext(principal_id="alice", scopes=scopes, claims={"sub": "alice"}),
+        enforce_tools=False,
+    )
+    with authorization_scope(lambda: caller):
+        if use_async:
+            asyncio.run(os.manager.arun("hello", user_id="alice"))
+        else:
+            os.manager.run("hello", user_id="alice")
+    lines = catalog(model.system[0])
+    assert lines == [HINT]
+    assert "hidden-" not in model.system[0]
+
+
+def test_catalog_has_no_hint_when_the_page_is_not_full(tmp_path):
+    os, model = build(tmp_path)
+    store_agent(os.db, "published", "published")
+    for n in range(_CATALOG_LIMIT - 1):
+        store_agent(os.db, f"draft-{n:02}", "draft")
+    os.manager.run("hello")
+    assert catalog(model.system[0]) == ["- published (agent, id published)"]
+
+
 class CountingProvider(ScopeAuthorizationProvider):
     """Allow every read and count the checks."""
 
