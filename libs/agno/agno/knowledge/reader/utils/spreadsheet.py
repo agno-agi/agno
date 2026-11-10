@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, time
 from pathlib import Path
 from typing import IO, Any, Iterable, List, Optional, Sequence, Tuple, Union
 from uuid import uuid4
@@ -58,7 +58,7 @@ def infer_file_extension(file: Union[Path, IO[Any]], name: Optional[str]) -> str
 
 
 def convert_xls_cell_value(cell_value: Any, cell_type: int, datemode: int) -> Any:
-    """Convert xlrd cell value to Python type (dates and booleans need conversion)."""
+    """Convert xlrd cell value to Python type (dates, times and booleans need conversion)."""
     try:
         import xlrd
     except ImportError:
@@ -67,6 +67,8 @@ def convert_xls_cell_value(cell_value: Any, cell_type: int, datemode: int) -> An
     if cell_type == xlrd.XL_CELL_DATE:
         try:
             date_tuple = xlrd.xldate_as_tuple(cell_value, datemode)
+            if date_tuple[:3] == (0, 0, 0):
+                return time(*date_tuple[3:])
             return datetime(*date_tuple)
         except Exception:
             return cell_value
