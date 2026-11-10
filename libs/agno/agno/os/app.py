@@ -146,9 +146,10 @@ async def http_client_lifespan(_):
     """Manage httpx client lifecycle for proper connection pool cleanup."""
     from agno.utils.http import aclose_default_clients
 
-    yield
-
-    await aclose_default_clients()
+    try:
+        yield
+    finally:
+        await aclose_default_clients()
 
 
 @asynccontextmanager
@@ -231,11 +232,15 @@ async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
     if agent_os._authz_role_store is not None:
         await agent_os._authz_role_store._araise_if_former_manager_policies()
 
-    yield
-
-    # Let in-flight cancel-persist tasks finish writing before the pool closes
-    await _drain_cancel_persist_tasks()
-    await agent_os._close_databases()
+    try:
+        yield
+    finally:
+        # Let in-flight cancel-persist tasks finish writing before the pool closes,
+        # but close the databases even if draining fails
+        try:
+            await _drain_cancel_persist_tasks()
+        finally:
+            await agent_os._close_databases()
 
 
 @asynccontextmanager
@@ -285,9 +290,10 @@ async def scheduler_lifespan(app: FastAPI, agent_os: "AgentOS"):
     app.state.scheduler_poller = poller
     await poller.start()
 
-    yield
-
-    await poller.stop()
+    try:
+        yield
+    finally:
+        await poller.stop()
 
 
 # Default timeout (in seconds) when stopping the metrics calculation
