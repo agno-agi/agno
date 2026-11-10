@@ -2724,7 +2724,7 @@ class DynamoDb(BaseDb):
             or refreshes_table_name is None
             or not self.table_exists(sessions_table_name)
         ):
-            log_info("No session data found. Won't calculate metrics.")
+            log_debug("No session data found. Won't calculate metrics.")
             return []
         runs_table_name = self._get_table("runs", create_table_if_not_found=True)
         if runs_table_name is None:
@@ -2859,7 +2859,7 @@ class DynamoDb(BaseDb):
         )
 
         if not calculated_dates:
-            log_info("Metrics already calculated for all relevant dates.")
+            log_debug("Metrics already calculated for all relevant dates.")
             return []
 
         log_debug("Updated metrics calculations")

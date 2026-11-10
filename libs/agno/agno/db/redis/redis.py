@@ -2531,7 +2531,7 @@ class RedisDb(BaseDb):
         )
 
         if not calculated_dates:
-            log_info("Metrics already calculated for all relevant dates.")
+            log_debug("Metrics already calculated for all relevant dates.")
             return []
 
         log_debug("Updated metrics calculations")
