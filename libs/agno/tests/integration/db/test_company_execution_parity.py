@@ -910,6 +910,7 @@ async def test_attention_clears_acted_on_failures_and_preserves_results(system, 
 @pytest.mark.parametrize(
     "kind,executor_id",
     [
+        ("agent", "superagent-routines"),
         ("agent", "company-manager-internal"),
         ("agent", "product-manager-internal"),
         ("team", "os-manager-internal"),

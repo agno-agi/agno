@@ -1,0 +1,387 @@
+"""Company Routines name Super Agent and run on the restricted Routine runner, never on Super Agent."""
+
+import asyncio
+import json
+import re
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+from agno.agent import Agent
+from agno.company import Product, Routine
+from agno.company.manager import CompanyManager
+from agno.company.routines import _routine_executor_endpoint, _RoutineAuthorization, load_routine_skills
+from agno.db.sqlite import SqliteDb
+from agno.models.base import Model
+from agno.models.message import MessageMetrics
+from agno.models.response import ModelResponse
+from agno.os import AgentOS, CompanyConfig, OSManager
+from agno.registry._reserved import BUILDER_ID, MANAGER_TEAM_ID, RESERVED_MANAGER_IDS, ROUTINE_RUNNER_ID
+from agno.run.authorization import AUTHORIZATION_HEADER, authorization_scope
+from agno.tools.agentos import AgentOSTools
+from agno.tools.company import CompanyTools
+from agno.tools.studio import StudioTools
+from agno.tools.studio_runner import StudioRunnerTools
+
+pytestmark = pytest.mark.usefixtures("unavailable_manager_docs")
+
+RUNNER_ENDPOINT = f"/agents/{ROUTINE_RUNNER_ID}/runs"
+ROUTINE_SNAPSHOT = {
+    "context": {"principal_id": None},
+    "service_account": True,
+    "enforce_tools": True,
+    "company_routine": True,
+    "company_routine_unscoped": True,
+    "company_routine_id": "routine",
+    "company_product_id": "sdk",
+}
+
+
+class CountingModel(Model):
+    """Count model calls; optionally call one tool first and reply with its result."""
+
+    def __init__(self, tool=None, arguments=None):
+        super().__init__(id="fixture", provider="test")
+        self.tool = tool
+        self.arguments = arguments or {}
+        self.calls = 0
+
+    def invoke(self, messages, **kwargs):
+        self.calls += 1
+        if self.tool and messages[-1].role != "tool":
+            call = {
+                "id": "call",
+                "type": "function",
+                "function": {"name": self.tool, "arguments": json.dumps(self.arguments)},
+            }
+            return ModelResponse(role="assistant", tool_calls=[call], response_usage=MessageMetrics())
+        content = str(messages[-1].content) if self.tool else "answer"
+        return ModelResponse(role="assistant", content=content, response_usage=MessageMetrics())
+
+    async def ainvoke(self, *args, **kwargs):
+        return self.invoke(*args, **kwargs)
+
+    def invoke_stream(self, *args, **kwargs):
+        yield self.invoke(*args, **kwargs)
+
+    async def ainvoke_stream(self, *args, **kwargs):
+        yield self.invoke(*args, **kwargs)
+
+    def _parse_provider_response(self, response, **kwargs):
+        return response
+
+    def _parse_provider_response_delta(self, response):
+        return response
+
+
+def routine_authority():
+    return _RoutineAuthorization(None, routine_id="routine", product_id="sdk")
+
+
+def build(tmp_path, manager=True, **kwargs):
+    db = SqliteDb(db_file=str(tmp_path / "os.db"))
+    return AgentOS(
+        db=db,
+        manager=OSManager(model=CountingModel()) if manager else None,
+        company=CompanyConfig(model=CountingModel()),
+        telemetry=False,
+        **kwargs,
+    )
+
+
+def run(component, use_async, message="go"):
+    if use_async:
+        return asyncio.run(component.arun(message, user_id="alice", session_id="session"))
+    return component.run(message, user_id="alice", session_id="session")
+
+
+def internal_headers(os, snapshot=None):
+    headers = {"Authorization": "Bearer " + os._internal_service_token}
+    if snapshot is not None:
+        headers[AUTHORIZATION_HEADER] = json.dumps(snapshot)
+    return headers
+
+
+# ----------------------------------------------------------------- the executor a Routine may name
+
+
+@pytest.mark.parametrize("manager", [False, True])
+def test_a_routine_naming_super_agent_runs_on_the_runner(tmp_path, manager):
+    os = build(tmp_path, manager=manager)
+    assert _routine_executor_endpoint("team", MANAGER_TEAM_ID, os.registry, agent_os=os) == RUNNER_ENDPOINT
+    with pytest.raises(ValueError, match="executor_type must be 'team'"):
+        _routine_executor_endpoint("agent", MANAGER_TEAM_ID, os.registry, agent_os=os)
+
+
+@pytest.mark.parametrize("executor_id", sorted(RESERVED_MANAGER_IDS - {MANAGER_TEAM_ID}))
+def test_no_other_framework_id_can_execute_a_routine(tmp_path, executor_id):
+    os = build(tmp_path)
+    for executor_type in ("agent", "team"):
+        with pytest.raises(ValueError, match="Only Super Agent can execute Routines"):
+            _routine_executor_endpoint(executor_type, executor_id, os.registry, agent_os=os)
+
+
+def test_super_agent_routines_need_company_and_a_model(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "os.db"))
+    os = AgentOS(db=db, manager=OSManager(model=CountingModel()), telemetry=False)
+    with pytest.raises(ValueError, match="configure CompanyConfig"):
+        _routine_executor_endpoint("team", MANAGER_TEAM_ID, os.registry, agent_os=os)
+    os = AgentOS(db=db, company=CompanyConfig(), telemetry=False)
+    assert os._routine_runner is None
+    with pytest.raises(ValueError, match="Super Agent cannot run Routines: configure CompanyConfig\\(model="):
+        _routine_executor_endpoint("team", MANAGER_TEAM_ID, os.registry, agent_os=os)
+
+
+# ----------------------------------------------------------------- what the runner holds
+
+
+def test_runner_holds_company_tools_and_routine_skills_only(tmp_path):
+    os = build(tmp_path)
+    runner = os._routine_runner
+    assert runner.id == ROUTINE_RUNNER_ID and runner.name == "Super Agent Routines"
+    assert [type(tool) for tool in runner.tools] == [CompanyTools]
+    assert not any(isinstance(tool, (StudioTools, StudioRunnerTools, AgentOSTools)) for tool in runner.tools)
+    assert not getattr(runner, "members", None)
+    assert {"refresh_company_product", "summarize_company_product", "intake_product_source"} <= set(
+        runner.tools[0].functions
+    )
+    assert sorted(skill.name for skill in runner.skills.get_all_skills()) == ["intake", "refresh", "summary"]
+    # Super Agent holds the platform, so it keeps the two Routine tools off.
+    company = next(tool for tool in os.manager.tools if isinstance(tool, CompanyTools))
+    assert not {"refresh_company_product", "summarize_company_product"} & set(company.functions)
+
+
+@pytest.mark.parametrize("skill", ["intake", "refresh", "summary"])
+def test_every_tool_a_packaged_skill_names_is_on_the_runner(tmp_path, skill):
+    os = build(tmp_path)
+    functions = set(os._routine_runner.tools[0].functions)
+    text = load_routine_skills().get_skill(skill).instructions
+    named = set(re.findall(r"\b[a-z]+(?:_[a-z]+)*_(?:company|product)_[a-z_]+\b", text))
+    assert named, text
+    # propose_company_task is named only to say Routines do not use it.
+    assert named - {"propose_company_task"} <= functions, named - functions
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize(
+    "tool,arguments",
+    [
+        ("refresh_company_product", {"product_id": "{product}"}),
+        ("summarize_company_product", {"product_id": "{product}", "narrative": "Nothing changed."}),
+        (
+            "intake_product_source",
+            {
+                "source_id": "{source}",
+                "title": "Fix the docs",
+                "brief": "The install page is wrong.",
+                "proposal_key": "install-docs",
+                "evidence_links": ["notes.md"],
+                "evidence_hashes": {"notes.md": "{hash}"},
+                "project_id": "{project}",
+            },
+        ),
+    ],
+)
+def test_runner_can_call_the_tool_each_skill_names(tmp_path, tool, arguments, use_async):
+    import hashlib
+
+    notes = tmp_path / "notes"
+    notes.mkdir()
+    (notes / "notes.md").write_text("The install page is wrong.\n")
+    os = build(tmp_path)
+    company = CompanyManager(os.db)
+    product = company.create(name="SDK")
+    project = company.create_project(product_id=product["id"], name="Docs")
+    company.transition_project(project_id=project["id"], target="active", reason="Approved")
+    source = company.create_source(product_id=product["id"], type="markdown", reference=str(notes))
+    ids = {
+        "product": product["id"],
+        "project": project["id"],
+        "source": source["id"],
+        "hash": hashlib.sha256((notes / "notes.md").read_bytes()).hexdigest(),
+    }
+    filled = json.loads(json.dumps(arguments).replace("{product}", ids["product"]).replace("{source}", ids["source"]))
+    filled = json.loads(json.dumps(filled).replace("{project}", ids["project"]).replace("{hash}", ids["hash"]))
+    runner = os._routine_runner
+    runner.model = CountingModel(tool, filled)
+    authority = _RoutineAuthorization(None, routine_id="routine", product_id=product["id"])
+    with authorization_scope(lambda: authority):
+        result = run(runner, use_async)
+    executed = [execution for execution in result.tools or [] if execution.tool_name == tool]
+    assert len(executed) == 1, result.content
+    reply = str(executed[0].result)
+    assert "Permission required" not in reply and "requires Routine authority" not in reply, reply
+    assert "not found" not in reply.lower(), reply
+    if tool == "refresh_company_product":
+        assert not executed[0].tool_call_error, reply
+
+
+# ----------------------------------------------------------------- the runner runs Routines only
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_runner_refuses_a_run_without_routine_authority(tmp_path, use_async):
+    os = build(tmp_path)
+    runner = os._routine_runner
+    result = run(runner, use_async)
+    assert "This agent runs Company Routines only" in str(result.content)
+    assert runner.model.calls == 0
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_runner_runs_with_routine_authority(tmp_path, use_async):
+    os = build(tmp_path)
+    runner = os._routine_runner
+    with authorization_scope(routine_authority):
+        result = run(runner, use_async)
+    assert result.content == "answer" and runner.model.calls == 1
+
+
+def test_a_person_cannot_chat_with_the_runner_over_http(tmp_path):
+    os = build(tmp_path)
+    client = TestClient(os.get_app())
+    response = client.post(RUNNER_ENDPOINT, data={"message": "hello", "stream": "false"})
+    assert "This agent runs Company Routines only" in response.text
+    assert os._routine_runner.model.calls == 0
+    # The scheduler's own identity without a Routine is refused as well.
+    response = client.post(RUNNER_ENDPOINT, headers=internal_headers(os), data={"message": "hello", "stream": "false"})
+    assert "This agent runs Company Routines only" in response.text
+    assert os._routine_runner.model.calls == 0
+
+
+def test_the_scheduler_reaches_the_runner_with_a_routine(tmp_path):
+    os = build(tmp_path)
+    client = TestClient(os.get_app())
+    response = client.post(
+        RUNNER_ENDPOINT, headers=internal_headers(os, ROUTINE_SNAPSHOT), data={"message": "go", "stream": "false"}
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["content"] == "answer" and body["agent_id"] == ROUTINE_RUNNER_ID
+    assert body["agent_name"] == "Super Agent Routines"
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_super_agent_cannot_run_the_runner(tmp_path, use_async):
+    os = build(tmp_path)
+    os.manager.model = CountingModel("run_agent", {"agent_id": ROUTINE_RUNNER_ID, "message": "go"})
+    result = run(os.manager, use_async)
+    assert "not found" in str(result.content).lower() or "reserved" in str(result.content).lower(), result.content
+    assert os._routine_runner.model.calls == 0
+
+
+# ----------------------------------------------------------------- Super Agent never runs a Routine
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_super_agent_refuses_a_run_with_routine_authority(tmp_path, use_async):
+    os = build(tmp_path)
+    with authorization_scope(routine_authority):
+        result = run(os.manager, use_async)
+    assert "Company Routines run on the Routine runner" in str(result.content)
+    assert os.manager.model.calls == 0
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_super_agent_runs_for_a_person(tmp_path, use_async):
+    os = build(tmp_path)
+    assert run(os.manager, use_async).content == "answer"
+    assert os.manager.model.calls == 1
+
+
+def test_super_agent_refuses_a_routine_over_http(tmp_path):
+    os = build(tmp_path)
+    client = TestClient(os.get_app())
+    response = client.post(
+        f"/teams/{MANAGER_TEAM_ID}/runs",
+        headers=internal_headers(os, ROUTINE_SNAPSHOT),
+        data={"message": "go", "stream": "false"},
+    )
+    assert "Company Routines run on the Routine runner" in response.text
+    assert os.manager.model.calls == 0
+
+
+# ----------------------------------------------------------------- listings
+
+
+def test_runner_is_served_but_listed_nowhere(tmp_path):
+    os = build(tmp_path, agents=[Agent(id="reader", model=CountingModel())], a2a_interface=True, mcp=True)
+    assert ROUTINE_RUNNER_ID in [agent.id for agent in os.agents]
+    client = TestClient(os.get_app())
+    assert [agent["id"] for agent in client.get("/agents").json()] == ["reader"]
+    config = client.get("/config").json()
+    assert [agent["id"] for agent in config["agents"]] == ["reader"]
+    assert ROUTINE_RUNNER_ID not in config.get("manifest", {})
+    assert [agent.id for agent in os._get_a2a_agents()] == ["reader"]
+    assert os.registry.get_agent(ROUTINE_RUNNER_ID) is None
+    runner_tools = next(tool for tool in os.manager.tools if isinstance(tool, StudioRunnerTools))
+    assert [row["id"] for row in json.loads(runner_tools.list_agents())["agents"]] == ["reader"]
+    assert ROUTINE_RUNNER_ID not in "\n".join(os.manager.instructions())
+    assert [member.id for member in os.manager.members] == [BUILDER_ID]
+
+
+@pytest.mark.asyncio
+async def test_runner_is_not_in_the_mcp_listing(tmp_path):
+    from fastmcp import Client
+
+    from agno.os.mcp import build_mcp_server
+
+    os = build(tmp_path, agents=[Agent(id="reader", model=CountingModel())], mcp=True)
+    os.get_app()
+    async with Client(build_mcp_server(os)) as client:
+        result = await client.call_tool("get_agentos_config", {})
+    listed = json.loads(result.content[0].text)
+    assert [agent["id"] for agent in listed["agents"]] == ["reader"]
+
+
+# ----------------------------------------------------------------- records and declarations
+
+
+def test_routine_record_shows_the_executor_and_the_real_runner(tmp_path):
+    product = Product(
+        id="sdk",
+        name="SDK",
+        routines=[
+            Routine(
+                name="weekly",
+                executor_type="team",
+                executor_id=MANAGER_TEAM_ID,
+                cron_expr="0 9 * * 1",
+                instructions="Review.",
+            )
+        ],
+    )
+    db = SqliteDb(db_file=str(tmp_path / "os.db"))
+    os = AgentOS(db=db, company=CompanyConfig(model=CountingModel(), products=[product]), telemetry=False)
+    with TestClient(os.get_app()) as client:
+        routine = client.get("/company/routines").json()["data"][0]
+    # The Routine API shows the executor the person chose and the address that runs.
+    assert routine["endpoint"] == RUNNER_ENDPOINT
+    assert (routine["target_type"], routine["target_id"]) == ("team", MANAGER_TEAM_ID)
+    # The stored row names the runner, so the scheduler fires the component its target names.
+    stored = db.get_schedule_by_name("sdk.weekly")
+    assert stored["endpoint"] == RUNNER_ENDPOINT
+    assert (stored["target_type"], stored["target_id"]) == ("agent", ROUTINE_RUNNER_ID)
+
+
+def test_declared_routine_with_a_missing_executor_names_what_is_wrong(tmp_path):
+    product = Product(
+        name="Docs",
+        routines=[Routine(name="weekly", executor_type="agent", executor_id="company-manager", instructions="Review.")],
+    )
+    db = SqliteDb(db_file=str(tmp_path / "os.db"))
+    os = AgentOS(db=db, company=CompanyConfig(model=CountingModel(), products=[product]), telemetry=False)
+    with pytest.raises(ValueError) as raised:
+        with TestClient(os.get_app()):
+            pass
+    message = str(raised.value)
+    assert "Product 'Docs'" in message and "Routine 'weekly'" in message
+    assert "executor agent 'company-manager'" in message and "missing from the registry" in message
+
+
+def test_skill_files_are_the_packaged_three():
+    import agno.company
+
+    names = sorted(path.parent.name for path in (Path(agno.company.__file__).parent / "skills").glob("*/SKILL.md"))
+    assert names == ["intake", "refresh", "summary"]

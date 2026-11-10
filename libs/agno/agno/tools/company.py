@@ -16,7 +16,7 @@ from pydantic import BeforeValidator
 
 from agno.company.declarations import Product, Routine, Source
 from agno.company.manager import AsyncCompanyManager, CompanyManager
-from agno.company.routines import _require_routine_product, _RoutineAuthorization
+from agno.company.routines import _named_executor, _require_routine_product, _RoutineAuthorization
 from agno.company.sources import is_remote_git
 from agno.db.base import AsyncBaseDb
 from agno.run.authorization import current_authorization, requires_permission
@@ -487,6 +487,8 @@ class CompanyTools(Toolkit):
         """Create a Routine for the calling human; automated runs cannot create Routines.
 
         Args:
+            executor_type: Kind of component that runs it: agent, team or workflow.
+            executor_id: ID of the component that runs it. Use team "superagent" unless the person names another.
             template: Optional intake, refresh or summary template; null requires instructions.
             instructions: Custom instructions; null uses the selected template.
             cron_expr: Cron expression; null creates an on-demand Routine.
@@ -500,16 +502,15 @@ class CompanyTools(Toolkit):
         routine = _routine_declaration(
             name, executor_type, executor_id, template, instructions, cron_expr, timezone, enabled
         )
-        return _public_json(
-            self._sync().create_routine(
-                product_id=product_id,
-                routine=routine,
-                user_id=_identity(_agno_run_context),
-                scoped_user_id=self._scoped_user(_agno_run_context),
-                check=self._routine_check(routine, _agno_run_context),
-                agent_os=self._agent_os_ref() if self._agent_os_ref else None,
-            )
+        row = self._sync().create_routine(
+            product_id=product_id,
+            routine=routine,
+            user_id=_identity(_agno_run_context),
+            scoped_user_id=self._scoped_user(_agno_run_context),
+            check=self._routine_check(routine, _agno_run_context),
+            agent_os=self._agent_os_ref() if self._agent_os_ref else None,
         )
+        return _public_json({**row, **_named_executor(row)})
 
     @requires_permission()
     async def acreate_company_product(
@@ -591,6 +592,8 @@ class CompanyTools(Toolkit):
         """Create a Routine for the calling human; automated runs cannot create Routines.
 
         Args:
+            executor_type: Kind of component that runs it: agent, team or workflow.
+            executor_id: ID of the component that runs it. Use team "superagent" unless the person names another.
             template: Optional intake, refresh or summary template; null requires instructions.
             instructions: Custom instructions; null uses the selected template.
             cron_expr: Cron expression; null creates an on-demand Routine.
@@ -610,16 +613,15 @@ class CompanyTools(Toolkit):
             if isinstance(self.db, AsyncBaseDb)
             else self._routine_check(routine, _agno_run_context)
         )
-        return _public_json(
-            await self._async().create_routine(
-                product_id=product_id,
-                routine=routine,
-                user_id=_identity(_agno_run_context),
-                scoped_user_id=self._scoped_user(_agno_run_context),
-                check=check,
-                agent_os=self._agent_os_ref() if self._agent_os_ref else None,
-            )
+        row = await self._async().create_routine(
+            product_id=product_id,
+            routine=routine,
+            user_id=_identity(_agno_run_context),
+            scoped_user_id=self._scoped_user(_agno_run_context),
+            check=check,
+            agent_os=self._agent_os_ref() if self._agent_os_ref else None,
         )
+        return _public_json({**row, **_named_executor(row)})
 
     @requires_permission()
     def list_company_products(
@@ -730,7 +732,8 @@ class CompanyTools(Toolkit):
         Args:
             executor_type: Suggested executor kind; null leaves selection to acceptance.
             executor_id: Suggested executor ID; null leaves selection to acceptance.
-            brief: Task brief; null leaves it unspecified.
+            brief: Task brief, written for the executor: the outcome, the deliverable, how it is checked and any
+                restrictions the person gave. Null leaves it unspecified.
             project_id: Required Project ID within the Product. Propose a Project first when none fits.
         """
         executor_type = _empty_to_none(executor_type)
@@ -1022,7 +1025,8 @@ class CompanyTools(Toolkit):
         Args:
             executor_type: Suggested executor kind; null leaves selection to acceptance.
             executor_id: Suggested executor ID; null leaves selection to acceptance.
-            brief: Task brief; null leaves it unspecified.
+            brief: Task brief, written for the executor: the outcome, the deliverable, how it is checked and any
+                restrictions the person gave. Null leaves it unspecified.
             project_id: Required Project ID within the Product. Propose a Project first when none fits.
         """
         executor_type = _empty_to_none(executor_type)

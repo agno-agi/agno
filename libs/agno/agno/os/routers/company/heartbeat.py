@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from agno.company.declarations import AutoAccept, Product, Routine, Source
 from agno.company.manager import AsyncCompanyManager, CompanyManager
-from agno.company.routines import _routine_executor_endpoint, _routine_message, _schedule_fields
+from agno.company.routines import _named_executor, _routine_executor_endpoint, _routine_message, _schedule_fields
 from agno.db.base import AsyncBaseDb
 from agno.db.utils import get_sort_value
 from agno.os.auth import get_authentication_dependency
@@ -119,7 +119,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             raise HTTPException(409, "Routine is missing its Product metadata")
         if not include_deleted and row["payload"]["metadata"].get("deleted_at") is not None:
             raise HTTPException(404, "Routine not found")
-        return row
+        return {**row, **_named_executor(row)}
 
     def outlived(run, row, request):
         from agno.scheduler.executor import run_deadline
@@ -177,6 +177,8 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         return [
             {
                 **row,
+                # The executor fields name what the person chose; the endpoint names what runs.
+                **_named_executor(row),
                 "schedule_type": schedule_type(row),
                 "last_run": latest.get(row["id"]),
                 "deleted_at": (row.get("payload") or {}).get("metadata", {}).get("deleted_at"),

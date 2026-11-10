@@ -17,7 +17,7 @@ from agno.os.manager.prompts import (
     MANAGER_INSTRUCTIONS,
     SOURCE_INSTRUCTIONS,
 )
-from agno.registry._reserved import BUILDER_ID, RESERVED_MANAGER_IDS, RESERVED_MEMBER_IDS
+from agno.registry._reserved import BUILDER_ID, RESERVED_MANAGER_IDS, RESERVED_MEMBER_IDS, _listed
 from agno.run.authorization import _caller_authorization, requires_permission
 from agno.team import Team
 
@@ -229,6 +229,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
 
     Called internally by AgentOS after its registry and database are set.
     """
+    from agno.company.routines import _RoutineBoundary
     from agno.db.base import AsyncBaseDb, BaseDb
     from agno.tools.agentos import AgentOSTools
     from agno.tools.studio import StudioTools
@@ -301,7 +302,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         registry=registry,
         db=db,
         include_agents=LiveSequence(
-            lambda: [a for a in (agent_os.agents or []) if isinstance(a, (Agent, BaseExternalAgent))]
+            lambda: [a for a in _listed(agent_os.agents) if isinstance(a, (Agent, BaseExternalAgent))]
         ),
         include_teams=LiveSequence(lambda: agent_os._teams),
         include_workflows=LiveSequence(lambda: agent_os._workflows),
@@ -335,7 +336,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
     if company_db is not None:
         from agno.tools.company import CompanyTools
 
-        tools.append(CompanyTools(company_db, summary_tools=False, refresh_tools=False))
+        tools.append(CompanyTools(company_db, summary_tools=False, refresh_tools=False, agent_id=config.id))
         instructions.append(COMPANY_INSTRUCTIONS)
     if config.instructions:
         instructions.append(config.instructions)
@@ -352,6 +353,8 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         tools=tools,
         members=[builder],
         instructions=_ManagerInstructions(instructions, runner, company_db),
+        # Super Agent can edit the platform, so a Company Routine never runs on it.
+        pre_hooks=[_RoutineBoundary(routine=False)],
         tool_call_limit=config.tool_call_limit,
         search_past_sessions=True,
         read_chat_history=True,

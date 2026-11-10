@@ -106,6 +106,7 @@ from agno.os.utils import (
     stamped_component_version,
 )
 from agno.registry import Registry
+from agno.registry._reserved import _listed
 from agno.run.agent import RunErrorEvent, RunOutput
 from agno.run.base import RunStatus
 from agno.utils.log import log_debug, log_error, log_warning
@@ -2161,9 +2162,9 @@ def get_agent_router(
                 )
 
             # Limit results based on the user's access/scopes
-            accessible_agents = await afilter_resources_by_access(request, os.agents or [], "agents")
+            accessible_agents = await afilter_resources_by_access(request, _listed(os.agents), "agents")
         else:
-            accessible_agents = os.agents or []
+            accessible_agents = _listed(os.agents)
 
         agents: List[AgentResponse] = []
         if accessible_agents:

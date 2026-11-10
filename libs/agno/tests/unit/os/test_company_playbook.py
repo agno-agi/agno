@@ -1,4 +1,4 @@
-"""Company playbook, bounded tools and framework Company Manager contracts."""
+"""Company playbook, bounded tools, Super Agent's Company chat and the Routine runner contracts."""
 
 import contextvars
 import inspect
@@ -14,13 +14,13 @@ from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, CompanyConfig, OSManager
 from agno.os.manager.prompts import COMPANY_INSTRUCTIONS
 from agno.registry import Registry
-from agno.registry._reserved import COMPANY_MANAGER_ID
+from agno.registry._reserved import MANAGER_TEAM_ID, ROUTINE_RUNNER_ID
 from agno.run import RunContext
 from agno.tools.company import CompanyTools
 
 
 @pytest.mark.parametrize("manager", [False, True])
-def test_company_manager_assembly_and_model_precedence(tmp_path, manager):
+def test_routine_runner_assembly_and_model_precedence(tmp_path, manager):
     db = SqliteDb(db_file=str(tmp_path / "os.db"))
     first, override = OpenAIResponses(id="first"), OpenAIResponses(id="override")
     registry = Registry(models=[first])
@@ -31,14 +31,14 @@ def test_company_manager_assembly_and_model_precedence(tmp_path, manager):
         manager=OSManager(access_docs=False) if manager else None,
         telemetry=False,
     )
-    pm = os.company_manager
-    assert pm.id == COMPANY_MANAGER_ID and pm.model is override
+    pm = os._routine_runner
+    assert pm.id == ROUTINE_RUNNER_ID and pm.model is override
     assert pm.learning.decision_log.db is db
     assert pm not in registry.agents and not registry.tools
     assert sum(agent is pm for agent in os._agents) == 1
     if manager:
-        # Super Agent holds its own CompanyTools and has no Company Manager member.
-        assert all(m.id != COMPANY_MANAGER_ID for m in os.manager.members)
+        # Super Agent holds its own CompanyTools and has no Routine runner member.
+        assert all(m.id != ROUTINE_RUNNER_ID for m in os.manager.members)
         leader_tools = [t for t in os.manager.tools if isinstance(t, CompanyTools)]
         assert len(leader_tools) == 1 and leader_tools[0] is not pm.tools[0]
         assert "summarize_company_product" not in leader_tools[0].functions
@@ -51,15 +51,16 @@ def test_company_manager_assembly_and_model_precedence(tmp_path, manager):
     assert tools.registry is registry
     assert not any("schedule" in name or "transition" in name for name in tools.functions)
     assert "log_company_decision" not in tools.functions
-    assert "summarize_company_product" not in tools.functions
-    assert "refresh_company_product" not in tools.functions
+    # Summary and refresh Routines run here, so the runner holds both.
+    assert "summarize_company_product" in tools.functions
+    assert "refresh_company_product" in tools.functions
     assert "summarize_company_product" in CompanyTools(db, summary_tools=True).functions
     assert {fn.__name__ for fn in pm.learning.decision_log.get_tools()} == {
         "log_company_decision",
         "search_company_decisions",
     }
     inherited = AgentOS(db=db, registry=Registry(models=[first, override]), company=CompanyConfig(), telemetry=False)
-    assert inherited.company_manager.model is first
+    assert inherited._routine_runner.model is first
     with pytest.raises(ValueError, match="cron_expr"):
         CompanyConfig(cron_expr="")
 
@@ -85,16 +86,16 @@ def test_company_tools_published_only_over_mcp_are_bound(tmp_path):
 def test_no_model_manual_api_and_disabled_company(tmp_path, caplog):
     db = SqliteDb(db_file=str(tmp_path / "no-model.db"))
     os = AgentOS(db=db, company=CompanyConfig(), telemetry=False)
-    assert not any("Company Manager unavailable" in record.message for record in caplog.records)
-    assert os.company_manager is None and "CompanyConfig(model=" in os.company_manager_unavailable_reason
+    assert not any("Super Agent cannot run Routines" in record.message for record in caplog.records)
+    assert os._routine_runner is None and "CompanyConfig(model=" in os._routine_runner_unavailable_reason
     assert any(c.name == "company" and c.status == "WARN" for c in os.run_diagnostics().checks)
     assert TestClient(os.get_app()).post("/company/decisions", json={"decision": "manual"}).status_code == 201
     disabled = AgentOS(db=db, telemetry=False)
     assert not any(getattr(route, "path", "").startswith("/company") for route in disabled.get_app().routes)
     with pytest.raises(ValueError, match="reserved"):
-        AgentOS(db=db, agents=[Agent(id=COMPANY_MANAGER_ID)], telemetry=False)
+        AgentOS(db=db, agents=[Agent(id=ROUTINE_RUNNER_ID)], telemetry=False)
     with pytest.raises(ValueError, match="reserved"):
-        Registry(agents=[Agent(id=COMPANY_MANAGER_ID)])
+        Registry(agents=[Agent(id=ROUTINE_RUNNER_ID)])
 
 
 @pytest.mark.asyncio
@@ -143,7 +144,7 @@ async def test_tools_identity_fence_and_learning(tmp_path, use_async):
     )
     assert entry["user_id"] == "alice" and entry["session_id"] == "s"
     assert entry["agent_id"] is None
-    assert manager.list_decisions(agent_id=COMPANY_MANAGER_ID, session_id="s")[1] == 0
+    assert manager.list_decisions(agent_id=ROUTINE_RUNNER_ID, session_id="s")[1] == 0
     for function in tools.get_async_functions().values():
         function.process_entrypoint()
         properties = function.parameters.get("properties", {})
@@ -317,7 +318,7 @@ async def test_direct_mcp_has_only_bounded_tools(tmp_path):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["sync", "async", "http"])
-async def test_company_manager_runs_tools_with_injected_identity(tmp_path, mode):
+async def test_super_agent_runs_company_tools_with_injected_identity(tmp_path, mode):
     from agno.models.base import Model
     from agno.models.message import MessageMetrics
     from agno.models.response import ModelResponse
@@ -334,10 +335,7 @@ async def test_company_manager_runs_tools_with_injected_identity(tmp_path, mode)
 
         def invoke(self, messages, *args, **kwargs):
             prompt = "\n".join(m.content for m in messages if m.role == "system" and isinstance(m.content, str))
-            assert "Human review decision" in prompt
-            assert "`log_company_decision`" in prompt and "`search_company_decisions`" in prompt
-            assert not any(name in prompt for name in ("`log_decision`", "`search_decisions`", "`record_outcome`"))
-            assert "append-only" in prompt
+            assert COMPANY_INSTRUCTIONS in prompt
             self.calls += 1
             if self.calls == 1:
                 calls = [
@@ -388,13 +386,19 @@ async def test_company_manager_runs_tools_with_injected_identity(tmp_path, mode)
         def _parse_provider_response_delta(self, response):
             return response
 
-    os = AgentOS(db=db, company=CompanyConfig(model=PlanningModel()), user_isolation=True, telemetry=False)
+    os = AgentOS(
+        db=db,
+        company=CompanyConfig(),
+        manager=OSManager(model=PlanningModel(), access_docs=False),
+        user_isolation=True,
+        telemetry=False,
+    )
     with TestClient(os.get_app()) as client:
         response = client.post("/company/decisions", json={"decision": "Human review decision"})
         assert response.status_code == 201 and response.json()["agent_id"] is None
     if mode == "http":
         with TestClient(os.get_app()) as client:
-            route = "/agents/" + COMPANY_MANAGER_ID
+            route = "/teams/" + MANAGER_TEAM_ID
             assert client.get(route).status_code == 200
             response = client.post(
                 route + "/runs",
@@ -404,17 +408,17 @@ async def test_company_manager_runs_tools_with_injected_identity(tmp_path, mode)
             assert response.json()["content"] == "Proposal recorded"
             created = client.post(
                 "/components",
-                json={"component_id": COMPANY_MANAGER_ID, "component_type": "agent", "name": "Impersonator"},
+                json={"component_id": MANAGER_TEAM_ID, "component_type": "team", "name": "Impersonator"},
             )
             assert created.status_code == 409, created.text
-            assert client.patch("/components/" + COMPANY_MANAGER_ID, json={"name": "Changed"}).status_code == 404
-            assert client.delete("/components/" + COMPANY_MANAGER_ID).status_code == 404
-            assert db.get_component(COMPANY_MANAGER_ID) is None
+            assert client.patch("/components/" + MANAGER_TEAM_ID, json={"name": "Changed"}).status_code == 404
+            assert client.delete("/components/" + MANAGER_TEAM_ID).status_code == 404
+            assert db.get_component(MANAGER_TEAM_ID) is None
             assert client.get(route).status_code == 200
     elif mode == "async":
-        await os.company_manager.arun("Plan the release", user_id="alice", session_id="planning")
+        await os.manager.arun("Plan the release", user_id="alice", session_id="planning")
     else:
-        os.company_manager.run("Plan the release", user_id="alice", session_id="planning")
+        os.manager.run("Plan the release", user_id="alice", session_id="planning")
     m = CompanyManager(db)
     tasks, total = m.list_tasks()
     assert total == 1 and tasks[0]["user_id"] == "alice" and tasks[0]["status"] == "backlog"
@@ -422,8 +426,77 @@ async def test_company_manager_runs_tools_with_injected_identity(tmp_path, mode)
     decisions, total = m.list_decisions()
     assert total == 2
     own = next(decision for decision in decisions if decision.decision == "Review first")
-    assert own.user_id == "alice" and own.session_id == "planning" and own.agent_id == COMPANY_MANAGER_ID
-    assert m.list_decisions(agent_id=COMPANY_MANAGER_ID)[1] == 1
+    # Decisions logged in chat carry Super Agent's id, not the Routine runner's.
+    assert own.user_id == "alice" and own.session_id == "planning" and own.agent_id == MANAGER_TEAM_ID
+    assert m.list_decisions(agent_id=ROUTINE_RUNNER_ID)[1] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_routine_runner_recalls_company_decisions_only_in_routines(tmp_path, use_async):
+    from agno.models.base import Model
+    from agno.models.message import MessageMetrics
+    from agno.models.response import ModelResponse
+    from agno.os.authz.run_context import restore_authorization
+    from agno.run.authorization import authorization_scope
+
+    prompts = []
+
+    class RecallModel(Model):
+        def __init__(self):
+            super().__init__(id="offline-recall", provider="test")
+
+        def invoke(self, messages, *args, **kwargs):
+            prompts.append("\n".join(m.content for m in messages if m.role == "system" and isinstance(m.content, str)))
+            return ModelResponse(role="assistant", content="Quiet check", response_usage=MessageMetrics())
+
+        async def ainvoke(self, *args, **kwargs):
+            return self.invoke(*args, **kwargs)
+
+        def invoke_stream(self, *args, **kwargs):
+            yield self.invoke(*args, **kwargs)
+
+        async def ainvoke_stream(self, *args, **kwargs):
+            yield self.invoke(*args, **kwargs)
+
+        def parse_args(self, *args, **kwargs):
+            return {}
+
+        def _parse_provider_response(self, response, **kwargs):
+            return response
+
+        def _parse_provider_response_delta(self, response):
+            return response
+
+    db = SqliteDb(db_file=str(tmp_path / "recall.db"))
+    product = CompanyManager(db).create(name="SDK", user_id="alice")
+    os = AgentOS(db=db, company=CompanyConfig(model=RecallModel()), user_isolation=True, telemetry=False)
+    with TestClient(os.get_app()) as client:
+        assert client.post("/company/decisions", json={"decision": "Human review decision"}).status_code == 201
+
+    async def run():
+        runner = os._routine_runner
+        if use_async:
+            return await runner.arun("Run the Routine", user_id="alice", session_id="routine")
+        return runner.run("Run the Routine", user_id="alice", session_id="routine")
+
+    refused = await run()
+    assert refused.content == "This agent runs Company Routines only" and prompts == []
+    routine = {
+        "context": {"principal_id": "alice", "scopes": ["decisions:read"]},
+        "service_account": True,
+        "enforce_tools": True,
+        "company_routine": True,
+        "company_routine_id": "refresh",
+        "company_product_id": product["id"],
+    }
+    with authorization_scope(lambda: restore_authorization(None, routine)):
+        assert (await run()).content == "Quiet check"
+    prompt = prompts[-1]
+    assert "Human review decision" in prompt
+    assert "`log_company_decision`" in prompt and "`search_company_decisions`" in prompt
+    assert not any(name in prompt for name in ("`log_decision`", "`search_decisions`", "`record_outcome`"))
+    assert "append-only" in prompt
 
 
 @pytest.mark.asyncio
@@ -455,18 +528,18 @@ async def test_tools_and_automatic_recall_require_scopes(tmp_path):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fresh", [False, True])
-async def test_served_company_manager_resolution_and_catalog_fence(tmp_path, fresh):
+async def test_served_routine_runner_resolution_and_catalog_fence(tmp_path, fresh):
     from agno.os.utils import AgnoHTTPException, get_agent_by_id, get_agent_by_id_async
 
     db = SqliteDb(db_file=str(tmp_path / "resolution.db"))
     os = AgentOS(db=db, company=CompanyConfig(model=OpenAIResponses(id="offline")), telemetry=False)
     for resolver in (get_agent_by_id, get_agent_by_id_async):
-        result = resolver(COMPANY_MANAGER_ID, agents=os._agents, db=db, create_fresh=fresh)
+        result = resolver(ROUTINE_RUNNER_ID, agents=os._agents, db=db, create_fresh=fresh)
         result = await result if inspect.isawaitable(result) else result
-        assert result.id == COMPANY_MANAGER_ID
-        assert (result is not os.company_manager) == fresh
+        assert result.id == ROUTINE_RUNNER_ID
+        assert (result is not os._routine_runner) == fresh
         with pytest.raises(AgnoHTTPException, match="reserved"):
-            result = resolver(COMPANY_MANAGER_ID, agents=[], db=db)
+            result = resolver(ROUTINE_RUNNER_ID, agents=[], db=db)
             if inspect.isawaitable(result):
                 await result
     db.close()

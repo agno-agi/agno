@@ -145,6 +145,31 @@ class _RoutineResultGuardrail(BaseGuardrail):
         self.check(run_input, run_output)
 
 
+class _RoutineBoundary(BaseGuardrail):
+    """Keep Routine runs on the Routine runner, and every other run off it.
+
+    A Routine runs unattended on untrusted Sources with proposal-only authority. With routine=True the
+    component accepts only runs that carry that authority. With routine=False it refuses them.
+    """
+
+    def __init__(self, routine: bool):
+        self.routine = routine
+
+    def check(self, run_input: Any = None) -> None:
+        from agno.exceptions import InputCheckError
+        from agno.run.authorization import current_authorization
+
+        if isinstance(current_authorization(), _RoutineAuthorization) != self.routine:
+            raise InputCheckError(
+                "This agent runs Company Routines only"
+                if self.routine
+                else "Company Routines run on the Routine runner"
+            )
+
+    async def async_check(self, run_input: Any = None) -> None:
+        self.check(run_input)
+
+
 def _failed_routines(db: Any, products: Any) -> int:
     from agno.scheduler import ScheduleManager
 
@@ -186,18 +211,20 @@ async def _afailed_routines(db: Any, products: Any) -> int:
 
 
 def _routine_executor_endpoint(executor_type: str, executor_id: str, registry: Any, *, agent_os: Any = None) -> str:
-    from agno.registry._reserved import COMPANY_MANAGER_ID, RESERVED_MANAGER_IDS
+    from agno.registry._reserved import MANAGER_TEAM_ID, RESERVED_MANAGER_IDS, ROUTINE_RUNNER_ID
 
-    if executor_id == COMPANY_MANAGER_ID:
-        if executor_type != "agent":
-            raise ValueError("Company Manager Routine executor_type must be 'agent'")
-        component = agent_os.company_manager if agent_os is not None else None
+    if executor_id == MANAGER_TEAM_ID:
+        if executor_type != "team":
+            raise ValueError("Super Agent Routine executor_type must be 'team'")
+        # Super Agent can edit the platform; Routines run unattended on untrusted Sources.
+        # Its Routines run on the restricted runner, never on the team itself.
+        component = getattr(agent_os, "_routine_runner", None)
         if component is None:
-            reason = getattr(agent_os, "company_manager_unavailable_reason", None)
-            raise ValueError(reason or "Company Manager unavailable: configure CompanyConfig on the owning AgentOS")
+            reason = getattr(agent_os, "_routine_runner_unavailable_reason", None)
+            raise ValueError(reason or "Super Agent cannot run Routines: configure CompanyConfig on the owning AgentOS")
+        executor_type, executor_id = "agent", ROUTINE_RUNNER_ID
     elif executor_id in RESERVED_MANAGER_IDS:
-        # OS Manager and its specialists can edit the platform; Routines run unattended on untrusted Sources.
-        raise ValueError("Only the Company Manager can execute Routines among framework managers")
+        raise ValueError("Only Super Agent can execute Routines among framework managers")
     else:
         component = _registered_component(registry, executor_type, executor_id)
         if component is None:
@@ -207,6 +234,15 @@ def _routine_executor_endpoint(executor_type: str, executor_id: str, registry: A
     if RUN_ENDPOINT_RE.fullmatch(endpoint) is None:
         raise ValueError("Invalid Routine executor id")
     return endpoint
+
+
+def _named_executor(row: Dict[str, Any]) -> Dict[str, Any]:
+    """The executor a person named for a stored Routine: Super Agent for a Routine on the runner."""
+    from agno.registry._reserved import MANAGER_TEAM_ID, ROUTINE_RUNNER_ID
+
+    if row.get("target_id") == ROUTINE_RUNNER_ID:
+        return {"target_type": "team", "target_id": MANAGER_TEAM_ID}
+    return {"target_type": row.get("target_type"), "target_id": row.get("target_id")}
 
 
 def _schedule_fields(product_id: str, routine: Routine, registry: Any, *, agent_os: Any = None) -> Dict[str, Any]:

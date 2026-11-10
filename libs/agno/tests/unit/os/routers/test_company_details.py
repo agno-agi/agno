@@ -81,7 +81,8 @@ def test_next_manager_runs_use_saved_details_without_products(tmp_path):
     from agno.models.message import MessageMetrics
     from agno.models.response import ModelResponse
     from agno.os import OSManager
-    from agno.registry._reserved import COMPANY_MANAGER_ID, MANAGER_TEAM_ID
+    from agno.registry._reserved import MANAGER_TEAM_ID
+    from agno.utils.agent import execute_instructions
 
     class ContextModel(Model):
         def __init__(self):
@@ -127,36 +128,35 @@ def test_next_manager_runs_use_saved_details_without_products(tmp_path):
     client = TestClient(os.get_app())
     admin = headers(["agent_os:admin"])
     data = client.get("/company/details", headers=admin).json()
-    for component_type, component_id in [("agents", COMPANY_MANAGER_ID), ("teams", MANAGER_TEAM_ID)]:
-        scope = f"{component_type}:{component_id}:run"
-        first = client.post(
-            f"/{component_type}/{component_id}/runs",
-            data={"message": "What do we do?", "stream": "false"},
-            headers=headers([scope, "company:read"]),
-        )
-        assert first.status_code == 200, first.text
-        assert first.json()["content"] == "original description"
-        denied = client.post(
-            f"/{component_type}/{component_id}/runs",
-            data={"message": "What do we do?", "stream": "false"},
-            headers=headers([scope]),
-        )
-        assert denied.status_code == 200, denied.text
-        assert denied.json()["content"] == "no company context"
+    scope = f"teams:{MANAGER_TEAM_ID}:run"
+    first = client.post(
+        f"/teams/{MANAGER_TEAM_ID}/runs",
+        data={"message": "What do we do?", "stream": "false"},
+        headers=headers([scope, "company:read"]),
+    )
+    assert first.status_code == 200, first.text
+    assert first.json()["content"] == "original description"
+    denied = client.post(
+        f"/teams/{MANAGER_TEAM_ID}/runs",
+        data={"message": "What do we do?", "stream": "false"},
+        headers=headers([scope]),
+    )
+    assert denied.status_code == 200, denied.text
+    assert denied.json()["content"] == "no company context"
+    assert "original description" in "\n".join(execute_instructions(os._routine_runner.instructions))
     changed = client.patch(
         "/company/details",
         json={"expected_updated_at": data["updated_at"], "description": "new description"},
         headers=admin,
     )
     assert changed.status_code == 200
-    for component_type, component_id in [("agents", COMPANY_MANAGER_ID), ("teams", MANAGER_TEAM_ID)]:
-        updated = client.post(
-            f"/{component_type}/{component_id}/runs",
-            data={"message": "What do we do?", "stream": "false"},
-            headers=admin,
-        )
-        assert updated.status_code == 200, updated.text
-        assert updated.json()["content"] == "new description"
+    updated = client.post(
+        f"/teams/{MANAGER_TEAM_ID}/runs", data={"message": "What do we do?", "stream": "false"}, headers=admin
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["content"] == "new description"
+    # The Routine runner reads the same details for its next Routine.
+    assert "new description" in "\n".join(execute_instructions(os._routine_runner.instructions))
     db.close()
 
 
@@ -240,13 +240,15 @@ def _company_os(db, **company):
 
 
 def _assert_managers_answer(client):
-    from agno.registry._reserved import COMPANY_MANAGER_ID, MANAGER_TEAM_ID
+    from agno.registry._reserved import MANAGER_TEAM_ID, ROUTINE_RUNNER_ID
 
     assert client.get("/agents").status_code == 200
     assert client.get("/teams").status_code == 200
-    for path in (f"/agents/{COMPANY_MANAGER_ID}/runs", f"/teams/{MANAGER_TEAM_ID}/runs"):
-        run = client.post(path, data={"message": "hello", "stream": "false"})
-        assert run.status_code == 200 and run.json()["content"] == "local answer"
+    run = client.post(f"/teams/{MANAGER_TEAM_ID}/runs", data={"message": "hello", "stream": "false"})
+    assert run.status_code == 200 and run.json()["content"] == "local answer"
+    # The Routine runner is still served, and still refuses a person's run.
+    run = client.post(f"/agents/{ROUTINE_RUNNER_ID}/runs", data={"message": "hello", "stream": "false"})
+    assert run.status_code == 200 and run.json()["content"] == "This agent runs Company Routines only"
 
 
 def test_startup_applies_configuration_without_products(tmp_path):
@@ -445,7 +447,7 @@ def test_chat_edits_details_with_caller_permissions_and_fresh_context(tmp_path, 
     manager = OSManager(model=CompanyEditModel(), access_docs=False, offload_tool_results=False)
     company = CompanyConfig(model=CompanyEditModel(), name="Initial", description="Initial description")
     os = AgentOS(db=db, manager=manager, company=company, authorization=auth, telemetry=False)
-    scopes = ["teams:superagent:run", "agents:company-manager:run", "company:read"]
+    scopes = ["teams:superagent:run", "company:read"]
     if can_write:
         scopes.append("company:write")
     with TestClient(os.get_app()) as client:
@@ -469,18 +471,13 @@ def test_chat_edits_details_with_caller_permissions_and_fresh_context(tmp_path, 
         assert (saved["name"], saved["description"]) == ("Acme", "We build warehouse robots.")
         assert "Acme" in response.json()["content"]
         assert "We build warehouse robots." in response.json()["content"]
-        for path in ("/teams/superagent/runs", "/agents/company-manager/runs"):
-            fresh = client.post(
-                path,
-                headers=headers(scopes),
-                data={
-                    "message": "What does our company do?",
-                    "stream": "false",
-                    "session_id": "new-" + path.split("/")[2],
-                },
-            )
-            assert fresh.status_code == 200, fresh.text
-            assert '"name": "Acme", "description": "We build warehouse robots."' in fresh.json()["content"]
+        fresh = client.post(
+            "/teams/superagent/runs",
+            headers=headers(scopes),
+            data={"message": "What does our company do?", "stream": "false", "session_id": "new-superagent"},
+        )
+        assert fresh.status_code == 200, fresh.text
+        assert '"name": "Acme", "description": "We build warehouse robots."' in fresh.json()["content"]
     db.close()
     fresh_db = SqliteDb(db_file=db_path)
     restarted = AgentOS(
@@ -507,7 +504,7 @@ def test_replacing_details_requires_real_confirmation_through_superagent(tmp_pat
         authorization=Authorization(verification_keys=[SECRET], algorithm="HS256", audience="details-test"),
         telemetry=False,
     )
-    # Super Agent edits the details itself: no grant on the Company Manager agent is needed.
+    # Super Agent edits the details itself: its run grant and the company scopes are enough.
     scopes = ["teams:superagent:run", "company:read", "company:write"]
     with TestClient(os.get_app()) as client:
         response = client.post(

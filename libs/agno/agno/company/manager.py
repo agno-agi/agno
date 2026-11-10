@@ -17,8 +17,10 @@ def _validate_agent_source(type: str, executor_type: str, executor_id: Optional[
         raise ValueError("Adding a Source requires the calling agent or team and run identity")
 
 
-def _routine_provenance(routine: Any) -> Dict[str, str]:
-    return {"managed_by": "company", "target_type": routine.executor_type, "target_id": routine.executor_id}
+def _routine_provenance(endpoint: str) -> Dict[str, Any]:
+    from agno.db.schemas.scheduler import _schedule_endpoint_targets
+
+    return {"managed_by": "company", **_schedule_endpoint_targets("company", endpoint)}
 
 
 def _without_routine_links(fields: Dict[str, Any]) -> Dict[str, Any]:
@@ -92,7 +94,7 @@ class CompanyManager:
         """Create and link a Routine owned by ``user_id``; ``check`` sees the schedule fields before any write.
 
         Any writer may add a Routine to a Product, as with Projects and Tasks; ``scoped_user_id`` is kept for
-        callers and does not restrict which Product the Routine joins. Supply ``agent_os`` to target Company Manager.
+        callers and does not restrict which Product the Routine joins. Supply ``agent_os`` to name Super Agent as the executor.
         """
         from agno.company.declarations import Routine
         from agno.company.routines import _declared_schedule_fields, _require_routine_product
@@ -117,7 +119,7 @@ class CompanyManager:
             cron=fields["cron_expr"],
             user_id=user_id,
             enabled_on_create=False,
-            provenance=_routine_provenance(routine),
+            provenance=_routine_provenance(fields["endpoint"]),
         )
         linked = False
         try:
@@ -997,7 +999,7 @@ class AsyncCompanyManager:
         """Create and link a Routine owned by ``user_id``; ``check`` sees the schedule fields before any write.
 
         Any writer may add a Routine to a Product, as with Projects and Tasks; ``scoped_user_id`` is kept for
-        callers and does not restrict which Product the Routine joins. Supply ``agent_os`` to target Company Manager.
+        callers and does not restrict which Product the Routine joins. Supply ``agent_os`` to name Super Agent as the executor.
         """
         from agno.company.declarations import Routine
         from agno.company.routines import _declared_schedule_fields, _require_routine_product
@@ -1022,7 +1024,7 @@ class AsyncCompanyManager:
             cron=fields["cron_expr"],
             user_id=user_id,
             enabled_on_create=False,
-            provenance=_routine_provenance(routine),
+            provenance=_routine_provenance(fields["endpoint"]),
         )
         linked = False
         try:

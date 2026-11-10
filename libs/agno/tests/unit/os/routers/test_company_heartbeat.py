@@ -12,7 +12,7 @@ from agno.company.manager import CompanyManager
 from agno.company.routines import _RoutineAuthorization, load_routine_skills
 from agno.db.schemas.scheduler import Schedule
 from agno.db.sqlite import SqliteDb
-from agno.os import AgentOS, CompanyConfig
+from agno.os import AgentOS, CompanyConfig, OSManager
 from agno.os.authz.run_context import restore_authorization
 from agno.run.authorization import AUTHORIZATION_HEADER, authorization_scope
 from agno.scheduler.executor import ScheduleExecutor
@@ -997,10 +997,14 @@ def test_custom_company_tools_resolve_os_interfaces_and_human_origin(tmp_path, m
         agents=[executor],
         interfaces=[interface],
         company=CompanyConfig(model=OpenAIResponses(id="offline")),
+        manager=OSManager(model=OpenAIResponses(id="offline"), access_docs=False),
         telemetry=False,
     )
     assert toolkit.interfaces is os.interfaces
-    assert "summarize_company_product" not in os.company_manager.tools[0].functions
+    # Summary Routines run on the Routine runner; Super Agent's chat tools do not deliver summaries.
+    assert "summarize_company_product" in os._routine_runner.tools[0].functions
+    leader_tools = [tool for tool in os.manager.tools if isinstance(tool, CompanyTools)]
+    assert len(leader_tools) == 1 and "summarize_company_product" not in leader_tools[0].functions
     delivery = AsyncMock()
     monkeypatch.setattr("agno.company.summary.adeliver_summary", delivery)
     with TestClient(os.get_app()) as client:

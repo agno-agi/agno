@@ -96,6 +96,7 @@ from agno.os.utils import (
     update_cors_middleware,
 )
 from agno.registry import Registry
+from agno.registry._reserved import _listed
 from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.team import RemoteTeam, Team, TeamFactory
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -741,23 +742,23 @@ class AgentOS:
         from agno.os.manager.manager import _build_manager
 
         self._manager_catalog_checked: Set[int] = set()
-        self._company_manager: Optional[Agent] = None
-        self.company_manager_unavailable_reason: Optional[str] = None
+        self._routine_runner: Optional[Agent] = None
+        self._routine_runner_unavailable_reason: Optional[str] = None
         if self.company is not None:
-            from agno.company.company_manager import _build_company_manager
             from agno.company.execution import _mount_executors
+            from agno.company.routine_runner import _build_routine_runner
 
             _mount_executors(self)
 
             company_model = self.company.model
             if company_model is None and self.registry is not None and self.registry.models:
                 company_model = self.registry.models[0]
-            self._company_manager = _build_company_manager(self, company_model)
-            if self._company_manager is None:
-                self.company_manager_unavailable_reason = (
-                    "Company Manager unavailable: configure CompanyConfig(model=...) or Registry(models=[...])"
+            self._routine_runner = _build_routine_runner(self, company_model)
+            if self._routine_runner is None:
+                self._routine_runner_unavailable_reason = (
+                    "Super Agent cannot run Routines: configure CompanyConfig(model=...) or Registry(models=[...])"
                     if company_model is None
-                    else "Company Manager unavailable: Company requires a database"
+                    else "Super Agent cannot run Routines: Company requires a database"
                 )
 
         self._manager: Optional["_Manager"] = None
@@ -771,15 +772,16 @@ class AgentOS:
             self.agents = list(self.agents or [])
             self.teams = [*(self.teams or []), self._manager.team]
 
-        if self._company_manager is not None:
+        if self._routine_runner is not None:
+            from agno.company.details import _company_instructions
+            from agno.company.routine_runner import INSTRUCTIONS
+
             if self.registry is None:
                 self.registry = Registry()
-            self.registry.exclude_components([self._company_manager])
-            self.agents = [*(self.agents or []), self._company_manager]
-            from agno.company.company_manager import INSTRUCTIONS
-            from agno.company.details import _company_instructions
-
-            self._company_manager.instructions = _company_instructions(self._company_db, [INSTRUCTIONS])
+            self.registry.exclude_components([self._routine_runner])
+            # Served so the scheduler can reach it; listings leave it out.
+            self.agents = [*(self.agents or []), self._routine_runner]
+            self._routine_runner.instructions = _company_instructions(self._company_db, [INSTRUCTIONS])
         self._apply_manager_manifest()
 
         self._initialize_agents()
@@ -817,25 +819,6 @@ class AgentOS:
         """The OS Manager team, or None when disabled. Supports run() and arun()."""
         return self._manager.team if self._manager is not None else None
 
-    @property
-    def company_manager(self) -> Optional[Agent]:
-        """The built-in Company Manager, or None with an unavailable reason."""
-        return self._company_manager
-
-    @property
-    def product_manager(self) -> Optional[Agent]:
-        """Deprecated alias of ``company_manager``."""
-        log_warning("AgentOS.product_manager is deprecated; use AgentOS.company_manager.")
-        return self._company_manager
-
-    @property
-    def product_manager_unavailable_reason(self) -> Optional[str]:
-        """Deprecated alias of ``company_manager_unavailable_reason``."""
-        log_warning(
-            "AgentOS.product_manager_unavailable_reason is deprecated; use AgentOS.company_manager_unavailable_reason."
-        )
-        return self.company_manager_unavailable_reason
-
     def _owned_by_manager(self, component: Any) -> bool:
         """True for the manager's team and members, which never enter the registry."""
         return (getattr(component, "_registry_excluded", False) is True) or (
@@ -845,14 +828,9 @@ class AgentOS:
     def _apply_manager_manifest(self) -> None:
         """Set default UI descriptions and prompts without replacing application settings."""
         from agno.os.config import AgentOSConfig
-        from agno.registry._reserved import COMPANY_MANAGER_ID, RESERVED_MEMBER_IDS
+        from agno.registry._reserved import RESERVED_MEMBER_IDS
 
         defaults = self._manager.manifest() if self._manager is not None else {}
-        # Company Manager is served with or without OS Manager, so it always gets its own chat card.
-        if self._company_manager is not None:
-            from agno.company.company_manager import _company_manager_manifest
-
-            defaults[COMPANY_MANAGER_ID] = _company_manager_manifest()
         if not defaults:
             return
         if self.config is None:
@@ -1202,7 +1180,7 @@ class AgentOS:
 
     def _get_a2a_agents(self) -> Optional[List[Any]]:
         """The agents the A2A interface serves: external agents (Claude, Codex, ...) next to the local agents."""
-        a2a_agents = [a for a in (self.agents or []) if isinstance(a, (Agent, BaseExternalAgent))]
+        a2a_agents = [a for a in _listed(self.agents) if isinstance(a, (Agent, BaseExternalAgent))]
         return a2a_agents or None
 
     def _get_a2a_security_schemes(self) -> Optional[Dict[str, Any]]:
@@ -1227,7 +1205,7 @@ class AgentOS:
             [*(self.agents or []), *(self.teams or []), *(self.workflows or [])],
             owned=[
                 *(self._manager.components if self._manager is not None else []),
-                *([self._company_manager] if self._company_manager is not None else []),
+                *([self._routine_runner] if self._routine_runner is not None else []),
             ],
         )
         duplicate_ids: List[str] = []

@@ -55,15 +55,13 @@ COMPANY_INSTRUCTIONS = """\
 Company work:
 - A Product is an area of the company's work. A Project is an outcome inside a Product. A Task is one piece of
   a Project, done by an executor. A Source is a location a Product reads from. A Routine is saved instructions
-  for a Product that run on a schedule or on demand and can only propose work.
+  for a Product, run on a schedule or on demand by an agent, team or workflow. It can only propose work.
 - Do simple requests directly, with no Product, Project or Task. Record work only when the person asks, or
   confirms a plan with several tasks. Do not offer to record small requests.
 - To add to existing work, find its Project and add to it. Read the playbook only when planning new work.
 - You propose Projects and Tasks. People accept, start and complete them in the Company pages of the AgentOS
   UI. When asked to do one of those, say so and name the record.
 - For "what needs a decision from me", list proposed Projects and Backlog Tasks, which wait for acceptance.
-- Write each Task brief for its executor: the outcome, the deliverable, how it is checked and any restrictions.
-- Save the company's name or description when the person states or changes it.
 - A recurring job for a Product is a Routine, which you create yourself. Any other schedule goes to Platform
   Builder.
 """
