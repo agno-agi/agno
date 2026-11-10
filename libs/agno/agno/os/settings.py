@@ -17,6 +17,17 @@ class AgnoAPISettings(BaseSettings):
     # Set to False to disable docs server at /docs and /redoc
     docs_enabled: bool = True
 
+    # Set to False to stop calculating metrics; the metrics already calculated are still served
+    metrics_calculation_enabled: bool = True
+
+    # Seconds between metrics calculations in the background
+    metrics_calculation_interval_seconds: int = 60
+
+    # Days one OS metrics route may cover; a longer window gets a 422
+    os_metrics_max_window_days: int = Field(
+        default=3660, description="Maximum number of days one OS metrics request may cover"
+    )
+
     # Authentication settings
     os_security_key: Optional[str] = Field(default=None, description="Bearer token for API authentication")
 

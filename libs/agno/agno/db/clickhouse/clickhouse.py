@@ -722,7 +722,7 @@ class ClickhouseDb(BaseDb):
     ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
         return [], None
 
-    def calculate_metrics(self) -> Optional[Any]:
+    def calculate_metrics(self, rebuild_from: Optional[date] = None) -> Optional[Any]:
         return None
 
     # --- Knowledge ---

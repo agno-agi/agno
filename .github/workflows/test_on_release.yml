@@ -9,6 +9,7 @@ on:
       - "release/*" # Run on release/1.2.3 branch format
       - "ci/split-company-db-tests"
       - "feat/company-record-deletion"
+      - "homepage-v2"
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:

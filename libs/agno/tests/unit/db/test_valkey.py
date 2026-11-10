@@ -85,6 +85,12 @@ def _ensure_glide_sync_stub():
         def zadd(self, key, members_scores):
             self.commands.append(("zadd", key, members_scores))
 
+        def zrem(self, key, members):
+            self.commands.append(("zrem", key, members))
+
+        def hincrby(self, key, field, amount):
+            self.commands.append(("hincrby", key, field, amount))
+
         def zrange(self, key, range_query, reverse=False):
             self.commands.append(("zrange", key, range_query, reverse))
 
@@ -132,6 +138,10 @@ def _ensure_glide_sync_stub():
             self.start = start
             self.end = end
 
+    class _Script:
+        def __init__(self, code):
+            self.code = code
+
     class _RequestError(Exception):
         pass
 
@@ -147,6 +157,11 @@ def _ensure_glide_sync_stub():
     glide_mod.ServerCredentials = _ServerCredentials
     glide_mod.ExpirySet = _ExpirySet
     glide_mod.ExpiryType = _ExpiryType
+    glide_mod.InfBound = MagicMock(name="InfBound")
+    glide_mod.Limit = MagicMock(name="Limit")
+    glide_mod.RangeByScore = MagicMock(name="RangeByScore")
+    glide_mod.ScoreBoundary = MagicMock(name="ScoreBoundary")
+    glide_mod.Script = _Script
     glide_mod.DataType = MagicMock(name="DataType")
 
     # Also add stubs for vector store imports so both test files can coexist
@@ -183,9 +198,14 @@ def _patch_missing_attrs(glide_mod):
         "GlideClient",
         "GlideClientConfiguration",
         "GlideClusterClient",
+        "InfBound",
+        "Limit",
         "NodeAddress",
         "RangeByIndex",
+        "RangeByScore",
         "RequestError",
+        "ScoreBoundary",
+        "Script",
         "ServerCredentials",
         "DistanceMetricType",
         "FtCreateOptions",
