@@ -494,7 +494,7 @@ class Step:
                 from agno.utils.component_scope import get_component_owner_scope
 
                 try:
-                    agent = get_agent_by_id(
+                    loaded = get_agent_by_id(
                         db=db,
                         id=agent_id,
                         version=pinned,
@@ -510,7 +510,7 @@ class Step:
                             "Re-save the workflow to pin the agent's current version."
                         ) from step_member_error
                     raise
-                if agent is None and pinned is not None:
+                if loaded is None and pinned is not None:
                     if strict:
                         raise ComponentPinError(
                             f"Step '{config.get('name')}' pins agent '{agent_id}' at version {pinned}, "
@@ -521,9 +521,22 @@ class Step:
                         f"Step '{config.get('name')}' pins agent '{agent_id}' at version {pinned}, which "
                         "was not found in the db; loading the agent's current version instead."
                     )
-                    agent = get_agent_by_id(
+                    loaded = get_agent_by_id(
                         db=db, id=agent_id, registry=registry, strict=False, user_id=get_component_owner_scope()
                     )
+                from agno.agents.base import BaseExternalAgent
+
+                if isinstance(loaded, BaseExternalAgent):
+                    # A stored external adapter resolves here too; a step runs an Agent.
+                    message = (
+                        f"Step '{config.get('name')}' references agent '{agent_id}', which is a "
+                        f"{loaded.sdk!r} external agent; external agents cannot be workflow steps."
+                    )
+                    if strict:
+                        raise ComponentRehydrationError(message)
+                    log_warning(message)
+                else:
+                    agent = loaded
 
             # A pinned lenient load may still fall back to a code-defined agent.
             if agent is None and pinned is not None and registry and agent_id:

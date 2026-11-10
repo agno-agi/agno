@@ -79,6 +79,8 @@ def project_config_identity(config: Dict[str, Any]) -> Dict[str, Any]:
       never turn a write into an error, and a value that cannot be stored must
       never reach the column - it would make the component, and every listing
       that includes it, unreadable. The config keeps whatever the caller sent.
+      Owned metadata keeps a stored external agent's ``sdk``, which catalog
+      readers use to tell it from an Agent.
     """
     projection: Dict[str, Any] = {}
     if config.get("name") is not None:
@@ -89,7 +91,8 @@ def project_config_identity(config: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(metadata, dict):
         stamp_only = bool(metadata) and all(key == "studio" for key in metadata)
         if config.get("metadata_authored") or not stamp_only:
-            projection["metadata"] = metadata
+            sdk = config.get("sdk")
+            projection["metadata"] = {**metadata, "sdk": sdk} if isinstance(sdk, str) else metadata
     return projection
 
 

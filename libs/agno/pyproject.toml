@@ -221,7 +221,7 @@ pinecone = ["pinecone==5.4.2"]
 pylance = ["pylance"]
 qdrant = ["qdrant-client"]
 singlestore = ["sqlalchemy"]
-surrealdb = ["surrealdb>=1.0.4"]
+surrealdb = ["surrealdb>=1.0.4,<3"]
 upstash = ["upstash-vector"]
 weaviate = ["weaviate-client"]
 
