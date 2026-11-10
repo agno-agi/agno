@@ -61,15 +61,32 @@ def test_stringify_list_of_message_objects():
 
 
 def test_stringify_list_of_message_dicts_user_first():
-    """Test that lists of message dicts return the first user message content."""
+    """Test that lists of message dicts return the (single) user message content."""
     messages = [
         {"role": "user", "content": "User query here"},
         {"role": "assistant", "content": "Assistant response"},
     ]
     result = stringify_input_content(messages)
 
-    # Should return the first user message content
+    # Should return the user message content
     assert result == "User query here"
+
+
+def test_stringify_list_of_message_dicts_returns_last_user_message():
+    """Test that with several user messages, the last one is the effective input.
+
+    Team delegation runs members with their history prepended to the input list,
+    so the last user message is the delegated task — the first is a previous
+    round's input and must not be shown as this run's input.
+    """
+    messages = [
+        {"role": "user", "content": "Previous round input"},
+        {"role": "assistant", "content": "Previous round answer"},
+        {"role": "user", "content": "Current delegated task"},
+    ]
+    result = stringify_input_content(messages)
+
+    assert result == "Current delegated task"
 
 
 def test_stringify_list_of_message_dicts_no_user():
