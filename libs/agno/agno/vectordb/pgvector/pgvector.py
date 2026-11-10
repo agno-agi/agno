@@ -1012,14 +1012,28 @@ class PgVector(VectorDb):
         """Search asynchronously by running in a thread."""
         return await asyncio.to_thread(self.search, query, limit, filters, user_id)
 
+    @staticmethod
+    def _filter_literal(value: Any) -> str:
+        """Render a filter value the way Postgres renders ``jsonb ->>`` for it.
+
+        Booleans come back from ``->>`` as lowercase ``true``/``false``; ``str()``
+        would build ``'True'``, which never equals the stored value. Everything else
+        is already rendered as text, so it keeps the plain ``str()``.
+        """
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        return str(value)
+
     def _dsl_to_sqlalchemy(self, filter_expr, table) -> ColumnElement[bool]:
         op = filter_expr["op"]
 
         if op == "EQ":
-            return table.c.meta_data[filter_expr["key"]].astext == str(filter_expr["value"])
+            return table.c.meta_data[filter_expr["key"]].astext == self._filter_literal(filter_expr["value"])
         elif op == "IN":
             # Postgres JSONB array containment
-            return table.c.meta_data[filter_expr["key"]].astext.in_([str(v) for v in filter_expr["values"]])
+            return table.c.meta_data[filter_expr["key"]].astext.in_(
+                [self._filter_literal(v) for v in filter_expr["values"]]
+            )
         elif op == "GT":
             return table.c.meta_data[filter_expr["key"]].astext.cast(Integer) > filter_expr["value"]
         elif op == "LT":
