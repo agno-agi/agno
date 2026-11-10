@@ -11,8 +11,8 @@ from sqlalchemy import text
 from agno.agent import Agent
 from agno.company import AsyncCompanyManager, CompanyManager
 from agno.db.base import AsyncBaseDb
-from agno.db.schemas.scheduler import Schedule
 from agno.db.postgres import AsyncPostgresDb, PostgresDb
+from agno.db.schemas.scheduler import Schedule
 from agno.db.sqlite import AsyncSqliteDb, SqliteDb
 from agno.os import AgentOS, CompanyConfig
 from agno.registry import Registry

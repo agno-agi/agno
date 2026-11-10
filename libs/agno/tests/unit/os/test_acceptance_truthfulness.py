@@ -338,7 +338,6 @@ class TestBackgroundContinueCompatFallthrough:
                 agent_id=agent.id,
                 session_id="s1",
                 status=RunStatus.paused,
-                execution_origin="inline",
             ),
             session_id="s1",
         )
@@ -349,7 +348,6 @@ class TestBackgroundContinueCompatFallthrough:
                 team_id=team.id,
                 session_id="s2",
                 status=RunStatus.paused,
-                execution_origin="inline",
             ),
             session_id="s2",
         )

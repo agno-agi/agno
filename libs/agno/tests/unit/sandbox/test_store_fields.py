@@ -23,13 +23,10 @@ async def test_sandbox_pending_run_keeps_queue_origin_before_claim(monkeypatch):
     agent = SimpleNamespace(get_id=lambda: "agent", name="agent")
     run = await _harness.aprepare_pending_run(agent, "run", "session", None, "input", queued=True)
 
-    assert run.execution_origin == "queue"
     assert run.queue_attempt == 0
-    assert store.row["execution_origin"] == "queue"
     assert store.row["queue_attempt"] == 0
 
     ordinary = await _harness.aprepare_pending_run(agent, "other", "session", None, "input")
-    assert ordinary.execution_origin == "inline"
     assert ordinary.queue_attempt is None
 
 

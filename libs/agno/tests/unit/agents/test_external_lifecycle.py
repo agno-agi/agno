@@ -77,17 +77,13 @@ async def test_pending_running_terminal(agent, fail):
 
 
 @pytest.mark.asyncio
-async def test_external_run_origin_survives_pending_to_terminal(agent):
-    queued_id = str(uuid4())
-    pending = await agent._aprepare_pending_run(queued_id, "queued-origin", None, "go", queued=True)
-    assert pending.execution_origin == "queue"
-    with task_execution_scope(None, queued=True):
-        completed = agent._build_run_output(queued_id, "queued-origin", None, "go", "done", RunStatus.completed)
-    assert completed.execution_origin == "queue"
+async def test_external_pending_run_marks_only_queued_rows(agent):
+    pending = await agent._aprepare_pending_run(str(uuid4()), "queued-origin", None, "go", queued=True)
+    assert pending.queue_attempt == 0
 
     agent.release.set()
     ordinary = await agent.arun("go", run_id=str(uuid4()), session_id="inline-origin")
-    assert ordinary.execution_origin == "inline"
+    assert ordinary.queue_attempt is None
 
 
 @pytest.mark.asyncio
@@ -869,7 +865,7 @@ async def test_company_claim_survives_external_background_disconnect(agent, stre
     from agno.db.base import AsyncBaseDb
     from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS
     from agno.run.background import await_background_runs
-    from agno.run.concurrency import _TaskExecutionProvider, task_execution_scope
+    from agno.run.concurrency import _TaskExecutionProvider
 
     manager = (AsyncCompanyManager if isinstance(agent.db, AsyncBaseDb) else CompanyManager)(agent.db)
     product = await _call(manager, "create", name="Runtime")
@@ -910,7 +906,7 @@ async def test_external_sync_thread_keeps_company_context(tmp_path, stream):
 
     from agno.company.manager import CompanyManager
     from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS
-    from agno.run.concurrency import _TaskExecutionProvider, task_execution_scope
+    from agno.run.concurrency import _TaskExecutionProvider
 
     db = SqliteDb(db_file=str(tmp_path / "thread.db"))
     manager = CompanyManager(db)
@@ -966,7 +962,7 @@ async def test_external_stream_claim_outlives_native_cleanup(tmp_path, cleanup_f
     from agno.company.manager import CompanyManager
     from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS
     from agno.exceptions import RunCancelledException
-    from agno.run.concurrency import _TaskExecutionProvider, task_execution_scope
+    from agno.run.concurrency import _TaskExecutionProvider
 
     db = SqliteDb(db_file=str(tmp_path / "cleanup.db"))
     manager = CompanyManager(db)

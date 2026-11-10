@@ -455,7 +455,6 @@ async def aprepare_pending_run(
         messages=[Message(role="user", content=str(input), created_at=int(time.time()))],
         status=RunStatus.pending,
         queue_attempt=0 if queued else None,
-        execution_origin="queue" if queued else "inline",
     )
     await coordinator(agent).store.aprepare(run.to_dict())
     return run
@@ -570,7 +569,6 @@ async def astart_background(
         user_id=user_id,
         status=RunStatus.pending,
         queue_attempt=0,
-        execution_origin="queue",
     )
 
 

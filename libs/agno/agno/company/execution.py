@@ -522,7 +522,7 @@ async def _queue_execution(worker: Any, job: Dict[str, Any]) -> AsyncIterator[Di
         if set(job) == {"component_type", "component_id"}
         else await _acquire_queue_execution(worker, job, rotate=True)
     )
-    with task_execution_scope(provider, queued=True):
+    with task_execution_scope(provider):
         yield owner
     # Cancellation or an unresolved exception cannot establish that detached work stopped.
     await _release_queue_execution(worker, {**job, "payload": {**(job.get("payload") or {}), **owner}})
