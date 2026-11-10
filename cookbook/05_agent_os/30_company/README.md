@@ -34,7 +34,7 @@ whoever created the Product. User isolation does not restrict Company records.
 ## Weekly Company Manager review
 
 `10_weekly_product_review.py` runs a Company Routine with the framework's
-`company-manager-internal` agent. It reads Sources and existing work, proposes
+`company-manager` agent. It reads Sources and existing work, proposes
 only evidence-backed Backlog Tasks, and updates status without accepting work.
 The same declaration works with or without OS Manager; no application agent is
 needed. Company Manager is the only framework manager that can run a Routine:
@@ -172,8 +172,8 @@ entries that reference the original decision.
 
 Company Manager uses `CompanyConfig(model=...)`, otherwise the first declared
 registry model. If neither exists, its unavailable reason appears in diagnostics
-and manual APIs still work. It is served at `GET /agents/company-manager-internal`
-and `POST /agents/company-manager-internal/runs`. When OS Manager is enabled it also
+and manual APIs still work. It is served at `GET /agents/company-manager`
+and `POST /agents/company-manager/runs`. When Super Agent is enabled it also
 gets a separate Company Manager member that carries the manager's tool-call limit and
 focused instructions; the served agent, which direct chat and Routines use, keeps its
 own policy. It was previously named Product Manager with the id

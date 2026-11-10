@@ -1,4 +1,4 @@
-"""List agents with manifest descriptions through OS Manager. No model calls.
+"""List agents with manifest descriptions through Super Agent. No model calls.
 
 Run:
     .venvs/demo/bin/python cookbook/05_agent_os/29_manager/manager_discovery.py
