@@ -35,6 +35,7 @@ from agno.db.utils import (
     deserialize_session,
     deserialize_sessions,
     drop_legacy_metrics,
+    metric_record_day,
     filter_context_runs,
     get_metrics_dates_to_calculate,
     get_metrics_legacy_runs,
@@ -1832,7 +1833,13 @@ class GcsJsonDb(BaseDb):
             latest_updated_at = None
 
             for metric in metrics:
-                metric_date = datetime.strptime(metric.get("date", ""), "%Y-%m-%d").date()
+                # Same tolerance as the other key-value adapters and as
+                # `drop_legacy_metrics` just above: a row whose date is not a day
+                # is skipped with a warning rather than raised on, so one bad
+                # record cannot break every metrics read.
+                metric_date = metric_record_day(metric)
+                if metric_date is None:
+                    continue
 
                 if starting_date and metric_date < starting_date:
                     continue
