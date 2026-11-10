@@ -77,19 +77,18 @@ class _ManagerInstructions:
         # recognized as the same component.
         return self
 
-    def _rows(self, run_context: Any) -> List[Dict[str, Any]]:
-        """Published components the runner admits, without the framework's own."""
+    def _kind_rows(self, kind: str, run_context: Any) -> List[Dict[str, Any]]:
+        """Published components of one kind that the runner admits, without the framework's own."""
         actor = getattr(run_context, "user_id", None)
+        stored, _ = self.runner._list_db_component_rows(kind, limit=_CATALOG_LIMIT + 1, user_id=actor)
         rows: List[Dict[str, Any]] = []
-        for kind in ("agent", "team", "workflow"):
-            stored, _ = self.runner._list_db_component_rows(kind, limit=_CATALOG_LIMIT + 1, user_id=actor)
-            seen: set = set()
-            for row in [*self.runner._admitted_code_components(kind), *stored]:
-                component_id = row.get("id")
-                if component_id in seen or component_id in RESERVED_MANAGER_IDS or row.get("status") == "draft":
-                    continue
-                seen.add(component_id)
-                rows.append({**row, "kind": kind})
+        seen: set = set()
+        for row in [*self.runner._admitted_code_components(kind), *stored]:
+            component_id = row.get("id")
+            if component_id in seen or component_id in RESERVED_MANAGER_IDS or row.get("status") == "draft":
+                continue
+            seen.add(component_id)
+            rows.append({**row, "kind": kind})
         return rows
 
     @staticmethod
@@ -111,11 +110,18 @@ class _ManagerInstructions:
 
     def __call__(self, run_context: Any = None) -> List[str]:
         base = self.company(run_context) if self.company is not None else list(self.base)
+        authority = _caller_authorization(run_context)
+        # One entry past the limit shows that more exist. Nothing after it is listed or checked.
+        rows: List[Dict[str, Any]] = []
         try:
-            rows = self._rows(run_context)
-            authority = _caller_authorization(run_context)
-            if authority is not None:
-                rows = [row for row in rows if authority.provider.check(self._read_check(authority, row))]
+            for kind in ("agent", "team", "workflow"):
+                if len(rows) > _CATALOG_LIMIT:
+                    break
+                for row in self._kind_rows(kind, run_context):
+                    if authority is None or authority.provider.check(self._read_check(authority, row)):
+                        rows.append(row)
+                    if len(rows) > _CATALOG_LIMIT:
+                        break
         except Exception as exc:
             from agno.utils.log import log_warning
 
@@ -125,11 +131,17 @@ class _ManagerInstructions:
 
     async def __acall__(self, run_context: Any = None) -> List[str]:
         base = await self.company.__acall__(run_context) if self.company is not None else list(self.base)
+        authority = _caller_authorization(run_context)
+        rows: List[Dict[str, Any]] = []
         try:
-            rows = await asyncio.to_thread(self._rows, run_context)
-            authority = _caller_authorization(run_context)
-            if authority is not None:
-                rows = [row for row in rows if await authority.provider.acheck(self._read_check(authority, row))]
+            for kind in ("agent", "team", "workflow"):
+                if len(rows) > _CATALOG_LIMIT:
+                    break
+                for row in await asyncio.to_thread(self._kind_rows, kind, run_context):
+                    if authority is None or await authority.provider.acheck(self._read_check(authority, row)):
+                        rows.append(row)
+                    if len(rows) > _CATALOG_LIMIT:
+                        break
         except Exception as exc:
             from agno.utils.log import log_warning
 

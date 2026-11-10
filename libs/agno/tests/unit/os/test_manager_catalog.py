@@ -154,6 +154,46 @@ def test_catalog_shows_only_what_the_caller_may_read(tmp_path, use_async):
     assert catalog(model.system[0]) == ["- allowed (agent, id allowed)"]
 
 
+class CountingProvider(ScopeAuthorizationProvider):
+    """Allow every read and count the checks."""
+
+    def __init__(self):
+        super().__init__()
+        self.reads = []
+
+    def check(self, ctx):
+        if ctx.action == "read":
+            self.reads.append(ctx.resource_id)
+            return True
+        return super().check(ctx)
+
+    async def acheck(self, ctx):
+        return self.check(ctx)
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_catalog_stops_checking_once_it_is_full(tmp_path, use_async):
+    agents = [Agent(id=f"agent-{n:02}", model=RecordingModel()) for n in range(_CATALOG_LIMIT * 3)]
+    os, model = build(
+        tmp_path, agents=agents, teams=[Team(id="research", name="Research", members=[], model=RecordingModel())]
+    )
+    provider = CountingProvider()
+    caller = RunAuthorization(
+        provider,
+        AuthorizationContext(principal_id="alice", scopes=[f"teams:{MANAGER_TEAM_ID}:run"], claims={"sub": "alice"}),
+        enforce_tools=False,
+    )
+    with authorization_scope(lambda: caller):
+        if use_async:
+            asyncio.run(os.manager.arun("hello", user_id="alice"))
+        else:
+            os.manager.run("hello", user_id="alice")
+    lines = catalog(model.system[0])
+    assert len(lines) == _CATALOG_LIMIT + 1 and lines[-1].startswith("More exist")
+    # Twenty entries and the one that shows more exist. Teams and workflows are not read at all.
+    assert provider.reads == [f"agent-{n:02}" for n in range(_CATALOG_LIMIT + 1)]
+
+
 def test_catalog_over_http_matches_what_list_agents_returns(tmp_path):
     db = SqliteDb(db_file=str(tmp_path / "os.db"))
     model = RecordingModel("list_agents")
