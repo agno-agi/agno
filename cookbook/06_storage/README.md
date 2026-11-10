@@ -44,6 +44,7 @@ agent = Agent(
 - [`singlestore`](singlestore/) - SingleStore distributed SQL database integration
 - [`firestore`](firestore/) - Google Cloud Firestore NoSQL database integration
 - [`dynamodb`](dynamodb/) - AWS DynamoDB NoSQL database integration
+- [`scylladb`](scylladb/) - ScyllaDB integration via the DynamoDB-compatible Alternator API
 - [`json_db`](json_db/) - JSON file-based storage integration
 - [`gcs`](gcs/) - Google Cloud Storage JSON blob integration
 - [`in_memory`](in_memory/) - In-memory storage with optional persistence hooks
