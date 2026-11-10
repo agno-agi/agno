@@ -1,5 +1,37 @@
 # Test log
 
+### Chat review follow-up — offline checks (2026-11-10)
+
+**Status:** PASS
+
+**Description:** Replaced the patch dictionary with optional name/description arguments, limited chat descriptions to 2,000 characters, and added confirmation-protected replacement of human-edited details. Tested on the isolated Python 3.12 development environment.
+
+**Result:** 687 selected unit cases passed across CompanyTools, company-details HTTP, Company Manager Routines, authorization and manager regressions. The final result/prompt adjustments were rechecked with 133 affected unit cases. All 32 database cases passed on sync/async SQLite and PostgreSQL 18. Approval tests verify pause without writes, approval, rejection, permission revocation and an intervening edit. Full format and validation scripts passed. The HTTP description limit remains 20,000 characters.
+
+The continuation tests also logged a nonfatal `TypeError: '_RoutineResultGuardrail' object is not callable` from the unchanged framework post-hook path. Their approval and database assertions passed; this follow-up does not change the framework hook handling.
+
+---
+
+### chat.py configuration — three live phrases (2026-11-10)
+
+**Status:** PASS
+
+**Description:** Real `gpt-5.6-luna` runs through the Super Agent HTTP endpoint, using disposable PostgreSQL schemas and the built-in managers; documentation access and result offloading were disabled. The first two phrases used the same company record in separate conversations; the partner phrase used a fresh, unedited company record. No web-search tools were configured.
+
+**Result:** Final run:
+
+| Exact phrase | Observed behaviour |
+| --- | --- |
+| “Our company is Acme. We build warehouse robots.” | Completed after one delegation and `update_company_details`. Saved name `Acme`, description `Builds warehouse robots.`; no approval pause. |
+| “Rename our company to Acme Robotics; keep the description.” | Called `update_company_details`, then `confirm_company_details`, and paused for approval. The saved name remained `Acme` and description remained `Builds warehouse robots.` |
+| “We're working with Acme, they build warehouse robots.” | Completed with no tool calls. Name remained `Company`, description remained null. The reply explicitly treated Acme as a customer or partner, not the user's company. |
+
+Earlier live iterations exposed an unnecessary confirmation after a successful initial save, an acknowledged-but-unsaved introduction, and a partner company incorrectly saved into the unedited record. Those results led to an explicit successful-save result and clearer own-company routing in the existing prompt lines. One earlier partner check also hit a test-harness event-loop error; separate model clients fixed the harness before rerunning.
+
+The final live rename was not approved; approval/rejection and continuation were verified with deterministic offline tests. No UI walkthrough, hosted deployment or merge. These are observed live outcomes, not a guarantee that every future ambiguous phrase will be classified correctly.
+
+---
+
 ### company_details.py — chat editing follow-up (2026-11-10)
 
 **Status:** PASS

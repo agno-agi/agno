@@ -371,14 +371,37 @@ def test_custom_admin_scope_controls_who_can_edit(tmp_path):
 class CompanyEditModel(Model):
     """Script delegation/edit calls and echo fresh context without a provider."""
 
-    def __init__(self, delegate=False):
+    def __init__(self, delegate=False, company_name="Acme"):
         super().__init__(id="offline-company-edit", provider="test")
         self.delegate = delegate
+        self.company_name = company_name
 
     def invoke(self, messages, *args, **kwargs):
         start = max(i for i, message in enumerate(messages) if message.role == "user")
         results = [message for message in messages[start + 1 :] if message.role == "tool"]
         if results:
+            if not self.delegate and results[-1].tool_name == "update_company_details":
+                try:
+                    pending = json.loads(results[-1].content)
+                except (ValueError, TypeError):
+                    pending = {}
+                if pending.get("confirmation_required"):
+                    return ModelResponse(
+                        role="assistant",
+                        tool_calls=[
+                            {
+                                "id": "confirm-details",
+                                "type": "function",
+                                "function": {
+                                    "name": "confirm_company_details",
+                                    "arguments": json.dumps(
+                                        {"expected_updated_at": pending["expected_updated_at"], **pending["changes"]}
+                                    ),
+                                },
+                            }
+                        ],
+                        response_usage=MessageMetrics(),
+                    )
             return ModelResponse(role="assistant", content=str(results[-1].content), response_usage=MessageMetrics())
         if "What does our company do?" in str(messages[start].content):
             context = "\n".join(str(message.content) for message in messages if message.role == "system")
@@ -387,7 +410,7 @@ class CompanyEditModel(Model):
         arguments = (
             {"member_id": "company-manager", "task": "Our company is Acme. We build warehouse robots."}
             if self.delegate
-            else {"changes": {"name": "Acme", "description": "We build warehouse robots."}}
+            else {"name": self.company_name, "description": "We build warehouse robots."}
         )
         return ModelResponse(
             role="assistant",
@@ -471,3 +494,60 @@ def test_chat_delegates_details_edit_with_caller_permissions_and_fresh_context(t
     with TestClient(restarted.get_app()):
         assert fresh_db.get_company() == saved
     fresh_db.close()
+
+
+@pytest.mark.parametrize("decision", ["approve", "reject", "intervening_edit", "revoked"])
+def test_replacing_details_requires_real_confirmation_through_superagent(tmp_path, decision):
+    from agno.os import OSManager
+
+    db = SqliteDb(db_file=str(tmp_path / "confirmation.db"))
+    initial = db.initialize_company("Default")
+    original = db.update_company(initial["updated_at"], name="Acme", description="We build warehouse robots.")
+    os = AgentOS(
+        db=db,
+        manager=OSManager(model=CompanyEditModel(delegate=True), access_docs=False, offload_tool_results=False),
+        company=CompanyConfig(model=CompanyEditModel(company_name="Acme Robotics")),
+        authorization=Authorization(verification_keys=[SECRET], algorithm="HS256", audience="details-test"),
+        telemetry=False,
+    )
+    scopes = ["teams:superagent:run", "agents:company-manager:run", "company:read", "company:write"]
+    with TestClient(os.get_app()) as client:
+        response = client.post(
+            "/teams/superagent/runs",
+            headers=headers(scopes),
+            data={
+                "message": "Rename our company to Acme Robotics; keep the description.",
+                "stream": "false",
+            },
+        )
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["status"] == "PAUSED"
+        assert db.get_company() == original
+        requirements = data["requirements"]
+        assert len(requirements) == 1
+        assert requirements[0]["tool_execution"]["tool_name"] == "confirm_company_details"
+        assert requirements[0]["tool_execution"]["tool_args"]["expected_updated_at"] == original["updated_at"]
+        requirements[0]["confirmation"] = decision != "reject"
+        requirements[0]["tool_execution"]["confirmed"] = decision != "reject"
+        if decision == "intervening_edit":
+            original = db.update_company(original["updated_at"], name="Another person's edit")
+        if decision == "revoked":
+            scopes.remove("company:write")
+        resumed = client.post(
+            f"/teams/superagent/runs/{data['run_id']}/continue",
+            headers=headers(scopes),
+            data={
+                "session_id": data["session_id"],
+                "requirements": json.dumps(requirements),
+                "stream": "false",
+            },
+        )
+        assert resumed.status_code == 200, resumed.text
+        assert resumed.json()["status"] == "COMPLETED"
+        if decision == "approve":
+            assert db.get_company()["name"] == "Acme Robotics"
+            assert db.get_company()["description"] == original["description"]
+        else:
+            assert db.get_company() == original
+    db.close()

@@ -4,6 +4,8 @@ Run this server and connect the AgentOS UI to http://localhost:7777.
 In a Super Agent chat, say: "Our company is Acme. We build warehouse robots."
 In a new chat, ask: "What does our company do?"
 Then try: "Rename our company to Acme Robotics; keep the description."
+This replacement pauses for approval. Rejecting leaves the saved details unchanged.
+Chat descriptions are limited to 2000 characters; use the playbook for longer guidance.
 Restart with a different CompanyConfig name: the saved edit takes precedence.
 
 Sending chat messages makes live model calls and requires OPENAI_API_KEY.

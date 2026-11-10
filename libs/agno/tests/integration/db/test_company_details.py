@@ -203,16 +203,24 @@ async def test_company_tool_patch_and_restart_across_adapters(db):
     await call(db.initialize_company, "Initial", "Initial description")
     toolkit = CompanyTools(db)
     context = RunContext(run_id="edit", session_id="chat", user_id="alice")
-    functions = [toolkit.aupdate_company_details]
+    functions = [(toolkit.aupdate_company_details, toolkit.aconfirm_company_details)]
     if not isinstance(db, AsyncBaseDb):
-        functions.append(toolkit.update_company_details)
-    for edit in functions:
-        result = json.loads(await call(edit, {"name": "Acme", "description": "Warehouse robots"}, context))
+        functions.append((toolkit.update_company_details, toolkit.confirm_company_details))
+    for edit, confirm in functions:
+        result = json.loads(await call(edit, name="Acme", description="Warehouse robots", _agno_run_context=context))
+        if result.get("confirmation_required"):
+            result = json.loads(
+                await call(confirm, result["expected_updated_at"], **result["changes"], _agno_run_context=context)
+            )
         assert (result["name"], result["description"]) == ("Acme", "Warehouse robots")
-        result = json.loads(await call(edit, {"name": "Acme Inc"}, context))
+        before = await call(db.get_company)
+        pending = json.loads(await call(edit, name="Acme Inc", description=None, _agno_run_context=context))
+        assert pending["confirmation_required"] is True
+        assert await call(db.get_company) == before
+        result = json.loads(
+            await call(confirm, pending["expected_updated_at"], **pending["changes"], _agno_run_context=context)
+        )
         assert (result["name"], result["description"]) == ("Acme Inc", "Warehouse robots")
-        result = json.loads(await call(edit, {"description": None}, context))
-        assert (result["name"], result["description"]) == ("Acme Inc", None)
     saved = await call(db.get_company)
     await call(db.close)
     fresh = type(db).from_dict(db.to_dict())
@@ -244,12 +252,12 @@ async def test_company_tool_conflict_across_adapters(db, monkeypatch):
         return await update(expected_updated_at, **fields)
 
     monkeypatch.setattr(db, "update_company", acompeting_update if isinstance(db, AsyncBaseDb) else competing_update)
-    functions = [toolkit.aupdate_company_details]
+    functions = [toolkit.aconfirm_company_details]
     if not isinstance(db, AsyncBaseDb):
-        functions.append(toolkit.update_company_details)
+        functions.append(toolkit.confirm_company_details)
     for edit in functions:
         calls.clear()
-        with pytest.raises(ValueError, match="changed concurrently.*Stop without retrying"):
-            await call(edit, {"name": "Loser"})
+        with pytest.raises(ValueError, match="changed concurrently; this edit was not saved"):
+            await call(edit, (await call(db.get_company))["updated_at"], name="Loser")
         assert len(calls) == 1
         assert (await call(db.get_company))["name"] == "Winner"
