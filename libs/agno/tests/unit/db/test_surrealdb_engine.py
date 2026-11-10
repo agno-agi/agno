@@ -1,0 +1,288 @@
+"""SurrealDb storage against a real in-process engine, so SDK behavior changes cannot hide behind mocks."""
+
+from datetime import datetime, timezone
+from unittest.mock import MagicMock
+from uuid import uuid4
+
+import pytest
+
+from agno.db.base import SessionType
+from agno.db.schemas.memory import UserMemory
+from agno.db.surrealdb import SurrealDb
+from agno.run.agent import RunOutput
+from agno.session import AgentSession
+from agno.tracing.schemas import Span, Trace
+from agno.utils.surrealdb import run_query
+
+surrealdb = pytest.importorskip("surrealdb")
+
+
+@pytest.fixture
+def db() -> SurrealDb:
+    client = surrealdb.Surreal("mem://")
+    database = uuid4().hex
+    client.use("test", database)
+    return SurrealDb(client, "mem://", {}, "test", database)
+
+
+def _session(session_id: str = "s1") -> AgentSession:
+    return AgentSession(session_id=session_id, agent_id="a1", user_id="u1", created_at=1700000000)
+
+
+def test_session_round_trip_and_delete(db: SurrealDb):
+    db.upsert_session(_session())
+
+    stored = db.get_session("s1", SessionType.AGENT)
+    assert stored is not None
+    assert stored.session_id == "s1"
+
+    assert db.delete_session("s1") is True
+    assert db.get_session("s1", SessionType.AGENT) is None
+
+
+def test_run_reads_treat_a_missing_runs_table_as_empty(db: SurrealDb):
+    assert db.get_run("r1") is None
+    assert db.get_runs() == []
+    assert db.get_runs(deserialize=False) == ([], 0)
+
+
+def test_run_reads_return_stored_runs(db: SurrealDb):
+    db.upsert_run(RunOutput(run_id="r1", session_id="s1", agent_id="a1", content="hi"), session_id="s1", run_index=0)
+
+    run = db.get_run("r1")
+
+    assert run is not None
+    assert run.run_id == "r1"
+    assert [r.run_id for r in db.get_runs(session_id="s1")] == ["r1"]
+
+
+def test_run_deletes_tolerate_a_missing_runs_table(db: SurrealDb):
+    assert db.delete_run("r1") is False
+    db.delete_runs(["r1"])
+    assert db._delete_session_runs("s1") == 0
+    assert db._get_session_runs_data("s1") == []
+
+
+def _seed_legacy_blob(db: SurrealDb) -> str:
+    # Engines before 3.0 ignore the array::filter closure the scrub relies on
+    if int(db.client.version().split("-")[1].split(".")[0]) < 3:
+        pytest.skip("the legacy blob scrub needs a SurrealDB 3+ engine")
+    db.upsert_session(_session())
+    table = db._get_table("sessions")
+    run_query(db.client, f"UPDATE {table} SET runs = $runs", {"runs": [{"run_id": "r1"}, {"run_id": "r2"}]})
+    return table
+
+
+def _legacy_run_ids(db: SurrealDb, table: str) -> list:
+    rows = run_query(db.client, f"SELECT runs FROM {table}")
+    return [run["run_id"] for run in rows[0]["runs"]]
+
+
+def test_delete_run_scrubs_the_legacy_blob_when_the_runs_table_is_missing(db: SurrealDb):
+    table = _seed_legacy_blob(db)
+
+    db.delete_run("r1")
+
+    assert _legacy_run_ids(db, table) == ["r2"]
+
+
+def test_delete_runs_scrubs_the_legacy_blob_when_the_runs_table_is_missing(db: SurrealDb):
+    table = _seed_legacy_blob(db)
+
+    db.delete_runs(["r1"])
+
+    assert _legacy_run_ids(db, table) == ["r2"]
+
+
+def test_run_deletes_remove_stored_runs(db: SurrealDb):
+    run = RunOutput(run_id="r1", session_id="s1", agent_id="a1", content="hi")
+    db.upsert_run(run, session_id="s1", run_index=0)
+    db.upsert_run(RunOutput(run_id="r2", session_id="s1", agent_id="a1", content="hi"), session_id="s1", run_index=1)
+    db.upsert_run(RunOutput(run_id="r3", session_id="s2", agent_id="a1", content="hi"), session_id="s2", run_index=0)
+
+    assert db.delete_run("r1") is True
+    assert db.get_run("r1") is None
+    db.delete_runs(["r2"])
+    assert db.get_run("r2") is None
+    assert db._delete_session_runs("s2") == 1
+    assert db.get_run("r3") is None
+
+
+def test_memory_round_trip_and_delete(db: SurrealDb):
+    stored = db.upsert_user_memory(UserMemory(memory="likes tea", user_id="u1", memory_id="m1"))
+    assert stored is not None
+
+    fetched = db.get_user_memory("m1")
+    assert fetched is not None
+    assert fetched.memory == "likes tea"
+
+    db.delete_user_memory("m1")
+    assert db.get_user_memory("m1") is None
+
+
+def test_clear_memories_removes_every_row(db: SurrealDb):
+    db.upsert_user_memory(UserMemory(memory="likes tea", user_id="u1", memory_id="m1"))
+
+    db.clear_memories()
+
+    assert db.get_user_memories() == []
+
+
+def test_schema_version_round_trip(db: SurrealDb):
+    db.upsert_schema_version("agno_sessions", "3.1.0")
+
+    assert db.get_latest_schema_version("agno_sessions") == "3.1.0"
+
+
+def _trace(trace_id: str = "t1") -> Trace:
+    now = datetime.now(timezone.utc)
+    return Trace(
+        trace_id=trace_id,
+        name="trace",
+        status="OK",
+        start_time=now,
+        end_time=now,
+        duration_ms=0,
+        total_spans=0,
+        error_count=0,
+        run_id="r1",
+        session_id="s1",
+        user_id=None,
+        agent_id=None,
+        team_id=None,
+        workflow_id=None,
+        created_at=now,
+    )
+
+
+def _span(span_id: str, status_code: str, trace_id: str = "t1") -> Span:
+    now = datetime.now(timezone.utc)
+    return Span(
+        span_id=span_id,
+        trace_id=trace_id,
+        parent_span_id=None,
+        name="span",
+        span_kind="INTERNAL",
+        status_code=status_code,
+        status_message=None,
+        start_time=now,
+        end_time=now,
+        duration_ms=0,
+        attributes={},
+        created_at=now,
+    )
+
+
+def test_get_trace_treats_a_missing_spans_table_as_zero_spans(db: SurrealDb):
+    db.upsert_trace(_trace())
+
+    trace = db.get_trace("t1")
+
+    assert trace is not None
+    assert (trace.total_spans, trace.error_count) == (0, 0)
+
+
+def test_get_traces_treats_a_missing_spans_table_as_zero_spans(db: SurrealDb):
+    db.upsert_trace(_trace())
+
+    traces, total = db.get_traces()
+
+    assert total == 1
+    assert [(t.trace_id, t.total_spans, t.error_count) for t in traces] == [("t1", 0, 0)]
+
+
+def test_trace_reads_count_stored_spans(db: SurrealDb):
+    db.upsert_trace(_trace())
+    db.create_span(_span("ok", "OK"))
+    db.create_span(_span("bad", "ERROR"))
+
+    trace = db.get_trace("t1")
+    traces, _ = db.get_traces()
+
+    assert trace is not None
+    assert (trace.total_spans, trace.error_count) == (2, 1)
+    assert [(t.total_spans, t.error_count) for t in traces] == [(2, 1)]
+
+
+def _define_full_access_tables(db: SurrealDb) -> None:
+    for table_type in ("runs", "traces", "spans"):
+        table = db._get_table(table_type, create_table_if_not_found=False)
+        run_query(db.client, f"DEFINE TABLE {table} SCHEMALESS PERMISSIONS FULL")
+
+
+def _sign_in_as_record_user(db: SurrealDb) -> None:
+    run_query(
+        db.client,
+        "DEFINE ACCESS account ON DATABASE TYPE RECORD "
+        "SIGNUP (CREATE person SET name = $name) SIGNIN (SELECT * FROM person WHERE name = $name) "
+        "DURATION FOR TOKEN 1h, FOR SESSION 1h",
+    )
+    run_query(db.client, "DEFINE TABLE person SCHEMALESS PERMISSIONS FULL")
+    db.client.signup({"namespace": "test", "database": db._db_db, "access": "account", "variables": {"name": "ada"}})
+
+
+def test_record_users_read_and_delete_stored_rows(db: SurrealDb):
+    _define_full_access_tables(db)
+    for index, run_id in enumerate(("r1", "r2", "r3", "r4")):
+        run = RunOutput(run_id=run_id, session_id="s1", agent_id="a1", content="hi")
+        db.upsert_run(run, session_id="s1", run_index=index)
+    db.upsert_trace(_trace())
+    db.create_span(_span("ok", "OK"))
+    _sign_in_as_record_user(db)
+
+    run = db.get_run("r1")
+    trace = db.get_trace("t1")
+    traces, total = db.get_traces()
+
+    assert run is not None
+    assert run.run_id == "r1"
+    assert [r.run_id for r in db.get_runs(session_id="s1")] == ["r1", "r2", "r3", "r4"]
+    assert len(db._get_session_runs_data("s1")) == 4
+    assert trace is not None
+    assert trace.total_spans == 1
+    assert (total, [t.total_spans for t in traces]) == (1, [1])
+    assert db.delete_run("r1") is True
+    db.delete_runs(["r2"])
+    assert db._delete_session_runs("s1") == 2
+    assert db.get_runs(session_id="s1") == []
+
+
+def test_record_users_treat_missing_tables_as_empty(db: SurrealDb):
+    _sign_in_as_record_user(db)
+
+    assert db.get_run("r1") is None
+    assert db.get_runs() == []
+    assert db.get_runs(deserialize=False) == ([], 0)
+    assert db._get_session_runs_data("s1") == []
+    assert db.delete_run("r1") is False
+    db.delete_runs(["r1"])
+    assert db._delete_session_runs("s1") == 0
+
+
+def test_delete_session_runs_tolerates_a_missing_runs_table(db: SurrealDb):
+    assert db._delete_session_runs("s1") == 0
+    assert db._get_session_runs_data("s1") == []
+
+
+def test_run_reads_surface_errors_other_than_a_missing_table():
+    client = MagicMock()
+    client.query.side_effect = Exception("IAM error: Not enough permissions to perform this action")
+    db = SurrealDb(client, "mem://", {}, "test", "db")
+
+    with pytest.raises(RuntimeError):
+        db.get_run("r1")
+    with pytest.raises(RuntimeError):
+        db.get_runs()
+    with pytest.raises(Exception, match="Not enough permissions"):
+        db.delete_runs(["r1"])
+
+
+def test_run_reads_tolerate_a_missing_table_error_returned_as_a_string():
+    client = MagicMock()
+    client.query.return_value = "The table 'agno_runs' does not exist"
+    client.delete.return_value = "The table 'agno_runs' does not exist"
+    db = SurrealDb(client, "mem://", {}, "test", "db")
+
+    assert db.get_runs() == []
+    assert db._get_session_runs_data("s1") == []
+    assert db.delete_run("r1") is False
