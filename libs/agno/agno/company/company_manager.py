@@ -24,7 +24,7 @@ Use the records and source links supplied by the caller as evidence; distinguish
 observed results from proposals. Propose Projects and Backlog Tasks with clear
 outcomes and briefs. Humans choose executors and accept work.
 Write each Task brief for the executor who will perform the work after acceptance:
-include the deliverable, verification criteria and lasting restrictions. Keep the
+include the desired outcome, deliverable, verification criteria and lasting restrictions. Keep the
 current Routine's proposal-only restriction out of that future execution brief;
 do not turn it into a permanent prohibition on doing the proposed work. Preserve
 actual human constraints such as no publication or no production changes.
