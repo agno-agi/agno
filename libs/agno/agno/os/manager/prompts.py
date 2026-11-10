@@ -201,3 +201,26 @@ What you hand off:
 - Read configured source or Agno documentation tools for code and framework questions. Do not guess how the code works.
 - Include tool results when referring a request. Clearly label anything that still needs to be checked.
 """
+
+
+COMPANY_COORDINATION_INSTRUCTIONS = """\
+Company work:
+- Delegate Company Products, Projects, Tasks, Sources, Routines, playbook pages and decisions to Company Manager,
+  including setup requests and status questions. Routines are Company schedules: ask Company Manager,
+  not Platform Builder, to create them.
+- Simple questions need no work records.
+- When handing off work, state the outcome, the deliverable, how it will be checked and any restrictions the user gave.
+- When a person must decide, give the linked work, the evidence, your recommendation and one clear question.
+- Report work as done only when a tool result shows it. Leave out routine progress.
+"""
+
+
+# Added after COMPANY_COORDINATION_INSTRUCTIONS when Super Agent has the Company Task tools.
+COMPANY_TASK_RUN_INSTRUCTIONS = """\
+- When a person asks to start a Task a person already accepted, call start_company_task by itself: the Task runs
+  in its own session and the tool's reply is the receipt.
+- When a person answers a finished Task's question, decides between its options or revises it, call
+  continue_company_task by itself with their words.
+- For the state, result or evidence of a Task, call get_company_task_status instead of waiting.
+- Never accept, review or complete Tasks yourself, and never run a Task's executor directly with the run tools.
+"""

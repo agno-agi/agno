@@ -1806,9 +1806,13 @@ def test_metrics_page_counts_codex_runs_per_model(fake_sdk, tmp_db):
                 time.sleep(0.01)
             else:
                 raise AssertionError("Automatic background run did not complete")
+        # A read never calculates under AgentOS: the refresh builds the runs' day
+        assert client.post("/metrics/refresh").status_code == 200
         body = client.get("/metrics").json()
         days = body["metrics"] if isinstance(body, dict) else body
-        assert days[-1]["model_metrics"] == [{"model_id": "gpt-5.6-luna", "model_provider": "OpenAI", "count": 2}]
+        assert days[-1]["model_metrics"] == [
+            {"model_id": "gpt-5.6-luna", "model_provider": "OpenAI", "count": 2, "cost": None}
+        ]
 
 
 @pytest.mark.parametrize("stream", [False, True])

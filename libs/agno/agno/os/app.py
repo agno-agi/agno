@@ -21,6 +21,7 @@ from agno.agent import Agent, AgentFactory, RemoteAgent
 from agno.agent.protocol import AgentProtocol
 from agno.agents.base import BaseExternalAgent
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.db.utils import database_error_message
 from agno.exceptions import AgnoError, SessionBusyError
 from agno.job_queue import QueueConfig
 from agno.knowledge.knowledge import Knowledge
@@ -86,9 +87,12 @@ from agno.os.utils import (
     collect_mcp_tools_from_workflow,
     find_conflicting_routes,
     flatten_routes,
+    get_metrics_calculation,
+    has_metrics_lock_row,
     load_yaml_config,
     resolve_origins,
     setup_tracing_for_os,
+    stop_metrics_refresh_on_read,
     update_cors_middleware,
 )
 from agno.registry import Registry
@@ -284,6 +288,55 @@ async def scheduler_lifespan(app: FastAPI, agent_os: "AgentOS"):
     yield
 
     await poller.stop()
+
+
+# Default timeout (in seconds) when stopping the metrics calculation
+_DEFAULT_METRICS_STOP_TIMEOUT = 30
+
+
+@asynccontextmanager
+async def metrics_lifespan(app: FastAPI, agent_os: "AgentOS"):
+    """Calculate the metrics of every database with a lock row in the background: once at startup, then every
+    metrics_calculation_interval_seconds. The lock row lets one process calculate at a time."""
+    from itertools import chain
+
+    # A database registered under several ids is calculated once
+    dbs = list({id(db): db for db in chain.from_iterable(agent_os.dbs.values()) if has_metrics_lock_row(db)}.values())
+    if not dbs:
+        yield
+        return
+
+    # Calculated here, so a read never calculates them
+    for db in dbs:
+        stop_metrics_refresh_on_read(db)
+
+    stopping = asyncio.Event()
+
+    async def calculate_loop() -> None:
+        """Main loop: calculate first, then sleep."""
+        while not stopping.is_set():
+            for db in dbs:
+                try:
+                    # Checked between days, so a shutdown releases the lock instead of holding it for its lease
+                    if isinstance(db, AsyncBaseDb):
+                        await get_metrics_calculation(db, should_stop=stopping.is_set)()
+                    elif isinstance(db, BaseDb):
+                        await asyncio.to_thread(get_metrics_calculation(db, should_stop=stopping.is_set))
+                except Exception as exc:
+                    log_error(f"Metrics calculation error: {database_error_message(exc)}")
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(stopping.wait(), timeout=agent_os.settings.metrics_calculation_interval_seconds)
+
+    task = asyncio.create_task(calculate_loop())
+
+    yield
+
+    # A calculation in progress finishes before the database closes its connections
+    stopping.set()
+    try:
+        await asyncio.wait_for(task, timeout=_DEFAULT_METRICS_STOP_TIMEOUT)
+    except asyncio.TimeoutError as e:
+        log_warning(f"Timed out waiting for the metrics calculation during shutdown: {e}")
 
 
 def _combine_app_lifespans(lifespans: list) -> Any:
@@ -724,7 +777,11 @@ class AgentOS:
             self.registry.exclude_components([self._company_manager])
             if self._manager is not None:
                 from agno.company.company_manager import _build_company_manager
-                from agno.os.manager.prompts import FOCUSED_EXECUTION_INSTRUCTIONS
+                from agno.os.manager.prompts import (
+                    COMPANY_COORDINATION_INSTRUCTIONS,
+                    COMPANY_TASK_RUN_INSTRUCTIONS,
+                    FOCUSED_EXECUTION_INSTRUCTIONS,
+                )
 
                 # A separate member keeps the manager's execution policy off the served
                 # Company Manager, which direct chat and Routines run.
@@ -738,22 +795,14 @@ class AgentOS:
                 assert isinstance(self._manager.team.members, list)
                 self._manager.team.members.append(member)
                 assert isinstance(self._manager.team.instructions, list)
+                company_instructions = COMPANY_COORDINATION_INSTRUCTIONS
                 if self._company_db is not None:
                     from agno.os.manager.company_tasks import CompanyTaskTools
 
                     assert isinstance(self._manager.team.tools, list)
                     self._manager.team.tools.append(CompanyTaskTools(self))
-                self._manager.team.instructions.append(
-                    "Delegate Company Products, Projects, Tasks, Sources, Routines, playbook pages and decisions to "
-                    "Company Manager, including setup requests. Routines are Company schedules: ask Company "
-                    "Manager, not Platform Builder, to create them. When a person asks to start a Task a person "
-                    "already accepted, call start_company_task by itself: the Task runs in its own session and the "
-                    "tool's reply is the receipt. When a person answers a finished Task's question, decides between "
-                    "its options or revises it, call continue_company_task by itself with their words. For the "
-                    "state, result or evidence of a Task, call get_company_task_status instead of waiting. Never "
-                    "accept, review or complete Tasks yourself, and never run a Task's executor directly with the "
-                    "run tools."
-                )
+                    company_instructions += COMPANY_TASK_RUN_INSTRUCTIONS
+                self._manager.team.instructions.append(company_instructions)
             self.agents = [*(self.agents or []), self._company_manager]
         if self._company_db is not None:
             from agno.company.details import _company_instructions
@@ -1047,7 +1096,12 @@ class AgentOS:
                 agents=self._agents or None,  # type: ignore[arg-type]
                 teams=self._teams or None,  # type: ignore[arg-type]
             ),
-            get_metrics_router(dbs=self.dbs),
+            get_metrics_router(
+                dbs=self.dbs,
+                settings=self.settings,
+                role_store=self._authz_role_store,
+                auth_enabled=self._auth_configured(),
+            ),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
             get_traces_router(dbs=self.dbs),
             get_database_router(self, settings=self.settings),
@@ -2021,6 +2075,10 @@ class AgentOS:
             if self._scheduler_enabled and self.db is not None:
                 lifespans.append(partial(scheduler_lifespan, agent_os=self))
 
+            # The metrics lifespan (after db so tables exist)
+            if self.settings.metrics_calculation_enabled:
+                lifespans.append(partial(metrics_lifespan, agent_os=self))
+
             # The durable job queue worker (after db so tables exist)
             if self.queue is not None and self.queue.durable:
                 lifespans.append(partial(queue_lifespan, agent_os=self))
@@ -2078,6 +2136,10 @@ class AgentOS:
             if self._scheduler_enabled and self.db is not None:
                 lifespans.append(partial(scheduler_lifespan, agent_os=self))
 
+            # The metrics lifespan (after db so tables exist)
+            if self.settings.metrics_calculation_enabled:
+                lifespans.append(partial(metrics_lifespan, agent_os=self))
+
             # The durable job queue worker (after db so tables exist)
             if self.queue is not None and self.queue.durable:
                 lifespans.append(partial(queue_lifespan, agent_os=self))
@@ -2114,7 +2176,12 @@ class AgentOS:
                 agents=self._agents or None,  # type: ignore[arg-type]
                 teams=self._teams or None,  # type: ignore[arg-type]
             ),
-            get_metrics_router(dbs=self.dbs),
+            get_metrics_router(
+                dbs=self.dbs,
+                settings=self.settings,
+                role_store=self._authz_role_store,
+                auth_enabled=self._auth_configured(),
+            ),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
             get_traces_router(dbs=self.dbs),
             get_database_router(self, settings=self.settings),
@@ -3385,8 +3452,25 @@ class AgentOS:
 
         for db_id, dbs in self.dbs.items():
             if db_id not in dbs_with_specific_config:
-                # Collect unique table names from all databases with the same id
-                unique_tables = list({db.metrics_table_name for db in dbs if db.metrics_table_name is not None})
+                # Collect unique table names from all databases with the same id, the deprecated metrics table first
+                unique_tables = list(
+                    dict.fromkeys(
+                        table_name
+                        for db in dbs
+                        for table_name in (
+                            (
+                                db.metrics_table_name,
+                                db.component_metrics_table_name,
+                                db.aggregate_metrics_table_name,
+                                db.metrics_refreshes_table_name,
+                            )
+                            # A remote database lists the tables its own AgentOS listed
+                            if has_metrics_lock_row(db) or isinstance(db, RemoteDb)
+                            else (db.metrics_table_name,)
+                        )
+                        if table_name is not None
+                    )
+                )
                 metrics_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
