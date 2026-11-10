@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from agno.db.sqlite import SqliteDb
+from agno.metrics import RunMetrics
 from agno.models.openai import OpenAIChat
 from agno.run.agent import Message, RunOutput
 from agno.run.team import TeamRunOutput
@@ -818,3 +819,48 @@ def test_session_summary_manager_rejects_zero_conversation_limit(model):
     """Test that SessionSummaryManager raises ValueError for zero conversation_limit."""
     with pytest.raises(ValueError, match="conversation_limit must be a positive integer"):
         SessionSummaryManager(model=model, conversation_limit=0)
+
+
+def test_session_summary_manager_skips_below_token_threshold(model):
+    """Test that token-gated summaries are skipped below the configured threshold."""
+    manager = SessionSummaryManager(model=model, token_limit=1000, token_limit_ratio=0.8)
+    metrics = RunMetrics(input_tokens=799, total_tokens=799)
+
+    assert manager.should_create_session_summary(metrics) is False
+
+
+def test_session_summary_manager_creates_at_token_threshold(model):
+    """Test that token-gated summaries run at the configured threshold."""
+    manager = SessionSummaryManager(model=model, token_limit=1000, token_limit_ratio=0.8)
+    metrics = RunMetrics(input_tokens=800, total_tokens=800)
+
+    assert manager.should_create_session_summary(metrics) is True
+
+
+def test_session_summary_manager_rejects_invalid_token_limit(model):
+    """Test that SessionSummaryManager raises ValueError for invalid token_limit."""
+    with pytest.raises(ValueError, match="token_limit must be a positive integer"):
+        SessionSummaryManager(model=model, token_limit=0)
+
+
+def test_session_summary_manager_rejects_invalid_token_limit_ratio(model):
+    """Test that SessionSummaryManager raises ValueError for invalid token_limit_ratio."""
+    with pytest.raises(ValueError, match="token_limit_ratio must be > 0 and <= 1"):
+        SessionSummaryManager(model=model, token_limit_ratio=0)
+
+
+def test_session_summary_manager_compacts_history_after_summary(model):
+    """Test that session history is compacted when configured."""
+    manager = SessionSummaryManager(model=model, compact_history_after_summary=True)
+    session = Mock()
+    session.runs = [Mock(run_id="run-1"), Mock(run_id="run-2")]
+
+    manager.compact_session_history(session)
+
+    assert [run.run_id for run in session.runs] == ["run-2"]
+
+
+def test_session_summary_manager_rejects_invalid_compact_history_keep_last_n_runs(model):
+    """Test that SessionSummaryManager raises ValueError for invalid compaction retention."""
+    with pytest.raises(ValueError, match="compact_history_keep_last_n_runs must be a positive integer"):
+        SessionSummaryManager(model=model, compact_history_keep_last_n_runs=0)
