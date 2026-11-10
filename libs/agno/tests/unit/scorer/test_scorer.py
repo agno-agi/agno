@@ -197,6 +197,27 @@ def test_code_scorer_digest_stable_and_sensitive():
         CodeScorer(len).digest()
 
 
+def test_code_scorer_digest_callable_objects():
+    class _SyncCallableA:
+        def __call__(self, run, expected):
+            return run.content == expected
+
+    class _SyncCallableB:
+        def __call__(self, run, expected):
+            return run.content != expected
+
+    # Two distinct instances of the same callable class produce identical digests.
+    assert CodeScorer(_AsyncCallable()).digest() == CodeScorer(_AsyncCallable()).digest()
+    assert CodeScorer(_SyncCallableA()).digest() == CodeScorer(_SyncCallableA()).digest()
+    # Different __call__ bodies produce different digests.
+    assert CodeScorer(_SyncCallableA()).digest() != CodeScorer(_SyncCallableB()).digest()
+    # Different pass_threshold values produce different digests.
+    assert (
+        CodeScorer(_AsyncCallable(), pass_threshold=0.5).digest()
+        != CodeScorer(_AsyncCallable(), pass_threshold=0.8).digest()
+    )
+
+
 def test_code_scorer_digest_stable_across_processes():
     # A digest embedding anything process-local -- a repr with a memory address --
     # would report "environment drifted" forever between two identical envs.
