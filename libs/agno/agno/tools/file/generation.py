@@ -161,7 +161,7 @@ class FileGenerationTools(Toolkit):
         try:
             file_path = safe_join_filename(self.output_directory, filename)  # type: ignore[arg-type]
             if isinstance(content, str):
-                file_path.write_text(content, encoding="utf-8")
+                file_path.write_bytes(content.encode("utf-8"))
             else:
                 file_path.write_bytes(content)
         except (OSError, PathSecurityError) as e:

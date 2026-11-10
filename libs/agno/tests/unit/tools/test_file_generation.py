@@ -85,6 +85,25 @@ def test_generate_csv_file_from_lists_with_headers():
     assert "Feb,200" in decoded
 
 
+def test_generate_csv_file_preserves_line_endings_and_rows():
+    """Test CSV generation preserves line endings and does not insert blank records on disk."""
+    import csv
+    import io
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tools = FileGenerationTools(output_directory=tmp_dir)
+        result = tools.generate_csv_file(
+            [["alpha", "beta"], ["one", "two"]],
+            filename="records.csv",
+        )
+        file_artifact = _get_single_file(result)
+        saved_path = Path(file_artifact.filepath)
+
+        assert saved_path.read_bytes() == file_artifact.content
+        rows = list(csv.reader(io.StringIO(saved_path.read_text(encoding="utf-8"), newline="")))
+        assert rows == [["alpha", "beta"], ["one", "two"]]
+
+
 def test_generate_text_file():
     """Test text file generation."""
     with tempfile.TemporaryDirectory() as tmp_dir:
