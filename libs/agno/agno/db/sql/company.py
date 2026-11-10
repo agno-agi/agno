@@ -43,6 +43,10 @@ def lock_product(sess: Any, products: Any, product_id: str) -> None:
         raise ValueError("Product is missing or archived")
 
 
+class CancelledProjectError(ValueError):
+    pass
+
+
 def require_project(
     sess: Any,
     projects: Any,
@@ -61,7 +65,7 @@ def require_project(
     if row._mapping["product_id"] != product_id:
         raise ValueError("Task and Project must belong to the same Product")
     if reject_cancelled and row._mapping["status"] == "cancelled":
-        raise ValueError("Cannot change Task status in a cancelled Project")
+        raise CancelledProjectError("Cannot change Task status in a cancelled Project")
     if reject_proposed and row._mapping["status"] == "proposed":
         raise ValueError("Project approval is required before creating Tasks outside Backlog or moving them to Ready")
     if (

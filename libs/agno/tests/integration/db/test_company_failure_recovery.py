@@ -61,6 +61,55 @@ async def test_cancelled_project_automation_skips_without_failure_streak(system,
 
 
 @pytest.mark.asyncio
+async def test_denied_dispatch_in_cancelled_project_does_not_abort_tick(system, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    client, db, _, _, _ = system
+    stuck = await accepted(client)
+    other = await accepted(client)
+    response = await client.post(
+        f"/company/projects/{stuck['project_id']}/transitions", json={"target": "cancelled", "reason": "Stop"}
+    )
+    assert response.status_code == 200, response.text
+    executor, _ = await automation(system)
+    original_dispatch = executor._dispatch
+    complete_projects = AsyncMock(wraps=executor._complete_projects)
+
+    async def dispatch(task):
+        if task["id"] == stuck["id"]:
+            raise PermissionError("Executor run permission revoked")
+        return await original_dispatch(task)
+
+    monkeypatch.setattr(executor, "_dispatch", dispatch)
+    monkeypatch.setattr(executor, "_complete_projects", complete_projects)
+    outcomes = await executor._tick()
+    assert any(row["task_id"] == other["id"] and row.get("action") == "submitted" for row in outcomes)
+    complete_projects.assert_awaited_once()
+    assert (await _call(db, "get_task", stuck["id"]))["status"] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_policy_refusal_keeps_its_reason_after_project_cancellation(system, monkeypatch):
+    import agno.company.routines as routines
+
+    client, db, _, _, _ = system
+    task = await accepted(client)
+    response = await client.post(
+        f"/company/projects/{task['project_id']}/transitions", json={"target": "cancelled", "reason": "Stop"}
+    )
+    assert response.status_code == 200, response.text
+    executor, _ = await automation(system)
+
+    async def refuse(*args):
+        raise ValueError("Policy denied")
+
+    monkeypatch.setattr(routines, "_check_automatic_policy", refuse)
+    with pytest.raises(ValueError, match="Policy denied"):
+        await executor._dispatch(await _call(db, "get_task", task["id"]))
+    assert (await _call(db, "get_task", task["id"]))["status"] == "ready"
+
+
+@pytest.mark.asyncio
 async def test_project_cancelled_during_automation_checks_is_skipped(system, tmp_path, monkeypatch):
     import agno.company.routines as routines
 
