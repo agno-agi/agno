@@ -19,3 +19,14 @@
 **Result:** Saved identity retained and stale edit rejected. SQL adapter tests cover configuration updating the single row until it is edited, on PostgreSQL and SQLite, sync and async.
 
 ---
+
+
+### company_details.py — final foundation review (2026-11-10)
+
+**Status:** PASS
+
+**Description:** Ran the offline example against a disposable local PostgreSQL database. Saved edits survived configuration reseeding and stale edits were rejected. Company details and former-manager policy tests passed all 62 cases across sync/async SQLite and PostgreSQL (also included in the final combined 636-test run).
+
+**Result:** PASS. No live provider calls or deployment.
+
+---

@@ -1924,7 +1924,7 @@ class BaseDb(ABC):
         raise NotImplementedError("Company details not supported by the configured database")
 
     def initialize_company(self, name: str = "Company", description: Optional[str] = None) -> Dict[str, Any]:
-        """Insert company details only when missing, retaining human edits."""
+        """Seed or refresh unedited company details, retaining human edits."""
         raise NotImplementedError("Company details not supported by the configured database")
 
     def update_company(self, expected_updated_at: int, **fields: Any) -> Optional[Dict[str, Any]]:
@@ -3981,7 +3981,7 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError("Company details not supported by the configured database")
 
     async def initialize_company(self, name: str = "Company", description: Optional[str] = None) -> Dict[str, Any]:
-        """Insert company details only when missing, retaining human edits."""
+        """Seed or refresh unedited company details, retaining human edits."""
         raise NotImplementedError("Company details not supported by the configured database")
 
     async def update_company(self, expected_updated_at: int, **fields: Any) -> Optional[Dict[str, Any]]:

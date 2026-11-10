@@ -63,7 +63,7 @@ feedback = Product(
         Routine(
             name="review-feedback",
             executor_type="agent",
-            executor_id="company--manager",
+            executor_id="company-manager",
             cron_expr="0 9 * * *",
             timezone="UTC",
             instructions=(

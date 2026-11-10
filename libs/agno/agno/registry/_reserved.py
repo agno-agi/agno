@@ -2,11 +2,11 @@
 
 from typing import Any
 
-# Double hyphens distinguish built-ins; single-hyphen names are user-owned.
-MANAGER_TEAM_ID = "super--agent"
-BUILDER_ID = "platform--builder"
-OPERATOR_ID = "platform--manager"
-COMPANY_MANAGER_ID = "company--manager"
+# Public API identifiers: reserve these exact names for built-in managers.
+MANAGER_TEAM_ID = "superagent"
+BUILDER_ID = "platform-builder"
+OPERATOR_ID = "platform-manager"
+COMPANY_MANAGER_ID = "company-manager"
 # Company Manager's former ID stays reserved so a user component cannot claim it.
 LEGACY_PRODUCT_MANAGER_ID = "product-manager-internal"
 # IDs used before 3.2. They stay reserved so a user component cannot inherit their grants or

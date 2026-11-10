@@ -831,3 +831,14 @@ provider calls were made.
 **Result:** `manager_discovery.py` and `check_manager_permissions.py` passed without model calls. Old URLs return 422 with the new ID, new URLs work, an old session can still be continued by its session ID, and old sessions drop out of lists filtered by the new ID. No model calls were made.
 
 ---
+
+
+### Public manager IDs and final review — 2026-11-10
+
+**Status:** PASS
+
+**Description:** Canonical IDs are now `superagent`, `company-manager`, `platform-builder` and `platform-manager`. The final combined manager, run-authorization, Company API/Routine, former-ID migration and company-details integration suite passed 636 tests with no skips. It includes synchronous/asynchronous SQLite and disposable PostgreSQL, exact grants and denies, catalog collisions, and IDs generated from component names. Full format and validation scripts passed. Tests used deterministic models; no paid model calls or deployment.
+
+**Result:** Public IDs route correctly; private specialists remain private; former IDs are rejected, and old managed-role policies block startup. Unrelated user IDs retain separate permissions/history. The earlier double-hyphen decision and alias behavior recorded above are superseded.
+
+---

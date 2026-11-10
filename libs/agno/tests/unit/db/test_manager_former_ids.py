@@ -88,7 +88,7 @@ async def test_former_id_policy_blocks_startup_on_every_adapter(db, resource, ef
     with pytest.raises(ValueError, match="renamed in Agno 3.2") as raised:
         await auth._araise_if_former_manager_policies()
     assert f"legacy: {resource} run ({effect})" in str(raised.value)
-    assert "os-manager-internal -> super--agent" in str(raised.value)
+    assert "os-manager-internal -> superagent" in str(raised.value)
 
 
 @pytest.mark.asyncio
@@ -97,7 +97,7 @@ async def test_current_and_user_ids_do_not_block_startup(db):
     await call(
         db.set_authz_role_policies,
         "current",
-        [("teams/super--agent", "run", "deny"), ("teams/super-agent", "run", "allow"), ("teams/*", "run", "allow")],
+        [("teams/superagent", "run", "deny"), ("teams/super-agent", "run", "allow"), ("teams/*", "run", "allow")],
     )
     await auth._araise_if_former_manager_policies()
 
@@ -110,7 +110,7 @@ def test_application_refuses_to_start_and_starts_once_policies_are_updated(tmp_p
         with TestClient(app):
             pass
 
-    db.set_authz_role_policies("legacy", [("teams/*", "run", "allow"), ("teams/super--agent", "run", "deny")])
+    db.set_authz_role_policies("legacy", [("teams/*", "run", "allow"), ("teams/superagent", "run", "deny")])
     app = AgentOS(id="former", db=db, authorization=_authorization(), telemetry=False).get_app()
     with TestClient(app) as client:
         assert client.get("/health").status_code == 200
