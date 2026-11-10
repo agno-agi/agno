@@ -18,8 +18,10 @@ class DayAggregatedMetrics(BaseModel):
     workflow_runs_count: int = Field(..., description="Total number of workflow runs", ge=0)
     workflow_sessions_count: int = Field(..., description="Total number of workflow sessions", ge=0)
     users_count: int = Field(..., description="Total number of unique users", ge=0)
-    token_metrics: Dict[str, Any] = Field(..., description="Token usage metrics (input, output, cached, etc.)")
-    model_metrics: List[Dict[str, Any]] = Field(..., description="Metrics grouped by model (model_id, provider, count)")
+    token_metrics: Dict[str, Any] = Field(..., description="Token usage metrics (input, output, cached, cost, etc.)")
+    model_metrics: List[Dict[str, Any]] = Field(
+        ..., description="Metrics grouped by model (model_id, provider, count, cost)"
+    )
 
     date: datetime = Field(..., description="Date for which these metrics are aggregated")
     created_at: datetime = Field(..., description="Timestamp when metrics were created")
@@ -46,11 +48,6 @@ class DayAggregatedMetrics(BaseModel):
         )
 
 
-class MetricsResponse(BaseModel):
-    metrics: List[DayAggregatedMetrics] = Field(..., description="List of daily aggregated metrics")
-    updated_at: Optional[datetime] = Field(None, description="Timestamp of the most recent metrics update")
-
-
 class MetricsRefreshResponse(BaseModel):
     status: str = Field(..., description="Status of the refresh request")
     message: Optional[str] = Field(None, description="Additional details")
@@ -61,3 +58,294 @@ class MetricsRefreshStatusResponse(BaseModel):
     started_at: Optional[datetime] = Field(None, description="When the most recent refresh started")
     finished_at: Optional[datetime] = Field(None, description="When the most recent refresh finished")
     error: Optional[str] = Field(None, description="Error message if the most recent refresh failed")
+
+
+class OSMetricsRefreshResponse(BaseModel):
+    db_ids: Dict[str, MetricsRefreshResponse] = Field(
+        default_factory=dict,
+        description=(
+            "Databases a refresh was asked of, each with its status: "
+            "'started', 'already_running', 'disabled' or 'failed'"
+        ),
+    )
+    skipped_db_ids: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Databases left out of the refresh, each with the reason: 'failed', 'timeout' or 'unsupported'",
+    )
+
+
+class OSMetricsRefreshStatusResponse(BaseModel):
+    status: str = Field(
+        ...,
+        description=(
+            "'running' while any database refreshes, else 'failed' if any refresh failed, "
+            "else 'idle' if any database has not refreshed, else 'completed'"
+        ),
+    )
+    finished_at: Optional[datetime] = Field(
+        None,
+        description=(
+            "When the most recent refresh of the database refreshed longest ago finished. "
+            "None while any database has no finished refresh"
+        ),
+    )
+    db_ids: Dict[str, MetricsRefreshStatusResponse] = Field(
+        default_factory=dict, description="Databases the status was read from, each with its most recent refresh"
+    )
+    skipped_db_ids: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Databases left out of the status, each with the reason: 'failed', 'timeout' or 'unsupported'",
+    )
+
+
+class MetricsResponse(BaseModel):
+    metrics: List[DayAggregatedMetrics] = Field(..., description="List of daily aggregated metrics")
+    updated_at: Optional[datetime] = Field(None, description="Timestamp of the most recent metrics update")
+    refresh: Optional[MetricsRefreshStatusResponse] = Field(None, description="Status of the most recent refresh")
+
+
+class DaySessionMetrics(BaseModel):
+    """The sessions created on one day"""
+
+    date: datetime = Field(..., description="Date the sessions were created")
+    sessions_count: int = Field(
+        ..., description="Sessions created on this date, across agents, teams and workflows", ge=0
+    )
+
+
+class OSSessionMetricsResponse(BaseModel):
+    metrics: List[DaySessionMetrics] = Field(..., description="Daily session counts across the window, oldest first")
+    total_sessions: int = Field(..., description="Sessions created in the window", ge=0)
+    previous_total_sessions: int = Field(
+        ..., description="Sessions created in the window of the same length that ends the day before this one", ge=0
+    )
+    change_percent: Optional[float] = Field(
+        None,
+        description=(
+            "Change of total_sessions against previous_total_sessions, in percent. "
+            "None when the previous window had no sessions"
+        ),
+    )
+    window_days: int = Field(..., description="Number of days the metrics cover", ge=1)
+    updated_at: Optional[datetime] = Field(None, description="Timestamp of the most recent metrics update")
+    db_ids: Dict[str, Optional[datetime]] = Field(
+        default_factory=dict, description="Databases the metrics were read from, each with its most recent update"
+    )
+    skipped_db_ids: Dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Databases left out of the metrics, each with the reason: "
+            "'timeout', 'incomplete', 'failed' or 'unsupported'"
+        ),
+    )
+
+
+class DayTokenMetrics(BaseModel):
+    """The tokens used on one day"""
+
+    date: datetime = Field(..., description="Date the tokens were used on")
+    tokens_count: int = Field(..., description="Tokens used on this date, across agents, teams and workflows", ge=0)
+
+
+class OSTokenMetricsResponse(BaseModel):
+    metrics: List[DayTokenMetrics] = Field(..., description="Daily token counts across the window, oldest first")
+    total_tokens: int = Field(..., description="Tokens used in the window", ge=0)
+    previous_total_tokens: int = Field(
+        ..., description="Tokens used in the window of the same length that ends the day before this one", ge=0
+    )
+    change_percent: Optional[float] = Field(
+        None,
+        description=(
+            "Change of total_tokens against previous_total_tokens, in percent. "
+            "None when the previous window used no tokens"
+        ),
+    )
+    window_days: int = Field(..., description="Number of days the metrics cover", ge=1)
+    updated_at: Optional[datetime] = Field(None, description="Timestamp of the most recent metrics update")
+    db_ids: Dict[str, Optional[datetime]] = Field(
+        default_factory=dict, description="Databases the metrics were read from, each with its most recent update"
+    )
+    skipped_db_ids: Dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Databases left out of the metrics, each with the reason: "
+            "'timeout', 'incomplete', 'failed' or 'unsupported'"
+        ),
+    )
+
+
+class DayUserMetrics(BaseModel):
+    """The users in the directory at the end of one day"""
+
+    date: datetime = Field(..., description="Date the users are counted at the end of")
+    users_count: int = Field(..., description="Users in the directory at the end of this date", ge=0)
+
+
+class OSUserMetricsResponse(BaseModel):
+    metrics: List[DayUserMetrics] = Field(..., description="Daily user counts across the window, oldest first")
+    total_users: int = Field(..., description="Users in the directory at the end of the window", ge=0)
+    previous_total_users: int = Field(
+        ...,
+        description=(
+            "Users in the directory at the end of the window of the same length that ends the day before this one"
+        ),
+        ge=0,
+    )
+    change_percent: Optional[float] = Field(
+        None,
+        description=(
+            "Change of total_users against previous_total_users, in percent. None when the previous window had no users"
+        ),
+    )
+    window_days: int = Field(..., description="Number of days the metrics cover", ge=1)
+    updated_at: Optional[datetime] = Field(None, description="Timestamp of the directory read")
+
+
+class ModelUsage(BaseModel):
+    """The runs one model served across the window"""
+
+    model_id: str = Field(..., description="Identifier of the model")
+    model_provider: Optional[str] = Field(None, description="Provider serving the model")
+    runs_count: int = Field(..., description="Runs the model served in the window", ge=0)
+    runs_share: float = Field(..., description="Percentage of the window's runs the model served", ge=0)
+
+
+class OSModelMetricsResponse(BaseModel):
+    models: List[ModelUsage] = Field(..., description="Model usage across the window, most-run first")
+    total_model_runs: int = Field(
+        ..., description="Runs in the window that called a model, team members and workflow steps included", ge=0
+    )
+    window_days: int = Field(..., description="Number of days the metrics cover", ge=1)
+    updated_at: Optional[datetime] = Field(None, description="Timestamp of the most recent metrics update")
+    db_ids: Dict[str, Optional[datetime]] = Field(
+        default_factory=dict, description="Databases the metrics were read from, each with its most recent update"
+    )
+    skipped_db_ids: Dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Databases left out of the metrics, each with the reason: "
+            "'timeout', 'incomplete', 'failed' or 'unsupported'"
+        ),
+    )
+
+
+class DayRunMetrics(BaseModel):
+    """The runs started on one day"""
+
+    date: datetime = Field(..., description="Date the runs started")
+    runs_count: int = Field(
+        ..., description="Runs no other run started on this date, across agents, teams and workflows", ge=0
+    )
+    status_metrics: Dict[str, int] = Field(
+        ..., description="Runs started on this date by their current status, team member runs included"
+    )
+
+
+class OSRunMetricsResponse(BaseModel):
+    metrics: List[DayRunMetrics] = Field(..., description="Daily run counts across the window, oldest first")
+    total_runs: int = Field(..., description="Runs no other run started in the window", ge=0)
+    status_metrics: Dict[str, int] = Field(
+        ..., description="Runs started in the window by their current status, team member runs included"
+    )
+    success_rate: Optional[float] = Field(
+        None,
+        description=(
+            "Percentage of the window's finished runs (completed, errored or cancelled) that completed. "
+            "None when no run finished"
+        ),
+    )
+    previous_total_runs: int = Field(
+        ...,
+        description="Runs no other run started in the window of the same length that ends the day before this one",
+        ge=0,
+    )
+    change_percent: Optional[float] = Field(
+        None,
+        description=(
+            "Change of total_runs against previous_total_runs, in percent. None when the previous window had no runs"
+        ),
+    )
+    window_days: int = Field(..., description="Number of days the metrics cover", ge=1)
+    updated_at: Optional[datetime] = Field(None, description="Timestamp of the most recent metrics update")
+    db_ids: Dict[str, Optional[datetime]] = Field(
+        default_factory=dict, description="Databases the metrics were read from, each with its most recent update"
+    )
+    skipped_db_ids: Dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Databases left out of the metrics, each with the reason: "
+            "'timeout', 'incomplete', 'failed' or 'unsupported'"
+        ),
+    )
+
+
+class DayLatencyMetrics(BaseModel):
+    """The latency of the completed runs started on one day"""
+
+    date: datetime = Field(..., description="Date the runs started")
+    runs_count: int = Field(..., description="Completed runs started on this date that recorded a duration", ge=0)
+    avg_duration_ms: Optional[int] = Field(
+        None, description="Average duration of a completed run, from start to end, time paused included"
+    )
+    median_duration_ms: Optional[int] = Field(None, description="Duration half the completed runs finished within")
+    p95_duration_ms: Optional[int] = Field(None, description="Duration 95% of the completed runs finished within")
+    max_duration_ms: Optional[int] = Field(None, description="Duration of the slowest completed run")
+    avg_time_to_first_token_ms: Optional[int] = Field(
+        None, description="Average time to the first token of a completed run"
+    )
+    median_time_to_first_token_ms: Optional[int] = Field(
+        None, description="Time to the first token half the completed runs stayed within"
+    )
+    p95_time_to_first_token_ms: Optional[int] = Field(
+        None, description="Time to the first token 95% of the completed runs stayed within"
+    )
+    max_time_to_first_token_ms: Optional[int] = Field(None, description="Longest time to the first token")
+    avg_model_call_ms: Optional[int] = Field(None, description="Average duration of a model call")
+    median_model_call_ms: Optional[int] = Field(None, description="Duration half the model calls finished within")
+    p95_model_call_ms: Optional[int] = Field(None, description="Duration 95% of the model calls finished within")
+    max_model_call_ms: Optional[int] = Field(None, description="Duration of the slowest model call")
+
+
+class OSLatencyMetricsResponse(BaseModel):
+    metrics: List[DayLatencyMetrics] = Field(..., description="Daily latency across the window, oldest first")
+    runs_count: int = Field(..., description="Completed runs in the window that recorded a duration", ge=0)
+    avg_duration_ms: Optional[int] = Field(
+        None, description="Average duration of a completed run in the window, from start to end, time paused included"
+    )
+    median_duration_ms: Optional[int] = Field(
+        None, description="Duration half the window's completed runs finished within"
+    )
+    p95_duration_ms: Optional[int] = Field(
+        None, description="Duration 95% of the window's completed runs finished within"
+    )
+    max_duration_ms: Optional[int] = Field(None, description="Duration of the slowest completed run in the window")
+    avg_time_to_first_token_ms: Optional[int] = Field(
+        None, description="Average time to the first token of a completed run in the window"
+    )
+    median_time_to_first_token_ms: Optional[int] = Field(
+        None, description="Time to the first token half the window's completed runs stayed within"
+    )
+    p95_time_to_first_token_ms: Optional[int] = Field(
+        None, description="Time to the first token 95% of the window's completed runs stayed within"
+    )
+    max_time_to_first_token_ms: Optional[int] = Field(None, description="Longest time to the first token in the window")
+    avg_model_call_ms: Optional[int] = Field(None, description="Average duration of a model call in the window")
+    median_model_call_ms: Optional[int] = Field(
+        None, description="Duration half the window's model calls finished within"
+    )
+    p95_model_call_ms: Optional[int] = Field(
+        None, description="Duration 95% of the window's model calls finished within"
+    )
+    max_model_call_ms: Optional[int] = Field(None, description="Duration of the slowest model call in the window")
+    window_days: int = Field(..., description="Number of days the metrics cover", ge=1)
+    updated_at: Optional[datetime] = Field(None, description="Timestamp of the most recent metrics update")
+    db_ids: Dict[str, Optional[datetime]] = Field(
+        default_factory=dict, description="Databases the metrics were read from, each with its most recent update"
+    )
+    skipped_db_ids: Dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Databases left out of the metrics, each with the reason: "
+            "'timeout', 'incomplete', 'failed' or 'unsupported'"
+        ),
+    )

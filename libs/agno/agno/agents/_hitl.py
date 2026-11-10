@@ -27,11 +27,11 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Set
 from uuid import uuid4
 
 from agno.models.response import ToolExecution
-from agno.tools.function import UserFeedbackOption, UserFeedbackQuestion
 from agno.run.agent import RunContinuedEvent, RunPausedEvent
 from agno.run.base import RunStatus
 from agno.run.cancel import araise_if_cancelled
 from agno.run.requirement import RunRequirement
+from agno.tools.function import UserFeedbackOption, UserFeedbackQuestion
 
 _current: ContextVar[Optional["HITLBridge"]] = ContextVar("harness_hitl", default=None)
 # Run metadata key holding the native human-in-the-loop state.

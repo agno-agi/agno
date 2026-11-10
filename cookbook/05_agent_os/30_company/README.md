@@ -34,7 +34,7 @@ whoever created the Product. User isolation does not restrict Company records.
 ## Weekly Company Manager review
 
 `10_weekly_product_review.py` runs a Company Routine with the framework's
-`company-manager-internal` agent. It reads Sources and existing work, proposes
+`company-manager` agent. It reads Sources and existing work, proposes
 only evidence-backed Backlog Tasks, and updates status without accepting work.
 The same declaration works with or without OS Manager; no application agent is
 needed. Company Manager is the only framework manager that can run a Routine:
@@ -122,8 +122,9 @@ The HTTP routes use `/company/projects` and `/company/tasks`, with the same
 CRUD, paging, soft delete and restore conventions as Products, plus
 `POST /{id}/transitions`. Task Ready requests include `executor_type` and
 `executor_id`; the API applies the scheduler's caller run-permission check.
-Acceptance also validates the executor against the registry. Direct Python callers
-pass `registry=Registry(...)` to their Company manager.
+Acceptance also validates the executor against the registry, then the published
+Studio components in the AgentOS catalog, like the ordinary run routes. Direct Python
+callers pass `registry=Registry(...)` to their Company manager.
 
 Project and Task HTTP reads are company-wide for callers with the resource's
 read scope, matching Products. Edits and transitions are collaborative: callers with the resource write
@@ -171,8 +172,8 @@ entries that reference the original decision.
 
 Company Manager uses `CompanyConfig(model=...)`, otherwise the first declared
 registry model. If neither exists, its unavailable reason appears in diagnostics
-and manual APIs still work. It is served at `GET /agents/company-manager-internal`
-and `POST /agents/company-manager-internal/runs`. When OS Manager is enabled it also
+and manual APIs still work. It is served at `GET /agents/company-manager`
+and `POST /agents/company-manager/runs`. When Super Agent is enabled it also
 gets a separate Company Manager member that carries the manager's tool-call limit and
 focused instructions; the served agent, which direct chat and Routines use, keeps its
 own policy. It was previously named Product Manager with the id
@@ -205,6 +206,7 @@ retaining a known old ID explicitly is necessary for those references.
 | File | Demonstrates |
 | --- | --- |
 | `06_execute_tasks.py` | Durable execution, duplicate starts, ordinary run history and attention with no model call. |
+| `12_task_board.py` | Direct start from Backlog, `last_run`, `allowed_transitions` and a board read by status with no model call. |
 
 `06_execute_tasks.py` starts an accepted workflow Task through its ordinary run
 route and the durable queue, waits for In review, reads paged history and checks
@@ -222,24 +224,43 @@ creates and removes its own database schema. `COMPANY_QUEUE_DB_URL` overrides
 the local PostgreSQL URL. SQLite follows the queue's existing development
 fallback; use PostgreSQL session storage for production attempt fencing.
 
-POST `/company/tasks/{id}/runs` accepts `{"attempt": 1}` (the default). Repeating
-an active attempt returns the first run. In review, a stale attempt returns 409. A full queue returns 429 without changing
-the Task or consuming the attempt; retry the same attempt when capacity is available.
+`12_task_board.py` starts a Backlog Task by naming its workflow executor in the
+run request, repeats the start, waits for In review, and reads each board column
+with the `status` filter. It makes no provider calls. With PostgreSQL running, run:
+
+```bash
+.venv/bin/python cookbook/05_agent_os/30_company/12_task_board.py
+COMPANY_DB=postgres .venv/bin/python cookbook/05_agent_os/30_company/12_task_board.py
+```
+
+POST `/company/tasks/{id}/runs` accepts an optional `attempt`. Without it, the request
+joins the reserved attempt, otherwise it starts the next one. Repeating
+an active attempt returns the first run. In review, a stale attempt returns 409.
+A full queue returns 429 without changing an accepted Task or consuming the
+attempt; retry the same attempt when capacity is available.
 The durable ticket is accepted before the Task moves to In progress, and the worker
 can recover that update if the submitting process stops. If acceptance changes
 before the Task can reserve a fresh ticket, the request returns 409 and cancels
 the waiting ticket; an already-claimed ticket is rejected by the worker.
-To request a revision from In review, POST to the runs route with `attempt` equal
-to the highest recorded attempt plus one. The reservation writes the In review
+To request a revision from In review, POST to the runs route without `attempt`, or with
+`attempt` equal to the highest recorded attempt plus one. The reservation writes the In review
 to In progress transition and clears the previous result, retaining the same
 session and executor. A rejected submission leaves the result and lifecycle unchanged.
 A fresh Ready Task starts attempt 1. Work returned to Backlog, edited, and accepted
-again starts the next unused attempt from Ready, retaining its session. Backlog
-cannot start a run. Failed or cancelled runs can still be retried while the Task
-remains In progress. No
+again starts the next unused attempt from Ready, retaining its session. A Backlog
+Task starts only when the request names `executor_type` and `executor_id`: the route
+accepts it with the same checks as moving it to Ready, then starts the run. If
+the run does not start, the Task returns to Backlog with the refusal as the
+transition reason. Repeating the start joins its run while the Task is Ready or
+its run is unfinished; after the run ends, the repeat returns 409. Failed or
+cancelled runs can still be retried while the Task remains In progress. No
 revision feedback field is accepted by this request. Each Task retains one session. GET on the same route returns ordinary session runs
 with `limit` and `page`. GET `/company/runs/{id}` reads an individual run and
 POST `/company/runs/{id}/cancel` uses the executor's existing cancellation route.
+
+Each Task response carries `last_run` (status, attempt, run id and times of its latest
+run) and `allowed_transitions` (each target, whether the move is allowed now, and why
+not).
 
 Start rechecks the registry, `tasks:write`, `wiki:read` and the executor's run
 permission. Registry-only executors receive their ordinary routes when Company
@@ -626,7 +647,7 @@ Automatic executors must be local and have a database for durable run storage.
 | --- | --- |
 | `project_active` | The proposal's Project exists, belongs to the same Product, and is active. Independent Tasks fail this check. |
 | `has_source_evidence` | Evidence names an existing Source in this Product; a fresh read through its configured reader matches each content hash and link. An asserted hash or `passed` field is insufficient. |
-| `executor_registered` | The proposed executor exists in the current registry and passes the ordinary Company executor checks. Registry validation is also mandatory for every acceptance and dispatch. |
+| `executor_registered` | The proposed executor exists in the current registry, or as a published Studio component, and passes the ordinary Company executor checks. Registry validation is also mandatory for every acceptance and dispatch. |
 
 `limits.max_acceptances` defaults to **1**. Each distinct Task counts at most
 once per policy version, including archived Tasks; returning a Task to Backlog

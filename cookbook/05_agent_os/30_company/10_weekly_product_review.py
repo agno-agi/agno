@@ -59,7 +59,7 @@ def build_os(
             Routine(
                 name="weekly-review",
                 executor_type="agent",
-                executor_id="company-manager-internal",
+                executor_id="company-manager",
                 cron_expr="0 9 * * 1",
                 timezone="Europe/London",
                 instructions=REVIEW,
@@ -103,9 +103,9 @@ if __name__ == "__main__":
                 agent_os.db, product, agent_os.registry, agent_os=agent_os
             )
             schedule = agent_os.db.get_schedule_by_name("documentation.weekly-review")
-            assert schedule["endpoint"] == "/agents/company-manager-internal/runs"
+            assert schedule["endpoint"] == "/agents/company-manager/runs"
             assert schedule["payload"]["metadata"]["auto_accept"] is False
-            assert agent_os.registry.get_agent("company-manager-internal") is None
+            assert agent_os.registry.get_agent("company-manager") is None
             print("Weekly Company Manager review configured; no model calls made.")
             agent_os.db.close()
     else:

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from agno.company.declarations import Routine
-from agno.company.execution import _call, _ExecutorAuthorization, _validate_executor_tools
+from agno.company.execution import _call, _ExecutorAuthorization, _registered_component, _validate_executor_tools
 from agno.company.scheduler import CompanyScheduleExecutor
 from agno.db.schemas.scheduler import COMPANY_AUTOMATION_SCHEDULE_ID, RUN_ENDPOINT_RE
 from agno.guardrails.base import BaseGuardrail
@@ -199,7 +199,7 @@ def _routine_executor_endpoint(executor_type: str, executor_id: str, registry: A
         # OS Manager and its specialists can edit the platform; Routines run unattended on untrusted Sources.
         raise ValueError("Only the Company Manager can execute Routines among framework managers")
     else:
-        component = getattr(registry, "get_" + executor_type)(executor_id) if registry else None
+        component = _registered_component(registry, executor_type, executor_id)
         if component is None:
             raise ValueError("Routine executor is missing from the registry")
     _validate_executor_tools(component)

@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb
 from agno.db.schemas.tasks import task_run_id
-from agno.exceptions import InputCheckError
+from agno.exceptions import ComponentRehydrationError, InputCheckError
 from agno.registry._reserved import RESERVED_MANAGER_IDS
 from agno.run.authorization import RunAuthorization
 
@@ -37,10 +37,29 @@ class _TaskRunRefused(InputCheckError):
     """A claimed Company run (a Task or a routine) may no longer start; the queue fails it without retrying."""
 
 
+def _registered_component(registry: Any, executor_type: str, executor_id: Optional[str]) -> Any:
+    """A code-defined component, else the published Studio version in the OS's component catalog."""
+    if registry is None:
+        return None
+    component = getattr(registry, "get_" + executor_type)(executor_id)
+    # Only the catalog AgentOS declared, never a guessed db, like the ordinary run routes.
+    if component is not None or not executor_id or registry.component_db is None:
+        return component
+    from agno.agent.agent import get_agent_by_id
+    from agno.team.team import get_team_by_id
+    from agno.workflow.workflow import get_workflow_by_id
+
+    load = {"agent": get_agent_by_id, "team": get_team_by_id, "workflow": get_workflow_by_id}[executor_type]
+    try:
+        return load(registry.component_db, executor_id, registry=registry, strict=True)
+    except ComponentRehydrationError as exc:
+        raise ValueError(str(exc)) from exc
+
+
 def _executor(registry: Any, executor_type: Optional[str], executor_id: Optional[str], accepting: bool = False) -> Any:
     if executor_type not in {"agent", "team", "workflow"} or executor_id in RESERVED_MANAGER_IDS:
         raise ValueError("Select a registered agent, team or workflow executor")
-    component = getattr(registry, "get_" + executor_type)(executor_id) if registry is not None else None
+    component = _registered_component(registry, executor_type, executor_id)
     if component is None:
         raise ValueError("Task executor is missing from the registry")
     if not accepting:

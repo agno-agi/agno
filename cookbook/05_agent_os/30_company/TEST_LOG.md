@@ -412,3 +412,38 @@ routine, and startup preserves that choice. Uses temporary SQLite storage with n
 model calls or scheduler execution.
 
 ---
+
+### 12_task_board.py
+
+**Status:** PASS
+
+**Description:** Start a Backlog Task by naming its workflow executor, repeat the
+start while it runs and after it reaches In review, then read each board column
+with the `status` filter.
+
+**Result:** The repeat during the run joins it and the repeat after review returns
+409. Each of the six status columns reports its count. Passed on temporary
+SQLite and with `COMPANY_DB=postgres`, with no model calls.
+
+---
+
+### Current manager ID in Company cookbooks (2026-11-09)
+
+**Status:** PASS
+
+**Description:** `05_company_manager.py` and `10_weekly_product_review.py --check` address Company Manager as `company--manager`, and the weekly Routine schedule stores that endpoint. `10_customer_feedback/company_os.py` uses the same executor ID.
+
+**Result:** Both checks passed with no model calls. `company_os.py` was compiled but not served.
+
+---
+
+
+### 10_weekly_product_review.py — public manager ID (2026-11-10)
+
+**Status:** PASS
+
+**Description:** Ran `--check` with the canonical `company-manager` ID. The Routine targets `/agents/company-manager/runs`; no model calls were made.
+
+**Result:** Offline configuration check passed. The combined 636-test regression suite also covers Company Routine authorization and restrictions.
+
+---

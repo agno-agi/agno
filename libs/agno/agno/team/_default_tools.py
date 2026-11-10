@@ -89,6 +89,7 @@ from agno.utils.response import (
 from agno.utils.team import (
     add_interaction_to_team_run_context,
     format_member_agent_task,
+    get_member_session_id,
 )
 from agno.utils.timer import Timer
 
@@ -134,7 +135,9 @@ async def _acascading_cancel_run(run_id: str) -> bool:
     return await _team_acancel_run(run_id)
 
 
-def _get_update_user_memory_function(team: "Team", user_id: Optional[str] = None, async_mode: bool = False) -> Function:
+def _get_update_user_memory_function(
+    team: "Team", user_id: Optional[str] = None, run_response: Optional[TeamRunOutput] = None, async_mode: bool = False
+) -> Function:
     def update_user_memory(task: str) -> str:
         """
         Use this function to submit a task to modify the Agent's memory.
@@ -148,7 +151,9 @@ def _get_update_user_memory_function(team: "Team", user_id: Optional[str] = None
             str: A string indicating the status of the update.
         """
         team.memory_manager = cast(MemoryManager, team.memory_manager)
-        response = team.memory_manager.update_memory_task(task=task, user_id=user_id)
+        response = team.memory_manager.update_memory_task(
+            task=task, user_id=user_id, run_metrics=run_response.metrics if run_response else None
+        )
         return response
 
     async def aupdate_user_memory(task: str) -> str:
@@ -164,7 +169,9 @@ def _get_update_user_memory_function(team: "Team", user_id: Optional[str] = None
             str: A string indicating the status of the update.
         """
         team.memory_manager = cast(MemoryManager, team.memory_manager)
-        response = await team.memory_manager.aupdate_memory_task(task=task, user_id=user_id)
+        response = await team.memory_manager.aupdate_memory_task(
+            task=task, user_id=user_id, run_metrics=run_response.metrics if run_response else None
+        )
         return response
 
     if async_mode:
@@ -736,8 +743,8 @@ def _get_delegate_task_function(
                 member_agent_run_response_stream = member_agent.run(
                     input=member_agent_task if not history else history,
                     user_id=user_id,
-                    # All members have the same session_id
-                    session_id=session.session_id,
+                    # Local members share the team's session_id; a remote member keeps its own
+                    session_id=get_member_session_id(member_agent, session.session_id),
                     session_state=member_session_state_copy,  # Send a copy to the agent
                     images=images,
                     videos=videos,
@@ -796,8 +803,8 @@ def _get_delegate_task_function(
                 member_agent_run_response = member_agent.run(  # type: ignore
                     input=member_agent_task if not history else history,  # type: ignore
                     user_id=user_id,
-                    # All members have the same session_id
-                    session_id=session.session_id,
+                    # Local members share the team's session_id; a remote member keeps its own
+                    session_id=get_member_session_id(member_agent, session.session_id),
                     session_state=member_session_state_copy,  # Send a copy to the agent
                     images=images,
                     videos=videos,
@@ -920,8 +927,8 @@ def _get_delegate_task_function(
                 member_agent_run_response_stream = member_agent.arun(  # type: ignore
                     input=member_agent_task if not history else history,
                     user_id=user_id,
-                    # All members have the same session_id
-                    session_id=session.session_id,
+                    # Local members share the team's session_id; a remote member keeps its own
+                    session_id=get_member_session_id(member_agent, session.session_id),
                     session_state=member_session_state_copy,  # Send a copy to the agent
                     images=images,
                     videos=videos,
@@ -980,8 +987,8 @@ def _get_delegate_task_function(
                 member_agent_run_response = await member_agent.arun(  # type: ignore
                     input=member_agent_task if not history else history,
                     user_id=user_id,
-                    # All members have the same session_id
-                    session_id=session.session_id,
+                    # Local members share the team's session_id; a remote member keeps its own
+                    session_id=get_member_session_id(member_agent, session.session_id),
                     session_state=member_session_state_copy,  # Send a copy to the agent
                     images=images,
                     videos=videos,
@@ -1088,8 +1095,8 @@ def _get_delegate_task_function(
                     member_agent_run_response_stream = member_agent.run(
                         input=member_agent_task if not history else history,
                         user_id=user_id,
-                        # All members have the same session_id
-                        session_id=session.session_id,
+                        # Local members share the team's session_id; a remote member keeps its own
+                        session_id=get_member_session_id(member_agent, session.session_id),
                         session_state=member_session_state_copy,  # Send a copy to the agent
                         images=images,
                         videos=videos,
@@ -1151,8 +1158,8 @@ def _get_delegate_task_function(
                     member_agent_run_response = member_agent.run(  # type: ignore
                         input=member_agent_task if not history else history,
                         user_id=user_id,
-                        # All members have the same session_id
-                        session_id=session.session_id,
+                        # Local members share the team's session_id; a remote member keeps its own
+                        session_id=get_member_session_id(member_agent, session.session_id),
                         session_state=member_session_state_copy,  # Send a copy to the agent
                         images=images,
                         videos=videos,
@@ -1261,7 +1268,7 @@ def _get_delegate_task_function(
                 member_stream = agent.arun(  # type: ignore
                     input=member_agent_task if not history else history,
                     user_id=user_id,
-                    session_id=session.session_id,
+                    session_id=get_member_session_id(agent, session.session_id),
                     session_state=member_session_state_copy,  # Send a copy to the agent
                     images=images,
                     videos=videos,
@@ -1394,8 +1401,8 @@ def _get_delegate_task_function(
                         member_agent_run_response = await member_agent.arun(
                             input=member_agent_task if not history else history,
                             user_id=user_id,
-                            # All members have the same session_id
-                            session_id=session.session_id,
+                            # Local members share the team's session_id; a remote member keeps its own
+                            session_id=get_member_session_id(member_agent, session.session_id),
                             session_state=member_session_state_copy,  # Send a copy to the agent
                             images=images,
                             videos=videos,
