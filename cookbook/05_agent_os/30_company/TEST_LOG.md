@@ -448,6 +448,36 @@ SQLite and with `COMPANY_DB=postgres`, with no model calls.
 
 ---
 
+### 05_super_agent_company.py and 10_weekly_product_review.py: Company work through Super Agent (2026-11-10)
+
+**Status:** PASS
+
+**Description:** `05_company_manager.py` is renamed `05_super_agent_company.py`. It builds AgentOS with `OSManager` and `CompanyConfig`, takes the `CompanyTools` from Super Agent, and calls them with a trusted run context: company details, a Product with an intake Routine naming team `superagent`, a Project, a Backlog proposal, a status update and a decision. It checks that Super Agent has no `refresh_company_product` or `summarize_company_product`, that `GET /agents` does not list `miniagent`, that `/teams/superagent` has one member, `platform-builder`, and that the Routine shows `target_type` `team` and `target_id` `superagent` with stored endpoint `/agents/miniagent/runs`. Ran `10_weekly_product_review.py --check` and `--check --with-os-manager`; both assert the same endpoint and targets.
+
+**Result:** All passed with a placeholder `OPENAI_API_KEY`. No model calls were made.
+
+---
+
+### Other offline Company examples (2026-11-10)
+
+**Status:** PASS
+
+**Description:** Ran `01_manage_products.py`, `02_manage_projects.py`, `03_manage_tasks.py`, `04_manage_playbook.py`, `06_execute_tasks.py`, `07_cascading_archive.py` (SQLite and `--postgres`), `07_heartbeat.py`, `08_custom_routines.py`, `09_task_session_ownership.py`, `11_disabled_routine.py`, `12_task_board.py` and `09_sandboxed_engineers.py --config-only` against local PostgreSQL and Redis.
+
+**Result:** All exited 0 and printed their success lines. The logged 409 responses are the refusals the examples check. `09_sandboxed_engineers.py` with an executor needs Docker sandboxes and live models and was not run. No model calls were made.
+
+---
+
+### 05_super_agent_company.py, 10_weekly_product_review.py (default Routine executor)
+
+**Status:** PASS
+
+**Description:** The Routines in both files no longer name an executor. A Routine with no executor runs as team `superagent` on Mini Agent. Ran `05_super_agent_company.py`, and `10_weekly_product_review.py --check` with and without `--with-os-manager`.
+
+**Result:** All three ran and their assertions on the stored endpoint `/agents/miniagent/runs` and the shown executor (`team`, `superagent`) passed. No model calls were made.
+
+---
+
 ### 13_start_tasks_from_chat.py (2026-11-10)
 
 **Status:** PASS
@@ -467,3 +497,21 @@ SQLite and with `COMPANY_DB=postgres`, with no model calls.
 **Result:** The seeded Task id was printed after startup. "Start the task" returned the receipt with the run id, and the Task moved to in progress with the requesting session recorded in `requested_from`. The scripted rerun matched the earlier one: receipt 3.3s, status 4.6s and an unrelated answer 1.6s while the Task ran, then In review.
 
 ---
+
+### 05_super_agent_company.py, 10_weekly_product_review.py (Mini Agent rename, 2026-11-11)
+
+**Status:** PASS
+
+**Description:** The internal agent that runs Super Agent's Routines is renamed from `superagent-routines` to Mini Agent, ID `miniagent`. Reran `05_super_agent_company.py`, and `10_weekly_product_review.py --check`, with a placeholder `OPENAI_API_KEY`.
+
+**Result:** Both exited 0 and their assertions on the stored endpoint `/agents/miniagent/runs` passed. No model calls were made.
+
+---
+
+### 05_super_agent_company.py, 10_weekly_product_review.py (Mini Agent is the named default executor, 2026-11-11)
+
+**Status:** PASS
+
+**Description:** A Routine with no executor now names agent `miniagent` directly, and a Routine that names Super Agent is refused. The API, the stored schedule and the endpoint all name Mini Agent. Reran `05_super_agent_company.py`, and `10_weekly_product_review.py --check` with and without `--with-os-manager`, with a placeholder `OPENAI_API_KEY`.
+
+**Result:** All three exited 0. The assertions on `target_type` `agent`, `target_id` `miniagent` and endpoint `/agents/miniagent/runs` passed. No model calls were made.

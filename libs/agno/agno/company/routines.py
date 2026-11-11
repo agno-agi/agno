@@ -146,6 +146,29 @@ class _RoutineResultGuardrail(BaseGuardrail):
         self.check(run_input, run_output)
 
 
+class _RoutineBoundary(BaseGuardrail):
+    """Keep Routine runs on Mini Agent, and every other run off it.
+
+    A Routine runs unattended on untrusted Sources with proposal-only authority. With routine=True the
+    component accepts only runs that carry that authority. With routine=False it refuses them.
+    """
+
+    def __init__(self, routine: bool):
+        self.routine = routine
+
+    def check(self, run_input: Any = None) -> None:
+        from agno.exceptions import InputCheckError
+        from agno.run.authorization import current_authorization
+
+        if isinstance(current_authorization(), _RoutineAuthorization) != self.routine:
+            raise InputCheckError(
+                "This agent runs Company Routines only" if self.routine else "Company Routines run on Mini Agent"
+            )
+
+    async def async_check(self, run_input: Any = None) -> None:
+        self.check(run_input)
+
+
 def _failed_routines(db: Any, products: Any) -> int:
     from agno.scheduler import ScheduleManager
 
@@ -187,18 +210,20 @@ async def _afailed_routines(db: Any, products: Any) -> int:
 
 
 def _routine_executor_endpoint(executor_type: str, executor_id: str, registry: Any, *, agent_os: Any = None) -> str:
-    from agno.registry._reserved import COMPANY_MANAGER_ID, RESERVED_MANAGER_IDS
+    from agno.registry._reserved import MINI_AGENT_ID, RESERVED_MANAGER_IDS
 
-    if executor_id == COMPANY_MANAGER_ID:
+    if executor_id == MINI_AGENT_ID:
         if executor_type != "agent":
-            raise ValueError("Company Manager Routine executor_type must be 'agent'")
-        component = agent_os.company_manager if agent_os is not None else None
+            raise ValueError("Mini Agent Routine executor_type must be 'agent'")
+        component = getattr(agent_os, "_mini_agent", None)
         if component is None:
-            reason = getattr(agent_os, "company_manager_unavailable_reason", None)
-            raise ValueError(reason or "Company Manager unavailable: configure CompanyConfig on the owning AgentOS")
+            reason = getattr(agent_os, "_mini_agent_unavailable_reason", None)
+            raise ValueError(reason or "Mini Agent unavailable: configure CompanyConfig on the owning AgentOS")
     elif executor_id in RESERVED_MANAGER_IDS:
-        # OS Manager and its specialists can edit the platform; Routines run unattended on untrusted Sources.
-        raise ValueError("Only the Company Manager can execute Routines among framework managers")
+        # Super Agent and Platform Builder can edit the platform; Routines run unattended on untrusted Sources.
+        raise ValueError(
+            f"Among framework agents, only Mini Agent runs Routines: name agent '{MINI_AGENT_ID}' or leave the executor out"
+        )
     else:
         component = _registered_component(registry, executor_type, executor_id)
         if component is None:

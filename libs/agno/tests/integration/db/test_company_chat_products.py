@@ -309,17 +309,22 @@ class CreationModel(OfflineModel):
 
 
 @pytest.mark.asyncio
-async def test_company_manager_runtime_injects_caller_and_parses_declarations(db):
+async def test_super_agent_runtime_injects_caller_and_parses_declarations(db, tmp_path):
+    from agno.db.sqlite import SqliteDb
+    from agno.os import OSManager
     from agno.run.authorization import authorization_scope
 
+    # Super Agent's Studio tools need a synchronous OS database; Company records stay on the adapter under test.
+    os_db = SqliteDb(db_file=str(tmp_path / "os.db")) if isinstance(db, AsyncBaseDb) else db
     os = AgentOS(
-        db=db,
+        db=os_db,
         agents=[Agent(id="writer", model=OfflineModel())],
-        company=CompanyConfig(model=CreationModel()),
+        company=CompanyConfig(db=db),
+        manager=OSManager(model=CreationModel(), access_docs=False),
         telemetry=False,
     )
     with authorization_scope(lambda: context().authorization):
-        output = await os.company_manager.arun("Set up a Product for our docs site", user_id="ana")
+        output = await os.manager.arun("Set up a Product for our docs site", user_id="ana")
     assert output.tools and not output.tools[0].tool_call_error, output
     async with AsyncClient(transport=ASGITransport(app=os.get_app()), base_url="http://test") as client:
         products = (await client.get("/company/products")).json()["data"]

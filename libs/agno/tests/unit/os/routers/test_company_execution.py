@@ -295,6 +295,7 @@ def test_missing_product_context_does_not_reserve_execution(system, monkeypatch)
 @pytest.mark.parametrize(
     "resource,executor_id",
     [
+        ("agents", "miniagent"),
         ("agents", "company-manager-internal"),
         ("agents", "product-manager-internal"),
         ("teams", "os-manager-internal"),

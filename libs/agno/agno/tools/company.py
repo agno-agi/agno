@@ -121,6 +121,23 @@ def _chat_sources(sources, agent, team, run_context):
         )
 
 
+def _task_status(status):
+    """The stored form of a Task status. A label such as "Backlog" or "In progress" is accepted.
+
+    An unknown status is an error: filtering by it would return an empty list that reads as "no Tasks".
+    """
+    from agno.db.schemas.tasks import TASK_TRANSITIONS
+
+    status = _empty_to_none(status)
+    if status is None:
+        return None
+    value = status.strip().lower().replace(" ", "_").replace("-", "_")
+    value = {"reviewing": "in_review"}.get(value, value)
+    if value not in TASK_TRANSITIONS:
+        raise ValueError(f"Unknown Task status {status!r}. Use one of: {', '.join(TASK_TRANSITIONS)}")
+    return value
+
+
 def _routine_declaration(name, executor_type, executor_id, template, instructions, cron_expr, timezone, enabled=True):
     return Routine.model_validate(
         dict(
@@ -475,8 +492,8 @@ class CompanyTools(Toolkit):
         self,
         product_id: str,
         name: str,
-        executor_type: str,
-        executor_id: str,
+        executor_type: _OptionalString = None,
+        executor_id: _OptionalString = None,
         template: _OptionalString = None,
         instructions: _OptionalString = None,
         cron_expr: _OptionalString = None,
@@ -487,6 +504,8 @@ class CompanyTools(Toolkit):
         """Create a Routine for the calling human; automated runs cannot create Routines.
 
         Args:
+            executor_type: agent, team or workflow. Null with a null executor_id runs it on Mini Agent.
+            executor_id: ID of that component; null with a null executor_type.
             template: Optional intake, refresh or summary template; null requires instructions.
             instructions: Custom instructions; null uses the selected template.
             cron_expr: Cron expression; null creates an on-demand Routine.
@@ -500,16 +519,15 @@ class CompanyTools(Toolkit):
         routine = _routine_declaration(
             name, executor_type, executor_id, template, instructions, cron_expr, timezone, enabled
         )
-        return _public_json(
-            self._sync().create_routine(
-                product_id=product_id,
-                routine=routine,
-                user_id=_identity(_agno_run_context),
-                scoped_user_id=self._scoped_user(_agno_run_context),
-                check=self._routine_check(routine, _agno_run_context),
-                agent_os=self._agent_os_ref() if self._agent_os_ref else None,
-            )
+        row = self._sync().create_routine(
+            product_id=product_id,
+            routine=routine,
+            user_id=_identity(_agno_run_context),
+            scoped_user_id=self._scoped_user(_agno_run_context),
+            check=self._routine_check(routine, _agno_run_context),
+            agent_os=self._agent_os_ref() if self._agent_os_ref else None,
         )
+        return _public_json(row)
 
     @requires_permission()
     async def acreate_company_product(
@@ -579,8 +597,8 @@ class CompanyTools(Toolkit):
         self,
         product_id: str,
         name: str,
-        executor_type: str,
-        executor_id: str,
+        executor_type: _OptionalString = None,
+        executor_id: _OptionalString = None,
         template: _OptionalString = None,
         instructions: _OptionalString = None,
         cron_expr: _OptionalString = None,
@@ -591,6 +609,8 @@ class CompanyTools(Toolkit):
         """Create a Routine for the calling human; automated runs cannot create Routines.
 
         Args:
+            executor_type: agent, team or workflow. Null with a null executor_id runs it on Mini Agent.
+            executor_id: ID of that component; null with a null executor_type.
             template: Optional intake, refresh or summary template; null requires instructions.
             instructions: Custom instructions; null uses the selected template.
             cron_expr: Cron expression; null creates an on-demand Routine.
@@ -610,16 +630,15 @@ class CompanyTools(Toolkit):
             if isinstance(self.db, AsyncBaseDb)
             else self._routine_check(routine, _agno_run_context)
         )
-        return _public_json(
-            await self._async().create_routine(
-                product_id=product_id,
-                routine=routine,
-                user_id=_identity(_agno_run_context),
-                scoped_user_id=self._scoped_user(_agno_run_context),
-                check=check,
-                agent_os=self._agent_os_ref() if self._agent_os_ref else None,
-            )
+        row = await self._async().create_routine(
+            product_id=product_id,
+            routine=routine,
+            user_id=_identity(_agno_run_context),
+            scoped_user_id=self._scoped_user(_agno_run_context),
+            check=check,
+            agent_os=self._agent_os_ref() if self._agent_os_ref else None,
         )
+        return _public_json(row)
 
     @requires_permission()
     def list_company_products(
@@ -683,12 +702,12 @@ class CompanyTools(Toolkit):
 
         Args:
             product_id: Product ID; null includes all Products.
-            status: Task status to filter by; null includes all statuses.
+            status: backlog, ready, in_progress, in_review, done or cancelled; null includes all statuses.
             limit: Maximum results per page; null uses 20.
             page: One-based page number; null uses 1.
         """
         product_id = _empty_to_none(product_id)
-        status = _empty_to_none(status)
+        status = _task_status(status)
         limit = _empty_to_none(limit)
         limit = 20 if limit is None else limit
         page = _empty_to_none(page)
@@ -730,9 +749,12 @@ class CompanyTools(Toolkit):
         Args:
             executor_type: Suggested executor kind; null leaves selection to acceptance.
             executor_id: Suggested executor ID; null leaves selection to acceptance.
-            brief: Task brief; null leaves it unspecified.
-            project_id: Required Project ID within the Product. A proposed Project can hold Backlog drafts;
-                human approval is required before accepting or running them.
+            brief: Task brief. A brief the person dictated is saved in their words. Otherwise write it for the
+                executor: the outcome, the deliverable, how it is checked and any restrictions the person gave.
+                Null leaves it unspecified.
+            project_id: Required Project ID within the Product. Propose a Project first when none fits. A
+                proposed Project can hold Backlog drafts; human approval is required before accepting or
+                running them.
         """
         executor_type = _empty_to_none(executor_type)
         executor_id = _empty_to_none(executor_id)
@@ -974,12 +996,12 @@ class CompanyTools(Toolkit):
 
         Args:
             product_id: Product ID; null includes all Products.
-            status: Task status to filter by; null includes all statuses.
+            status: backlog, ready, in_progress, in_review, done or cancelled; null includes all statuses.
             limit: Maximum results per page; null uses 20.
             page: One-based page number; null uses 1.
         """
         product_id = _empty_to_none(product_id)
-        status = _empty_to_none(status)
+        status = _task_status(status)
         limit = _empty_to_none(limit)
         limit = 20 if limit is None else limit
         page = _empty_to_none(page)
@@ -1023,9 +1045,12 @@ class CompanyTools(Toolkit):
         Args:
             executor_type: Suggested executor kind; null leaves selection to acceptance.
             executor_id: Suggested executor ID; null leaves selection to acceptance.
-            brief: Task brief; null leaves it unspecified.
-            project_id: Required Project ID within the Product. A proposed Project can hold Backlog drafts;
-                human approval is required before accepting or running them.
+            brief: Task brief. A brief the person dictated is saved in their words. Otherwise write it for the
+                executor: the outcome, the deliverable, how it is checked and any restrictions the person gave.
+                Null leaves it unspecified.
+            project_id: Required Project ID within the Product. Propose a Project first when none fits. A
+                proposed Project can hold Backlog drafts; human approval is required before accepting or
+                running them.
         """
         executor_type = _empty_to_none(executor_type)
         executor_id = _empty_to_none(executor_id)

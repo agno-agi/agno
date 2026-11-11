@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Literal, Optional, Union
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agno.db.schemas.sources import validate_source_fields
+from agno.registry._reserved import MINI_AGENT_ID
 
 
 class Source(BaseModel):
@@ -50,13 +51,25 @@ class Routine(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(min_length=1, max_length=255)
     template: Optional[Literal["refresh", "intake", "summary"]] = None
-    executor_type: Literal["agent", "team", "workflow"]
-    executor_id: str = Field(min_length=1)
+    executor_type: Literal["agent", "team", "workflow"] = "agent"
+    executor_id: str = Field(default=MINI_AGENT_ID, min_length=1)
     cron_expr: Optional[str] = None
     timezone: str = "UTC"
     enabled: bool = Field(default=True, description="Initial enabled state; existing routines retain later edits.")
     instructions: Optional[str] = None
     auto_accept: Union[Literal[False], AutoAccept] = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_executor(cls, data: Any) -> Any:
+        """A Routine with no executor runs on Mini Agent. A null counts as left out."""
+        if isinstance(data, dict):
+            named = [key for key in ("executor_type", "executor_id") if data.get(key) is not None]
+            if len(named) == 1:
+                raise ValueError("Give executor_type and executor_id together, or leave both out to use Mini Agent")
+            if not named:
+                data = {key: value for key, value in data.items() if key not in ("executor_type", "executor_id")}
+        return data
 
     @model_validator(mode="after")
     def validate_schedule(self):
