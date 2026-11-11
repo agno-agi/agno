@@ -378,6 +378,8 @@ def test_builder_and_lead_carry_the_framework_toolkits(db, workspace, company_en
             "approve_company_project",
             "accept_company_task",
             "review_company_task",
+            "turn_on_routine_auto_accept",
+            "turn_off_routine_auto_accept",
         }
     assert rest == []
 
