@@ -322,6 +322,54 @@ def test_mini_agent_writes_its_task_files_through_a_real_task_run(system):
     assert not (OLD_WIKI_TOOLS | {"save_company_page", "delete_company_file"}) & offered
 
 
+def test_a_task_started_without_wiki_write_fills_its_folder_and_writes_no_product_page(system):
+    ids = records(system)
+    system.accept(ids["task"])
+    # What the start route asks of the starter: run the executor, tasks:write and wiki:read.
+    starter = [scope for scope in SCOPES if scope != "wiki:write"]
+    saved = system.execute(
+        ids["task"],
+        [
+            ("write_company_file", {"path": f"tasks/{ids['task']}/report.md", "content": "The report"}),
+            ("read_company_file", {"path": f"tasks/{ids['task']}/report.md"}),
+            (
+                "write_company_file",
+                {"path": f"products/{ids['product']}/findings.md", "content": "Found", "expected_version": 0},
+            ),
+            (
+                "write_company_file",
+                {"path": f"products/{ids['product']}/status.md", "content": "Done", "expected_version": 1},
+            ),
+        ],
+        scopes=starter,
+    )
+    report, read, findings, status = saved["result"]["content"].split("\n")
+    assert json.loads(report)["version"] == 1 and json.loads(read)["content"] == "The report"
+    for refused in (findings, status):
+        assert "Permission required: wiki:write" in refused, refused
+    stored = pages(system, ids)
+    assert stored[("company/tasks", f"{ids['task']}/report.md")] == "The report"
+    assert (ids["product"], "findings.md") not in stored and "Done" not in stored[(ids["product"], "status.md")]
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_a_tasks_folder_asks_for_tasks_write_and_a_products_pages_for_wiki_write(system, use_async):
+    ids = records(system)
+    files = tree(system.os)
+    report = {"path": f"tasks/{ids['task']}/report.md", "content": "Report"}
+    page = {"path": f"products/{ids['product']}/research.md", "content": "Research", "expected_version": 0}
+    for authority in (person([*RUN_ONLY, "wiki:write"]), _ExecutorAuthorization(person(["wiki:write"]), ids["task"])):
+        authority.product_id = ids["product"] if isinstance(authority, _ExecutorAuthorization) else None
+        with pytest.raises(PermissionError, match="Permission required: tasks:write"):
+            call(files, "write_company_file", authority, use_async, **report)
+    for authority in (person([*RUN_ONLY, "tasks:write"]), _ExecutorAuthorization(person(["tasks:write"]), ids["task"])):
+        authority.product_id = ids["product"] if isinstance(authority, _ExecutorAuthorization) else None
+        with pytest.raises(PermissionError, match="Permission required: wiki:write"):
+            call(files, "write_company_file", authority, use_async, **page)
+        assert call(files, "write_company_file", authority, use_async, **report)["path"] == report["path"]
+    assert (ids["product"], "research.md") not in pages(system, ids)
+
+
 @pytest.mark.parametrize("use_async", [False, True])
 def test_a_routine_run_writes_only_its_own_products_status(system, use_async):
     ids = records(system)

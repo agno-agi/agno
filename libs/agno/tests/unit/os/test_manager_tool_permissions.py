@@ -71,7 +71,10 @@ MOVED_TOOLS = {
     "list_company_files": ({"folder": "wiki"}, "wiki:read"),
     "read_company_file": ({"path": "products/{product}/brief.md"}, "wiki:read"),
     "search_company_files": ({"query": "Company"}, "wiki:read"),
-    "write_company_file": ({"path": "tasks/{task}/report.md", "content": "Report"}, "wiki:write"),
+    "write_company_file": (
+        {"path": "products/{product}/research.md", "content": "Research", "expected_version": 0},
+        "wiki:write",
+    ),
     "log_company_decision": ({"decision": "Drop the old API"}, "decisions:write"),
     "search_company_decisions": ({}, "decisions:read"),
 }

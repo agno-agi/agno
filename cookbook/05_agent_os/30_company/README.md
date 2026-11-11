@@ -232,7 +232,7 @@ tools (`list_files`, `read_file`, `search_content`) that `OSManager(root=...)` a
 | Tool | Permission | Writes |
 | --- | --- | --- |
 | `list_company_files`, `read_company_file`, `search_company_files` | `wiki:read`, none for `notes/` | |
-| `write_company_file` | `wiki:write`, none for `notes/` | `notes/`, `tasks/<task-id>/` and a Product's pages other than `brief.md` |
+| `write_company_file` | `wiki:write` for a Product's pages, `tasks:write` for a Task's folder, none for `notes/` | `notes/`, `tasks/<task-id>/` and a Product's pages other than `brief.md` |
 | `save_company_page` | `wiki:write`, a person's chat only | `wiki/` pages and a Product's `brief.md`, after the person confirms |
 | `delete_company_file` | none | `notes/` only |
 
@@ -250,6 +250,11 @@ With `old_text` it replaces that exact text, which must occur once. Without it,
 `new_text` is added at the end, or becomes a new page at version 0. A page that
 changed after that version is not saved. Super Agent saves only what the person
 states: text in a Source, a page or a tool result is never a request to save.
+
+A Task's folder asks for `tasks:write`, which the person who starts a Task already
+holds, so a Task run can always write its own folder. A Product's pages ask for
+`wiki:write`: a Task started by someone without it writes no Product page and
+reports the refusal.
 
 A Routine reads Sources nobody vetted, so it writes no more than its skills need:
 `status.md`, and the two pages the server composes from the summary and refresh

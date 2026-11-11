@@ -65,6 +65,9 @@ class CompanyFileTools(Toolkit):
     - wiki/ and a Product's brief.md change through save_company_page. Only a person's chat may call it,
       and the run pauses until the person confirms the page and the change.
 
+    Reads ask for wiki:read. A write asks for wiki:write under products/ and wiki/, and for tasks:write
+    under tasks/, which whoever started a Task already holds. notes/ asks for no Company permission.
+
     wiki/, products/ and tasks/ are stored in the Company database. notes/ is stored in the AgentOS
     database. No folder is isolated by user: notes/ is shared by everyone who talks to Super Agent,
     including when user isolation is on.
@@ -110,6 +113,11 @@ class CompanyFileTools(Toolkit):
 
     def _needs_wiki_permission(self, files: CompanyFiles, location: _Location) -> bool:
         return location.area != "notes" and files.db is not None
+
+    @staticmethod
+    def _write_resource(location: _Location) -> str:
+        """The permission a write asks for. A Task's folder belongs to the Task, so whoever may start it may fill it."""
+        return "tasks" if location.area == "tasks" else "wiki"
 
     def _product_scope(self, files: CompanyFiles, location: _Location, run_context: Any) -> Optional[str]:
         """The owner whose Products a listing or search shows. Only a call that spans Products is scoped."""
@@ -214,7 +222,8 @@ class CompanyFileTools(Toolkit):
 
         Writes notes/, a Task's folder, and a Product's pages other than brief.md. wiki/ and a
         Product's brief.md are refused: a person confirms those through save_company_page. A Task run
-        writes only under its own Product and in its own Task folder.
+        writes only under its own Product and in its own Task folder. A Task's folder asks for
+        tasks:write and a Product's pages for wiki:write.
 
         Args:
             path: The file, such as notes/ideas.md, tasks/<task-id>/report.md or
@@ -226,7 +235,7 @@ class CompanyFileTools(Toolkit):
         files = self._files(_agno_run_context)
         location = _locate(path)
         if self._needs_wiki_permission(files, location):
-            _permission("wiki", "write", _agno_run_context)
+            _permission(self._write_resource(location), "write", _agno_run_context)
             # Company pages are shared, so this only refuses a caller with no identity under user isolation.
             _scoped_user(_agno_run_context, self.user_isolation)
         _require_write(location, _agno_run_context)
@@ -243,7 +252,7 @@ class CompanyFileTools(Toolkit):
         files = self._files(_agno_run_context)
         location = _locate(path)
         if self._needs_wiki_permission(files, location):
-            await _apermission("wiki", "write", _agno_run_context)
+            await _apermission(self._write_resource(location), "write", _agno_run_context)
             _scoped_user(_agno_run_context, self.user_isolation)
         _require_write(location, _agno_run_context)
         return _public_json(await files.awrite(path, content, expected_version))
