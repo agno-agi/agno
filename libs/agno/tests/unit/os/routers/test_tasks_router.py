@@ -330,7 +330,8 @@ def test_task_project_must_belong_to_same_product(client):
 @pytest.mark.parametrize(
     "body",
     [
-        {"target": "ready", "reason": "Accept"},
+        {"target": "ready", "reason": "Accept", "executor_type": "agent"},
+        {"target": "ready", "reason": "Accept", "executor_id": "a"},
         {"target": "ready", "reason": "Accept", "executor_type": "agent", "executor_id": " "},
         {"target": "cancelled", "reason": "Cancel", "executor_type": "agent", "executor_id": "a"},
         {"target": "ready", "reason": "Accept", "executor_type": "agent", "executor_id": "a", "accepted_by": "spoof"},
@@ -339,6 +340,14 @@ def test_task_project_must_belong_to_same_product(client):
 def test_invalid_acceptance(client, body):
     path = "/company/tasks/" + create(client)["id"]
     assert client.post(path + "/transitions", json=body).status_code == 422
+
+
+def test_acceptance_with_no_executor_names_mini_agent_and_needs_it(client):
+    # This deployment has no Company model, so Mini Agent does not exist.
+    path = "/company/tasks/" + create(client)["id"]
+    response = client.post(path + "/transitions", json={"target": "ready", "reason": "Accept"})
+    assert response.status_code == 409 and "Mini Agent is unavailable" in response.text
+    assert client.get(path).json()["status"] == "backlog"
 
 
 def test_project_approval_keeps_ready_validation_and_permissions(client):

@@ -324,7 +324,7 @@ class CompanyManager:
         from agno.run.authorization import current_authorization
 
         if isinstance(current_authorization(), _ExecutorAuthorization):
-            raise PermissionError("Routine and Task runs cannot approve, complete or cancel a Project")
+            raise PermissionError("Routine and Task runs cannot approve, complete or cancel a Project; a human decides")
         if target == "done":
             page = 1
             while True:
@@ -517,7 +517,9 @@ class CompanyManager:
         from agno.run.authorization import current_authorization
 
         if isinstance(current_authorization(), _ExecutorAuthorization):
-            raise PermissionError("Routine and Task runs cannot accept, review, complete or cancel a Task")
+            raise PermissionError(
+                "Routine and Task runs cannot accept, review, complete or cancel a Task; a human decides"
+            )
         if target == "ready":
             existing = self.db.get_task(task_id, user_id=user_id)
             if existing is None:
@@ -1229,7 +1231,7 @@ class AsyncCompanyManager:
         from agno.run.authorization import current_authorization
 
         if isinstance(current_authorization(), _ExecutorAuthorization):
-            raise PermissionError("Routine and Task runs cannot approve, complete or cancel a Project")
+            raise PermissionError("Routine and Task runs cannot approve, complete or cancel a Project; a human decides")
         if target == "done":
             page = 1
             while True:
@@ -1426,7 +1428,9 @@ class AsyncCompanyManager:
         from agno.run.authorization import current_authorization
 
         if isinstance(current_authorization(), _ExecutorAuthorization):
-            raise PermissionError("Routine and Task runs cannot accept, review, complete or cancel a Task")
+            raise PermissionError(
+                "Routine and Task runs cannot accept, review, complete or cancel a Task; a human decides"
+            )
         if target == "ready":
             existing = await self.db.get_task(task_id, user_id=user_id)
             if existing is None:

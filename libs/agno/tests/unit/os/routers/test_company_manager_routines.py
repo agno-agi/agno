@@ -207,7 +207,9 @@ def test_owned_resolution_serving_and_resync(tmp_path, enabled):
     if enabled:
         assert all(member.id != MINI_AGENT_ID for member in os.manager.members)
     assert all(agent.id != BUILDER_ID for agent in os._agents)
-    for kind, cid in (("agent", MINI_AGENT_ID), ("team", MANAGER_TEAM_ID)):
+    # Among framework components only Mini Agent executes Tasks.
+    assert _executor(os.registry, "agent", MINI_AGENT_ID) is runner
+    for kind, cid in (("team", MINI_AGENT_ID), ("team", MANAGER_TEAM_ID), ("agent", BUILDER_ID)):
         with pytest.raises(ValueError):
             _executor(os.registry, kind, cid)
     db.close()
@@ -427,7 +429,7 @@ async def test_scheduled_review_persists_evidence_and_caller_authority(tmp_path,
             )
             return "Observed injected authority"
 
-        s.os._mini_agent.tools.append(observe_authority)
+        s.os._mini_agent.tools.routine.append(observe_authority)
         s.os._mini_agent.model = ScriptedModel(
             [("observe_authority", {"_agno_run_context": {"user_id": "mallory"}})]
             + review_steps(product, project, source, path)
@@ -456,7 +458,7 @@ async def test_scheduled_review_persists_evidence_and_caller_authority(tmp_path,
 def test_recursive_scheduler_tools_validation_is_preserved(tmp_path):
     db = SqliteDb(db_file=str(tmp_path / "tools.db"))
     os = make_os(db, manager=True)
-    os._mini_agent.tools.append(SchedulerTools(db=db))
+    os._mini_agent.tools.routine.append(SchedulerTools(db=db))
     with pytest.raises(ValueError, match="cannot hold SchedulerTools"):
         _routine_executor_endpoint("agent", MINI_AGENT_ID, os.registry, agent_os=os)
     db.close()
@@ -516,7 +518,7 @@ async def test_routine_mutation_fence_holds_even_for_admin(tmp_path, mode):
                     raise RuntimeError("An exposed mutation unexpectedly succeeded")
             return "All unauthorized mutations refused"
 
-        s.os._mini_agent.tools.append(check_forbidden_mutations)
+        s.os._mini_agent.tools.routine.append(check_forbidden_mutations)
         s.os._mini_agent.model = ScriptedModel([("check_forbidden_mutations", {})])
         row = await create_routine(s, product["id"])
         result = await s.executor.execute(s.db.get_schedule(row["id"]), s.db, release_schedule=False)
@@ -683,7 +685,7 @@ async def test_concurrent_reviews_keep_private_sessions_and_owners_separate(tmp_
             observed.append((_agno_run_context.user_id, authority.context.principal_id, authority.product_id))
             return "Caller observed"
 
-        s.os._mini_agent.tools.append(observe_caller)
+        s.os._mini_agent.tools.routine.append(observe_caller)
         s.os._mini_agent.model = ScriptedModel([("observe_caller", {})])
         schedules = []
         for user, product in products.items():
@@ -888,7 +890,7 @@ async def test_person_cannot_chat_with_mini_agent(tmp_path, mode):
             headers=s.headers,
             data={"message": "Create a Routine for product " + product["id"], "stream": "false"},
         )
-        assert "This agent runs Company Routines only" in response.text, response.text
+        assert "Mini Agent runs Company Routines and Tasks only" in response.text, response.text
         assert s.db.get_product(product["id"]).get("metadata", {}).get("routine_ids") in (None, [])
         listed = (await s.client.get("/agents", headers=s.headers)).json()
         assert all(agent["id"] != MINI_AGENT_ID for agent in listed)
