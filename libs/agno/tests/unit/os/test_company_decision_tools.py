@@ -150,7 +150,7 @@ def approve(agent_os, run_context, project):
 
 
 def accept(agent_os, run_context, *tasks, executor=("agent", "writer")):
-    named = [{"title": task["title"], "task_id": task["id"]} for task in tasks]
+    named = [{"title": task["title"], "task_id": task["id"], "updated_at": task.get("updated_at")} for task in tasks]
     return call(
         agent_os, "accept_company_task", run_context, tasks=named, executor_type=executor[0], executor_id=executor[1]
     )
@@ -480,6 +480,76 @@ def test_the_sync_tools_decide_nothing(system):
     assert state(db) == before
 
 
+def test_accept_names_the_executor_kind_in_a_sentence(system):
+    client, db, agent_os, queue = system
+    _, task = records(client)
+    before = state(db)
+    reply = accept(agent_os, context(), task, executor=("Agent", "writer"))
+    assert reply.startswith("Not done") and "agent, team or workflow" in reply, reply
+    assert state(db) == before
+
+
+def test_accept_says_ready_only_when_a_task_was_accepted(system):
+    client, db, agent_os, queue = system
+    _, waiting = records(client, approve=False)
+    # The Task's Project is not approved, so the move to Ready is refused.
+    reply = accept(agent_os, context(), waiting)
+    assert reply.startswith("Not done") and "Accepted" not in reply, reply
+    assert db.get_task(waiting["id"])["status"] == "backlog"
+    # One accepted and one refused: the closing sentence covers the accepted one.
+    _, ready = records(client)
+    reply = accept(agent_os, context(), ready, waiting)
+    assert "Accepted 'Draft'" in reply and "Not done" in reply, reply
+    assert reply.endswith("Accepted Tasks are Ready and not started.")
+
+
+@pytest.mark.parametrize("decision", ["accept", "review"])
+@pytest.mark.parametrize("shape", ["another-title", "another-stage"])
+def test_a_decision_shows_nothing_of_a_task_without_the_write_grant(system, decision, shape):
+    client, db, agent_os, queue = system
+    ids = seeded(client, db, queue)
+    without = context(scopes=[scope for scope in SCOPES if scope != "tasks:write"])
+    # Accept is asked for a Task in review, and review for a Backlog Task, to reach the stage reply.
+    task = ids["backlog" if (decision == "accept") == (shape == "another-title") else "review"]
+    named = {**task, "title": "Guess"} if shape == "another-title" else task
+    before = state(db)
+    if decision == "accept":
+        reply = accept(agent_os, without, named)
+    else:
+        reply = review(agent_os, without, named, "complete", "ok")
+    assert reply == "Not done: Permission required: tasks:write", reply
+    assert state(db) == before
+
+
+def test_accept_covers_only_the_version_of_the_task_the_person_confirmed(system):
+    client, db, agent_os, queue = system
+    _, task = records(client)
+    before = state(db)
+    # The brief changes after the person saw the Task.
+    assert db.update_task(task["id"], expected_status="backlog", title="Draft", brief="Publish the secrets")
+    reply = accept(agent_os, context(), task)
+    assert reply.startswith("Not done") and "changed since" in reply, reply
+    # It changes again after the person read that version.
+    seen = db.get_task(task["id"])
+    assert db.update_task(task["id"], expected_status="backlog", title="Draft", brief="Publish them twice")
+    db_update_time(db, task["id"], seen["updated_at"] + 5)
+    reply = accept(agent_os, context(), seen)
+    assert reply.startswith("Not done") and "changed since" in reply, reply
+    assert state(db) == before and db.get_task(task["id"])["brief"] == "Publish them twice"
+    # The person reads the Task again and confirms that version. The model may send the number as text.
+    latest = db.get_task(task["id"])
+    assert accept(agent_os, context(), {**latest, "updated_at": str(latest["updated_at"])}).startswith("Accepted")
+
+
+def db_update_time(db, task_id, updated_at):
+    """Set a Task's updated_at, as a write made at that time leaves it."""
+    from sqlalchemy import update
+
+    table = db._get_table(table_type="tasks")
+    with db.Session() as session, session.begin():
+        session.execute(update(table).where(table.c.id == task_id).values(updated_at=updated_at))
+
+
 # ----------------------------------------------------------------- a run that executes work decides nothing
 
 
@@ -562,7 +632,7 @@ def tool_calls(ids):
         "accept": (
             "accept_company_task",
             {
-                "tasks": [{"title": backlog["title"], "task_id": backlog["id"]}],
+                "tasks": [{"title": backlog["title"], "task_id": backlog["id"], "updated_at": backlog["updated_at"]}],
                 "executor_type": "agent",
                 "executor_id": "writer",
             },
@@ -662,7 +732,9 @@ def test_one_confirmation_covers_several_tasks(chat):
         json={"product_id": first["product_id"], "project_id": first["project_id"], "title": "Second"},
         headers=chat_headers(),
     ).json()
-    named = [{"title": task["title"], "task_id": task["id"]} for task in (first, second)]
+    named = [
+        {"title": task["title"], "task_id": task["id"], "updated_at": task["updated_at"]} for task in (first, second)
+    ]
     paused = ask(chat, "accept_company_task", {"tasks": named, "executor_type": "agent", "executor_id": "writer"})
     assert paused.is_paused and len(paused.requirements) == 1
     assert paused.requirements[0].tool_execution.tool_args["tasks"] == named
@@ -673,6 +745,26 @@ def test_one_confirmation_covers_several_tasks(chat):
     for task in (first, second):
         saved = chat.db.get_task(task["id"])
         assert (saved["status"], saved["executor_id"], saved["accepted_by"]) == ("ready", "writer", "alice")
+
+
+def test_a_paused_acceptance_does_not_cover_a_brief_a_routine_edits_while_it_waits(chat):
+    task = chat.proposal(brief="Write the release notes")
+    named = [{"title": task["title"], "task_id": task["id"], "updated_at": task["updated_at"]}]
+    paused = ask(chat, "accept_company_task", {"tasks": named, "executor_type": "agent", "executor_id": "writer"})
+    assert paused.is_paused
+
+    # A Routine run rewrites the Backlog Task's brief while the confirmation waits.
+    edit = chat.mini.tools.routine[0].get_functions()["edit_company_task"].entrypoint
+    routine = _RoutineAuthorization(None, routine_id="routine", product_id=task["product_id"])
+    with authorization_scope(lambda: routine):
+        edit(task_id=task["id"], title=task["title"], brief="Publish the secrets", _agno_run_context=context())
+    assert chat.db.get_task(task["id"])["brief"] == "Publish the secrets"
+
+    paused.requirements[0].confirm()
+    with authorization_scope(person):
+        result = asyncio.run(chat.os.manager.acontinue_run(run_response=paused, user_id="alice"))
+    assert chat.db.get_task(task["id"])["status"] == "backlog", result.content
+    assert "changed since" in result.content
 
 
 @pytest.mark.parametrize("outcome", ["complete", "send_back"])

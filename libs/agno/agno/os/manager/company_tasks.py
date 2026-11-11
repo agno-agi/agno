@@ -33,6 +33,12 @@ def _same_name(given: Any, stored: Any) -> bool:
     return " ".join(str(given or "").split()).casefold() == " ".join(str(stored or "").split()).casefold()
 
 
+def _same_version(given: Any, stored: Any) -> bool:
+    """Whether the updated_at the person confirmed is the Task's. A Task never edited has none."""
+    given = None if given in (None, "", "null") else str(given)
+    return given == (None if stored is None else str(stored))
+
+
 def _refusal(authority: Any) -> Optional[str]:
     from agno.company.execution import _automatic_task, _ExecutorAuthorization
     from agno.company.routines import _RoutineAuthorization
@@ -291,7 +297,7 @@ class CompanyTaskTools(Toolkit):
 
     def accept_company_task(
         self,
-        tasks: List[Dict[str, str]],
+        tasks: List[Dict[str, Any]],
         executor_type: Optional[str],
         executor_id: Optional[str],
         _agno_run_context: Optional[Any] = None,
@@ -299,7 +305,8 @@ class CompanyTaskTools(Toolkit):
         """Accept Backlog Company Tasks with one executor. The run pauses for the person to confirm.
 
         Args:
-            tasks: The Tasks to accept, each as {"title": the stored title, "task_id": the id}.
+            tasks: The Tasks to accept, each as {"title": the stored title, "task_id": the id,
+                "updated_at": the Task's updated_at as the person saw it}.
             executor_type: agent, team or workflow. With no executor named, pass agent.
             executor_id: ID of that component. With no executor named, pass miniagent.
         """
@@ -307,13 +314,13 @@ class CompanyTaskTools(Toolkit):
 
     async def aaccept_company_task(
         self,
-        tasks: List[Dict[str, str]],
+        tasks: List[Dict[str, Any]],
         executor_type: Optional[str],
         executor_id: Optional[str],
         _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Accept Backlog Company Tasks with one executor. They become Ready. The run pauses for the
-        person to confirm each Task by title and ID, and the executor.
+        person to confirm each Task by title, ID and version, and the executor.
 
         Call this only when the person asked, in this conversation, to accept these Tasks. A request to
         plan, list or summarize work is not a request to accept it. Pass every Task the person named in
@@ -323,7 +330,9 @@ class CompanyTaskTools(Toolkit):
         person asks.
 
         Args:
-            tasks: The Tasks to accept, each as {"title": the stored title, "task_id": the id}.
+            tasks: The Tasks to accept, each as {"title": the stored title, "task_id": the id,
+                "updated_at": the Task's updated_at as the person saw it}. A Task edited after that is
+                not accepted: show it again first.
             executor_type: agent, team or workflow. With no executor named, pass agent.
             executor_id: ID of that component. With no executor named, pass miniagent.
         """
@@ -343,10 +352,14 @@ class CompanyTaskTools(Toolkit):
                 return "Not done: give executor_type and executor_id together, or leave both out to use Mini Agent."
             if kind is None:
                 kind, name = "agent", MINI_AGENT_ID
+            if kind not in ("agent", "team", "workflow"):
+                return "Not done: executor_type is agent, team or workflow."
             if not tasks:
                 return "Not done: name at least one Task."
+            if authority is not None:
+                await authority.arequire("tasks", "write")
             starter = _TaskStarter(agent_os)
-            # Nothing is accepted unless every Task is the one the person confirmed, and still a proposal.
+            # Nothing is accepted unless every Task is the version the person confirmed, and still a proposal.
             values = []
             for item in tasks:
                 value = await starter.task(str(item.get("task_id") or ""))
@@ -356,14 +369,17 @@ class CompanyTaskTools(Toolkit):
                 if value["status"] != "backlog":
                     words = _STATUS_WORDS.get(value["status"], value["status"])
                     return f"Not done: '{title}' is {words}; only a proposal can be accepted."
+                if not _same_version(item.get("updated_at"), value["updated_at"]):
+                    return (
+                        f"Not done: '{title}' (Task {value['id']}) changed since the person saw it. "
+                        "Show it to them again, then call with its updated_at."
+                    )
                 values.append(value)
-            if authority is not None:
-                await authority.arequire("tasks", "write")
             # The transition route's decision: the person must be allowed to run the executor themselves.
             caller = _StartCaller.for_authority(getattr(agent_os, "_company_app", None), authority, user_id)
             await caller.require_accept(starter.endpoint({"executor_type": kind, "executor_id": name}))
             saved = replace(authority, enforce_tools=False) if authority is not None else None
-            lines = []
+            lines, accepted = [], False
             for value in values:
                 title = value.get("title") or value["id"]
                 try:
@@ -387,8 +403,9 @@ class CompanyTaskTools(Toolkit):
                     if record is None:
                         lines.append(f"Not done: '{title}' (Task {value['id']}) changed while it was being accepted.")
                     else:
+                        accepted = True
                         lines.append(f"Accepted '{title}' (Task {value['id']}) for {kind} {name}.")
-            return " ".join(lines) + " Accepted Tasks are Ready and not started."
+            return " ".join(lines) + (" Accepted Tasks are Ready and not started." if accepted else "")
 
         return await self._decide(call)
 
@@ -448,6 +465,8 @@ class CompanyTaskTools(Toolkit):
                 return "Not done: outcome is complete or send_back."
             if outcome == "send_back" and not (reason or "").strip():
                 return "Not done: sending a Task back needs the person's reason."
+            if authority is not None:
+                await authority.arequire("tasks", "write")
             starter = _TaskStarter(agent_os)
             value = await starter.task(task_id)
             title = value.get("title") or task_id
@@ -458,8 +477,6 @@ class CompanyTaskTools(Toolkit):
                 return f"'{title}' is {words}; only a Task in review can be completed or sent back."
             if not reviewed_run_id or value.get("job_id") != reviewed_run_id:
                 return "Not done: the Task's attempt changed. Read its latest result and request a new confirmation."
-            if authority is not None:
-                await authority.arequire("tasks", "write")
             executor: Dict[str, Any] = {}
             if outcome == "send_back":
                 # A return to Ready is a fresh acceptance of the same executor.
