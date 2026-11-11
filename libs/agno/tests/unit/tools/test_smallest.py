@@ -28,8 +28,8 @@ def test_init_with_api_key():
     """Test initialization with API key."""
     tools = SmallestTools(api_key="test_key")
     assert tools.api_key == "test_key"
-    assert tools.model == "lightning_v3.1"
-    assert tools.voice_id == "magnus"
+    assert tools.model == "lightning_v3.1_pro"
+    assert tools.voice_id == "kaitlyn"
     assert tools.sample_rate == 24000
     assert tools.speed == 1.0
     assert tools.output_format == "wav"
@@ -130,8 +130,8 @@ def test_text_to_speech_success(smallest_tools, mock_agent):
     args, kwargs = mock_post.call_args
     assert args[0] == SMALLEST_TTS_URL
     assert kwargs["json"]["text"] == "Hello world"
-    assert kwargs["json"]["voice_id"] == "magnus"
-    assert kwargs["json"]["model"] == "lightning_v3.1"
+    assert kwargs["json"]["voice_id"] == "kaitlyn"
+    assert kwargs["json"]["model"] == "lightning_v3.1_pro"
     assert kwargs["json"]["sample_rate"] == 24000
     assert kwargs["json"]["speed"] == 1.0
     assert kwargs["json"]["output_format"] == "wav"
@@ -274,7 +274,7 @@ def test_get_voices_success(smallest_tools):
         result = smallest_tools.get_voices()
 
     args, kwargs = mock_get.call_args
-    assert args[0] == SMALLEST_VOICES_URLS["lightning_v3.1"]
+    assert args[0] == SMALLEST_VOICES_URLS["lightning_v3.1_pro"]
     assert kwargs["headers"]["Authorization"] == "Bearer test_key"
     assert kwargs["headers"]["X-Source"] == "agno"
 
@@ -300,19 +300,41 @@ def test_get_voices_list_response(smallest_tools):
     assert voices[0]["name"] == "Magnus"
 
 
-def test_get_voices_pro_model_uses_pro_catalog():
-    """Test that the Pro model queries the Pro voice catalog endpoint."""
-    tools = SmallestTools(api_key="test_key", model="lightning_v3.1_pro", voice_id="meher")
-    mock_response = MagicMock()
-    mock_response.raise_for_status.return_value = None
-    mock_response.json.return_value = {"voices": []}
+@pytest.mark.parametrize("model", ["lightning_v3.1", "lightning_v3.1_pro"])
+def test_get_voices_uses_pro_catalog(model):
+    """Both model options must avoid the retiring standard voice catalog route."""
+    tools = SmallestTools(api_key="test_key", model=model, timeout=12)
+    catalog_url = "https://api.smallest.ai/waves/v1/lightning-v3.1-pro/get_voices"
+    response = httpx.Response(200, json={"voices": []}, request=httpx.Request("GET", catalog_url))
 
-    with patch("agno.tools.smallest.httpx.get", return_value=mock_response) as mock_get:
+    with patch("agno.tools.smallest.httpx.get", return_value=response) as mock_get:
         result = tools.get_voices()
 
-    args, _ = mock_get.call_args
-    assert args[0] == SMALLEST_VOICES_URLS["lightning_v3.1_pro"]
+    mock_get.assert_called_once_with(
+        catalog_url,
+        headers={"Authorization": "Bearer test_key", "X-Source": "agno"},
+        timeout=12,
+    )
     assert json.loads(result) == []
+
+
+def test_text_to_speech_explicit_legacy_model_and_voice(mock_agent):
+    """Keep explicitly selected standard models and voices available during migration."""
+    tools = SmallestTools(api_key="test_key", model="lightning_v3.1", voice_id="magnus")
+    response = httpx.Response(
+        200,
+        content=b"audio data",
+        headers={"content-type": "audio/wav"},
+        request=httpx.Request("POST", SMALLEST_TTS_URL),
+    )
+
+    with patch("agno.tools.smallest.httpx.post", return_value=response) as mock_post:
+        result = tools.text_to_speech(mock_agent, "Hello world")
+
+    assert result.content == "Audio generated successfully"
+    _, kwargs = mock_post.call_args
+    assert kwargs["json"]["model"] == "lightning_v3.1"
+    assert kwargs["json"]["voice_id"] == "magnus"
 
 
 def test_get_voices_error(smallest_tools):

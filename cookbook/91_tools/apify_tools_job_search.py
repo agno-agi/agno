@@ -41,9 +41,9 @@ def cap_and_trim(function_name: str, func: callable, args: dict):
     if not function_name.startswith("apify_actor_"):
         return func(**args)
 
+    # Agno runs the tool with this same args dict, so set the cap on it in place.
     cap_name, cap_value = ITEM_CAP
-    args = dict(args)
-    params = args["kwargs"] if set(args) == {"kwargs"} else args
+    params = args["kwargs"] if isinstance(args.get("kwargs"), dict) else args
     requested = params.get(cap_name) or cap_value
     params[cap_name] = min(int(requested), cap_value)
 

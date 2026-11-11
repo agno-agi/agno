@@ -17,8 +17,10 @@ def _validate_agent_source(type: str, executor_type: str, executor_id: Optional[
         raise ValueError("Adding a Source requires the calling agent or team and run identity")
 
 
-def _routine_provenance(routine: Any) -> Dict[str, str]:
-    return {"managed_by": "company", "target_type": routine.executor_type, "target_id": routine.executor_id}
+def _routine_provenance(endpoint: str) -> Dict[str, Any]:
+    from agno.db.schemas.scheduler import _schedule_endpoint_targets
+
+    return {"managed_by": "company", **_schedule_endpoint_targets("company", endpoint)}
 
 
 def _without_routine_links(fields: Dict[str, Any]) -> Dict[str, Any]:
@@ -92,7 +94,7 @@ class CompanyManager:
         """Create and link a Routine owned by ``user_id``; ``check`` sees the schedule fields before any write.
 
         Any writer may add a Routine to a Product, as with Projects and Tasks; ``scoped_user_id`` is kept for
-        callers and does not restrict which Product the Routine joins. Supply ``agent_os`` to target Company Manager.
+        callers and does not restrict which Product the Routine joins. Supply ``agent_os`` to name Mini Agent as the executor.
         """
         from agno.company.declarations import Routine
         from agno.company.routines import _declared_schedule_fields, _require_routine_product
@@ -108,7 +110,7 @@ class CompanyManager:
         return self._write_routine(product_id, routine, fields, user_id)
 
     def _write_routine(self, product_id: str, routine: Any, fields: Dict[str, Any], user_id: Optional[str]):
-        """Create, link and enable the schedule; a failed link or enable leaves no schedule behind."""
+        """Create and link the schedule, then enable it if requested; roll back failed writes."""
         from agno.scheduler import ScheduleManager
 
         schedules = ScheduleManager(self.schedule_db)
@@ -117,14 +119,14 @@ class CompanyManager:
             cron=fields["cron_expr"],
             user_id=user_id,
             enabled_on_create=False,
-            provenance=_routine_provenance(routine),
+            provenance=_routine_provenance(fields["endpoint"]),
         )
         linked = False
         try:
             if self.db.add_product_routine(product_id, schedule.id) is None:
                 raise RuntimeError("Routine could not be linked to its Product")
             linked = True
-            enabled = schedules.enable(schedule.id, user_id=user_id)
+            enabled = schedules.enable(schedule.id, user_id=user_id) if routine.enabled else schedule
             if enabled is None:
                 raise RuntimeError("Routine could not be enabled")
         except Exception:
@@ -997,7 +999,7 @@ class AsyncCompanyManager:
         """Create and link a Routine owned by ``user_id``; ``check`` sees the schedule fields before any write.
 
         Any writer may add a Routine to a Product, as with Projects and Tasks; ``scoped_user_id`` is kept for
-        callers and does not restrict which Product the Routine joins. Supply ``agent_os`` to target Company Manager.
+        callers and does not restrict which Product the Routine joins. Supply ``agent_os`` to name Mini Agent as the executor.
         """
         from agno.company.declarations import Routine
         from agno.company.routines import _declared_schedule_fields, _require_routine_product
@@ -1013,7 +1015,7 @@ class AsyncCompanyManager:
         return await self._write_routine(product_id, routine, fields, user_id)
 
     async def _write_routine(self, product_id: str, routine: Any, fields: Dict[str, Any], user_id: Optional[str]):
-        """Create, link and enable the schedule; a failed link or enable leaves no schedule behind."""
+        """Create and link the schedule, then enable it if requested; roll back failed writes."""
         from agno.scheduler import ScheduleManager
 
         schedules = ScheduleManager(self.schedule_db)
@@ -1022,14 +1024,14 @@ class AsyncCompanyManager:
             cron=fields["cron_expr"],
             user_id=user_id,
             enabled_on_create=False,
-            provenance=_routine_provenance(routine),
+            provenance=_routine_provenance(fields["endpoint"]),
         )
         linked = False
         try:
             if await self.db.add_product_routine(product_id, schedule.id) is None:
                 raise RuntimeError("Routine could not be linked to its Product")
             linked = True
-            enabled = await schedules.aenable(schedule.id, user_id=user_id)
+            enabled = await schedules.aenable(schedule.id, user_id=user_id) if routine.enabled else schedule
             if enabled is None:
                 raise RuntimeError("Routine could not be enabled")
         except Exception:

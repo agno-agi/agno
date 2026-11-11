@@ -63,6 +63,25 @@ def test_id_is_deterministic(mock_engine):
     assert first_db.id == second_db.id
 
 
+@pytest.mark.parametrize("db_type", [PostgresDb, AsyncPostgresDb])
+def test_long_session_table_keeps_distinct_metrics_names(mock_engine, db_type):
+    session_table = "s" * 63
+    db = db_type(db_engine=mock_engine, session_table=session_table)
+    names = [db.component_metrics_table_name, db.aggregate_metrics_table_name, db.metrics_refreshes_table_name]
+
+    assert db.session_table_name == session_table
+    assert len({session_table, *names}) == 4
+    assert all(len(name.encode("utf-8")) <= 63 for name in names)
+    assert all(
+        name.endswith(suffix)
+        for name, suffix in zip(names, ["_component_metrics", "_aggregate_metrics", "_metrics_refreshes"])
+    )
+    same = db_type(db_engine=mock_engine, session_table=session_table)
+    assert same.component_metrics_table_name == db.component_metrics_table_name
+    other = db_type(db_engine=mock_engine, session_table="t" * 63)
+    assert other.component_metrics_table_name != db.component_metrics_table_name
+
+
 def test_init_with_engine(mock_engine):
     """Test initialization with engine"""
     db = PostgresDb(db_engine=mock_engine, session_table="sessions")

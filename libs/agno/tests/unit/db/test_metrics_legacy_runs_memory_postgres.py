@@ -10,6 +10,7 @@ Runs against the live pgvector container (localhost:5532) with a unique schema p
 test; skips cleanly when psycopg or the server is absent.
 """
 
+import json
 import subprocess
 import sys
 import time
@@ -155,7 +156,9 @@ async def test_metrics_count_migrated_and_unmigrated_runs_once(schema, mode):
     expected_runs = 2 * SMALL_SESSIONS * RUNS_PER_SESSION
     assert result[0]["agent_sessions_count"] == 2 * SMALL_SESSIONS + 1
     assert result[0]["agent_runs_count"] == expected_runs
-    assert result[0]["model_metrics"] == [{"model_id": "gpt-5.5", "model_provider": "OpenAI", "count": expected_runs}]
+    assert result[0]["model_metrics"] == [
+        {"model_id": "gpt-5.5", "model_provider": "OpenAI", "count": expected_runs, "cost": None}
+    ]
 
 
 @pytest.mark.asyncio
@@ -167,10 +170,13 @@ async def test_metrics_default_missing_model_provider_to_empty(schema, mode, mig
     engine = create_engine(DB_URL)
     try:
         with engine.begin() as conn:
-            conn.execute(
-                text(f'UPDATE "{schema}"."{SESSIONS_TABLE}" SET runs = :runs'),
-                {"runs": '[{"run_id": "r1", "model": "test-model"}]'},
-            )
+            # Dated with its session, so the run and the session are on one day
+            run = {
+                "run_id": "r1",
+                "model": "test-model",
+                "created_at": int(time.time()) - 86400,
+            }
+            conn.execute(text(f'UPDATE "{schema}"."{SESSIONS_TABLE}" SET runs = :runs'), {"runs": json.dumps([run])})
     finally:
         engine.dispose()
     if migrated:
@@ -179,7 +185,7 @@ async def test_metrics_default_missing_model_provider_to_empty(schema, mode, mig
     result = await _calculate_metrics(_db(mode, schema))
 
     assert result is not None and len(result) == 1
-    assert result[0]["model_metrics"] == [{"model_id": "test-model", "model_provider": "", "count": 1}]
+    assert result[0]["model_metrics"] == [{"model_id": "test-model", "model_provider": "", "count": 1, "cost": None}]
 
 
 # ---------------------------------------------------------------------------

@@ -44,7 +44,7 @@ class _FakeBlob:
             raise NotFound(self.name)
         return self._bucket._objects[self.name].encode("utf-8")
 
-    def upload_from_string(self, data: str, content_type: str = "application/json") -> None:
+    def upload_from_string(self, data: str, content_type: str = "application/json", if_generation_match=None) -> None:
         self._bucket._objects[self.name] = data
 
     def delete(self) -> None:

@@ -1,6 +1,6 @@
 import json
 from datetime import date
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Sequence, Union
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Sequence, Union, overload
 
 from fastapi import UploadFile
 from httpx import ConnectError, ConnectTimeout, TimeoutException
@@ -39,6 +39,14 @@ from agno.os.routers.metrics.schemas import (
     MetricsRefreshResponse,
     MetricsRefreshStatusResponse,
     MetricsResponse,
+    OSLatencyMetricsResponse,
+    OSMetricsRefreshResponse,
+    OSMetricsRefreshStatusResponse,
+    OSModelMetricsResponse,
+    OSRunMetricsResponse,
+    OSSessionMetricsResponse,
+    OSTokenMetricsResponse,
+    OSUserMetricsResponse,
 )
 from agno.os.routers.teams.schema import TeamResponse
 from agno.os.routers.traces.schemas import (
@@ -58,6 +66,8 @@ from agno.os.schema import (
     PaginatedResponse,
     PaginationInfo,
     RunSchema,
+    RunsPage,
+    RunsPageInfo,
     SessionRunPreviewSchema,
     SessionSchema,
     TeamRunSchema,
@@ -1872,6 +1882,7 @@ class AgentOSClient:
         else:
             raise ValueError(f"Could not determine session type for session {session_id}")
 
+    @overload
     async def get_session_runs(
         self,
         session_id: str,
@@ -1883,8 +1894,54 @@ class AgentOSClient:
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
         status: Optional[List[str]] = None,
-    ) -> List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]:
-        """Get all runs for a specific session.
+        limit: None = None,
+    ) -> List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]: ...
+
+    @overload
+    async def get_session_runs(
+        self,
+        session_id: str,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+        created_after: Optional[int] = None,
+        created_before: Optional[int] = None,
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+        status: Optional[List[str]] = None,
+        *,
+        limit: int,
+        before_run_index: Optional[int] = None,
+        after_run_index: Optional[int] = None,
+    ) -> RunsPage[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]: ...
+
+    async def get_session_runs(
+        self,
+        session_id: str,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+        created_after: Optional[int] = None,
+        created_before: Optional[int] = None,
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+        status: Optional[List[str]] = None,
+        limit: Optional[int] = None,
+        before_run_index: Optional[int] = None,
+        after_run_index: Optional[int] = None,
+    ) -> Union[
+        List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
+        RunsPage[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
+    ]:
+        """Get the runs for a specific session.
+
+        Pagination is opt-in: without ``limit`` the server returns every run as a list. With
+        ``limit`` it returns a :class:`RunsPage` holding the newest ``limit`` runs,
+        or those before ``before_run_index`` / after ``after_run_index``. Pages count top-level
+        runs; member and step runs come with their parent. Take the next cursor from
+        ``meta.oldest_run_index`` (as ``before_run_index``) / ``meta.newest_run_index``
+        (as ``after_run_index``). Runs are always in chronological
+        order and carry their ``run_index``.
 
         Args:
             session_id: ID of the session
@@ -1896,9 +1953,12 @@ class AgentOSClient:
             table: Optional table name to use
             headers: HTTP headers to include in the request (optional)
             status: Optional run status filter, matching any of the given statuses (case-insensitive)
+            limit: Maximum number of runs to return (enables pagination)
+            before_run_index: Return the newest runs with a lower run_index (requires limit)
+            after_run_index: Return the oldest runs with a higher run_index (requires limit)
 
         Returns:
-            List of runs (RunSchema, TeamRunSchema, or WorkflowRunSchema)
+            A list of runs, or a RunsPage of runs when limit is provided.
 
         Raises:
             HTTPStatusError: On HTTP errors
@@ -1909,23 +1969,35 @@ class AgentOSClient:
             "created_after": created_after,
             "created_before": created_before,
             "status": status,
+            "limit": limit,
+            "before_run_index": before_run_index,
+            "after_run_index": after_run_index,
             "db_id": db_id,
             "table": table,
         }
         params = {k: v for k, v in params.items() if v is not None}
 
-        data = await self._aget(f"/sessions/{session_id}/runs", params=params, headers=headers)
+        response = await self._aget(f"/sessions/{session_id}/runs", params=params, headers=headers)
 
-        # Parse runs based on session type and run content
+        # The server returns a bare list unless limit was passed, in which case it
+        # returns a {"data": [...], "meta": {...}} envelope.
+        raw_runs = response["data"] if isinstance(response, dict) else response
         runs: List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]] = []
-        for run in data:
+        for run in raw_runs:
             if run.get("workflow_id") is not None:
                 runs.append(WorkflowRunSchema.model_validate(run))
             elif run.get("team_id") is not None:
                 runs.append(TeamRunSchema.model_validate(run))
             else:
                 runs.append(RunSchema.model_validate(run))
-        return runs
+
+        if not isinstance(response, dict):
+            return runs
+
+        return RunsPage[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]](
+            data=runs,
+            meta=RunsPageInfo.model_validate(response["meta"]),
+        )
 
     @staticmethod
     def _session_run_preview_params(
@@ -3062,6 +3134,7 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
+        user_id: Optional[str] = None,
     ) -> MetricsResponse:
         """Retrieve AgentOS metrics and analytics data for a specified date range.
 
@@ -3073,9 +3146,10 @@ class AgentOSClient:
             db_id: Optional database ID to use
             table: Optional database table to use
             headers: HTTP headers to include in the request (optional)
+            user_id: Optional user ID
 
         Returns:
-            MetricsResponse: Metrics data including daily aggregated metrics
+            MetricsResponse: Metrics data including daily aggregated metrics and the refresh status
 
         Raises:
             HTTPStatusError: On HTTP errors
@@ -3085,6 +3159,7 @@ class AgentOSClient:
             "ending_date": ending_date.strftime("%Y-%m-%d") if ending_date else None,
             "db_id": db_id,
             "table": table,
+            "user_id": user_id,
         }
         params = {k: v for k, v in params.items() if v is not None}
 
@@ -3097,6 +3172,8 @@ class AgentOSClient:
         table: Optional[str] = None,
         background: bool = False,
         headers: Optional[Dict[str, str]] = None,
+        user_id: Optional[str] = None,
+        rebuild_from: Optional[date] = None,
     ) -> Union[List[DayAggregatedMetrics], MetricsRefreshResponse]:
         """Manually trigger recalculation of system metrics from raw data.
 
@@ -3112,6 +3189,8 @@ class AgentOSClient:
             table: Optional database table to use
             background: Run the refresh in the background and return immediately
             headers: HTTP headers to include in the request (optional)
+            user_id: Optional user ID
+            rebuild_from: Also rebuild every day from this date to today (YYYY-MM-DD format)
 
         Returns:
             List[DayAggregatedMetrics]: The refreshed daily aggregated metrics (synchronous refresh)
@@ -3120,7 +3199,12 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        params: Dict[str, Any] = {"db_id": db_id, "table": table}
+        params: Dict[str, Any] = {
+            "db_id": db_id,
+            "table": table,
+            "user_id": user_id,
+            "rebuild_from": rebuild_from.strftime("%Y-%m-%d") if rebuild_from else None,
+        }
         params = {k: v for k, v in params.items() if v is not None}
         if background:
             params["background"] = True
@@ -3140,9 +3224,9 @@ class AgentOSClient:
 
         Returns 'running' while a refresh is in progress, then 'completed' or 'failed'
         with the finish timestamp. The state updates even when a refresh completes
-        without writing new data. Returns 'idle' if no refresh has been triggered
-        since the server process started. Intended for polling after starting a
-        background refresh via refresh_metrics(background=True).
+        without writing new data. Returns 'idle' if no refresh has run on the
+        database. Intended for polling after starting a background refresh via
+        refresh_metrics(background=True).
 
         Args:
             db_id: Optional database ID to use
@@ -3160,3 +3244,285 @@ class AgentOSClient:
 
         data = await self._aget("/metrics/refresh/status", params=params, headers=headers)
         return MetricsRefreshStatusResponse.model_validate(data)
+
+    async def get_os_session_metrics(
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
+        db_id: Optional[List[str]] = None,
+        timeout_seconds: Optional[float] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> OSSessionMetricsResponse:
+        """Retrieve the sessions created on each day of a date range, their total, and how that total
+        compares with the date range of the same length before it.
+
+        If no date range is specified, covers the last 30 days.
+
+        Args:
+            starting_date: Starting date for metrics range (YYYY-MM-DD format)
+            ending_date: Ending date for metrics range (YYYY-MM-DD format)
+            user_id: Optional user ID
+            db_id: Optional database IDs to read, every database by default
+            timeout_seconds: Optional seconds to wait for each database to answer
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            OSSessionMetricsResponse: Session counts per day, their total and its change
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, Any] = {
+            "starting_date": starting_date.strftime("%Y-%m-%d") if starting_date else None,
+            "ending_date": ending_date.strftime("%Y-%m-%d") if ending_date else None,
+            "user_id": user_id,
+            "db_id": db_id,
+            "timeout_seconds": timeout_seconds,
+        }
+        params = {k: v for k, v in params.items() if v is not None}
+
+        data = await self._aget("/os/metrics/sessions", params=params, headers=headers)
+        return OSSessionMetricsResponse.model_validate(data)
+
+    async def get_os_token_metrics(
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
+        db_id: Optional[List[str]] = None,
+        timeout_seconds: Optional[float] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> OSTokenMetricsResponse:
+        """Retrieve the tokens used on each day of a date range, their total, and how that total
+        compares with the date range of the same length before it.
+
+        If no date range is specified, covers the last 30 days.
+
+        Args:
+            starting_date: Starting date for metrics range (YYYY-MM-DD format)
+            ending_date: Ending date for metrics range (YYYY-MM-DD format)
+            user_id: Optional user ID
+            db_id: Optional database IDs to read, every database by default
+            timeout_seconds: Optional seconds to wait for each database to answer
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            OSTokenMetricsResponse: Token counts per day, their total and its change
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, Any] = {
+            "starting_date": starting_date.strftime("%Y-%m-%d") if starting_date else None,
+            "ending_date": ending_date.strftime("%Y-%m-%d") if ending_date else None,
+            "user_id": user_id,
+            "db_id": db_id,
+            "timeout_seconds": timeout_seconds,
+        }
+        params = {k: v for k, v in params.items() if v is not None}
+
+        data = await self._aget("/os/metrics/tokens", params=params, headers=headers)
+        return OSTokenMetricsResponse.model_validate(data)
+
+    async def get_os_user_metrics(
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> OSUserMetricsResponse:
+        """Retrieve the users in the user directory at the end of each day of a date range, their total,
+        and how that total compares with the date range of the same length before it.
+
+        If no date range is specified, covers the last 30 days.
+
+        Args:
+            starting_date: Starting date for metrics range (YYYY-MM-DD format)
+            ending_date: Ending date for metrics range (YYYY-MM-DD format)
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            OSUserMetricsResponse: User counts per day, their total and its change
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, Any] = {
+            "starting_date": starting_date.strftime("%Y-%m-%d") if starting_date else None,
+            "ending_date": ending_date.strftime("%Y-%m-%d") if ending_date else None,
+        }
+        params = {k: v for k, v in params.items() if v is not None}
+
+        data = await self._aget("/os/metrics/users", params=params, headers=headers)
+        return OSUserMetricsResponse.model_validate(data)
+
+    async def get_os_model_metrics(
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
+        db_id: Optional[List[str]] = None,
+        timeout_seconds: Optional[float] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> OSModelMetricsResponse:
+        """Retrieve how many runs each model served over a date range.
+
+        If no date range is specified, covers the last 30 days.
+
+        Args:
+            starting_date: Starting date for metrics range (YYYY-MM-DD format)
+            ending_date: Ending date for metrics range (YYYY-MM-DD format)
+            user_id: Optional user ID
+            db_id: Optional database IDs to read, every database by default
+            timeout_seconds: Optional seconds to wait for each database to answer
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            OSModelMetricsResponse: Run counts and shares per model
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, Any] = {
+            "starting_date": starting_date.strftime("%Y-%m-%d") if starting_date else None,
+            "ending_date": ending_date.strftime("%Y-%m-%d") if ending_date else None,
+            "user_id": user_id,
+            "db_id": db_id,
+            "timeout_seconds": timeout_seconds,
+        }
+        params = {k: v for k, v in params.items() if v is not None}
+
+        data = await self._aget("/os/metrics/models", params=params, headers=headers)
+        return OSModelMetricsResponse.model_validate(data)
+
+    async def get_os_run_metrics(
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
+        db_id: Optional[List[str]] = None,
+        timeout_seconds: Optional[float] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> OSRunMetricsResponse:
+        """Retrieve the runs started on each day of a date range by status, their total and success rate,
+        and how that total compares with the date range of the same length before it.
+
+        If no date range is specified, covers the last 30 days.
+
+        Args:
+            starting_date: Starting date for metrics range (YYYY-MM-DD format)
+            ending_date: Ending date for metrics range (YYYY-MM-DD format)
+            user_id: Optional user ID
+            db_id: Optional database IDs to read, every database by default
+            timeout_seconds: Optional seconds to wait for each database to answer
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            OSRunMetricsResponse: Run counts per day by status, their total and its change
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, Any] = {
+            "starting_date": starting_date.strftime("%Y-%m-%d") if starting_date else None,
+            "ending_date": ending_date.strftime("%Y-%m-%d") if ending_date else None,
+            "user_id": user_id,
+            "db_id": db_id,
+            "timeout_seconds": timeout_seconds,
+        }
+        params = {k: v for k, v in params.items() if v is not None}
+
+        data = await self._aget("/os/metrics/runs", params=params, headers=headers)
+        return OSRunMetricsResponse.model_validate(data)
+
+    async def get_os_latency_metrics(
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
+        db_id: Optional[List[str]] = None,
+        timeout_seconds: Optional[float] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> OSLatencyMetricsResponse:
+        """Retrieve the average, median, p95 and slowest duration, time to the first token and model call
+        of the completed runs on each day of a date range and across it.
+
+        If no date range is specified, covers the last 30 days.
+
+        Args:
+            starting_date: Starting date for metrics range (YYYY-MM-DD format)
+            ending_date: Ending date for metrics range (YYYY-MM-DD format)
+            user_id: Optional user ID
+            db_id: Optional database IDs to read, every database by default
+            timeout_seconds: Optional seconds to wait for each database to answer
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            OSLatencyMetricsResponse: Latency per day and across the window
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, Any] = {
+            "starting_date": starting_date.strftime("%Y-%m-%d") if starting_date else None,
+            "ending_date": ending_date.strftime("%Y-%m-%d") if ending_date else None,
+            "user_id": user_id,
+            "db_id": db_id,
+            "timeout_seconds": timeout_seconds,
+        }
+        params = {k: v for k, v in params.items() if v is not None}
+
+        data = await self._aget("/os/metrics/latency", params=params, headers=headers)
+        return OSLatencyMetricsResponse.model_validate(data)
+
+    async def refresh_os_metrics(
+        self,
+        db_id: Optional[List[str]] = None,
+        timeout_seconds: Optional[float] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> OSMetricsRefreshResponse:
+        """Recalculate the metrics of every database the /os/metrics routes read, in the background.
+
+        Returns at once with the status of each database. Poll get_os_metrics_refresh_status for the outcome.
+
+        Args:
+            db_id: Optional database IDs to refresh, every database by default
+            timeout_seconds: Optional seconds to wait for each database to answer
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            OSMetricsRefreshResponse: The status of the refresh of each database
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, Any] = {"db_id": db_id, "timeout_seconds": timeout_seconds}
+        params = {k: v for k, v in params.items() if v is not None}
+
+        data = await self._apost("/os/metrics/refresh", params=params, headers=headers)
+        return OSMetricsRefreshResponse.model_validate(data)
+
+    async def get_os_metrics_refresh_status(
+        self,
+        db_id: Optional[List[str]] = None,
+        timeout_seconds: Optional[float] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> OSMetricsRefreshStatusResponse:
+        """Get the status of the most recent metrics refresh of every database the /os/metrics routes read.
+
+        Args:
+            db_id: Optional database IDs to read, every database by default
+            timeout_seconds: Optional seconds to wait for each database to answer
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            OSMetricsRefreshStatusResponse: The status that answers for every database, and each database's own
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, Any] = {"db_id": db_id, "timeout_seconds": timeout_seconds}
+        params = {k: v for k, v in params.items() if v is not None}
+
+        data = await self._aget("/os/metrics/refresh/status", params=params, headers=headers)
+        return OSMetricsRefreshStatusResponse.model_validate(data)

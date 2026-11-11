@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb
 from agno.db.schemas.tasks import task_run_id
-from agno.exceptions import InputCheckError
+from agno.exceptions import ComponentRehydrationError, InputCheckError
 from agno.registry._reserved import RESERVED_MANAGER_IDS
 from agno.run.authorization import RunAuthorization
 
@@ -37,10 +37,29 @@ class _TaskRunRefused(InputCheckError):
     """A claimed Company run (a Task or a routine) may no longer start; the queue fails it without retrying."""
 
 
+def _registered_component(registry: Any, executor_type: str, executor_id: Optional[str]) -> Any:
+    """A code-defined component, else the published Studio version in the OS's component catalog."""
+    if registry is None:
+        return None
+    component = getattr(registry, "get_" + executor_type)(executor_id)
+    # Only the catalog AgentOS declared, never a guessed db, like the ordinary run routes.
+    if component is not None or not executor_id or registry.component_db is None:
+        return component
+    from agno.agent.agent import get_agent_by_id
+    from agno.team.team import get_team_by_id
+    from agno.workflow.workflow import get_workflow_by_id
+
+    load = {"agent": get_agent_by_id, "team": get_team_by_id, "workflow": get_workflow_by_id}[executor_type]
+    try:
+        return load(registry.component_db, executor_id, registry=registry, strict=True)
+    except ComponentRehydrationError as exc:
+        raise ValueError(str(exc)) from exc
+
+
 def _executor(registry: Any, executor_type: Optional[str], executor_id: Optional[str], accepting: bool = False) -> Any:
     if executor_type not in {"agent", "team", "workflow"} or executor_id in RESERVED_MANAGER_IDS:
         raise ValueError("Select a registered agent, team or workflow executor")
-    component = getattr(registry, "get_" + executor_type)(executor_id) if registry is not None else None
+    component = _registered_component(registry, executor_type, executor_id)
     if component is None:
         raise ValueError("Task executor is missing from the registry")
     if not accepting:
@@ -61,6 +80,19 @@ async def _call(target: Any, method: str, *args: Any, **kwargs: Any) -> Any:
     if isinstance(target, (AsyncBaseDb, AsyncCompanyManager)):
         return await fn(*args, **kwargs)
     return await asyncio.to_thread(fn, *args, **kwargs)
+
+
+async def _project_run_block(db: Any, task: Dict[str, Any]) -> Optional[str]:
+    project_id = task.get("project_id")
+    if project_id is None:
+        return None
+    project = await _call(db, "get_project", project_id)
+    if project is None:
+        return None
+    return {
+        "proposed": "Approve the Project before starting Task work",
+        "cancelled": "Cannot start Task work in a cancelled Project",
+    }.get(project["status"])
 
 
 def _queued_run_id() -> str:
@@ -87,6 +119,7 @@ async def _reserve_task(db: Any, job: Dict[str, Any]) -> Optional[Dict[str, Any]
             user_id=payload.get("company_started_by", job.get("user_id")),
             run_db_id=payload["company_run_db_id"],
             session_user_id=job.get("user_id"),
+            **({"requested_from": payload["company_requested_from"]} if payload.get("company_requested_from") else {}),
         )
         task = reserved or await _call(db, "get_task", task["id"])
     if (
@@ -365,6 +398,7 @@ async def _enqueue_ticket(worker: Any, job: Dict[str, Any]) -> Dict[str, Any]:
             "company_task_attempt": submission["attempt"],
             "company_run_db_id": submission["run_db_id"],
             "company_started_by": submission.get("started_by"),
+            **({"company_requested_from": submission["requested_from"]} if submission.get("requested_from") else {}),
         },
     }
     try:
@@ -401,6 +435,11 @@ async def _check_task(worker: Any, job: Dict[str, Any]) -> None:
     db = getattr(worker, "_company_db", None)
     if db is None:
         raise ValueError("Company is unavailable for this queued Task")
+    current = await _call(db, "get_task", task_id)
+    if current is not None and not (job.get("payload") or {}).get("continue"):
+        reason = await _project_run_block(db, current)
+        if reason:
+            raise _TaskRunRefused(reason)
     task = await _reserve_task(db, job)
     if (
         task is None
