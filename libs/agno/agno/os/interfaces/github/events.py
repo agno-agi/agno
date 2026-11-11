@@ -81,15 +81,14 @@ def ignore_reason(
     event: GitHubEvent,
     repositories: Collection[str],
     events: Collection[str],
-    ignore_logins: Collection[str],
 ) -> Optional[str]:
     """Why an event is not handled, or None when it is."""
     if event.repository not in repositories:
         return f"repository {event.repository} is not watched"
     if event.kind not in events:
         return f"{event.kind} is not handled"
-    # Bots include this integration's own GitHub App; a token-based setup names its posting login instead.
-    if event.sender_type == "Bot" or event.sender.lower() in ignore_logins:
+    # Bots include this integration's own GitHub App. Whoever posts Agno's text, its marker identifies it.
+    if event.sender_type == "Bot":
         return f"sent by {event.sender}"
     text = (event.comment or {}).get("body") if event.comment else (event.issue or {}).get("body")
     if MARKER in (text or ""):

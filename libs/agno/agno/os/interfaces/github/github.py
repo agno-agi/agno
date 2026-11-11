@@ -30,7 +30,6 @@ class GitHub(BaseInterface):
         repositories: Sequence[str],
         webhook_secret: Optional[str] = None,
         events: Sequence[str] = DEFAULT_EVENTS,
-        ignore_logins: Sequence[str] = (),
         prefix: str = "/github",
         tags: Optional[List[str]] = None,
     ):
@@ -41,7 +40,6 @@ class GitHub(BaseInterface):
             repositories: The repositories to watch, as "owner/name".
             webhook_secret: The secret set on the webhook. Defaults to GITHUB_WEBHOOK_SECRET.
             events: The event and action pairs to handle, e.g. "issues.opened".
-            ignore_logins: Logins whose events are ignored, e.g. the account whose token posts Agno's comments.
             prefix: Mount path; the webhook's payload URL is <prefix>/events.
             tags: OpenAPI tags.
         """
@@ -55,7 +53,6 @@ class GitHub(BaseInterface):
         self.webhook_secret = secret
         self.repositories = watched
         self.events = set(events)
-        self.ignore_logins = {login.lower() for login in ignore_logins}
         self.prefix = prefix
         self.tags = tags or ["GitHub"]
 
@@ -66,5 +63,4 @@ class GitHub(BaseInterface):
             secret=self.webhook_secret,
             repositories=self.repositories,
             events=self.events,
-            ignore_logins=self.ignore_logins,
         )

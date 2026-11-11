@@ -56,7 +56,7 @@ def client(received):
         received.append(event)
         return {"task_id": "t-1"}
 
-    interface = GitHub(handler, repositories=["Agno-AGI/agno"], webhook_secret=SECRET, ignore_logins=["agno-bot"])
+    interface = GitHub(handler, repositories=["Agno-AGI/agno"], webhook_secret=SECRET)
     app = FastAPI()
     app.include_router(interface.get_router())
     return TestClient(app)
@@ -128,10 +128,9 @@ def test_ping_and_malformed_deliveries(client, received):
         (issue_opened(repository={"full_name": "someone/else"}), "issues", "repository someone/else is not watched"),
         (issue_opened(action="edited"), "issues", "issues.edited is not handled"),
         (issue_opened(sender={"login": "dependabot[bot]", "type": "Bot"}), "issues", "sent by dependabot[bot]"),
-        (issue_opened(sender={"login": "Agno-Bot", "type": "User"}), "issues", "sent by Agno-Bot"),
         ({"action": "opened", "sender": {"login": "alice"}}, "issues", "the delivery names no repository"),
     ],
-    ids=["other-repository", "other-action", "bot", "own-login", "no-repository"],
+    ids=["other-repository", "other-action", "bot", "no-repository"],
 )
 def test_events_outside_the_watch_are_acknowledged_and_ignored(client, received, payload, event, reason):
     response = deliver(client, payload, event=event)

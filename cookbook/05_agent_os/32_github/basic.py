@@ -92,9 +92,6 @@ agent_os = AgentOS(
             record,
             repositories=[repository],
             webhook_secret=secret,
-            # A GitHub App's own comments are ignored as a bot's. With a personal token instead,
-            # name the account that posts Agno's comments.
-            ignore_logins=[getenv("GITHUB_BOT_LOGIN", "agno-bot")],
         )
     ],
     telemetry=False,
@@ -134,12 +131,12 @@ def run_check() -> None:
     print(deliver("issues", opened))
     print(deliver("issues", {**opened, "repository": {"full_name": "someone/else"}}))
     print(
-        deliver("issues", {**opened, "sender": {"login": "agno-bot", "type": "User"}})
+        deliver("issues", {**opened, "sender": {"login": "my-app[bot]", "type": "Bot"}})
     )
     print(deliver("issues", opened, key="wrong-secret"))
     assert len(received) == 1, received
     print(
-        "Handled 1 of 4 deliveries: the other repository, Agno's own login and the bad signature were refused."
+        "Handled 1 of 4 deliveries: the other repository, the App's own bot and the bad signature were refused."
     )
 
 

@@ -18,7 +18,6 @@ def attach_routes(
     secret: str,
     repositories: Collection[str],
     events: Collection[str],
-    ignore_logins: Collection[str],
 ) -> APIRouter:
     @router.post(
         "/events",
@@ -50,7 +49,7 @@ def attach_routes(
         event = parse_event(name, delivery_id, payload)
         reason = "the delivery names no repository" if event is None else None
         if event is not None:
-            reason = ignore_reason(event, repositories, events, ignore_logins)
+            reason = ignore_reason(event, repositories, events)
         if event is None or reason is not None:
             return {"status": "ignored", "reason": reason}
 
