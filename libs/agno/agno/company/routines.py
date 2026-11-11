@@ -89,6 +89,7 @@ def _routine_failure(output: Any) -> Optional[str]:
                 "intake_product_source",
                 "propose_company_task",
                 "update_product_status",
+                "write_company_file",
                 "summarize_company_product",
                 "refresh_company_product",
             }:

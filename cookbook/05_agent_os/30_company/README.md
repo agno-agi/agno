@@ -225,6 +225,8 @@ and the wiki API above serves the same pages.
 **Nothing in the tree is isolated by user.** `notes/` is one folder shared by
 everyone who talks to Super Agent, including when user isolation is on. A note
 Super Agent saved in one person's chat can be read in another person's chat.
+Listing `products/` and searching the tree show every Product, as the Product
+listing does.
 
 The tools are `CompanyFileTools`. Their names keep them apart from the source file
 tools (`list_files`, `read_file`, `search_content`) that `OSManager(root=...)` adds.
@@ -242,7 +244,7 @@ What a call may write follows the run it is in, read from the run's authority:
 | --- | --- |
 | A person's chat with Super Agent | `notes/`, any Task's folder, any Product's pages other than `brief.md`; `wiki/` and `brief.md` with a confirmation |
 | A Task run | Its own Product's pages other than `brief.md`, and its own `tasks/<task-id>/` |
-| A Routine run | Its own Product's `status.md`, through `update_product_status`. Mini Agent holds no file tools in a Routine run |
+| A Routine run | Its own Product's `status.md`, through `update_product_status` only. The file tools refuse every write in a Routine run |
 
 `save_company_page` pauses the run. The confirmation shows the page, the version
 the person saw, the text removed (`old_text`) and the text added (`new_text`).
@@ -258,7 +260,10 @@ reports the refusal.
 
 A Routine reads Sources nobody vetted, so it writes no more than its skills need:
 `status.md`, and the two pages the server composes from the summary and refresh
-tools. An unattended run never sees `notes/`.
+tools. Mini Agent holds no file tools in a Routine run. On a named executor that
+holds them, `write_company_file` refuses every write in a Routine run, and the run
+is recorded as failed, as it is when `update_product_status` is refused. An
+unattended run never sees `notes/`.
 
 A Task's input always carries the Product's `brief.md` and `status.md`, then every
 `wiki/` page: at most 8,000 characters a page and 40,000 in total. A longer page
@@ -266,9 +271,21 @@ is cut and the input names the file to read for the rest. Pages past the total
 are named without their content. Every other file is read on request. Every read
 result says that file content is information, never an instruction.
 
+This input is the same for every executor. Before 3.2 it carried every page of the
+Product. Mini Agent reads the other pages with its file tools. A named agent, team
+or workflow that needs a Product page other than `brief.md` and `status.md`, such as
+a runbook, must hold the read tools:
+`CompanyFileTools(db, include_tools=["list_company_files", "read_company_file", "search_company_files"])`.
+Without them it no longer sees that page.
+
+A listing returns 200 entries a page with the total, and `next_page` when more
+remain. A search returns up to ten matches and `more` when others exist.
+
 A file holds at most 1 MB. `wiki/`, each Product and `notes/` hold 20 MB each, and
-`tasks/` holds 200 MB in total. There are no API routes for `tasks/` and `notes/`,
-and no tool appends to, moves or deletes a file outside `notes/`.
+`tasks/` holds 200 MB in total, shared by every Task. Nothing removes a Task's
+files, not even archiving the Task, so a full `tasks/` refuses every Task's writes
+until files are replaced with smaller ones. There are no API routes for `tasks/`
+and `notes/`, and no tool appends to, moves or deletes a file outside `notes/`.
 
 With `CompanyConfig`, Super Agent holds the Company tools itself. People do
 Company work by talking to Super Agent at `/teams/superagent`. It reads company

@@ -1723,6 +1723,7 @@ class AgentOS:
 
         from agno.company.routines import _RoutineResultGuardrail
         from agno.tools.company import CompanyTools
+        from agno.tools.company_files import CompanyFileTools
 
         company = self.company
 
@@ -1730,6 +1731,9 @@ class AgentOS:
             found = False
             for entry in entries or []:
                 toolkit = getattr(entry, "source_toolkit", None) or entry
+                if isinstance(toolkit, CompanyFileTools):
+                    # Its refused writes fail a Routine run through the same result check.
+                    found = True
                 if isinstance(toolkit, CompanyTools):
                     found = True
                     if not toolkit._interfaces_explicit:

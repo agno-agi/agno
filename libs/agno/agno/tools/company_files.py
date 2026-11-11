@@ -35,14 +35,9 @@ def _require_write(location: _Location, run_context: Any) -> None:
             "In a person's chat, save_company_page asks for their confirmation."
         )
     if isinstance(authority, _RoutineAuthorization):
-        own_status = (
-            location.area == "products"
-            and location.path == "status.md"
-            and authority.product_id is not None
-            and location.record_id == authority.product_id
+        raise PermissionError(
+            "A Routine run writes no file here. Report on its Product with update_product_status, which writes status.md."
         )
-        if not own_status:
-            raise PermissionError("A Routine run writes only its own Product's status.md.")
     elif isinstance(authority, _ExecutorAuthorization):
         own_product = (
             location.area == "products"
@@ -61,7 +56,8 @@ class CompanyFileTools(Toolkit):
 
     - A person's chat writes notes/, a Task's folder and a Product's pages other than brief.md.
     - A Task run writes under its own Product, other than brief.md, and in its own Task folder.
-    - A Routine run writes only its own Product's status.md.
+    - A Routine run writes nothing through these tools. It reports on its Product with
+      update_product_status, the one tool that writes status.md in a Routine run.
     - wiki/ and a Product's brief.md change through save_company_page. Only a person's chat may call it,
       and the run pauses until the person confirms the page and the change.
 
@@ -76,7 +72,8 @@ class CompanyFileTools(Toolkit):
         db: The Company database. Without it the tree is notes/ only.
         notes_db: The AgentOS database that holds notes/. Without it there is no notes/. Unattended
             runs never see notes/.
-        user_isolation: Deployment setting that scopes the Products a listing shows.
+        user_isolation: Deployment setting. With it on, a write to a Company folder needs a caller
+            identity. It never narrows what is listed, searched or read.
         include_tools: Limit the tools registered.
     """
 
@@ -119,12 +116,10 @@ class CompanyFileTools(Toolkit):
         """The permission a write asks for. A Task's folder belongs to the Task, so whoever may start it may fill it."""
         return "tasks" if location.area == "tasks" else "wiki"
 
-    def _product_scope(self, files: CompanyFiles, location: _Location, run_context: Any) -> Optional[str]:
-        """The owner whose Products a listing or search shows. Only a call that spans Products is scoped."""
-        return _scoped_user(run_context, self.user_isolation) if files._spans_products(location) else None
-
     @requires_permission()
-    def list_company_files(self, folder: _OptionalString = None, _agno_run_context: Optional[Any] = None) -> str:
+    def list_company_files(
+        self, folder: _OptionalString = None, page: _OptionalInt = None, _agno_run_context: Optional[Any] = None
+    ) -> str:
         """List a folder of the company file tree. These are company files, not source code.
 
         The tree: wiki/ (agreed direction), products/<product-id>/ (a Product's brief.md, status.md and
@@ -134,23 +129,24 @@ class CompanyFileTools(Toolkit):
         Args:
             folder: A folder such as wiki, products, products/<product-id>, tasks/<task-id> or notes.
                 Null lists the top folders.
+            page: Page of a long listing. Use the next_page a listing returned; null is the first page.
         """
         files = self._files(_agno_run_context)
         location = _locate(folder or "", folder=True)
         # The top of the tree names its folders and holds nothing else.
         if location.area and self._needs_wiki_permission(files, location):
             _permission("wiki", "read", _agno_run_context)
-        user_id = self._product_scope(files, location, _agno_run_context) if location.area else None
-        return _public_json(files.list(folder or "", user_id=user_id))
+        return _public_json(files.list(folder or "", page or 1))
 
     @requires_permission()
-    async def alist_company_files(self, folder: _OptionalString = None, _agno_run_context: Optional[Any] = None) -> str:
+    async def alist_company_files(
+        self, folder: _OptionalString = None, page: _OptionalInt = None, _agno_run_context: Optional[Any] = None
+    ) -> str:
         files = self._files(_agno_run_context)
         location = _locate(folder or "", folder=True)
         if location.area and self._needs_wiki_permission(files, location):
             await _apermission("wiki", "read", _agno_run_context)
-        user_id = self._product_scope(files, location, _agno_run_context) if location.area else None
-        return _public_json(await files.alist(folder or "", user_id=user_id))
+        return _public_json(await files.alist(folder or "", page or 1))
 
     @requires_permission()
     def read_company_file(self, path: str, offset: _OptionalInt = None, _agno_run_context: Optional[Any] = None) -> str:
@@ -185,7 +181,8 @@ class CompanyFileTools(Toolkit):
     ) -> str:
         """Search the text of the company file tree, ignoring case. These are company files, not source code.
 
-        Returns each matching file with the line of its first match. Read the file before relying on it.
+        Returns up to ten matching files with the line of each first match, and more: true when others
+        exist; narrow the folder or the query to see them. Read a file before relying on it.
 
         Args:
             query: Text to find.
@@ -196,8 +193,7 @@ class CompanyFileTools(Toolkit):
         location = _locate(folder or "", folder=True)
         if self._needs_wiki_permission(files, location):
             _permission("wiki", "read", _agno_run_context)
-        user_id = self._product_scope(files, location, _agno_run_context)
-        return _public_json(files.search(query, folder or "", user_id=user_id), ensure_ascii=False)
+        return _public_json(files.search(query, folder or ""), ensure_ascii=False)
 
     @requires_permission()
     async def asearch_company_files(
@@ -207,8 +203,7 @@ class CompanyFileTools(Toolkit):
         location = _locate(folder or "", folder=True)
         if self._needs_wiki_permission(files, location):
             await _apermission("wiki", "read", _agno_run_context)
-        user_id = self._product_scope(files, location, _agno_run_context)
-        return _public_json(await files.asearch(query, folder or "", user_id=user_id), ensure_ascii=False)
+        return _public_json(await files.asearch(query, folder or ""), ensure_ascii=False)
 
     @requires_permission()
     def write_company_file(

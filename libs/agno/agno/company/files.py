@@ -201,19 +201,28 @@ class CompanyFiles:
         return {"folder": "", "folders": [area + "/" for area in self.areas]}
 
     @staticmethod
-    def _product_folders(rows: List[Dict[str, Any]], total: int) -> Dict[str, Any]:
-        folders = [{"folder": f"products/{row['id']}/", "name": row["name"]} for row in rows]
-        return {"folder": "products", "folders": folders, "total": total}
+    def _paged(result: Dict[str, Any], total: int, page: int) -> Dict[str, Any]:
+        """Add the total, and the next page when this one is not the last."""
+        result["total"] = total
+        if page * LIST_ENTRIES < total:
+            result["next_page"] = page + 1
+        return result
 
-    @staticmethod
-    def _listing(location: _Location, metas: List[Any]) -> Dict[str, Any]:
+    @classmethod
+    def _product_folders(cls, rows: List[Dict[str, Any]], total: int, page: int) -> Dict[str, Any]:
+        folders = [{"folder": f"products/{row['id']}/", "name": row["name"]} for row in rows]
+        return cls._paged({"folder": "products", "folders": folders}, total, page)
+
+    @classmethod
+    def _listing(cls, location: _Location, metas: List[Any], page: int) -> Dict[str, Any]:
+        window = slice((page - 1) * LIST_ENTRIES, page * LIST_ENTRIES)
         if location.area == "tasks" and location.record_id is None:
             counts: Dict[str, int] = {}
             for meta in metas:
                 task_id = meta.path.split("/")[0]
                 counts[task_id] = counts.get(task_id, 0) + 1
             folders = [{"folder": f"tasks/{task_id}/", "files": count} for task_id, count in counts.items()]
-            return {"folder": "tasks", "folders": folders[:LIST_ENTRIES], "total": len(folders)}
+            return cls._paged({"folder": "tasks", "folders": folders[window]}, len(folders), page)
         files = [
             {
                 "path": location.tree_path_of(meta.path),
@@ -221,9 +230,16 @@ class CompanyFiles:
                 "version": meta.version,
                 "updated_at": meta.updated_at,
             }
-            for meta in metas[:LIST_ENTRIES]
+            for meta in metas[window]
         ]
-        return {"folder": location.tree_path, "files": files, "total": len(metas)}
+        return cls._paged({"folder": location.tree_path, "files": files}, len(metas), page)
+
+    @staticmethod
+    def _found(query: str, location: _Location, matches: List[Dict[str, Any]], limit: int) -> Dict[str, Any]:
+        result: Dict[str, Any] = {"query": query, "folder": location.tree_path, "matches": matches[:limit]}
+        if len(matches) > limit:
+            result["more"] = True
+        return result
 
     @staticmethod
     def _matches(location: _Location, found: List[Any]) -> List[Dict[str, Any]]:
@@ -262,32 +278,42 @@ class CompanyFiles:
         data = self._filesystem(location).read_with_meta(location.store_path)
         return self._read_result(location, data, offset)
 
-    def list(self, folder: str = "", user_id: Optional[str] = None) -> Dict[str, Any]:
-        """List a folder. ``user_id`` scopes the Products shown, as it does in the Product listing."""
+    def _product_ids(self) -> List[str]:
+        """Every Product's ID. The tree is company-wide, so no owner narrows it."""
+        product_ids: List[str] = []
+        page = 1
+        while True:
+            rows, total = self._sync_manager().db.get_products(limit=LIST_ENTRIES, page=page)
+            product_ids.extend(row["id"] for row in rows)
+            if not rows or page * LIST_ENTRIES >= total:
+                return product_ids
+            page += 1
+
+    def list(self, folder: str = "", page: int = 1) -> Dict[str, Any]:
+        """List a folder, LIST_ENTRIES entries a page. Products are listed for every caller."""
         location = _locate(folder, folder=True)
         self._require_area(location)
+        page = max(page, 1)
         if not location.area:
             return self._root()
         if location.area == "products" and location.record_id is None:
-            rows, total = self._sync_manager().db.get_products(user_id=user_id, limit=LIST_ENTRIES, page=1)
-            return self._product_folders(rows, total)
-        return self._listing(location, self._filesystem(location).list(location.store_path))
+            rows, total = self._sync_manager().db.get_products(limit=LIST_ENTRIES, page=page)
+            return self._product_folders(rows, total, page)
+        return self._listing(location, self._filesystem(location).list(location.store_path), page)
 
-    def search(self, query: str, folder: str = "", limit: int = 10, user_id: Optional[str] = None) -> Dict[str, Any]:
+    def search(self, query: str, folder: str = "", limit: int = 10) -> Dict[str, Any]:
         """Search file content, case-insensitive, in one folder or in the whole tree."""
         location = _locate(folder, folder=True)
         self._require_area(location)
-        product_ids: List[str] = []
-        if self._spans_products(location):
-            rows, _ = self._sync_manager().db.get_products(user_id=user_id, limit=LIST_ENTRIES, page=1)
-            product_ids = [row["id"] for row in rows]
+        product_ids = self._product_ids() if self._spans_products(location) else []
         matches: List[Dict[str, Any]] = []
         for target in self._search_targets(location, product_ids):
-            if len(matches) >= limit:
+            # One match past the limit shows that more exist.
+            if len(matches) > limit:
                 break
-            found = self._filesystem(target).search(query, target.store_path, limit - len(matches))
+            found = self._filesystem(target).search(query, target.store_path, limit + 1 - len(matches))
             matches.extend(self._matches(target, found))
-        return {"query": query, "folder": location.tree_path, "matches": matches}
+        return self._found(query, location, matches, limit)
 
     def write(self, path: str, content: str, expected_version: Optional[int] = None) -> Dict[str, Any]:
         """Create or replace a file. ``expected_version`` is the version read; 0 creates only."""
@@ -354,35 +380,42 @@ class CompanyFiles:
         data = await (await self._afilesystem(location)).aread_with_meta(location.store_path)
         return self._read_result(location, data, offset)
 
-    async def alist(self, folder: str = "", user_id: Optional[str] = None) -> Dict[str, Any]:
-        """List a folder. ``user_id`` scopes the Products shown, as it does in the Product listing."""
+    async def _aproduct_ids(self) -> List[str]:
+        """Every Product's ID. The tree is company-wide, so no owner narrows it."""
+        product_ids: List[str] = []
+        page = 1
+        while True:
+            rows, total = await _call(self.db, "get_products", limit=LIST_ENTRIES, page=page)
+            product_ids.extend(row["id"] for row in rows)
+            if not rows or page * LIST_ENTRIES >= total:
+                return product_ids
+            page += 1
+
+    async def alist(self, folder: str = "", page: int = 1) -> Dict[str, Any]:
+        """List a folder, LIST_ENTRIES entries a page. Products are listed for every caller."""
         location = _locate(folder, folder=True)
         self._require_area(location)
+        page = max(page, 1)
         if not location.area:
             return self._root()
         if location.area == "products" and location.record_id is None:
-            rows, total = await _call(self.db, "get_products", user_id=user_id, limit=LIST_ENTRIES, page=1)
-            return self._product_folders(rows, total)
-        return self._listing(location, await (await self._afilesystem(location)).alist(location.store_path))
+            rows, total = await _call(self.db, "get_products", limit=LIST_ENTRIES, page=page)
+            return self._product_folders(rows, total, page)
+        return self._listing(location, await (await self._afilesystem(location)).alist(location.store_path), page)
 
-    async def asearch(
-        self, query: str, folder: str = "", limit: int = 10, user_id: Optional[str] = None
-    ) -> Dict[str, Any]:
+    async def asearch(self, query: str, folder: str = "", limit: int = 10) -> Dict[str, Any]:
         """Search file content, case-insensitive, in one folder or in the whole tree."""
         location = _locate(folder, folder=True)
         self._require_area(location)
-        product_ids: List[str] = []
-        if self._spans_products(location):
-            rows, _ = await _call(self.db, "get_products", user_id=user_id, limit=LIST_ENTRIES, page=1)
-            product_ids = [row["id"] for row in rows]
+        product_ids = await self._aproduct_ids() if self._spans_products(location) else []
         matches: List[Dict[str, Any]] = []
         for target in self._search_targets(location, product_ids):
-            if len(matches) >= limit:
+            if len(matches) > limit:
                 break
             store = await self._afilesystem(target)
-            found = await store.asearch(query, target.store_path, limit - len(matches))
+            found = await store.asearch(query, target.store_path, limit + 1 - len(matches))
             matches.extend(self._matches(target, found))
-        return {"query": query, "folder": location.tree_path, "matches": matches}
+        return self._found(query, location, matches, limit)
 
     async def awrite(self, path: str, content: str, expected_version: Optional[int] = None) -> Dict[str, Any]:
         """Create or replace a file. ``expected_version`` is the version read; 0 creates only."""

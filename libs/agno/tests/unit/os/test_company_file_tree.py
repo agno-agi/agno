@@ -371,12 +371,13 @@ def test_a_tasks_folder_asks_for_tasks_write_and_a_products_pages_for_wiki_write
 
 
 @pytest.mark.parametrize("use_async", [False, True])
-def test_a_routine_run_writes_only_its_own_products_status(system, use_async):
+def test_a_routine_run_writes_no_file_through_the_file_tools(system, use_async):
     ids = records(system)
     # Mini Agent holds no file tools in a Routine run. A named executor could, so the rule is in the tool.
     files = CompanyFileTools(system.db)
     authority = routine_run(ids["product"])
     refused = [
+        f"products/{ids['product']}/status.md",
         f"products/{ids['product']}/research.md",
         f"products/{ids['product']}/brief.md",
         f"products/{ids['other']}/status.md",
@@ -386,16 +387,65 @@ def test_a_routine_run_writes_only_its_own_products_status(system, use_async):
     ]
     before = pages(system, ids)
     for path in refused:
-        with pytest.raises(PermissionError, match="status.md|only a person changes them"):
+        with pytest.raises(PermissionError, match="A Routine run writes no file here|only a person changes them"):
             call(files, "write_company_file", authority, use_async, path=path, content="Hijacked", expected_version=1)
     assert pages(system, ids) == before
-    status = f"products/{ids['product']}/status.md"
+    # Status has one way in a Routine run, and it reaches the Routine's own Product only.
+    status_tool = system.mini.tools.routine[0]
     assert (
-        call(files, "write_company_file", authority, use_async, path=status, content="Ok", expected_version=1)[
-            "version"
-        ]
+        call(
+            status_tool,
+            "update_product_status",
+            authority,
+            use_async,
+            product_id=ids["product"],
+            content="Ok",
+            expected_version=1,
+        )["version"]
         == 2
     )
+    with pytest.raises(PermissionError, match="restricted to its configured Product"):
+        call(
+            status_tool,
+            "update_product_status",
+            authority,
+            use_async,
+            product_id=ids["other"],
+            content="No",
+            expected_version=1,
+        )
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_a_refused_file_write_fails_a_routine_on_a_named_executor(tmp_path, use_async):
+    from agno.agent import Agent
+    from agno.company.routines import _routine_failure
+    from agno.run.base import RunStatus
+
+    db = SqliteDb(db_file=str(tmp_path / "os.db"))
+    # A developer's own executor that holds only the file tools.
+    worker = Agent(id="worker", name="Worker", model=ScriptedModel(), db=db, tools=[CompanyFileTools(db)])
+    agent_os = AgentOS(db=db, agents=[worker], company=CompanyConfig(model=ScriptedModel()), telemetry=False)
+    try:
+        product = CompanyManager(db, agent_os.registry).create(name="SDK")
+        status = f"products/{product['id']}/status.md"
+        worker.model = ScriptedModel(
+            [("write_company_file", {"path": status, "content": "Hijacked", "expected_version": 1})]
+        )
+        with authorization_scope(lambda: routine_run(product["id"])):
+            if use_async:
+                result = asyncio.run(worker.arun("Run the Routine", user_id="alice", session_id="routine"))
+            else:
+                result = worker.run("Run the Routine", user_id="alice", session_id="routine")
+        # The run is recorded as failed, as it is when update_product_status is refused.
+        assert result.status == RunStatus.error, result.status
+        assert "write_company_file failed" in str(result.content)
+        assert "No status recorded yet" in CompanyManager(db).read_wiki(product["id"], "status.md").content
+        # The same call outside a Routine run is a Task's or a person's, and is not a Routine failure.
+        failed = {"tools": [{"tool_name": "write_company_file", "tool_call_error": True, "result": "version conflict"}]}
+        assert _routine_failure(failed) == "write_company_file failed: version conflict"
+    finally:
+        db.close()
 
 
 @pytest.mark.parametrize("use_async", [False, True])
@@ -684,17 +734,73 @@ def test_notes_are_shared_by_everyone_who_talks_to_super_agent(tmp_path):
         files = tree(system.os)
         alice = RunContext(run_id="run", session_id="a", user_id="alice")
         bob = RunContext(run_id="run", session_id="b", user_id="bob")
-        # Reading the wiki names no owner, so it asks for no identity. Listing Products is scoped to one.
-        nobody = RunContext(run_id="run", session_id="n", user_id=None)
-        assert json.loads(files.list_company_files(folder="wiki", _agno_run_context=nobody))["total"] == 2
-        with pytest.raises(PermissionError, match="Caller identity is required"):
-            files.list_company_files(folder="products", _agno_run_context=nobody)
         files.write_company_file(path="notes/ideas.md", content="From Alice", _agno_run_context=alice)
         assert json.loads(files.read_company_file(path="notes/ideas.md", _agno_run_context=bob))["content"] == (
             "From Alice"
         )
     finally:
         system.db.close()
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_user_isolation_hides_no_product_from_a_listing_or_a_search(tmp_path, use_async):
+    system = System(tmp_path, authorization=False, user_isolation=True)
+    try:
+        manager = CompanyManager(system.db, system.os.registry)
+        hers = manager.create(name="Alice product", user_id="alice")
+        his = manager.create(name="Bob product", user_id="bob")
+        manager.write_wiki(product_id=his["id"], path="zebra.md", content="zebra facts", expected_version=0)
+        files = tree(system.os)
+
+        def as_alice(tool, **arguments):
+            context = RunContext(run_id="run", session_id="a", user_id="alice")
+            functions = files.get_async_functions() if use_async else files.get_functions()
+            result = functions[tool].entrypoint(**arguments, _agno_run_context=context)
+            return json.loads(asyncio.run(result) if use_async else result)
+
+        # The tree is company-wide, as the Product listing is.
+        listed = {row["name"] for row in as_alice("list_company_files", folder="products")["folders"]}
+        assert listed == {"Alice product", "Bob product"}
+        page = f"products/{his['id']}/zebra.md"
+        assert [match["path"] for match in as_alice("search_company_files", query="zebra")["matches"]] == [page]
+        assert [
+            match["path"] for match in as_alice("search_company_files", query="zebra", folder="products")["matches"]
+        ] == [page]
+        # Reading and listing name no owner, so a caller with no identity is not turned away.
+        nobody = RunContext(run_id="run", session_id="n", user_id=None)
+        assert json.loads(files.list_company_files(folder="products", _agno_run_context=nobody))["total"] == 2
+        assert hers["id"] != his["id"]
+    finally:
+        system.db.close()
+
+
+def test_search_reaches_every_product_and_long_listings_have_pages(system):
+    from agno.company.files import LIST_ENTRIES
+
+    manager = CompanyManager(system.db, system.os.registry)
+    created = [manager.create(name=f"Product {index:03d}")["id"] for index in range(LIST_ENTRIES + 1)]
+    files = tree(system.os)
+    first = call(files, "list_company_files", folder="products")
+    assert len(first["folders"]) == LIST_ENTRIES and first["total"] == LIST_ENTRIES + 1 and first["next_page"] == 2
+    second = call(files, "list_company_files", folder="products", page=2)
+    assert len(second["folders"]) == 1 and "next_page" not in second
+    # The one Product the first page leaves out is still searched.
+    shown = {row["folder"].split("/")[1] for row in first["folders"]}
+    beyond = next(product_id for product_id in created if product_id not in shown)
+    manager.write_wiki(product_id=beyond, path="needle.md", content="uniqueneedle", expected_version=0)
+    found = call(files, "search_company_files", query="uniqueneedle")
+    assert [match["path"] for match in found["matches"]] == [f"products/{beyond}/needle.md"] and "more" not in found
+    # A search that stops at ten matches says that more exist.
+    for index in range(11):
+        call(files, "write_company_file", path=f"notes/note-{index:02d}.md", content="repeated phrase")
+    many = call(files, "search_company_files", query="repeated phrase", folder="notes")
+    assert len(many["matches"]) == 10 and many["more"] is True
+    # A long folder is listed a page at a time.
+    for index in range(LIST_ENTRIES - 10):
+        call(files, "write_company_file", path=f"notes/more-{index:03d}.md", content="x")
+    notes = call(files, "list_company_files", folder="notes")
+    assert len(notes["files"]) == LIST_ENTRIES and notes["total"] == LIST_ENTRIES + 1 and notes["next_page"] == 2
+    assert len(call(files, "list_company_files", folder="notes", page=2)["files"]) == 1
 
 
 @pytest.mark.parametrize("use_async", [False, True])
