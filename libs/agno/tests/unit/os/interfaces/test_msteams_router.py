@@ -365,6 +365,91 @@ def test_operation_ids_fall_back_to_entity_type_when_name_missing():
     assert "msteams_webhook_agent" in operation_ids
 
 
+@pytest.mark.parametrize(
+    "mime,content,notice",
+    [
+        ("application/zip", b"zip", "archive.zip"),
+        ("application/x-zip", b"zip", "archive.zip"),
+        ("application/x-zip-compressed", b"zip", "archive.zip"),
+        ("application/pdf", b"oversized", "archive.zip (too large)"),
+    ],
+)
+def test_attachment_notice_keeps_text_and_interface_cap(mime, content, notice):
+    from unittest.mock import AsyncMock
+
+    import httpx
+
+    from agno.os.interfaces.msteams import MSTeams
+    from agno.run.agent import RunOutput
+
+    entity = SimpleNamespace(
+        id="agent", name="Agent", db=None, arun=AsyncMock(return_value=RunOutput(run_id="run", content="done"))
+    )
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, content=content, headers={"Content-Type": mime})
+        )
+    )
+    with (
+        patch.dict("os.environ", {"MICROSOFT_APP_SKIP_JWT_VALIDATION": "true"}, clear=True),
+        patch("httpx.AsyncClient", return_value=client),
+        patch("agno.os.interfaces.msteams.router.typing_indicator_async", new_callable=AsyncMock),
+        patch("agno.os.interfaces.msteams.router.send_teams_message_async", new_callable=AsyncMock),
+    ):
+        app = FastAPI()
+        app.include_router(MSTeams(agent=entity, max_file_size=4).get_router())
+        with TestClient(app) as webhook:
+            response = webhook.post(
+                "/msteams/messages",
+                json={
+                    "type": "message",
+                    "text": "keep my text",
+                    "serviceUrl": "https://svc",
+                    "conversation": {"id": "c"},
+                    "from": {"id": "u"},
+                    "attachments": [{"name": "archive.zip", "contentUrl": "https://other/file"}],
+                },
+            )
+    assert response.status_code == 200
+    entity.arun.assert_awaited_once()
+    assert entity.arun.call_args.args[0] == f"[Some attachments could not be read: {notice}]\n\nkeep my text"
+    assert "files" not in entity.arun.call_args.kwargs
+
+
+def test_mention_only_reaches_agent():
+    from unittest.mock import AsyncMock
+
+    from agno.run.agent import RunOutput
+
+    entity = SimpleNamespace(
+        id="agent", name="Agent", db=None, arun=AsyncMock(return_value=RunOutput(run_id="run", content="hello"))
+    )
+    client, env = _build_test_client(agent=entity)
+    try:
+        with (
+            patch("agno.os.interfaces.msteams.router.typing_indicator_async", new_callable=AsyncMock),
+            patch("agno.os.interfaces.msteams.router.send_teams_message_async", new_callable=AsyncMock),
+        ):
+            assert (
+                client.post(
+                    "/messages",
+                    json={
+                        "type": "message",
+                        "text": "<at>Bot</at>",
+                        "serviceUrl": "https://svc",
+                        "from": {"id": "u"},
+                        "conversation": {"id": "c"},
+                        "recipient": {"id": "bot", "name": "Display"},
+                        "entities": [{"type": "mention", "text": "<at>Bot</at>", "mentioned": {"id": "bot"}}],
+                    },
+                ).status_code
+                == 200
+            )
+        assert entity.arun.call_args.args[0] == "Display"
+    finally:
+        env.stop()
+
+
 @pytest.mark.parametrize("kind", ["agent", "team", "workflow"])
 def test_paused_run_sends_only_approval_notice(kind, caplog):
     from unittest.mock import AsyncMock
