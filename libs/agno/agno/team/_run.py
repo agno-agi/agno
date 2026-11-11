@@ -79,7 +79,11 @@ from agno.run.cancel import (
 from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )
-from agno.run.concurrency import SSE_KEEPALIVE_INTERVAL_SECONDS, background_run_slot
+from agno.run.concurrency import (
+    SSE_KEEPALIVE_INTERVAL_SECONDS,
+    background_run_slot,
+    guard_task_execution,
+)
 from agno.run.messages import RunMessages
 from agno.run.status_persist import apersist_run_transition
 from agno.run.team import (
@@ -1080,6 +1084,7 @@ def _run_tasks_stream(
         cleanup_run(run_response.run_id)  # type: ignore
 
 
+@guard_task_execution()
 def _run(
     team: "Team",
     run_response: TeamRunOutput,
@@ -1440,6 +1445,7 @@ def _run(
     return run_response  # Defensive fallback for type-checker; all paths return inside the loop
 
 
+@guard_task_execution()
 def _run_stream(
     team: "Team",
     run_response: TeamRunOutput,
@@ -1899,6 +1905,7 @@ def _run_stream(
         cleanup_run(run_response.run_id)  # type: ignore
 
 
+@guard_task_execution()
 def run_dispatch(
     team: "Team",
     input: Union[str, List, Dict, Message, BaseModel, List[Message]],
@@ -3042,6 +3049,7 @@ async def _arun_tasks_stream(
         await acleanup_run(run_response.run_id)  # type: ignore
 
 
+@guard_task_execution()
 async def _arun(
     team: "Team",
     run_response: TeamRunOutput,
@@ -3450,6 +3458,7 @@ async def _arun(
     return run_response
 
 
+@guard_task_execution(background=True)
 async def _arun_background(
     team: "Team",
     run_response: TeamRunOutput,
@@ -3518,6 +3527,7 @@ async def _arun_background(
     return run_response
 
 
+@guard_task_execution(background=True)
 async def _arun_background_stream(
     team: "Team",
     run_response: TeamRunOutput,
@@ -3614,6 +3624,7 @@ async def _arun_background_stream(
         await pump.aclose()
 
 
+@guard_task_execution()
 async def _arun_stream(
     team: "Team",
     run_response: TeamRunOutput,
@@ -4129,6 +4140,7 @@ async def _arun_stream(
         await acleanup_run(run_response.run_id)  # type: ignore
 
 
+@guard_task_execution(async_dispatch=True)
 def arun_dispatch(  # type: ignore
     team: "Team",
     input: Union[str, List, Dict, Message, BaseModel, List[Message]],
@@ -7070,6 +7082,7 @@ def _fork_team_run(run_response: "TeamRunOutput", message_index: int) -> "TeamRu
 
     forked = copy.deepcopy(run_response)
     forked.run_id = str(uuid4())
+    forked.queue_attempt = None
     forked.forked_from_run_id = run_response.run_id
     forked.forked_from_message_index = message_index
     # A new run of this session, counted here: only runs copied from the session it was forked from are counted there
@@ -7297,6 +7310,7 @@ def _build_forked_team_session(source_session: TeamSession, new_user_id: Optiona
 
     for run in forked_runs:
         run.run_id = str(uuid4())
+        run.queue_attempt = None
         run.session_id = new_session_id
         if not getattr(run, "forked_from_session_id", None):
             run.forked_from_session_id = source_session.session_id
@@ -7464,6 +7478,7 @@ async def afork_session_dispatch(
     return new_session.session_id
 
 
+@guard_task_execution()
 def continue_run_dispatch(
     team: "Team",
     run_response: Optional[TeamRunOutput] = None,
@@ -8257,6 +8272,7 @@ def _continue_run_dispatch_stream_with_member_events(
         yield run_response
 
 
+@guard_task_execution()
 def _continue_run(
     team: "Team",
     run_response: TeamRunOutput,
@@ -8458,6 +8474,7 @@ def _continue_run(
     return run_response
 
 
+@guard_task_execution()
 def _continue_run_stream(
     team: "Team",
     run_response: TeamRunOutput,
@@ -8756,6 +8773,7 @@ def _as_run_status(value: Union[RunStatus, str, None]) -> Union[RunStatus, str, 
         return value
 
 
+@guard_task_execution(background=True)
 async def _acontinue_run_background_stream(
     team: Team,
     run_context: RunContext,
@@ -9224,6 +9242,7 @@ async def _acontinue_run_background_stream(
         yield sse_data
 
 
+@guard_task_execution(async_dispatch=True)
 def acontinue_run_dispatch(  # type: ignore
     team: "Team",
     run_response: Optional[TeamRunOutput] = None,
@@ -9420,6 +9439,7 @@ def acontinue_run_dispatch(  # type: ignore
         )
 
 
+@guard_task_execution()
 async def _acontinue_run(
     team: "Team",
     session_id: str,
@@ -9904,6 +9924,7 @@ async def _acontinue_run(
     return run_response  # type: ignore
 
 
+@guard_task_execution()
 async def _acontinue_run_stream(
     team: "Team",
     session_id: str,

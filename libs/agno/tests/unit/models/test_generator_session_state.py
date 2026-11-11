@@ -20,6 +20,80 @@ import pytest
 from agno.tools.function import Function, FunctionCall, FunctionExecutionResult
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("nested", [False, True])
+async def test_sync_tool_keeps_task_claim_after_async_cancellation(tmp_path, nested):
+    import asyncio
+    import threading
+
+    from agno.company.manager import CompanyManager
+    from agno.db.schemas.tasks import TASK_EXECUTION_CLAIMS
+    from agno.db.sqlite import SqliteDb
+    from agno.models.openai import OpenAIChat
+    from agno.run.concurrency import _TaskExecutionProvider, guard_task_execution, task_execution_scope
+
+    db = SqliteDb(db_file=str(tmp_path / "tool-thread.db"))
+    manager = CompanyManager(db)
+    product = manager.create(name="Tools")
+    project = manager.create_project(product_id=product["id"], name="Draft")
+    task = manager.create_task(product_id=product["id"], project_id=project["id"], title="Work")
+    provider = _TaskExecutionProvider(db)
+    await provider.ainitialize()
+
+    class Producer:
+        @guard_task_execution()
+        async def run(self, session_id, call):
+            if nested:
+                return await self.child("member:" + session_id, call)
+            return await OpenAIChat().arun_function_call(call)
+
+        @guard_task_execution()
+        async def child(self, session_id, call):
+            return await OpenAIChat().arun_function_call(call)
+
+    closing = None
+    for cycle in range(2):
+        entered, finish, stopped = threading.Event(), threading.Event(), threading.Event()
+
+        def work():
+            """Wait for the test to finish the real thread."""
+            entered.set()
+            try:
+                finish.wait(5)
+                return "done"
+            finally:
+                stopped.set()
+
+        function = Function.from_callable(work)
+        function.process_entrypoint()
+        with task_execution_scope(provider):
+            running = asyncio.create_task(Producer().run(task["session_id"], FunctionCall(function=function)))
+        try:
+            assert await asyncio.to_thread(entered.wait, 3)
+            running.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await running
+            assert not stopped.is_set()
+            assert (db.get_task(task["id"])["metadata"] or {}).get(TASK_EXECUTION_CLAIMS), (
+                "awaiting coroutine released protection while its tool thread was still executing"
+            )
+            if cycle == 1:
+                closing = asyncio.create_task(provider.aclose())
+                await asyncio.sleep(0.02)
+                assert not closing.done(), "shutdown closed the provider before its accepted tool thread stopped"
+        finally:
+            finish.set()
+            await asyncio.to_thread(stopped.wait, 3)
+            for _ in range(100):
+                if not (db.get_task(task["id"])["metadata"] or {}).get(TASK_EXECUTION_CLAIMS):
+                    break
+                await asyncio.sleep(0.01)
+    if closing is not None:
+        await closing
+    await provider.aclose()
+    db.close()
+
+
 def test_sync_generator_session_state_not_captured_early():
     """Verify that sync generators don't capture session_state before consumption."""
     from agno.run import RunContext

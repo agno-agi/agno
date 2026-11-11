@@ -291,7 +291,17 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             fields["payload"]["metadata"]["initial_enabled"] = False
         schedule = await call(ScheduleCreate, **fields)
         row = await call(handlers["create_schedule"], schedule, request)
-        await call(db.add_product_routine, body.product_id, row["id"])
+        try:
+            if await call(db.add_product_routine, body.product_id, row["id"]) is None:
+                raise HTTPException(422, "Routine could not be linked to its Product")
+        except Exception:
+            from agno.scheduler import ScheduleManager
+
+            # Keep interrupted creates retryable unless their Product was permanently removed.
+            if await call(manager.get, body.product_id, include_deleted=True) is None:
+                if not await ScheduleManager(schedule_db).adelete(row["id"]):
+                    raise HTTPException(503, "Routine creation failed and schedule cleanup could not be verified")
+            raise
         if body.enabled:
             row = await call(handlers["enable_schedule"], row["id"], request)
         else:

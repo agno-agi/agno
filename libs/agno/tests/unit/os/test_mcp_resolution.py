@@ -251,6 +251,7 @@ async def test_continue_run_resolves_the_stamped_version(monkeypatch):
 
     continued_on = []
     stamped_agent = Agent(id="preview-agent", name="Preview Agent v7")
+    _bind_agent_session(stamped_agent, "preview-agent", "s-1", "run-1")
 
     async def stamped_acontinue_run(*, run_id, session_id, user_id, requirements, stream=False):
         continued_on.append("stamped")

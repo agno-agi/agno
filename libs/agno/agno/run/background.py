@@ -14,7 +14,9 @@ _background_tasks: set[asyncio.Task[None]] = set()
 
 
 def _spawn_background(coro: Awaitable[None]) -> None:
-    task = asyncio.ensure_future(coro)
+    from agno.run.concurrency import create_task_execution
+
+    task = create_task_execution(coro)
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
 

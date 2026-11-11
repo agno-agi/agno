@@ -259,7 +259,9 @@ class ValkeyDb(BaseDb):
             return ClusterBatch(is_atomic=is_atomic)
         return Batch(is_atomic=is_atomic)
 
-    def _exec_pipeline(self, pipeline: Union[Batch, ClusterBatch], raise_on_error: bool = False) -> Optional[List[Any]]:
+    def _exec_pipeline(
+        self, pipeline: Union[Batch, ClusterBatch], *, raise_on_error: bool = False
+    ) -> Optional[List[Any]]:
         """Execute a batch pipeline on the appropriate client. With raise_on_error, a command that failed raises
         instead of coming back in the results. A batch with no command is not sent: the server refuses an empty batch.
         """
@@ -418,7 +420,7 @@ class ValkeyDb(BaseDb):
             log_error(f"Error deleting record {record_id}: {str(e)}")
             return False
 
-    def _get_all_records(self, table_type: str) -> List[Dict[str, Any]]:
+    def _get_all_records(self, table_type: str, *, raise_on_error: bool = False) -> List[Dict[str, Any]]:
         """Generic method to get all records for a table type using pipeline batching.
 
         Args:
@@ -443,12 +445,20 @@ class ValkeyDb(BaseDb):
             for key in keys:
                 pipeline.get(key)
 
-            results = self._exec_pipeline(pipeline)
+            results = (
+                self._exec_pipeline(pipeline, raise_on_error=True) if raise_on_error else self._exec_pipeline(pipeline)
+            )
+            if raise_on_error and (results is None or len(results) != len(keys)):
+                raise RuntimeError(f"Cannot verify {table_type} records")
             if not results:
                 return []
 
             records = []
             for raw in results:
+                if raise_on_error and isinstance(raw, RequestError):
+                    raise raw
+                if raise_on_error and raw is None:
+                    raise RuntimeError(f"Indexed {table_type} record is unavailable")
                 if raw is None or isinstance(raw, RequestError):
                     continue
                 data_str: str = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw) if raw else ""
@@ -459,6 +469,8 @@ class ValkeyDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error getting all records for {table_type}: {str(e)}")
+            if raise_on_error:
+                raise
             return []
 
     def _schema_version_key(self, table_name: str) -> str:
@@ -733,6 +745,8 @@ class ValkeyDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        *,
+        raise_on_error: bool = False,
     ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
         """Get all runs matching the given filters.
 
@@ -741,10 +755,17 @@ class ValkeyDb(BaseDb):
         """
         try:
             # Fast path: filter by session_id uses the index
-            if session_id is not None:
-                rows: List[Dict[str, Any]] = self._get_session_run_rows(session_id)
+            if session_id is not None and raise_on_error:
+                # Run keys and the session index are not written atomically.
+                rows = [
+                    row
+                    for row in self._get_all_records("runs", raise_on_error=True)
+                    if row.get("session_id") == session_id
+                ]
+            elif session_id is not None:
+                rows = self._get_session_run_rows(session_id)
             else:
-                rows = self._get_all_records("runs")
+                rows = self._get_all_records("runs", raise_on_error=raise_on_error)
 
             conditions: Dict[str, Any] = {}
             if user_id is not None:

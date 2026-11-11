@@ -310,3 +310,142 @@ async def test_scheduler_tools_added_after_queue_fails_without_retry(system, mon
     assert job["error"] == "permanent: Company executors cannot hold SchedulerTools"
     assert (await _call(db, "get_run", run_id, deserialize=False))["status"] == "ERROR"
     assert (await _call(db, "get_task", value["id"]))["result"]["status"] == "ERROR"
+
+
+async def test_http_queue_acceptance_protects_stored_task_before_enqueue(system, monkeypatch):
+    client, db, worker, os, _ = system
+    worker._task_execution_provider = os._task_execution_provider
+    await worker._task_execution_provider.ainitialize()
+    original = worker.store.enqueue_job
+    value = await accepted(client)
+
+    async def inspect_enqueue(job, **kwargs):
+        task = await _call(db, "get_task", value["id"])
+        assert task["metadata"].get("_agno_execution_claims")
+        assert job["payload"]["_agno_company_task_ids"] == [value["id"]]
+        return await original(job, **kwargs)
+
+    monkeypatch.setattr(worker.store, "enqueue_job", inspect_enqueue)
+    response = await client.post(f"/company/tasks/{value['id']}/runs")
+    assert response.status_code == 202, response.text
+    job = await worker.store.get_job(response.json()["run_id"])
+    assert await worker.acancel_queued(job["id"])
+    saved = await _call(db, "get_task", value["id"])
+    assert not saved["metadata"].get("_agno_execution_claims")
+    await worker._task_execution_provider.aclose()
+
+
+async def test_cooperative_agent_cancellation_releases_worker_and_acceptance(system, monkeypatch):
+    from agno.run.cancel import ais_cancelled, araise_if_cancelled
+
+    client, db, worker, os, components = system
+    worker._task_execution_provider = os._task_execution_provider
+    await worker._task_execution_provider.ainitialize()
+    entered, exited = asyncio.Event(), asyncio.Event()
+    run_id = None
+
+    async def cooperate(*args, **kwargs):
+        entered.set()
+        try:
+            while not await ais_cancelled(run_id):
+                await asyncio.sleep(0.01)
+            await araise_if_cancelled(run_id)
+        finally:
+            exited.set()
+
+    monkeypatch.setattr(components["writer"].model, "ainvoke", cooperate)
+    try:
+        for _ in range(2):
+            value = await accepted(client)
+            entered.clear()
+            exited.clear()
+            response = await client.post(f"/company/tasks/{value['id']}/runs")
+            assert response.status_code == 202, response.text
+            run_id = response.json()["run_id"]
+            running = asyncio.create_task(execute(worker))
+            try:
+                await asyncio.wait_for(entered.wait(), 5)
+                task = await _call(db, "get_task", value["id"])
+                assert len(task["metadata"]["_agno_execution_claims"]) >= 2
+                cancellation = await client.post(f"/company/runs/{run_id}/cancel")
+                assert cancellation.status_code == 200, cancellation.text
+                finished = await asyncio.wait_for(running, 5)
+                assert exited.is_set()
+                assert finished["status"] == "cancelled"
+                saved = await _call(db, "get_task", value["id"])
+                assert not saved["metadata"].get("_agno_execution_claims")
+            finally:
+                if not running.done():
+                    running.cancel()
+                await asyncio.gather(running, return_exceptions=True)
+    finally:
+        await worker._task_execution_provider.aclose()
+
+
+async def test_company_lost_acceptance_response_keeps_committed_token(system, monkeypatch):
+    client, db, worker, os, _ = system
+    worker._task_execution_provider = os._task_execution_provider
+    await worker._task_execution_provider.ainitialize()
+    enqueue = worker.store.enqueue_job
+
+    async def commit_then_lose_response(job, **kwargs):
+        result = await enqueue(job, **kwargs)
+        assert result["accepted"]
+        raise OSError("lost response after commit")
+
+    monkeypatch.setattr(worker.store, "enqueue_job", commit_then_lose_response)
+    for _ in range(2):
+        task = await accepted(client)
+        response = await client.post(f"/company/tasks/{task['id']}/runs")
+        assert response.status_code == 202, response.text
+        job = await worker.store.get_job(response.json()["run_id"])
+        saved = await _call(db, "get_task", task["id"])
+        assert saved["metadata"].get("_agno_execution_claims") == [job["payload"]["_agno_company_acceptance_token"]]
+        assert await worker.acancel_queued(job["id"])
+        assert not (await _call(db, "get_task", task["id"]))["metadata"].get("_agno_execution_claims")
+
+
+async def test_accepting_store_pending_history_survives_worker_reassignment(system, tmp_path):
+    from uuid import uuid4
+
+    from agno.agent import Agent
+    from agno.company.execution import _TaskRunConflict, _verify_task_purge
+    from agno.db.schemas.jobs import QueuedJob
+    from agno.db.schemas.tasks import task_execution_stores
+    from agno.db.sqlite import SqliteDb
+    from agno.os.job_queue import aenqueue_ticket, aprepare_accepted_or_abort
+    from agno.run.agent import RunOutput
+    from agno.run.base import RunStatus
+    from tests.integration.db.test_company_execution_parity import OfflineModel
+
+    client, db, worker, os, _ = system
+    worker._task_execution_provider = os._task_execution_provider
+    await worker._task_execution_provider.ainitialize()
+    first = SqliteDb(db_file=str(tmp_path / "accepting.db"), id="accepting-store")
+    first._create_all_tables()
+    accepting = Agent(id="writer", db=first, model=OfflineModel(), telemetry=False)
+    os.dbs[first.id] = [first]
+    try:
+        task = await accepted(client)
+        job = QueuedJob(
+            id=uuid4().hex,
+            component_type="agent",
+            component_id="writer",
+            session_id=task["session_id"],
+            payload={"input": "draft", "kwargs": {}},
+        ).to_dict()
+        assert (await aenqueue_ticket(worker, job, accepting))["accepted"]
+        await aprepare_accepted_or_abort(worker, accepting, "agent", job["id"], task["session_id"], None, "draft")
+        pending = await accepting.aget_run_output(job["id"], task["session_id"])
+        assert pending.status == RunStatus.pending
+        recorded = await _call(db, "get_task", task["id"])
+        assert first.id in {store["db_id"] for store in task_execution_stores(recorded)}
+        assert (await execute(worker))["status"] == "completed"
+        recorded = await _call(db, "get_task", task["id"])
+        assert {store["db_id"] for store in task_execution_stores(recorded)} == {first.id, db.id}
+        with pytest.raises(_TaskRunConflict, match="Cancel live"):
+            await _verify_task_purge(os, [recorded], worker)
+        first.upsert_run(RunOutput(run_id=job["id"], status=RunStatus.cancelled), session_id=task["session_id"])
+        await _verify_task_purge(os, [recorded], worker)
+    finally:
+        first.close()

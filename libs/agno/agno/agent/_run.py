@@ -26,6 +26,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
+from agno.run.concurrency import guard_task_execution
+
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
@@ -364,6 +366,7 @@ async def ahandle_agent_run_paused_stream(
     log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
 
+@guard_task_execution()
 def _run(
     agent: Agent,
     run_response: RunOutput,
@@ -774,6 +777,7 @@ def _run(
     return run_response
 
 
+@guard_task_execution()
 def _run_stream(
     agent: Agent,
     run_response: RunOutput,
@@ -1318,6 +1322,7 @@ def _run_stream(
         cleanup_run(run_response.run_id)  # type: ignore
 
 
+@guard_task_execution()
 def run_dispatch(
     agent: Agent,
     input: Union[str, List, Dict, Message, BaseModel, List[Message]],
@@ -1510,6 +1515,7 @@ def run_dispatch(
         return response
 
 
+@guard_task_execution()
 async def _arun(
     agent: Agent,
     run_response: RunOutput,
@@ -1954,6 +1960,7 @@ async def _arun(
     return run_response
 
 
+@guard_task_execution(background=True)
 async def _arun_background(
     agent: Agent,
     run_response: RunOutput,
@@ -2022,6 +2029,7 @@ async def _arun_background(
     return run_response
 
 
+@guard_task_execution(background=True)
 async def _arun_background_stream(
     agent: Agent,
     run_response: RunOutput,
@@ -2120,6 +2128,7 @@ async def _arun_background_stream(
         await pump.aclose()
 
 
+@guard_task_execution()
 async def _arun_stream(
     agent: Agent,
     run_response: RunOutput,
@@ -2708,6 +2717,7 @@ async def _arun_stream(
         await acleanup_run(run_response.run_id)  # type: ignore
 
 
+@guard_task_execution(async_dispatch=True)
 def arun_dispatch(  # type: ignore
     agent: Agent,
     input: Union[str, List, Dict, Message, BaseModel, List[Message]],
@@ -3035,6 +3045,7 @@ def _fork_run(run_response: RunOutput, message_index: int) -> RunOutput:
 
     forked = copy.deepcopy(run_response)
     forked.run_id = str(uuid4())
+    forked.queue_attempt = None
     forked.forked_from_run_id = run_response.run_id
     forked.forked_from_message_index = message_index
     # A new run of this session, counted here: only runs copied from the session it was forked from are counted there
@@ -3303,6 +3314,7 @@ def _apply_requirement_tools(run_response: RunOutput, requirements: List[Any]) -
         run_response.tools = updated_tools
 
 
+@guard_task_execution()
 def continue_run_dispatch(
     agent: Agent,
     run_response: Optional[RunOutput] = None,
@@ -3668,6 +3680,7 @@ def continue_run_dispatch(
         return response
 
 
+@guard_task_execution()
 def _continue_run(
     agent: Agent,
     run_response: RunOutput,
@@ -3898,6 +3911,7 @@ def _continue_run(
     return run_response
 
 
+@guard_task_execution()
 def _continue_run_stream(
     agent: Agent,
     run_response: RunOutput,
@@ -4214,6 +4228,7 @@ def _continue_run_stream(
         cleanup_run(run_response.run_id)  # type: ignore
 
 
+@guard_task_execution(async_dispatch=True)
 def acontinue_run_dispatch(  # type: ignore
     agent: Agent,
     run_response: Optional[RunOutput] = None,
@@ -4425,6 +4440,7 @@ def acontinue_run_dispatch(  # type: ignore
         )
 
 
+@guard_task_execution(background=True)
 async def _acontinue_run_background_stream(
     agent: Agent,
     session_id: str,
@@ -4694,6 +4710,7 @@ async def _acontinue_run_background_stream(
         yield sse_data
 
 
+@guard_task_execution()
 async def _acontinue_run(
     agent: Agent,
     session_id: str,
@@ -5220,6 +5237,7 @@ async def _acontinue_run(
     return run_response  # type: ignore
 
 
+@guard_task_execution()
 async def _acontinue_run_stream(
     agent: Agent,
     session_id: str,
@@ -6499,6 +6517,7 @@ def _build_forked_session(source_session: AgentSession, new_user_id: Optional[st
 
     for run in forked_runs:
         run.run_id = str(uuid4())
+        run.queue_attempt = None
         run.session_id = new_session_id
         if not run.forked_from_session_id:
             run.forked_from_session_id = source_session.session_id

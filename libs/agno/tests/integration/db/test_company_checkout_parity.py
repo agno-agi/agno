@@ -40,7 +40,7 @@ async def test_checkout_is_atomic_and_a_different_pin_fails_the_attempt(system):
         db, "complete_task_run", task["id"], job["id"], result, expected_transitions=[], checkout=checkout
     )
     assert stale is None
-    assert (await _call(db, "get_task", task["id"]))["metadata"] is None
+    assert (await _call(db, "get_task", task["id"]))["metadata"] == task["metadata"]
     saved = await _call(
         db,
         "complete_task_run",
