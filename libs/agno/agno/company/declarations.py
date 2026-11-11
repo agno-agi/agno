@@ -74,7 +74,10 @@ class AutoAccept(BaseModel):
         """A policy that names executor_type and executor_id allows that one executor, and uses it by default."""
         if isinstance(data, dict) and ("executor_type" in data or "executor_id" in data):
             if "default_executor" in data or "executors" in data:
-                raise ValueError("Name executors with default_executor and executors only")
+                # The Routine API returns both forms, so a policy read from it can be sent back as it is.
+                if data.get("executor_id") != data.get("default_executor"):
+                    raise ValueError("executor_id and default_executor name different executors: send one")
+                return {key: value for key, value in data.items() if key not in ("executor_type", "executor_id")}
             data = _default_executor(data)
             executor_id = data.get("executor_id")
             data = {key: value for key, value in data.items() if key not in ("executor_type", "executor_id")}

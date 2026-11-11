@@ -421,8 +421,13 @@ def test_a_policy_sent_with_executor_type_and_executor_id_is_read_as_a_default_a
     assert system.client.patch(path, json={"auto_accept": sent}, headers=headers(SCOPES)).status_code == 200
     stored = system.stored(routine_id)["metadata"]["auto_accept"]
     assert (stored["default_executor"], stored["executors"]) == ("writer", ["writer"]) and "executor_type" not in stored
-    for mixed in ({**sent, "default_executor": "writer"}, {"executor_id": "writer"}):
-        assert system.client.patch(path, json={"auto_accept": mixed}, headers=headers(SCOPES)).status_code == 422
+    for refused in (
+        {**sent, "default_executor": MINI_AGENT_ID},
+        {**sent, "executors": ["writer"]},
+        {"executor_id": "writer"},
+    ):
+        assert system.client.patch(path, json={"auto_accept": refused}, headers=headers(SCOPES)).status_code == 422
+    assert system.stored(routine_id)["metadata"]["auto_accept"] == stored
 
 
 def test_a_policy_saved_before_this_change_keeps_its_version():
@@ -645,31 +650,6 @@ def test_a_chat_made_product_cannot_declare_a_policy(system):
         tools.create_company_product("Chat", routines=[Routine(name="intake", instructions="Read.", auto_accept=True)])
 
 
-# ----------------------------------------------------------------- Mini Agent's status write
-
-
-@pytest.mark.parametrize("use_async", [False, True])
-def test_a_task_run_on_mini_agent_updates_only_its_own_products_status(system, use_async):
-    product_id, routine_id = system.declare(auto_accept=True)
-    other_id, _ = system.declare(auto_accept=False, product="Other")
-    _, task = system.proposes(product_id, routine_id)
-    tools = system.mini.tools.task[0]
-
-    def update(target):
-        version = system.manager.read_wiki(target, "status.md").metadata.version
-        if use_async:
-            return asyncio.run(tools.aupdate_product_status(target, "Done.", version))
-        return tools.update_product_status(target, "Done.", version)
-
-    with authorization_scope(lambda: _ExecutorAuthorization(None, task_id=task["id"])):
-        with pytest.raises(PermissionError, match="its own Product only"):
-            update(other_id)
-        assert json.loads(update(product_id))["path"] == "status.md"
-    with authorization_scope(lambda: _ExecutorAuthorization(None, task_id="missing")):
-        with pytest.raises(PermissionError, match="its own Product only"):
-            update(product_id)
-
-
 # ----------------------------------------------------------------- auto-accept from chat
 
 
@@ -793,7 +773,11 @@ def test_the_routine_api_still_returns_executor_type_and_executor_id_marked_depr
         assert (policy["executor_type"], policy["executor_id"]) == ("agent", "writer")
         assert policy["max_open"] == 5 and "_agno_company_acceptance" not in returned["payload"]
     # They are returned only: the stored policy does not hold them.
-    assert "executor_type" not in system.stored(routine_id)["metadata"]["auto_accept"]
+    stored = system.stored(routine_id)["metadata"]["auto_accept"]
+    assert "executor_type" not in stored
+    # A client can send back the policy it read, with both forms in it.
+    assert system.client.patch(path, json={"auto_accept": policy}, headers=headers(SCOPES)).status_code == 200
+    assert system.stored(routine_id)["metadata"]["auto_accept"] == stored
 
     # A policy stored with the two fields is returned with the new ones too.
     legacy_id = legacy(system, product_id)

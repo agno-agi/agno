@@ -23,33 +23,57 @@ The declaration applies when the Routine is first created. After that, change it
 the UI, the API or chat. Removing auto_accept from the code does not turn it off on a
 Routine that already exists.
 
+Who the policy runs as depends on the deployment:
+
+    Authorization off (the default here)     Authorization on (--authorization)
+    -------------------------------------    ------------------------------------------
+    The declared Routine runs and its        The declared Routine and its policy wait:
+    policy acts from startup. No person      code cannot give a Routine a person's
+    acts.                                    grant. Super Agent says it is waiting.
+                                             A person turns auto-accept on once, in
+                                             chat, with one confirmation.
+    Each decision is recorded with the       The Routine then runs and its declared
+    Routine and the policy version.          policy acts, under that person's saved
+                                             permissions. Each decision is recorded
+                                             with that person as well.
+
 Prerequisites: PostgreSQL (./cookbook/scripts/run_pgvector.sh) and OPENAI_API_KEY.
 
     .venvs/demo/bin/python cookbook/05_agent_os/30_company/15_policy_source_to_done.py
+    .venvs/demo/bin/python cookbook/05_agent_os/30_company/15_policy_source_to_done.py --authorization
 
 The tick runs hourly by default. This example advances its due time to avoid the wait.
 It serves AgentOS on a free local port, because the scheduler starts a Routine over HTTP.
-The server has no authorization, so keep it local. With authorization on, a declared
-auto_accept does nothing until a person turns it on for the Routine, from the UI, the
-API or chat; it then runs under that person's permissions.
+Without --authorization the server checks no permissions, so keep it local. With it, the
+example signs a token for one person with a local key; use your identity provider instead.
 """
 
+import json
 import os
 import socket
+import sys
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import mkdtemp
 from typing import Any, Dict, List
 from uuid import uuid4
 
 import httpx
+import jwt
 import uvicorn
 from agno.company import Product, Routine, Source
 from agno.db.postgres import PostgresDb
 from agno.job_queue import QueueConfig
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, CompanyConfig, OSManager
+from agno.os.authz import Authorization
+
+AUTHORIZATION = "--authorization" in sys.argv
+OS_ID = "company-auto-accept"
+SECRET = "local-example-key-of-at-least-32-bytes"
+PERSON = "alice"
 
 with socket.socket() as probe:
     probe.bind(("127.0.0.1", 0))
@@ -94,8 +118,11 @@ products = [
 ]
 
 agent_os = AgentOS(
-    id="company-auto-accept",
+    id=OS_ID,
     db=db,
+    authorization=Authorization(verification_keys=[SECRET], algorithm="HS256")
+    if AUTHORIZATION
+    else None,
     company=CompanyConfig(model=model, products=products),
     manager=OSManager(model=model, access_docs=False),
     queue=QueueConfig(durable=True, db=db, poll_interval=0.5),
@@ -105,6 +132,59 @@ agent_os = AgentOS(
     telemetry=False,
 )
 app = agent_os.get_app()
+
+
+def person_headers() -> Dict[str, str]:
+    """A token for one person who administers this AgentOS. Empty with authorization off."""
+    if not AUTHORIZATION:
+        return {}
+    claims = {
+        "sub": PERSON,
+        "aud": OS_ID,
+        "scopes": ["agent_os:admin"],
+        "exp": datetime.now(timezone.utc) + timedelta(hours=1),
+    }
+    return {"Authorization": "Bearer " + jwt.encode(claims, SECRET, algorithm="HS256")}
+
+
+def ask(client: httpx.Client, message: str, session_id: str) -> Dict[str, Any]:
+    response = client.post(
+        "/teams/superagent/runs",
+        data={"message": message, "session_id": session_id, "stream": "false"},
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def turn_on_from_chat(client: httpx.Client, routine_id: str) -> None:
+    """The one action a person takes where authorization is on."""
+    session_id = "turn-on-" + uuid4().hex[:8]
+    question = "What needs a decision in the Docs Product?"
+    print(f"\n> {question}\n{ask(client, question, session_id).get('content')}")
+
+    request = "Turn on auto-accept for the feedback-intake Routine."
+    paused = ask(client, request, session_id)
+    assert paused["status"] == "PAUSED", paused.get("content")
+    requirements = paused["requirements"]
+    shown = requirements[0]["tool_execution"]
+    print(f"\n> {request}\nPaused for a confirmation of {shown['tool_name']}:")
+    print(json.dumps(shown["tool_args"], indent=2))
+    assert shown["tool_name"] == "turn_on_routine_auto_accept"
+    assert shown["tool_args"]["routine_id"] == routine_id
+
+    for requirement in requirements:
+        requirement["confirmation"] = True
+        requirement["tool_execution"]["confirmed"] = True
+    confirmed = client.post(
+        f"/teams/superagent/runs/{paused['run_id']}/continue",
+        data={
+            "requirements": json.dumps(requirements),
+            "session_id": session_id,
+            "stream": "false",
+        },
+    )
+    confirmed.raise_for_status()
+    print(f"Confirmed.\n{confirmed.json().get('content')}")
 
 
 def tasks(client: httpx.Client) -> List[Dict[str, Any]]:
@@ -145,7 +225,12 @@ def main(client: httpx.Client) -> None:
     routine = client.get("/company/routines", params={"product_id": "docs"}).json()[
         "data"
     ][0]
-    print(f"Declared Routine '{routine['name']}' with auto_accept on. No person acts.")
+    print(f"Declared Routine '{routine['name']}' with auto_accept on.")
+    if AUTHORIZATION:
+        # The declared Routine and its policy wait until a person turns auto-accept on.
+        turn_on_from_chat(client, routine["id"])
+    else:
+        print("Authorization is off, so no person acts.")
 
     client.post(f"/company/routines/{routine['id']}/trigger").raise_for_status()
     print("\nRoutine triggered: Mini Agent reads the Source and proposes work")
@@ -182,21 +267,15 @@ def main(client: httpx.Client) -> None:
         assert [entry["target"] for entry in decided] == ["ready"], decided
         assert decided[0]["auto_accept"]["routine_id"] == routine["id"]
         assert decided[0]["auto_accept"]["executor_chosen_by"] == "default"
+        # A policy a person turned on is theirs. One that acts as declared says so.
+        assert bool(decided[0]["auto_accept"].get("declared")) is not AUTHORIZATION
         assert [entry["target"] for entry in project["transitions"]] == ["active"]
         assert project["transitions"][0]["auto_accept"]["routine_id"] == routine["id"]
         assert not task["result"].get("invoked"), "Mini Agent holds no run tools here"
 
     question = "What did the Docs Product's Routine decide without a person?"
-    status = client.post(
-        "/teams/superagent/runs",
-        data={
-            "message": question,
-            "session_id": "status-" + uuid4().hex[:8],
-            "stream": "false",
-        },
-    )
-    status.raise_for_status()
-    print(f"\n> {question}\n{status.json().get('content')}")
+    status = ask(client, question, "status-" + uuid4().hex[:8])
+    print(f"\n> {question}\n{status.get('content')}")
 
 
 if __name__ == "__main__":
@@ -207,7 +286,9 @@ if __name__ == "__main__":
     thread.start()
     try:
         wait_until_healthy()
-        with httpx.Client(base_url=BASE_URL, timeout=180) as client:
+        with httpx.Client(
+            base_url=BASE_URL, timeout=180, headers=person_headers()
+        ) as client:
             main(client)
     finally:
         # Let the server finish its shutdown before the interpreter exits.

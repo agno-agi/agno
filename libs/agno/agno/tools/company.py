@@ -183,16 +183,6 @@ def _page(result, limit, page, **notes):
     )
 
 
-def _executed_task(run_context):
-    """The id of the accepted Task this run executes, or None for a Routine run and every other run."""
-    from agno.company.execution import _ExecutorAuthorization
-
-    authority = _authority(run_context)
-    if isinstance(authority, _ExecutorAuthorization) and not isinstance(authority, _RoutineAuthorization):
-        return authority.task_id
-    return None
-
-
 class CompanyTools(Toolkit):
     """Company-wide reads, proposals and human-requested setup, following StudioTools injection.
 
@@ -212,10 +202,7 @@ class CompanyTools(Toolkit):
         interfaces: Any = None,
         registry: Any = None,
         include_tools: Optional[List[str]] = None,
-        own_product_status: bool = False,
     ):
-        # A run that executes a Task may then update the status page of that Task's Product only.
-        self._own_product_status = own_product_status
         self._interfaces_explicit = interfaces is not None
         self.interfaces = interfaces if interfaces is not None else []
         self._automation_history_retention_days = 30
@@ -921,11 +908,6 @@ class CompanyTools(Toolkit):
     ) -> str:
         """Update status.md after reading it; supply the version read to prevent lost edits."""
         _permission("wiki", "write", _agno_run_context)
-        task_id = _executed_task(_agno_run_context) if self._own_product_status else None
-        if task_id is not None:
-            task = self._sync().get_task(task_id)
-            if task is None or task["product_id"] != product_id:
-                raise PermissionError("A Task run updates the status of its own Product only")
         return _public_json(
             asdict(
                 self._sync().write_wiki(
@@ -1255,11 +1237,6 @@ class CompanyTools(Toolkit):
     ) -> str:
         """Update status.md after reading it; supply the version read to prevent lost edits."""
         await _apermission("wiki", "write", _agno_run_context)
-        task_id = _executed_task(_agno_run_context) if self._own_product_status else None
-        if task_id is not None:
-            task = await self._async().get_task(task_id)
-            if task is None or task["product_id"] != product_id:
-                raise PermissionError("A Task run updates the status of its own Product only")
         return _public_json(
             asdict(
                 await self._async().write_wiki(

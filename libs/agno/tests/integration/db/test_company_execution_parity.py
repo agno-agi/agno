@@ -3433,6 +3433,7 @@ async def test_automatic_acceptance_requires_wiki_read(system, tmp_path, isolati
                 executor_type="agent",
                 executor_id="writer",
                 required_checks=["executor_registered", "application_check"],
+                approve_projects=False,
                 limits={"max_acceptances": 1, "expires_at": int(time.time()) + 3600},
             )
             body = dict(

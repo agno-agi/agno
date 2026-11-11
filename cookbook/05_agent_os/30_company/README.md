@@ -960,25 +960,33 @@ Every field has a default:
 
 **What a declared policy runs as.** A policy a person sets through the API, the
 UI or chat runs under that person's saved permissions, as before. A policy
-declared in code has no person behind it:
+declared in code has no person behind it, so the two kinds of deployment differ:
 
-- **With authorization off**, every caller is a trusted operator, and the
-  declared policy acts. The tick checks that the Routine is enabled and its
-  policy unchanged, that the proposal is this Routine's own and in its Product,
-  that the executor is registered and passes the executor checks, the bound, and
-  the policy's server checks. The Task run has no person's permissions to check
-  against. It still cannot change schedules, approve, accept, review or complete
-  work, turn auto-accept on, create Products or Routines, or edit company
-  details. On Mini Agent it holds the Company read tools and can update the
-  status page of its own Product only. With a named executor, that executor's
-  own tools are the whole boundary.
-- **With authorization on, a declared policy does nothing.** Code cannot give a
-  Routine a caller's grant. A Routine declared in code is refused at the request
-  gate until a person changes it through the API or chat, and the tick accepts
-  nothing under a declared policy. A person turns auto-accept on for the Routine
-  once, with one confirmation in chat, and from then on it runs under that
-  person's saved permissions.
-- The declared marker is written only when the deployment's own declaration
+| | Authorization off | Authorization on |
+| --- | --- | --- |
+| What you write | `Routine(..., auto_accept=True)` | The same |
+| At startup | The Routine runs on its schedule and its policy acts | The Routine and its policy wait. Code cannot give a Routine a person's grant, so its runs are refused and the tick accepts nothing |
+| What a person does | Nothing | One action, once: turn auto-accept on for the Routine. In chat that is "turn on auto-accept for the feedback-intake Routine" and one confirmation. Through the API it is `PATCH /company/routines/{id}` with `auto_accept` |
+| After that | | The Routine runs on its schedule and its declared policy acts, both under that person's saved permissions |
+| While it waits | | `get_company_product` and a Backlog listing from `list_company_tasks` return `auto_accept_waiting_for_a_person` with the Routine, so Super Agent says it is waiting when asked for the Product's status or for what needs a decision |
+| Who each decision is recorded as | The Routine and the policy version, with `declared` | The Routine, the policy version and that person |
+
+- **The one action keeps the declared policy.** From chat, a Routine whose
+  declared policy no person has turned on keeps that policy as declared. Naming
+  an executor in the request changes its `default_executor` only. Through the
+  API, `"auto_accept": true` writes the default policy, so send the declared
+  fields to keep them.
+- **With authorization off**, every caller is a trusted operator. The tick
+  checks that the Routine is enabled and its policy unchanged, that the proposal
+  is this Routine's own and in its Product, that the executor is registered and
+  passes the executor checks, the bound, and the policy's server checks. The
+  Task run has no person's permissions to check against. It still cannot change
+  schedules, approve, accept, review or complete work, turn auto-accept on,
+  create Products or Routines, or edit company details. A Task run on any
+  executor is bound to its Task's Product for Company writes. On Mini Agent it
+  holds the Company read tools and can update the status page of its own
+  Product. With a named executor, that executor's other tools are its own.
+- **The declared marker** is written only when the deployment's own declaration
   first creates the Routine. The Routine API and the chat tools write the
   person's grant instead, so a person who changes a declared Routine's
   instructions, executor or policy makes it theirs. The generic schedule routes
@@ -986,20 +994,22 @@ declared in code has no person behind it:
   ScheduleManager drops it from every write, and Platform Builder's schedule
   tools take no payload.
 
-**A policy saved before this change** keeps its version, its budget and its
-rules: it approves no Project, its executor is fixed, and its lifetime count and
-expiry are its only limits.
-
 **From chat.** `turn_on_routine_auto_accept` pauses and shows the Routine's name,
-its Product's name and the executor; it refuses when a name is not the stored
-one. `turn_off_routine_auto_accept` does not pause. Both go through the Routine
-API's PATCH handler as the chatting person, so they need what PATCH needs:
-`routines:write`, `schedules:write`, `tasks:write`, `wiki:read`, `projects:write`
-and run permission on the Routine's executor and the policy's.
+its Product's name and the default executor when the person named one; it
+refuses when a name is not the stored one. `turn_off_routine_auto_accept` does
+not pause. Both go through the Routine API's PATCH handler as the chatting
+person, so they need what PATCH needs: `routines:write`, `schedules:write`,
+`tasks:write`, `wiki:read`, `projects:write` and run permission on the Routine's
+executor and on each executor the policy names.
+
+**The Routine API response.** A policy is returned with `default_executor` and
+`executors`. For one release it also carries `executor_type` and `executor_id`,
+set from `default_executor` and marked deprecated in the schema, so a client
+that reads them keeps working.
 
 **On the record.** Each automatic approval and acceptance carries `auto_accept`
 with the Routine ID and the policy version, `declared` for a declared policy,
-and on an acceptance whether the proposal or the policy chose the executor.
+and on an acceptance whether the executor came from the proposal or the default.
 `get_company_product` returns the latest 20 as `automatic_decisions`.
 
 ```bash
