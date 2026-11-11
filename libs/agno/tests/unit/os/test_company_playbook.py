@@ -40,13 +40,13 @@ def test_mini_agent_assembly_and_model_precedence(tmp_path, manager):
         # Super Agent holds its own CompanyTools and has no Mini Agent member.
         assert all(m.id != MINI_AGENT_ID for m in os.manager.members)
         leader_tools = [t for t in os.manager.tools if isinstance(t, CompanyTools)]
-        assert len(leader_tools) == 1 and leader_tools[0] is not pm.tools[0]
+        assert len(leader_tools) == 1 and leader_tools[0] is not pm.tools.routine[0]
         assert "summarize_company_product" not in leader_tools[0].functions
         assert "refresh_company_product" not in leader_tools[0].functions
         assert COMPANY_INSTRUCTIONS in os.manager.instructions.base
     os.resync(os.get_app())
     assert pm not in registry.agents and not registry.tools
-    tools = pm.tools[0]
+    tools = pm.tools.routine[0]
     assert {"create_company_product", "create_product_routine"} <= tools.functions.keys()
     assert tools.registry is registry
     assert not any("schedule" in name or "transition" in name for name in tools.functions)
@@ -447,7 +447,7 @@ async def test_mini_agent_recalls_company_decisions_only_in_routines(tmp_path, u
         return runner.run("Run the Routine", user_id="alice", session_id="routine")
 
     refused = await run()
-    assert refused.content == "This agent runs Company Routines only" and prompts == []
+    assert refused.content == "Mini Agent runs Company Routines and Tasks only" and prompts == []
     routine = {
         "context": {"principal_id": "alice", "scopes": ["decisions:read"]},
         "service_account": True,

@@ -16,7 +16,7 @@ from pydantic import BeforeValidator
 
 from agno.company.declarations import Product, Routine, Source
 from agno.company.manager import AsyncCompanyManager, CompanyManager
-from agno.company.routines import _require_routine_product, _RoutineAuthorization
+from agno.company.routines import _require_routine_product, _RoutineAuthorization, _run_kind
 from agno.company.sources import is_remote_git
 from agno.db.base import AsyncBaseDb
 from agno.run.authorization import current_authorization, requires_permission
@@ -54,6 +54,15 @@ def _identity(run_context):
     return authority.context.principal_id if authority is not None else getattr(run_context, "user_id", None)
 
 
+def _saved_no_caller(authority):
+    """Whether a Company run's authority wraps no caller authority, as when authorization is off."""
+    from agno.company.execution import _ExecutorAuthorization
+
+    while isinstance(authority, _ExecutorAuthorization):
+        authority = authority.original
+    return authority is None
+
+
 def _permission(resource, action, run_context):
     authority = _authority(run_context)
     if authority is not None:
@@ -73,6 +82,12 @@ def _require_plain_proposal(run_context):
         raise PermissionError(
             "Routines must propose Tasks through intake_product_source with evidence and a dedupe key"
         )
+
+
+def _require_decision_log_write(run_context):
+    # The log is company-wide and later runs recall it. A Task run acts on a brief that anyone may have written.
+    if _run_kind(run_context) == "task":
+        raise PermissionError("A Task run cannot write the company decision log. Report the decision in the result")
 
 
 def _require_human_creation(run_context, operation="create Company Products and Routines"):
@@ -185,6 +200,7 @@ class CompanyTools(Toolkit):
         agent_id: Optional[str] = None,
         interfaces: Any = None,
         registry: Any = None,
+        include_tools: Optional[List[str]] = None,
     ):
         self._interfaces_explicit = interfaces is not None
         self.interfaces = interfaces if interfaces is not None else []
@@ -228,6 +244,7 @@ class CompanyTools(Toolkit):
             tools=[getattr(self, name) for name in names],
             async_tools=[(getattr(self, "a" + name), name) for name in names],
             requires_confirmation_tools=["confirm_company_details"],
+            include_tools=include_tools,
         )
 
     def _scoped_user(self, run_context):
@@ -244,6 +261,10 @@ class CompanyTools(Toolkit):
                 if isinstance(authority, _RoutineAuthorization) and authority.original is None:
                     # An unowned Routine fires unscoped like any unowned schedule, still bound to its Product.
                     return None
+                if _run_kind(run_context) == "task" and _saved_no_caller(authority):
+                    # A Task run with no caller authority, as in a deployment without authorization, acts as
+                    # the starter its run names, and unscoped when it names none. It stays bound to its Product.
+                    return getattr(run_context, "user_id", None)
                 raise PermissionError("Caller identity is required under user isolation")
             return user
         return None
@@ -885,6 +906,7 @@ class CompanyTools(Toolkit):
         reasoning = _empty_to_none(reasoning)
         context = _empty_to_none(context)
         outcome = _empty_to_none(outcome)
+        _require_decision_log_write(_agno_run_context)
         _permission("decisions", "write", _agno_run_context)
         self._scoped_user(_agno_run_context)
         return _public_json(
@@ -1185,6 +1207,7 @@ class CompanyTools(Toolkit):
         reasoning = _empty_to_none(reasoning)
         context = _empty_to_none(context)
         outcome = _empty_to_none(outcome)
+        _require_decision_log_write(_agno_run_context)
         await _apermission("decisions", "write", _agno_run_context)
         self._scoped_user(_agno_run_context)
         return _public_json(

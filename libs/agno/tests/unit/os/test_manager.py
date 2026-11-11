@@ -372,7 +372,13 @@ def test_builder_and_lead_carry_the_framework_toolkits(db, workspace, company_en
         assert "create_company_product" in company.functions
         assert not {"summarize_company_product", "refresh_company_product"} & set(company.functions)
         task_runs = rest.pop(0)
-        assert set(task_runs.functions) == {"start_company_task", "get_company_task_status"}
+        assert set(task_runs.functions) == {
+            "start_company_task",
+            "get_company_task_status",
+            "approve_company_project",
+            "accept_company_task",
+            "review_company_task",
+        }
     assert rest == []
 
     names = set()
@@ -2203,14 +2209,14 @@ def test_mini_agent_keeps_its_own_execution_policy(db, with_manager):
         manager=OSManager(model=OfflineModel(), member_tool_call_limit=7) if with_manager else None,
         telemetry=False,
     )
-    # Routines run on the served runner, which the manager's member limits do not bound.
-    assert os._mini_agent.tool_call_limit is None
+    # Mini Agent keeps its own limit; the manager's member limits do not bound it.
+    assert os._mini_agent.tool_call_limit == 30
     assert FOCUSED_EXECUTION_INSTRUCTIONS not in os._mini_agent.instructions()
     if with_manager:
         assert manager_member(os, MINI_AGENT_ID) is None
         assert manager_member(os, BUILDER_ID).tool_call_limit == 7
         os.resync(os.get_app())
-        assert os._mini_agent.tool_call_limit is None
+        assert os._mini_agent.tool_call_limit == 30
         assert FOCUSED_EXECUTION_INSTRUCTIONS not in os._mini_agent.instructions()
 
 

@@ -102,6 +102,7 @@ from agno.os.utils import (
     stamped_component_version,
     stored_event_replay_dicts,
 )
+from agno.run.authorization import current_authorization, require_task_authority
 from agno.run.base import RunStatus
 from agno.run.workflow import WorkflowErrorEvent, WorkflowRunOutput
 from agno.utils.log import log_debug, log_error, log_warning, logger
@@ -967,6 +968,12 @@ async def handle_workflow_continue_via_websocket(
                     }
                 )
             )
+            return
+        # Same refusal as the HTTP continue route, for a run a Company Task started.
+        try:
+            require_task_authority(getattr(existing_run, "metadata", None), current_authorization())
+        except PermissionError as exc:
+            await websocket.send_text(json.dumps({"event": "error", "run_id": run_id, "error": str(exc)}))
             return
 
         # Version-stable continuation (see the HTTP continue route): a run
@@ -2314,6 +2321,13 @@ def get_workflow_router(
                 f"run is not paused (status={getattr(status, 'value', status)})",
             )
             raise HTTPException(status_code=409, detail=detail)
+
+        # A continued workflow does not pass its stored dispatch lineage to its steps, so the
+        # tool-level check cannot see that a Company Task started this run. Refuse it here.
+        try:
+            require_task_authority(getattr(existing_run, "metadata", None), current_authorization())
+        except PermissionError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
 
         # Version-stable continuation: a run started with an explicitly pinned
         # version (draft preview) recorded it in its run metadata; continue on

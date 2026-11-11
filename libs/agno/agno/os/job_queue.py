@@ -2153,7 +2153,9 @@ class QueueWorker:
             ):
                 from agno.company.execution import _ExecutorAuthorization
 
-                authority = _ExecutorAuthorization(authority)
+                authority = _ExecutorAuthorization(
+                    authority, task_id=payload.get("company_task_id") or (snapshot or {}).get("company_task_id")
+                )
             with authorization_scope(lambda: authority):
                 await self._execute_claimed_inner(job, ownership)
 

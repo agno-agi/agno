@@ -319,12 +319,12 @@ class CompanyManager:
         auto_accept: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Apply an explicit transition; the caller enforces platform authorization."""
-        from agno.company.routines import _RoutineAuthorization
+        from agno.company.execution import _ExecutorAuthorization
         from agno.db.schemas.projects import validate_project_completion
         from agno.run.authorization import current_authorization
 
-        if isinstance(current_authorization(), _RoutineAuthorization):
-            raise PermissionError("Routines propose Project completion; a human must accept the transition")
+        if isinstance(current_authorization(), _ExecutorAuthorization):
+            raise PermissionError("Routine and Task runs cannot approve, complete or cancel a Project; a human decides")
         if target == "done":
             page = 1
             while True:
@@ -511,13 +511,17 @@ class CompanyManager:
         executor_id: Optional[str] = None,
         expected_updated_at: Optional[int] = _UNSET_UPDATED_AT,
         auto_accept: Optional[Dict[str, Any]] = None,
+        expected_status: Optional[str] = None,
+        expected_job_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Apply an explicit transition; the caller enforces platform authorization."""
-        from agno.company.routines import _RoutineAuthorization
+        from agno.company.execution import _ExecutorAuthorization
         from agno.run.authorization import current_authorization
 
-        if isinstance(current_authorization(), _RoutineAuthorization) and target in {"ready", "done"}:
-            raise PermissionError("Routines can propose work but cannot accept or complete it")
+        if isinstance(current_authorization(), _ExecutorAuthorization):
+            raise PermissionError(
+                "Routine and Task runs cannot accept, review, complete or cancel a Task; a human decides"
+            )
         if target == "ready":
             existing = self.db.get_task(task_id, user_id=user_id)
             if existing is None:
@@ -533,6 +537,8 @@ class CompanyManager:
             executor_id=executor_id,
             expected_updated_at=expected_updated_at,
             auto_accept=auto_accept,
+            expected_status=expected_status,
+            expected_job_id=expected_job_id,
         )
 
     def attention(self, product_id: Optional[str] = None) -> Dict[str, Any]:
@@ -1224,12 +1230,12 @@ class AsyncCompanyManager:
         auto_accept: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Apply an explicit transition; the caller enforces platform authorization."""
-        from agno.company.routines import _RoutineAuthorization
+        from agno.company.execution import _ExecutorAuthorization
         from agno.db.schemas.projects import validate_project_completion
         from agno.run.authorization import current_authorization
 
-        if isinstance(current_authorization(), _RoutineAuthorization):
-            raise PermissionError("Routines propose Project completion; a human must accept the transition")
+        if isinstance(current_authorization(), _ExecutorAuthorization):
+            raise PermissionError("Routine and Task runs cannot approve, complete or cancel a Project; a human decides")
         if target == "done":
             page = 1
             while True:
@@ -1420,13 +1426,17 @@ class AsyncCompanyManager:
         executor_id: Optional[str] = None,
         expected_updated_at: Optional[int] = _UNSET_UPDATED_AT,
         auto_accept: Optional[Dict[str, Any]] = None,
+        expected_status: Optional[str] = None,
+        expected_job_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Apply an explicit transition; the caller enforces platform authorization."""
-        from agno.company.routines import _RoutineAuthorization
+        from agno.company.execution import _ExecutorAuthorization
         from agno.run.authorization import current_authorization
 
-        if isinstance(current_authorization(), _RoutineAuthorization) and target in {"ready", "done"}:
-            raise PermissionError("Routines can propose work but cannot accept or complete it")
+        if isinstance(current_authorization(), _ExecutorAuthorization):
+            raise PermissionError(
+                "Routine and Task runs cannot accept, review, complete or cancel a Task; a human decides"
+            )
         if target == "ready":
             existing = await self.db.get_task(task_id, user_id=user_id)
             if existing is None:
@@ -1442,6 +1452,8 @@ class AsyncCompanyManager:
             executor_id=executor_id,
             expected_updated_at=expected_updated_at,
             auto_accept=auto_accept,
+            expected_status=expected_status,
+            expected_job_id=expected_job_id,
         )
 
     async def attention(self, product_id: Optional[str] = None) -> Dict[str, Any]:

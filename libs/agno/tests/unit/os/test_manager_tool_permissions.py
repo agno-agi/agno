@@ -76,8 +76,15 @@ MOVED_TOOLS = {
 }
 # Pauses for the person before it runs, so its refusal is asserted after the confirmation.
 CONFIRMED_TOOL = "confirm_company_details"
-# Async only, and checked with the Task start route's grants in test_company_task_tools.py.
-TASK_RUN_TOOLS = {"start_company_task", "get_company_task_status"}
+# Async only. test_company_task_tools.py checks the two run tools with the Task start route's grants, and
+# test_company_decision_tools.py checks the three decision tools.
+TASK_RUN_TOOLS = {
+    "start_company_task",
+    "get_company_task_status",
+    "approve_company_project",
+    "accept_company_task",
+    "review_company_task",
+}
 
 
 class OneToolModel(Model):
