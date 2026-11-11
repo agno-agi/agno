@@ -378,6 +378,8 @@ def test_builder_and_lead_carry_the_framework_toolkits(db, workspace, company_en
             "approve_company_project",
             "accept_company_task",
             "review_company_task",
+            "turn_on_routine_auto_accept",
+            "turn_off_routine_auto_accept",
         }
     assert rest == []
 
@@ -2417,6 +2419,8 @@ def test_former_manager_ids_no_longer_resolve_and_name_the_new_id(db, family, fo
     assert response.status_code == 422 and f"replaced by '{current}'" in response.text
     response = client.post(f"/{family}/{former}/runs", data={"message": "hello", "stream": "false"})
     assert response.status_code == 422 and f"replaced by '{current}'" in response.text
+    # Routines ran on the former Company manager as well, and Mini Agent runs them now.
+    assert (f"or '{MINI_AGENT_ID}' for a Routine executor" in response.text) == (former == "company-manager-internal")
     assert client.get(f"/{current_family}/{current}").status_code == 200
 
 
