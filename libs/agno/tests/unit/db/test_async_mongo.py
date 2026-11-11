@@ -1,4 +1,5 @@
 import asyncio
+import json
 from datetime import date
 from unittest.mock import AsyncMock, Mock, PropertyMock, patch
 
@@ -422,3 +423,41 @@ async def test_get_metrics_returns_a_day_with_only_a_regenerated_run():
         await db._get_aggregate_metrics_rows(date(2026, 10, 1), date(2026, 10, 1), "")
 
     assert {"total_tokens": {"$gt": 0}} in mock_collection.find.call_args.args[0]["$or"]
+
+
+@pytest.mark.asyncio
+async def test_metrics_legacy_runs_count_runs_stored_as_json_string():
+    """Legacy runs stored as a JSON string, as before v2.1.1, count like legacy runs stored as an array."""
+    db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
+    sessions_collection = Mock()
+    created_at = 1790000000
+    sessions_cursor = Mock()
+    # As the projection reads them: an array keeps its runs' fields, a JSON string comes back without runs
+    sessions_cursor.batch_size.return_value = sessions_cursor
+    sessions_cursor.to_list = AsyncMock(
+        side_effect=[
+            [
+                {
+                    "_id": 1,
+                    "session_id": "s1",
+                    "user_id": "u1",
+                    "created_at": created_at,
+                    "runs": [{"run_id": "r1", "agent_id": "a1", "created_at": created_at}],
+                },
+                {"_id": 2, "session_id": "s2", "user_id": "u1", "created_at": created_at},
+            ],
+            [],
+        ]
+    )
+
+    # Only the session that came back without runs is read again, with its runs whole
+    async def json_sessions():
+        yield {"_id": 2, "runs": json.dumps([{"run_id": "r2", "agent_id": "a1", "created_at": created_at}])}
+
+    sessions_collection.find.side_effect = [sessions_cursor, json_sessions()]
+
+    _, legacy_runs_by_id = await db._get_metrics_legacy_runs(sessions_collection, None, created_at, created_at + 1)
+
+    assert sorted(legacy_runs_by_id) == ["r1", "r2"]
+    assert legacy_runs_by_id["r2"]["session_id"] == "s2"
+    assert sessions_collection.find.call_args.args[0] == {"_id": {"$in": [2]}, "runs": {"$type": "string"}}

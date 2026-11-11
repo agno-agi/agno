@@ -2285,6 +2285,7 @@ class DynamoDb(BaseDb):
         """
         legacy_runs_by_day: Dict[date, List[Dict[str, Any]]] = {}
         legacy_runs_by_id: Dict[str, Dict[str, Any]] = {}
+        counted_runs: Set[Tuple[Any, str]] = set()
         for session_type in METRICS_COMPONENT_TYPES:
             # A session holds runs created after it started and before it was last written
             query_kwargs: Dict[str, Any] = {
@@ -2331,9 +2332,13 @@ class DynamoDb(BaseDb):
                     )
                 }
                 for legacy_run in legacy_runs:
-                    # A run kept in two sessions, or read on an earlier page, is counted once
-                    if legacy_run["run_id"] in migrated_run_ids or legacy_run["run_id"] in legacy_runs_by_id:
+                    # A run kept twice in one session's legacy runs is counted once
+                    if (
+                        legacy_run["run_id"] in migrated_run_ids
+                        or (legacy_run["session_id"], legacy_run["run_id"]) in counted_runs
+                    ):
                         continue
+                    counted_runs.add((legacy_run["session_id"], legacy_run["run_id"]))
                     legacy_run_day = datetime.fromtimestamp(legacy_run["created_at"], tz=timezone.utc).date()
                     legacy_runs_by_day.setdefault(legacy_run_day, []).append(legacy_run)
                     legacy_runs_by_id[legacy_run["run_id"]] = legacy_run

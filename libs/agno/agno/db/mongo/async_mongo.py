@@ -27,6 +27,8 @@ from agno.db.mongo.utils import (
     areopen_metrics_days_from,
     areopen_metrics_month,
     aupsert_aggregate_metrics_row,
+    build_component_metrics_legacy_json_runs_filter,
+    build_component_metrics_legacy_runs,
     build_component_metrics_legacy_runs_projection,
     build_component_metrics_legacy_session,
     build_component_metrics_runs_projection,
@@ -2324,14 +2326,16 @@ class AsyncMongoDb(AsyncBaseDb):
         legacy_runs_by_day: Dict[date, List[Dict[str, Any]]] = {}
         legacy_runs_by_id: Dict[str, Dict[str, Any]] = {}
         while True:
-            sessions: List[Dict[str, Any]] = []
-            # A session at a time, so a JSON string read whole is reduced before the next session is read
-            async for session in cursor:
-                sessions.append(build_component_metrics_legacy_session(session))
-                if len(sessions) == METRICS_BATCH_SIZE:
-                    break
+            sessions = await cursor.to_list(length=METRICS_BATCH_SIZE)
             if not sessions:
                 break
+            legacy_json_runs_filter = build_component_metrics_legacy_json_runs_filter(sessions)
+            if legacy_json_runs_filter is not None:
+                legacy_json_runs: Dict[Any, List[Dict[str, Any]]] = {}
+                # A session at a time, so a JSON string read whole is reduced before the next session is read
+                async for session in sessions_collection.find(legacy_json_runs_filter, {"runs": 1}):
+                    legacy_json_runs[session["_id"]] = build_component_metrics_legacy_runs(session["runs"])
+                sessions = [build_component_metrics_legacy_session(session, legacy_json_runs) for session in sessions]
             legacy_runs = [
                 legacy_run
                 for legacy_run in get_metrics_legacy_runs(sessions)
