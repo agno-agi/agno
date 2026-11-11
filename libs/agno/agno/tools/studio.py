@@ -1648,17 +1648,17 @@ class StudioTools(Toolkit):
             )
         return row, resolved_id, None
 
-    def _meant(self, identifier: str, actor: Optional[str]) -> str:
-        """A hint when the text before stray characters is the id of a component the caller can see.
+    def _meant_id(self, identifier: str, actor: Optional[str]) -> Optional[str]:
+        """The id that stray text follows, when it names a component the caller can see.
 
-        A model sometimes sends an id followed by a stray word. The lookup is not guessed; the error names
-        the id it could have meant. A component the caller cannot see is never named.
+        A model sometimes sends an id followed by a stray word ("tone-checker trouble"). A component the
+        caller cannot see is never returned.
         """
         import re
 
         leading = re.match(r"[A-Za-z0-9_.-]+", identifier)
         if leading is None or leading.group(0) == identifier:
-            return ""
+            return None
         candidate = leading.group(0)
         code_defined = any(
             getattr(component, "id", None) == candidate
@@ -1671,8 +1671,13 @@ class StudioTools(Toolkit):
             except NotImplementedError:
                 row = None
             if row is None or not self._visible_to(row, actor):
-                return ""
-        return f" Did you mean {candidate!r}? Send exactly that id."
+                return None
+        return candidate
+
+    def _meant(self, identifier: str, actor: Optional[str]) -> str:
+        """The hint a not-found error ends with when stray text follows a real id. Writes are not guessed."""
+        candidate = self._meant_id(identifier, actor)
+        return f" Did you mean {candidate!r}? Send exactly that id." if candidate is not None else ""
 
     @classmethod
     def _step_config_to_spec(cls, step: Dict[str, Any]) -> Dict[str, Any]:
@@ -2060,7 +2065,8 @@ class StudioTools(Toolkit):
         edited is what you read. Call before every edit.
 
         Args:
-            component_id (str): Exact id, or an exact display name.
+            component_id (str): Exact id, or an exact display name. An id followed
+                by stray text reads the component the id names, with a warning.
             version (Optional[int]): Exact stored version; omit for the latest.
 
         Returns:
@@ -2071,6 +2077,23 @@ class StudioTools(Toolkit):
             single function stays a single function, never its whole toolkit.
         """
         component_id = _clean_id(component_id)
+        result = self._read_component(component_id, version, _agno_run_context)
+        meant = self._meant_id(component_id, _actor_id(_agno_run_context))
+        if meant is not None and '"component_not_found"' in result:
+            # A read is safe to resolve: the caller may already read this component, and the result
+            # carries the real id for whatever it does next.
+            retried = json.loads(self._read_component(meant, version, _agno_run_context))
+            if retried.get("ok"):
+                retried.setdefault("warnings", []).append(
+                    f"Read {meant!r}. The id sent was {component_id!r}; send {meant!r} from here on."
+                )
+                return json.dumps(retried)
+        return result
+
+    def _read_component(
+        self, component_id: str, version: Optional[int], _agno_run_context: Optional[RunContext]
+    ) -> str:
+        """Read one component by exact id or exact display name."""
         version = _version_or_latest(version)
         actor = _actor_id(_agno_run_context)
         code_tiers = (

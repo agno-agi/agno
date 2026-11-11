@@ -78,7 +78,8 @@ def test_schedule_resolves_a_target_id_with_stray_whitespace(studio, use_async):
 @pytest.mark.parametrize("use_async", [False, True])
 @pytest.mark.parametrize("sent,stray", [("tone-checker”,", "”,"), ("tone-checkerانت", "انت"), ("tone-checker ئ", " ئ")])
 def test_an_id_with_stray_characters_is_refused_and_named(studio, sent, stray, use_async):
-    read = call(studio, "get_component", use_async, sent)
+    # Only get_component resolves stray text. Every other tool refuses and names what is wrong.
+    read = call(studio, "list_versions", use_async, sent)
     assert not read["ok"] and read["error"]["code"] == "component_not_found", read
     message = read["error"]["message"]
     assert message.startswith("Component not found: " + sent)
@@ -93,12 +94,33 @@ def test_a_missing_plain_id_or_name_gets_the_plain_message(studio, use_async):
 
 
 @pytest.mark.parametrize("use_async", [False, True])
-@pytest.mark.parametrize("sent", ["tone-checker trouble", "tone-checker”,", "tone-checker ئ"])
-def test_a_stray_word_after_a_real_id_gets_a_did_you_mean(studio, sent, use_async):
-    # The lookup is not guessed. The error names the id the caller could have meant.
+@pytest.mark.parametrize(
+    "sent", ["tone-checker trouble", "tone-checker”,", "tone-checker ئ", "tone-checker handoff uuid"]
+)
+def test_a_read_with_stray_text_after_a_real_id_reads_that_component(studio, sent, use_async):
+    # A read is safe to resolve. The result carries the real id and a warning naming what was sent.
     read = call(studio, "get_component", use_async, sent)
-    assert not read["ok"] and read["error"]["code"] == "component_not_found", read
-    assert "Did you mean 'tone-checker'? Send exactly that id." in read["error"]["message"]
+    assert read["ok"] and read["data"]["id"] == "tone-checker", read
+    assert read["warnings"] == [f"Read 'tone-checker'. The id sent was {sent!r}; send 'tone-checker' from here on."]
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_other_tools_do_not_guess_and_say_which_id_was_meant(studio, use_async):
+    listed = call(studio, "list_versions", use_async, "tone-checker trouble")
+    assert not listed["ok"] and listed["error"]["code"] == "component_not_found", listed
+    assert "Did you mean 'tone-checker'? Send exactly that id." in listed["error"]["message"]
+    edited = call(studio, "edit_agent", use_async, "tone-checker trouble", instructions="Changed.")
+    assert not edited["ok"], edited
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_an_exact_display_name_is_not_taken_for_an_id_with_stray_text(studio, use_async):
+    # "tone-checker notes" is a real component here, so it must not read "tone-checker".
+    created = json.loads(studio.create_agent(name="tone-checker notes", instructions="Other."))
+    assert created["ok"], created
+    read = call(studio, "get_component", use_async, "tone-checker notes")
+    assert read["ok"] and read["data"]["id"] == created["data"]["id"] != "tone-checker", read
+    assert read["warnings"] == []
 
 
 @pytest.mark.parametrize("use_async", [False, True])
@@ -127,4 +149,4 @@ def test_no_hint_for_a_component_the_caller_cannot_see(studio, use_async):
     hidden = call(studio, "get_component", use_async, "private-draft trouble", _agno_run_context=bob)
     assert hidden["error"]["message"] == "Component not found: private-draft trouble"
     own = call(studio, "get_component", use_async, "private-draft trouble", _agno_run_context=alice)
-    assert "Did you mean 'private-draft'?" in own["error"]["message"]
+    assert own["ok"] and own["data"]["id"] == "private-draft"
