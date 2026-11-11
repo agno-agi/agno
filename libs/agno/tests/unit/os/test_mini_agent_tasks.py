@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from agno.agent import Agent
 from agno.company.execution import _ExecutorAuthorization, _invoked_components
-from agno.company.mini_agent import TASK_COMPANY_TOOLS
+from agno.company.mini_agent import TASK_COMPANY_TOOLS, TASK_FILE_TOOLS
 from agno.company.routines import _policy_fingerprint, _RoutineAuthorization
 from agno.db.sqlite import SqliteDb
 from agno.job_queue import QueueConfig
@@ -229,10 +229,16 @@ def system(tmp_path):
     value.db.close()
 
 
-def task_authority(run_components=None, task_id="task"):
+def task_authority(run_components=None, task_id="task", product_id=None):
     authority = _ExecutorAuthorization(None, task_id=task_id)
     authority.run_components = run_components
+    authority.product_id = product_id
     return authority
+
+
+def file_tools(system):
+    """The file tree tools Mini Agent holds in a Task run."""
+    return next(toolkit for toolkit in system.mini.tools.task if toolkit.name == "company_files")
 
 
 def routine_authority():
@@ -404,7 +410,7 @@ def test_a_task_a_person_accepted_runs_another_agent_and_records_it(system):
 
     # The kind of run chooses the instruction and the tools.
     assert "This run is a Task." in model.system and "This run is a Routine." not in model.system
-    assert RUN_TOOLS <= model.offered and set(TASK_COMPANY_TOOLS) <= model.offered
+    assert RUN_TOOLS <= model.offered and {*TASK_COMPANY_TOOLS, *TASK_FILE_TOOLS} <= model.offered
     refused = {"propose_company_task", "propose_company_project", "intake_product_source", "edit_company_task"}
     assert not refused & model.offered
     assert not {"create_company_product", "create_product_routine", "refresh_company_product"} & model.offered
@@ -481,42 +487,36 @@ def test_task_can_read_status_and_recover_from_a_concurrent_update(system, use_a
 
     proposal = system.proposal()
     product_id = proposal["product_id"]
+    status = f"products/{product_id}/status.md"
     manager = CompanyManager(system.db, system.os.registry)
-    toolkit = system.mini.tools.task[0]
+    toolkit = file_tools(system)
     context = RunContext(run_id="run", session_id="session", user_id="alice")
 
     def call(name, **arguments):
         functions = toolkit.get_async_functions() if use_async else toolkit.get_functions()
         entrypoint = functions[name].entrypoint
-        with authorization_scope(lambda: task_authority()):
+        with authorization_scope(lambda: task_authority(product_id=product_id)):
             result = entrypoint(**arguments, _agno_run_context=context)
             return json.loads(asyncio.run(result) if use_async else result)
 
-    first = call("read_company_wiki", product_id=product_id, path="status.md")
+    first = call("read_company_file", path=status)
     manager.write_wiki(
         product_id=product_id,
         path="status.md",
         content="Another person's update",
-        expected_version=first["metadata"]["version"],
+        expected_version=first["version"],
     )
     with pytest.raises(VersionConflictError, match="version conflict"):
-        call(
-            "update_product_status",
-            product_id=product_id,
-            content="stale update",
-            expected_version=first["metadata"]["version"],
-        )
-    latest = call("read_company_wiki", product_id=product_id, path="status.md")
+        call("write_company_file", path=status, content="stale update", expected_version=first["version"])
+    latest = call("read_company_file", path=status)
     combined = latest["content"] + "\nTask completed."
-    call(
-        "update_product_status", product_id=product_id, content=combined, expected_version=latest["metadata"]["version"]
-    )
+    call("write_company_file", path=status, content=combined, expected_version=latest["version"])
     assert manager.read_wiki(product_id, "status.md").content == "Another person's update\nTask completed."
 
 
 STATUS_CALLS = [
-    ("read_company_wiki", {"product_id": "{product}", "path": "status.md"}),
-    ("update_product_status", {"product_id": "{product}", "content": "Done.", "expected_version": 1}),
+    ("read_company_file", {"path": "products/{product}/status.md"}),
+    ("write_company_file", {"path": "products/{product}/status.md", "content": "Done.", "expected_version": 1}),
     ("list_company_tasks", {"product_id": "{product}"}),
 ]
 
@@ -549,14 +549,14 @@ def test_only_a_task_run_with_no_caller_authority_is_let_past_the_identity_check
     system = System(tmp_path, authorization=False, user_isolation=True)
     try:
         product_id = system.proposal()["product_id"]
-        toolkit = system.mini.tools.task[0]
+        toolkit = file_tools(system)
         nobody = RunContext(run_id="run", session_id="session", user_id=None)
 
         def update(authority):
             functions = toolkit.get_async_functions() if use_async else toolkit.get_functions()
-            arguments = {"product_id": product_id, "content": "Done.", "expected_version": 1}
+            arguments = {"path": f"products/{product_id}/status.md", "content": "Done.", "expected_version": 1}
             with authorization_scope(lambda: authority):
-                result = functions["update_product_status"].entrypoint(**arguments, _agno_run_context=nobody)
+                result = functions["write_company_file"].entrypoint(**arguments, _agno_run_context=nobody)
                 return json.loads(asyncio.run(result) if use_async else result)
 
         signed_in = RunAuthorization(ScopeAuthorizationProvider(), AuthorizationContext(scopes=SCOPES))
@@ -570,7 +570,7 @@ def test_only_a_task_run_with_no_caller_authority_is_let_past_the_identity_check
         for authority in refused.values():
             with pytest.raises(PermissionError, match="Caller identity is required"):
                 update(authority)
-        assert update(task_authority())["version"] == 2
+        assert update(task_authority(product_id=product_id))["version"] == 2
     finally:
         system.db.close()
 
@@ -604,13 +604,17 @@ def test_a_task_run_reads_and_reports_on_its_own_product_only(system, tmp_path):
         [
             ("read_product_source", {"source_id": source["id"], "path": "notes.md"}),
             (
-                "update_product_status",
-                {"product_id": other["id"], "content": "Hijacked", "expected_version": before.metadata.version},
+                "write_company_file",
+                {
+                    "path": f"products/{other['id']}/status.md",
+                    "content": "Hijacked",
+                    "expected_version": before.metadata.version,
+                },
             ),
             (
-                "update_product_status",
+                "write_company_file",
                 {
-                    "product_id": proposal["product_id"],
+                    "path": f"products/{proposal['product_id']}/status.md",
                     "content": "Notes written",
                     "expected_version": own.metadata.version,
                 },
@@ -619,8 +623,8 @@ def test_a_task_run_reads_and_reports_on_its_own_product_only(system, tmp_path):
     )
     assert saved["status"] == "in_review"
     read, write, own_write = saved["result"]["content"].split("\n")
-    for refused in (read, write):
-        assert "A Task run is restricted to its Task's Product" in refused, refused
+    assert "A Task run is restricted to its Task's Product" in read, read
+    assert "A Task run writes only under its own Product" in write, write
     assert "The other Product's notes" not in saved["result"]["content"]
     assert manager.read_wiki(other["id"], "status.md").content == before.content
     # The Task's own Product is unaffected by the bound.
@@ -629,7 +633,7 @@ def test_a_task_run_reads_and_reports_on_its_own_product_only(system, tmp_path):
 
 
 @pytest.mark.parametrize("use_async", [False, True])
-@pytest.mark.parametrize("tool", ["read_product_source", "update_product_status"])
+@pytest.mark.parametrize("tool", ["read_product_source", "write_company_file"])
 def test_the_product_bound_follows_a_task_run_through_restore_and_delegation(system, tmp_path, tool, use_async):
     from agno.os.authz.run_context import restore_authorization
     from agno.run import RunContext
@@ -645,13 +649,13 @@ def test_the_product_bound_follows_a_task_run_through_restore_and_delegation(sys
     arguments = (
         {"source_id": source["id"], "path": "notes.md"}
         if tool == "read_product_source"
-        else {"product_id": other["id"], "content": "Hijacked", "expected_version": 1}
+        else {"path": f"products/{other['id']}/status.md", "content": "Hijacked", "expected_version": 1}
     )
-    toolkit = system.mini.tools.task[0]
+    toolkit = system.mini.tools.task[0] if tool == "read_product_source" else file_tools(system)
     entrypoint = (toolkit.get_async_functions() if use_async else toolkit.get_functions())[tool].entrypoint
     context = RunContext(run_id="run", session_id="session", user_id="alice")
     for bound in (authority, _ExecutorAuthorization(authority, task_id=proposal["id"]), restored):
-        with authorization_scope(lambda: bound), pytest.raises(PermissionError, match="its Task's Product"):
+        with authorization_scope(lambda: bound), pytest.raises(PermissionError, match="its (Task's|own) Product"):
             result = entrypoint(**arguments, _agno_run_context=context)
             if use_async:
                 asyncio.run(result)

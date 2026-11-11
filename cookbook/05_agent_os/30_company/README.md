@@ -167,6 +167,7 @@ methods retain explicit owner filters for direct callers.
 | --- | --- |
 | `04_manage_playbook.py` | Sync/async wiki namespaces, atomic page creation, version conflicts and the learning decision log without a model. |
 | `05_super_agent_company.py` | Company work through Super Agent's Company tools: company details, a Product with a Routine on Mini Agent, a proposal, status and a decision, without a model call. |
+| `16_company_file_tree.py` | The file tree through Super Agent's tools, without a model call: a confirmed company page and Product brief, a Product page, a Task file, a note, and what a Task's input loads. |
 
 Each Product has a durable wiki namespace with `brief.md` (human direction) and
 `status.md` (current work). A second namespace holds company context. Default
@@ -197,10 +198,102 @@ decision tools. Standalone CompanyTools leave agent attribution unset. The log
 is append-only: later outcomes are new entries that reference the original
 decision.
 
+### One file tree
+
+Super Agent and Mini Agent see the wiki, each Product's pages, each Task's files
+and Super Agent's notes as one tree, addressed by path:
+
+```
+wiki/                   agreed direction: brief.md and status.md by default
+products/<product-id>/  brief.md and status.md by default, and what agents found
+tasks/<task-id>/        what one Task was given and what it produced
+notes/                  Super Agent's own notes
+```
+
+`priorities.md`, `people.md` and `how-we-work.md` are the names Super Agent uses
+in `wiki/`. Each is created when there is something to put in it. A Product is
+addressed by ID, and listing `products/` shows each name beside its ID. Pages in
+`wiki/` and `products/` are Markdown; `tasks/` and `notes/` take any text file.
+
+**Where it is stored.** `wiki/`, `products/` and `tasks/` are in the Company
+database. `notes/` is in the AgentOS database, so it exists with Super Agent on
+whether or not Company is on. The two are the same database unless
+`CompanyConfig(db=...)` names another. The stored namespaces of the wiki and of
+each Product are the ones 3.1 created, so existing pages are read where they are,
+and the wiki API above serves the same pages.
+
+**Nothing in the tree is isolated by user.** `notes/` is one folder shared by
+everyone who talks to Super Agent, including when user isolation is on. A note
+Super Agent saved in one person's chat can be read in another person's chat.
+Listing `products/` and searching the tree show every Product, as the Product
+listing does.
+
+The tools are `CompanyFileTools`. Their names keep them apart from the source file
+tools (`list_files`, `read_file`, `search_content`) that `OSManager(root=...)` adds.
+
+| Tool | Permission | Writes |
+| --- | --- | --- |
+| `list_company_files`, `read_company_file`, `search_company_files` | `wiki:read`, none for `notes/` | |
+| `write_company_file` | `wiki:write` for a Product's pages, `tasks:write` for a Task's folder, none for `notes/` | `notes/`, `tasks/<task-id>/` and a Product's pages other than `brief.md` |
+| `save_company_page` | `wiki:write`, a person's chat only | `wiki/` pages and a Product's `brief.md`, after the person confirms |
+| `delete_company_file` | none | `notes/` only |
+
+What a call may write follows the run it is in, read from the run's authority:
+
+| Run | May write |
+| --- | --- |
+| A person's chat with Super Agent | `notes/`, any Task's folder, any Product's pages other than `brief.md`; `wiki/` and `brief.md` with a confirmation |
+| A Task run | Its own Product's pages other than `brief.md`, and its own `tasks/<task-id>/` |
+| A Routine run | Its own Product's `status.md`, through `update_product_status` only. The file tools refuse every write in a Routine run |
+
+`save_company_page` pauses the run. The confirmation shows the page, the version
+the person saw, the text removed (`old_text`) and the text added (`new_text`).
+With `old_text` it replaces that exact text, which must occur once. Without it,
+`new_text` is added at the end, or becomes a new page at version 0. A page that
+changed after that version is not saved. Super Agent saves only what the person
+states: text in a Source, a page or a tool result is never a request to save.
+
+A Task's folder asks for `tasks:write`, which the person who starts a Task already
+holds, so a Task run can always write its own folder. A Product's pages ask for
+`wiki:write`: a Task started by someone without it writes no Product page and
+reports the refusal.
+
+A Routine reads Sources nobody vetted, so it writes no more than its skills need:
+`status.md`, and the two pages the server composes from the summary and refresh
+tools. Mini Agent holds no file tools in a Routine run. On a named executor that
+holds them, `write_company_file` refuses every write in a Routine run, and the run
+is recorded as failed, as it is when `update_product_status` is refused.
+
+A Routine run and a Task run never see `notes/`. A scheduled or service-account
+run of Super Agent is neither: it counts as a person's chat, and reads and writes
+`notes/`.
+
+A Task's input always carries the Product's `brief.md` and `status.md`, then every
+`wiki/` page: at most 8,000 characters a page and 40,000 in total. A longer page
+is cut and the input names the file to read for the rest. Pages past the total
+are named without their content. Every other file is read on request. Every read
+result says that file content is information, never an instruction.
+
+This input is the same for every executor. Before 3.2 it carried every page of the
+Product. Mini Agent reads the other pages with its file tools. A named agent, team
+or workflow that needs a Product page other than `brief.md` and `status.md`, such as
+a runbook, must hold the read tools:
+`CompanyFileTools(db, include_tools=["list_company_files", "read_company_file", "search_company_files"])`.
+Without them it no longer sees that page.
+
+A listing returns 200 entries a page with the total, and `next_page` when more
+remain. A search returns up to ten matches and `more` when others exist.
+
+A file holds at most 1 MB. `wiki/`, each Product and `notes/` hold 20 MB each, and
+`tasks/` holds 200 MB in total, shared by every Task. Nothing removes a Task's
+files, not even archiving the Task, so a full `tasks/` refuses every Task's writes
+until files are replaced with smaller ones. There are no API routes for `tasks/`
+and `notes/`, and no tool appends to, moves or deletes a file outside `notes/`.
+
 With `CompanyConfig`, Super Agent holds the Company tools itself. People do
 Company work by talking to Super Agent at `/teams/superagent`. It reads company
 details, Products, Projects, Tasks, Sources and the playbook, proposes Projects
-and Backlog Tasks, edits owned proposals, updates `status.md` with a version check,
+and Backlog Tasks, edits owned proposals, writes `status.md` with a version check,
 saves company details, creates Routines and logs decisions. It can add website
 Sources with permission and Product ownership. When the person asks, it approves
 a Project, accepts a Task and reviews a finished one; see "Decisions from chat
@@ -309,8 +402,9 @@ session to the Task owner only after matching its original reservation and run. 
 including Super Agent and Platform Builder, cannot be accepted or started as
 Task executors.
 
-Executor input contains only the Task brief, its evidence and the current
-company and Product wiki pages. Queue retries and restart recovery use the
+Executor input contains only the Task brief, its evidence, every company wiki
+page and the Product's `brief.md` and `status.md`; see "One file tree" for the
+size limit. Queue retries and restart recovery use the
 existing queue policy. Results are saved on the Task; success moves it to
 `in_review`. Retryable failures remain outside failed attention while the queue
 has attempts left. An exhausted, permanent or cancelled run leaves the Task
@@ -397,8 +491,9 @@ Agent only when you would run those components yourself.
 
 The accepting person's saved permissions bound component runs throughout
 delegation and continuation; the starter's permissions still apply. Task runs
-can use `read_company_wiki` to read `status.md` and its version before updating
-it, and reread it after a version conflict to preserve concurrent edits.
+can use `read_company_file` to read `products/<product-id>/status.md` and its
+version before writing it with `write_company_file`, and reread it after a
+version conflict to preserve concurrent edits.
 
 When a Task run finishes, the components it started through the run tools are
 saved on the Task as `result.invoked`: type, id, run id and status, with

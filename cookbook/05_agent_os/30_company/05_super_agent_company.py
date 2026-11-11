@@ -83,10 +83,16 @@ if __name__ == "__main__":
                 )
             )
             assert proposal["status"] == "backlog" and proposal["user_id"] == "alice"
-            tools.update_product_status(
-                product["id"],
-                "# Status\n\nRelease notes proposed.\n",
-                1,
+            # The file tree tools write a Product's pages. Status is one of them.
+            files = next(
+                t
+                for t in super_agent.tools
+                if getattr(t, "name", None) == "company_files"
+            )
+            files.write_company_file(
+                path="products/" + product["id"] + "/status.md",
+                content="# Status\n\nRelease notes proposed.\n",
+                expected_version=1,
                 _agno_run_context=context,
             )
             tools.log_company_decision(
