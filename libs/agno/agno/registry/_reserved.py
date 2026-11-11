@@ -22,6 +22,13 @@ FORMER_MANAGER_IDS = {
 }
 # Routines ran on this former manager as well. Mini Agent runs them now, not Super Agent.
 FORMER_ROUTINE_EXECUTOR_ID = "company-manager-internal"
+# The policy resource of each built-in component. Super Agent is served as a team, the others as
+# agents: a policy that names the wrong family matches nothing.
+MANAGER_RESOURCES = {
+    MANAGER_TEAM_ID: f"teams/{MANAGER_TEAM_ID}",
+    BUILDER_ID: f"agents/{BUILDER_ID}",
+    MINI_AGENT_ID: f"agents/{MINI_AGENT_ID}",
+}
 RESERVED_MEMBER_IDS = frozenset({BUILDER_ID, "platform-builder-internal", "platform-manager-internal"})
 RESERVED_MANAGER_IDS = RESERVED_MEMBER_IDS | {
     MANAGER_TEAM_ID,
