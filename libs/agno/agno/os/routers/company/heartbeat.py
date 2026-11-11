@@ -324,8 +324,14 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         row = await routine(routine_id, request)
         # Automatic acceptance runs on the saved grant, so only the user who granted it may start it
         # manually, whether or not user isolation is on. The grant records the raw caller, so compare that.
-        if row["payload"]["metadata"].get("auto_accept") and not caller_is_admin(request):
-            grantor = (row["payload"].get("_agno_company_acceptance") or {}).get("user_id")
+        from agno.company.routines import _DECLARED
+
+        grant = row["payload"].get("_agno_company_acceptance") or {}
+        # A policy declared in code has no author. It acts only where authorization is off, and there
+        # whoever may run the Routine may trigger it.
+        unauthored = grant == _DECLARED and not agent_os.authorization
+        if row["payload"]["metadata"].get("auto_accept") and not unauthored and not caller_is_admin(request):
+            grantor = grant.get("user_id")
             if getattr(request.state, "user_id", None) != grantor:
                 raise HTTPException(403, "Only the user who authorized automatic acceptance may run this Routine")
         await product(row["payload"]["metadata"]["product_id"])

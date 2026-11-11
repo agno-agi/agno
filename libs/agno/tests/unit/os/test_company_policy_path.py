@@ -41,8 +41,8 @@ FUTURE = 4102444800
 
 
 class PolicySystem(System):
-    def __init__(self, tmp_path, authorization=True):
-        super().__init__(tmp_path, **({} if authorization else {"authorization": None}))
+    def __init__(self, tmp_path, authorization=True, **os_options):
+        super().__init__(tmp_path, **({} if authorization else {"authorization": None}), **os_options)
         token = self.os._internal_service_token
         self.app.state.internal_service_token = token
         self.executor = _CompanyScheduleExecutor(
@@ -657,6 +657,35 @@ def test_a_declaration_never_touches_the_grant_of_a_routine_that_exists(system):
     )
     # The Routine that exists keeps its policy and its author's grant.
     assert system.db.get_schedule(routine_id) == before
+
+
+def test_a_declared_routine_is_triggered_by_whoever_may_run_it_where_authorization_is_off(tmp_path):
+    # A deployment that knows who is calling and checks no permissions.
+    system = PolicySystem(tmp_path, authorization=False, user_isolation=True)
+    try:
+        product_id, routine_id = system.declare(auto_accept=True)
+        path = f"/company/routines/{routine_id}/trigger"
+        triggered = system.client.post(path, params={"user_id": "alice"})
+        # No person authorized a declared policy, so there is no author to be the only one who may run it.
+        # The request reaches the scheduler, which these tests do not start.
+        assert (triggered.status_code, triggered.json()["detail"]) == (503, "Scheduler is not running"), triggered.text
+        # A policy a person set is still run by hand only by that person.
+        assert turn_on(system, routine_id, RunContext(run_id="r", session_id="s", user_id="bob")).startswith(
+            "Auto-accept is on"
+        )
+        assert system.stored(routine_id)["_agno_company_acceptance"]["user_id"] == "bob"
+        refused = system.client.post(path, params={"user_id": "alice"})
+        assert refused.status_code == 403 and "Only the user who authorized" in refused.text, refused.text
+        assert system.client.post(path, params={"user_id": "bob"}).status_code == 503
+    finally:
+        system.db.close()
+
+
+def test_a_declared_routine_waiting_for_a_person_is_not_triggered_by_another_person(system):
+    # With authorization on, a declared policy acts for no one, and only an admin runs its Routine by hand.
+    product_id, routine_id = system.declare(auto_accept=True)
+    refused = system.client.post(f"/company/routines/{routine_id}/trigger", headers=headers(SCOPES))
+    assert refused.status_code == 403 and "Only the user who authorized" in refused.text, refused.text
 
 
 def test_a_person_changing_a_declared_routine_replaces_the_declared_policy(open_system):
