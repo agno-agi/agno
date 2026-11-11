@@ -206,8 +206,8 @@ def test_new_session_survives_a_same_second_save_on_the_old_one(tmp_path):
     """`/new` races the run that was in flight when it was typed: that run's save
     stamps the old session with the same whole second the new one was created in."""
     db = SqliteDb(db_file=str(tmp_path / "teams_sessions.db"))
-    old_id = "teams:agent-1:user-1"
-    new_id = "teams:agent-1:user-1:0a1b2c3d"
+    old_id = "msteams:agent-1:conv-1:user-1"
+    new_id = "msteams:agent-1:conv-1:user-1:0a1b2c3d"
     first_message, reset = 1_700_000_000, 1_700_000_060
 
     old = AgentSession(
@@ -311,9 +311,10 @@ def test_conversation_ref_is_written_to_the_run_session_not_the_newest():
                     "id": "act-1",
                     "serviceUrl": "https://svc/",
                     "from": {"id": "29:u", "aadObjectId": "user-1"},
-                    "conversation": {"id": "conv-1"},
+                    "conversation": {"id": "conv-1", "conversationType": "personal"},
                     "recipient": {"id": "28:bot"},
                     "text": "hello",
+                    "channelId": "msteams",
                 },
             )
         assert resp.status_code == 200
@@ -362,3 +363,62 @@ def test_operation_ids_fall_back_to_entity_type_when_name_missing():
     operation_ids = {route.operation_id for route in router.routes if hasattr(route, "operation_id")}
     assert "msteams_status_agent" in operation_ids
     assert "msteams_webhook_agent" in operation_ids
+
+
+@pytest.mark.parametrize("kind", ["personal", "groupChat", "channel"])
+def test_conversation_scoped_reset_and_reference(tmp_path, kind):
+    from unittest.mock import AsyncMock
+
+    db = SqliteDb(db_file=str(tmp_path / "scope.db"))
+    seen = []
+
+    async def arun(text, **kwargs):
+        sid = kwargs["session_id"]
+        seen.append(sid)
+        existing = db.get_session(session_id=sid, session_type=SessionType.AGENT)
+        if existing is None:
+            db.upsert_session(AgentSession(session_id=sid, agent_id="agent-1", user_id="user-1"))
+        return SimpleNamespace(status="COMPLETED", content="ok", session_id=sid, reasoning_content=None)
+
+    async def get_session(session_id):
+        return db.get_session(session_id=session_id, session_type=SessionType.AGENT)
+
+    async def save_session(session):
+        db.upsert_session(session)
+
+    agent = SimpleNamespace(
+        id="agent-1", name="Stub", db=db, arun=arun, aget_session=get_session, asave_session=save_session
+    )
+    client, env_patch = _build_test_client(agent=agent)
+    activity = {
+        "type": "message",
+        "id": "act",
+        "serviceUrl": "https://svc/",
+        "from": {"id": "user-1"},
+        "recipient": {"id": "bot"},
+        "text": "hello",
+    }
+    own_conv = "thread;messageid=root" if kind == "channel" else kind
+    try:
+        with (
+            patch("agno.os.interfaces.msteams.router.typing_indicator_async", new_callable=AsyncMock),
+            patch("agno.os.interfaces.msteams.router.send_teams_message_async", new_callable=AsyncMock),
+        ):
+            for conv, conv_type in [(own_conv, kind), ("other", "groupChat"), (own_conv, kind)]:
+                activity["conversation"] = {"id": conv, "conversationType": conv_type}
+                assert client.post("/messages", json=activity).status_code == 200
+            own_scope = f"msteams:agent-1:{own_conv}:user-1"
+            assert seen == [own_scope, "msteams:agent-1:other:user-1", own_scope]
+            activity["text"] = "/new"
+            assert client.post("/messages", json=activity).status_code == 200
+            activity["text"] = "after reset"
+            assert client.post("/messages", json=activity).status_code == 200
+            assert seen[-1].startswith(own_scope + ":")
+            assert len(seen[-1].removeprefix(own_scope + ":")) == 8
+            activity["conversation"] = {"id": "other", "conversationType": "groupChat"}
+            assert client.post("/messages", json=activity).status_code == 200
+            assert seen[-1] == "msteams:agent-1:other:user-1"
+        session = db.get_session(session_id=own_scope, session_type=SessionType.AGENT)
+        assert ("msteams_conversation_ref" in (session.session_data or {})) == (kind == "personal")
+    finally:
+        env_patch.stop()

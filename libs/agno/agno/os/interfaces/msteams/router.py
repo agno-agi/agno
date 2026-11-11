@@ -179,6 +179,7 @@ def attach_routes(
                 )
                 return
 
+            session_scope = f"msteams:{entity_id}:{conversation_id}:{user_id}"
             if parsed.text.strip().lower() == "/new":
                 if not session_config.has_db:
                     await send_teams_message_async(
@@ -191,7 +192,7 @@ def attach_routes(
                     )
                     return
                 try:
-                    new_session_id = f"teams:{entity_id}:{user_id}:{uuid4().hex[:8]}"
+                    new_session_id = f"{session_scope}:{uuid4().hex[:8]}"
                     now = int(time())
                     new_session = session_config.session_class(
                         session_id=new_session_id,
@@ -227,7 +228,7 @@ def attach_routes(
             log_info(f"Processing Teams message from user {user_id[:12]}")
             log_debug(f"Message content: {parsed.text}")
 
-            default_session_id = f"teams:{entity_id}:{user_id}"
+            default_session_id = session_scope
             session_id = default_session_id
             if session_config.has_db:
                 try:
@@ -242,7 +243,7 @@ def attach_routes(
                         sort_order="desc",
                         # A window rather than limit=1: equal created_at values come back
                         # in arbitrary scan order.
-                        limit=5,
+                        limit=50,
                         # Only ids and timestamps are read, so skip building every
                         # session's RunOutput objects. include_runs=False would also skip
                         # fetching them, but most non-SQL backends reject that kwarg.
@@ -253,10 +254,10 @@ def attach_routes(
                     else:
                         results = session_config.db.get_sessions(**session_filter)
                     rows = results[0] if isinstance(results, tuple) else results
-                    if rows:
-                        # A `/new` id is the default id plus `:<hex8>`, so on an exact
-                        # created_at tie the string order resolves to the newer session.
-                        newest = max(rows, key=lambda row: (row["created_at"], row["session_id"]))
+                    candidates = [row for row in rows if row["session_id"].startswith(session_scope)]
+                    if candidates:
+                        # A reset sorts after its base scope on a same-second tie.
+                        newest = max(candidates, key=lambda row: (row["created_at"], row["session_id"]))
                         session_id = newest["session_id"]
                 except Exception as e:
                     log_warning(f"Session lookup failed, using default: {e}")
@@ -297,7 +298,7 @@ def attach_routes(
             finally:
                 typing_task.cancel()
 
-            if session_config.has_db:
+            if session_config.has_db and conversation.get("conversationType") == "personal":
                 try:
                     # By exact session_id, not latest-by-user: concurrent messages
                     # from one user would otherwise land the ref on the other run's
