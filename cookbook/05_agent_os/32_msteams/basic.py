@@ -3,11 +3,11 @@ Serve an Agent on Microsoft Teams
 =================================
 
 Mount one Agent on AgentOS's Microsoft Teams interface. The interface verifies
-the inbound Bot Framework JWT, maps each Teams user to a persistent session,
+the inbound Bot Framework JWT, scopes sessions by conversation and user,
 and posts the Agent's response back through the Bot Connector API.
 
 Prerequisites: OPENAI_API_KEY and the MICROSOFT_APP_* credentials in README.md
-Run: .venvs/demo/bin/python cookbook/05_agent_os/32_msteams/basic.py
+Run: python cookbook/05_agent_os/32_msteams/basic.py
 Try: GET http://localhost:7777/msteams/status, then message the bot from Teams
 """
 
