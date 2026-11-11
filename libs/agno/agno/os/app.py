@@ -3450,14 +3450,13 @@ class AgentOS:
 
         for db_id, dbs in self.dbs.items():
             if db_id not in dbs_with_specific_config:
-                # Collect unique table names from all databases with the same id, the deprecated metrics table first
+                # Collect unique table names from all databases with the same id
                 unique_tables = list(
                     dict.fromkeys(
                         table_name
                         for db in dbs
                         for table_name in (
                             (
-                                db.metrics_table_name,
                                 db.component_metrics_table_name,
                                 db.aggregate_metrics_table_name,
                                 db.metrics_refreshes_table_name,
