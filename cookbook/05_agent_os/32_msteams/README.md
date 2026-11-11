@@ -12,7 +12,12 @@ patterns.
 | File | Demonstrates |
 |---|---|
 | `basic.py` | One persistent Agent on the default `/msteams` interface |
-| `proactive_alert.py` | Push a message to a Teams user from a background task via `teams.asend_alert(user_id, text)` (or its sync `send_alert` wrapper) |
+| `proactive_alert.py` | Push a message to a user's personal chat with `asend_alert` or its blocking `send_alert` wrapper |
+| `team.py` | Route requests to a specialist Team |
+| `workflow.py` | Run a research-then-writing Workflow |
+| `reasoning_agent.py` | Send reasoning separately before the final response |
+| `multiple_instances.py` | Two app registrations with per-instance credentials and prefixes |
+| `media.py` | Analyze inbound images and documents; return text only |
 
 ## Install
 
@@ -32,8 +37,8 @@ Bot Connector can reach.
 |---|---|
 | `MICROSOFT_APP_ID` | Bot Framework application id; optional only in the credential-free bypass mode below |
 | `MICROSOFT_APP_PASSWORD` | Client secret for the Bot Framework application; optional under the same mode |
-| `MICROSOFT_APP_TENANT_ID` | Entra tenant guid. Required for a single-tenant bot, which is what the portal creates; leave unset only if your app registration is multi-tenant |
-| `OPENAI_API_KEY` | Model calls for both `basic.py` and `proactive_alert.py` |
+| `MICROSOFT_APP_TENANT_ID` | Required tenant id; legacy multi-tenant bots must explicitly pass `botframework.com` |
+| `OPENAI_API_KEY` | Model calls in all examples |
 
 Managed Identity (`UserAssignedMSI`) is not supported: the interface authenticates
 with a client secret.
@@ -67,10 +72,10 @@ with a client secret.
 ```bash
 export MICROSOFT_APP_ID="..."
 export MICROSOFT_APP_PASSWORD="..."       # the secret Value, not the Secret ID
-export MICROSOFT_APP_TENANT_ID="..."      # required for a single-tenant bot
+export MICROSOFT_APP_TENANT_ID="..."       # required
 export OPENAI_API_KEY="..."
 
-.venvs/demo/bin/python cookbook/05_agent_os/32_msteams/basic.py
+python cookbook/05_agent_os/32_msteams/basic.py
 ```
 
 Verify the credentials before sending a message. This is the same client-credentials
@@ -104,7 +109,8 @@ That is the same link the channel's **Open in Teams** action produces, and it is
 enough to exercise everything except channels and group chats.
 
 **For channels and group chats**, upload an app package: a `manifest.json`
-declaring `scopes` of `personal`, `team` and `groupChat`, plus a 192x192 colour
+declaring `scopes` of `personal`, `team` and `groupChat`, and `supportsFiles: true`
+on the bot entry to enable file uploads, plus a 192x192 colour
 icon and a 32x32 transparent outline icon, zipped with all three at the root.
 Upload it under **Apps → Manage your apps → Upload an app**.
 
@@ -129,16 +135,19 @@ AgentOS also exposes `/health`, `/config`, and its normal REST surface.
 
 ## Sessions and Commands
 
-Each Teams user starts on a session id of the form
-`teams:<entity_id>:<user_id>`, where `user_id` is the Entra `aadObjectId` when
-available and the channel-scoped id otherwise. Send `/new` to start a fresh
-conversation — it gains a random suffix and becomes the one subsequent messages
-resolve to; the previous session is preserved in storage.
+Each user in each conversation starts on
+`msteams:<entity_id>:<conversation.id>:<user_id>`, where `user_id` is the Entra
+`aadObjectId` when available and the channel-scoped id otherwise. Channel thread
+ids include `;messageid=<root>`, so threads are isolated too. Send `/new` to create
+`<scope>:<hex8>` in that conversation only; the previous session is preserved.
+Lookup scans the latest 50 sessions for that user and entity. If an older reset
+falls outside this window, the conversation falls back to its base scope, never
+to a different conversation.
 
 ## Proactive Alerts
 
-Every inbound message persists the caller's `serviceUrl`, `conversation.id`,
-and the bot's `recipient` object onto the session that run used
+A prior **personal-chat message** is required. Only personal chats persist the
+caller's `serviceUrl`, `conversation.id`, and the bot's `recipient` onto the session that run used
 (`session_data.msteams_conversation_ref`). Any code with a reference to the
 `MSTeams` instance can later push a message without an inbound
 trigger:
@@ -151,13 +160,15 @@ await teams.asend_alert(user_id="29:1abc...", text="Analysis complete.")
 teams.send_alert(user_id="29:1abc...", text="Analysis complete.")
 ```
 
-Delivery uses the newest session that carries a reference, which is not always
-the newest session — `/new` starts one without a reference until the user's next
-message, and alerts keep working across that gap.
+Delivery pages through sessions, 50 at a time, until it finds a personal-chat
+reference or exhausts the user's sessions. Newer group/channel sessions cannot
+redirect an alert. Alerts also work after `/new`, before the next message saves
+a reference. `send_alert` raises `RuntimeError` in a running event loop; await
+`asend_alert` there instead.
 
 Both return `True` on delivery and `False` when the entity has no database, when
-the session lookup fails, or when none of that user's recent sessions carries a
-reference (typically because they have never chatted with the bot). Failing to
+the session lookup fails, or when none of that user's sessions carries a
+personal-chat reference (typically because they have never messaged the bot personally). Failing to
 deliver to a reference that does exist is the one case that raises instead of
 returning `False`, so a caller that loops on the return value has to handle both.
 Call it from scheduled jobs, background tasks, or other request handlers; see
@@ -171,7 +182,7 @@ environment variable. The value is whatever the interface used as the run's
 it and the channel-scoped `from.id` otherwise:
 
 1. Start `basic.py` (or any bot backed by the same database).
-2. Ask the target user to send one message to the bot from Teams.
+2. Ask the target user to send one **personal-chat** message to the bot from Teams.
 3. In the server logs, look for a line of the form:
 
    ```text
@@ -188,7 +199,7 @@ it and the channel-scoped `from.id` otherwise:
    ```bash
    sqlite3 tmp/teams_basic.db \
      "SELECT user_id FROM agno_sessions
-      WHERE session_id LIKE 'teams:%'
+      WHERE session_id LIKE 'msteams:%'
       ORDER BY updated_at DESC LIMIT 1;"
    ```
 
@@ -196,12 +207,12 @@ it and the channel-scoped `from.id` otherwise:
 
    ```bash
    export ALERT_USER_ID="<full-user-id-from-the-query-above>"
-   .venvs/demo/bin/python cookbook/05_agent_os/32_msteams/proactive_alert.py
+   python cookbook/05_agent_os/32_msteams/proactive_alert.py
    ```
 
    The two examples register different agent ids against different databases, so
    a reference stored while `basic.py` was running is not visible here. Message
-   the bot once with `proactive_alert.py` running before expecting a delivery.
+   the bot personally once with `proactive_alert.py` running before expecting a delivery.
 
 Proactive delivery only succeeds against a live conversation reference, and its
 two failure modes want opposite handling. `False` means no reference is stored
@@ -219,8 +230,10 @@ window, so prefer them for anything you want to keep working.
 Incoming POST requests are validated as Bot Framework JWTs. The interface
 fetches Microsoft's JWKS from
 `https://login.botframework.com/v1/.well-known/openidconfiguration`, caches
-keys for twenty-four hours, and verifies signature, audience, issuer, and
-expiration. Teams routes authenticate themselves and are therefore outside
+keys using PyJWT's `PyJWKClient`, and verifies signature, audience, issuer,
+expiration (with 300 seconds of leeway), and the strict `serviceurl` match.
+Signing-key endorsements are checked against the activity's `channelId` when
+both are present. Teams routes authenticate themselves and are therefore outside
 AgentOS's central authorization middleware.
 
 For local development against the Bot Framework Emulator, the library
@@ -234,11 +247,37 @@ The bypass applies **only when neither credential is configured**. With an app i
 set there is a real audience to verify against, so the flag is ignored and inbound
 activities are validated as usual — the variable cannot downgrade a configured
 deployment, and setting one credential without the other is refused at startup.
-Outbound delivery is unavailable in this mode (fetching a bot token needs the
-client secret), so it exercises the inbound path only.
+Replies in this mode are posted without an `Authorization` header and without
+fetching a bot token. Tenant id is not required. Use this only against a local
+emulator; live Teams delivery in bypass mode has not been verified.
+
+## Attachments and Limitations
+
+Inbound images and supported documents are downloaded with a 1 GB cap
+(`max_file_size`, default `1_073_741_824` bytes). Downloads exceeding the cap are
+skipped with a notice; the text is still sent. Archives are skipped. An
+`application/octet-stream` response is resolved from the attachment's filename.
+The model provider may impose a lower upload limit.
+
+The bot token is only attached to `contentUrl` requests on the verified
+`serviceUrl` host. Pre-authorized `content.downloadUrl` links never receive it.
+Images hosted elsewhere may therefore be skipped; verify with your Teams setup.
+
+HITL approval, outbound/generated media, and streaming replies are not supported
+yet. A paused run produces an approval-unavailable notice, not its partial output.
+
+## Multiple Instances
+
+`multiple_instances.py` requires two app registrations and these six variables:
+`BASIC_MICROSOFT_APP_ID`, `BASIC_MICROSOFT_APP_PASSWORD`,
+`BASIC_MICROSOFT_APP_TENANT_ID`, `RESEARCH_MICROSOFT_APP_ID`,
+`RESEARCH_MICROSOFT_APP_PASSWORD`, and `RESEARCH_MICROSOFT_APP_TENANT_ID`.
+Set their messaging endpoints to `/basic/messages` and `/research/messages`
+respectively on your public HTTPS host. Status routes are `/basic/status` and
+`/research/status`. Each bot has its own entity id and session history.
 
 ## Test Scope
 
-Unit tests under `libs/agno/tests/unit/os/interfaces/test_teams_*.py` cover JWT
+Unit tests under `libs/agno/tests/unit/os/interfaces/test_msteams_*.py` cover JWT
 validation, helper behavior, and `asend_alert` / `send_alert` semantics. They run
 offline. `TEST_LOG.md` records what each example was run against.

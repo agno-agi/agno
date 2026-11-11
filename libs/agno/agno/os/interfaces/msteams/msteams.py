@@ -19,13 +19,7 @@ from agno.workflow import RemoteWorkflow, Workflow
 
 
 class MSTeams(BaseInterface):
-    """Microsoft Teams interface for agents, teams, and workflows.
-
-    Serves ``GET /status`` and the Bot Framework webhook ``POST /messages``
-    under ``prefix``. ``send_alert`` / ``asend_alert`` push a message to a user
-    who has chatted with the bot before, using the conversation reference their
-    inbound messages stored.
-    """
+    """Microsoft Teams interface with conversation-scoped sessions and personal-chat alerts."""
 
     type = "msteams"
 
