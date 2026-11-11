@@ -535,3 +535,13 @@ SQLite and with `COMPANY_DB=postgres`, with no model calls.
 **Result:** The stream sent the current state (`ready`) on connect, `in_progress`/`RUNNING` right after the start, and `in_review`/`COMPLETED` with two evidence items when the run finished, with no client polling.
 
 ---
+
+### 14_continue_tasks_from_chat.py, evidence read from the run (2026-11-11)
+
+**Status:** PASS
+
+**Description:** After review: the Task result no longer stores evidence, `/company/events` is removed, and Super Agent's per-turn Task note and session-state tracking are removed. Live run with `gpt-5.6-luna`, PostgreSQL and the durable queue; what each attempt ran is read from its run through `GET /company/runs/{run_id}`.
+
+**Result:** Start returned a receipt in 4.5s. Attempt 1 reached In review with a recommendation and a question; its run showed `read_export_logs` and `list_iam_roles`. "Any update?" was answered in 5.4s through `get_company_task_status`. The reply continued the Task in 3.1s as attempt 2 on the same worker session, whose run showed `set_export_role {"role": "billing-export-new"}`.
+
+---

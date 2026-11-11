@@ -9,7 +9,6 @@ import json
 from typing import Any, Dict, Optional, Tuple
 from weakref import ReferenceType, ref
 
-from agno.company.details import _remember_task
 from agno.tools import Toolkit
 
 
@@ -115,8 +114,6 @@ class CompanyTaskTools(Toolkit):
             return f"Not started: {exc.detail}"
         except (_TaskRunConflict, _TaskRunUnavailable) as exc:
             return f"Not started: {exc}"
-        if response.status_code == 202:
-            _remember_task(_agno_run_context, task_id)
         return _receipt("Queued", title, task_id, response)
 
     def continue_company_task(self, task_id: str, message: str, _agno_run_context: Optional[Any] = None) -> str:
@@ -163,8 +160,6 @@ class CompanyTaskTools(Toolkit):
             return f"Not continued: {exc.detail}"
         except (_TaskRunConflict, _TaskRunUnavailable) as exc:
             return f"Not continued: {exc}"
-        if response.status_code == 202:
-            _remember_task(_agno_run_context, task_id)
         return _receipt("Continued", title, task_id, response)
 
     def get_company_task_status(self, task_id: str, _agno_run_context: Optional[Any] = None) -> str:
@@ -179,9 +174,9 @@ class CompanyTaskTools(Toolkit):
         """Read a Company Task's saved state, latest run and recorded evidence without waiting for it.
 
         Reports what is recorded: the Task status, the latest attempt and its run, the reply it
-        continues from, and the saved result with the commands and tools the worker actually ran.
-        Report the recorded evidence, and say when there is none. A finished run is not proof the
-        outcome was achieved.
+        continues from, the saved result, and the commands and tools the worker actually ran, read
+        from the run. Report that evidence, and say when there is none. A finished run is not proof
+        the outcome was achieved.
 
         Args:
             task_id: The Task to inspect.
@@ -205,6 +200,7 @@ class CompanyTaskTools(Toolkit):
             return f"Cannot read the Task: {exc.detail}"
         app = getattr(agent_os, "_company_app", None)
         state = await starter.state(value, app) if app is not None else _task_state(value)
+        state.update(await starter.run_evidence(value))
         return json.dumps(state, ensure_ascii=False, default=str)
 
 

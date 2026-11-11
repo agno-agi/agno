@@ -1,9 +1,10 @@
-"""Get a Task's result with its evidence, answer its question, and continue the same work.
+"""Get a Task's result and what its run did, answer its question, and continue the same work.
 
 A worker investigates and stops at a decision: it reports what it found, what it checked
-and the one question a person must answer. The Task records the reply and the commands
-and tools the worker actually ran. The person's answer continues the same Task on the
-same worker session, so the worker builds on its earlier turn instead of starting over.
+and the one question a person must answer. Its run records the commands and tools it
+actually ran; Super Agent and the Task page read them from the run. The person's answer
+is recorded on the Task and continues it on the same worker session, so the worker builds
+on its earlier turn instead of starting over.
 Super Agent never answers for the person and never accepts or completes the Task.
 
 Prerequisites: PostgreSQL (./cookbook/scripts/run_pgvector.sh) and OPENAI_API_KEY.
@@ -20,10 +21,10 @@ The seeded Task id is printed once the server is up.
 
     1. Connect the AgentOS UI (os.agno.com or a local agno-os) to http://localhost:7777.
     2. In Super Agent chat, ask "Start the task <seeded id>".
-    3. Watch the Task change without asking: in a terminal, stream its events with
-       curl -N "http://localhost:7777/company/events?task_id=<seeded id>"
-    4. When it is waiting for review, ask Super Agent what it found. The reply includes the
-       evidence the worker recorded and its question.
+    3. Follow the Task on its card in chat or on its Project page, or read it with
+       curl "http://localhost:7777/company/tasks/<seeded id>"
+    4. When it is waiting for review, ask Super Agent what it found. The reply includes what
+       the worker ran, read from its run, and its question.
     5. Answer in chat, for example "Go with option A". The Task continues on the same session,
        and its new attempt records your reply.
 
@@ -40,6 +41,7 @@ from uuid import uuid4
 
 import httpx
 from agno.agent import Agent
+from agno.company.evidence import run_evidence
 from agno.db.postgres import PostgresDb
 from agno.job_queue import QueueConfig
 from agno.models.openai import OpenAIResponses
@@ -51,7 +53,7 @@ PORT = 7777
 
 
 # ---------------------------------------------------------------------------
-# The worker's tools: what it runs is recorded as evidence on the Task
+# The worker's tools: what it runs is recorded in its run
 # ---------------------------------------------------------------------------
 def read_export_logs() -> str:
     """Read the last nightly billing export log."""
@@ -165,15 +167,16 @@ def wait_for_review(client: TestClient, task_id: str, attempt: int) -> Dict[str,
         time.sleep(3)
 
 
-def show(task: Dict[str, Any]) -> None:
+def show(client: TestClient, task: Dict[str, Any]) -> None:
     result = task["result"]
     print(f"\nAttempt result ({result['status']}): {result['content']}")
-    for item in result.get("evidence") or []:
-        print(
-            f"  evidence: {item['kind']} {item['name']} -> {str(item.get('output'))[:80]!r}"
-        )
-    if result.get("evidence_note"):
-        print(f"  {result['evidence_note']}")
+    # What the worker ran is read from its run, the same record the Task page shows.
+    run = client.get(f"/company/runs/{result['run_id']}").json()
+    evidence, note = run_evidence(run.get("run_data") or {})
+    for item in evidence:
+        print(f"  ran: {item['kind']} {item['name']} {item.get('input') or ''}")
+    if note:
+        print(f"  {note}")
 
 
 def scripted() -> None:
@@ -183,14 +186,14 @@ def scripted() -> None:
         chat(client, f"Start the accepted Task {task['id']}.", session)
 
         first = wait_for_review(client, task["id"], 1)
-        show(first)
+        show(client, first)
         chat(client, "Any update on the export Task I started?", session)
         chat(
             client, f"For Task {task['id']}: go with your recommended option.", session
         )
 
         second = wait_for_review(client, task["id"], 2)
-        show(second)
+        show(client, second)
         entry = [entry for entry in second["transitions"] if entry.get("attempt")][-1]
         print(f"\nAttempt 2 continued from: {entry['follow_up']}")
         print(

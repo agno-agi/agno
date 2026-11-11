@@ -122,10 +122,6 @@ async def _reserve_task(db: Any, job: Dict[str, Any]) -> Optional[Dict[str, Any]
             **({"requested_from": payload["company_requested_from"]} if payload.get("company_requested_from") else {}),
             **({"follow_up": payload["company_follow_up"]} if payload.get("company_follow_up") else {}),
         )
-        if reserved is not None:
-            from agno.company.events import notify_task_changed
-
-            notify_task_changed()
         task = reserved or await _call(db, "get_task", task["id"])
     if (
         task is None
@@ -352,18 +348,13 @@ async def _reconcile_task_run(
     await _cancel_ticketless_pending_run(run_db, task, run, caller, worker, is_admin=is_admin)
     if run["status"] not in {"COMPLETED", "ERROR", "CANCELLED"}:
         return False
-    from agno.company.evidence import with_evidence
-
     data = run.get("run_data") or {}
-    result = with_evidence(
-        {
-            "run_id": run["run_id"],
-            "status": run["status"],
-            "content": data.get("content"),
-            "content_type": data.get("content_type"),
-        },
-        data,
-    )
+    result = {
+        "run_id": run["run_id"],
+        "status": run["status"],
+        "content": data.get("content"),
+        "content_type": data.get("content_type"),
+    }
     checkout = None
     if run["status"] == "COMPLETED":
         from agno.company.sandbox import _is_sandboxed, _project_checkout
@@ -388,10 +379,6 @@ async def _reconcile_task_run(
         expected_transitions=task["transitions"],
         **({"checkout": checkout} if checkout is not None else {}),
     )
-    if updated is not None:
-        from agno.company.events import notify_task_changed
-
-        notify_task_changed()
     return updated is not None
 
 
@@ -514,11 +501,9 @@ async def _project_run(worker: Any, job: Dict[str, Any], status: str, error: Opt
             raise ValueError("Completed Task run is not durably readable")
         data = output.to_dict()
         result = {key: data.get(key) for key in ("run_id", "status", "content", "content_type")}
-        from agno.company.evidence import with_evidence
         from agno.company.sandbox import _project_checkout
 
         checkout, result = await _project_checkout(db, task, component, data, result)
-        result = with_evidence(result, data)
     await _call(
         db,
         "complete_task_run",
@@ -528,9 +513,6 @@ async def _project_run(worker: Any, job: Dict[str, Any], status: str, error: Opt
         expected_transitions=task["transitions"],
         **({"checkout": checkout} if checkout is not None else {}),
     )
-    from agno.company.events import notify_task_changed
-
-    notify_task_changed()
 
 
 async def _project_run_before_settle(

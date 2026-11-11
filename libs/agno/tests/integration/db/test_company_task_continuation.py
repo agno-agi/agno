@@ -1,9 +1,10 @@
-"""A finished attempt keeps its evidence; a person's reply continues the same Task and session once."""
+"""A finished attempt's evidence stays in its run; a person's reply continues the same Task and session once."""
 
 import json
 
 import pytest
 
+from agno.company.evidence import run_evidence
 from agno.company.execution import _call
 from agno.db.schemas.tasks import task_run_id
 from tests.integration.db.test_company_execution_parity import accepted, execute, system  # noqa: F401
@@ -19,7 +20,10 @@ async def test_reply_continues_the_same_session_once(system):  # noqa: F811
 
     reviewed = (await client.get(path)).json()
     assert reviewed["status"] == "in_review"
-    evidence = reviewed["result"]["evidence"]
+    # The Task keeps only the result; what the run did is read from the run.
+    assert "evidence" not in reviewed["result"]
+    run = (await client.get(f"/company/runs/{reviewed['result']['run_id']}")).json()
+    evidence, _ = run_evidence(run["run_data"])
     assert evidence and evidence[0]["kind"] == "step" and evidence[0]["name"] == "Draft"
 
     reply = {"message": "Go with option A", "in_reply_to_attempt": 1}

@@ -1,4 +1,4 @@
-"""Recorded evidence, Task event streams, conversation updates and continuing a Task from Super Agent."""
+"""Evidence read from the run, Task state for Super Agent, and continuing a Task from a reply."""
 
 import asyncio
 import json
@@ -9,7 +9,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agno.agent import Agent
-from agno.company.details import _task_updates
 from agno.company.evidence import MAX_ITEMS, NO_EVIDENCE, run_evidence
 from agno.db.schemas.tasks import task_run_id
 from agno.db.sqlite import SqliteDb
@@ -21,7 +20,7 @@ from agno.os.authz.provider import AuthorizationContext
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider
 from agno.os.job_queue import QueueWorker
 from agno.os.manager.company_tasks import CompanyTaskTools
-from agno.os.routers.company.runs import _task_event_stream, _task_state
+from agno.os.routers.company.runs import _task_state
 from agno.registry import Registry
 from agno.run import RunContext
 from agno.run.authorization import RunAuthorization
@@ -63,18 +62,15 @@ def test_evidence_records_what_the_run_did():
     evidence, note = run_evidence(run)
     assert note is None
     assert [item["kind"] for item in evidence] == ["command", "command", "tool", "tool", "step", "file", "checkout"]
-    assert evidence[0] == {
-        "kind": "command",
-        "name": "Bash",
-        "input": "pytest -q",
-        "output": "3 passed",
-        "error": False,
-    }
-    assert evidence[1]["output"].endswith("more characters]") and len(evidence[1]["output"]) < 2100
+    # Outputs stay in the run; the summary has names, inputs and whether each failed.
+    assert evidence[0] == {"kind": "command", "name": "Bash", "input": "pytest -q", "error": False}
+    assert all("output" not in item for item in evidence)
     assert evidence[2]["error"] is True and json.loads(evidence[2]["input"]) == {"query": "export"}
     assert evidence[3]["member"] == "tester"
     assert run_evidence({"tools": [{"tool_name": "list_roles", "tool_args": {}}]})[0][0]["input"] is None
-    assert evidence[4]["error"] is True and evidence[6]["output"] == "abc123"
+    assert evidence[4]["error"] is True and evidence[6]["input"] == "main@abc123"
+    long_input = run_evidence({"tools": [{"tool_name": "write", "tool_args": {"text": "x" * 5000}}]})[0][0]["input"]
+    assert long_input.endswith("more characters]") and len(long_input) < 400
 
 
 def test_missing_and_excess_evidence_is_said_plainly():
@@ -85,7 +81,7 @@ def test_missing_and_excess_evidence_is_said_plainly():
 
 
 # ---------------------------------------------------------------------------
-# Task state and its event stream
+# Task state for Super Agent
 # ---------------------------------------------------------------------------
 def task_row(**overrides):
     row = {
@@ -109,44 +105,10 @@ def test_state_reports_waiting_runs_and_recorded_results():
     assert paused["follow_up"]["message"] == "Go with A" and paused["attempt"] == 2
 
     finished = _task_state(
-        task_row(
-            status="in_review",
-            result={"run_id": "r2", "status": "COMPLETED", "content": "Done", "evidence": [{"kind": "command"}]},
-        )
+        task_row(status="in_review", result={"run_id": "r2", "status": "COMPLETED", "content": "Done"})
     )
     assert finished["meaning"] == "finished, waiting for review" and finished["run_status"] == "COMPLETED"
-    assert finished["result"]["evidence_count"] == 1
-
-
-@pytest.mark.asyncio
-async def test_event_stream_sends_changes_and_stops_when_the_client_leaves():
-    states = iter([[{"task_id": "t1", "status": "in_progress"}]] * 2 + [[{"task_id": "t1", "status": "in_review"}]])
-    checks = iter([False, False, False, True])
-
-    async def read():
-        return next(states)
-
-    async def disconnected():
-        return next(checks)
-
-    async def wait(timeout):
-        await asyncio.sleep(0)
-
-    events = [event async for event in _task_event_stream(read, disconnected, wait, keep_alive=3600)]
-    assert [json.loads(event.split("data: ", 1)[1])["status"] for event in events] == ["in_progress", "in_review"]
-    assert all(event.startswith("event: task\n") for event in events)
-
-
-# ---------------------------------------------------------------------------
-# Super Agent hears about Tasks its conversation started
-# ---------------------------------------------------------------------------
-def test_task_updates_name_only_this_conversations_tasks():
-    mine = task_row(status="in_review", result={"run_id": "r2", "status": "COMPLETED", "content": "Root cause found"})
-    other = task_row(id="t2", transitions=[{"attempt": 1, "requested_from": {"session_id": "chat-2"}}])
-    update = _task_updates([mine, other], "chat-1")
-    assert "Task t1" in update and "Task t2" not in update
-    assert "finished, waiting for review" in update and "Root cause found" in update
-    assert _task_updates([other], "chat-1") is None and _task_updates([mine], None) is None
+    assert finished["result"] == {"content": "Done"}
 
 
 # ---------------------------------------------------------------------------
@@ -248,6 +210,31 @@ def test_super_agent_continues_a_task_with_the_persons_words(system):
     assert functions["continue_company_task"].stop_after_tool_call is True
     state = json.loads(asyncio.run(tools.aget_company_task_status(task["id"], _agno_run_context=context())))
     assert state["attempt"] == 2 and state["follow_up"]["message"] == "Go with A" and state["run_status"] == "PENDING"
+    # Evidence is read from the run when asked; attempt 2 is queued and has recorded nothing yet.
+    assert state["evidence"] == [] and state["evidence_note"] == NO_EVIDENCE
+
+
+def test_status_reads_evidence_from_the_run(system, monkeypatch):
+    from agno.os.routers.company.runs import _TaskStarter
+
+    client, db, agent_os, queue = system
+    task = reviewed_task(client, db, queue)
+    run = {"run_data": {"tools": [{"tool_name": "list_roles", "tool_args": {"scope": "billing"}, "result": "secret"}]}}
+
+    class RunStore:
+        def get_run(self, run_id, deserialize=False):
+            assert run_id == task["job_id"] and deserialize is False
+            return run
+
+    monkeypatch.setattr(_TaskStarter, "run_database", lambda self, value: RunStore())
+    state = json.loads(
+        asyncio.run(CompanyTaskTools(agent_os).aget_company_task_status(task["id"], _agno_run_context=context()))
+    )
+    assert state["evidence"] == [
+        {"kind": "tool", "name": "list_roles", "input": '{"scope": "billing"}', "error": False}
+    ]
+    # Outputs never reach the model's context.
+    assert "secret" not in json.dumps(state)
 
 
 def test_a_cancelled_project_refuses_a_reply_before_queueing(system):
@@ -278,43 +265,3 @@ def test_continuing_needs_the_start_routes_grants(system, missing):
     )
     assert reply.startswith("Not continued:"), reply
     assert asyncio.run(queue.store.get_job(task_run_id(task["id"], 2))) is None
-
-
-def test_later_turns_report_this_conversations_tasks_however_busy_the_company_is(system):
-    from agno.company.details import CONVERSATION_TASKS, CONVERSATION_TASKS_KEY, _CompanyInstructions
-
-    client, db, agent_os, queue = system
-    task = reviewed_task(client, db, queue)
-    run_context = context([*SCOPES, "company:read"])
-    run_context.session_state = {}
-    reply = asyncio.run(
-        CompanyTaskTools(agent_os).acontinue_company_task(task["id"], "Go", _agno_run_context=run_context)
-    )
-    assert reply.startswith("Continued")
-    assert run_context.session_state[CONVERSATION_TASKS_KEY] == [task["id"]]
-
-    # More than the old scan's 50 rows are updated after this conversation's Task.
-    for index in range(55):
-        client.post(
-            "/company/tasks",
-            json={"product_id": task["product_id"], "project_id": task["project_id"], "title": f"Other {index}"},
-            headers=headers(),
-        ).raise_for_status()
-    instructions = _CompanyInstructions(db, ["Base"], task_updates=True)
-    assert any(task["id"] in line for line in instructions(run_context))
-    assert any(task["id"] in line for line in asyncio.run(instructions.__acall__(run_context)))
-
-    # Session state can come with a request: an id from another conversation is not reported.
-    elsewhere = context([*SCOPES, "company:read"])
-    elsewhere.session_id = "chat-2"
-    elsewhere.session_state = {CONVERSATION_TASKS_KEY: [task["id"]]}
-    assert not any(task["id"] in line for line in instructions(elsewhere))
-
-    # The list keeps the latest Tasks once, newest last.
-    run_context.session_state[CONVERSATION_TASKS_KEY] = [f"t{index}" for index in range(CONVERSATION_TASKS)]
-    from agno.company.details import _remember_task
-
-    _remember_task(run_context, "t3")
-    _remember_task(run_context, "new")
-    remembered = run_context.session_state[CONVERSATION_TASKS_KEY]
-    assert len(remembered) == CONVERSATION_TASKS and remembered[-2:] == ["t3", "new"] and remembered.count("t3") == 1

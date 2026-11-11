@@ -1,11 +1,12 @@
-"""What a Task attempt actually did, read from its run.
+"""A compact account of what a Task attempt did, read from its run when asked.
 
-The worker's reply says what it found; this records what it ran and produced, from the
-run itself: commands with their output, other tool calls, files, workflow steps and the
-checked-out commit. Nothing is inferred. A run that recorded nothing says so.
+The worker's reply says what it found; this lists what it ran, from the run itself: commands and
+other tool calls with their inputs and whether they failed, workflow steps, files and the
+checked-out commit. Nothing is inferred and nothing is stored: the run stays the one source, read
+through `GET /company/runs/{run_id}`. Outputs are left out so a summary fits a model's context.
 
-This is output evidence for review, kept on the Task result. The Task's own `evidence`
-field is unrelated: it holds the Source intake records a Task was proposed from.
+The Task's own `evidence` field is unrelated: it holds the Source intake records a Task was
+proposed from.
 """
 
 import json
@@ -13,9 +14,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 # Harness tools whose input is a shell command.
 _COMMAND_TOOLS = {"bash": "command", "shell": "command"}
-MAX_ITEMS = 50
-MAX_OUTPUT = 2000
-MAX_INPUT = 500
+MAX_ITEMS = 20
+MAX_INPUT = 300
 NO_EVIDENCE = "The run recorded no commands, tool calls, workflow steps or files."
 
 
@@ -36,7 +36,6 @@ def _tool_item(tool: Dict[str, Any], member: Optional[str] = None) -> Dict[str, 
         "name": name,
         # A tool called without arguments has no input worth showing.
         "input": _clip(command if command is not None else (args or None), MAX_INPUT),
-        "output": _clip(tool.get("result"), MAX_OUTPUT),
         "error": bool(tool.get("tool_call_error")),
     }
     if member:
@@ -45,7 +44,7 @@ def _tool_item(tool: Dict[str, Any], member: Optional[str] = None) -> Dict[str, 
 
 
 def run_evidence(run: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Optional[str]]:
-    """Return the run's recorded evidence, and a note when there is none to show."""
+    """What the run recorded, without outputs, and a note when there is none or some were left out."""
     items: List[Dict[str, Any]] = []
     for tool in run.get("tools") or []:
         if isinstance(tool, dict):
@@ -57,12 +56,7 @@ def run_evidence(run: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Optional[st
     for step in run.get("step_results") or []:
         if isinstance(step, dict):
             items.append(
-                {
-                    "kind": "step",
-                    "name": step.get("step_name") or "step",
-                    "output": _clip(step.get("content"), MAX_OUTPUT),
-                    "error": step.get("success") is False,
-                }
+                {"kind": "step", "name": step.get("step_name") or "step", "error": step.get("success") is False}
             )
     for file in run.get("files") or []:
         if isinstance(file, dict):
@@ -73,8 +67,7 @@ def run_evidence(run: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Optional[st
             {
                 "kind": "checkout",
                 "name": repository.get("url"),
-                "input": repository.get("branch"),
-                "output": repository["commit"],
+                "input": f"{repository.get('branch')}@{repository['commit']}",
             }
         )
     if not items:
@@ -83,9 +76,3 @@ def run_evidence(run: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Optional[st
         return items, None
     note = f"Showing the first {MAX_ITEMS} of {len(items)} recorded items; the rest are in the run."
     return items[:MAX_ITEMS], note
-
-
-def with_evidence(result: Dict[str, Any], run: Dict[str, Any]) -> Dict[str, Any]:
-    """Attach recorded evidence to a completed or failed Task result."""
-    evidence, note = run_evidence(run)
-    return {**result, "evidence": evidence, **({"evidence_note": note} if note else {})}

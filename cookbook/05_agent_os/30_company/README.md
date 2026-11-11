@@ -220,7 +220,7 @@ retaining a known old ID explicitly is necessary for those references.
 | `06_execute_tasks.py` | Durable execution, duplicate starts, ordinary run history and attention with no model call. |
 | `12_task_board.py` | Direct start from Backlog, `last_run`, `allowed_transitions` and a board read by status with no model call. |
 | `13_start_tasks_from_chat.py` | Super Agent starts a human-accepted Task, ends its turn with the receipt, and answers status and unrelated questions while the Task runs. Add `--serve` to try it from the AgentOS UI on `localhost:7777` with a seeded, accepted Task. Live model; PostgreSQL. |
-| `14_continue_tasks_from_chat.py` | A worker stops at a decision with the commands and tools it ran recorded on the Task; the person's answer from chat continues the same Task and worker session. `--serve` adds the UI demo and `GET /company/events` streams the Task's state. Live model; PostgreSQL. |
+| `14_continue_tasks_from_chat.py` | A worker stops at a decision; what it ran is read from its run. The person's answer from chat continues the same Task and worker session. `--serve` adds the UI demo. Live model; PostgreSQL. |
 
 `06_execute_tasks.py` starts an accepted workflow Task through its ordinary run
 route and the durable queue, waits for In review, reads paged history and checks

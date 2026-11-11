@@ -2,11 +2,11 @@
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional, Union
+from typing import Any, Awaitable, Callable, Dict, Optional, Union
 from urllib.parse import quote, unquote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from starlette.responses import JSONResponse, Response, StreamingResponse
+from starlette.responses import JSONResponse, Response
 
 from agno.company.execution import (
     _call,
@@ -52,7 +52,7 @@ class _StartCaller:
     require_accept: Callable[[str], Awaitable[None]]
     # The conversation that asked for the run, recorded on its Task attempt.
     requested_from: Optional[Dict[str, str]] = None
-    # A users reply that the run continues from: message, sender and the attempt it answers.
+    # A user's reply that the run continues from: message, sender and the attempt it answers.
     follow_up: Optional[Dict[str, Any]] = None
 
     @classmethod
@@ -190,41 +190,9 @@ def _task_state(value: Dict[str, Any], ticket: Optional[Dict[str, Any]] = None) 
     result = value.get("result") or {}
     if result and result.get("run_id") == value.get("job_id"):
         content = result.get("content")
-        evidence = result.get("evidence") or []
         state["run_status"] = result.get("status") or state.get("run_status")
-        state["result"] = {
-            "content": content[:1500] if isinstance(content, str) else content,
-            "evidence": [{key: item.get(key) for key in ("kind", "name", "input", "error")} for item in evidence[:10]],
-            "evidence_count": len(evidence),
-            **({"evidence_note": result["evidence_note"]} if result.get("evidence_note") else {}),
-        }
+        state["result"] = {"content": content[:1500] if isinstance(content, str) else content}
     return state
-
-
-async def _task_event_stream(
-    read: Callable[[], Awaitable[List[Dict[str, Any]]]],
-    disconnected: Callable[[], Awaitable[bool]],
-    wait: Callable[[float], Awaitable[None]],
-    interval: float = 5,
-    keep_alive: float = 15,
-) -> AsyncIterator[str]:
-    """Emit each Task's state when it first appears or changes, until the client goes away."""
-    import json
-
-    sent: Dict[str, Any] = {}
-    quiet = 0.0
-    while not await disconnected():
-        for state in await read():
-            if state != sent.get(state["task_id"]):
-                sent[state["task_id"]] = state
-                quiet = 0.0
-                yield f"event: task\ndata: {json.dumps(state, ensure_ascii=False, default=str)}\n\n"
-        started = asyncio.get_running_loop().time()
-        await wait(interval)
-        quiet += asyncio.get_running_loop().time() - started
-        if quiet >= keep_alive:
-            quiet = 0.0
-            yield ": keep-alive\n\n"
 
 
 class _TaskStarter:
@@ -303,6 +271,22 @@ class _TaskStarter:
         queue = getattr(getattr(app, "state", None), "queue_worker", None)
         ticket = await queue.store.get_job(value["job_id"]) if value.get("job_id") and queue is not None else None
         return _task_state(value, ticket)
+
+    async def run_evidence(self, value: Dict[str, Any]) -> Dict[str, Any]:
+        """What the latest attempt's run recorded, read from the run itself and summarized without outputs."""
+        from agno.company.evidence import run_evidence
+
+        if not value.get("job_id"):
+            return {}
+        try:
+            row = await _call(self.run_database(value), "get_run", value["job_id"], deserialize=False)
+        except (HTTPException, _TaskRunUnavailable) as exc:
+            detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+            return {"evidence_note": f"The run could not be read: {detail}"}
+        if row is None:
+            return {"evidence_note": "The run is not recorded yet."}
+        items, note = run_evidence(row.get("run_data") or {})
+        return {"evidence": items, **({"evidence_note": note} if note else {})}
 
     async def continue_task(
         self,
@@ -807,36 +791,6 @@ def get_company_runs_router(os: Any) -> APIRouter:
             raise HTTPException(503, str(exc)) from exc
         except _TaskRunConflict as exc:
             raise HTTPException(409, str(exc)) from exc
-
-    @router.get("/events")
-    async def events(
-        request: Request,
-        task_id: List[str] = Query(..., min_length=1, max_length=50),
-        _: bool = Depends(auth),
-    ):
-        """Stream Task state changes as server-sent events: the current state first, then each change.
-
-        A change on this replica arrives at once; others are read back every few seconds, so the
-        stream needs no shared broker and a reconnecting client always starts from the current state.
-        """
-        from agno.company.events import wait_for_task_change
-
-        get_scoped_user_id(request)
-
-        async def read() -> List[Dict[str, Any]]:
-            states = []
-            for identifier in dict.fromkeys(task_id):
-                try:
-                    states.append(await starter.state(await task(identifier), request.app))
-                except HTTPException as exc:
-                    states.append({"task_id": identifier, "error": exc.detail})
-            return states
-
-        return StreamingResponse(
-            _task_event_stream(read, request.is_disconnected, wait_for_task_change),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        )
 
     @router.get("/attention")
     async def attention(request: Request, product_id: Optional[str] = None, _: bool = Depends(auth)):

@@ -11,7 +11,6 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 
 from agno.agent import Agent
-from agno.company.evidence import NO_EVIDENCE
 from agno.db.base import AsyncBaseDb
 from agno.db.postgres import AsyncPostgresDb, PostgresDb
 from agno.db.sqlite import AsyncSqliteDb, SqliteDb
@@ -3934,14 +3933,7 @@ async def test_automation_reconciles_durable_run_without_resubmission(system, mo
     terminal = status in {"COMPLETED", "ERROR", "CANCELLED"}
     assert saved["status"] == ("in_review" if status == "COMPLETED" else "in_progress")
     assert saved["result"] == (
-        {
-            "run_id": run.run_id,
-            "status": status,
-            "content": run.content,
-            "content_type": run.content_type,
-            "evidence": [],
-            "evidence_note": NO_EVIDENCE,
-        }
+        {"run_id": run.run_id, "status": status, "content": run.content, "content_type": run.content_type}
         if terminal
         else None
     )

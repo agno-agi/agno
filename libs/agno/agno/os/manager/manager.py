@@ -70,10 +70,7 @@ class _ManagerInstructions:
 
         self.base = base
         self.runner = runner
-        # Super Agent hears about Tasks its conversations started; Mini Agent does not.
-        self.company: Any = (
-            _company_instructions(company_db, base, task_updates=True) if company_db is not None else None
-        )
+        self.company: Any = _company_instructions(company_db, base) if company_db is not None else None
 
     def __copy__(self) -> "_ManagerInstructions":
         # Holds no run state. A run copy of the team keeps this object, so the copy is
