@@ -138,6 +138,19 @@ class _TaskRunTools(StudioRunnerTools):
         return super()._require_no_cycle(running, inherited, component_type, component_id)
 
     @staticmethod
+    def _run_payload(id_key: str, component_id: str, run_output: Any) -> str:
+        payload = StudioRunnerTools._run_payload(id_key, component_id, run_output)
+        result = json.loads(payload)
+        if result.get("status") != "PAUSED":
+            return payload
+        # A run that a Task started cannot continue outside the Task, and nobody answers inside it.
+        result["blocker"] = (
+            f"{component_id} paused for a person's confirmation. A Task run is unattended, so this run "
+            "cannot continue in this Task. Do not run it again. Report it as the blocker, with what it asked for."
+        )
+        return json.dumps(result)
+
+    @staticmethod
     def _authorized_listing(payload: str, family: str, run_context: Any) -> str:
         refusal = _task_run_refusal()
         if refusal is not None:

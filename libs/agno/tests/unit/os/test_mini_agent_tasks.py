@@ -24,6 +24,11 @@ from agno.os.authz import Authorization
 from agno.os.job_queue import QueueWorker
 from agno.registry._reserved import BUILDER_ID, MANAGER_TEAM_ID, MINI_AGENT_ID
 from agno.run.authorization import AUTHORIZATION_HEADER, authorization_scope
+from agno.team import Team
+from agno.tools import tool
+from agno.tools.studio_runner import StudioRunnerTools
+from agno.workflow import Step, Workflow
+from agno.workflow.types import HumanReview
 
 pytestmark = pytest.mark.usefixtures("unavailable_manager_docs")
 
@@ -88,6 +93,12 @@ class ScriptedModel(Model):
         return response
 
 
+@tool(requires_confirmation=True)
+def publish_notes() -> str:
+    """Publish the notes."""
+    return "published"
+
+
 def headers(scopes=None, user="alice"):
     token = jwt.encode(
         {
@@ -103,13 +114,40 @@ def headers(scopes=None, user="alice"):
 
 
 class System:
-    def __init__(self, tmp_path):
+    def __init__(self, tmp_path, pausing=None):
         self.db = SqliteDb(db_file=str(tmp_path / "company.db"))
         self.writer = Agent(id="writer", name="Writer", model=ScriptedModel(), db=self.db)
+        # A component that pauses for a confirmation, then tries to run the writer.
+        self.helper = Agent(
+            id="helper",
+            name="Helper",
+            db=self.db,
+            model=ScriptedModel([("publish_notes", {}), ("run_agent", {"agent_id": "writer", "message": "Write"})]),
+            tools=[publish_notes, StudioRunnerTools(include_agents=[self.writer])],
+        )
+        delegate = ("delegate_task_to_member", {"member_id": "helper", "task": "Publish the notes"})
+        self.crew = Team(id="crew", name="Crew", db=self.db, members=[self.helper], model=ScriptedModel([delegate]))
+        # A workflow that pauses for a confirmation before a step that tries to run the writer.
+        self.stepper = Agent(
+            id="stepper",
+            name="Stepper",
+            db=self.db,
+            model=ScriptedModel([("run_agent", {"agent_id": "writer", "message": "Write"})]),
+            tools=[StudioRunnerTools(include_agents=[self.writer])],
+        )
+        review = HumanReview(requires_confirmation=True)
+        self.pipeline = Workflow(
+            id="pipeline",
+            name="Pipeline",
+            db=self.db,
+            steps=[Step(name="publish", agent=self.stepper, human_review=review)],
+        )
         self.os = AgentOS(
             id="mini-agent-tasks",
             db=self.db,
-            agents=[self.writer],
+            agents=[self.writer, self.helper] if pausing == "agent" else [self.writer],
+            teams=[self.crew] if pausing == "team" else None,
+            workflows=[self.pipeline] if pausing == "workflow" else None,
             manager=OSManager(model=ScriptedModel()),
             company=CompanyConfig(model=ScriptedModel()),
             telemetry=False,
@@ -118,6 +156,7 @@ class System:
         self.mini = self.os._mini_agent
         self.app = self.os.get_app()
         components = {MINI_AGENT_ID: self.mini, "writer": self.writer, MANAGER_TEAM_ID: self.os.manager}
+        components.update(helper=self.helper, crew=self.crew, pipeline=self.pipeline)
         self.queue = QueueWorker(
             InMemoryQueueStore(),
             lambda kind, id, scope=None: components.get(id),
@@ -577,6 +616,128 @@ def test_a_task_run_lists_components_in_a_deployment_without_authorization(syste
         assert json.loads(teams).get("teams", []) == []
 
 
+@pytest.mark.parametrize("kind", ["agent", "team"])
+def test_a_run_a_task_started_cannot_continue_outside_the_task(tmp_path, kind):
+    system = System(tmp_path, pausing=kind)
+    try:
+        component = "helper" if kind == "agent" else "crew"
+        # Neither the accepting person nor the person who continues may run the writer.
+        scopes = [scope for scope in SCOPES if scope != "agents:writer:run"]
+        scopes += [f"{kind}s:{component}:run", f"{kind}s:{component}:read"]
+        proposal = system.proposal()
+        system.accept(proposal["id"], scopes=scopes)
+        saved = system.execute(
+            proposal["id"], [(f"run_{kind}", {f"{kind}_id": component, "message": "Publish"})], scopes=scopes
+        )
+        paused = json.loads(saved["result"]["content"])
+        assert paused["status"] == "PAUSED" and system.writer.model.turns == 0
+        # Mini Agent is told this is a blocker, and the Task records the paused run.
+        assert "cannot continue in this Task" in paused["blocker"] and component in paused["blocker"]
+        assert [(entry["id"], entry["status"]) for entry in saved["result"]["invoked"]] == [(component, "PAUSED")]
+
+        requirements = paused["requirements"]
+        for requirement in requirements:
+            requirement["confirmation"] = True
+            requirement["tool_execution"]["confirmed"] = True
+        answer = (
+            {"tools": json.dumps([requirement["tool_execution"] for requirement in requirements])}
+            if kind == "agent"
+            else {"requirements": json.dumps(requirements)}
+        )
+        continued = system.client.post(
+            f"/{kind}s/{component}/runs/{paused['run_id']}/continue",
+            data={**answer, "session_id": paused["session_id"], "stream": "false"},
+            headers=headers(scopes),
+        )
+        assert continued.status_code == 200, continued.text
+        assert system.writer.model.turns == 0, continued.text
+        assert "published" not in str(continued.json().get("content"))
+    finally:
+        system.db.close()
+
+
+@pytest.mark.parametrize("door", ["http", "websocket", "service"])
+def test_a_workflow_a_task_started_cannot_continue_outside_the_task(tmp_path, door):
+    from agno.os.routers.workflows.router import handle_workflow_continue_via_websocket
+    from agno.os.services.runs import continue_paused_run
+
+    system = System(tmp_path, pausing="workflow")
+    try:
+        scopes = [scope for scope in SCOPES if scope != "agents:writer:run"]
+        scopes += ["workflows:pipeline:run", "workflows:pipeline:read"]
+        proposal = system.proposal()
+        system.accept(proposal["id"], scopes=scopes)
+        saved = system.execute(
+            proposal["id"], [("run_workflow", {"workflow_id": "pipeline", "message": "Publish"})], scopes=scopes
+        )
+        paused = json.loads(saved["result"]["content"])
+        assert paused["status"] == "PAUSED", paused
+        assert "cannot continue in this Task" in paused["blocker"]
+        run_id, session_id = paused["run_id"], paused["session_id"]
+        stored = system.pipeline.get_run_output(run_id, session_id=session_id)
+        for requirement in stored.step_requirements:
+            requirement.confirm()
+        requirements = [requirement.to_dict() for requirement in stored.step_requirements]
+        refusal = "started by a Company Task and cannot continue outside it"
+
+        if door == "http":
+            continued = system.client.post(
+                f"/workflows/pipeline/runs/{run_id}/continue",
+                data={"step_requirements": json.dumps(requirements), "session_id": session_id, "stream": "false"},
+                headers=headers(scopes),
+            )
+            assert continued.status_code == 409 and refusal in continued.text, continued.text
+        elif door == "websocket":
+            sent = []
+
+            class Socket:
+                async def send_text(self, text):
+                    sent.append(json.loads(text))
+
+            message = {
+                "workflow_id": "pipeline",
+                "run_id": run_id,
+                "session_id": session_id,
+                "step_requirements": requirements,
+            }
+            asyncio.run(handle_workflow_continue_via_websocket(Socket(), message, system.os))
+            assert [frame["event"] for frame in sent] == ["error"] and refusal in sent[0]["error"], sent
+        else:
+            # The service behind the MCP continue_run tool.
+            with pytest.raises(PermissionError, match=refusal):
+                asyncio.run(
+                    continue_paused_run(
+                        system.pipeline, run_id=run_id, session_id=session_id, requirements=requirements
+                    )
+                )
+        assert system.writer.model.turns == 0
+        assert system.pipeline.get_run_output(run_id, session_id=session_id).is_paused
+    finally:
+        system.db.close()
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_a_component_that_pauses_in_a_task_is_reported_as_a_blocker(tmp_path, use_async):
+    system = System(tmp_path, pausing="agent")
+    try:
+        tools = system.mini.tools.run_tools[0]
+        with authorization_scope(lambda: task_authority()):
+            if use_async:
+                paused = asyncio.run(tools.arun_agent("helper", "Publish"))
+                finished = asyncio.run(tools.arun_agent("writer", "Write"))
+            else:
+                paused = tools.run_agent("helper", "Publish")
+                finished = tools.run_agent("writer", "Write")
+        paused, finished = json.loads(paused), json.loads(finished)
+        assert paused["status"] == "PAUSED" and "helper paused for a person's confirmation" in paused["blocker"]
+        assert "cannot continue in this Task" in paused["blocker"]
+        assert paused["requirements"][0]["tool_execution"]["tool_name"] == "publish_notes"
+        # A run that finished carries no blocker.
+        assert finished["status"] == "COMPLETED" and "blocker" not in finished
+    finally:
+        system.db.close()
+
+
 # ----------------------------------------------------------------- a Task a policy accepted
 
 
@@ -867,8 +1028,6 @@ def test_invoked_components_are_read_from_the_run_tool_calls():
 
 
 def test_a_run_that_was_not_allowed_is_refused_and_one_that_failed_is_failed(system):
-    from agno.tools.studio_runner import StudioRunnerTools
-
     def recorded(tool, arguments, reply):
         return _invoked_components({"tools": [{"tool_name": tool, "tool_args": arguments, "result": reply}]})[0]
 
