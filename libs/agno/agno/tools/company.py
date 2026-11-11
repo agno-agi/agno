@@ -760,8 +760,9 @@ class CompanyTools(Toolkit):
         Args:
             executor_type: Suggested executor kind; null leaves selection to acceptance.
             executor_id: Suggested executor ID; null leaves selection to acceptance.
-            brief: Task brief, written for the executor: the outcome, the deliverable, how it is checked and any
-                restrictions the person gave. Null leaves it unspecified.
+            brief: Task brief. A brief the person dictated is saved in their words. Otherwise write it for the
+                executor: the outcome, the deliverable, how it is checked and any restrictions the person gave.
+                Null leaves it unspecified.
             project_id: Required Project ID within the Product. Propose a Project first when none fits.
         """
         executor_type = _empty_to_none(executor_type)
@@ -1053,8 +1054,9 @@ class CompanyTools(Toolkit):
         Args:
             executor_type: Suggested executor kind; null leaves selection to acceptance.
             executor_id: Suggested executor ID; null leaves selection to acceptance.
-            brief: Task brief, written for the executor: the outcome, the deliverable, how it is checked and any
-                restrictions the person gave. Null leaves it unspecified.
+            brief: Task brief. A brief the person dictated is saved in their words. Otherwise write it for the
+                executor: the outcome, the deliverable, how it is checked and any restrictions the person gave.
+                Null leaves it unspecified.
             project_id: Required Project ID within the Product. Propose a Project first when none fits.
         """
         executor_type = _empty_to_none(executor_type)
