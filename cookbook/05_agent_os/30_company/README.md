@@ -744,8 +744,8 @@ the IDs below with real records and PATCH this body:
 ```json
 {
   "auto_accept": {
-    "executor_type": "agent",
-    "executor_id": "writer",
+    "default_executor": "writer",
+    "executors": ["writer"],
     "source_ids": ["release-notes"],
     "work_scope": {
       "product_ids": ["documentation"],
@@ -890,7 +890,10 @@ retaining a known old ID explicitly is necessary for those references.
 Routine(name="maintenance", instructions=MAINTENANCE, auto_accept=True)
 
 # With a named worker
-Routine(..., auto_accept=AutoAccept(executor_type="agent", executor_id="codex-engineer"))
+Routine(..., auto_accept=AutoAccept(default_executor="codex-engineer"))
+
+# With a named worker, and a list of the executors a proposal may suggest
+Routine(..., auto_accept=AutoAccept(default_executor="codex-engineer", executors=["writer"]))
 ```
 
 `auto_accept=True` means: a Project this Routine proposed is approved, its Tasks
@@ -903,7 +906,8 @@ Every field has a default:
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `executor_type`, `executor_id` | agent `miniagent` | Where a Task runs when its proposal suggests no executor. Give both, or leave both out. |
+| `default_executor` | `miniagent` | ID of the agent, team or workflow that runs a Task whose proposal suggests no executor. |
+| `executors` | none | IDs of the executors a proposal may suggest. Left out, any registered executor is accepted. Set, a proposal that names another waits for a person. Mini Agent and `default_executor` are always allowed and need not be listed. |
 | `approve_projects` | `true` | Approve a Project this Routine proposed, when one of its Tasks is accepted. With `false`, a person approves each Project and the policy accepts and runs its Tasks. |
 | `max_open` | `5` | At most this many of the Routine's Tasks are Ready, In progress or In review at once. Applies when `limits` is not set. |
 | `limits` | none | Optional lifetime count and expiry, as before. A policy without it has no expiry: you turn it off. |
@@ -919,10 +923,24 @@ Every field has a default:
   and the name. Only such a Project is approved, and only at the moment one of
   its Tasks is accepted. A Project a person or another Routine proposed, or one
   renamed since, waits for a person.
+- **Executors.** A Task runs on the executor its proposal suggests, or on
+  `default_executor` when it suggests none. The Task's acceptance records which:
+  `executor_chosen_by` is `proposal` or `default`. With no `executors` list, any
+  registered component a proposal names can be chosen, so a Source that a
+  Routine reads can influence where its Tasks run; set `executors` to limit
+  that. Every executor a policy names must be registered and pass the executor
+  checks, and the person who sets the policy must be allowed to run each one.
+  Super Agent and Platform Builder are refused.
+- **IDs only.** A policy names executors by ID, and the kind (agent, team or
+  workflow) is read from the registry. Studio components cannot share an ID
+  across kinds. Components defined in code can; a policy that names such an ID
+  is refused, never guessed. Give each component its own ID.
 - **A Task on Mini Agent** that a policy accepted holds no run tools. Work that
   needs a real worker names it as the executor, in the policy or on the proposal.
-  Any registered component a proposal names can be chosen this way, so a Source
-  that a Routine reads can influence where its Tasks run.
+- **A policy saved with `executor_type` and `executor_id`** keeps working. It
+  allows that one executor and uses it by default, approves no Project, and keeps
+  its version and its acceptance count. The API still reads those two fields and
+  stores them as `default_executor` and a list of that one ID.
 - **Where it is set.** In a Routine declaration in code or YAML, through
   `POST` or `PATCH /company/routines` (`"auto_accept": true` or an object), from
   the UI, or from chat. A declaration applies when the Routine is first

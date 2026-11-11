@@ -2,10 +2,10 @@
 
 import asyncio
 import json
-import time
 
 import pytest
 
+from agno.agent import Agent
 from agno.company import CompanyManager, Product, Routine
 from agno.company.bootstrap import arehydrate_product
 from agno.company.declarations import AutoAccept
@@ -14,7 +14,9 @@ from agno.company.routines import (
     _DECLARED,
     _check_automatic_policy,
     _CompanyScheduleExecutor,
+    _executor_kind,
     _open_tasks,
+    _policy_executors,
     _policy_fingerprint,
     _RoutineAuthorization,
 )
@@ -26,6 +28,7 @@ from agno.registry._reserved import BUILDER_ID, MANAGER_TEAM_ID, MINI_AGENT_ID
 from agno.run import RunContext
 from agno.run.authorization import AUTHORIZATION_KEY, RunAuthorization, authorization_scope
 from agno.scheduler import ScheduleManager
+from agno.team import Team
 from agno.tools.company import CompanyTools
 from agno.tools.studio import StudioTools
 from tests.unit.os.test_mini_agent_tasks import RUN_TOOLS, ScriptedModel, System, headers
@@ -134,8 +137,8 @@ def test_one_line_takes_a_routines_work_to_in_review_with_no_person(open_system)
     payload = open_system.stored(routine_id)
     assert payload["_agno_company_acceptance"] == _DECLARED
     assert payload["metadata"]["auto_accept"] == {
-        "executor_type": "agent",
-        "executor_id": MINI_AGENT_ID,
+        "default_executor": MINI_AGENT_ID,
+        "executors": None,
         "source_ids": None,
         "work_scope": None,
         "required_checks": ["executor_registered"],
@@ -170,7 +173,7 @@ def test_one_line_takes_a_routines_work_to_in_review_with_no_person(open_system)
     version = _policy_fingerprint(open_system.db.get_schedule(routine_id))
     receipt = {"routine_id": routine_id, "policy": version, "declared": True}
     assert receipts(open_system.db.get_project(project["id"])) == [("active", None, receipt)]
-    assert receipts(review) == [("ready", None, {**receipt, "executor_chosen_by": "policy"})]
+    assert receipts(review) == [("ready", None, {**receipt, "executor_chosen_by": "default"})]
     decisions = open_system.manager.auto_accept_status(product_id)["automatic_decisions"]
     assert sorted((item["record"], item["decision"]) for item in decisions) == [
         ("project", "approved"),
@@ -197,8 +200,8 @@ def test_only_the_deployments_own_declarations_carry_a_policy(system):
     body = {"name": "Setup", "routines": [{"name": "intake", "instructions": "Read.", "auto_accept": True}]}
     setup = system.client.post("/company/setup", json=body, headers=headers([*SCOPES, "sources:write"]))
     assert setup.status_code == 422 and "Authorize automatic acceptance through the Routine API" in setup.text
-    with pytest.raises(ValueError, match="missing from the registry"):
-        system.declare(auto_accept=AutoAccept(executor_type="agent", executor_id="missing"), product="Bad")
+    with pytest.raises(ValueError, match="'missing' is not a registered agent, team or workflow"):
+        system.declare(auto_accept=AutoAccept(default_executor="missing"), product="Bad")
 
 
 def test_a_declared_policy_acts_only_where_authorization_is_off(system):
@@ -234,7 +237,123 @@ def test_a_task_runs_on_the_executor_its_proposal_suggests(open_system):
     on_writer, on_default = open_system.db.get_task(suggested["id"]), open_system.db.get_task(plain["id"])
     assert on_writer["executor_id"] == "writer" and on_default["executor_id"] == MINI_AGENT_ID
     assert receipts(on_writer)[0][2]["executor_chosen_by"] == "proposal"
-    assert receipts(on_default)[0][2]["executor_chosen_by"] == "policy"
+    assert receipts(on_default)[0][2]["executor_chosen_by"] == "default"
+
+
+def test_a_named_default_runs_a_task_whose_proposal_suggests_none(open_system):
+    product_id, routine_id = open_system.declare(auto_accept=AutoAccept(default_executor="writer"))
+    assert open_system.stored(routine_id)["metadata"]["auto_accept"]["executors"] is None
+    _, plain = open_system.proposes(product_id, routine_id, title="Suggests nothing")
+    _, mini = open_system.proposes(
+        product_id, routine_id, title="Suggests Mini Agent", executor=("agent", MINI_AGENT_ID)
+    )
+    open_system.tick()
+    on_default, on_mini = open_system.db.get_task(plain["id"]), open_system.db.get_task(mini["id"])
+    assert (on_default["executor_type"], on_default["executor_id"]) == ("agent", "writer")
+    assert receipts(on_default)[0][2]["executor_chosen_by"] == "default"
+    assert on_mini["executor_id"] == MINI_AGENT_ID and receipts(on_mini)[0][2]["executor_chosen_by"] == "proposal"
+
+
+def test_a_list_of_executors_limits_what_a_proposal_may_suggest(open_system):
+    editor = Agent(id="editor", name="Editor", model=ScriptedModel(), db=open_system.db)
+    reviewer = Agent(id="reviewer", name="Reviewer", model=ScriptedModel(), db=open_system.db)
+    open_system.os.registry.agents.extend([editor, reviewer])
+    policy = AutoAccept(default_executor="writer", executors=["editor"], max_open=10)
+    product_id, routine_id = open_system.declare(auto_accept=policy)
+    suggests = {
+        name: open_system.proposes(product_id, routine_id, title=name, executor=executor)[1]["id"]
+        for name, executor in {
+            "listed": ("agent", "editor"),
+            "default": ("agent", "writer"),
+            "mini": ("agent", MINI_AGENT_ID),
+            "none": (None, None),
+            "unlisted": ("agent", "reviewer"),
+            "wrong kind": ("team", "editor"),
+        }.items()
+    }
+    outcomes = open_system.tick()
+    ran_on = {name: open_system.db.get_task(task_id)["executor_id"] for name, task_id in suggests.items()}
+    assert ran_on == {
+        "listed": "editor",
+        "default": "writer",
+        "mini": MINI_AGENT_ID,
+        "none": "writer",
+        "unlisted": "reviewer",
+        "wrong kind": "editor",
+    }
+    status = {name: open_system.db.get_task(task_id)["status"] for name, task_id in suggests.items()}
+    assert [name for name, value in status.items() if value == "backlog"] == ["unlisted", "wrong kind"], outcomes
+    # A proposal that names an executor outside the list waits for a person.
+    for name in ("unlisted", "wrong kind"):
+        reason = open_system.outcome(outcomes, suggests[name])["reason"]
+        assert "outside automatic acceptance authorization" in reason
+    chosen = {
+        name: receipts(open_system.db.get_task(task_id))[0][2]["executor_chosen_by"]
+        for name, task_id in suggests.items()
+        if status[name] != "backlog"
+    }
+    assert chosen == {"listed": "proposal", "default": "proposal", "mini": "proposal", "none": "default"}
+
+
+@pytest.mark.parametrize("field", ["default_executor", "executors"])
+@pytest.mark.parametrize("executor_id", [MANAGER_TEAM_ID, BUILDER_ID, "missing", "no-database"])
+def test_every_executor_a_policy_names_passes_the_executor_checks(system, field, executor_id):
+    # Super Agent is refused even where a registry lists it, and an executor needs a database for durable runs.
+    system.os.registry.teams.append(system.os.manager)
+    system.os.registry.agents.append(Agent(id="no-database", name="No database", model=ScriptedModel()))
+    product_id, routine_id = system.declare(auto_accept=False)
+    before = system.db.get_schedule(routine_id)
+    policy = {field: executor_id if field == "default_executor" else [executor_id]}
+    scopes = [*SCOPES, "teams:*:run", "agents:*:run"]
+    with pytest.raises(ValueError):
+        system.declare(auto_accept=AutoAccept(**policy), product="Bad")
+    patched = system.client.patch(
+        f"/company/routines/{routine_id}", json={"auto_accept": policy}, headers=headers(scopes)
+    )
+    assert patched.status_code == 422, patched.text
+    assert system.api_routine(product_id, policy, scopes=scopes, name="second").status_code == 422
+    assert system.db.get_schedule(routine_id) == before
+
+
+def test_the_author_must_be_allowed_to_run_each_executor_the_policy_names(system):
+    product_id, routine_id = system.declare(auto_accept=False)
+    path = f"/company/routines/{routine_id}"
+    without = [scope for scope in SCOPES if scope != "agents:writer:run"]
+    assert "agents:writer:run" in SCOPES and f"agents:{MINI_AGENT_ID}:run" in without
+    for policy in ({"default_executor": "writer"}, {"executors": ["writer"]}):
+        refused = system.client.patch(path, json={"auto_accept": policy}, headers=headers(without))
+        assert refused.status_code == 403, refused.text
+        assert system.stored(routine_id)["metadata"]["auto_accept"] is False
+        assert system.client.patch(path, json={"auto_accept": policy}, headers=headers(SCOPES)).status_code == 200
+        assert system.client.patch(path, json={"auto_accept": False}, headers=headers(SCOPES)).status_code == 200
+
+
+def test_an_executor_id_that_names_two_components_is_refused_not_guessed(system):
+    # Code-defined components are checked for duplicate IDs within a kind only, so an agent and a team can share one.
+    system.os.registry.teams.append(Team(id="writer", name="Writers", members=[system.writer], model=ScriptedModel()))
+    assert _executor_kind(system.os.registry, MINI_AGENT_ID) == "agent"
+    with pytest.raises(ValueError, match="is shared by agent and team. Give each its own ID"):
+        _executor_kind(system.os.registry, "writer")
+    product_id, routine_id = system.declare(auto_accept=False)
+    for policy in ({"default_executor": "writer"}, {"executors": ["writer"]}):
+        patched = system.client.patch(
+            f"/company/routines/{routine_id}", json={"auto_accept": policy}, headers=headers(SCOPES)
+        )
+        assert patched.status_code == 422 and "Give each its own ID" in patched.text, patched.text
+    assert "Give each its own ID" in turn_on(system, routine_id, executor="writer")
+    assert system.stored(routine_id)["metadata"]["auto_accept"] is False
+
+
+def test_a_studio_published_executor_is_named_by_its_id(system, monkeypatch):
+    published = Team(id="editors", name="Editors", members=[system.writer], model=ScriptedModel(), db=system.db)
+    system.os.registry.component_db = system.db
+    monkeypatch.setattr(
+        "agno.team.team.get_team_by_id", lambda db, id, **kwargs: published if id == "editors" else None
+    )
+    monkeypatch.setattr("agno.agent.agent.get_agent_by_id", lambda db, id, **kwargs: None)
+    monkeypatch.setattr("agno.workflow.workflow.get_workflow_by_id", lambda db, id, **kwargs: None)
+    assert _executor_kind(system.os.registry, "editors") == "team"
+    assert _policy_executors(system.os.registry, AutoAccept(default_executor="editors")) == ["/teams/editors/runs"]
 
 
 @pytest.mark.parametrize("executor", [("team", MANAGER_TEAM_ID), ("agent", BUILDER_ID), ("agent", "missing")])
@@ -247,19 +366,19 @@ def test_a_suggested_executor_that_cannot_run_the_task_waits_for_a_person(open_s
 
 
 def legacy(system, product_id, executor_id="writer"):
-    """A Routine whose policy was saved through the API before approve_projects existed."""
-    policy = {
-        "executor_type": "agent",
-        "executor_id": executor_id,
-        "limits": {"max_acceptances": 5, "expires_at": FUTURE},
-    }
-    response = system.api_routine(product_id, {**policy, "approve_projects": False}, name="legacy")
+    """A Routine whose policy was saved through the API when a policy named executor_type and executor_id."""
+    limits = {"max_acceptances": 5, "expires_at": FUTURE}
+    response = system.api_routine(product_id, {"default_executor": executor_id, "limits": limits}, name="legacy")
     assert response.status_code == 201, response.text
     row = system.db.get_schedule(response.json()["id"])
     saved = {
-        key: value
-        for key, value in row["payload"]["metadata"]["auto_accept"].items()
-        if key not in {"approve_projects", "max_open"}
+        "executor_type": "agent",
+        "executor_id": executor_id,
+        "source_ids": None,
+        "work_scope": None,
+        "required_checks": ["executor_registered"],
+        "limits": limits,
+        "complete_projects": False,
     }
     payload = {**row["payload"], "metadata": {**row["payload"]["metadata"], "auto_accept": saved}}
     system.db.update_schedule(row["id"], payload=payload)
@@ -284,14 +403,30 @@ def test_a_policy_saved_before_this_change_keeps_its_rules(system):
     )
     assert approved.status_code == 200, approved.text
     outcomes = system.tick()
-    # Its executor is fixed: a proposal that suggests another waits for a person.
+    # It allows its one executor: a proposal that suggests another, Mini Agent included, waits for a person.
     assert "outside automatic acceptance authorization" in system.outcome(outcomes, other["id"])["reason"]
     accepted = system.db.get_task(task["id"])
-    assert accepted["executor_id"] == "writer" and accepted["transitions"][-2]["auto_accept"]["max_acceptances"] == 5
+    assert (accepted["executor_type"], accepted["executor_id"]) == ("agent", "writer")
+    receipt = accepted["transitions"][-2]["auto_accept"]
+    assert receipt["max_acceptances"] == 5 and receipt["executor_chosen_by"] == "default"
+    # It reads as a default and a list of that one executor.
+    read = AutoAccept.model_validate(system.stored(routine_id)["metadata"]["auto_accept"])
+    assert (read.default_executor, read.executors) == ("writer", ["writer"])
+
+
+def test_a_policy_sent_with_executor_type_and_executor_id_is_read_as_a_default_and_a_list(system):
+    product_id, routine_id = system.declare(auto_accept=False)
+    path = f"/company/routines/{routine_id}"
+    sent = {"executor_type": "agent", "executor_id": "writer"}
+    assert system.client.patch(path, json={"auto_accept": sent}, headers=headers(SCOPES)).status_code == 200
+    stored = system.stored(routine_id)["metadata"]["auto_accept"]
+    assert (stored["default_executor"], stored["executors"]) == ("writer", ["writer"]) and "executor_type" not in stored
+    for mixed in ({**sent, "default_executor": "writer"}, {"executor_id": "writer"}):
+        assert system.client.patch(path, json={"auto_accept": mixed}, headers=headers(SCOPES)).status_code == 422
 
 
 def test_a_policy_saved_before_this_change_keeps_its_version():
-    # Versions computed on main, before approve_projects and max_open existed.
+    # Versions computed on main, where a policy named executor_type and executor_id.
     saved = [
         (
             {"executor_type": "agent", "executor_id": "writer", "limits": {"expires_at": FUTURE}},
@@ -547,10 +682,10 @@ def chat(scopes=None, user="alice", **authority_fields):
     return RunContext(run_id="chat-run", session_id="chat-session", user_id=user, authorization=authority)
 
 
-def turn_on(system, routine_id, context=None, routine="intake", product="Docs", executor=("agent", MINI_AGENT_ID)):
+def turn_on(system, routine_id, context=None, routine="intake", product="Docs", executor=MINI_AGENT_ID):
     tools = CompanyTaskTools(system.os)
     call = tools.aturn_on_routine_auto_accept(
-        routine, product, executor[0], executor[1], routine_id, _agno_run_context=context or chat()
+        routine, product, executor, routine_id, _agno_run_context=context or chat()
     )
     return asyncio.run(call)
 
@@ -566,7 +701,7 @@ def test_turning_auto_accept_on_pauses_and_turning_it_off_does_not(system):
     assert not functions["turn_off_routine_auto_accept"].requires_confirmation
     functions["turn_on_routine_auto_accept"].process_entrypoint()
     shown = set(functions["turn_on_routine_auto_accept"].parameters["required"])
-    assert shown == {"routine_name", "product_name", "executor_type", "executor_id", "routine_id"}
+    assert shown == {"routine_name", "product_name", "default_executor", "routine_id"}
 
 
 def test_super_agent_pauses_before_auto_accept_is_turned_on(system):
@@ -575,8 +710,7 @@ def test_super_agent_pauses_before_auto_accept_is_turned_on(system):
     arguments = {
         "routine_name": "intake",
         "product_name": "Docs",
-        "executor_type": "agent",
-        "executor_id": "writer",
+        "default_executor": "writer",
         "routine_id": routine_id,
     }
     system.os.manager.model = ScriptedModel([("turn_on_routine_auto_accept", arguments)])
@@ -590,7 +724,8 @@ def test_super_agent_pauses_before_auto_accept_is_turned_on(system):
         result = asyncio.run(system.os.manager.acontinue_run(run_response=paused, user_id="alice"))
     assert "Auto-accept is on for Routine 'intake'" in str(result.content), result.content
     payload = system.stored(routine_id)
-    assert payload["metadata"]["auto_accept"]["executor_id"] == "writer"
+    policy = payload["metadata"]["auto_accept"]
+    assert (policy["default_executor"], policy["executors"]) == ("writer", None)
     # A policy a person turns on runs under that person's saved permissions, not as the deployment.
     grant = payload["_agno_company_acceptance"]
     assert grant["user_id"] == "alice" and grant[AUTHORIZATION_KEY]["context"]["principal_id"] == "alice"
@@ -613,15 +748,18 @@ def test_auto_accept_is_turned_on_only_for_the_routine_the_person_confirmed(syst
     assert "belongs to Product 'Docs'" in turn_on(system, routine_id, product="Other")
     assert "is named 'intake'" in turn_off(system, routine_id, routine="other")
     assert "Routine not found" in turn_on(system, "missing")
-    assert "leave both out to use Mini Agent" in turn_on(system, routine_id, executor=("agent", None))
-    assert turn_on(
-        system, routine_id, chat(scopes=[*SCOPES, "teams:*:run"]), executor=("team", MANAGER_TEAM_ID)
-    ).startswith("Not done")
+    assert "'missing' is not a registered" in turn_on(system, routine_id, executor="missing")
+    assert turn_on(system, routine_id, chat(scopes=[*SCOPES, "teams:*:run"]), executor=MANAGER_TEAM_ID).startswith(
+        "Not done"
+    )
     assert system.db.get_schedule(routine_id) == before
     tools = CompanyTaskTools(system.os)
-    assert "asynchronous run" in tools.turn_on_routine_auto_accept("intake", "Docs", "agent", MINI_AGENT_ID, routine_id)
+    assert "asynchronous run" in tools.turn_on_routine_auto_accept("intake", "Docs", MINI_AGENT_ID, routine_id)
     assert "asynchronous run" in tools.turn_off_routine_auto_accept("intake", routine_id)
     assert system.db.get_schedule(routine_id) == before
+    # A schedule listing shows the Routine under its Product's ID. That name is the same Routine.
+    assert turn_on(system, routine_id, routine="docs.intake").startswith("Auto-accept is on for Routine 'intake'")
+    assert turn_off(system, routine_id, routine="docs.intake").startswith("Auto-accept is off")
 
 
 PATCH_GRANTS = [

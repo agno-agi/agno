@@ -418,7 +418,7 @@ def test_auto_accept_human_scope_and_executor_fence(system):
     # The generic schedule surface cannot mutate a Company Routine. The Company
     # surface validates the executor before stamping the human's authority.
     raw = db.get_schedule(routine["id"])["payload"]
-    raw["metadata"]["auto_accept"]["executor_id"] = "another-agent"
+    raw["metadata"]["auto_accept"].update(default_executor="another-agent", executors=["another-agent"])
     assert (
         client.patch(f"/schedules/{routine['id']}", json={"payload": raw}, headers=headers(scopes=scopes)).status_code
         == 409
@@ -662,7 +662,8 @@ async def test_policy_defaults_expiry_and_content_fingerprint(system):
         payload["metadata"]["auto_accept"] = invalid
         assert client.patch("/schedules/" + routine["id"], json={"payload": payload}, headers=fresh).status_code == 409
     for key, value in (
-        ("executor_id", "different"),
+        ("default_executor", "different"),
+        ("executors", None),
         ("complete_projects", True),
         ("source_ids", ["source"]),
         ("work_scope", {"project_ids": ["project"]}),

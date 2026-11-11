@@ -14,9 +14,10 @@ Each automatic step is on the record with the Routine, and Super Agent reports t
 asked for the Product's status.
 
 A named worker is one more argument, and a Task whose proposal suggests an executor runs
-on that executor instead:
+on that executor instead. executors limits which executors a proposal may suggest:
 
-    auto_accept=AutoAccept(executor_type="agent", executor_id="codex-engineer")
+    auto_accept=AutoAccept(default_executor="codex-engineer")
+    auto_accept=AutoAccept(default_executor="codex-engineer", executors=["writer"])
 
 The declaration applies when the Routine is first created. After that, change it from
 the UI, the API or chat. Removing auto_accept from the code does not turn it off on a
@@ -180,7 +181,7 @@ def main(client: httpx.Client) -> None:
         decided = [entry for entry in task["transitions"] if entry.get("auto_accept")]
         assert [entry["target"] for entry in decided] == ["ready"], decided
         assert decided[0]["auto_accept"]["routine_id"] == routine["id"]
-        assert decided[0]["auto_accept"]["executor_chosen_by"] == "policy"
+        assert decided[0]["auto_accept"]["executor_chosen_by"] == "default"
         assert [entry["target"] for entry in project["transitions"]] == ["active"]
         assert project["transitions"][0]["auto_accept"]["routine_id"] == routine["id"]
         assert not task["result"].get("invoked"), "Mini Agent holds no run tools here"
