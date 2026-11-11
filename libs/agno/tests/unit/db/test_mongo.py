@@ -159,32 +159,102 @@ def test_metrics_legacy_runs_count_runs_stored_as_json_string():
     db = _db()
     sessions_collection = Mock()
     created_at = 1790000000
-    # As the projection reads them: an array keeps its runs' fields, a JSON string is read whole
-    sessions_collection.find.return_value.batch_size.return_value = iter(
+    sessions_cursor = Mock()
+    # As the projection reads them: an array keeps its runs' fields, a JSON string comes back without runs
+    sessions_cursor.batch_size.return_value = iter(
+        [
+            {
+                "_id": 1,
+                "session_id": "s1",
+                "user_id": "u1",
+                "created_at": created_at,
+                "runs": [{"run_id": "r1", "agent_id": "a1", "created_at": created_at}],
+            },
+            {"_id": 2, "session_id": "s2", "user_id": "u1", "created_at": created_at},
+        ]
+    )
+    # Only the session that came back without runs is read again, with its runs whole
+    json_sessions = iter(
+        [{"_id": 2, "runs": json.dumps([{"run_id": "r2", "agent_id": "a1", "created_at": created_at}])}]
+    )
+    sessions_collection.find.side_effect = [sessions_cursor, json_sessions]
+
+    _, legacy_runs_by_id = db._get_metrics_legacy_runs(sessions_collection, None, created_at, created_at + 1)
+
+    assert sorted(legacy_runs_by_id) == ["r1", "r2"]
+    assert legacy_runs_by_id["r2"]["session_id"] == "s2"
+    assert sessions_collection.find.call_args.args[0] == {"_id": {"$in": [2]}, "runs": {"$type": "string"}}
+
+
+def test_metrics_legacy_runs_count_json_string_runs_of_sessions_sharing_an_id_once(monkeypatch):
+    """Sessions sharing an id, possible without the unique index, count the JSON string runs of each once, read in
+    the same batch or not."""
+    monkeypatch.setattr("agno.db.mongo.mongo.METRICS_BATCH_SIZE", 1)
+    db = _db()
+    sessions_collection = Mock()
+    created_at = 1790000000
+    sessions_cursor = Mock()
+    sessions_cursor.batch_size.return_value = iter(
+        [
+            {"_id": 1, "session_id": "dup", "user_id": "u1", "created_at": created_at},
+            {"_id": 2, "session_id": "dup", "user_id": "u1", "created_at": created_at},
+        ]
+    )
+    json_documents = [
+        {
+            "_id": 1,
+            "session_id": "dup",
+            "runs": json.dumps([{"run_id": "r1", "agent_id": "a1", "created_at": created_at}]),
+        },
+        {
+            "_id": 2,
+            "session_id": "dup",
+            "runs": json.dumps([{"run_id": "r2", "agent_id": "a1", "created_at": created_at}]),
+        },
+    ]
+
+    # Each batch's read of the JSON string runs returns the documents its filter matches, as MongoDB does
+    def find(filter, projection):
+        if filter.get("runs") != {"$type": "string"}:
+            return sessions_cursor
+        return iter(
+            document
+            for document in json_documents
+            if all(document[key] in condition["$in"] for key, condition in filter.items() if key != "runs")
+        )
+
+    sessions_collection.find.side_effect = find
+
+    legacy_runs_by_day, legacy_runs_by_id = db._get_metrics_legacy_runs(
+        sessions_collection, None, created_at, created_at + 1
+    )
+
+    assert sorted(legacy_runs_by_id) == ["r1", "r2"]
+    assert sum(len(runs) for runs in legacy_runs_by_day.values()) == 2
+
+
+def test_metrics_legacy_runs_read_no_json_string_when_every_session_has_runs():
+    """A batch whose sessions all came back with runs is read with no query for runs stored as a JSON string."""
+    db = _db()
+    sessions_collection = Mock()
+    created_at = 1790000000
+    sessions_cursor = Mock()
+    sessions_cursor.batch_size.return_value = iter(
         [
             {
                 "session_id": "s1",
                 "user_id": "u1",
                 "created_at": created_at,
                 "runs": [{"run_id": "r1", "agent_id": "a1", "created_at": created_at}],
-                "runs_json": None,
-            },
-            {
-                "session_id": "s2",
-                "user_id": "u1",
-                "created_at": created_at,
-                "runs_json": json.dumps([{"run_id": "r2", "agent_id": "a1", "created_at": created_at}]),
-            },
+            }
         ]
     )
+    sessions_collection.find.side_effect = [sessions_cursor]
 
     _, legacy_runs_by_id = db._get_metrics_legacy_runs(sessions_collection, None, created_at, created_at + 1)
 
-    assert sorted(legacy_runs_by_id) == ["r1", "r2"]
-    assert legacy_runs_by_id["r2"]["session_id"] == "s2"
-    assert build_component_metrics_legacy_runs_projection()["runs_json"] == {
-        "$cond": [{"$eq": [{"$type": "$runs"}, "string"]}, "$runs", None]
-    }
+    assert sorted(legacy_runs_by_id) == ["r1"]
+    assert sessions_collection.find.call_count == 1
 
 
 def test_metrics_runs_projection_keeps_what_tool_metrics_count():
