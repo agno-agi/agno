@@ -143,7 +143,7 @@ def test_next_manager_runs_use_saved_details_without_products(tmp_path):
     )
     assert denied.status_code == 200, denied.text
     assert denied.json()["content"] == "no company context"
-    assert "original description" in "\n".join(execute_instructions(os._routine_runner.instructions))
+    assert "original description" in "\n".join(execute_instructions(os._mini_agent.instructions))
     changed = client.patch(
         "/company/details",
         json={"expected_updated_at": data["updated_at"], "description": "new description"},
@@ -155,8 +155,8 @@ def test_next_manager_runs_use_saved_details_without_products(tmp_path):
     )
     assert updated.status_code == 200, updated.text
     assert updated.json()["content"] == "new description"
-    # The Routine runner reads the same details for its next Routine.
-    assert "new description" in "\n".join(execute_instructions(os._routine_runner.instructions))
+    # Mini Agent reads the same details for its next Routine.
+    assert "new description" in "\n".join(execute_instructions(os._mini_agent.instructions))
     db.close()
 
 
@@ -240,14 +240,14 @@ def _company_os(db, **company):
 
 
 def _assert_managers_answer(client):
-    from agno.registry._reserved import MANAGER_TEAM_ID, ROUTINE_RUNNER_ID
+    from agno.registry._reserved import MANAGER_TEAM_ID, MINI_AGENT_ID
 
     assert client.get("/agents").status_code == 200
     assert client.get("/teams").status_code == 200
     run = client.post(f"/teams/{MANAGER_TEAM_ID}/runs", data={"message": "hello", "stream": "false"})
     assert run.status_code == 200 and run.json()["content"] == "local answer"
-    # The Routine runner is still served, and still refuses a person's run.
-    run = client.post(f"/agents/{ROUTINE_RUNNER_ID}/runs", data={"message": "hello", "stream": "false"})
+    # Mini Agent is still served, and still refuses a person's run.
+    run = client.post(f"/agents/{MINI_AGENT_ID}/runs", data={"message": "hello", "stream": "false"})
     assert run.status_code == 200 and run.json()["content"] == "This agent runs Company Routines only"
 
 

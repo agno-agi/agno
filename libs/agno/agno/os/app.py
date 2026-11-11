@@ -742,20 +742,20 @@ class AgentOS:
         from agno.os.manager.manager import _build_manager
 
         self._manager_catalog_checked: Set[int] = set()
-        self._routine_runner: Optional[Agent] = None
-        self._routine_runner_unavailable_reason: Optional[str] = None
+        self._mini_agent: Optional[Agent] = None
+        self._mini_agent_unavailable_reason: Optional[str] = None
         if self.company is not None:
             from agno.company.execution import _mount_executors
-            from agno.company.routine_runner import _build_routine_runner
+            from agno.company.mini_agent import _build_mini_agent
 
             _mount_executors(self)
 
             company_model = self.company.model
             if company_model is None and self.registry is not None and self.registry.models:
                 company_model = self.registry.models[0]
-            self._routine_runner = _build_routine_runner(self, company_model)
-            if self._routine_runner is None:
-                self._routine_runner_unavailable_reason = (
+            self._mini_agent = _build_mini_agent(self, company_model)
+            if self._mini_agent is None:
+                self._mini_agent_unavailable_reason = (
                     "Super Agent cannot run Routines: configure CompanyConfig(model=...) or Registry(models=[...])"
                     if company_model is None
                     else "Super Agent cannot run Routines: Company requires a database"
@@ -772,16 +772,16 @@ class AgentOS:
             self.agents = list(self.agents or [])
             self.teams = [*(self.teams or []), self._manager.team]
 
-        if self._routine_runner is not None:
+        if self._mini_agent is not None:
             from agno.company.details import _company_instructions
-            from agno.company.routine_runner import INSTRUCTIONS
+            from agno.company.mini_agent import INSTRUCTIONS
 
             if self.registry is None:
                 self.registry = Registry()
-            self.registry.exclude_components([self._routine_runner])
+            self.registry.exclude_components([self._mini_agent])
             # Served so the scheduler can reach it; listings leave it out.
-            self.agents = [*(self.agents or []), self._routine_runner]
-            self._routine_runner.instructions = _company_instructions(self._company_db, [INSTRUCTIONS])
+            self.agents = [*(self.agents or []), self._mini_agent]
+            self._mini_agent.instructions = _company_instructions(self._company_db, [INSTRUCTIONS])
         self._apply_manager_manifest()
 
         self._initialize_agents()
@@ -1205,7 +1205,7 @@ class AgentOS:
             [*(self.agents or []), *(self.teams or []), *(self.workflows or [])],
             owned=[
                 *(self._manager.components if self._manager is not None else []),
-                *([self._routine_runner] if self._routine_runner is not None else []),
+                *([self._mini_agent] if self._mini_agent is not None else []),
             ],
         )
         duplicate_ids: List[str] = []

@@ -29,7 +29,7 @@ from agno.registry._reserved import (
     LEGACY_PRODUCT_MANAGER_ID,
     MANAGER_TEAM_ID,
     RESERVED_MANAGER_IDS,
-    ROUTINE_RUNNER_ID,
+    MINI_AGENT_ID,
 )
 from agno.run import RunContext
 from agno.run.authorization import AUTHORIZATION_KEY, current_authorization
@@ -55,9 +55,9 @@ SCOPES = [
     "schedules:read",
     "schedules:write",
     "sessions:read",
-    "agents:superagent-routines:read",
+    "agents:miniagent:read",
     "teams:superagent:read",
-    "agents:superagent-routines:run",
+    "agents:miniagent:run",
     "teams:superagent:run",
 ]
 
@@ -133,7 +133,7 @@ def declaration(kind="team", component_id=MANAGER_TEAM_ID, **kwargs):
     )
 
 
-RUNNER_ENDPOINT = "/agents/" + ROUTINE_RUNNER_ID + "/runs"
+RUNNER_ENDPOINT = "/agents/" + MINI_AGENT_ID + "/runs"
 
 
 def make_os(db, *, manager=False, model=None, authorization=False, isolation=False, products=()):
@@ -197,17 +197,17 @@ def test_owned_resolution_serving_and_resync(tmp_path, enabled):
     os = make_os(db, manager=enabled)
     for _ in range(2):
         os.resync(os.get_app())
-    runner = os._routine_runner
-    assert runner.id == ROUTINE_RUNNER_ID and runner.name == "Super Agent Routines"
+    runner = os._mini_agent
+    assert runner.id == MINI_AGENT_ID and runner.name == "Mini Agent"
     assert sum(agent is runner for agent in os._agents) == 1
-    assert os.registry.get_agent(ROUTINE_RUNNER_ID) is None
+    assert os.registry.get_agent(MINI_AGENT_ID) is None
     assert os.registry.get_team(MANAGER_TEAM_ID) is None
     assert not os.registry.tools
     assert _routine_executor_endpoint("team", MANAGER_TEAM_ID, os.registry, agent_os=os) == RUNNER_ENDPOINT
     if enabled:
-        assert all(member.id != ROUTINE_RUNNER_ID for member in os.manager.members)
+        assert all(member.id != MINI_AGENT_ID for member in os.manager.members)
     assert all(agent.id != BUILDER_ID for agent in os._agents)
-    for kind, cid in (("agent", ROUTINE_RUNNER_ID), ("team", MANAGER_TEAM_ID)):
+    for kind, cid in (("agent", MINI_AGENT_ID), ("team", MANAGER_TEAM_ID)):
         with pytest.raises(ValueError):
             _executor(os.registry, kind, cid)
     db.close()
@@ -219,7 +219,7 @@ def test_wrong_type_and_reserved_registry_fallback_are_refused(tmp_path):
     with pytest.raises(ValueError, match="executor_type"):
         _routine_executor_endpoint("agent", MANAGER_TEAM_ID, os.registry, agent_os=os)
     # Even a corrupted registry cannot substitute for the owning AgentOS.
-    registry = SimpleNamespace(get_agent=lambda _: os._routine_runner, get_team=lambda _: os.manager)
+    registry = SimpleNamespace(get_agent=lambda _: os._mini_agent, get_team=lambda _: os.manager)
     with pytest.raises(ValueError, match="cannot run Routines"):
         _routine_executor_endpoint("team", MANAGER_TEAM_ID, registry)
     db.close()
@@ -228,8 +228,8 @@ def test_wrong_type_and_reserved_registry_fallback_are_refused(tmp_path):
 @pytest.mark.parametrize(
     "kind,cid",
     [
-        ("agent", ROUTINE_RUNNER_ID),
-        ("team", ROUTINE_RUNNER_ID),
+        ("agent", MINI_AGENT_ID),
+        ("team", MINI_AGENT_ID),
         ("agent", BUILDER_ID),
         ("agent", "platform-manager-internal"),
         ("agent", "company-manager-internal"),
@@ -240,8 +240,8 @@ def test_wrong_type_and_reserved_registry_fallback_are_refused(tmp_path):
 def test_only_superagent_can_execute_routines_among_framework_managers(tmp_path, kind, cid, enabled):
     db = SqliteDb(db_file=str(tmp_path / "only.db"))
     os = make_os(db, manager=enabled)
-    # A registry that would hand back the live runner or team must not be consulted for reserved IDs.
-    registry = SimpleNamespace(get_agent=lambda _: os._routine_runner, get_team=lambda _: os.manager)
+    # A registry that would hand back the live Mini Agent or team must not be consulted for reserved IDs.
+    registry = SimpleNamespace(get_agent=lambda _: os._mini_agent, get_team=lambda _: os.manager)
     for candidate in (os.registry, registry):
         with pytest.raises(ValueError, match="Only Super Agent"):
             _routine_executor_endpoint(kind, cid, candidate, agent_os=os)
@@ -311,7 +311,7 @@ def test_declarations_bootstrap_and_restart(tmp_path, mode, enabled):
     row = db.get_schedule_by_name("docs.weekly-review", user_id="alice")
     assert row["endpoint"] == RUNNER_ENDPOINT
     # The stored row names the component that runs; the Routine API shows the executor the person named.
-    assert row["managed_by"] == "company" and row["target_type"] == "agent" and row["target_id"] == ROUTINE_RUNNER_ID
+    assert row["managed_by"] == "company" and row["target_type"] == "agent" and row["target_id"] == MINI_AGENT_ID
     assert AUTHORIZATION_KEY not in row["payload"]
     assert row["enabled"] is enabled
     db.update_schedule(row["id"], enabled=not enabled, payload={**row["payload"], "message": "Human edit"})
@@ -338,14 +338,14 @@ async def test_api_create_patch_resume_and_unavailable_manager(tmp_path):
         assert row["endpoint"] == RUNNER_ENDPOINT
         assert row["target_type"] == "team" and row["target_id"] == MANAGER_TEAM_ID
         before = s.db.get_schedule(row["id"])
-        for kind, cid in (("agent", ROUTINE_RUNNER_ID), ("agent", BUILDER_ID)):
+        for kind, cid in (("agent", MINI_AGENT_ID), ("agent", BUILDER_ID)):
             response = await s.client.patch(path, headers=s.headers, json={"executor_type": kind, "executor_id": cid})
             assert response.status_code == 422 and "Only Super Agent" in response.text
         response = await s.client.patch(path, headers=s.headers, json={"executor_type": "agent"})
         assert response.status_code == 422 and "executor_type" in response.text
         assert s.db.get_schedule(row["id"]) == before
         assert (await s.client.post(path + "/pause", headers=s.headers)).status_code == 200
-        s.os._routine_runner = None
+        s.os._mini_agent = None
         response = await s.client.post(path + "/resume", headers=s.headers)
         assert response.status_code == 422 and "Super Agent cannot run Routines" in response.text
         assert not s.db.get_schedule(row["id"])["enabled"]
@@ -427,8 +427,8 @@ async def test_scheduled_review_persists_evidence_and_caller_authority(tmp_path,
             )
             return "Observed injected authority"
 
-        s.os._routine_runner.tools.append(observe_authority)
-        s.os._routine_runner.model = ScriptedModel(
+        s.os._mini_agent.tools.append(observe_authority)
+        s.os._mini_agent.model = ScriptedModel(
             [("observe_authority", {"_agno_run_context": {"user_id": "mallory"}})]
             + review_steps(product, project, source, path)
         )
@@ -456,7 +456,7 @@ async def test_scheduled_review_persists_evidence_and_caller_authority(tmp_path,
 def test_recursive_scheduler_tools_validation_is_preserved(tmp_path):
     db = SqliteDb(db_file=str(tmp_path / "tools.db"))
     os = make_os(db, manager=True)
-    os._routine_runner.tools.append(SchedulerTools(db=db))
+    os._mini_agent.tools.append(SchedulerTools(db=db))
     with pytest.raises(ValueError, match="cannot hold SchedulerTools"):
         _routine_executor_endpoint("team", MANAGER_TEAM_ID, os.registry, agent_os=os)
     db.close()
@@ -471,7 +471,7 @@ async def test_routine_status_write_never_gains_permission(tmp_path, mode, ident
         manager = CompanyManager(s.db)
         product = manager.create(name="Docs", user_id="alice")
         before = manager.read_wiki(product["id"], "status.md")
-        s.os._routine_runner.model = ScriptedModel(
+        s.os._mini_agent.model = ScriptedModel(
             [("update_product_status", {"product_id": product["id"], "content": "Unauthorized", "expected_version": 1})]
         )
         row = await create_routine(s, product["id"])
@@ -516,8 +516,8 @@ async def test_routine_mutation_fence_holds_even_for_admin(tmp_path, mode):
                     raise RuntimeError("An exposed mutation unexpectedly succeeded")
             return "All unauthorized mutations refused"
 
-        s.os._routine_runner.tools.append(check_forbidden_mutations)
-        s.os._routine_runner.model = ScriptedModel([("check_forbidden_mutations", {})])
+        s.os._mini_agent.tools.append(check_forbidden_mutations)
+        s.os._mini_agent.model = ScriptedModel([("check_forbidden_mutations", {})])
         row = await create_routine(s, product["id"])
         result = await s.executor.execute(s.db.get_schedule(row["id"]), s.db, release_schedule=False)
         assert result["status"] == "success", result
@@ -537,7 +537,7 @@ async def test_other_product_source_and_status_are_refused(tmp_path, owner):
         path.write_text("Other Product source")
         source = manager.create_source(product_id=other["id"], type="markdown", reference=str(path))
         before = manager.read_wiki(other["id"], "status.md")
-        s.os._routine_runner.model = ScriptedModel(
+        s.os._mini_agent.model = ScriptedModel(
             [
                 ("read_product_source", {"source_id": source["id"], "path": path.name}),
                 (
@@ -550,7 +550,7 @@ async def test_other_product_source_and_status_are_refused(tmp_path, owner):
         result = await s.executor.execute(s.db.get_schedule(row["id"]), s.db, release_schedule=False)
         assert result["status"] == "failed", result
         assert manager.read_wiki(other["id"], "status.md") == before
-        output = await s.os._routine_runner.aget_run_output(
+        output = await s.os._mini_agent.aget_run_output(
             result["run_id"], session_id=result["session_id"], user_id="alice"
         )
         assert "Routine authority is restricted to its configured Product" in json.dumps(output.to_dict())
@@ -561,9 +561,9 @@ async def test_other_product_source_and_status_are_refused(tmp_path, owner):
     "run_scope,allowed",
     [
         (None, False),
-        # Running Super Agent in chat does not grant the runner that executes its Routines.
+        # Running Super Agent in chat does not grant Mini Agent, which executes its Routines.
         ("teams:" + MANAGER_TEAM_ID + ":run", False),
-        ("agents:" + ROUTINE_RUNNER_ID + ":run", True),
+        ("agents:" + MINI_AGENT_ID + ":run", True),
     ],
 )
 @pytest.mark.parametrize("identity", ["scope", "managed"])
@@ -592,7 +592,7 @@ async def test_configuration_requires_target_run_permission(tmp_path, identity, 
 async def test_legacy_catalog_cannot_replace_owned_or_unavailable_manager(tmp_path, stage):
     from agno.db.base import ComponentType
 
-    kind, cid = "agent", ROUTINE_RUNNER_ID
+    kind, cid = "agent", MINI_AGENT_ID
 
     async with system(tmp_path, mode="member") as s:
         s.db.upsert_component(component_id=cid, component_type=ComponentType(kind), user_id="alice")
@@ -683,8 +683,8 @@ async def test_concurrent_reviews_keep_private_sessions_and_owners_separate(tmp_
             observed.append((_agno_run_context.user_id, authority.context.principal_id, authority.product_id))
             return "Caller observed"
 
-        s.os._routine_runner.tools.append(observe_caller)
-        s.os._routine_runner.model = ScriptedModel([("observe_caller", {})])
+        s.os._mini_agent.tools.append(observe_caller)
+        s.os._mini_agent.model = ScriptedModel([("observe_caller", {})])
         schedules = []
         for user, product in products.items():
             response = await s.client.post(
@@ -713,7 +713,7 @@ async def test_status_conflict_is_failed_without_overwriting_human_edit(tmp_path
         manager.write_wiki(
             product_id=product["id"], path="status.md", content="Human edit", expected_version=1, user_id="alice"
         )
-        s.os._routine_runner.model = ScriptedModel(
+        s.os._mini_agent.model = ScriptedModel(
             [("update_product_status", {"product_id": product["id"], "content": "Stale review", "expected_version": 1})]
         )
         row = await create_routine(s, product["id"])
@@ -731,7 +731,7 @@ async def test_recovered_status_conflict_succeeds(tmp_path, mode):
         manager.write_wiki(
             product_id=product["id"], path="status.md", content="Human edit", expected_version=1, user_id="alice"
         )
-        s.os._routine_runner.model = ScriptedModel(
+        s.os._mini_agent.model = ScriptedModel(
             [
                 ("update_product_status", {"product_id": product["id"], "content": "Stale", "expected_version": 1}),
                 ("read_company_wiki", {"product_id": product["id"], "path": "status.md"}),
@@ -762,7 +762,7 @@ async def test_superagent_routine_reports_provider_failure(tmp_path, mode):
 
     async with system(tmp_path, mode=mode) as s:
         product = CompanyManager(s.db).create(name="Docs", user_id="alice")
-        s.os._routine_runner.model = FailingModel()
+        s.os._mini_agent.model = FailingModel()
         row = await create_routine(s, product["id"])
         result = await s.executor.execute(s.db.get_schedule(row["id"]), s.db, release_schedule=False)
         assert result["status"] == "failed", result
@@ -822,7 +822,7 @@ async def test_no_auth_declared_review_can_run_locally(tmp_path):
     db.close()
 
 
-@pytest.mark.parametrize("component_id", [ROUTINE_RUNNER_ID, LEGACY_PRODUCT_MANAGER_ID, MANAGER_TEAM_ID])
+@pytest.mark.parametrize("component_id", [MINI_AGENT_ID, LEGACY_PRODUCT_MANAGER_ID, MANAGER_TEAM_ID])
 def test_user_components_cannot_claim_manager_ids(component_id):
     component = Agent(id=component_id, model=ScriptedModel())
     with pytest.raises(ValueError, match="reserved"):
@@ -848,7 +848,7 @@ async def test_human_chat_configures_superagent_routine(tmp_path, tool, enabled)
         assert total == 1
         row = s.db.get_schedule(products[0]["metadata"]["routine_ids"][0])
         assert row["endpoint"] == RUNNER_ENDPOINT
-        assert row["target_type"] == "agent" and row["target_id"] == ROUTINE_RUNNER_ID and row["user_id"] == "alice"
+        assert row["target_type"] == "agent" and row["target_id"] == MINI_AGENT_ID and row["user_id"] == "alice"
         assert row["payload"][AUTHORIZATION_KEY]["context"]["principal_id"] == "alice"
         assert row["payload"]["metadata"]["auto_accept"] is False
         assert row["enabled"] is enabled
@@ -856,8 +856,8 @@ async def test_human_chat_configures_superagent_routine(tmp_path, tool, enabled)
 
 @pytest.mark.parametrize("tool", ["create_company_product", "create_product_routine"])
 async def test_human_chat_routine_needs_runner_permission(tmp_path, tool):
-    # Talking to Super Agent does not grant the runner that executes its Routines.
-    scopes = [scope for scope in SCOPES if scope != "agents:" + ROUTINE_RUNNER_ID + ":run"]
+    # Talking to Super Agent does not grant Mini Agent, which executes its Routines.
+    scopes = [scope for scope in SCOPES if scope != "agents:" + MINI_AGENT_ID + ":run"]
     async with system(tmp_path, mode="member", scopes=scopes) as s:
         kwargs = {"name": "Docs", "routines": [declaration().model_dump()]}
         if tool == "create_product_routine":
@@ -868,21 +868,21 @@ async def test_human_chat_routine_needs_runner_permission(tmp_path, tool):
             "/teams/" + MANAGER_TEAM_ID + "/runs", headers=s.headers, data={"message": "Set up a weekly review"}
         )
         assert response.status_code == 200, response.text
-        assert "Permission required: agents:" + ROUTINE_RUNNER_ID + ":run" in response.text
+        assert "Permission required: agents:" + MINI_AGENT_ID + ":run" in response.text
         products, _ = s.db.get_products()
         assert all(not (product.get("metadata") or {}).get("routine_ids") for product in products)
         assert s.db.get_schedules()[1] == 0
 
 
 @pytest.mark.parametrize("mode", ["standalone", "member"])
-async def test_person_cannot_chat_with_routine_runner(tmp_path, mode):
+async def test_person_cannot_chat_with_mini_agent(tmp_path, mode):
     class UncalledModel(ScriptedModel):
         def invoke(self, *args, **kwargs):
-            raise AssertionError("The Routine runner called its model outside a Routine")
+            raise AssertionError("Mini Agent called its model outside a Routine")
 
     async with system(tmp_path, mode=mode, scopes=SCOPES + ["agents:read"]) as s:
         product = CompanyManager(s.db).create(name="Docs", user_id="alice")
-        s.os._routine_runner.model = UncalledModel()
+        s.os._mini_agent.model = UncalledModel()
         response = await s.client.post(
             RUNNER_ENDPOINT,
             headers=s.headers,
@@ -891,7 +891,7 @@ async def test_person_cannot_chat_with_routine_runner(tmp_path, mode):
         assert "This agent runs Company Routines only" in response.text, response.text
         assert s.db.get_product(product["id"]).get("metadata", {}).get("routine_ids") in (None, [])
         listed = (await s.client.get("/agents", headers=s.headers)).json()
-        assert all(agent["id"] != ROUTINE_RUNNER_ID for agent in listed)
+        assert all(agent["id"] != MINI_AGENT_ID for agent in listed)
 
 
 @pytest.mark.parametrize("tool", ["run_agent", "run_team", "run_workflow"])

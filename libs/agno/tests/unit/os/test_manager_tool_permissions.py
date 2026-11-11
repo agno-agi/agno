@@ -14,7 +14,7 @@ from agno.models.response import ModelResponse
 from agno.os import AgentOS, CompanyConfig, OSManager
 from agno.os.authz.provider import AuthorizationContext
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider
-from agno.registry._reserved import BUILDER_ID, MANAGER_TEAM_ID, ROUTINE_RUNNER_ID
+from agno.registry._reserved import BUILDER_ID, MANAGER_TEAM_ID, MINI_AGENT_ID
 from agno.run.authorization import RunAuthorization, authorization_scope
 from agno.tools.agentos import AgentOSTools
 from agno.tools.company import CompanyTools
@@ -255,10 +255,10 @@ def routine_names(os):
 
 @pytest.mark.parametrize("use_async", [False, True])
 def test_routine_tool_needs_the_runner_not_super_agent(platform, use_async):
-    # The Routine API checks the component that runs. For Super Agent that is the Routine runner.
+    # The Routine API checks the component that runs. For Super Agent that is Mini Agent.
     os, ids = platform
     before = routine_names(os)
-    scopes = [*ROUTINE_WRITE, f"agents:{ROUTINE_RUNNER_ID}:run"]
+    scopes = [*ROUTINE_WRITE, f"agents:{MINI_AGENT_ID}:run"]
     result = run_tool(os, ids, "create_product_routine", SUPER_AGENT_ROUTINE, scopes, use_async)
     assert "Permission required" not in str(result.content), result.content
     assert routine_names(os) == sorted([*before, ids["product"] + ".review"])
@@ -270,5 +270,5 @@ def test_routine_tool_is_refused_with_super_agent_and_no_runner(platform, use_as
     before = routine_names(os)
     scopes = [*ROUTINE_WRITE, *RUN_ONLY]
     result = run_tool(os, ids, "create_product_routine", SUPER_AGENT_ROUTINE, scopes, use_async)
-    assert f"Permission required: agents:{ROUTINE_RUNNER_ID}:run" in str(result.content), result.content
+    assert f"Permission required: agents:{MINI_AGENT_ID}:run" in str(result.content), result.content
     assert routine_names(os) == before

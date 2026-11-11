@@ -215,7 +215,7 @@ async def test_company_recall_is_shared_and_agent_attribution_is_bound(db):
     import json
 
     from agno.company.decisions import CompanyDecisionLogStore
-    from agno.registry._reserved import ROUTINE_RUNNER_ID
+    from agno.registry._reserved import MINI_AGENT_ID
     from agno.run import RunContext
     from agno.tools.company import CompanyTools
 
@@ -230,13 +230,13 @@ async def test_company_recall_is_shared_and_agent_attribution_is_bound(db):
     fn = next(tool for tool in learned_tools if tool.name == "log_company_decision")
     own = json.loads(await fn.entrypoint("Other agent decision", _agno_run_context=context))
     assert own["agent_id"] == "other-agent"
-    recalled = await store.arecall(agent_id=ROUTINE_RUNNER_ID, session_id="new-session")
+    recalled = await store.arecall(agent_id=MINI_AGENT_ID, session_id="new-session")
     assert {entry.id for entry in recalled} == {human.id, direct["id"], own["id"]}
     assert len(await store.asearch(agent_id="other-agent")) == 1
-    assert await store.asearch(agent_id=ROUTINE_RUNNER_ID) == []
+    assert await store.asearch(agent_id=MINI_AGENT_ID) == []
     if not isinstance(db, AsyncBaseDb):
         sync_tool = store.get_tools(agent_id="sync-agent")[0]
         entry = json.loads(sync_tool("Sync agent decision", _agno_run_context=context))
         assert entry["agent_id"] == "sync-agent"
-        assert len(store.recall(agent_id=ROUTINE_RUNNER_ID)) == 4
+        assert len(store.recall(agent_id=MINI_AGENT_ID)) == 4
         assert len(store.search(agent_id="sync-agent")) == 1

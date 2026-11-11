@@ -28,7 +28,7 @@ from agno.registry._reserved import (
     FORMER_MANAGER_IDS,
     LEGACY_PRODUCT_MANAGER_ID,
     MANAGER_TEAM_ID,
-    ROUTINE_RUNNER_ID,
+    MINI_AGENT_ID,
     _reserved_manager_id_message,
 )
 from agno.run import RunContext
@@ -53,11 +53,10 @@ def test_super_agent_routine_runs_on_the_restricted_runner(db):
         telemetry=False,
     )
     assert (
-        _routine_executor_endpoint("team", MANAGER_TEAM_ID, os.registry, agent_os=os)
-        == f"/agents/{ROUTINE_RUNNER_ID}/runs"
+        _routine_executor_endpoint("team", MANAGER_TEAM_ID, os.registry, agent_os=os) == f"/agents/{MINI_AGENT_ID}/runs"
     )
     for kind, target in [
-        ("agent", ROUTINE_RUNNER_ID),
+        ("agent", MINI_AGENT_ID),
         ("agent", BUILDER_ID),
         ("team", "os-manager-internal"),
         ("agent", "company-manager-internal"),
@@ -453,7 +452,7 @@ def test_manager_discovery_uses_manifest_without_changing_agent_prompts(db, tmp_
         "undescribed": None,
     }
     assert daily_brief.description is claude.description is codex.description is None
-    assert os._routine_runner.description is None
+    assert os._mini_agent.description is None
     assert explicit.description == "Agent description."
     os.config = AgentOSConfig(manifest={"daily-brief": Manifest(description="Updated description.")})
     assert descriptions()["daily-brief"] == "Updated description."
@@ -485,7 +484,7 @@ def test_manager_discovery_describes_teams_workflows_and_default_managers(db, us
     agents = json.loads(asyncio.run(runner.alist_agents()) if use_async else runner.list_agents())["agents"]
     teams = json.loads(asyncio.run(runner.alist_teams()) if use_async else runner.list_teams())["teams"]
     workflows = json.loads(asyncio.run(runner.alist_workflows()) if use_async else runner.list_workflows())["workflows"]
-    # The Routine runner is served for the scheduler only and is never offered as a run target.
+    # Mini Agent is served for the scheduler only and is never offered as a run target.
     assert agents == []
     assert {row["id"]: row["description"] for row in teams} == {
         "research": "Research team.",
@@ -503,8 +502,8 @@ def test_company_chat_card_belongs_to_super_agent_only(db, with_manager):
     os = AgentOS(db=db, manager=manager, company=CompanyConfig(model=OfflineModel()), telemetry=False)
     config = TestClient(os.get_app()).get("/config").json()
     manifest = config.get("manifest") or {}
-    assert ROUTINE_RUNNER_ID not in manifest and "company-manager" not in manifest
-    assert ROUTINE_RUNNER_ID not in {agent["id"] for agent in config["agents"]}
+    assert MINI_AGENT_ID not in manifest and "company-manager" not in manifest
+    assert MINI_AGENT_ID not in {agent["id"] for agent in config["agents"]}
     assert bool(manifest.get(MANAGER_TEAM_ID, {}).get("quick_prompts")) is with_manager
 
     custom = AgentOSConfig(manifest={MANAGER_TEAM_ID: Manifest(quick_prompts=["Ours"])})
@@ -972,7 +971,7 @@ def test_disabled_manager_needs_neither_a_model_nor_a_workspace(db, enabled):
     assert os.registry.excluded_component_ids == {
         MANAGER_TEAM_ID,
         BUILDER_ID,
-        ROUTINE_RUNNER_ID,
+        MINI_AGENT_ID,
         LEGACY_PRODUCT_MANAGER_ID,
         *FORMER_MANAGER_IDS,
     }
@@ -1093,7 +1092,7 @@ def test_registry_exclusion_surface_is_public_and_read_only():
             "reserved-id",
             MANAGER_TEAM_ID,
             BUILDER_ID,
-            ROUTINE_RUNNER_ID,
+            MINI_AGENT_ID,
             LEGACY_PRODUCT_MANAGER_ID,
             *FORMER_MANAGER_IDS,
         }
@@ -1225,7 +1224,7 @@ def test_manager_offloading_and_readback(db, workspace, async_mode, target, sett
 
 
 @pytest.mark.parametrize("enabled", [False, True])
-@pytest.mark.parametrize("component_id", [MANAGER_TEAM_ID, ROUTINE_RUNNER_ID, BUILDER_ID, FORMER_SPECIALIST_ID])
+@pytest.mark.parametrize("component_id", [MANAGER_TEAM_ID, MINI_AGENT_ID, BUILDER_ID, FORMER_SPECIALIST_ID])
 def test_reserved_ids_cannot_be_minted_when_manager_is_disabled(db, enabled, component_id):
     os = AgentOS(db=db, manager=OSManager(model=OfflineModel()) if enabled else None, telemetry=False)
     studio = StudioTools(registry=os.registry, db=db)
@@ -1239,7 +1238,7 @@ def test_reserved_ids_cannot_be_minted_when_manager_is_disabled(db, enabled, com
     assert db.get_component(component_id) is None
 
 
-@pytest.mark.parametrize("component_id", [MANAGER_TEAM_ID, ROUTINE_RUNNER_ID, BUILDER_ID, FORMER_SPECIALIST_ID])
+@pytest.mark.parametrize("component_id", [MANAGER_TEAM_ID, MINI_AGENT_ID, BUILDER_ID, FORMER_SPECIALIST_ID])
 @pytest.mark.parametrize("kind", ["agent", "team", "workflow"])
 def test_reserved_ids_rejected_for_all_application_component_types(db, component_id, kind):
     from agno.team import Team
@@ -1886,7 +1885,7 @@ def test_manager_details_show_members_without_exposing_them_in_registry(db, comp
     )
     app = os.get_app()
     client = TestClient(app)
-    # The Routine runner is not a member, with or without Company.
+    # Mini Agent is not a member, with or without Company.
     expected_ids = [BUILDER_ID]
     expected_names = ["Platform Builder"]
 
@@ -1905,8 +1904,8 @@ def test_manager_details_show_members_without_exposing_them_in_registry(db, comp
         assert [agent.id for agent in registry.agents] == ["ordinary"]
         assert registry.teams == []
         assert all(registry.is_component_excluded(member) for member in os.manager.members)
-        # The Routine runner is served for the scheduler but never listed; Platform Builder is never served.
-        assert [agent.id for agent in os.agents] == ["ordinary", *([ROUTINE_RUNNER_ID] if company_enabled else [])]
+        # Mini Agent is served for the scheduler but never listed; Platform Builder is never served.
+        assert [agent.id for agent in os.agents] == ["ordinary", *([MINI_AGENT_ID] if company_enabled else [])]
         assert [agent["id"] for agent in client.get("/agents").json()] == ["ordinary"]
         assert [agent["id"] for agent in client.get("/config").json()["agents"]] == ["ordinary"]
         assert client.get(f"/agents/{BUILDER_ID}").status_code == 422
@@ -2194,7 +2193,7 @@ def test_instruction_sections_follow_the_attached_tools(db, company_enabled, acc
 
 
 @pytest.mark.parametrize("with_manager", [False, True])
-def test_routine_runner_keeps_its_own_execution_policy(db, with_manager):
+def test_mini_agent_keeps_its_own_execution_policy(db, with_manager):
     from agno.os import CompanyConfig
     from agno.os.manager.prompts import FOCUSED_EXECUTION_INSTRUCTIONS
 
@@ -2205,17 +2204,17 @@ def test_routine_runner_keeps_its_own_execution_policy(db, with_manager):
         telemetry=False,
     )
     # Routines run on the served runner, which the manager's member limits do not bound.
-    assert os._routine_runner.tool_call_limit is None
-    assert FOCUSED_EXECUTION_INSTRUCTIONS not in os._routine_runner.instructions()
+    assert os._mini_agent.tool_call_limit is None
+    assert FOCUSED_EXECUTION_INSTRUCTIONS not in os._mini_agent.instructions()
     if with_manager:
-        assert manager_member(os, ROUTINE_RUNNER_ID) is None
+        assert manager_member(os, MINI_AGENT_ID) is None
         assert manager_member(os, BUILDER_ID).tool_call_limit == 7
         os.resync(os.get_app())
-        assert os._routine_runner.tool_call_limit is None
-        assert FOCUSED_EXECUTION_INSTRUCTIONS not in os._routine_runner.instructions()
+        assert os._mini_agent.tool_call_limit is None
+        assert FOCUSED_EXECUTION_INSTRUCTIONS not in os._mini_agent.instructions()
 
 
-@pytest.mark.parametrize("component_id", ["superagent", "superagent-routines", "platform-builder"])
+@pytest.mark.parametrize("component_id", ["superagent", "miniagent", "platform-builder"])
 def test_preexisting_public_catalog_collision_is_explicit(db, component_id):
     _store_manager_test_component(db, "team" if component_id == "superagent" else "agent", component_id)
     with pytest.raises(ValueError, match="Rename or migrate"):
@@ -2225,7 +2224,7 @@ def test_preexisting_public_catalog_collision_is_explicit(db, component_id):
 def test_separate_company_database_checks_os_catalog_collision(db, tmp_path):
     from agno.company import CompanyConfig
 
-    _store_manager_test_component(db, "agent", ROUTINE_RUNNER_ID)
+    _store_manager_test_component(db, "agent", MINI_AGENT_ID)
     company_db = SqliteDb(db_file=str(tmp_path / "separate-company.db"))
     with pytest.raises(ValueError, match="Rename or migrate"):
         AgentOS(db=db, manager=False, company=CompanyConfig(db=company_db, model=OfflineModel()), telemetry=False)
@@ -2345,7 +2344,7 @@ def test_user_super_agent_grant_and_history_are_separate_from_builtin(db, manage
     "family,user_id,internal_id",
     [
         ("teams", "super-agent", "superagent"),
-        ("agents", "company-manager", ROUTINE_RUNNER_ID),
+        ("agents", "company-manager", MINI_AGENT_ID),
         ("agents", "my-platform-builder", "platform-builder"),
         ("agents", "platform-manager", FORMER_SPECIALIST_ID),
     ],
@@ -2387,7 +2386,7 @@ def test_manager_catalog_is_checked_once_per_database(tmp_path):
         company=CompanyConfig(model=OfflineModel()),
         telemetry=False,
     )
-    assert sorted(calls) == sorted({MANAGER_TEAM_ID, ROUTINE_RUNNER_ID, BUILDER_ID})
+    assert sorted(calls) == sorted({MANAGER_TEAM_ID, MINI_AGENT_ID, BUILDER_ID})
 
 
 @pytest.mark.parametrize(
@@ -2446,7 +2445,7 @@ def test_sessions_stored_under_a_former_id_are_not_listed_under_the_new_one(db):
     assert [session.session_id for session in rows] == ["new"]
 
 
-@pytest.mark.parametrize("name", ["Superagent", "Superagent Routines", "Platform Builder"])
+@pytest.mark.parametrize("name", ["Superagent", "Miniagent", "Platform Builder"])
 @pytest.mark.parametrize("kind", ["agent", "team", "workflow"])
 def test_name_derived_public_manager_ids_are_reserved(db, name, kind):
     from agno.team import Team

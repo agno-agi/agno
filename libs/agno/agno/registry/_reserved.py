@@ -6,7 +6,7 @@ from typing import Any
 MANAGER_TEAM_ID = "superagent"
 BUILDER_ID = "platform-builder"
 # The restricted form of Super Agent that runs Company Routines. Internal: Routines name Super Agent.
-ROUTINE_RUNNER_ID = "superagent-routines"
+MINI_AGENT_ID = "miniagent"
 # A former ID of the agent that ran Routines. It stays reserved so a user component cannot claim it.
 LEGACY_PRODUCT_MANAGER_ID = "product-manager-internal"
 # IDs used before 3.2, each with the ID that now does its work. They stay reserved so a user
@@ -22,15 +22,15 @@ FORMER_MANAGER_IDS = {
 RESERVED_MEMBER_IDS = frozenset({BUILDER_ID, "platform-builder-internal", "platform-manager-internal"})
 RESERVED_MANAGER_IDS = RESERVED_MEMBER_IDS | {
     MANAGER_TEAM_ID,
-    ROUTINE_RUNNER_ID,
+    MINI_AGENT_ID,
     LEGACY_PRODUCT_MANAGER_ID,
     *FORMER_MANAGER_IDS,
 }
 
 
 def _listed(components: Any) -> list:
-    """Served components as listings show them. The Routine runner is served for the scheduler only."""
-    return [component for component in components or [] if getattr(component, "id", None) != ROUTINE_RUNNER_ID]
+    """Served components as listings show them. Mini Agent is served for the scheduler only."""
+    return [component for component in components or [] if getattr(component, "id", None) != MINI_AGENT_ID]
 
 
 def is_framework_owned(component: Any) -> bool:
@@ -50,7 +50,7 @@ def _reserved_manager_id_message(component_id: str) -> str:
 
 def _raise_if_manager_catalog_collision(db: Any) -> None:
     """Refuse to shadow a custom component that predates the public manager IDs."""
-    for component_id in sorted({*FORMER_MANAGER_IDS.values(), ROUTINE_RUNNER_ID}):
+    for component_id in sorted({*FORMER_MANAGER_IDS.values(), MINI_AGENT_ID}):
         try:
             row = db.get_component(component_id, include_deleted=True)
         except NotImplementedError:

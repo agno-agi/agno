@@ -105,11 +105,11 @@ if __name__ == "__main__":
                 agent_os.db, product, agent_os.registry, agent_os=agent_os
             )
             schedule = agent_os.db.get_schedule_by_name("documentation.weekly-review")
-            assert schedule["endpoint"] == "/agents/superagent-routines/runs"
+            assert schedule["endpoint"] == "/agents/miniagent/runs"
             assert schedule["payload"]["metadata"]["auto_accept"] is False
             assert schedule["target_type"] == "agent"
-            assert schedule["target_id"] == "superagent-routines"
-            assert agent_os.registry.get_agent("superagent-routines") is None
+            assert schedule["target_id"] == "miniagent"
+            assert agent_os.registry.get_agent("miniagent") is None
             print("Weekly Super Agent review configured; no model calls made.")
             agent_os.db.close()
     else:

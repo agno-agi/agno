@@ -1,11 +1,11 @@
-"""The Routine runner: the restricted form of Super Agent that runs Company Routines."""
+"""Mini Agent: the restricted form of Super Agent that runs Company Routines."""
 
 from typing import Any, Optional
 
 from agno.agent import Agent
 from agno.company.decisions import CompanyDecisionLogStore
 from agno.learn import LearningMachine
-from agno.registry._reserved import ROUTINE_RUNNER_ID
+from agno.registry._reserved import MINI_AGENT_ID
 from agno.tools.company import CompanyTools
 
 INSTRUCTIONS = """\
@@ -38,7 +38,7 @@ If nothing changed, report a quiet check and propose nothing.
 """
 
 
-def _build_routine_runner(agent_os: Any, model: Any) -> Optional[Agent]:
+def _build_mini_agent(agent_os: Any, model: Any) -> Optional[Agent]:
     if agent_os._company_db is None or model is None:
         return None
     from agno.company.routines import _RoutineBoundary, load_routine_skills
@@ -59,11 +59,11 @@ def _build_routine_runner(agent_os: Any, model: Any) -> Optional[Agent]:
     )
     db = agent_os._company_db
     return Agent(
-        id=ROUTINE_RUNNER_ID,
-        name="Super Agent Routines",
+        id=MINI_AGENT_ID,
+        name="Mini Agent",
         model=model,
         db=db,
-        metadata={"_agno": {"internal": True, "id": ROUTINE_RUNNER_ID}},
+        metadata={"_agno": {"internal": True, "id": MINI_AGENT_ID}},
         tools=[CompanyTools(db, user_isolation=isolation, decision_tools=False, interfaces=agent_os.interfaces)],
         skills=load_routine_skills(),
         learning=LearningMachine(

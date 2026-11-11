@@ -1,4 +1,4 @@
-"""Company playbook, bounded tools, Super Agent's Company chat and the Routine runner contracts."""
+"""Company playbook, bounded tools, Super Agent's Company chat and Mini Agent contracts."""
 
 import contextvars
 import inspect
@@ -14,13 +14,13 @@ from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, CompanyConfig, OSManager
 from agno.os.manager.prompts import COMPANY_INSTRUCTIONS
 from agno.registry import Registry
-from agno.registry._reserved import MANAGER_TEAM_ID, ROUTINE_RUNNER_ID
+from agno.registry._reserved import MANAGER_TEAM_ID, MINI_AGENT_ID
 from agno.run import RunContext
 from agno.tools.company import CompanyTools
 
 
 @pytest.mark.parametrize("manager", [False, True])
-def test_routine_runner_assembly_and_model_precedence(tmp_path, manager):
+def test_mini_agent_assembly_and_model_precedence(tmp_path, manager):
     db = SqliteDb(db_file=str(tmp_path / "os.db"))
     first, override = OpenAIResponses(id="first"), OpenAIResponses(id="override")
     registry = Registry(models=[first])
@@ -31,14 +31,14 @@ def test_routine_runner_assembly_and_model_precedence(tmp_path, manager):
         manager=OSManager(access_docs=False) if manager else None,
         telemetry=False,
     )
-    pm = os._routine_runner
-    assert pm.id == ROUTINE_RUNNER_ID and pm.model is override
+    pm = os._mini_agent
+    assert pm.id == MINI_AGENT_ID and pm.model is override
     assert pm.learning.decision_log.db is db
     assert pm not in registry.agents and not registry.tools
     assert sum(agent is pm for agent in os._agents) == 1
     if manager:
-        # Super Agent holds its own CompanyTools and has no Routine runner member.
-        assert all(m.id != ROUTINE_RUNNER_ID for m in os.manager.members)
+        # Super Agent holds its own CompanyTools and has no Mini Agent member.
+        assert all(m.id != MINI_AGENT_ID for m in os.manager.members)
         leader_tools = [t for t in os.manager.tools if isinstance(t, CompanyTools)]
         assert len(leader_tools) == 1 and leader_tools[0] is not pm.tools[0]
         assert "summarize_company_product" not in leader_tools[0].functions
@@ -51,7 +51,7 @@ def test_routine_runner_assembly_and_model_precedence(tmp_path, manager):
     assert tools.registry is registry
     assert not any("schedule" in name or "transition" in name for name in tools.functions)
     assert "log_company_decision" not in tools.functions
-    # Summary and refresh Routines run here, so the runner holds both.
+    # Summary and refresh Routines run here, so Mini Agent holds both.
     assert "summarize_company_product" in tools.functions
     assert "refresh_company_product" in tools.functions
     assert "summarize_company_product" in CompanyTools(db, summary_tools=True).functions
@@ -60,7 +60,7 @@ def test_routine_runner_assembly_and_model_precedence(tmp_path, manager):
         "search_company_decisions",
     }
     inherited = AgentOS(db=db, registry=Registry(models=[first, override]), company=CompanyConfig(), telemetry=False)
-    assert inherited._routine_runner.model is first
+    assert inherited._mini_agent.model is first
     with pytest.raises(ValueError, match="cron_expr"):
         CompanyConfig(cron_expr="")
 
@@ -87,15 +87,15 @@ def test_no_model_manual_api_and_disabled_company(tmp_path, caplog):
     db = SqliteDb(db_file=str(tmp_path / "no-model.db"))
     os = AgentOS(db=db, company=CompanyConfig(), telemetry=False)
     assert not any("Super Agent cannot run Routines" in record.message for record in caplog.records)
-    assert os._routine_runner is None and "CompanyConfig(model=" in os._routine_runner_unavailable_reason
+    assert os._mini_agent is None and "CompanyConfig(model=" in os._mini_agent_unavailable_reason
     assert any(c.name == "company" and c.status == "WARN" for c in os.run_diagnostics().checks)
     assert TestClient(os.get_app()).post("/company/decisions", json={"decision": "manual"}).status_code == 201
     disabled = AgentOS(db=db, telemetry=False)
     assert not any(getattr(route, "path", "").startswith("/company") for route in disabled.get_app().routes)
     with pytest.raises(ValueError, match="reserved"):
-        AgentOS(db=db, agents=[Agent(id=ROUTINE_RUNNER_ID)], telemetry=False)
+        AgentOS(db=db, agents=[Agent(id=MINI_AGENT_ID)], telemetry=False)
     with pytest.raises(ValueError, match="reserved"):
-        Registry(agents=[Agent(id=ROUTINE_RUNNER_ID)])
+        Registry(agents=[Agent(id=MINI_AGENT_ID)])
 
 
 @pytest.mark.asyncio
@@ -144,7 +144,7 @@ async def test_tools_identity_fence_and_learning(tmp_path, use_async):
     )
     assert entry["user_id"] == "alice" and entry["session_id"] == "s"
     assert entry["agent_id"] is None
-    assert manager.list_decisions(agent_id=ROUTINE_RUNNER_ID, session_id="s")[1] == 0
+    assert manager.list_decisions(agent_id=MINI_AGENT_ID, session_id="s")[1] == 0
     for function in tools.get_async_functions().values():
         function.process_entrypoint()
         properties = function.parameters.get("properties", {})
@@ -392,14 +392,14 @@ async def test_super_agent_runs_company_tools_with_injected_identity(tmp_path, m
     decisions, total = m.list_decisions()
     assert total == 2
     own = next(decision for decision in decisions if decision.decision == "Review first")
-    # Decisions logged in chat carry Super Agent's id, not the Routine runner's.
+    # Decisions logged in chat carry Super Agent's id, not Mini Agent's.
     assert own.user_id == "alice" and own.session_id == "planning" and own.agent_id == MANAGER_TEAM_ID
-    assert m.list_decisions(agent_id=ROUTINE_RUNNER_ID)[1] == 0
+    assert m.list_decisions(agent_id=MINI_AGENT_ID)[1] == 0
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("use_async", [False, True])
-async def test_routine_runner_recalls_company_decisions_only_in_routines(tmp_path, use_async):
+async def test_mini_agent_recalls_company_decisions_only_in_routines(tmp_path, use_async):
     from agno.models.base import Model
     from agno.models.message import MessageMetrics
     from agno.models.response import ModelResponse
@@ -441,7 +441,7 @@ async def test_routine_runner_recalls_company_decisions_only_in_routines(tmp_pat
         assert client.post("/company/decisions", json={"decision": "Human review decision"}).status_code == 201
 
     async def run():
-        runner = os._routine_runner
+        runner = os._mini_agent
         if use_async:
             return await runner.arun("Run the Routine", user_id="alice", session_id="routine")
         return runner.run("Run the Routine", user_id="alice", session_id="routine")
@@ -494,18 +494,18 @@ async def test_tools_and_automatic_recall_require_scopes(tmp_path):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fresh", [False, True])
-async def test_served_routine_runner_resolution_and_catalog_fence(tmp_path, fresh):
+async def test_served_mini_agent_resolution_and_catalog_fence(tmp_path, fresh):
     from agno.os.utils import AgnoHTTPException, get_agent_by_id, get_agent_by_id_async
 
     db = SqliteDb(db_file=str(tmp_path / "resolution.db"))
     os = AgentOS(db=db, company=CompanyConfig(model=OpenAIResponses(id="offline")), telemetry=False)
     for resolver in (get_agent_by_id, get_agent_by_id_async):
-        result = resolver(ROUTINE_RUNNER_ID, agents=os._agents, db=db, create_fresh=fresh)
+        result = resolver(MINI_AGENT_ID, agents=os._agents, db=db, create_fresh=fresh)
         result = await result if inspect.isawaitable(result) else result
-        assert result.id == ROUTINE_RUNNER_ID
-        assert (result is not os._routine_runner) == fresh
+        assert result.id == MINI_AGENT_ID
+        assert (result is not os._mini_agent) == fresh
         with pytest.raises(AgnoHTTPException, match="reserved"):
-            result = resolver(ROUTINE_RUNNER_ID, agents=[], db=db)
+            result = resolver(MINI_AGENT_ID, agents=[], db=db)
             if inspect.isawaitable(result):
                 await result
     db.close()

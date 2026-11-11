@@ -305,7 +305,7 @@ class CompanyTools(Toolkit):
                 raise ValueError(refusal)
             authority = _authority(run_context)
             if authority is not None:
-                # The Routine API checks the component that runs, which for Super Agent is the Routine runner.
+                # The Routine API checks the component that runs, which for Super Agent is Mini Agent.
                 authority.require(*_run_target(fields["endpoint"]))
             if archived_endpoint_refusal(self._schedule_db, fields["endpoint"], user_id=self._scoped_user(run_context)):
                 raise ValueError("Routine executor is archived; restore the component first")

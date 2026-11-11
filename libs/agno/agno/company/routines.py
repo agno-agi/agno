@@ -147,7 +147,7 @@ class _RoutineResultGuardrail(BaseGuardrail):
 
 
 class _RoutineBoundary(BaseGuardrail):
-    """Keep Routine runs on the Routine runner, and every other run off it.
+    """Keep Routine runs on Mini Agent, and every other run off it.
 
     A Routine runs unattended on untrusted Sources with proposal-only authority. With routine=True the
     component accepts only runs that carry that authority. With routine=False it refuses them.
@@ -162,9 +162,7 @@ class _RoutineBoundary(BaseGuardrail):
 
         if isinstance(current_authorization(), _RoutineAuthorization) != self.routine:
             raise InputCheckError(
-                "This agent runs Company Routines only"
-                if self.routine
-                else "Company Routines run on the Routine runner"
+                "This agent runs Company Routines only" if self.routine else "Company Routines run on Mini Agent"
             )
 
     async def async_check(self, run_input: Any = None) -> None:
@@ -212,18 +210,18 @@ async def _afailed_routines(db: Any, products: Any) -> int:
 
 
 def _routine_executor_endpoint(executor_type: str, executor_id: str, registry: Any, *, agent_os: Any = None) -> str:
-    from agno.registry._reserved import MANAGER_TEAM_ID, RESERVED_MANAGER_IDS, ROUTINE_RUNNER_ID
+    from agno.registry._reserved import MANAGER_TEAM_ID, RESERVED_MANAGER_IDS, MINI_AGENT_ID
 
     if executor_id == MANAGER_TEAM_ID:
         if executor_type != "team":
             raise ValueError("Super Agent Routine executor_type must be 'team'")
         # Super Agent can edit the platform; Routines run unattended on untrusted Sources.
-        # Its Routines run on the restricted runner, never on the team itself.
-        component = getattr(agent_os, "_routine_runner", None)
+        # Its Routines run on Mini Agent, never on the team itself.
+        component = getattr(agent_os, "_mini_agent", None)
         if component is None:
-            reason = getattr(agent_os, "_routine_runner_unavailable_reason", None)
+            reason = getattr(agent_os, "_mini_agent_unavailable_reason", None)
             raise ValueError(reason or "Super Agent cannot run Routines: configure CompanyConfig on the owning AgentOS")
-        executor_type, executor_id = "agent", ROUTINE_RUNNER_ID
+        executor_type, executor_id = "agent", MINI_AGENT_ID
     elif executor_id in RESERVED_MANAGER_IDS:
         raise ValueError("Only Super Agent can execute Routines among framework managers")
     else:
@@ -238,10 +236,10 @@ def _routine_executor_endpoint(executor_type: str, executor_id: str, registry: A
 
 
 def _named_executor(row: Dict[str, Any]) -> Dict[str, Any]:
-    """The executor a person named for a stored Routine: Super Agent for a Routine on the runner."""
-    from agno.registry._reserved import MANAGER_TEAM_ID, ROUTINE_RUNNER_ID
+    """The executor a person named for a stored Routine: Super Agent for a Routine on Mini Agent."""
+    from agno.registry._reserved import MANAGER_TEAM_ID, MINI_AGENT_ID
 
-    if row.get("target_id") == ROUTINE_RUNNER_ID:
+    if row.get("target_id") == MINI_AGENT_ID:
         return {"target_type": "team", "target_id": MANAGER_TEAM_ID}
     return {"target_type": row.get("target_type"), "target_id": row.get("target_id")}
 

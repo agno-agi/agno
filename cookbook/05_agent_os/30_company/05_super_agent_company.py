@@ -2,7 +2,7 @@
 
 With CompanyConfig set, Super Agent holds the Company tools itself: company details,
 Products, Projects, Tasks, Sources, playbook, Routines and decisions. A Routine names
-team "superagent" and runs on a restricted internal runner that can only propose work.
+team "superagent" and runs on Mini Agent, a restricted internal agent that can only propose work.
 
 Prerequisites: Install agno, sqlalchemy, openai, fastapi and httpx.
 Run: .venv/bin/python cookbook/05_agent_os/30_company/05_super_agent_company.py
@@ -100,13 +100,13 @@ if __name__ == "__main__":
             routine = client.get("/company/routines").json()["data"][0]
             assert routine["target_type"] == "team"
             assert routine["target_id"] == "superagent"
-            # The Routine runner is internal: it is not listed and has no chat card.
+            # Mini Agent is internal: it is not listed and has no chat card.
             listed = [agent["id"] for agent in client.get("/agents").json()]
-            assert "superagent-routines" not in listed
+            assert "miniagent" not in listed
             team = client.get("/teams/superagent").json()
             assert [m["id"] for m in team["members"]] == ["platform-builder"]
         schedule = db.get_schedule(routine["id"])
-        assert schedule["endpoint"] == "/agents/superagent-routines/runs"
+        assert schedule["endpoint"] == "/agents/miniagent/runs"
         db.close()
         print("Super Agent saved company details, a Product, a Routine and a proposal")
         print("No model call was made")

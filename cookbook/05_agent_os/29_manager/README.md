@@ -168,7 +168,7 @@ latency, or application components dispatched through runner tools.
 
 Increase the limits for larger builds or plans. Set either limit to `None` to
 restore unlimited ordinary tool executions for that level. Ordinary application
-agents and the Company Routine runner are not affected. Model choices still
+agents and the Company Mini Agent are not affected. Model choices still
 determine routing and answer quality; prompt guidance is not a guarantee.
 
 ## When to use a registry
@@ -360,7 +360,7 @@ To refresh captured token-scope grants, update the payload as an authorized call
 ## Reserved IDs
 
 The public manager IDs are `superagent` (Super Agent) and `platform-builder`
-(Platform Builder). `superagent-routines` is the internal Company Routine runner.
+(Platform Builder). `miniagent` is the internal Company Mini Agent.
 `product-manager-internal` and the pre-3.2 IDs `os-manager-internal`,
 `company-manager-internal`, `platform-builder-internal` and
 `platform-manager-internal` stay reserved and do not resolve; requests that use

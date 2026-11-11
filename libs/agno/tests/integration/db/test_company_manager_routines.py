@@ -17,7 +17,7 @@ from agno.db.sqlite import AsyncSqliteDb, SqliteDb
 from agno.job_queue import QueueConfig
 from agno.os import AgentOS, Authorization, CompanyConfig, OSManager
 from agno.os.job_queue import QueueWorker, resolve_queue_store
-from agno.registry._reserved import BUILDER_ID, MANAGER_TEAM_ID, ROUTINE_RUNNER_ID
+from agno.registry._reserved import BUILDER_ID, MANAGER_TEAM_ID, MINI_AGENT_ID
 from agno.run import RunContext
 from agno.run.authorization import current_authorization
 from tests.integration.db.test_company_execution_parity import SimpleClient, execute
@@ -82,7 +82,7 @@ async def test_manager_review_through_durable_queue(tmp_path, backend, mode):
         observed.append((_agno_run_context.user_id, authority.context.principal_id, authority.product_id))
         return "Restored authority observed"
 
-    os._routine_runner.tools.append(observe_queue_authority)
+    os._mini_agent.tools.append(observe_queue_authority)
     try:
         product = await _call(manager, "create", name="Docs", user_id="alice")
         project = await _call(manager, "create_project", product_id=product["id"], name="Guides", user_id="alice")
@@ -90,7 +90,7 @@ async def test_manager_review_through_durable_queue(tmp_path, backend, mode):
         path = tmp_path / "source.md"
         path.write_text("The released API needs a guide.")
         source = await _call(manager, "create_source", product_id=product["id"], type="markdown", reference=str(path))
-        os._routine_runner.model = ScriptedModel(
+        os._mini_agent.model = ScriptedModel(
             [("observe_queue_authority", {})] + review_steps(product, project, source, path)
         )
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -161,7 +161,7 @@ async def test_chat_declarations_name_superagent(db, use_async, mode, tmp_path):
     )
     holder = chat if chat is not None else os.manager
     tools = next(tool for tool in holder.tools if isinstance(tool, CompanyTools))
-    for kind, cid in (("agent", ROUTINE_RUNNER_ID), ("agent", BUILDER_ID)):
+    for kind, cid in (("agent", MINI_AGENT_ID), ("agent", BUILDER_ID)):
         with pytest.raises(ValueError, match="Only Super Agent"):
             await invoke(
                 tools,
@@ -178,9 +178,9 @@ async def test_chat_declarations_name_superagent(db, use_async, mode, tmp_path):
         tools, "create_company_product", use_async, name="Docs", routines=[routine], _agno_run_context=context()
     )
     saved = os.db.get_schedule(product["metadata"]["routine_ids"][0])
-    assert saved["endpoint"] == "/agents/" + ROUTINE_RUNNER_ID + "/runs"
+    assert saved["endpoint"] == "/agents/" + MINI_AGENT_ID + "/runs"
     # The stored row names the component that runs.
-    assert saved["target_type"] == "agent" and saved["target_id"] == ROUTINE_RUNNER_ID and saved["user_id"] == "ana"
+    assert saved["target_type"] == "agent" and saved["target_id"] == MINI_AGENT_ID and saved["user_id"] == "ana"
     second = await invoke(
         tools,
         "create_product_routine",
@@ -196,10 +196,10 @@ async def test_chat_declarations_name_superagent(db, use_async, mode, tmp_path):
             "create_product_routine",
             use_async,
             product_id=product["id"],
-            **{**declaration("agent", ROUTINE_RUNNER_ID).model_dump(exclude={"auto_accept"}), "name": "coordinated"},
+            **{**declaration("agent", MINI_AGENT_ID).model_dump(exclude={"auto_accept"}), "name": "coordinated"},
             _agno_run_context=context(),
         )
-    os._routine_runner = None
+    os._mini_agent = None
     with pytest.raises(ValueError, match="Super Agent cannot run Routines"):
         await invoke(
             tools,

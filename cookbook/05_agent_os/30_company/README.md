@@ -36,14 +36,14 @@ whoever created the Product. User isolation does not restrict Company records.
 `10_weekly_product_review.py` declares a Company Routine with no executor, so
 it runs as Super Agent. Naming team `superagent` does the same. It reads Sources and existing work, proposes only evidence-backed
 Backlog Tasks, and updates status without accepting work. The Routine runs on
-`superagent-routines`, a restricted internal form of Super Agent: Company tools
+`miniagent`, a restricted internal form of Super Agent: Company tools
 and the Routine skills only, no Platform Builder, no run or platform tools, and
 proposal-only authority. It works with or without `manager=OSManager(...)`, but
 needs `CompanyConfig(model=...)` or a registry model. The stored schedule names
-the runner: endpoint `/agents/superagent-routines/runs`, target agent
-`superagent-routines`. The Routine API shows that endpoint next to the executor
+Mini Agent: endpoint `/agents/miniagent/runs`, target agent
+`miniagent`. The Routine API shows that endpoint next to the executor
 chosen, `target_type` `team` and `target_id` `superagent`. Run and session
-records carry `agent_id` `superagent-routines`. The runner is hidden from `GET /agents`,
+records carry `agent_id` `miniagent`. Mini Agent is hidden from `GET /agents`,
 `GET /config`, MCP and A2A, and a person cannot chat with it. Super Agent itself
 refuses a run with Routine authority, and no other framework ID can run a Routine.
 
@@ -74,7 +74,7 @@ For direct Python bootstrap or `CompanyManager.create_routine`, pass the owning
 The caller needs Routine/schedule configuration permissions and the target's
 agent/team run permission; scheduled result polling also needs the target's read
 permission. For a Routine that names Super Agent the target is the runner, so
-these are `agents:superagent-routines:run` and `agents:superagent-routines:read`.
+these are `agents:miniagent:run` and `agents:miniagent:read`.
 A grant on Super Agent alone is not enough. Grant only the Company tools the review uses: Sources and existing
 work reads, proposal writes, wiki reads/writes and decision recall. Delegation
 retains those grants and Routine restrictions. Company-wide collaborative reads
@@ -404,7 +404,7 @@ with an error naming the Product, the Routine and the executor. Give it `Company
 `load_routine_skills()` for reader, Intake and Summary tools. AgentOS binds its
 interfaces to custom `CompanyTools(db)` executors automatically; an explicit
 `interfaces=` override is preserved, and `summary_tools=False` disables delivery.
-Super Agent has no outbound Summary tool; the Routine runner does. Enable the existing AgentOS scheduler and queue to run schedules; the
+Super Agent has no outbound Summary tool; Mini Agent does. Enable the existing AgentOS scheduler and queue to run schedules; the
 cookbook only creates and inspects them. Scheduling alone never grants acceptance.
 The OS scheduler database owns Routine definitions/history even with a separate
 Company database. `metadata.routine_ids` links them to Products.
@@ -738,7 +738,7 @@ checking the caller's authority.
 In a local deployment with authentication disabled, API callers are trusted
 operators, as for the existing scheduler. Code/YAML declarations remain
 proposal-only: write an automatic authorization through the human API.
-Executors and the Routine runner hold no `schedules:write` or SchedulerTools.
+Executors and Mini Agent hold no `schedules:write` or SchedulerTools.
 Private authorization is removed from public payloads and executor input;
 Routine metadata is data, never a source of broader executor authority.
 
@@ -778,7 +778,7 @@ The maintenance tool requires Routine authority, Product ownership when
 isolation applies, `products:read`, `projects:read`, `projects:delete`,
 `tasks:read`, `tasks:delete`, `wiki:read` and `wiki:write` on the saved caller.
 No scheduler-write grant is added. Super Agent does not receive maintenance
-or outbound Summary tools; Routines use them on the Routine runner. Existing schedule instructions retain the scheduler's
+or outbound Summary tools; Routines use them on Mini Agent. Existing schedule instructions retain the scheduler's
 snapshot behavior; apply the revised Refresh Skill through an authorized PATCH.
 
 Products, Projects and Tasks list routes accept `sort_by=updated_at` and

@@ -4,7 +4,7 @@
 
 `GET /company/details` requires `company:read`. `PATCH /company/details` requires `company:write`, and the admin scope bypasses it as usual. Pass `expected_updated_at` from the last read with the changed `name` or `description`. A concurrent edit returns 409. Reload and reconcile your changes before retrying. `description: null` clears it.
 
-Super Agent and its Routine runner read current details on each authorized run. The playbook remains the home for longer guidance. Use `company:read` with permission to run Super Agent to include company context.
+Super Agent and its Mini Agent read current details on each authorized run. The playbook remains the home for longer guidance. Use `company:read` with permission to run Super Agent to include company context.
 
 ## Edit through chat
 
