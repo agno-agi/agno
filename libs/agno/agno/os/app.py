@@ -744,6 +744,8 @@ class AgentOS:
         self._manager_catalog_checked: Set[int] = set()
         self._mini_agent: Optional[Agent] = None
         self._mini_agent_unavailable_reason: Optional[str] = None
+        # The Routine API's PATCH handler, set when the Company routes are built.
+        self._routine_api_update: Any = None
         if self.company is not None:
             from agno.company.execution import _mount_executors
             from agno.company.mini_agent import _build_mini_agent

@@ -276,13 +276,28 @@ def _schedule_fields(product_id: str, routine: Routine, registry: Any, *, agent_
     return fields
 
 
+# The grant of a policy declared in code or YAML. Only the startup declaration path writes it.
+_DECLARED = {"declared": True}
+
+
 def _declared_schedule_fields(
-    product_id: str, routine: Routine, registry: Any, *, agent_os: Any = None
+    product_id: str, routine: Routine, registry: Any, *, agent_os: Any = None, trusted: bool = False
 ) -> Dict[str, Any]:
-    """Schedule fields for a declared Routine; automatic acceptance needs the Routine API's authorization."""
-    if routine.auto_accept:
+    """Schedule fields for a declared Routine.
+
+    Only the deployment's own declarations (trusted=True) may carry auto_accept. A Routine declared
+    through a request or a chat tool needs the Routine API's authorization for it.
+    """
+    if routine.auto_accept and not trusted:
         raise ValueError("Authorize automatic acceptance through the Routine API")
-    return _schedule_fields(product_id, routine, registry, agent_os=agent_os)
+    fields = _schedule_fields(product_id, routine, registry, agent_os=agent_os)
+    if routine.auto_accept:
+        policy = routine.auto_accept
+        _automatic_executor(registry, policy.executor_type, policy.executor_id)
+        if agent_os is not None and any(name not in _acceptance_checks(agent_os) for name in policy.required_checks):
+            raise ValueError("Unknown automatic acceptance check")
+        fields["payload"]["metadata"]["auto_accept"] = policy.model_dump()
+    return fields
 
 
 class _RoutineAuthorization(_ExecutorAuthorization):
@@ -331,7 +346,7 @@ async def _authorize_auto_accept(request, policy, agent_os=None):
     if policy:
         try:
             parsed = AutoAccept.model_validate(policy)
-            if parsed.limits.expires_at <= int(time.time()):
+            if parsed.limits is not None and parsed.limits.expires_at <= int(time.time()):
                 raise ValueError("Automatic acceptance expiry must be in the future")
             if agent_os is not None:
                 _automatic_executor(agent_os.registry, parsed.executor_type, parsed.executor_id)
@@ -339,7 +354,7 @@ async def _authorize_auto_accept(request, policy, agent_os=None):
                     raise ValueError("Unknown automatic acceptance check")
         except ValueError as exc:
             raise HTTPException(422, str(exc))
-        if parsed.complete_projects and authority is not None:
+        if (parsed.complete_projects or parsed.approve_projects) and authority is not None:
             try:
                 await authority.arequire("projects", "write")
             except PermissionError as exc:
@@ -369,19 +384,45 @@ async def _stamp_auto_accept(request, payload, agent_os=None):
     return payload
 
 
+def _stored_policy(raw):
+    """A stored policy, and whether it was saved before approve_projects existed.
+
+    Such a policy keeps the rules it was saved under: it approves no Project, its executor is fixed,
+    and its lifetime count and expiry are its only limits.
+    """
+    from agno.company.declarations import AutoAccept
+
+    legacy = "approve_projects" not in raw
+    return AutoAccept.model_validate({**raw, "approve_projects": False} if legacy else raw), legacy
+
+
 def _policy_fingerprint(schedule):
     import hashlib
     import json
 
-    from agno.company.declarations import AutoAccept
-
     policy = ((schedule.get("payload") or {}).get("metadata") or {}).get("auto_accept")
-    content = AutoAccept.model_validate(policy).model_dump() if policy else False
-    # An omitted permission grants nothing; adding its default must not revoke
-    # existing Task-only policies or reset their budgets on upgrade.
-    if isinstance(content, dict) and not content["complete_projects"]:
-        content.pop("complete_projects")
+    content: Any = False
+    if policy:
+        parsed, legacy = _stored_policy(policy)
+        content = parsed.model_dump()
+        # A policy saved before a field existed keeps the version it was saved with, and its budget.
+        if legacy:
+            content.pop("approve_projects")
+            content.pop("max_open")
+        if not content["complete_projects"]:
+            content.pop("complete_projects")
     return hashlib.sha256(json.dumps(content, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+_OPEN_STATUSES = ("ready", "in_progress", "in_review")
+
+
+def _open_tasks(tasks, routine_id):
+    """How many of a Routine's Tasks are accepted and not yet Done or Cancelled.
+
+    A Task whose run failed stays In progress, so it counts until a person retries, returns or cancels it.
+    """
+    return sum(1 for task in tasks if task.get("routine_id") == routine_id and task["status"] in _OPEN_STATUSES)
 
 
 async def _check_automatic_policy(schedule_db, task):
@@ -403,14 +444,14 @@ async def _check_automatic_policy(schedule_db, task):
         or schedule.get("managed_by") != "company"
         or ((schedule.get("payload") or {}).get("metadata") or {}).get("product_id") != task["product_id"]
         or _policy_fingerprint(schedule) != receipt["policy"]
+        # A declared policy that a person has since replaced no longer runs as the deployment.
+        or (receipt.get("declared") and schedule["payload"].get("_agno_company_acceptance") != _DECLARED)
     ):
         raise ValueError("Routine automatic acceptance was changed or revoked")
     import time
 
-    from agno.company.declarations import AutoAccept
-
-    policy = AutoAccept.model_validate(schedule["payload"]["metadata"]["auto_accept"])
-    if policy.limits.expires_at is not None and int(time.time()) >= policy.limits.expires_at:
+    policy, _ = _stored_policy(schedule["payload"]["metadata"]["auto_accept"])
+    if policy.limits is not None and int(time.time()) >= policy.limits.expires_at:
         raise ValueError("Routine automatic acceptance expired")
 
 
@@ -833,8 +874,8 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
         import inspect
         import time
 
-        from agno.company.declarations import AutoAccept
-        from agno.company.manager import AsyncCompanyManager, CompanyManager
+        from agno.company.manager import AsyncCompanyManager, CompanyManager, _routine_project_id
+        from agno.company.refresh import _records
         from agno.db.base import AsyncBaseDb
         from agno.os.authz.run_context import restore_authorization
         from agno.run.authorization import AUTHORIZATION_KEY, authorization_scope
@@ -850,24 +891,35 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
         grant = payload.get("_agno_company_acceptance")
         if not metadata.get("auto_accept") or grant is None:
             raise _AutomationSkip("Routine has no human automatic acceptance authorization")
-        policy = AutoAccept.model_validate(metadata["auto_accept"])
+        policy, legacy = _stored_policy(metadata["auto_accept"])
+        # A policy declared in code has no person behind it, and code cannot give a Routine a caller's
+        # grant. It acts only where authorization is off, where every caller is a trusted operator.
+        declared = grant == _DECLARED
+        if declared and os.authorization:
+            raise _AutomationSkip(
+                "A declared auto_accept acts only where authorization is off. "
+                "A person turns it on for this Routine from the UI, the API or chat"
+            )
         if completing and (not policy.complete_projects or metadata.get("template") != "refresh"):
             raise _AutomationSkip("Routine is not authorized to complete Projects")
         acceptance_resource = "projects" if completing else "tasks"
         if metadata.get("product_id") != task["product_id"]:
             raise _AutomationSkip("Proposal is outside the Routine Product")
-        if (task.get("executor_type"), task.get("executor_id")) not in {
-            (None, None),
-            (policy.executor_type, policy.executor_id),
-        }:
-            raise _AutomationSkip("Proposed executor is outside automatic acceptance authorization")
+        # A Task runs on the executor its proposal suggests, or on the policy's when it suggests none.
+        suggested = (task.get("executor_type"), task.get("executor_id"))
+        executor = (policy.executor_type, policy.executor_id)
+        chosen_by = "policy"
+        if suggested != (None, None) and suggested != executor:
+            if legacy or completing:
+                raise _AutomationSkip("Proposed executor is outside automatic acceptance authorization")
+            executor, chosen_by = suggested, "proposal"
         scope = policy.work_scope
         if scope and (
             (scope.product_ids is not None and task["product_id"] not in scope.product_ids)
             or (scope.project_ids is not None and task.get("project_id") not in scope.project_ids)
         ):
             raise _AutomationSkip("Proposal is outside the authorized work scope")
-        if policy.limits.expires_at is not None and int(time.time()) >= policy.limits.expires_at:
+        if policy.limits is not None and int(time.time()) >= policy.limits.expires_at:
             raise _AutomationSkip("Routine automatic acceptance expired")
         if policy.source_ids is not None:
             evidence = task.get("evidence") or []
@@ -875,8 +927,13 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
                 not isinstance(item, dict) or item.get("source_id") not in policy.source_ids for item in evidence
             ):
                 raise _AutomationSkip("Proposal is outside the authorized Sources")
-        _automatic_executor(os.registry, policy.executor_type, policy.executor_id)
-        checked_task = {**task, "executor_type": policy.executor_type, "executor_id": policy.executor_id}
+        try:
+            _automatic_executor(os.registry, *executor)
+        except ValueError as exc:
+            if chosen_by != "proposal":
+                raise
+            raise _AutomationSkip(f"The proposal's executor cannot run this Task: {exc}") from exc
+        checked_task = {**task, "executor_type": executor[0], "executor_id": executor[1]}
         authority = restore_authorization(self.app, grant.get(AUTHORIZATION_KEY))
         if isinstance(authority, _ExecutorAuthorization) or (authority is not None and authority.service_account):
             raise _AutomationSkip("Automatic acceptance requires human authority")
@@ -897,7 +954,7 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
                 ("schedules", "write", None),
                 (acceptance_resource, "write", None),
                 ("wiki", "read", None),
-                (policy.executor_type + "s", "run", policy.executor_id),
+                (executor[0] + "s", "run", executor[1]),
             ):
                 await authority.arequire(resource, action, resource_id)
         manager = (
@@ -905,17 +962,34 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
             if isinstance(os._company_db, AsyncBaseDb)
             else CompanyManager(os._company_db, os.registry)
         )
+        approving = None
         if not completing:
             project = await _manager_call(manager, "get_project", task["project_id"])
-            if project and project["status"] in {"proposed", "cancelled"}:
-                raise _AutomationSkip(
-                    "Project approval is required before automatic Task acceptance"
-                    if project["status"] == "proposed"
-                    else "Cannot accept Task work in a cancelled Project"
-                )
+            if project and project["status"] == "cancelled":
+                raise _AutomationSkip("Cannot accept Task work in a cancelled Project")
+            if project and project["status"] == "proposed":
+                # A Routine's Project takes its id from the Product, the Routine and the name. A Project a
+                # person or another Routine proposed, or one renamed since, waits for a person.
+                own = project["id"] == _routine_project_id(task["product_id"], schedule["id"], project["name"])
+                if not (policy.approve_projects and own):
+                    raise _AutomationSkip("Project approval is required before automatic Task acceptance")
+                if authority is not None:
+                    await authority.arequire("projects", "write")
+                approving = project
+        if policy.limits is None:
+            if not completing:
+                # The review queue is the brake: a person finishing a Task makes room for the next.
+                open_now = 0
+                for status in _OPEN_STATUSES:
+                    rows = await _records(manager, "list_tasks", product_id=task["product_id"], status=status)
+                    open_now += _open_tasks(rows, schedule["id"])
+                if open_now >= policy.max_open:
+                    raise _AutomationSkip(
+                        f"Routine has {open_now} Tasks open, its limit. Complete or cancel one for it to accept more"
+                    )
         # Avoid Source IO for exhausted policies. The transaction repeats this
         # check under the Product lock, so concurrent acceptances remain bounded.
-        if (
+        elif (
             await _call(
                 os._company_db,
                 "count_company_acceptances",
@@ -933,6 +1007,9 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
             if any(name not in checks for name in names):
                 raise _AutomationSkip("Unknown automatic acceptance check")
             names.sort(key=lambda name: 0 if name in {"executor_registered", "project_active"} else 1)
+            if approving is not None:
+                # The Project becomes active with this acceptance.
+                names = [name for name in names if name != "project_active"]
             for name in (name for name in names if name != "has_source_evidence"):
                 check = checks.get(name)
                 if check is None:
@@ -953,7 +1030,7 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
                 await authority.arequire("schedules", "write")
                 await authority.arequire(acceptance_resource, "write")
                 await authority.arequire("wiki", "read")
-                await authority.arequire(policy.executor_type + "s", "run", policy.executor_id)
+                await authority.arequire(executor[0] + "s", "run", executor[1])
             # Re-read after all checks and proposal IO. Product/template bindings
             # are separate from the content-only policy fingerprint.
             current = await _call(os.db, "get_schedule", schedule["id"])
@@ -967,13 +1044,13 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
                 or _policy_fingerprint(current) != _policy_fingerprint(schedule)
             ):
                 raise _AutomationSkip("Routine automatic acceptance changed during checks")
-            if policy.limits.expires_at is not None and int(time.time()) >= policy.limits.expires_at:
+            if policy.limits is not None and int(time.time()) >= policy.limits.expires_at:
                 raise _AutomationSkip("Routine automatic acceptance expired during checks")
-            receipt = {
-                "routine_id": schedule["id"],
-                "policy": _policy_fingerprint(schedule),
-                "max_acceptances": policy.limits.max_acceptances,
-            }
+            receipt = {"routine_id": schedule["id"], "policy": _policy_fingerprint(schedule)}
+            if policy.limits is not None:
+                receipt["max_acceptances"] = policy.limits.max_acceptances
+            if declared:
+                receipt["declared"] = True
             _check_automation_deadline()
             if completing:
                 accepted = await _manager_call(
@@ -987,6 +1064,19 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
                     auto_accept=receipt,
                 )
             else:
+                if approving is not None:
+                    approved = await _manager_call(
+                        manager,
+                        "transition_project",
+                        project_id=approving["id"],
+                        target="active",
+                        reason="Approved with the Routine's Task",
+                        accepted_by=grant.get("user_id"),
+                        expected_updated_at=approving["updated_at"],
+                        auto_accept=receipt,
+                    )
+                    if approved is None:
+                        raise _AutomationSkip("Project changed during automatic approval")
                 accepted = await _manager_call(
                     manager,
                     "transition_task",
@@ -994,10 +1084,11 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
                     target="ready",
                     reason="Authorized Routine proposal",
                     accepted_by=grant.get("user_id"),
-                    executor_type=policy.executor_type,
-                    executor_id=policy.executor_id,
+                    executor_type=executor[0],
+                    executor_id=executor[1],
                     expected_updated_at=task["updated_at"],
-                    auto_accept=receipt,
+                    # The record says whether the Routine's proposal or the policy chose the executor.
+                    auto_accept={**receipt, "executor_chosen_by": chosen_by},
                 )
         if accepted is None:
             raise _AutomationSkip("Proposal changed during automatic acceptance")

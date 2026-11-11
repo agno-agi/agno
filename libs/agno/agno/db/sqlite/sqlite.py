@@ -9713,7 +9713,7 @@ class SqliteDb(BaseDb):
         if table is None:
             return None
         tasks_table = self._get_table(table_type="tasks") if target == "done" else None
-        tasks = tasks_table if auto_accept else None
+        tasks = self._get_table(table_type="tasks") if auto_accept else None
         stmt = select(table).where(table.c.id == project_id, table.c.deleted_at.is_(None))
         if user_id is not None:
             stmt = stmt.where(table.c.user_id == user_id)
@@ -9722,8 +9722,13 @@ class SqliteDb(BaseDb):
         with self.Session() as sess, sess.begin():
             lock_child(sess, products, projects, table, project_id)
             if auto_accept is not None:
-                if target != "done" or expected_updated_at is _UNSET_UPDATED_AT or products is None or tasks is None:
-                    raise ValueError("Automatic completion requires expected_updated_at and a Project with Tasks")
+                if (
+                    target not in {"active", "done"}
+                    or expected_updated_at is _UNSET_UPDATED_AT
+                    or products is None
+                    or tasks is None
+                ):
+                    raise ValueError("An automatic Project decision requires expected_updated_at and a Product")
                 task_histories = (
                     (sess.execute(select(tasks.c.transitions).where(tasks.c.routine_id == auto_accept["routine_id"])))
                     .scalars()
@@ -9732,12 +9737,9 @@ class SqliteDb(BaseDb):
                 project_histories = (
                     (sess.execute(select(table.c.transitions).where(table.c.id != project_id))).scalars().all()
                 )
-                if (
-                    _acceptance_count(
-                        list(task_histories) + list(project_histories), auto_accept["routine_id"], auto_accept["policy"]
-                    )
-                    >= auto_accept["max_acceptances"]
-                ):
+                if _acceptance_count(
+                    list(task_histories) + list(project_histories), auto_accept["routine_id"], auto_accept["policy"]
+                ) >= auto_accept.get("max_acceptances", float("inf")):
                     raise ValueError("Routine acceptance limit reached")
             row = sess.execute(stmt).fetchone()
             if row is None:
@@ -10123,9 +10125,8 @@ class SqliteDb(BaseDb):
                 )
                 if projects is not None:
                     prior = list(prior) + list((sess.execute(select(projects.c.transitions))).scalars().all())
-                if (
-                    _acceptance_count(prior, auto_accept["routine_id"], auto_accept["policy"])
-                    >= auto_accept["max_acceptances"]
+                if _acceptance_count(prior, auto_accept["routine_id"], auto_accept["policy"]) >= auto_accept.get(
+                    "max_acceptances", float("inf")
                 ):
                     raise ValueError("Routine acceptance limit reached")
             row = sess.execute(stmt).fetchone()

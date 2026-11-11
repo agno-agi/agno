@@ -103,7 +103,7 @@ def headers(scopes=None, user="alice"):
 
 
 class System:
-    def __init__(self, tmp_path):
+    def __init__(self, tmp_path, authorization=True):
         self.db = SqliteDb(db_file=str(tmp_path / "company.db"))
         self.writer = Agent(id="writer", name="Writer", model=ScriptedModel(), db=self.db)
         self.os = AgentOS(
@@ -113,7 +113,7 @@ class System:
             manager=OSManager(model=ScriptedModel()),
             company=CompanyConfig(model=ScriptedModel()),
             telemetry=False,
-            authorization=Authorization(verification_keys=[SECRET], algorithm="HS256"),
+            authorization=Authorization(verification_keys=[SECRET], algorithm="HS256") if authorization else None,
         )
         self.mini = self.os._mini_agent
         self.app = self.os.get_app()
@@ -387,7 +387,8 @@ def test_task_can_read_status_and_recover_from_a_concurrent_update(system, use_a
     def call(name, **arguments):
         functions = toolkit.get_async_functions() if use_async else toolkit.get_functions()
         entrypoint = functions[name].entrypoint
-        with authorization_scope(lambda: task_authority()):
+        # The Task this run executes: its status write is bound to that Task's Product.
+        with authorization_scope(lambda: task_authority(task_id=proposal["id"])):
             result = entrypoint(**arguments, _agno_run_context=context)
             return json.loads(asyncio.run(result) if use_async else result)
 

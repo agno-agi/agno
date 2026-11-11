@@ -34,17 +34,44 @@ class AcceptanceLimits(BaseModel):
     expires_at: int = Field(ge=1)
 
 
+def _default_executor(data: Any) -> Any:
+    """Leave out a null executor so Mini Agent applies; one executor field without the other is an error."""
+    if isinstance(data, dict):
+        named = [key for key in ("executor_type", "executor_id") if data.get(key) is not None]
+        if len(named) == 1:
+            raise ValueError("Give executor_type and executor_id together, or leave both out to use Mini Agent")
+        if not named:
+            data = {key: value for key, value in data.items() if key not in ("executor_type", "executor_id")}
+    return data
+
+
 class AutoAccept(BaseModel):
-    """Human-authored bounds; identifiers refer to existing records and server checks."""
+    """What happens to a Routine's proposals with no person. Every field has a default.
+
+    The Routine's Tasks are accepted and run, and finished work waits In review for a person. A Task
+    runs on the executor its proposal suggests, or on this executor when it suggests none.
+    approve_projects also approves a Project the Routine proposed when one of its Tasks is accepted;
+    turn it off for a person to approve each Project. max_open is the most Tasks of this Routine
+    that may be Ready, In progress or In review at once; it applies when limits is not set. limits
+    adds a lifetime count and an expiry.
+    """
 
     model_config = ConfigDict(extra="forbid", strict=True)
-    executor_type: Literal["agent", "team", "workflow"]
-    executor_id: str = Field(min_length=1)
+    executor_type: Literal["agent", "team", "workflow"] = "agent"
+    executor_id: str = Field(default=MINI_AGENT_ID, min_length=1)
     source_ids: Optional[List[str]] = None
     work_scope: Optional[AcceptanceScope] = None
     required_checks: List[str] = Field(default_factory=lambda: ["executor_registered"], min_length=1)
-    limits: AcceptanceLimits
+    limits: Optional[AcceptanceLimits] = None
     complete_projects: bool = False
+    approve_projects: bool = True
+    max_open: int = Field(5, ge=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_executor(cls, data: Any) -> Any:
+        """A policy with no executor uses Mini Agent. A null counts as left out."""
+        return _default_executor(data)
 
 
 class Routine(BaseModel):
@@ -57,18 +84,19 @@ class Routine(BaseModel):
     timezone: str = "UTC"
     enabled: bool = Field(default=True, description="Initial enabled state; existing routines retain later edits.")
     instructions: Optional[str] = None
-    auto_accept: Union[Literal[False], AutoAccept] = False
+    auto_accept: Union[Literal[False], AutoAccept] = Field(
+        default=False,
+        description="True is AutoAccept() with every default. Applied when the Routine is first created; "
+        "an existing Routine keeps its stored setting.",
+    )
 
     @model_validator(mode="before")
     @classmethod
     def default_executor(cls, data: Any) -> Any:
-        """A Routine with no executor runs on Mini Agent. A null counts as left out."""
-        if isinstance(data, dict):
-            named = [key for key in ("executor_type", "executor_id") if data.get(key) is not None]
-            if len(named) == 1:
-                raise ValueError("Give executor_type and executor_id together, or leave both out to use Mini Agent")
-            if not named:
-                data = {key: value for key, value in data.items() if key not in ("executor_type", "executor_id")}
+        """A Routine with no executor runs on Mini Agent, and auto_accept=True is the default policy."""
+        data = _default_executor(data)
+        if isinstance(data, dict) and data.get("auto_accept") is True:
+            data = {**data, "auto_accept": AutoAccept()}
         return data
 
     @model_validator(mode="after")

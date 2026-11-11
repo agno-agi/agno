@@ -225,6 +225,7 @@ retaining a known old ID explicitly is necessary for those references.
 | `12_task_board.py` | Direct start from Backlog, `last_run`, `allowed_transitions` and a board read by status with no model call. |
 | `13_start_tasks_from_chat.py` | Super Agent starts a human-accepted Task, ends its turn with the receipt, and answers status and unrelated questions while the Task runs. Add `--serve` to try it from the AgentOS UI on `localhost:7777` with a seeded, accepted Task. Live model; PostgreSQL. |
 | `14_work_to_done_in_chat.py` | A person takes work from a proposal to Done in a Super Agent chat: approve the Project, accept the Task on Mini Agent, start it, read the result and complete it. Each decision pauses for the person's confirmation. Mini Agent runs another agent to do the work, and the Task records it. Live model; PostgreSQL. |
+| `15_policy_source_to_done.py` | One line in a Routine declaration, `auto_accept=True`. The Routine reads a Source and proposes work, the automation tick approves the Routine's Project and accepts its Task, Mini Agent does the Task, and the result waits In review. Every automatic step is on the record. Live model; PostgreSQL; serves on a free local port. |
 
 `06_execute_tasks.py` starts an accepted workflow Task through its ordinary run
 route and the durable queue, waits for In review, reads paged history and checks
@@ -756,9 +757,12 @@ the IDs below with real records and PATCH this body:
 }
 ```
 
-Every authorization names an exact executor type and ID. A proposal with no
-executor receives that authorized executor at acceptance. A proposal that names
-an executor must name the same one. It must belong to the Routine's Product and
+A policy's executor is a default, and it is agent `miniagent` when left out. A
+proposal with no executor runs on the policy's executor. A proposal that names an
+executor runs on that one, when it is registered and passes the executor checks;
+otherwise it waits for a person. A policy saved before `approve_projects` existed
+keeps its earlier rule: its executor is fixed, and a proposal that names another
+waits for a person. A proposal must belong to the Routine's Product and
 carry the framework's Routine origin. `propose_company_task` and
 `intake_product_source` can create Backlog drafts in a proposed Project and name a
 proposed executor; neither can accept work. Source IDs and work scope are optional bounds. Omitted Source/scope
@@ -767,8 +771,8 @@ bounds impose no additional restriction; an empty allowed-ID list permits no mat
 check names fail closed. A Source bound requires verified reader evidence.
 Omitting `required_checks` defaults to `["executor_registered"]`; an explicit
 empty check list is rejected. Every policy therefore runs at least one server-side
-check. `limits.expires_at` is required on every policy creation or replacement,
-including PATCH, and must be a UTC epoch-second timestamp in the future.
+check. `limits` is optional. When it is given, `limits.expires_at` is required and
+must be a UTC epoch-second timestamp in the future.
 Automatic executors must be local and have a database for durable run storage.
 
 | Built-in required check | Server-side fact checked |
@@ -818,8 +822,9 @@ payload writes strip acceptance grants; only the human API can issue them after
 checking the caller's authority.
 
 In a local deployment with authentication disabled, API callers are trusted
-operators, as for the existing scheduler. Code/YAML declarations remain
-proposal-only: write an automatic authorization through the human API.
+operators, as for the existing scheduler. A Routine declared in the deployment's
+own code or YAML may carry `auto_accept`; see "auto_accept: one switch" below.
+`POST /company/setup` and the chat tools that create Products cannot.
 Executors and Mini Agent hold no `schedules:write` or SchedulerTools.
 Private authorization is removed from public payloads and executor input;
 Routine metadata is data, never a source of broader executor authority.
@@ -878,6 +883,100 @@ from its connection details. Reuse those details (or an explicit stable `id`)
 after restart and across replicas so saved run database references resolve.
 This does not rewrite references saved with older randomly generated IDs;
 retaining a known old ID explicitly is necessary for those references.
+
+### auto_accept: one switch
+
+```python
+Routine(name="maintenance", instructions=MAINTENANCE, auto_accept=True)
+
+# With a named worker
+Routine(..., auto_accept=AutoAccept(executor_type="agent", executor_id="codex-engineer"))
+```
+
+`auto_accept=True` means: a Project this Routine proposed is approved, its Tasks
+are accepted and run, and finished work waits In review for a person. Nothing
+completes a Task but a person. Every step runs in the automation tick; no run
+approves or accepts anything.
+
+`auto_accept` takes `True`, `False` or an `AutoAccept`. `True` is `AutoAccept()`.
+Every field has a default:
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `executor_type`, `executor_id` | agent `miniagent` | Where a Task runs when its proposal suggests no executor. Give both, or leave both out. |
+| `approve_projects` | `true` | Approve a Project this Routine proposed, when one of its Tasks is accepted. With `false`, a person approves each Project and the policy accepts and runs its Tasks. |
+| `max_open` | `5` | At most this many of the Routine's Tasks are Ready, In progress or In review at once. Applies when `limits` is not set. |
+| `limits` | none | Optional lifetime count and expiry, as before. A policy without it has no expiry: you turn it off. |
+| `source_ids`, `work_scope`, `required_checks`, `complete_projects` | as before | Unchanged. |
+
+- **The bound.** The review queue is the brake. When five of the Routine's Tasks
+  are open, the next proposal waits in Backlog until a person completes or
+  cancels one. A Task whose run failed stays In progress, so it still counts
+  until a person retries it, returns it to Backlog or cancels it.
+  `get_company_product` and a Backlog listing from `list_company_tasks` return
+  `auto_accept_at_limit` for a Routine that is waiting this way.
+- **Projects.** A Routine's Project takes its ID from the Product, the Routine
+  and the name. Only such a Project is approved, and only at the moment one of
+  its Tasks is accepted. A Project a person or another Routine proposed, or one
+  renamed since, waits for a person.
+- **A Task on Mini Agent** that a policy accepted holds no run tools. Work that
+  needs a real worker names it as the executor, in the policy or on the proposal.
+  Any registered component a proposal names can be chosen this way, so a Source
+  that a Routine reads can influence where its Tasks run.
+- **Where it is set.** In a Routine declaration in code or YAML, through
+  `POST` or `PATCH /company/routines` (`"auto_accept": true` or an object), from
+  the UI, or from chat. A declaration applies when the Routine is first
+  created. After that the stored Routine is the record: removing `auto_accept`
+  from the code does not turn it off on a Routine that already exists, and
+  adding it does not turn it on.
+
+**What a declared policy runs as.** A policy a person sets through the API, the
+UI or chat runs under that person's saved permissions, as before. A policy
+declared in code has no person behind it:
+
+- **With authorization off**, every caller is a trusted operator, and the
+  declared policy acts. The tick checks that the Routine is enabled and its
+  policy unchanged, that the proposal is this Routine's own and in its Product,
+  that the executor is registered and passes the executor checks, the bound, and
+  the policy's server checks. The Task run has no person's permissions to check
+  against. It still cannot change schedules, approve, accept, review or complete
+  work, turn auto-accept on, create Products or Routines, or edit company
+  details. On Mini Agent it holds the Company read tools and can update the
+  status page of its own Product only. With a named executor, that executor's
+  own tools are the whole boundary.
+- **With authorization on, a declared policy does nothing.** Code cannot give a
+  Routine a caller's grant. A Routine declared in code is refused at the request
+  gate until a person changes it through the API or chat, and the tick accepts
+  nothing under a declared policy. A person turns auto-accept on for the Routine
+  once, with one confirmation in chat, and from then on it runs under that
+  person's saved permissions.
+- The declared marker is written only when the deployment's own declaration
+  first creates the Routine. The Routine API and the chat tools write the
+  person's grant instead, so a person who changes a declared Routine's
+  instructions, executor or policy makes it theirs. The generic schedule routes
+  refuse a Company Routine and drop the key from any other schedule, the
+  ScheduleManager drops it from every write, and Platform Builder's schedule
+  tools take no payload.
+
+**A policy saved before this change** keeps its version, its budget and its
+rules: it approves no Project, its executor is fixed, and its lifetime count and
+expiry are its only limits.
+
+**From chat.** `turn_on_routine_auto_accept` pauses and shows the Routine's name,
+its Product's name and the executor; it refuses when a name is not the stored
+one. `turn_off_routine_auto_accept` does not pause. Both go through the Routine
+API's PATCH handler as the chatting person, so they need what PATCH needs:
+`routines:write`, `schedules:write`, `tasks:write`, `wiki:read`, `projects:write`
+and run permission on the Routine's executor and the policy's.
+
+**On the record.** Each automatic approval and acceptance carries `auto_accept`
+with the Routine ID and the policy version, `declared` for a declared policy,
+and on an acceptance whether the proposal or the policy chose the executor.
+`get_company_product` returns the latest 20 as `automatic_decisions`.
+
+```bash
+.venvs/demo/bin/python cookbook/05_agent_os/30_company/15_policy_source_to_done.py
+```
 
 ### Bounded Project completion
 

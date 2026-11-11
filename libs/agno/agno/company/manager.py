@@ -31,15 +31,77 @@ def _without_routine_links(fields: Dict[str, Any]) -> Dict[str, Any]:
     return {**fields, "metadata": {key: value for key, value in metadata.items() if key != "routine_ids"}}
 
 
-def _project_proposal_id(product_id: str, name: str) -> Optional[str]:
+_AUTOMATIC_DECISIONS = {"active": "approved", "ready": "accepted", "done": "completed"}
+
+
+def _automatic_decisions(projects: Any, tasks: Any, limit: int) -> List[Dict[str, Any]]:
+    """The decisions a Routine's policy made on these records, newest first."""
+    decisions = []
+    for kind, rows in (("project", projects), ("task", tasks)):
+        for row in rows:
+            for position, entry in enumerate(row.get("transitions") or []):
+                receipt = entry.get("auto_accept")
+                if not receipt or entry.get("target") not in _AUTOMATIC_DECISIONS:
+                    continue
+                decisions.append(
+                    {
+                        "position": position,
+                        "record": kind,
+                        "id": row["id"],
+                        "title": row.get("title") or row.get("name"),
+                        "decision": _AUTOMATIC_DECISIONS[entry["target"]],
+                        "routine_id": receipt.get("routine_id"),
+                        "policy": receipt.get("policy"),
+                        "policy_author": entry.get("user_id"),
+                        "at": entry.get("created_at"),
+                    }
+                )
+    # Within one second, a record's later step comes first.
+    decisions.sort(key=lambda item: (item["at"] or 0, item.pop("position")), reverse=True)
+    return decisions[:limit]
+
+
+def _at_limit(product: Dict[str, Any], schedules: List[Optional[Dict[str, Any]]], tasks: Any) -> List[Dict[str, Any]]:
+    """The Product's Routines whose auto-accept is waiting because their open Tasks are at the limit."""
+    from agno.company.routines import _open_tasks, _stored_policy
+
+    waiting = []
+    for schedule in schedules:
+        metadata = ((schedule or {}).get("payload") or {}).get("metadata") or {}
+        raw = metadata.get("auto_accept")
+        if not schedule or not schedule.get("enabled") or not raw or metadata.get("deleted_at") is not None:
+            continue
+        policy, _ = _stored_policy(raw)
+        open_now = _open_tasks(tasks, schedule["id"])
+        if policy.limits is None and open_now >= policy.max_open:
+            backlog = sum(1 for t in tasks if t.get("routine_id") == schedule["id"] and t["status"] == "backlog")
+            waiting.append(
+                {
+                    "routine_id": schedule["id"],
+                    "routine": schedule["name"].removeprefix(product["id"] + "."),
+                    "open_tasks": open_now,
+                    "max_open": policy.max_open,
+                    "proposals_waiting": backlog,
+                    "note": "Auto-accept is at its limit. Complete or cancel an open Task for it to accept more.",
+                }
+            )
+    return waiting
+
+
+def _routine_project_id(product_id: str, routine_id: Optional[str], name: str) -> str:
+    """The id of the Project a Routine proposes under this name in a Product."""
     from uuid import NAMESPACE_URL, uuid5
 
+    return str(uuid5(NAMESPACE_URL, f"company-project/{product_id}/{routine_id}/{name}"))
+
+
+def _project_proposal_id(product_id: str, name: str) -> Optional[str]:
     from agno.company.routines import _RoutineAuthorization
     from agno.run.authorization import current_authorization
 
     authority = current_authorization()
     if isinstance(authority, _RoutineAuthorization):
-        return str(uuid5(NAMESPACE_URL, f"company-project/{product_id}/{authority.routine_id}/{name}"))
+        return _routine_project_id(product_id, authority.routine_id, name)
     return None
 
 
@@ -536,6 +598,29 @@ class CompanyManager:
             expected_updated_at=expected_updated_at,
             auto_accept=auto_accept,
         )
+
+    def auto_accept_status(self, product_id: str, limit: int = 20) -> Dict[str, Any]:
+        """What auto-accept did and is waiting on in a Product.
+
+        automatic_decisions holds the latest decisions a policy made on the Product's Projects and Tasks,
+        newest first. auto_accept_at_limit holds its Routines that wait for a person to finish an open Task.
+        """
+        product = self.get(product_id)
+        records: Dict[str, List[Dict[str, Any]]] = {"list_projects": [], "list_tasks": []}
+        for method, rows in records.items():
+            page = 1
+            while True:
+                batch, total = getattr(self, method)(product_id=product_id, limit=100, page=page)
+                rows.extend(batch)
+                if page * 100 >= total:
+                    break
+                page += 1
+        routine_ids = ((product or {}).get("metadata") or {}).get("routine_ids") or []
+        schedules = [self.schedule_db.get_schedule(routine_id) for routine_id in routine_ids]
+        return {
+            "automatic_decisions": _automatic_decisions(records["list_projects"], records["list_tasks"], limit),
+            "auto_accept_at_limit": _at_limit(product or {}, schedules, records["list_tasks"]),
+        }
 
     def attention(self, product_id: Optional[str] = None) -> Dict[str, Any]:
         """Company-wide counts over the same filters used by the Task list."""
@@ -1447,6 +1532,31 @@ class AsyncCompanyManager:
             expected_updated_at=expected_updated_at,
             auto_accept=auto_accept,
         )
+
+    async def auto_accept_status(self, product_id: str, limit: int = 20) -> Dict[str, Any]:
+        """What auto-accept did and is waiting on in a Product.
+
+        automatic_decisions holds the latest decisions a policy made on the Product's Projects and Tasks,
+        newest first. auto_accept_at_limit holds its Routines that wait for a person to finish an open Task.
+        """
+        from agno.company.execution import _call
+
+        product = await self.get(product_id)
+        records: Dict[str, List[Dict[str, Any]]] = {"list_projects": [], "list_tasks": []}
+        for method, rows in records.items():
+            page = 1
+            while True:
+                batch, total = await getattr(self, method)(product_id=product_id, limit=100, page=page)
+                rows.extend(batch)
+                if page * 100 >= total:
+                    break
+                page += 1
+        routine_ids = ((product or {}).get("metadata") or {}).get("routine_ids") or []
+        schedules = [await _call(self.schedule_db, "get_schedule", routine_id) for routine_id in routine_ids]
+        return {
+            "automatic_decisions": _automatic_decisions(records["list_projects"], records["list_tasks"], limit),
+            "auto_accept_at_limit": _at_limit(product or {}, schedules, records["list_tasks"]),
+        }
 
     async def attention(self, product_id: Optional[str] = None) -> Dict[str, Any]:
         """Company-wide counts over the same filters used by the Task list."""
