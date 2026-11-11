@@ -21,6 +21,12 @@ class OSManager:
     and delegated work. Ordinary agents retain their existing tool permissions.
     Direct Python calls and bound interfaces are trusted application entry points.
 
+    Super Agent keeps its own files in ``notes/``, stored in the AgentOS database. ``notes/`` is one
+    folder shared by everyone who talks to Super Agent, including when user isolation is on, so
+    anyone who can chat with Super Agent can read what it noted in another person's chat. With
+    Company on, the same tools read and write the company wiki, each Product's pages and each
+    Task's files, which are stored in the Company database.
+
     Args:
         name: The manager team's display name.
         model: Model for the manager and Platform Builder. Uses the registry's first

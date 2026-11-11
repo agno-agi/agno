@@ -381,6 +381,17 @@ def test_builder_and_lead_carry_the_framework_toolkits(db, workspace, company_en
             "turn_on_routine_auto_accept",
             "turn_off_routine_auto_accept",
         }
+        assert not {"list_company_wiki", "read_company_wiki", "update_product_status"} & set(company.functions)
+    # notes/ comes with Super Agent. The wiki, Products and Tasks join the tree with Company.
+    files = rest.pop(0)
+    assert files.name == "company_files"
+    assert set(files.functions) == {
+        "list_company_files",
+        "read_company_file",
+        "search_company_files",
+        "write_company_file",
+        "delete_company_file",
+    } | ({"save_company_page"} if company_enabled else set())
     assert rest == []
 
     names = set()
