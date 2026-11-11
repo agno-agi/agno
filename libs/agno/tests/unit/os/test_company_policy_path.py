@@ -892,6 +892,23 @@ def test_under_isolation_the_chat_tool_needs_a_signed_in_person(system):
     assert system.db.get_schedule(routine_id) == before
 
 
+def test_a_run_with_no_authority_changes_auto_accept_only_where_authorization_is_off(system, open_system):
+    nobody = RunContext(run_id="r", session_id="s", user_id=None, authorization=None)
+    # The deployment checks permissions and this run carries none: an admin's grant is not replaced.
+    product_id, routine_id = system.declare(auto_accept=False)
+    assert turn_on(system, routine_id).startswith("Auto-accept is on")
+    before = system.db.get_schedule(routine_id)
+    for reply in (turn_off(system, routine_id, nobody), turn_on(system, routine_id, nobody)):
+        assert reply.startswith("Not done") and "signed-in person" in reply, reply
+    assert system.db.get_schedule(routine_id) == before
+    # Where authorization is off every caller is a trusted operator.
+    product_id, routine_id = open_system.declare(auto_accept=False)
+    assert turn_on(open_system, routine_id, nobody).startswith("Auto-accept is on")
+    assert open_system.stored(routine_id)["metadata"]["auto_accept"] == AutoAccept().model_dump()
+    assert turn_off(open_system, routine_id, nobody).startswith("Auto-accept is off")
+    assert open_system.stored(routine_id)["metadata"]["auto_accept"] is False
+
+
 def automated(caller):
     context = chat()
     if caller == "routine-run":

@@ -49,6 +49,14 @@ def _user_isolation(agent_os: Any) -> bool:
     )
 
 
+def _unsigned(agent_os: Any, authority: Any, user_id: Any) -> bool:
+    """Whether nobody stands behind this run: it carries no permissions where the deployment checks
+    them, or names no person where the deployment isolates users."""
+    return (authority is None and bool(getattr(agent_os, "authorization", None))) or (
+        _user_isolation(agent_os) and not user_id
+    )
+
+
 def _refusal(authority: Any) -> Optional[str]:
     from agno.company.execution import _automatic_task, _ExecutorAuthorization
     from agno.company.routines import _RoutineAuthorization
@@ -119,7 +127,7 @@ class CompanyTaskTools(Toolkit):
         refusal = _refusal(authority)
         if refusal is not None:
             return refusal
-        if _user_isolation(agent_os) and not user_id:
+        if _unsigned(agent_os, authority, user_id):
             return "A signed-in person is required to start a Task."
 
         starter = _TaskStarter(agent_os)
@@ -233,7 +241,7 @@ class CompanyTaskTools(Toolkit):
 
         _require_human_creation(run_context, operation)
         authority, user_id = _run_context_identity(run_context)
-        if _user_isolation(agent_os) and not user_id:
+        if _unsigned(agent_os, authority, user_id):
             raise PermissionError(f"A signed-in person is required to {operation}")
         return authority, user_id
 
