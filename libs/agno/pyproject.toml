@@ -258,7 +258,7 @@ a2a = ["a2a-sdk[http-server]>=1.2.2,<2"]
 
 # Dependencies for Slack integration
 slack = ["slack_bolt>=1.29.0,<2", "slack_sdk>=3.43.0,<4", "aiohttp>=3.7.3,<4"]
-msteams = ["pyjwt[crypto]>=2.8.0"]
+msteams = ["pyjwt[crypto]>=2.14.0"]
 
 # Dependencies for Embedders
 huggingface = [

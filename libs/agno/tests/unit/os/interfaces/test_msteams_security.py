@@ -1,292 +1,195 @@
+import json
+import threading
+import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import jwt
 import pytest
+from cryptography.hazmat.primitives.asymmetric import rsa
+from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi.testclient import TestClient
 
-from agno.os.interfaces.msteams import security as teams_security
-from agno.os.interfaces.msteams.security import validate_bot_framework_jwt
+from agno.os.interfaces.msteams import security
+from agno.os.interfaces.msteams.router import attach_routes
 
 APP_ID = "test-app-id"
+SERVICE_URL = "https://svc/"
 
 
-def _reset_jwks_state():
-    teams_security._jwks_cache["keys"] = None
-    teams_security._jwks_cache["fetched_at"] = 0.0
-    teams_security._jwks_cache["fetched_monotonic"] = 0.0
-    teams_security._jwks_cache["jwks_uri"] = None
-    # The async lock is bound to the loop that created it; a leaked one would
-    # be reused by the next test's loop.
-    teams_security._async_jwks_lock = None
+@pytest.fixture(scope="module")
+def signing_key():
+    return rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
 
-@pytest.fixture(autouse=True)
-def _clear_jwks_cache():
-    _reset_jwks_state()
-    yield
-    _reset_jwks_state()
+@pytest.fixture
+def claims():
+    return {
+        "aud": APP_ID,
+        "iss": "https://api.botframework.com",
+        "exp": int(time.time()) + 600,
+        "serviceurl": SERVICE_URL,
+    }
 
 
-# === Header shape rejection (fast-path, no JWKS fetch) ===
+def _token(key, claims, kid="test-kid"):
+    return jwt.encode(claims, key, algorithm="RS256", headers={"kid": kid})
 
 
-@pytest.mark.asyncio
-async def test_missing_auth_header_returns_false():
-    assert await validate_bot_framework_jwt(None, APP_ID) is False
-
-
-@pytest.mark.asyncio
-async def test_empty_auth_header_returns_false():
-    assert await validate_bot_framework_jwt("", APP_ID) is False
-
-
-@pytest.mark.asyncio
-async def test_missing_bearer_prefix_returns_false():
-    assert await validate_bot_framework_jwt("Basic abc", APP_ID) is False
-
-
-@pytest.mark.asyncio
-async def test_bearer_prefix_is_case_insensitive():
-    with patch("agno.os.interfaces.msteams.security._get_jwks", new_callable=AsyncMock, return_value=[]):
-        assert await validate_bot_framework_jwt("bearer not-a-real-jwt", APP_ID) is False
-
-
-@pytest.mark.asyncio
-async def test_malformed_jwt_returns_false():
-    with patch("agno.os.interfaces.msteams.security._get_jwks", new_callable=AsyncMock, return_value=[]):
-        assert await validate_bot_framework_jwt("Bearer garbage.not.jwt", APP_ID) is False
-
-
-# === Skip flag for local dev ===
-
-
-@pytest.mark.asyncio
-async def test_skip_flag_bypasses_validation():
-    # No app id configured — the only shape in which the bypass applies.
-    with patch.dict("os.environ", {"MICROSOFT_APP_SKIP_JWT_VALIDATION": "true"}, clear=True):
-        assert await validate_bot_framework_jwt(None, "") is True
-        assert await validate_bot_framework_jwt("Bearer garbage", "") is True
-        assert await validate_bot_framework_jwt("", "") is True
-
-
-@pytest.mark.asyncio
-async def test_skip_flag_case_insensitive():
-    with patch.dict("os.environ", {"MICROSOFT_APP_SKIP_JWT_VALIDATION": "True"}, clear=True):
-        assert await validate_bot_framework_jwt(None, "") is True
-
-
-@pytest.mark.asyncio
-async def test_skip_flag_false_still_validates():
-    with patch.dict("os.environ", {"MICROSOFT_APP_SKIP_JWT_VALIDATION": "false"}, clear=True):
-        assert await validate_bot_framework_jwt(None, APP_ID) is False
-
-
-# === JWKS refetch amplification (driven through the webhook) ===
-
-
-def _client_that_really_validates():
-    """A webhook whose JWT check actually runs: credentials set, no dev bypass."""
-    from types import SimpleNamespace
-
-    from fastapi import APIRouter, FastAPI
-    from fastapi.testclient import TestClient
-
-    from agno.os.interfaces.msteams.router import attach_routes
-
-    router = APIRouter()
-    env = patch.dict(
-        "os.environ",
-        {"MICROSOFT_APP_ID": APP_ID, "MICROSOFT_APP_PASSWORD": "secret"},
-        clear=True,
+@pytest.fixture
+def jwks(signing_key, monkeypatch):
+    key = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(signing_key.public_key()))
+    key.update(kid="test-kid", use="sig", endorsements=["msteams"])
+    monkeypatch.setattr(security, "_jwk_client", None, raising=False)
+    monkeypatch.setattr(
+        security, "_fetch_openid_metadata", AsyncMock(return_value={"jwks_uri": "https://example.com/keys"})
     )
-    env.start()
-    attach_routes(router, agent=SimpleNamespace(id="a-1", name="A", db=None))
-    app = FastAPI()
-    app.include_router(router)
-    return TestClient(app), env
-
-
-def _token_with_kid(kid: str) -> str:
-    import jwt as pyjwt
-
-    # Only the header matters: the kid lookup happens before any signature work.
-    return pyjwt.encode({"aud": APP_ID}, "irrelevant", algorithm="HS256", headers={"kid": kid})
-
-
-def test_repeated_unknown_kid_refetches_jwks_only_once():
-    """get_unverified_header verifies nothing, so any caller can trigger the
-    rotation refetch with a made-up kid."""
-    calls = {"meta": 0, "keys": 0}
-
-    def fake_metadata():
-        calls["meta"] += 1
-        return {"jwks_uri": "https://example/keys", "issuer": "https://api.botframework.com"}
-
-    def fake_keys(uri):
-        calls["keys"] += 1
-        return [{"kty": "RSA", "kid": "a-real-kid"}]
-
-    client, env = _client_that_really_validates()
-    try:
-        with (
-            patch("agno.os.interfaces.msteams.security._fetch_openid_metadata", side_effect=fake_metadata),
-            patch("agno.os.interfaces.msteams.security._fetch_jwks", side_effect=fake_keys),
-        ):
-            headers = {"Authorization": f"Bearer {_token_with_kid('made-up-kid')}"}
-            for _ in range(5):
-                assert (
-                    client.post("/messages", json={"type": "message", "text": "x"}, headers=headers).status_code == 403
-                )
-    finally:
-        env.stop()
-
-    assert calls["meta"] == 1
-    assert calls["keys"] == 1
-
-
-def test_jwks_is_fetched_with_the_async_client_not_the_blocking_one():
-    """Both clients are patched: the sync one so the assertion can see it, the
-    async one so the test never leaves the machine."""
-    client, env = _client_that_really_validates()
-    try:
-        with patch("httpx.AsyncClient") as async_client, patch("httpx.Client") as blocking_client:
-            headers = {"Authorization": f"Bearer {_token_with_kid('made-up-kid')}"}
-            client.post("/messages", json={"type": "message", "text": "x"}, headers=headers)
-    finally:
-        env.stop()
-
-    blocking_client.assert_not_called()
-    assert async_client.called, "the JWKS fetch did not go through httpx.AsyncClient"
+    # Stub the network fetch, not token decoding or the subclass's endorsement capture.
+    with patch("jwt.PyJWKClient.fetch_data", return_value={"keys": [key]}) as fetch:
+        yield key, fetch
 
 
 @pytest.mark.asyncio
-async def test_missing_crypto_extra_raises_install_hint_not_a_rejection():
-    """A configuration error, not a bad token: without this the operator sees a
-    403 and debugs their Azure registration instead of their install."""
-    from fastapi import HTTPException
+@pytest.mark.parametrize("header", [None, "", "Basic abc", "Bearer malformed", "Bearer x.y.z"])
+async def test_invalid_header_rejected(header):
+    assert await security.validate_bot_framework_jwt(header, APP_ID, SERVICE_URL, "msteams") is None
 
-    with patch.dict("os.environ", {"MICROSOFT_APP_ID": APP_ID}, clear=True):
-        with patch("jwt.algorithms.has_crypto", False):
-            with pytest.raises(HTTPException) as exc:
-                await validate_bot_framework_jwt("Bearer x.y.z", APP_ID)
 
+@pytest.mark.asyncio
+async def test_valid_signature_returns_claims(signing_key, claims, jwks):
+    token = _token(signing_key, claims)
+    assert await security.validate_bot_framework_jwt(f"bearer {token}", APP_ID, SERVICE_URL, "msteams") == claims
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "change", [{"aud": "wrong"}, {"iss": "wrong"}, {"exp": 1}, {"serviceurl": None}, {"serviceurl": "https://other/"}]
+)
+async def test_invalid_claims_rejected(signing_key, claims, jwks, change):
+    claims.update(change)
+    if claims["serviceurl"] is None:
+        del claims["serviceurl"]
+    token = _token(signing_key, claims)
+    assert await security.validate_bot_framework_jwt(f"Bearer {token}", APP_ID, SERVICE_URL, "msteams") is None
+
+
+@pytest.mark.asyncio
+async def test_bad_signature_rejected(claims, jwks):
+    other_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    token = _token(other_key, claims)
+    assert await security.validate_bot_framework_jwt(f"Bearer {token}", APP_ID, SERVICE_URL, "msteams") is None
+
+
+@pytest.mark.asyncio
+async def test_expiry_within_leeway_accepted(signing_key, claims, jwks):
+    claims["exp"] = int(time.time()) - 240
+    token = _token(signing_key, claims)
+    assert await security.validate_bot_framework_jwt(f"Bearer {token}", APP_ID, SERVICE_URL, "msteams") == claims
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "endorsements,channel,accepted",
+    [
+        (["msteams"], "msteams", True),
+        (["other"], "msteams", False),
+        (None, "msteams", True),
+        ([], "msteams", True),
+        (["other"], None, True),
+    ],
+)
+async def test_endorsements_follow_bot_framework(signing_key, claims, jwks, endorsements, channel, accepted):
+    key, _ = jwks
+    if endorsements is None:
+        key.pop("endorsements")
+    else:
+        key["endorsements"] = endorsements
+    result = await security.validate_bot_framework_jwt(
+        f"Bearer {_token(signing_key, claims)}", APP_ID, SERVICE_URL, channel
+    )
+    assert (result is not None) == accepted
+
+
+@pytest.mark.asyncio
+async def test_unknown_kids_use_client_cooldown(signing_key, claims, jwks):
+    key, fetch = jwks
+    for kid in ["unknown-1", "unknown-2", "unknown-3"]:
+        assert (
+            await security.validate_bot_framework_jwt(
+                f"Bearer {_token(signing_key, claims, kid)}", APP_ID, SERVICE_URL, "msteams"
+            )
+            is None
+        )
+    # The base method normally stamps the cooldown during a network fetch.
+    # Its network stub does not; subsequent requests must still be cooled down.
+    assert fetch.call_count <= 2
+    security._fetch_openid_metadata.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_signing_key_lookup_runs_off_loop(signing_key, claims, jwks):
+    token = _token(signing_key, claims)
+    await security.validate_bot_framework_jwt(f"Bearer {token}", APP_ID, SERVICE_URL, "msteams")
+    client = security._jwk_client
+    original = client.get_signing_key
+    threads = []
+
+    def get_key(kid):
+        threads.append(threading.get_ident())
+        return original(kid)
+
+    with patch.object(client, "get_signing_key", side_effect=get_key):
+        assert await security.validate_bot_framework_jwt(f"Bearer {token}", APP_ID, SERVICE_URL, "msteams") == claims
+    assert threads and threads[0] != threading.get_ident()
+
+
+@pytest.mark.asyncio
+async def test_missing_crypto_reports_configuration_error():
+    with patch("jwt.algorithms.has_crypto", False):
+        with pytest.raises(HTTPException) as exc:
+            await security.validate_bot_framework_jwt("Bearer x.y.z", APP_ID, SERVICE_URL)
     assert exc.value.status_code == 500
     assert "pyjwt[crypto]" in exc.value.detail
 
 
 @pytest.mark.asyncio
-async def test_skip_flag_is_ignored_when_credentials_are_configured():
-    """A configured deployment must not be downgradable by an env var."""
+async def test_bypass_only_without_app_id():
+    with patch.dict("os.environ", {"MICROSOFT_APP_SKIP_JWT_VALIDATION": "True"}, clear=True):
+        assert await security.validate_bot_framework_jwt(None, "", SERVICE_URL) == {}
+        assert await security.validate_bot_framework_jwt(None, APP_ID, SERVICE_URL) is None
+    with patch.dict("os.environ", {}, clear=True):
+        with pytest.raises(HTTPException) as exc:
+            await security.validate_bot_framework_jwt(None, "", SERVICE_URL)
+        assert exc.value.status_code == 500
+
+
+@pytest.mark.parametrize("body", [[], [1], "text", 12, True, None])
+def test_webhook_rejects_non_object_before_auth(body):
+    router = APIRouter()
+    with patch.dict("os.environ", {"MICROSOFT_APP_SKIP_JWT_VALIDATION": "true"}, clear=True):
+        attach_routes(router, agent=SimpleNamespace(id="agent", name="Agent", db=None))
+        app = FastAPI()
+        app.include_router(router)
+        with TestClient(app) as client:
+            response = client.post("/messages", content=json.dumps(body), headers={"Content-Type": "application/json"})
+    assert response.status_code == 400
+
+
+def test_webhook_enforces_serviceurl(signing_key, claims, jwks):
+    router = APIRouter()
     with patch.dict(
         "os.environ",
-        {"MICROSOFT_APP_ID": APP_ID, "MICROSOFT_APP_SKIP_JWT_VALIDATION": "true"},
+        {"MICROSOFT_APP_ID": APP_ID, "MICROSOFT_APP_PASSWORD": "secret", "MICROSOFT_APP_TENANT_ID": "tenant"},
         clear=True,
     ):
-        assert await validate_bot_framework_jwt(None, APP_ID) is False
-        assert await validate_bot_framework_jwt("Bearer garbage", APP_ID) is False
-
-
-@pytest.mark.asyncio
-async def test_skip_flag_bypasses_only_without_credentials():
-    """The local-development path stays open."""
-    with patch.dict("os.environ", {"MICROSOFT_APP_SKIP_JWT_VALIDATION": "true"}, clear=True):
-        assert await validate_bot_framework_jwt(None, "") is True
-        assert await validate_bot_framework_jwt("Bearer garbage", "") is True
-
-
-# === Signature verification path (mocked jwt.decode) ===
-
-
-@pytest.mark.asyncio
-async def test_valid_signature_returns_true():
-    fake_key = {"kty": "RSA", "kid": "test-kid", "n": "AA", "e": "AQAB"}
-
-    with (
-        patch("agno.os.interfaces.msteams.security._get_jwks", new_callable=AsyncMock, return_value=[fake_key]),
-        patch("jwt.get_unverified_header", return_value={"kid": "test-kid", "alg": "RS256"}),
-        patch("jwt.algorithms.RSAAlgorithm.from_jwk", return_value="fake-public-key"),
-        patch("jwt.decode", return_value={"iss": "https://api.botframework.com", "aud": APP_ID, "exp": 9999999999}),
-    ):
-        assert await validate_bot_framework_jwt("Bearer x.y.z", APP_ID) is True
-
-
-@pytest.mark.asyncio
-async def test_signature_verification_failure_returns_false():
-    import jwt
-
-    fake_key = {"kty": "RSA", "kid": "test-kid", "n": "AA", "e": "AQAB"}
-
-    with (
-        patch("agno.os.interfaces.msteams.security._get_jwks", new_callable=AsyncMock, return_value=[fake_key]),
-        patch("jwt.get_unverified_header", return_value={"kid": "test-kid"}),
-        patch("jwt.algorithms.RSAAlgorithm.from_jwk", return_value="fake-public-key"),
-        patch("jwt.decode", side_effect=jwt.InvalidSignatureError("bad sig")),
-    ):
-        assert await validate_bot_framework_jwt("Bearer x.y.z", APP_ID) is False
-
-
-@pytest.mark.asyncio
-async def test_unknown_kid_forces_refresh_then_fails():
-    """With the cache old enough for the refresh floor, an unknown kid forces one
-    refetch and is then rejected."""
-    call_count = {"n": 0}
-
-    async def fake_get_jwks():
-        call_count["n"] += 1
-        return []  # empty both times
-
-    with (
-        patch("agno.os.interfaces.msteams.security._get_jwks", new_callable=AsyncMock, side_effect=fake_get_jwks),
-        patch("jwt.get_unverified_header", return_value={"kid": "unknown-kid"}),
-    ):
-        assert await validate_bot_framework_jwt("Bearer x.y.z", APP_ID) is False
-        assert call_count["n"] == 2
-
-
-@pytest.mark.asyncio
-async def test_missing_kid_in_header_returns_false():
-    with patch("jwt.get_unverified_header", return_value={"alg": "RS256"}):
-        assert await validate_bot_framework_jwt("Bearer x.y.z", APP_ID) is False
-
-
-@pytest.mark.asyncio
-async def test_wrong_audience_returns_false():
-    import jwt
-
-    fake_key = {"kty": "RSA", "kid": "test-kid", "n": "AA", "e": "AQAB"}
-
-    with (
-        patch("agno.os.interfaces.msteams.security._get_jwks", new_callable=AsyncMock, return_value=[fake_key]),
-        patch("jwt.get_unverified_header", return_value={"kid": "test-kid"}),
-        patch("jwt.algorithms.RSAAlgorithm.from_jwk", return_value="fake-public-key"),
-        patch("jwt.decode", side_effect=jwt.InvalidAudienceError("wrong aud")),
-    ):
-        assert await validate_bot_framework_jwt("Bearer x.y.z", APP_ID) is False
-
-
-@pytest.mark.asyncio
-async def test_wrong_issuer_returns_false():
-    import jwt
-
-    fake_key = {"kty": "RSA", "kid": "test-kid", "n": "AA", "e": "AQAB"}
-
-    with (
-        patch("agno.os.interfaces.msteams.security._get_jwks", new_callable=AsyncMock, return_value=[fake_key]),
-        patch("jwt.get_unverified_header", return_value={"kid": "test-kid"}),
-        patch("jwt.algorithms.RSAAlgorithm.from_jwk", return_value="fake-public-key"),
-        patch("jwt.decode", side_effect=jwt.InvalidIssuerError("wrong iss")),
-    ):
-        assert await validate_bot_framework_jwt("Bearer x.y.z", APP_ID) is False
-
-
-@pytest.mark.asyncio
-async def test_expired_token_returns_false():
-    import jwt
-
-    fake_key = {"kty": "RSA", "kid": "test-kid", "n": "AA", "e": "AQAB"}
-
-    with (
-        patch("agno.os.interfaces.msteams.security._get_jwks", new_callable=AsyncMock, return_value=[fake_key]),
-        patch("jwt.get_unverified_header", return_value={"kid": "test-kid"}),
-        patch("jwt.algorithms.RSAAlgorithm.from_jwk", return_value="fake-public-key"),
-        patch("jwt.decode", side_effect=jwt.ExpiredSignatureError("expired")),
-    ):
-        assert await validate_bot_framework_jwt("Bearer x.y.z", APP_ID) is False
+        attach_routes(router, agent=SimpleNamespace(id="agent", name="Agent", db=None))
+        app = FastAPI()
+        app.include_router(router)
+        with TestClient(app) as client:
+            for url, status in [(SERVICE_URL, 200), ("https://other/", 403), (None, 403)]:
+                response = client.post(
+                    "/messages",
+                    json={"type": "conversationUpdate", "serviceUrl": url, "channelId": "msteams"},
+                    headers={"Authorization": f"Bearer {_token(signing_key, claims)}"},
+                )
+                assert response.status_code == status
