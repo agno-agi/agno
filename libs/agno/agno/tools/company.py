@@ -168,7 +168,7 @@ def _routine_declaration(name, executor_type, executor_id, template, instruction
     )
 
 
-def _page(result, limit, page):
+def _page(result, limit, page, **notes):
     rows, total = result
     from agno.db.schemas.tasks import public_task
 
@@ -177,6 +177,7 @@ def _page(result, limit, page):
         {
             "data": rows,
             "meta": {"page": page, "limit": limit, "total_count": total, "total_pages": (total + limit - 1) // limit},
+            **{name: value for name, value in notes.items() if value},
         },
         default=str,
     )
@@ -268,6 +269,11 @@ class CompanyTools(Toolkit):
                 raise PermissionError("Caller identity is required under user isolation")
             return user
         return None
+
+    def _authorization_on(self) -> bool:
+        """Whether this deployment checks permissions. Where it does not, a declared auto_accept acts."""
+        agent_os = self._agent_os_ref() if self._agent_os_ref else None
+        return bool(getattr(agent_os, "authorization", None))
 
     def _sync(self):
         if isinstance(self.db, AsyncBaseDb):
@@ -680,11 +686,27 @@ class CompanyTools(Toolkit):
 
     @requires_permission()
     def get_company_product(self, product_id: str, _agno_run_context: Optional[Any] = None) -> str:
-        """Read a Product's purpose and current configuration."""
+        """Read a Product's purpose, configuration and status.
+
+        automatic_decisions lists what a Routine's auto-accept approved or accepted with no person, newest
+        first, with the Routine. auto_accept_at_limit lists Routines that are waiting for a person to
+        complete or cancel an open Task. Report both when asked for the status.
+        """
         _permission("products", "read", _agno_run_context)
-        product = self._sync().get(product_id)
+        manager = self._sync()
+        product = manager.get(product_id)
         if product is None:
             raise LookupError("Product not found")
+        try:
+            # The decisions name Projects and Tasks, so they need the caller's read permission on both.
+            _permission("projects", "read", _agno_run_context)
+            _permission("tasks", "read", _agno_run_context)
+        except PermissionError:
+            return _public_json(product)
+        product.update({key: value for key, value in manager.auto_accept_status(product_id).items() if value != []})
+        product.setdefault("automatic_decisions", [])
+        if self._authorization_on() and (waiting := manager.auto_accept_waiting(product_id)):
+            product["auto_accept_waiting_for_a_person"] = waiting
         return _public_json(product)
 
     @requires_permission()
@@ -721,6 +743,9 @@ class CompanyTools(Toolkit):
     ) -> str:
         """List Tasks across owners, optionally filtered by status.
 
+        A Backlog listing also returns auto_accept_at_limit: Routines whose auto-accept is waiting for a
+        person to complete or cancel an open Task. Say so when listing what needs a decision.
+
         Args:
             product_id: Product ID; null includes all Products.
             status: backlog, ready, in_progress, in_review, done or cancelled; null includes all statuses.
@@ -734,7 +759,17 @@ class CompanyTools(Toolkit):
         page = _empty_to_none(page)
         page = 1 if page is None else page
         _permission("tasks", "read", _agno_run_context)
-        return _page(self._sync().list_tasks(product_id=product_id, status=status, limit=limit, page=page), limit, page)
+        manager = self._sync()
+        result = manager.list_tasks(product_id=product_id, status=status, limit=limit, page=page)
+        at_limit: List[Dict[str, Any]] = []
+        # A listing that holds Backlog work is where a person looks for what needs a decision.
+        if status in (None, "backlog"):
+            for listed in dict.fromkeys(row["product_id"] for row in result[0]):
+                at_limit.extend(manager.auto_accept_status(listed, decisions=False)["auto_accept_at_limit"])
+        # A Routine waiting to be turned on has proposed nothing, so it is listed whatever the page holds.
+        decides = status in (None, "backlog") and self._authorization_on()
+        waiting = manager.auto_accept_waiting(product_id) if decides else []
+        return _page(result, limit, page, auto_accept_at_limit=at_limit, auto_accept_waiting_for_a_person=waiting)
 
     @requires_permission()
     def propose_company_project(
@@ -975,11 +1010,28 @@ class CompanyTools(Toolkit):
 
     @requires_permission()
     async def aget_company_product(self, product_id: str, _agno_run_context: Optional[Any] = None) -> str:
-        """Read a Product's purpose and current configuration."""
+        """Read a Product's purpose, configuration and status.
+
+        automatic_decisions lists what a Routine's auto-accept approved or accepted with no person, newest
+        first, with the Routine. auto_accept_at_limit lists Routines that are waiting for a person to
+        complete or cancel an open Task. Report both when asked for the status.
+        """
         await _apermission("products", "read", _agno_run_context)
-        product = await self._async().get(product_id)
+        manager = self._async()
+        product = await manager.get(product_id)
         if product is None:
             raise LookupError("Product not found")
+        try:
+            # The decisions name Projects and Tasks, so they need the caller's read permission on both.
+            await _apermission("projects", "read", _agno_run_context)
+            await _apermission("tasks", "read", _agno_run_context)
+        except PermissionError:
+            return _public_json(product)
+        status = await manager.auto_accept_status(product_id)
+        product.update({key: value for key, value in status.items() if value != []})
+        product.setdefault("automatic_decisions", [])
+        if self._authorization_on() and (waiting := await manager.auto_accept_waiting(product_id)):
+            product["auto_accept_waiting_for_a_person"] = waiting
         return _public_json(product)
 
     @requires_permission()
@@ -1016,6 +1068,9 @@ class CompanyTools(Toolkit):
     ) -> str:
         """List Tasks across owners, optionally filtered by status.
 
+        A Backlog listing also returns auto_accept_at_limit: Routines whose auto-accept is waiting for a
+        person to complete or cancel an open Task. Say so when listing what needs a decision.
+
         Args:
             product_id: Product ID; null includes all Products.
             status: backlog, ready, in_progress, in_review, done or cancelled; null includes all statuses.
@@ -1029,9 +1084,17 @@ class CompanyTools(Toolkit):
         page = _empty_to_none(page)
         page = 1 if page is None else page
         await _apermission("tasks", "read", _agno_run_context)
-        return _page(
-            await self._async().list_tasks(product_id=product_id, status=status, limit=limit, page=page), limit, page
-        )
+        manager = self._async()
+        result = await manager.list_tasks(product_id=product_id, status=status, limit=limit, page=page)
+        at_limit: List[Dict[str, Any]] = []
+        # A listing that holds Backlog work is where a person looks for what needs a decision.
+        if status in (None, "backlog"):
+            for listed in dict.fromkeys(row["product_id"] for row in result[0]):
+                at_limit.extend((await manager.auto_accept_status(listed, decisions=False))["auto_accept_at_limit"])
+        # A Routine waiting to be turned on has proposed nothing, so it is listed whatever the page holds.
+        decides = status in (None, "backlog") and self._authorization_on()
+        waiting = await manager.auto_accept_waiting(product_id) if decides else []
+        return _page(result, limit, page, auto_accept_at_limit=at_limit, auto_accept_waiting_for_a_person=waiting)
 
     @requires_permission()
     async def apropose_company_project(

@@ -3,7 +3,8 @@
 Starting reuses the Company start route's checks, duplicate handling and queue path, under
 the calling user's own authority. The decision tools approve a Project, accept Tasks and
 review a finished one. Each decision pauses the run until the chatting person confirms it,
-runs under that person's permissions, and records that person on the transition.
+runs under that person's permissions, and records that person on the transition. Two more
+tools turn a Routine's auto-accept on, with the same confirmation, or off.
 """
 
 import json
@@ -48,6 +49,43 @@ def _user_isolation(agent_os: Any) -> bool:
     )
 
 
+def _unsigned(agent_os: Any, authority: Any, user_id: Any) -> bool:
+    """Whether nobody stands behind this run: it carries no permissions where the deployment checks
+    them, or names no person where the deployment isolates users."""
+    return (authority is None and bool(getattr(agent_os, "authorization", None))) or (
+        _user_isolation(agent_os) and not user_id
+    )
+
+
+def _policy_line(policy: Any) -> str:
+    """A Routine's stored auto-accept policy on one line, for the person to confirm before it is kept."""
+    from datetime import datetime, timezone
+
+    parts = [
+        f"default executor {policy.default_executor}",
+        "proposals may name "
+        + ("any executor" if policy.executors is None else ", ".join(policy.executors) or "no other executor"),
+        "approves its Projects" if policy.approve_projects else "a person approves its Projects",
+    ]
+    if policy.limits is None:
+        parts.append(f"at most {policy.max_open} Tasks open")
+    else:
+        expires = datetime.fromtimestamp(policy.limits.expires_at, timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        parts.append(f"at most {policy.limits.max_acceptances} acceptances, expires {expires}")
+    if policy.source_ids is not None:
+        parts.append("Sources " + (", ".join(policy.source_ids) or "none"))
+    scope = policy.work_scope
+    if scope is not None and scope.product_ids is not None:
+        parts.append("Products " + (", ".join(scope.product_ids) or "none"))
+    if scope is not None and scope.project_ids is not None:
+        parts.append("Projects " + (", ".join(str(item) for item in scope.project_ids) or "none"))
+    if policy.required_checks != ["executor_registered"]:
+        parts.append("checks " + ", ".join(policy.required_checks))
+    if policy.complete_projects:
+        parts.append("completes Projects")
+    return "; ".join(parts)
+
+
 def _refusal(authority: Any) -> Optional[str]:
     from agno.company.execution import _automatic_task, _ExecutorAuthorization
     from agno.company.routines import _RoutineAuthorization
@@ -68,13 +106,21 @@ class CompanyTaskTools(Toolkit):
             "approve_company_project",
             "accept_company_task",
             "review_company_task",
+            "turn_on_routine_auto_accept",
+            "turn_off_routine_auto_accept",
         ]
         super().__init__(
             name="company_tasks",
             tools=[getattr(self, name) for name in names],
             async_tools=[(getattr(self, "a" + name), name) for name in names],
             # A decision is the person's: the run pauses until they confirm the record and the change.
-            requires_confirmation_tools=["approve_company_project", "accept_company_task", "review_company_task"],
+            # Auto-accept lets a Routine's work run with no person, so turning it on is confirmed too.
+            requires_confirmation_tools=[
+                "approve_company_project",
+                "accept_company_task",
+                "review_company_task",
+                "turn_on_routine_auto_accept",
+            ],
             # The receipt is the reply: the coordinator turn ends once the run is queued.
             stop_after_tool_call_tools=["start_company_task"],
             show_result_tools=["start_company_task"],
@@ -110,7 +156,7 @@ class CompanyTaskTools(Toolkit):
         refusal = _refusal(authority)
         if refusal is not None:
             return refusal
-        if _user_isolation(agent_os) and not user_id:
+        if _unsigned(agent_os, authority, user_id):
             return "A signed-in person is required to start a Task."
 
         starter = _TaskStarter(agent_os)
@@ -218,15 +264,85 @@ class CompanyTaskTools(Toolkit):
                 state["invoked"] = result["invoked"]
         return json.dumps(state, ensure_ascii=False, default=str)
 
-    def _person(self, agent_os: Any, run_context: Any) -> Any:
+    def _person(self, agent_os: Any, run_context: Any, operation: str = "decide Company work") -> Any:
         """The chatting person's authority and identity. Raises PermissionError for every other caller."""
         from agno.tools.company import _require_human_creation
 
-        _require_human_creation(run_context, "decide Company work")
+        _require_human_creation(run_context, operation)
         authority, user_id = _run_context_identity(run_context)
-        if _user_isolation(agent_os) and not user_id:
-            raise PermissionError("A signed-in person is required to decide Company work")
+        if _unsigned(agent_os, authority, user_id):
+            raise PermissionError(f"A signed-in person is required to {operation}")
         return authority, user_id
+
+    async def _named_routine(self, agent_os: Any, routine_id: str, routine_name: str, product_name: Any) -> Any:
+        """Check that the names the person confirmed are the stored Routine's and its Product's.
+
+        Returns the Routine's name and its stored payload.
+        """
+        from agno.company.execution import _call
+
+        row = await _call(agent_os.db, "get_schedule", routine_id) if agent_os.db is not None else None
+        metadata = ((row or {}).get("payload") or {}).get("metadata") or {}
+        if row is None or row.get("managed_by") != "company" or not metadata.get("product_id"):
+            raise LookupError("Routine not found")
+        stored = row["name"].removeprefix(metadata["product_id"] + ".")
+        # Its schedule is stored under the Product's ID and this name; a listing may show either.
+        if not (_same_name(routine_name, stored) or _same_name(routine_name, row["name"])):
+            raise ValueError(f"Routine {routine_id} is named '{stored}'. Call again with that name.")
+        if product_name is not None:
+            product = await _call(agent_os._company_db, "get_product", metadata["product_id"])
+            if product is None:
+                raise LookupError("The Routine's Product was not found")
+            if not _same_name(product_name, product["name"]):
+                raise ValueError(
+                    f"Routine '{stored}' belongs to Product '{product['name']}'. Call again with that name."
+                )
+        return stored, row["payload"]
+
+    async def _patch_routine(
+        self, agent_os: Any, authority: Any, user_id: Any, routine_id: str, auto_accept: Any
+    ) -> Any:
+        """Change a Routine's auto_accept through the Routine API's own PATCH handler, as the chatting person."""
+        from dataclasses import replace
+
+        from starlette.requests import Request
+
+        from agno.os.routers.company.heartbeat import RoutineUpdate
+        from agno.run.authorization import authorization_scope
+
+        app = getattr(agent_os, "_company_app", None)
+        handler = getattr(agent_os, "_routine_api_update", None)
+        if handler is None or app is None:
+            raise LookupError("The Routine API is not running here. Change the Routine from AgentOS.")
+        if authority is not None:
+            # The route's own scope, checked by the API before its handler runs.
+            await authority.arequire("routines", "write")
+        context = authority.context if authority is not None else None
+        # What the API's middleware records for a caller: identity, scopes and the deployment's isolation.
+        state = {
+            "user_id": user_id,
+            "authenticated": authority is not None,
+            "authorization_enabled": authority is not None,
+            "scopes": list(context.scopes or []) if context is not None else [],
+            "claims": dict(context.claims or {}) if context is not None else {},
+            "admin_scope": context.admin_scope if context is not None else None,
+            "user_isolation_enabled": bool(getattr(app.state, "user_isolation_enabled", False)),
+            "is_internal_service": False,
+        }
+        request = Request(
+            {
+                "type": "http",
+                "method": "PATCH",
+                "path": f"/company/routines/{routine_id}",
+                "headers": [],
+                "query_string": b"",
+                "app": app,
+                "state": state,
+            }
+        )
+        saved = replace(authority, enforce_tools=False) if authority is not None else None
+        with authorization_scope(lambda: saved):
+            return await handler(routine_id, RoutineUpdate(auto_accept=auto_accept), request)
 
     async def _decide(self, call: Any) -> str:
         """Run one decision, returning each refusal as text and leaving the record as it was."""
@@ -558,5 +674,142 @@ class CompanyTaskTools(Toolkit):
                 f"Sent '{title}' (Task {task_id}) back to Ready for {executor['executor_type']} "
                 f"{executor['executor_id']}. It is not started."
             )
+
+        return await self._decide(call)
+
+    def turn_on_routine_auto_accept(
+        self,
+        routine_name: str,
+        product_name: str,
+        default_executor: Optional[str],
+        kept_policy: Optional[str],
+        routine_id: str,
+        _agno_run_context: Optional[Any] = None,
+    ) -> str:
+        """Turn auto-accept on for a Company Routine. The run pauses for the person to confirm.
+
+        Args:
+            routine_name: The Routine's name, as stored.
+            product_name: The name of the Routine's Product, as stored.
+            default_executor: ID of the agent, team or workflow. Null unless the person names one.
+            kept_policy: Null, unless the Routine already has a policy a person set.
+            routine_id: The Routine.
+        """
+        return "Turning auto-accept on needs an asynchronous run. Change the Routine from AgentOS instead."
+
+    async def aturn_on_routine_auto_accept(
+        self,
+        routine_name: str,
+        product_name: str,
+        default_executor: Optional[str],
+        kept_policy: Optional[str],
+        routine_id: str,
+        _agno_run_context: Optional[Any] = None,
+    ) -> str:
+        """Turn auto-accept on for a Company Routine. The run pauses for the person to confirm the
+        Routine by name, its Product by name, the default executor, and the policy that is kept.
+
+        With auto-accept on, the Projects this Routine proposes are approved and its Tasks are accepted
+        and run with no person, and finished work waits In review. A Task runs on the executor its
+        proposal suggests, or on the default executor when it suggests none. Call this only when the
+        person asked to turn auto-accept on for this Routine.
+
+        A Routine that already has a policy keeps it: one its code declares, or one a person set. Only
+        its default executor changes, and only when the person names one. From then on the Routine and
+        its policy run under this person's permissions.
+
+        Args:
+            routine_name: The Routine's name, as stored. The person confirms this name.
+            product_name: The name of the Routine's Product, as stored. The person confirms this name.
+            default_executor: ID of the agent, team or workflow that runs a Task whose proposal
+                suggests no executor. Null unless the person names one: the Routine's policy is then
+                kept as it is, or Mini Agent is used when it has none.
+            kept_policy: Null, unless the Routine already has a policy a person set. Then that policy
+                on one line, as this tool gives it when it is left out, so the person confirms what is kept.
+            routine_id: The Routine.
+        """
+        from agno.company.declarations import AutoAccept
+        from agno.company.routines import _DECLARED, _stored_policy
+
+        async def call(agent_os: Any) -> str:
+            authority, user_id = self._person(agent_os, _agno_run_context, "turn a Routine's auto-accept on")
+            stored, payload = await self._named_routine(agent_os, routine_id, routine_name, product_name)
+            # A Routine that has a policy keeps it. The defaults are for a Routine with none.
+            raw = payload["metadata"].get("auto_accept")
+            kept = _stored_policy(raw)[0] if raw else None
+            declared = kept is not None and payload.get("_agno_company_acceptance") == _DECLARED
+            line = _policy_line(kept) if kept is not None else None
+            # A policy a person set is shown on the confirmation before it is kept under this person's
+            # name. What the confirmation shows is always the stored policy.
+            shown = (kept_policy or "").strip() or None
+            if not (_same_name(shown, line) if shown is not None else line is None or declared):
+                if line is None:
+                    return f"Not done: Routine '{stored}' has no policy to keep. Call again with kept_policy null."
+                return (
+                    f"Not done: Routine '{stored}' already has a policy, and the person confirms the policy that "
+                    f"is kept. Call again with kept_policy set to this line: {line}"
+                )
+            policy = AutoAccept.model_validate(
+                {
+                    **(kept.model_dump() if kept else {}),
+                    **({"default_executor": default_executor} if default_executor else {}),
+                }
+            )
+            await self._patch_routine(agent_os, authority, user_id, routine_id, policy)
+            projects = (
+                "Its Projects are approved and its"
+                if policy.approve_projects
+                else "A person approves its Projects. Its"
+            )
+            listed = f" from {', '.join(policy.executors)}" if policy.executors else ""
+            bound = (
+                f"At most {policy.max_open} of its Tasks are open at once."
+                if policy.limits is None
+                else f"It accepts at most {policy.limits.max_acceptances} Tasks."
+            )
+            source = (
+                ", with the policy its code declares"
+                if declared
+                else ", with the policy it already had"
+                if kept
+                else ""
+            )
+            return (
+                f"Auto-accept is on for Routine '{stored}' ({routine_id}){source}. {projects} Tasks are accepted and "
+                f"run on {policy.default_executor}, unless a proposal names another executor{listed}. "
+                f"Finished work waits In review. {bound}"
+            )
+
+        return await self._decide(call)
+
+    def turn_off_routine_auto_accept(
+        self, routine_name: str, routine_id: str, _agno_run_context: Optional[Any] = None
+    ) -> str:
+        """Turn auto-accept off for a Company Routine.
+
+        Args:
+            routine_name: The Routine's name, as stored.
+            routine_id: The Routine.
+        """
+        return "Turning auto-accept off needs an asynchronous run. Change the Routine from AgentOS instead."
+
+    async def aturn_off_routine_auto_accept(
+        self, routine_name: str, routine_id: str, _agno_run_context: Optional[Any] = None
+    ) -> str:
+        """Turn auto-accept off for a Company Routine. Its proposals then wait for a person.
+
+        Call this when the person asked to turn auto-accept off for this Routine. Work it accepted
+        that has not started returns to Backlog.
+
+        Args:
+            routine_name: The Routine's name, as stored.
+            routine_id: The Routine.
+        """
+
+        async def call(agent_os: Any) -> str:
+            authority, user_id = self._person(agent_os, _agno_run_context, "turn a Routine's auto-accept off")
+            stored, _ = await self._named_routine(agent_os, routine_id, routine_name, None)
+            await self._patch_routine(agent_os, authority, user_id, routine_id, False)
+            return f"Auto-accept is off for Routine '{stored}' ({routine_id}). Its proposals now wait for a person."
 
         return await self._decide(call)
