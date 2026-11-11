@@ -5,7 +5,8 @@ from typing import Any
 # Public API identifiers: reserve these exact names for built-in managers.
 MANAGER_TEAM_ID = "superagent"
 BUILDER_ID = "platform-builder"
-# The restricted form of Super Agent that runs Company Routines. Internal: Routines name Super Agent.
+# The restricted agent that runs Company Routines unattended, and the default Routine executor.
+# Served for the scheduler; chat and listings leave it out.
 MINI_AGENT_ID = "miniagent"
 # A former ID of the agent that ran Routines. It stays reserved so a user component cannot claim it.
 LEGACY_PRODUCT_MANAGER_ID = "product-manager-internal"

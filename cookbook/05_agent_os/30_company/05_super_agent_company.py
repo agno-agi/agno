@@ -1,8 +1,8 @@
 """Do Company work through Super Agent and exercise its Company tools without a model call.
 
 With CompanyConfig set, Super Agent holds the Company tools itself: company details,
-Products, Projects, Tasks, Sources, playbook, Routines and decisions. A Routine names
-team "superagent" and runs on Mini Agent, a restricted internal agent that can only propose work.
+Products, Projects, Tasks, Sources, playbook, Routines and decisions. A Routine with no
+executor runs on Mini Agent, a restricted agent that can only propose work.
 
 Prerequisites: Install agno, sqlalchemy, openai, fastapi and httpx.
 Run: .venv/bin/python cookbook/05_agent_os/30_company/05_super_agent_company.py
@@ -61,7 +61,7 @@ if __name__ == "__main__":
                     purpose="Help people build reliable agents",
                     sources=[{"type": "website", "reference": "https://docs.agno.com"}],
                     routines=[
-                        # No executor is named, so the Routine runs as Super Agent.
+                        # No executor is named, so the Routine runs on Mini Agent.
                         {"name": "intake", "template": "intake"}
                     ],
                     _agno_team=super_agent,
@@ -98,9 +98,9 @@ if __name__ == "__main__":
             assert client.get("/company/details").json()["name"] == "Acme"
             assert len(client.get("/company/sources").json()["data"]) == 1
             routine = client.get("/company/routines").json()["data"][0]
-            assert routine["target_type"] == "team"
-            assert routine["target_id"] == "superagent"
-            # Mini Agent is internal: it is not listed and has no chat card.
+            assert routine["target_type"] == "agent"
+            assert routine["target_id"] == "miniagent"
+            # Mini Agent runs unattended work: it is not listed and has no chat card.
             listed = [agent["id"] for agent in client.get("/agents").json()]
             assert "miniagent" not in listed
             team = client.get("/teams/superagent").json()

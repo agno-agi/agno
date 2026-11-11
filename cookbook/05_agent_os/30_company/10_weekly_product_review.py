@@ -1,4 +1,4 @@
-"""Opt in to a weekly Product review by Super Agent.
+"""Opt in to a weekly Product review by Mini Agent.
 
 Check configuration without model calls:
     .venv/bin/python cookbook/05_agent_os/30_company/10_weekly_product_review.py --check
@@ -6,8 +6,8 @@ Check configuration without model calls:
 Serve locally and enable Monday reviews at 09:00 Europe/London:
     .venv/bin/python cookbook/05_agent_os/30_company/10_weekly_product_review.py --enable-weekly-review
 
-The Routine names team "superagent". It runs on Super Agent's restricted Routine
-runner, which can only propose work, so it works with or without OS Manager. Add
+The Routine names no executor, so it runs on Mini Agent, the restricted agent that
+runs Routines and can only propose work. It works with or without OS Manager. Add
 --with-os-manager to also serve Super Agent for chat. Running scheduled reviews
 requires provider credentials and makes model calls. This local example has no
 authentication; use the authenticated Routine API for production caller grants.
@@ -60,7 +60,7 @@ def build_os(
         sources=[Source(type="markdown", reference=str(source.resolve()))],
         routines=[
             Routine(
-                # No executor is named, so the Routine runs as Super Agent.
+                # No executor is named, so the Routine runs on Mini Agent.
                 name="weekly-review",
                 cron_expr="0 9 * * 1",
                 timezone="Europe/London",
@@ -110,7 +110,7 @@ if __name__ == "__main__":
             assert schedule["target_type"] == "agent"
             assert schedule["target_id"] == "miniagent"
             assert agent_os.registry.get_agent("miniagent") is None
-            print("Weekly Super Agent review configured; no model calls made.")
+            print("Weekly Mini Agent review configured; no model calls made.")
             agent_os.db.close()
     else:
         agent_os = build_os(

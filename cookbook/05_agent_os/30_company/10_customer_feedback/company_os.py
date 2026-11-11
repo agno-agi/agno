@@ -61,7 +61,7 @@ feedback = Product(
     sources=[Source(type="markdown", reference=str(example_dir / "feedback"))],
     routines=[
         Routine(
-            # No executor is named, so the Routine runs as Super Agent.
+            # No executor is named, so the Routine runs on Mini Agent.
             name="review-feedback",
             cron_expr="0 9 * * *",
             timezone="UTC",

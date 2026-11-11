@@ -240,11 +240,11 @@ def test_confirmed_company_edit_is_refused_without_its_permission(platform, use_
 
 
 ROUTINE_WRITE = ["products:write", "schedules:write", "routines:write"]
-SUPER_AGENT_ROUTINE = {
+MINI_AGENT_ROUTINE = {
     "product_id": "{product}",
     "name": "review",
-    "executor_type": "team",
-    "executor_id": MANAGER_TEAM_ID,
+    "executor_type": "agent",
+    "executor_id": MINI_AGENT_ID,
     "instructions": "Review the Product.",
 }
 
@@ -254,21 +254,21 @@ def routine_names(os):
 
 
 @pytest.mark.parametrize("use_async", [False, True])
-def test_routine_tool_needs_the_runner_not_super_agent(platform, use_async):
-    # The Routine API checks the component that runs. For Super Agent that is Mini Agent.
+def test_routine_tool_needs_run_permission_on_mini_agent(platform, use_async):
+    # Running Super Agent in chat is not permission to run Mini Agent unattended.
     os, ids = platform
     before = routine_names(os)
     scopes = [*ROUTINE_WRITE, f"agents:{MINI_AGENT_ID}:run"]
-    result = run_tool(os, ids, "create_product_routine", SUPER_AGENT_ROUTINE, scopes, use_async)
+    result = run_tool(os, ids, "create_product_routine", MINI_AGENT_ROUTINE, scopes, use_async)
     assert "Permission required" not in str(result.content), result.content
     assert routine_names(os) == sorted([*before, ids["product"] + ".review"])
 
 
 @pytest.mark.parametrize("use_async", [False, True])
-def test_routine_tool_is_refused_with_super_agent_and_no_runner(platform, use_async):
+def test_routine_tool_is_refused_without_run_permission_on_mini_agent(platform, use_async):
     os, ids = platform
     before = routine_names(os)
     scopes = [*ROUTINE_WRITE, *RUN_ONLY]
-    result = run_tool(os, ids, "create_product_routine", SUPER_AGENT_ROUTINE, scopes, use_async)
+    result = run_tool(os, ids, "create_product_routine", MINI_AGENT_ROUTINE, scopes, use_async)
     assert f"Permission required: agents:{MINI_AGENT_ID}:run" in str(result.content), result.content
     assert routine_names(os) == before

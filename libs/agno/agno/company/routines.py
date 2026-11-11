@@ -210,20 +210,20 @@ async def _afailed_routines(db: Any, products: Any) -> int:
 
 
 def _routine_executor_endpoint(executor_type: str, executor_id: str, registry: Any, *, agent_os: Any = None) -> str:
-    from agno.registry._reserved import MANAGER_TEAM_ID, RESERVED_MANAGER_IDS, MINI_AGENT_ID
+    from agno.registry._reserved import MINI_AGENT_ID, RESERVED_MANAGER_IDS
 
-    if executor_id == MANAGER_TEAM_ID:
-        if executor_type != "team":
-            raise ValueError("Super Agent Routine executor_type must be 'team'")
-        # Super Agent can edit the platform; Routines run unattended on untrusted Sources.
-        # Its Routines run on Mini Agent, never on the team itself.
+    if executor_id == MINI_AGENT_ID:
+        if executor_type != "agent":
+            raise ValueError("Mini Agent Routine executor_type must be 'agent'")
         component = getattr(agent_os, "_mini_agent", None)
         if component is None:
             reason = getattr(agent_os, "_mini_agent_unavailable_reason", None)
-            raise ValueError(reason or "Super Agent cannot run Routines: configure CompanyConfig on the owning AgentOS")
-        executor_type, executor_id = "agent", MINI_AGENT_ID
+            raise ValueError(reason or "Mini Agent unavailable: configure CompanyConfig on the owning AgentOS")
     elif executor_id in RESERVED_MANAGER_IDS:
-        raise ValueError("Only Super Agent can execute Routines among framework managers")
+        # Super Agent and Platform Builder can edit the platform; Routines run unattended on untrusted Sources.
+        raise ValueError(
+            f"Among framework agents, only Mini Agent runs Routines: name agent '{MINI_AGENT_ID}' or leave the executor out"
+        )
     else:
         component = _registered_component(registry, executor_type, executor_id)
         if component is None:
@@ -233,15 +233,6 @@ def _routine_executor_endpoint(executor_type: str, executor_id: str, registry: A
     if RUN_ENDPOINT_RE.fullmatch(endpoint) is None:
         raise ValueError("Invalid Routine executor id")
     return endpoint
-
-
-def _named_executor(row: Dict[str, Any]) -> Dict[str, Any]:
-    """The executor a person named for a stored Routine: Super Agent for a Routine on Mini Agent."""
-    from agno.registry._reserved import MANAGER_TEAM_ID, MINI_AGENT_ID
-
-    if row.get("target_id") == MINI_AGENT_ID:
-        return {"target_type": "team", "target_id": MANAGER_TEAM_ID}
-    return {"target_type": row.get("target_type"), "target_id": row.get("target_id")}
 
 
 def _schedule_fields(product_id: str, routine: Routine, registry: Any, *, agent_os: Any = None) -> Dict[str, Any]:

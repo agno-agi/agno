@@ -1,4 +1,4 @@
-"""Mini Agent: the restricted form of Super Agent that runs Company Routines."""
+"""Mini Agent: the restricted agent that runs Company Routines unattended."""
 
 from typing import Any, Optional
 
@@ -9,7 +9,7 @@ from agno.registry._reserved import MINI_AGENT_ID
 from agno.tools.company import CompanyTools
 
 INSTRUCTIONS = """\
-You are Super Agent running a Routine for a Product. Follow the Routine's skill or instructions.
+You are Mini Agent, running a Routine for a Product. Follow the Routine's skill or instructions.
 
 Proposing work:
 - Check what exists before adding to it: list the Product's Projects and Tasks, and read the company and

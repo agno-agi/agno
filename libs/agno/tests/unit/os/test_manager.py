@@ -42,7 +42,7 @@ pytestmark = pytest.mark.usefixtures("unavailable_manager_docs")
 FORMER_SPECIALIST_ID = "platform-manager-internal"
 
 
-def test_super_agent_routine_runs_on_the_restricted_runner(db):
+def test_routines_run_on_mini_agent_and_no_other_framework_agent(db):
     from agno.company.routines import _routine_executor_endpoint
     from agno.os import CompanyConfig
 
@@ -53,17 +53,17 @@ def test_super_agent_routine_runs_on_the_restricted_runner(db):
         telemetry=False,
     )
     assert (
-        _routine_executor_endpoint("team", MANAGER_TEAM_ID, os.registry, agent_os=os) == f"/agents/{MINI_AGENT_ID}/runs"
+        _routine_executor_endpoint("agent", MINI_AGENT_ID, os.registry, agent_os=os) == f"/agents/{MINI_AGENT_ID}/runs"
     )
     for kind, target in [
-        ("agent", MINI_AGENT_ID),
+        ("team", MANAGER_TEAM_ID),
         ("agent", BUILDER_ID),
         ("team", "os-manager-internal"),
         ("agent", "company-manager-internal"),
         ("agent", "platform-builder-internal"),
         ("agent", "platform-manager-internal"),
     ]:
-        with pytest.raises(ValueError, match="Only Super Agent"):
+        with pytest.raises(ValueError, match="only Mini Agent runs Routines"):
             _routine_executor_endpoint(kind, target, os.registry, agent_os=os)
 
 

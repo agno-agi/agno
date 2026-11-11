@@ -55,7 +55,8 @@ COMPANY_INSTRUCTIONS = """\
 Company work:
 - A Product is an area of the company's work. Its Projects are outcomes; their Tasks are pieces of work done
   by an executor. A Source is where a Product reads from. A Routine is saved instructions for a Product, run
-  on a schedule or on demand by an agent, team or workflow. It can only propose work.
+  on a schedule or on demand by Mini Agent unless another agent, team or workflow is named. It can only
+  propose work.
 - A plan is a reply: give it here and offer once to record it. Record work only when told to add, create or
   record. Simple requests need no Product, Project, Task or offer.
 - You propose Projects and Tasks. People accept, complete and reassign them, and change or pause Routines,

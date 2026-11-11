@@ -168,7 +168,7 @@ latency, or application components dispatched through runner tools.
 
 Increase the limits for larger builds or plans. Set either limit to `None` to
 restore unlimited ordinary tool executions for that level. Ordinary application
-agents and the Company Mini Agent are not affected. Model choices still
+agents and Mini Agent are not affected. Model choices still
 determine routing and answer quality; prompt guidance is not a guarantee.
 
 ## When to use a registry
@@ -360,7 +360,7 @@ To refresh captured token-scope grants, update the payload as an authorized call
 ## Reserved IDs
 
 The public manager IDs are `superagent` (Super Agent) and `platform-builder`
-(Platform Builder). `miniagent` is the internal Company Mini Agent.
+(Platform Builder). `miniagent` is Mini Agent, which runs Company Routines.
 `product-manager-internal` and the pre-3.2 IDs `os-manager-internal`,
 `company-manager-internal`, `platform-builder-internal` and
 `platform-manager-internal` stay reserved and do not resolve; requests that use
@@ -387,7 +387,8 @@ When upgrading:
   with its own tools; nothing is served at `/agents/company-manager`.
 - `AgentOS.company_manager` and `AgentOS.product_manager` are removed. Use
   `AgentOS.manager` or talk to Super Agent at `/teams/superagent`.
-- Routines name team `superagent`: `executor_type="team", executor_id="superagent"`.
+- Routines run on Mini Agent by default: `executor_type="agent", executor_id="miniagent"`, or leave
+  the executor out. A Routine cannot name Super Agent.
 - `OSManager.tool_call_limit` defaults to 24 and `num_history_runs` to 5.
 
 Before upgrading, audit existing components, sessions and authorization grants for the newly reserved names. Rename custom components and migrate their references; do not let a grant intended for a custom component authorize a built-in manager. Catalog collisions fail at startup, but external token scopes and custom policy stores require an operator audit.

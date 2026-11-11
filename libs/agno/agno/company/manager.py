@@ -94,7 +94,7 @@ class CompanyManager:
         """Create and link a Routine owned by ``user_id``; ``check`` sees the schedule fields before any write.
 
         Any writer may add a Routine to a Product, as with Projects and Tasks; ``scoped_user_id`` is kept for
-        callers and does not restrict which Product the Routine joins. Supply ``agent_os`` to name Super Agent as the executor.
+        callers and does not restrict which Product the Routine joins. Supply ``agent_os`` to name Mini Agent as the executor.
         """
         from agno.company.declarations import Routine
         from agno.company.routines import _declared_schedule_fields, _require_routine_product
@@ -999,7 +999,7 @@ class AsyncCompanyManager:
         """Create and link a Routine owned by ``user_id``; ``check`` sees the schedule fields before any write.
 
         Any writer may add a Routine to a Product, as with Projects and Tasks; ``scoped_user_id`` is kept for
-        callers and does not restrict which Product the Routine joins. Supply ``agent_os`` to name Super Agent as the executor.
+        callers and does not restrict which Product the Routine joins. Supply ``agent_os`` to name Mini Agent as the executor.
         """
         from agno.company.declarations import Routine
         from agno.company.routines import _declared_schedule_fields, _require_routine_product

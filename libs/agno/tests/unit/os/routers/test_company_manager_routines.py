@@ -121,7 +121,7 @@ def headers(user="alice", scopes=None):
     }
 
 
-def declaration(kind="team", component_id=MANAGER_TEAM_ID, **kwargs):
+def declaration(kind="agent", component_id=MINI_AGENT_ID, **kwargs):
     return Routine(
         name="weekly-review",
         executor_type=kind,
@@ -181,7 +181,7 @@ async def system(tmp_path, *, mode="standalone", identity="scope", isolation=Tru
     db.close()
 
 
-async def create_routine(s, product_id, *, kind="team", component_id=MANAGER_TEAM_ID):
+async def create_routine(s, product_id, *, kind="agent", component_id=MINI_AGENT_ID):
     response = await s.client.post(
         "/company/routines",
         headers=s.headers,
@@ -203,7 +203,7 @@ def test_owned_resolution_serving_and_resync(tmp_path, enabled):
     assert os.registry.get_agent(MINI_AGENT_ID) is None
     assert os.registry.get_team(MANAGER_TEAM_ID) is None
     assert not os.registry.tools
-    assert _routine_executor_endpoint("team", MANAGER_TEAM_ID, os.registry, agent_os=os) == RUNNER_ENDPOINT
+    assert _routine_executor_endpoint("agent", MINI_AGENT_ID, os.registry, agent_os=os) == RUNNER_ENDPOINT
     if enabled:
         assert all(member.id != MINI_AGENT_ID for member in os.manager.members)
     assert all(agent.id != BUILDER_ID for agent in os._agents)
@@ -217,19 +217,19 @@ def test_wrong_type_and_reserved_registry_fallback_are_refused(tmp_path):
     db = SqliteDb(db_file=str(tmp_path / "reserved.db"))
     os = make_os(db, manager=True)
     with pytest.raises(ValueError, match="executor_type"):
-        _routine_executor_endpoint("agent", MANAGER_TEAM_ID, os.registry, agent_os=os)
+        _routine_executor_endpoint("team", MINI_AGENT_ID, os.registry, agent_os=os)
     # Even a corrupted registry cannot substitute for the owning AgentOS.
     registry = SimpleNamespace(get_agent=lambda _: os._mini_agent, get_team=lambda _: os.manager)
-    with pytest.raises(ValueError, match="cannot run Routines"):
-        _routine_executor_endpoint("team", MANAGER_TEAM_ID, registry)
+    with pytest.raises(ValueError, match="Mini Agent unavailable"):
+        _routine_executor_endpoint("agent", MINI_AGENT_ID, registry)
     db.close()
 
 
 @pytest.mark.parametrize(
     "kind,cid",
     [
-        ("agent", MINI_AGENT_ID),
-        ("team", MINI_AGENT_ID),
+        ("team", MANAGER_TEAM_ID),
+        ("agent", MANAGER_TEAM_ID),
         ("agent", BUILDER_ID),
         ("agent", "platform-manager-internal"),
         ("agent", "company-manager-internal"),
@@ -237,15 +237,15 @@ def test_wrong_type_and_reserved_registry_fallback_are_refused(tmp_path):
     ],
 )
 @pytest.mark.parametrize("enabled", [False, True])
-def test_only_superagent_can_execute_routines_among_framework_managers(tmp_path, kind, cid, enabled):
+def test_only_mini_agent_runs_routines_among_framework_agents(tmp_path, kind, cid, enabled):
     db = SqliteDb(db_file=str(tmp_path / "only.db"))
     os = make_os(db, manager=enabled)
     # A registry that would hand back the live Mini Agent or team must not be consulted for reserved IDs.
     registry = SimpleNamespace(get_agent=lambda _: os._mini_agent, get_team=lambda _: os.manager)
     for candidate in (os.registry, registry):
-        with pytest.raises(ValueError, match="Only Super Agent"):
+        with pytest.raises(ValueError, match="only Mini Agent runs Routines"):
             _routine_executor_endpoint(kind, cid, candidate, agent_os=os)
-    with pytest.raises(ValueError, match="Only Super Agent"):
+    with pytest.raises(ValueError, match="only Mini Agent runs Routines"):
         rehydrate_product(db, Product(name="Docs", routines=[declaration(kind, cid)]), os.registry, agent_os=os)
     assert db.get_products()[1] == 0
     db.close()
@@ -281,7 +281,7 @@ def test_company_manager_id_is_an_ordinary_executor(tmp_path, enabled):
 @pytest.mark.parametrize("mode", ["sync", "async", "lifespan", "yaml"])
 @pytest.mark.parametrize("enabled", [True, False])
 def test_declarations_bootstrap_and_restart(tmp_path, mode, enabled):
-    kind, cid = "team", MANAGER_TEAM_ID
+    kind, cid = "agent", MINI_AGENT_ID
     db = SqliteDb(db_file=str(tmp_path / "bootstrap.db"))
     product = Product(id="docs", name="Docs", user_id="alice", routines=[declaration(kind, cid, enabled=enabled)])
     os = make_os(db, manager=True, products=[product] if mode == "lifespan" else [])
@@ -336,18 +336,18 @@ async def test_api_create_patch_resume_and_unavailable_manager(tmp_path):
         row = await create_routine(s, product["id"])
         path = "/company/routines/" + row["id"]
         assert row["endpoint"] == RUNNER_ENDPOINT
-        assert row["target_type"] == "team" and row["target_id"] == MANAGER_TEAM_ID
+        assert row["target_type"] == "agent" and row["target_id"] == MINI_AGENT_ID
         before = s.db.get_schedule(row["id"])
-        for kind, cid in (("agent", MINI_AGENT_ID), ("agent", BUILDER_ID)):
+        for kind, cid in (("team", MANAGER_TEAM_ID), ("agent", BUILDER_ID)):
             response = await s.client.patch(path, headers=s.headers, json={"executor_type": kind, "executor_id": cid})
-            assert response.status_code == 422 and "Only Super Agent" in response.text
-        response = await s.client.patch(path, headers=s.headers, json={"executor_type": "agent"})
+            assert response.status_code == 422 and "only Mini Agent runs Routines" in response.text
+        response = await s.client.patch(path, headers=s.headers, json={"executor_type": "team"})
         assert response.status_code == 422 and "executor_type" in response.text
         assert s.db.get_schedule(row["id"]) == before
         assert (await s.client.post(path + "/pause", headers=s.headers)).status_code == 200
         s.os._mini_agent = None
         response = await s.client.post(path + "/resume", headers=s.headers)
-        assert response.status_code == 422 and "Super Agent cannot run Routines" in response.text
+        assert response.status_code == 422 and "Mini Agent unavailable" in response.text
         assert not s.db.get_schedule(row["id"])["enabled"]
         response = await s.client.post(
             "/company/routines",
@@ -458,7 +458,7 @@ def test_recursive_scheduler_tools_validation_is_preserved(tmp_path):
     os = make_os(db, manager=True)
     os._mini_agent.tools.append(SchedulerTools(db=db))
     with pytest.raises(ValueError, match="cannot hold SchedulerTools"):
-        _routine_executor_endpoint("team", MANAGER_TEAM_ID, os.registry, agent_os=os)
+        _routine_executor_endpoint("agent", MINI_AGENT_ID, os.registry, agent_os=os)
     db.close()
 
 
@@ -501,8 +501,8 @@ async def test_routine_mutation_fence_holds_even_for_admin(tmp_path, mode):
                 lambda: StudioTools(registry=s.os.registry, db=s.db, schedules=True).create_schedule(
                     name="forbidden",
                     cron="0 0 * * *",
-                    target_type="team",
-                    target_id=MANAGER_TEAM_ID,
+                    target_type="agent",
+                    target_id=MINI_AGENT_ID,
                     message="Run again",
                     _agno_run_context=_agno_run_context,
                 ),
@@ -581,7 +581,7 @@ async def test_configuration_requires_target_run_permission(tmp_path, identity, 
         routine_ids = (s.db.get_product(product["id"]).get("metadata") or {}).get("routine_ids")
         if allowed:
             assert response.status_code == 201, response.text
-            assert response.json()["target_type"] == "team" and response.json()["target_id"] == MANAGER_TEAM_ID
+            assert response.json()["target_type"] == "agent" and response.json()["target_id"] == MINI_AGENT_ID
             assert routine_ids == [response.json()["id"]]
         else:
             assert response.status_code == 403, response.text

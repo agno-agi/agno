@@ -756,9 +756,9 @@ class AgentOS:
             self._mini_agent = _build_mini_agent(self, company_model)
             if self._mini_agent is None:
                 self._mini_agent_unavailable_reason = (
-                    "Super Agent cannot run Routines: configure CompanyConfig(model=...) or Registry(models=[...])"
+                    "Mini Agent unavailable: configure CompanyConfig(model=...) or Registry(models=[...])"
                     if company_model is None
-                    else "Super Agent cannot run Routines: Company requires a database"
+                    else "Mini Agent unavailable: Company requires a database"
                 )
 
         self._manager: Optional["_Manager"] = None

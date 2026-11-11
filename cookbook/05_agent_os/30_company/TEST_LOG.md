@@ -505,3 +505,13 @@ SQLite and with `COMPANY_DB=postgres`, with no model calls.
 **Description:** The internal agent that runs Super Agent's Routines is renamed from `superagent-routines` to Mini Agent, ID `miniagent`. Reran `05_super_agent_company.py`, and `10_weekly_product_review.py --check`, with a placeholder `OPENAI_API_KEY`.
 
 **Result:** Both exited 0 and their assertions on the stored endpoint `/agents/miniagent/runs` passed. No model calls were made.
+
+---
+
+### 05_super_agent_company.py, 10_weekly_product_review.py (Mini Agent is the named default executor, 2026-11-11)
+
+**Status:** PASS
+
+**Description:** A Routine with no executor now names agent `miniagent` directly, and a Routine that names Super Agent is refused. The API, the stored schedule and the endpoint all name Mini Agent. Reran `05_super_agent_company.py`, and `10_weekly_product_review.py --check` with and without `--with-os-manager`, with a placeholder `OPENAI_API_KEY`.
+
+**Result:** All three exited 0. The assertions on `target_type` `agent`, `target_id` `miniagent` and endpoint `/agents/miniagent/runs` passed. No model calls were made.

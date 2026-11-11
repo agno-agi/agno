@@ -31,21 +31,21 @@ The HTTP layer records the authenticated caller as the creator. Company records
 are shared: reads need the read scope and writes need the write or delete scope,
 whoever created the Product. User isolation does not restrict Company records.
 
-## Weekly Super Agent review
+## Weekly Mini Agent review
 
 `10_weekly_product_review.py` declares a Company Routine with no executor, so
-it runs as Super Agent. Naming team `superagent` does the same. It reads Sources and existing work, proposes only evidence-backed
-Backlog Tasks, and updates status without accepting work. The Routine runs on
-`miniagent`, a restricted internal form of Super Agent: Company tools
+it runs on Mini Agent. Naming `executor_type="agent"`, `executor_id="miniagent"` does
+the same. It reads Sources and existing work, proposes only evidence-backed
+Backlog Tasks, and updates status without accepting work. Mini Agent is a
+restricted agent for unattended work: Company tools
 and the Routine skills only, no Platform Builder, no run or platform tools, and
 proposal-only authority. It works with or without `manager=OSManager(...)`, but
-needs `CompanyConfig(model=...)` or a registry model. The stored schedule names
-Mini Agent: endpoint `/agents/miniagent/runs`, target agent
-`miniagent`. The Routine API shows that endpoint next to the executor
-chosen, `target_type` `team` and `target_id` `superagent`. Run and session
-records carry `agent_id` `miniagent`. Mini Agent is hidden from `GET /agents`,
-`GET /config`, MCP and A2A, and a person cannot chat with it. Super Agent itself
-refuses a run with Routine authority, and no other framework ID can run a Routine.
+needs `CompanyConfig(model=...)` or a registry model. The stored schedule, the
+Routine API and the run and session records all name it: endpoint
+`/agents/miniagent/runs`, `target_type` `agent`, `target_id` `miniagent`.
+Mini Agent is hidden from `GET /agents`, `GET /config`, MCP and A2A, and a
+person cannot chat with it. Super Agent refuses a run with Routine authority,
+and a Routine that names Super Agent or any other framework ID is refused.
 
 Check both configurations without model calls or an active scheduler:
 
@@ -69,13 +69,12 @@ A code/YAML declaration's `user_id` is attribution, not a grant. An authorized
 execution-changing PATCH (for example, updating `instructions`) can authorize an
 existing declared Routine. A timing-only edit does not replace its authority.
 For direct Python bootstrap or `CompanyManager.create_routine`, pass the owning
-`AgentOS` as `agent_os=agent_os` when the Routine names Super Agent.
+`AgentOS` as `agent_os=agent_os` when the Routine runs on Mini Agent.
 
 The caller needs Routine/schedule configuration permissions and the target's
 agent/team run permission; scheduled result polling also needs the target's read
-permission. For a Routine that names Super Agent the target is the runner, so
-these are `agents:miniagent:run` and `agents:miniagent:read`.
-A grant on Super Agent alone is not enough. Grant only the Company tools the review uses: Sources and existing
+permission. For a Routine on Mini Agent these are `agents:miniagent:run` and
+`agents:miniagent:read`. A grant on Super Agent is not a grant on Mini Agent. Grant only the Company tools the review uses: Sources and existing
 work reads, proposal writes, wiki reads/writes and decision recall. Delegation
 retains those grants and Routine restrictions. Company-wide collaborative reads
 keep their existing visibility; Source contents and mutations retain Product
@@ -164,7 +163,7 @@ methods retain explicit owner filters for direct callers.
 | File | Demonstrates |
 | --- | --- |
 | `04_manage_playbook.py` | Sync/async wiki namespaces, atomic page creation, version conflicts and the learning decision log without a model. |
-| `05_super_agent_company.py` | Company work through Super Agent's Company tools: company details, a Product with a Super Agent Routine, a proposal, status and a decision, without a model call. |
+| `05_super_agent_company.py` | Company work through Super Agent's Company tools: company details, a Product with a Routine on Mini Agent, a proposal, status and a decision, without a model call. |
 
 Each Product has a durable wiki namespace with `brief.md` (human direction) and
 `status.md` (current work). A second namespace holds company context. Default
@@ -198,7 +197,7 @@ Sources with permission and Product ownership. Acceptance, completion, ownership
 changes, local Source additions, Product maintenance and outbound summaries are
 not among its Company tools. Routines use the model from `CompanyConfig(model=...)`,
 otherwise the first registry model. If neither exists, diagnostics warns, a
-Routine naming Super Agent fails with that reason, and manual APIs still work.
+Routine on Mini Agent fails with that reason, and manual APIs still work.
 
 The examples make no provider calls; they do not demonstrate live model quality.
 The heartbeat examples below demonstrate Routines and Sources.

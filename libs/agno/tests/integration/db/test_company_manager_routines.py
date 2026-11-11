@@ -143,7 +143,7 @@ async def test_manager_review_through_durable_queue(tmp_path, backend, mode):
 
 @pytest.mark.parametrize("mode", ["standalone", "member"])
 @pytest.mark.parametrize("use_async", [False, True])
-async def test_chat_declarations_name_superagent(db, use_async, mode, tmp_path):
+async def test_chat_declarations_name_mini_agent(db, use_async, mode, tmp_path):
     from agno.agent import Agent
     from agno.tools.company import CompanyTools
     from tests.integration.db.test_company_chat_products import context, invoke
@@ -161,8 +161,8 @@ async def test_chat_declarations_name_superagent(db, use_async, mode, tmp_path):
     )
     holder = chat if chat is not None else os.manager
     tools = next(tool for tool in holder.tools if isinstance(tool, CompanyTools))
-    for kind, cid in (("agent", MINI_AGENT_ID), ("agent", BUILDER_ID)):
-        with pytest.raises(ValueError, match="Only Super Agent"):
+    for kind, cid in (("team", MANAGER_TEAM_ID), ("agent", BUILDER_ID)):
+        with pytest.raises(ValueError, match="only Mini Agent runs Routines"):
             await invoke(
                 tools,
                 "create_company_product",
@@ -172,7 +172,7 @@ async def test_chat_declarations_name_superagent(db, use_async, mode, tmp_path):
                 _agno_run_context=context(),
             )
     assert (await _call(db, "get_products"))[1] == 0
-    kind, cid = "team", MANAGER_TEAM_ID
+    kind, cid = "agent", MINI_AGENT_ID
     routine = declaration(kind, cid).model_dump()
     product = await invoke(
         tools, "create_company_product", use_async, name="Docs", routines=[routine], _agno_run_context=context()
@@ -190,17 +190,17 @@ async def test_chat_declarations_name_superagent(db, use_async, mode, tmp_path):
         _agno_run_context=context(),
     )
     assert second["target_type"] == kind and second["target_id"] == cid
-    with pytest.raises(ValueError, match="Only Super Agent"):
+    with pytest.raises(ValueError, match="only Mini Agent runs Routines"):
         await invoke(
             tools,
             "create_product_routine",
             use_async,
             product_id=product["id"],
-            **{**declaration("agent", MINI_AGENT_ID).model_dump(exclude={"auto_accept"}), "name": "coordinated"},
+            **{**declaration("team", MANAGER_TEAM_ID).model_dump(exclude={"auto_accept"}), "name": "coordinated"},
             _agno_run_context=context(),
         )
     os._mini_agent = None
-    with pytest.raises(ValueError, match="Super Agent cannot run Routines"):
+    with pytest.raises(ValueError, match="Mini Agent unavailable"):
         await invoke(
             tools,
             "create_company_product",

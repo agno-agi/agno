@@ -16,7 +16,7 @@ from pydantic import BeforeValidator
 
 from agno.company.declarations import Product, Routine, Source
 from agno.company.manager import AsyncCompanyManager, CompanyManager
-from agno.company.routines import _named_executor, _require_routine_product, _RoutineAuthorization
+from agno.company.routines import _require_routine_product, _RoutineAuthorization
 from agno.company.sources import is_remote_git
 from agno.db.base import AsyncBaseDb
 from agno.run.authorization import current_authorization, requires_permission
@@ -119,16 +119,6 @@ def _chat_sources(sources, agent, team, run_context):
             getattr(executor, "id", None),
             getattr(run_context, "run_id", None),
         )
-
-
-def _run_target(endpoint):
-    """Resource, action and component id of the run permission a Routine's endpoint needs."""
-    from agno.db.schemas.scheduler import RUN_ENDPOINT_RE
-
-    target = RUN_ENDPOINT_RE.fullmatch(endpoint)
-    if target is None:
-        raise ValueError("Routine executor must be a run endpoint")
-    return target.group(1), "run", target.group(2)
 
 
 def _task_status(status):
@@ -305,8 +295,7 @@ class CompanyTools(Toolkit):
                 raise ValueError(refusal)
             authority = _authority(run_context)
             if authority is not None:
-                # The Routine API checks the component that runs, which for Super Agent is Mini Agent.
-                authority.require(*_run_target(fields["endpoint"]))
+                authority.require(routine.executor_type + "s", "run", routine.executor_id)
             if archived_endpoint_refusal(self._schedule_db, fields["endpoint"], user_id=self._scoped_user(run_context)):
                 raise ValueError("Routine executor is archived; restore the component first")
 
@@ -321,7 +310,7 @@ class CompanyTools(Toolkit):
                 raise ValueError(refusal)
             authority = _authority(run_context)
             if authority is not None:
-                await authority.arequire(*_run_target(fields["endpoint"]))
+                await authority.arequire(routine.executor_type + "s", "run", routine.executor_id)
             if await aarchived_endpoint_refusal(
                 self._schedule_db, fields["endpoint"], user_id=self._scoped_user(run_context)
             ):
@@ -515,7 +504,7 @@ class CompanyTools(Toolkit):
         """Create a Routine for the calling human; automated runs cannot create Routines.
 
         Args:
-            executor_type: agent, team or workflow. Null with a null executor_id runs it as Super Agent.
+            executor_type: agent, team or workflow. Null with a null executor_id runs it on Mini Agent.
             executor_id: ID of that component; null with a null executor_type.
             template: Optional intake, refresh or summary template; null requires instructions.
             instructions: Custom instructions; null uses the selected template.
@@ -538,7 +527,7 @@ class CompanyTools(Toolkit):
             check=self._routine_check(routine, _agno_run_context),
             agent_os=self._agent_os_ref() if self._agent_os_ref else None,
         )
-        return _public_json({**row, **_named_executor(row)})
+        return _public_json(row)
 
     @requires_permission()
     async def acreate_company_product(
@@ -620,7 +609,7 @@ class CompanyTools(Toolkit):
         """Create a Routine for the calling human; automated runs cannot create Routines.
 
         Args:
-            executor_type: agent, team or workflow. Null with a null executor_id runs it as Super Agent.
+            executor_type: agent, team or workflow. Null with a null executor_id runs it on Mini Agent.
             executor_id: ID of that component; null with a null executor_type.
             template: Optional intake, refresh or summary template; null requires instructions.
             instructions: Custom instructions; null uses the selected template.
@@ -649,7 +638,7 @@ class CompanyTools(Toolkit):
             check=check,
             agent_os=self._agent_os_ref() if self._agent_os_ref else None,
         )
-        return _public_json({**row, **_named_executor(row)})
+        return _public_json(row)
 
     @requires_permission()
     def list_company_products(

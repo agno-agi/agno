@@ -1,6 +1,6 @@
 # Customer feedback in the AgentOS UI
 
-A Super Agent Routine reviews local Markdown feedback with `gpt-6.1-sol` and proposes
+A Mini Agent Routine reviews local Markdown feedback with `gpt-6.1-sol` and proposes
 Projects and evidence-backed Backlog Tasks for your review. After you approve a
 Project and separately accept a Task, Feedback Analyst
 writes a product brief and regression test plan.
@@ -76,8 +76,8 @@ text before continuing; there is no need to delete the Product or its history.
    criteria, regression cases and open questions. Mark it **Done** only after
    you have reviewed it.
 
-The Routine names no executor, so it runs as Super Agent, on Super Agent's restricted Routine
-runner, which can only propose work. Feedback Analyst executes accepted Tasks;
+The Routine names no executor, so it runs on Mini Agent, the restricted agent that
+runs Routines and can only propose work. Feedback Analyst executes accepted Tasks;
 the built-in managers cannot be selected as business Task executors.
 `auto_accept=False` keeps discovery from authorizing execution.
 
