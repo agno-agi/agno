@@ -129,16 +129,21 @@ def attach_routes(
         },
     )
     async def webhook(request: Request, background_tasks: BackgroundTasks):
-        auth_header = request.headers.get("Authorization")
-        if not await validate_bot_framework_jwt(auth_header, config.app_id):
-            log_warning("Rejected inbound Teams activity: JWT validation failed")
-            raise HTTPException(status_code=403, detail="Invalid Bot Framework token")
-
         try:
             activity = await request.json()
         except Exception as e:
             log_warning(f"Malformed activity payload: {e}")
             raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+        if not isinstance(activity, dict):
+            raise HTTPException(status_code=400, detail="Activity must be a JSON object")
+
+        claims = await validate_bot_framework_jwt(
+            request.headers.get("Authorization"), config.app_id, activity.get("serviceUrl"), activity.get("channelId")
+        )
+        if claims is None:
+            log_warning("Rejected inbound Teams activity: JWT validation failed")
+            raise HTTPException(status_code=403, detail="Invalid Bot Framework token")
 
         background_tasks.add_task(process_activity, activity)
         return MSTeamsWebhookResponse(status="processing")
