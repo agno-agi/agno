@@ -10,6 +10,7 @@ import json
 from tempfile import TemporaryDirectory
 
 from agno.agent import Agent
+from agno.company import CompanyManager
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, CompanyConfig, MCPConfig
@@ -66,6 +67,14 @@ if __name__ == "__main__":
             tools.propose_company_project(
                 product["id"], "Release", _agno_run_context=context
             )
+        )
+        # Human approval is an application action, not a Company Manager tool.
+        CompanyManager(db, registry=agent_os.registry).transition_project(
+            project_id=project["id"],
+            target="active",
+            reason="Human approved Project scope",
+            user_id="alice",
+            accepted_by="alice",
         )
         proposal = json.loads(
             tools.propose_company_task(

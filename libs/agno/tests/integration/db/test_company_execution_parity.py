@@ -233,6 +233,24 @@ async def test_direct_start_accepts_a_backlog_task(system):
 
 
 @pytest.mark.asyncio
+async def test_direct_start_waits_for_project_approval(system):
+    client, _, worker, _, _ = system
+    product = (await client.post("/company/products", json={"name": "SDK"})).json()
+    project = (await client.post("/company/projects", json={"product_id": product["id"], "name": "Release"})).json()
+    task = (
+        await client.post(
+            "/company/tasks",
+            json={"product_id": product["id"], "project_id": project["id"], "title": "Draft"},
+        )
+    ).json()
+    path = f"/company/tasks/{task['id']}"
+    response = await client.post(path + "/runs", json={"executor_type": "agent", "executor_id": "writer"})
+    assert response.status_code == 409, response.text
+    assert (await client.get(path)).json()["status"] == "backlog"
+    assert (await worker.store.list_jobs())[0] == []
+
+
+@pytest.mark.asyncio
 async def test_concurrent_direct_starts_join_one_run(system):
     client, _, _, _, _ = system
     task = await accepted(client)
@@ -268,6 +286,64 @@ async def test_in_progress_requires_run_start(system):
             assert running["job_id"] == started.json()["run_id"]
             assert running["transitions"][-1]["attempt"] == 1
             assert (await execute(worker))["status"] == "completed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("queued", [False, True])
+async def test_legacy_ready_task_waits_for_project_approval_before_run(system, queued):
+    from agno.company.execution import _call
+    from agno.db.schemas.tasks import task_run_id
+
+    client, db, worker, _, _ = system
+    task = await accepted(client)
+    if queued:
+        started = await client.post(f"/company/tasks/{task['id']}/runs")
+        assert started.status_code == 202, started.text
+    project = await _call(db, "_get_table", table_type="projects")
+    statement = project.update().where(project.c.id == task["project_id"]).values(status="proposed", transitions=[])
+    if isinstance(db, AsyncBaseDb):
+        async with db.db_engine.begin() as connection:
+            await connection.execute(statement)
+    else:
+        with db.db_engine.begin() as connection:
+            connection.execute(statement)
+
+    before = await _call(db, "get_task", task["id"])
+    if queued:
+        assert (await execute(worker))["status"] == "failed"
+    else:
+        response = await client.post(f"/company/tasks/{task['id']}/runs")
+        assert response.status_code == 409, response.text
+        assert await worker.store.get_job(task_run_id(task["id"], 1)) is None
+    assert (await _call(db, "get_task", task["id"]))["status"] == before["status"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("queued", [False, True])
+async def test_cancelled_project_refuses_new_task_execution(system, queued):
+    from agno.company.execution import _call
+    from agno.db.schemas.tasks import task_run_id
+
+    client, db, worker, _, _ = system
+    task = await accepted(client)
+    path = f"/company/tasks/{task['id']}/runs"
+    if queued:
+        started = await client.post(path)
+        assert started.status_code == 202, started.text
+    response = await client.post(
+        f"/company/projects/{task['project_id']}/transitions",
+        json={"target": "cancelled", "reason": "Reject"},
+    )
+    assert response.status_code == 200, response.text
+
+    before = await _call(db, "get_task", task["id"])
+    if queued:
+        assert (await execute(worker))["status"] == "failed"
+    else:
+        response = await client.post(path)
+        assert response.status_code == 409, response.text
+        assert await worker.store.get_job(task_run_id(task["id"], 1)) is None
+    assert (await _call(db, "get_task", task["id"]))["status"] == before["status"]
 
 
 @pytest.mark.asyncio
@@ -484,6 +560,63 @@ async def test_executing_attempt_blocks_leaving_in_progress(system, status):
     assert response.status_code == 409
     assert response.json()["detail"] == f"Cancel the run with POST /company/runs/{run_id}/cancel to leave In progress"
     assert (await client.get(path)).json()["status"] == "in_progress"
+
+
+@pytest.mark.asyncio
+async def test_paused_task_run_can_continue_after_project_cancellation(system, monkeypatch):
+    from agno.tools import tool
+
+    client, db, worker, _, components = system
+    agent = components["writer"]
+    calls = {"model": 0, "tool": 0}
+
+    @tool(requires_confirmation=True, stop_after_tool_call=True)
+    def confirm_qa() -> str:
+        """Confirm this draft."""
+        calls["tool"] += 1
+        return "confirmed"
+
+    agent.tools = [confirm_qa]
+
+    def invoke(*args, **kwargs):
+        calls["model"] += 1
+        if calls["model"] == 1:
+            return ModelResponse(
+                role="assistant",
+                tool_calls=[
+                    {"id": "qa-call", "type": "function", "function": {"name": "confirm_qa", "arguments": "{}"}}
+                ],
+                response_usage=MessageMetrics(),
+            )
+        return ModelResponse(role="assistant", content="done", response_usage=MessageMetrics())
+
+    monkeypatch.setattr(agent.model, "invoke", invoke)
+    task = await accepted(client)
+    path = f"/company/tasks/{task['id']}"
+    started = await client.post(path + "/runs")
+    assert started.status_code == 202, started.text
+    run_id = started.json()["run_id"]
+    assert (await execute(worker))["status"] == "paused"
+    run = await agent.aget_run_output(run_id, task["session_id"])
+    assert run is not None
+    cancelled = await client.post(
+        f"/company/projects/{task['project_id']}/transitions", json={"target": "cancelled", "reason": "Cancel"}
+    )
+    assert cancelled.status_code == 200, cancelled.text
+    confirmed_tools = [{**item, "confirmed": True} for item in run.to_dict().get("tools", [])]
+    resumed = await client.post(
+        f"/agents/writer/runs/{run_id}/continue",
+        data={
+            "session_id": task["session_id"],
+            "background": "true",
+            "stream": "false",
+            "tools": json.dumps(confirmed_tools),
+        },
+    )
+    assert resumed.status_code == 202, resumed.text
+    assert (await execute(worker))["status"] == "completed"
+    assert calls["tool"] == 1
+    assert (await client.get(path)).json()["status"] == "in_review"
 
 
 @pytest.mark.asyncio
@@ -1432,7 +1565,16 @@ async def intake_proposal(manager, title, evidence, **kwargs):
     )
 
 
-async def routine_proposal(system, tmp_path, *, policy=None, executor_id="writer", template="intake"):
+async def routine_proposal(
+    system,
+    tmp_path,
+    *,
+    policy=None,
+    executor_id="writer",
+    template="intake",
+    approve_project=True,
+    required_checks=None,
+):
     from agno.company.manager import AsyncCompanyManager, CompanyManager
     from agno.company.routines import _manager_call, _RoutineAuthorization
     from agno.run.authorization import authorization_scope
@@ -1440,11 +1582,12 @@ async def routine_proposal(system, tmp_path, *, policy=None, executor_id="writer
     client, db, worker, os, _ = system
     product = (await client.post("/company/products", json={"name": "Docs"})).json()
     project = (await client.post("/company/projects", json={"product_id": product["id"], "name": "Release"})).json()
-    assert (
-        await client.post(
-            f"/company/projects/{project['id']}/transitions", json={"target": "active", "reason": "Start"}
-        )
-    ).status_code == 200
+    if approve_project:
+        assert (
+            await client.post(
+                f"/company/projects/{project['id']}/transitions", json={"target": "active", "reason": "Start"}
+            )
+        ).status_code == 200
     source_path = tmp_path / (product["id"] + ".md")
     source_path.write_text("# Release\nVerified Source material.\n")
     source = (
@@ -1458,7 +1601,7 @@ async def routine_proposal(system, tmp_path, *, policy=None, executor_id="writer
             "executor_id": "writer",
             "source_ids": [source["id"]],
             "work_scope": {"product_ids": [product["id"]], "project_ids": [project["id"]]},
-            "required_checks": ["project_active", "has_source_evidence", "executor_registered"],
+            "required_checks": required_checks or ["project_active", "has_source_evidence", "executor_registered"],
             "limits": {"max_acceptances": 1, "expires_at": int(time.time()) + 3600},
         }
     response = await client.post(
@@ -1491,6 +1634,44 @@ async def routine_proposal(system, tmp_path, *, policy=None, executor_id="writer
         )
     assert task["origin"] == "routine" and task["routine_id"] == routine["id"]
     return task, routine, manager
+
+
+@pytest.mark.asyncio
+async def test_auto_accept_waits_for_project_approval_without_failure_streak(system, tmp_path):
+    from agno.company.automation_history import aautomation_failures
+    from agno.company.execution import _call
+
+    client, db, _, _, _ = system
+    task, _, _ = await routine_proposal(
+        system,
+        tmp_path,
+        approve_project=False,
+        required_checks=["has_source_evidence", "executor_registered"],
+    )
+    executor, schedule = await automation(system)
+    for _ in range(2):
+        await _call(db, "update_schedule", schedule["id"], next_run_at=0)
+        result = await tick(executor, db)
+        assert result["status"] == "success", result
+        assert result["output"]["tasks"] == [
+            {
+                "task_id": task["id"],
+                "status": "skipped",
+                "reason": "Project approval is required before automatic Task acceptance",
+            }
+        ]
+        assert (await _call(db, "get_schedule_runs", schedule["id"]))[1] == 0
+        assert await aautomation_failures(db, db) == []
+    assert (await _call(db, "get_task", task["id"]))["status"] == "backlog"
+
+    approved = await client.post(
+        f"/company/projects/{task['project_id']}/transitions", json={"target": "active", "reason": "Approve"}
+    )
+    assert approved.status_code == 200, approved.text
+    await _call(db, "update_schedule", schedule["id"], next_run_at=0)
+    result = await tick(executor, db)
+    assert result["status"] == "success", result
+    assert (await _call(db, "get_task", task["id"]))["status"] == "in_progress"
 
 
 @pytest.mark.asyncio
@@ -2471,6 +2652,7 @@ async def test_automatic_task_timestamp_refuses_later_edit(system, monkeypatch, 
     project = (await client.post("/company/projects", json={"product_id": product["id"], "name": "Other"})).json()
     initial = (await client.post("/company/projects", json={"product_id": product["id"], "name": "Initial"})).json()
     approval = {"target": "active", "reason": "Approved"}
+    await client.post(f"/company/projects/{project['id']}/transitions", json=approval)
     await client.post(f"/company/projects/{initial['id']}/transitions", json=approval)
     task = (
         await client.post(
@@ -2608,6 +2790,10 @@ async def test_search_routine_adds_website_and_deduplicates_three_runs(system, m
                 name, arguments = "propose_company_project", dict(product_id=product["id"], name="Migration guide")
             elif len(results) == 3 or (len(results) == 4 and not results[2]["data"]):
                 project = results[2]["data"][0] if results[2]["data"] else results[3]
+                if project["status"] == "proposed":
+                    return ModelResponse(
+                        role="assistant", content="Project awaits human approval.", response_usage=MessageMetrics()
+                    )
                 observed = results[1]
                 assert "migration guide" in observed["content"]
                 name, arguments = (
@@ -2650,21 +2836,36 @@ async def test_search_routine_adds_website_and_deduplicates_three_runs(system, m
     routine = created.json()
     executor = await routine_executor(system)
     runs = []
-    for _ in range(3):
+    task_ids = []
+    for index in range(3):
         result = await executor.execute(await _call(db, "get_schedule", routine["id"]), db, release_schedule=False)
         assert result["status"] == "success", result
         runs.append(result["run_id"])
+        tasks, count = await _call(db, "get_tasks", product_id=product["id"])
+        if index == 0:
+            assert count == 0
+            projects, project_count = await _call(db, "get_projects", product_id=product["id"])
+            assert project_count == 1 and projects[0]["status"] == "proposed"
+            approved = await client.post(
+                "/company/projects/" + projects[0]["id"] + "/transitions",
+                json={"target": "active", "reason": "Human approved"},
+            )
+            assert approved.status_code == 200, approved.text
+        else:
+            assert count == 1
+            task_ids.append(tasks[0]["id"])
+    assert task_ids[0] == task_ids[1]
     sources, count = await _call(db, "get_sources", product_id=product["id"])
     assert count == 1
     assert sources[0]["config"]["metadata"] == {executor_type + "_id": executor_id, "run_id": runs[0]}
     tasks, count = await _call(db, "get_tasks", product_id=product["id"])
     assert count == 1 and tasks[0]["status"] == "backlog"
-    assert tasks[0]["evidence"][0]["run_id"] == runs[0]
+    assert tasks[0]["evidence"][0]["run_id"] == runs[1]
     assert tasks[0]["evidence"][0]["link"] == url and tasks[0]["evidence"][0]["content_hash"]
     assert tasks[0]["routine_id"] == routine["id"]
     projects, project_count = await _call(db, "get_projects", product_id=product["id"])
     assert project_count == 1 and tasks[0]["project_id"] == projects[0]["id"]
-    assert projects[0]["status"] == "proposed"
+    assert projects[0]["status"] == "active"
     listed = (await client.get("/company/sources", params={"product_id": product["id"]})).json()["data"]
     assert listed[0]["config"]["metadata"][executor_type + "_id"] == executor_id
     # Discovered websites use the same bounded acceptance checks as human-added Sources.
@@ -2746,6 +2947,10 @@ async def test_later_scope_move_cannot_accept_or_queue(system, tmp_path, monkeyp
     outside = (
         await client.post("/company/projects", json={"product_id": task["product_id"], "name": "Outside"})
     ).json()
+    approved = await client.post(
+        f"/company/projects/{outside['id']}/transitions", json={"target": "active", "reason": "Approved"}
+    )
+    assert approved.status_code == 200, approved.text
     now = int(time.time())
     monkeypatch.setattr(time, "time", lambda: now)
     task = await _call(db, "update_task", task["id"], brief="Observed scope")
@@ -2935,7 +3140,7 @@ async def test_cheap_check_failure_skips_source_io(system, tmp_path, monkeypatch
     for _ in range(3):
         await _call(db, "update_schedule", schedule["id"], next_run_at=0)
         result = await tick(executor, db)
-        assert "project_active" in result["output"]["tasks"][0]["reason"]
+        assert "cancelled Project" in result["output"]["tasks"][0]["reason"]
     read.assert_not_called()
 
 

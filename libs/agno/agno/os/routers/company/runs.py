@@ -14,6 +14,7 @@ from agno.company.execution import (
     _executor,
     _pending_task_attempt,
     _prepare_task_session,
+    _project_run_block,
     _reconcile_task_run,
     _reservation_owner,
     _reserve_task,
@@ -485,6 +486,9 @@ def get_company_runs_router(os: Any) -> APIRouter:
         from agno.company.routines import _manager_call
 
         value = await task(task_id)
+        reason = await _project_run_block(db, value)
+        if reason:
+            raise HTTPException(409, reason)
         # A retry joins the start while the Task is Ready or its attempt is unfinished; repeating it
         # after the run has ended would start another attempt, so it is refused.
         accepted_for = (value["status"] == "ready" or _pending_task_attempt(value) is not None) and (
