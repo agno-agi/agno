@@ -1,6 +1,6 @@
 """Configure Company Manager and exercise its bounded tools without a model call.
 
-Prerequisites: Install agno, sqlalchemy, openai, fastapi, httpx and fastmcp.
+Prerequisites: Install agno, sqlalchemy, openai, fastapi and httpx.
 Run: .venv/bin/python cookbook/05_agent_os/30_company/05_company_manager.py
 Try: With provider credentials, call agent_os.company_manager.print_response(...).
      Add manager=OSManager() to compose Company Manager as an OS Manager member.
@@ -13,7 +13,7 @@ from agno.agent import Agent
 from agno.company import CompanyManager
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
-from agno.os import AgentOS, CompanyConfig, MCPConfig
+from agno.os import AgentOS, CompanyConfig
 from agno.registry import Registry
 from agno.run import RunContext
 from agno.tools.company import CompanyTools
@@ -32,10 +32,9 @@ if __name__ == "__main__":
             ),
             company=CompanyConfig(),
             user_isolation=True,
-            mcp=MCPConfig(tools=[tools]),
             telemetry=False,
         )
-        # Trusted application code supplies context. HTTP and MCP inject their
+        # Trusted application code supplies context. HTTP injects its
         # authenticated caller automatically; identity is never a model argument.
         context = RunContext(run_id="demo", session_id="planning", user_id="alice")
         # Chat step: "Set up a Product for our docs site with an intake Routine."
