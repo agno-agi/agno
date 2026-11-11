@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agno.utils.json_schema import (
     get_json_schema,
@@ -452,3 +452,32 @@ def test_get_json_schema_with_mixed_nested_structures():
     assert "contact_info" in dataclass_schema["properties"]
     assert "address" in pydantic_schema["properties"]["contact_info"]["properties"]
     assert "address" in dataclass_schema["properties"]["contact_info"]["properties"]
+
+
+def test_get_json_schema_for_arg_annotated():
+    """Annotated[T, ...] must unwrap to T instead of the empty-object stub (#10857)."""
+    schema = get_json_schema_for_arg(Annotated[int, Field(ge=0)])
+    assert schema == {"type": "integer"}
+
+    schema = get_json_schema_for_arg(Annotated[str, Field(min_length=1)])
+    assert schema == {"type": "string"}
+
+    nested = get_json_schema_for_arg(list[Annotated[int, Field(ge=0)]])
+    assert nested == {"type": "array", "items": {"type": "integer"}}
+
+
+def test_get_json_schema_dataclass_annotated_fields():
+    """Dataclass fields keep Annotated (get_type_hints is not used); must not become {}."""
+
+    @dataclass
+    class Point:
+        x: Annotated[int, Field(ge=0)]
+        y: Annotated[int, Field(ge=0)]
+
+    arg_schema = get_json_schema_for_arg(Point)
+    assert arg_schema["properties"]["x"] == {"type": "integer"}
+    assert arg_schema["properties"]["y"] == {"type": "integer"}
+
+    schema = get_json_schema({"p": Point})
+    assert schema["properties"]["p"]["properties"]["x"] == {"type": "integer"}
+    assert schema["properties"]["p"]["properties"]["y"] == {"type": "integer"}

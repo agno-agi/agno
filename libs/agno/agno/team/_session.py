@@ -21,9 +21,11 @@ from agno.db.base import SessionType
 from agno.metrics import SessionMetrics
 from agno.models.message import Message
 from agno.run import RunStatus
+from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
 from agno.session import TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
+from agno.team._members import member_storage
 from agno.utils.agent import (
     aget_session_metrics_util,
     aget_session_name_util,
@@ -66,11 +68,10 @@ def get_session(
     session_id_to_load: str = session_id or team.session_id  # type: ignore[assignment]
 
     # If there is a cached session, return it
-    if team.cache_session and hasattr(team, "_cached_session") and team._cached_session is not None:
-        if team._cached_session.session_id == session_id_to_load and (
-            user_id is None or team._cached_session.user_id == user_id
-        ):
-            return team._cached_session
+    if team.cache_session:
+        cached_session = team._get_cached_session(session_id_to_load, user_id=user_id)
+        if cached_session is not None:
+            return cached_session
 
     if _has_async_db(team):
         raise ValueError("Cannot use sync get_session() with an async database. Use aget_session() instead.")
@@ -95,7 +96,7 @@ def get_session(
 
         # Cache the session if relevant
         if loaded_session is not None and team.cache_session:
-            team._cached_session = loaded_session
+            team._set_cached_session(loaded_session)
 
         return loaded_session  # type: ignore[return-value]
 
@@ -126,11 +127,10 @@ async def aget_session(
     session_id_to_load: str = session_id or team.session_id  # type: ignore[assignment]
 
     # If there is a cached session, return it
-    if team.cache_session and hasattr(team, "_cached_session") and team._cached_session is not None:
-        if team._cached_session.session_id == session_id_to_load and (
-            user_id is None or team._cached_session.user_id == user_id
-        ):
-            return team._cached_session
+    if team.cache_session:
+        cached_session = team._get_cached_session(session_id_to_load, user_id=user_id)
+        if cached_session is not None:
+            return cached_session
 
     # Load and return the session from the database
     if team.db is not None:
@@ -168,7 +168,7 @@ async def aget_session(
 
         # Cache the session if relevant
         if loaded_session is not None and team.cache_session:
-            team._cached_session = loaded_session
+            team._set_cached_session(loaded_session)
 
         return loaded_session  # type: ignore[return-value]
 
@@ -273,29 +273,61 @@ def _storage_view_of_spared_run(
     if member is None:
         member = _resolve_spared_member(team, member_response)
     if member is None:
-        # The owning member cannot be resolved (e.g. callable Team.members).
-        # Store the strictest view: every storage flag treated as off, with the
-        # paused-aware tool scrub so the pending call stays resumable.
+        # The owning member cannot be resolved (e.g. callable Team.members). Store the strictest
+        # view: every storage flag treated as off, with the paused-aware tool scrub so the pending
+        # call stays resumable. References to uploaded objects stay so they remain deletable.
         view = copy(member_response)
         isolate_media_scrub_targets(view)
-        scrub_media_from_run_output(view)
+        scrub_media_from_run_output(view, keep_references=team.media_storage is not None and team.store_media)
         _scrub_tool_results_keeping_unresolved(view)
         scrub_history_messages_from_run_output(view)
         return view
-    if member.store_media and member.store_tool_messages and member.store_history_messages:
+    if member_storage(member).keeps_all:
         return member_response
 
     view = copy(member_response)
     # The spared run is shared with the live tree, and the media scrub rewrites
     # Message objects in place.
     isolate_media_scrub_targets(view)
-    if not member.store_media:
+    if not member_storage(member).media:
         scrub_media_from_run_output(view)
-    if not member.store_tool_messages:
+    if not member_storage(member).tool_messages:
         _scrub_tool_results_keeping_unresolved(view)
-    if not member.store_history_messages:
+    if not member_storage(member).history_messages:
         scrub_history_messages_from_run_output(view)
     return view
+
+
+def _remote_member_run_metrics(
+    member_response: Union[TeamRunOutput, "RunOutput"],
+) -> Union[TeamRunOutput, "RunOutput"]:
+    """The part of a remote member's run the team's run keeps when it stores no member responses: its ids, status,
+    model and metrics. The run itself is stored by the AgentOS that ran it, which may use another database."""
+    if isinstance(member_response, TeamRunOutput):
+        return TeamRunOutput(
+            run_id=member_response.run_id,
+            parent_run_id=member_response.parent_run_id,
+            session_id=member_response.session_id,
+            team_id=member_response.team_id,
+            status=member_response.status,
+            created_at=member_response.created_at,
+            model=member_response.model,
+            model_provider=member_response.model_provider,
+            metrics=member_response.metrics,
+            # The remote team's own members' runs, which the team's database holds no record of either
+            member_responses=[_remote_member_run_metrics(m) for m in member_response.member_responses or []],
+        )
+    return RunOutput(
+        run_id=member_response.run_id,
+        parent_run_id=member_response.parent_run_id,
+        session_id=member_response.session_id,
+        agent_id=member_response.agent_id,
+        status=member_response.status,
+        created_at=member_response.created_at,
+        model=member_response.model,
+        model_provider=member_response.model_provider,
+        metrics=member_response.metrics,
+    )
 
 
 def _scrub_member_responses_keeping_paused(
@@ -307,17 +339,21 @@ def _scrub_member_responses_keeping_paused(
     state for continue_run after a session reload, and the save after it
     completes scrubs it. Completed responses inside a spared paused sub-team
     run are removed too, and a spared run still passes through its own member's
-    storage flags.
+    storage flags. A remote member's run keeps its metrics.
 
     Copy-on-write: every level this rebuilds is shallow-copied, so the live run
     tree the caller holds keeps its member responses and its full messages."""
     from copy import copy
 
     from agno.team.team import Team
+    from agno.utils.team import is_remote_member_run
 
     spared = []
     for member_response in getattr(run, "member_responses", None) or []:
         if not getattr(member_response, "is_paused", False):
+            # The team's database may hold no other record of a remote member's run to count its tokens from
+            if is_remote_member_run(member_response, run.session_id):
+                spared.append(_remote_member_run_metrics(member_response))
             continue
         # Resolve the owner at THIS level before recursing: the response tree
         # mirrors the team tree, and carrying the owning sub-team down keeps a
@@ -428,6 +464,62 @@ async def asave_session(team: "Team", session: TeamSession) -> None:
         else:
             _upsert_session(team, session=storage_session)
         log_debug(f"Created or updated TeamSession record: {session.session_id}")
+
+
+def saves_its_runs(team: "Team") -> bool:
+    """Whether the team saves its own runs: a member team's or a workflow step's are saved by its team or workflow."""
+    return team.db is not None and team.parent_team_id is None and team.workflow_id is None
+
+
+def save_run(
+    team: "Team",
+    run: Union[TeamRunOutput, RunOutput],
+    session_id: str,
+    user_id: Optional[str] = None,
+    run_index: Optional[int] = None,
+) -> None:
+    """Persist a single run to the database (O(1) operation).
+
+    Use this instead of save_session() when only a single run has changed.
+    """
+    from agno.team._init import _has_async_db
+    from agno.team._run import _scrub_member_responses
+    from agno.team._storage import _upsert_run
+
+    if _has_async_db(team):
+        raise ValueError("Cannot use sync save_run() with an async database. Use asave_run() instead.")
+
+    if saves_its_runs(team):
+        storage_run = run
+        if hasattr(run, "member_responses"):
+            if not team.store_member_responses:
+                storage_run = _scrub_member_responses_keeping_paused(team, run)
+            else:
+                _scrub_member_responses(team, run.member_responses)  # type: ignore[union-attr]
+        _upsert_run(team, run=storage_run, session_id=session_id, user_id=user_id, run_index=run_index)
+        log_debug(f"Saved run {getattr(run, 'run_id', '?')} to session {session_id}")
+
+
+async def asave_run(
+    team: "Team",
+    run: Union[TeamRunOutput, RunOutput],
+    session_id: str,
+    user_id: Optional[str] = None,
+    run_index: Optional[int] = None,
+) -> None:
+    """Async version of ``save_run``."""
+    from agno.team._run import _scrub_member_responses
+    from agno.team._storage import _aupsert_run
+
+    if saves_its_runs(team):
+        storage_run = run
+        if hasattr(run, "member_responses"):
+            if not team.store_member_responses:
+                storage_run = _scrub_member_responses_keeping_paused(team, run)
+            else:
+                _scrub_member_responses(team, run.member_responses)  # type: ignore[union-attr]
+        await _aupsert_run(team, run=storage_run, session_id=session_id, user_id=user_id, run_index=run_index)
+        log_debug(f"Saved run {getattr(run, 'run_id', '?')} to session {session_id}")
 
 
 # ---------------------------------------------------------------------------
@@ -688,26 +780,27 @@ async def aget_session_metrics(team: "Team", session_id: Optional[str] = None) -
     return await aget_session_metrics_util(cast(Any, team), session_id=session_id)
 
 
-def update_session_metrics(team: "Team", session: TeamSession, run_response: TeamRunOutput) -> None:
-    """Calculate session metrics and write them to session_data.
+def update_session_metrics(team: "Team", session: TeamSession) -> None:
+    """Calculate session metrics from the session's runs and write them to session_data.
 
     Converts run-level Metrics (details: Dict[str, List[ModelMetrics]]) to
     session-level SessionMetrics (details: List[ModelMetrics]) using
     SessionMetrics.accumulate_from_run().
 
-    Accumulates metrics from the team leader's own model calls as well as
-    all member agent/team responses (recursively for nested teams).
+    Accumulates metrics from every run of the session, the team leader's and
+    its members' (recursively for nested teams), once each.
     """
-    from agno.team._storage import get_session_metrics_internal
+    session_metrics = SessionMetrics()
+    runs = session.runs or []
+    # A run of its own is counted from its row, never again from a copy kept inside its team's run
+    seen_run_ids: set[str] = {run.run_id for run in runs if run.run_id}
+    for run in runs:
+        if run.metrics is not None:
+            session_metrics.accumulate_from_run(run.metrics)
 
-    session_metrics = get_session_metrics_internal(team, session=session)
-    if session_metrics is None:
-        return
-    if run_response.metrics is not None:
-        session_metrics.accumulate_from_run(run_response.metrics)
-
-    # Accumulate metrics from member responses (agent and nested team runs)
-    _accumulate_member_metrics(session_metrics, run_response.member_responses)
+    # Accumulate metrics from member responses kept only inside a team's run (such as a remote member's)
+    for run in runs:
+        _accumulate_member_metrics(session_metrics, getattr(run, "member_responses", None) or [], seen_run_ids)
 
     if session.session_data is not None:
         session.session_data["session_metrics"] = session_metrics.to_dict()
@@ -716,14 +809,20 @@ def update_session_metrics(team: "Team", session: TeamSession, run_response: Tea
 def _accumulate_member_metrics(
     session_metrics: SessionMetrics,
     member_responses: "List",
+    seen_run_ids: set[str],
 ) -> None:
-    """Recursively accumulate metrics from member responses into session metrics."""
+    """Recursively accumulate metrics from member responses not counted yet into session metrics."""
     for member_response in member_responses:
+        run_id = member_response.run_id
+        if run_id and run_id in seen_run_ids:
+            continue
+        if run_id:
+            seen_run_ids.add(run_id)
         if member_response.metrics is not None:
             session_metrics.accumulate_from_run(member_response.metrics)
         # Recurse into nested team member responses
         if isinstance(member_response, TeamRunOutput) and member_response.member_responses:
-            _accumulate_member_metrics(session_metrics, member_response.member_responses)
+            _accumulate_member_metrics(session_metrics, member_response.member_responses, seen_run_ids)
 
 
 # ---------------------------------------------------------------------------
@@ -731,8 +830,11 @@ def _accumulate_member_metrics(
 # ---------------------------------------------------------------------------
 
 
-def delete_session(team: "Team", session_id: str, user_id: Optional[str] = None):
-    """Delete the current session and save to storage"""
+def delete_session(team: "Team", session_id: str, user_id: Optional[str] = None, delete_media: bool = False):
+    """Delete the current session and save to storage.
+
+    ``delete_media`` deletes the session's offloaded objects along with it.
+    """
     from agno.team._init import _has_async_db
 
     if _has_async_db(team):
@@ -741,19 +843,75 @@ def delete_session(team: "Team", session_id: str, user_id: Optional[str] = None)
     if team.db is None:
         return
 
+    keys: List[str] = []
+    storage = team.media_storage
+    if delete_media:
+        from agno.media.storage.base import AsyncMediaStorage
+        from agno.utils.media_offload import session_media_keys
+
+        if storage is None:
+            log_warning("delete_media=True but no media_storage is configured, skipping media deletion")
+        else:
+            # Refused before the row is deleted: afterwards nothing would be left pointing at the object.
+            if isinstance(storage, AsyncMediaStorage):
+                raise ValueError(
+                    "Cannot use sync delete_session() with an AsyncMediaStorage. Use adelete_session() instead."
+                )
+            try:
+                session = team.db.get_session(session_id=session_id, user_id=user_id)
+            except Exception as e:
+                log_warning(f"Could not read session {session_id} for media deletion: {e}")
+                session = None
+            if session is not None:
+                keys = session_media_keys(session, [session_id], storage)
+    elif storage is not None:
+        log_debug("delete_media=False, keeping any offloaded media, pass delete_media=True to delete it too")
+
     team.db.delete_session(session_id=session_id, user_id=user_id)
 
+    if keys and storage is not None:
+        from agno.utils.media_offload import delete_media_keys
 
-async def adelete_session(team: "Team", session_id: str, user_id: Optional[str] = None):
-    """Delete the current session and save to storage"""
+        delete_media_keys(keys, storage)  # type: ignore[arg-type]
+
+
+async def adelete_session(team: "Team", session_id: str, user_id: Optional[str] = None, delete_media: bool = False):
+    """Async variant of :func:`delete_session`."""
     from agno.team._init import _has_async_db
 
     if team.db is None:
         return
+
+    keys: List[str] = []
+    storage = team.media_storage
+    if delete_media:
+        from agno.utils.media_offload import session_media_keys
+
+        if storage is None:
+            log_warning("delete_media=True but no media_storage is configured, skipping media deletion")
+        else:
+            try:
+                if _has_async_db(team):
+                    session = await team.db.get_session(session_id=session_id, user_id=user_id)  # type: ignore
+                else:
+                    session = team.db.get_session(session_id=session_id, user_id=user_id)
+            except Exception as e:
+                log_warning(f"Could not read session {session_id} for media deletion: {e}")
+                session = None
+            if session is not None:
+                keys = session_media_keys(session, [session_id], storage)
+    elif storage is not None:
+        log_debug("delete_media=False, keeping any offloaded media, pass delete_media=True to delete it too")
+
     if _has_async_db(team):
         await team.db.delete_session(session_id=session_id, user_id=user_id)  # type: ignore
     else:
         team.db.delete_session(session_id=session_id, user_id=user_id)
+
+    if keys and storage is not None:
+        from agno.utils.media_offload import adelete_media_keys
+
+        await adelete_media_keys(keys, storage)
 
 
 # ---------------------------------------------------------------------------

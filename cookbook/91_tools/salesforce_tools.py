@@ -34,7 +34,7 @@ from agno.tools.salesforce import SalesforceTools
 # Read-only agent (default — query, search, and metadata only)
 read_only_agent = Agent(
     name="Salesforce Explorer",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[SalesforceTools()],
     description="You are a Salesforce data specialist that can explore objects, query records, and search across the org.",
     instructions=[
@@ -48,7 +48,7 @@ read_only_agent = Agent(
 # Full CRM agent with write operations enabled
 full_crm_agent = Agent(
     name="Salesforce CRM Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         SalesforceTools(
             enable_create_record=True,

@@ -66,6 +66,9 @@ gmail_token.json
 calendar_token.json
 gdrive_token.json
 
+# xAI SuperGrok OAuth token (file-fallback store)
+xai_token.json
+
 .composio.lock
 
 # Coverage

@@ -1,31 +1,79 @@
+import errno
 import json
 import os
+import stat
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union
 from uuid import uuid4
+
+from packaging import version as packaging_version
 
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
 from agno.db.base import BaseDb, SessionType
-from agno.db.json.utils import (
-    apply_sorting,
-    calculate_date_metrics,
-    deserialize_cultural_knowledge_from_db,
-    fetch_all_sessions_data,
-    get_dates_to_calculate_metrics_for,
-    serialize_cultural_knowledge_for_db,
-)
-from agno.db.schemas.culture import CulturalKnowledge
+from agno.db.json.utils import apply_sorting
+from agno.db.migrations.manager import MigrationManager
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.utils import deserialize_session, deserialize_sessions
+from agno.db.utils import (
+    AGGREGATE_METRICS_COUNT_COLUMNS,
+    AGGREGATE_METRICS_KEY_COLUMNS,
+    COMPONENT_METRICS_KEY_COLUMNS,
+    METRICS_LOCK_SECONDS,
+    METRICS_REFRESH_ID,
+    METRICS_STOPPED_ERROR,
+    METRICS_WRITE_RETRIES,
+    build_metrics_by_owner_from_rows,
+    build_metrics_from_aggregate_metrics,
+    build_single_run_row,
+    calculate_date_metrics,
+    calculate_month_metrics,
+    database_error_message,
+    deserialize_metrics_rows,
+    deserialize_run,
+    deserialize_session,
+    deserialize_sessions,
+    drop_legacy_metrics,
+    filter_context_runs,
+    get_metrics_dates_to_calculate,
+    get_metrics_legacy_runs,
+    get_metrics_records_by_day,
+    get_metrics_reopen_session_ids,
+    get_metrics_rows_by_key,
+    get_months_to_calculate_metrics_for,
+    get_open_metrics_months,
+    list_metrics_totals_models,
+    merge_metrics_totals,
+    merge_runs_table_with_legacy_blob,
+    metrics_calculation_enabled,
+    metrics_day_completed,
+    metrics_day_to_reopen,
+    metrics_full_months,
+    metrics_month_end,
+    metrics_refresh_status,
+    metrics_versions,
+    reopen_metrics_days_from,
+    reopen_metrics_month,
+    reopened_aggregate_metrics_row,
+    resolve_metrics_fields,
+    total_metrics_rows,
+    write_aggregate_metrics_rows,
+)
+from agno.run.agent import RunOutput
+from agno.run.base import RunStatus
+from agno.run.team import TeamRunOutput
+from agno.run.workflow import WorkflowRunOutput
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
+
+# Errors where an existing table can't be replaced atomically, so it is written in place instead
+_IN_PLACE_WRITE_ERRNOS = frozenset({errno.EACCES, errno.EPERM, errno.EBUSY, errno.EXDEV})
 
 
 class JsonDb(BaseDb):
@@ -33,9 +81,12 @@ class JsonDb(BaseDb):
         self,
         db_path: Optional[str] = None,
         session_table: Optional[str] = None,
-        culture_table: Optional[str] = None,
+        runs_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
+        component_metrics_table: Optional[str] = None,
+        aggregate_metrics_table: Optional[str] = None,
+        metrics_refreshes_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         traces_table: Optional[str] = None,
@@ -48,9 +99,13 @@ class JsonDb(BaseDb):
         Args:
             db_path (Optional[str]): Path to the directory where JSON files will be stored.
             session_table (Optional[str]): Name of the JSON file to store sessions (without .json extension).
-            culture_table (Optional[str]): Name of the JSON file to store cultural knowledge.
+            runs_table (Optional[str]): Name of the JSON file to store runs (one entry per run).
             memory_table (Optional[str]): Name of the JSON file to store memories.
             metrics_table (Optional[str]): Name of the JSON file to store metrics.
+            component_metrics_table (Optional[str]): Name of the JSON file to store the metrics of each agent, team
+                and workflow.
+            aggregate_metrics_table (Optional[str]): Name of the JSON file to store the metrics of each user.
+            metrics_refreshes_table (Optional[str]): Name of the JSON file to store the metrics refreshes.
             eval_table (Optional[str]): Name of the JSON file to store evaluation runs.
             knowledge_table (Optional[str]): Name of the JSON file to store knowledge content.
             traces_table (Optional[str]): Name of the JSON file to store run traces.
@@ -64,9 +119,12 @@ class JsonDb(BaseDb):
         super().__init__(
             id=id,
             session_table=session_table,
-            culture_table=culture_table,
+            runs_table=runs_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
+            component_metrics_table=component_metrics_table,
+            aggregate_metrics_table=aggregate_metrics_table,
+            metrics_refreshes_table=metrics_refreshes_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
             traces_table=traces_table,
@@ -75,6 +133,17 @@ class JsonDb(BaseDb):
 
         # Create the directory where the JSON files will be stored, if it doesn't exist
         self.db_path = Path(db_path or os.path.join(os.getcwd(), "agno_json_db"))
+
+        if metrics_table is not None:
+            log_warning("metrics_table is deprecated; use component_metrics_table and aggregate_metrics_table.")
+
+        # Zero means never refreshed; get_metrics uses this to refresh lazily, at most once per minute.
+        # stop_metrics_refresh_on_read sets it to infinity, so reads never calculate
+        self._metrics_refreshed_at: float = 0.0
+        # Reads warn once that the deprecated metrics file is served until a first calculate_metrics has finished
+        self._deprecated_metrics_logged: bool = False
+        # The days whose metrics a write could not reopen, retried by the next write
+        self._metrics_days_not_reopened: Set[date] = set()
 
     def table_exists(self, table_name: str) -> bool:
         """JSON implementation, always returns True."""
@@ -103,44 +172,412 @@ class JsonDb(BaseDb):
 
         except FileNotFoundError:
             if create_table_if_not_found:
-                with open(file_path, "w", encoding="utf-8") as f:
-                    json.dump([], f)
+                # Exclusive create so a table published by a concurrent writer is never truncated
+                try:
+                    with open(file_path, "x", encoding="utf-8") as f:
+                        json.dump([], f)
+                    # Store the schema version for the created sessions table, which holds no legacy runs for metrics
+                    if filename == self.session_table_name:
+                        latest_schema_version = MigrationManager(self).latest_schema_version
+                        self.upsert_schema_version(table_name=filename, version=latest_schema_version.public)
+                except FileExistsError:
+                    pass
             return []
 
         except json.JSONDecodeError as e:
             log_error(f"Error reading the {file_path} JSON file: {str(e)}")
             raise e
 
-    def _write_json_file(self, filename: str, data: List[Dict[str, Any]]) -> None:
-        """Write data to a JSON file.
+    def _write_json_file(
+        self,
+        filename: str,
+        data: List[Dict[str, Any]],
+        if_generation_match: Optional[Tuple[int, int, int]] = None,
+        indent: Optional[int] = 2,
+    ) -> bool:
+        """Write data to a JSON file, publishing regular tables after serialization succeeds.
 
         Args:
             filename (str): The name of the JSON file to write.
             data (List[Dict[str, Any]]): The data to write to the JSON file.
+            if_generation_match (Optional[Tuple[int, int, int]]): Write only while the file is still at this
+                generation, from _read_json_file_with_generation. Checked right before the file is replaced.
+            indent (Optional[int]): The indent of the JSON. None for the most compact, as the metrics files are
+                written: only this class reads them, and indenting a large file takes most of its write.
+
+        Returns:
+            bool: Whether the data was written. False only when the file is no longer at if_generation_match.
 
         Raises:
             Exception: If an error occurs while writing to the JSON file.
         """
-        file_path = self.db_path / f"{filename}.json"
+        file_path = (self.db_path / f"{filename}.json").resolve()
 
         # Create directory if it doesn't exist
         self.db_path.mkdir(parents=True, exist_ok=True)
 
+        temporary_path: Optional[Path] = None
         try:
-            with open(file_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, default=str)
+            existing = file_path.stat() if file_path.exists() else None
+            if existing is not None and not stat.S_ISREG(existing.st_mode):
+                if if_generation_match is not None and self._json_file_generation(file_path) != if_generation_match:
+                    return False
+                self._write_json_in_place(file_path, data)
+                return True
+            if existing is not None:
+                descriptor = os.open(file_path, os.O_WRONLY)
+                os.close(descriptor)
+
+            serializing = False
+            try:
+                staging_path = file_path.with_name(f".agno-json-{uuid4().hex}.tmp")
+                with open(staging_path, "x", encoding="utf-8") as f:
+                    temporary_path = staging_path
+                    if existing is not None:
+                        self._copy_table_metadata(staging_path, existing)
+                    serializing = True
+                    json.dump(data, f, indent=indent, default=str)
+                serializing = False
+                # Checked last, so a write another process made while this one serialized is never replaced
+                if if_generation_match is not None and self._json_file_generation(file_path) != if_generation_match:
+                    return False
+                os.replace(staging_path, file_path)
+            except OSError as e:
+                # Bind-mounted tables, read-only directories and foreign-owned tables can't be replaced.
+                # Serialization errors always propagate so the existing table is never truncated.
+                if serializing or existing is None or e.errno not in _IN_PLACE_WRITE_ERRNOS:
+                    raise
+                log_debug(f"Writing {file_path} in place: {e}")
+                if if_generation_match is not None and self._json_file_generation(file_path) != if_generation_match:
+                    return False
+                self._write_json_in_place(file_path, data)
+            return True
 
         except Exception as e:
             log_error(f"Error writing to the {file_path} JSON file: {str(e)}")
             raise e
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
 
-    def get_latest_schema_version(self):
-        """Get the latest version of the database schema."""
-        pass
+    @staticmethod
+    def _json_file_generation(file_path: Path) -> Tuple[int, int, int]:
+        """The generation of a JSON file: its inode, modification time and size, which every write changes. Zeros
+        while it does not exist."""
+        try:
+            file_stat = file_path.stat()
+        except FileNotFoundError:
+            return 0, 0, 0
+        return file_stat.st_ino, file_stat.st_mtime_ns, file_stat.st_size
 
-    def upsert_schema_version(self, version: str) -> None:
-        """Upsert the schema version into the database."""
-        pass
+    def _read_json_file_with_generation(
+        self, filename: str, create_table_if_not_found: Optional[bool] = True
+    ) -> Tuple[List[Dict[str, Any]], Tuple[int, int, int]]:
+        """Read data from a JSON file, as _read_json_file does, with the generation of the file it read.
+
+        The generation is taken before the data is read, so a write made in between only makes the next conditional
+        write read the file again.
+
+        Args:
+            filename (str): The name of the JSON file to read.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], Tuple[int, int, int]]: The data from the JSON file, and its generation. Zeros
+                while it does not exist.
+        """
+        generation = self._json_file_generation(self.db_path / f"{filename}.json")
+        return self._read_json_file(filename, create_table_if_not_found), generation
+
+    @staticmethod
+    def _copy_table_metadata(staging_path: Path, existing: os.stat_result) -> None:
+        """Give the staging file the existing table's owner and mode bits."""
+        staged = staging_path.stat()
+        if hasattr(os, "chown") and (staged.st_uid, staged.st_gid) != (existing.st_uid, existing.st_gid):
+            os.chown(staging_path, existing.st_uid, existing.st_gid)
+        os.chmod(staging_path, stat.S_IMODE(existing.st_mode))
+
+    @staticmethod
+    def _write_json_in_place(file_path: Path, data: List[Dict[str, Any]]) -> None:
+        """Overwrite the table directly, for paths that can't be replaced atomically."""
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, default=str)
+
+    def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
+        """Get the schema version stamped for the given table.
+
+        Defaults to "2.0.0" when nothing is stamped so the MigrationManager
+        runs migrations instead of skipping the table.
+        """
+        rows = self._read_json_file(self.versions_table_name, create_table_if_not_found=True)
+        for row in rows:
+            if row.get("table_name") == table_name:
+                return row.get("version") or "2.0.0"
+        return "2.0.0"
+
+    def upsert_schema_version(self, table_name: str = "", version: str = "") -> None:
+        """Record the schema version stamp for the given table."""
+        rows = self._read_json_file(self.versions_table_name, create_table_if_not_found=True)
+        entry = {"table_name": table_name, "version": version, "updated_at": int(time.time())}
+        rows = [row for row in rows if row.get("table_name") != table_name]
+        rows.append(entry)
+        self._write_json_file(self.versions_table_name, rows)
+
+    # -- Run methods --
+
+    def _read_runs_file(self, create_table_if_not_found: Optional[bool] = True) -> List[Dict[str, Any]]:
+        """Read the runs file. Returns [] if empty / not yet created."""
+        return self._read_json_file(self.runs_table_name, create_table_if_not_found=create_table_if_not_found)
+
+    def _write_runs_file(self, rows: List[Dict[str, Any]]) -> None:
+        """Replace the runs file with the given list of rows."""
+        self._write_json_file(self.runs_table_name, rows)
+
+    def _get_session_runs_data(self, session_id: str) -> List[Dict[str, Any]]:
+        """Get raw run_data dicts for the given session, in insertion order."""
+        all_runs = self._read_runs_file(create_table_if_not_found=False)
+        rows = [r for r in all_runs if r.get("session_id") == session_id]
+        rows.sort(key=lambda r: (r.get("run_index") or 0, r.get("created_at") or 0))
+        return [r["run_data"] for r in rows if "run_data" in r]
+
+    def _get_sessions_runs(self, session_ids: List[str]) -> Optional[Dict[str, List[Dict[str, Any]]]]:
+        """Run dicts for several sessions in one read, used by the search fallback."""
+        return self._get_sessions_runs_data(session_ids)
+
+    def _get_sessions_runs_data(self, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+        """Get raw run_data dicts for several sessions, grouped by session_id."""
+        if not session_ids:
+            return {}
+        all_runs = self._read_runs_file(create_table_if_not_found=False)
+        wanted = set(session_ids)
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
+        for r in all_runs:
+            sid = r.get("session_id")
+            if sid in wanted and "run_data" in r:
+                grouped.setdefault(sid, []).append(r)
+        for sid, items in grouped.items():
+            items.sort(key=lambda r: (r.get("run_index") or 0, r.get("created_at") or 0))
+            grouped[sid] = [it["run_data"] for it in items]
+        return grouped  # type: ignore[return-value]
+
+    def upsert_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> None:
+        """Upsert a single run row in the runs file.
+
+        Optimized for updating existing runs (e.g., status changes in HITL or
+        background mode) without re-upserting all runs in the session.
+
+        For new runs, ``run_index`` should be provided or will be read from
+        ``run_data``. For updates to existing runs, ``run_index`` is preserved
+        from the original insert.
+
+        Args:
+            run: The run object or dictionary to upsert.
+            session_id: The session ID this run belongs to.
+            user_id: Optional user ID to associate with the run.
+            run_index: Optional run index for new runs.
+
+        Raises:
+            ValueError: If the run has no run_id.
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            row = build_single_run_row(
+                run=run,
+                session_id=session_id,
+                user_id=user_id,
+                run_index=run_index,
+            )
+
+            existing = self._read_runs_file(create_table_if_not_found=True)
+            replaced = False
+            for i, r in enumerate(existing):
+                if r.get("run_id") == row["run_id"]:
+                    # Preserve the original run_index (don't bump it on update)
+                    row["run_index"] = r.get("run_index", row.get("run_index"))
+                    # The stored created_at, which a resumed run keeps
+                    if r.get("created_at") is not None:
+                        row["created_at"] = r["created_at"]
+                    existing[i] = row
+                    replaced = True
+                    break
+            if not replaced:
+                existing.append(row)
+            self._write_runs_file(existing)
+            self._reopen_metrics_days([row["created_at"]])
+        except Exception as e:
+            log_error(f"Exception upserting run into runs file: {str(e)}")
+            raise e
+
+    def _delete_session_runs(self, session_id: str) -> int:
+        """Cascade-delete every run row for a session."""
+        existing = self._read_runs_file(create_table_if_not_found=False)
+        kept = [r for r in existing if r.get("session_id") != session_id]
+        deleted = len(existing) - len(kept)
+        if deleted:
+            self._write_runs_file(kept)
+        return deleted
+
+    def cleanup_legacy_runs_field(self, force: bool = False) -> bool:
+        """Unset the legacy ``runs`` field from session records.
+
+        The v3.0.0 migration intentionally leaves the legacy ``runs`` field on
+        session records as a backup. Once you have verified the migration and
+        taken a backup, call this to reclaim the storage.
+
+        Args:
+            force: If True, unset the field even on sessions that still hold a
+                non-null ``runs`` array. Defaults to False.
+
+        Returns:
+            True if any session records were touched, False otherwise.
+        """
+        sessions = self._read_json_file(self.session_table_name, create_table_if_not_found=False)
+        if not sessions:
+            return False
+
+        if not force:
+            pending = sum(1 for s in sessions if s.get("runs"))
+            if pending > 0:
+                raise RuntimeError(
+                    f"Refusing to unset {self.session_table_name}.runs: {pending} session(s) still have "
+                    "non-null `runs` content. Run MigrationManager(db).up() first, or pass force=True."
+                )
+
+        touched = 0
+        for s in sessions:
+            if "runs" in s:
+                s.pop("runs", None)
+                touched += 1
+        if touched:
+            self._write_json_file(self.session_table_name, sessions)
+        log_info(f"Unset runs on {touched} session record(s)")
+        return touched > 0
+
+    def get_run(
+        self, run_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]]]:
+        try:
+            for r in self._read_runs_file(create_table_if_not_found=False):
+                if r.get("run_id") == run_id:
+                    if not deserialize:
+                        return r
+                    return deserialize_run(r.get("run_type"), r["run_data"])
+            return None
+        except Exception as e:
+            log_error(f"Exception reading run: {str(e)}")
+            raise e
+
+    def get_runs(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[RunStatus] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
+        from agno.db.utils import validate_pagination
+
+        validate_pagination(limit, page)
+        try:
+            rows = self._read_runs_file(create_table_if_not_found=False)
+            if session_id is not None:
+                rows = [r for r in rows if r.get("session_id") == session_id]
+            if user_id is not None:
+                rows = [r for r in rows if r.get("user_id") == user_id]
+            if agent_id is not None:
+                rows = [r for r in rows if r.get("agent_id") == agent_id]
+            if team_id is not None:
+                rows = [r for r in rows if r.get("team_id") == team_id]
+            if workflow_id is not None:
+                rows = [r for r in rows if r.get("workflow_id") == workflow_id]
+            if status is not None:
+                status_value = status.value if isinstance(status, RunStatus) else status
+                rows = [r for r in rows if r.get("status") == status_value]
+
+            total_count = len(rows)
+
+            if sort_by is not None:
+                rows = apply_sorting(rows, sort_by, sort_order)
+            else:
+                rows = sorted(rows, key=lambda r: (r.get("run_index") or 0, r.get("created_at") or 0))
+
+            if limit is not None:
+                start = 0
+                if page is not None:
+                    start = (page - 1) * limit
+                rows = rows[start : start + limit]
+
+            if not deserialize:
+                return rows, total_count
+            return [deserialize_run(r.get("run_type"), r["run_data"]) for r in rows]
+        except Exception as e:
+            log_error(f"Exception reading runs: {str(e)}")
+            raise e
+
+    def _scrub_run_ids_from_legacy_blob(self, run_ids: set) -> None:
+        """Remove ``run_ids`` from every session's legacy ``runs`` field.
+
+        During partial-migration state (v3 in progress, ``cleanup_legacy_runs_field``
+        not yet run), each session document still carries the pre-migration
+        ``runs`` blob as a backup. Deleting from the runs table alone leaves
+        the blob intact, and the read path's ``merge_runs_table_with_legacy_blob``
+        resurrects the ghost. This scrub keeps the two surfaces in sync.
+        """
+        if not run_ids:
+            return
+        try:
+            sessions = self._read_json_file(self.session_table_name, create_table_if_not_found=False)
+        except Exception:
+            return
+        mutated = False
+        for s in sessions:
+            legacy = s.get("runs")
+            if not isinstance(legacy, list):
+                continue
+            kept = [r for r in legacy if not (isinstance(r, dict) and r.get("run_id") in run_ids)]
+            if len(kept) != len(legacy):
+                s["runs"] = kept
+                mutated = True
+        if mutated:
+            self._write_json_file(self.session_table_name, sessions)
+
+    def delete_run(self, run_id: str) -> bool:
+        try:
+            rows = self._read_runs_file(create_table_if_not_found=False)
+            kept = [r for r in rows if r.get("run_id") != run_id]
+            deleted = len(kept) != len(rows)
+            if deleted:
+                self._write_runs_file(kept)
+            # Also scrub the legacy blob so the merge helper doesn't resurrect
+            # the run on the next read (partial-migration state).
+            self._scrub_run_ids_from_legacy_blob({run_id})
+            return deleted
+        except Exception as e:
+            log_error(f"Error deleting run: {str(e)}")
+            raise e
+
+    def delete_runs(self, run_ids: List[str]) -> None:
+        try:
+            rows = self._read_runs_file(create_table_if_not_found=False)
+            to_drop = set(run_ids)
+            kept = [r for r in rows if r.get("run_id") not in to_drop]
+            if len(kept) != len(rows):
+                self._write_runs_file(kept)
+            self._scrub_run_ids_from_legacy_blob(to_drop)
+        except Exception as e:
+            log_error(f"Error deleting runs: {str(e)}")
+            raise e
 
     # -- Session methods --
 
@@ -168,6 +605,8 @@ class JsonDb(BaseDb):
 
             if len(sessions) < original_count:
                 self._write_json_file(self.session_table_name, sessions)
+                # Cascade-delete runs
+                self._delete_session_runs(session_id)
                 log_debug(f"Successfully deleted session with session_id: {session_id}")
                 return True
 
@@ -191,12 +630,24 @@ class JsonDb(BaseDb):
         """
         try:
             sessions = self._read_json_file(self.session_table_name)
+            # Capture which session_ids actually get deleted (post user_id filter)
+            deleted_ids = {
+                s.get("session_id")
+                for s in sessions
+                if s.get("session_id") in session_ids and (user_id is None or s.get("user_id") == user_id)
+            }
             sessions = [
                 s
                 for s in sessions
                 if not (s.get("session_id") in session_ids and (user_id is None or s.get("user_id") == user_id))
             ]
             self._write_json_file(self.session_table_name, sessions)
+            # Cascade-delete runs for each deleted session
+            if deleted_ids:
+                all_runs = self._read_runs_file(create_table_if_not_found=False)
+                kept_runs = [r for r in all_runs if r.get("session_id") not in deleted_ids]
+                if len(kept_runs) != len(all_runs):
+                    self._write_runs_file(kept_runs)
             log_debug(f"Successfully deleted sessions with ids: {session_ids}")
 
         except Exception as e:
@@ -209,6 +660,7 @@ class JsonDb(BaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession, Dict[str, Any]]]:
         """Read a session from the JSON file.
 
@@ -234,6 +686,14 @@ class JsonDb(BaseDb):
                     if user_id is not None and session_data.get("user_id") != user_id:
                         continue
 
+                    # Attach runs from the runs file, merged with any legacy `runs` field
+                    runs_data = self._get_session_runs_data(session_id)
+                    session_data["runs"] = merge_runs_table_with_legacy_blob(runs_data, session_data.get("runs"))
+                    if runs_limit is not None:
+                        # No query engine to push "last N" down: filter+slice in memory to
+                        # match the SQL fast path (drop member/skip-status runs, then last N).
+                        session_data["runs"] = filter_context_runs(session_data["runs"] or [])[-runs_limit:]
+
                     if not deserialize:
                         return session_data
 
@@ -258,6 +718,7 @@ class JsonDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """Get all sessions from the JSON file with filtering and pagination.
 
@@ -273,7 +734,6 @@ class JsonDb(BaseDb):
             sort_by (Optional[str]): The field to sort the sessions by.
             sort_order (Optional[str]): The order to sort the sessions by.
             deserialize (Optional[bool]): Whether to deserialize the sessions.
-            create_table_if_not_found (Optional[bool]): Whether to create a json file to track sessions if it doesn't exist.
 
         Returns:
             Union[List[AgentSession], List[TeamSession], List[WorkflowSession], Tuple[List[Dict[str, Any]], int]]:
@@ -332,6 +792,14 @@ class JsonDb(BaseDb):
                     start_idx = (page - 1) * limit
                 filtered_sessions = filtered_sessions[start_idx : start_idx + limit]
 
+            # Attach runs from the runs file, merged with any legacy `runs` field
+            # Search scans skip the runs table; the record's legacy runs field is kept for merging later.
+            if include_runs and filtered_sessions:
+                runs_by_session = self._get_sessions_runs_data([s["session_id"] for s in filtered_sessions])
+                for s in filtered_sessions:
+                    runs_data = runs_by_session.get(s["session_id"], [])
+                    s["runs"] = merge_runs_table_with_legacy_blob(runs_data, s.get("runs"))
+
             if not deserialize:
                 return filtered_sessions, total_count
 
@@ -368,6 +836,10 @@ class JsonDb(BaseDb):
                 sessions[i] = session
                 self._write_json_file(self.session_table_name, sessions)
 
+                # Attach runs from the runs file, merged with any legacy `runs` field
+                runs_data = self._get_session_runs_data(session_id)
+                session["runs"] = merge_runs_table_with_legacy_blob(runs_data, session.get("runs"))
+
                 log_debug(f"Renamed session with id '{session_id}' to '{session_name}'")
 
                 if not deserialize:
@@ -387,7 +859,7 @@ class JsonDb(BaseDb):
         """Insert or update a session in the JSON file."""
         try:
             sessions = self._read_json_file(self.session_table_name, create_table_if_not_found=True)
-            session_dict = session.to_dict()
+            session_dict = session.to_dict(include_runs=False)
 
             # Add session_type based on session instance type
             if isinstance(session, AgentSession):
@@ -396,6 +868,8 @@ class JsonDb(BaseDb):
                 session_dict["session_type"] = SessionType.TEAM.value
             elif isinstance(session, WorkflowSession):
                 session_dict["session_type"] = SessionType.WORKFLOW.value
+
+            reopen_session_ids = get_metrics_reopen_session_ids(sessions, [session_dict])
 
             # Find existing session to update
             session_updated = False
@@ -406,8 +880,17 @@ class JsonDb(BaseDb):
                     existing_uid = existing_session.get("user_id")
                     if existing_uid is not None and existing_uid != session_dict.get("user_id"):
                         return None
-                    # Update existing session
+                    # Carry the legacy `runs` blob forward. session.to_dict(include_runs=False)
+                    # omits `runs`, so a bare replace here would silently erase any pre-v3
+                    # history that lives only in the legacy blob (upgrade-without-migration
+                    # data loss). Only cleanup_legacy_runs_field() should drop it, explicitly.
+                    legacy_runs = existing_session.get("runs")
                     session_dict["updated_at"] = int(time.time())
+                    if legacy_runs is not None:
+                        session_dict["runs"] = legacy_runs
+                    # The stored created_at, which a session keeps
+                    if existing_session.get("created_at") is not None:
+                        session_dict["created_at"] = existing_session["created_at"]
                     sessions[i] = session_dict
                     session_updated = True
                     break
@@ -419,6 +902,12 @@ class JsonDb(BaseDb):
                 sessions.append(session_dict)
 
             self._write_json_file(self.session_table_name, sessions)
+            if session_dict["session_id"] in reopen_session_ids:
+                self._reopen_metrics_days([session_dict.get("created_at")])
+
+            # Runs are persisted separately via upsert_run by the caller (agent loop).
+            # Attach the in-memory runs to the returned dict so callers see the full picture.
+            session_dict["runs"] = [run if isinstance(run, dict) else run.to_dict() for run in session.runs or []]
 
             if not deserialize:
                 return session_dict
@@ -794,137 +1283,671 @@ class JsonDb(BaseDb):
             raise e
 
     # -- Metrics methods --
-    def calculate_metrics(self) -> Optional[list[dict]]:
-        """Calculate metrics for all dates without complete metrics."""
+    def _read_metrics_file(self, filename: str) -> List[Dict[str, Any]]:
+        """Read the rows of a metrics file, their date a date. Empty while the file does not exist."""
+        return deserialize_metrics_rows(self._read_json_file(filename, create_table_if_not_found=False))
+
+    def _reopen_metrics_days(self, created_ats: Sequence[Optional[int]]) -> None:
+        """Reopen the metrics of each day a write changed, after the write, so the next calculation rebuilds it.
+
+        A failed reopen never fails the write itself, and the days it could not reopen are retried by the next write.
+
+        Args:
+            created_ats (Sequence[Optional[int]]): The stored created_at of each run or session the write changed.
+        """
+        days = sorted(
+            {day for created_at in created_ats if (day := metrics_day_to_reopen(created_at)) is not None}
+            | self._metrics_days_not_reopened
+        )
+        if not days:
+            return
         try:
-            metrics = self._read_json_file(self.metrics_table_name, create_table_if_not_found=True)
-
-            starting_date = self._get_metrics_calculation_starting_date(metrics)
-            if starting_date is None:
-                log_info("No session data found. Won't calculate metrics.")
-                return None
-
-            dates_to_process = get_dates_to_calculate_metrics_for(starting_date)
-            if not dates_to_process:
-                log_info("Metrics already calculated for all relevant dates.")
-                return None
-
-            start_timestamp = int(datetime.combine(dates_to_process[0], datetime.min.time()).timestamp())
-            end_timestamp = int(
-                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time()).timestamp()
-            )
-
-            sessions = self._get_all_sessions_for_metrics_calculation(start_timestamp, end_timestamp)
-            all_sessions_data = fetch_all_sessions_data(
-                sessions=sessions, dates_to_process=dates_to_process, start_timestamp=start_timestamp
-            )
-            if not all_sessions_data:
-                log_info("No new session data found. Won't calculate metrics.")
-                return None
-
-            results = []
-
-            for date_to_process in dates_to_process:
-                date_key = date_to_process.isoformat()
-                sessions_for_date = all_sessions_data.get(date_key, {})
-
-                # Skip dates with no sessions
-                if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
-                    continue
-
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
-
-                # Upsert metrics record
-                existing_record_idx = None
-                for i, existing_metric in enumerate(metrics):
-                    if (
-                        existing_metric.get("date") == str(date_to_process)
-                        and existing_metric.get("aggregation_period") == "daily"
-                    ):
-                        existing_record_idx = i
-                        break
-
-                if existing_record_idx is not None:
-                    metrics[existing_record_idx] = metrics_record
-                else:
-                    metrics.append(metrics_record)
-
-                results.append(metrics_record)
-
-            if results:
-                self._write_json_file(self.metrics_table_name, metrics)
-
-            log_debug("Updated metrics calculations")
-
-            return results
-
+            for attempt in range(METRICS_WRITE_RETRIES + 1):
+                aggregate_metrics_rows, generation = self._read_json_file_with_generation(
+                    self.aggregate_metrics_table_name, create_table_if_not_found=False
+                )
+                # No aggregate metrics file until a calculation started: the first one builds every day
+                if generation == (0, 0, 0):
+                    self._metrics_days_not_reopened.clear()
+                    return
+                aggregate_metrics_by_key = get_metrics_rows_by_key(
+                    deserialize_metrics_rows(aggregate_metrics_rows), AGGREGATE_METRICS_KEY_COLUMNS
+                )
+                for day in days:
+                    aggregate_metrics_by_key[("daily", day, "")] = reopened_aggregate_metrics_row(
+                        aggregate_metrics_by_key.get(("daily", day, "")), day
+                    )
+                if self._write_json_file(
+                    self.aggregate_metrics_table_name,
+                    list(aggregate_metrics_by_key.values()),
+                    if_generation_match=generation,
+                    indent=None,
+                ):
+                    break
+                if attempt == METRICS_WRITE_RETRIES:
+                    raise RuntimeError(
+                        f"{self.aggregate_metrics_table_name} was written by another process on every try"
+                    )
+            self._metrics_days_not_reopened.difference_update(days)
         except Exception as e:
-            log_warning(f"Exception refreshing metrics: {str(e)}")
-            raise e
+            self._metrics_days_not_reopened.update(days)
+            log_warning(
+                f"Could not reopen the metrics of {', '.join(str(day) for day in days)}: {database_error_message(e)}"
+            )
 
-    def _get_metrics_calculation_starting_date(self, metrics: List[Dict[str, Any]]) -> Optional[date]:
-        """Get the first date for which metrics calculation is needed."""
-        if metrics:
-            # Sort by date in descending order
-            sorted_metrics = sorted(metrics, key=lambda x: x.get("date", ""), reverse=True)
-            latest_metric = sorted_metrics[0]
+    def _get_metrics_refresh_row(self) -> Tuple[Optional[Dict[str, Any]], int]:
+        """Get the row of the metrics refreshes file, and the locked_at at or before which its lock is stale, by the
+        process's clock."""
+        refresh_rows = self._read_json_file(self.metrics_refreshes_table_name, create_table_if_not_found=False)
+        if not refresh_rows:
+            # Before the first refresh there is no lock to judge stale
+            return None, 0
+        return refresh_rows[0], int(time.time()) - METRICS_LOCK_SECONDS
 
-            if latest_metric.get("completed", False):
-                latest_date = datetime.strptime(latest_metric["date"], "%Y-%m-%d").date()
-                return latest_date + timedelta(days=1)
-            else:
-                return datetime.strptime(latest_metric["date"], "%Y-%m-%d").date()
+    def _claim_metrics_refresh(self, worker_id: str) -> Optional[Dict[str, Any]]:
+        """Claim the row of the metrics refreshes file, so one process calculates metrics at a time.
 
-        # No metrics records. Return the date of the first recorded session.
-        # We need to get sessions of all types, so we'll read directly from the file
-        all_sessions = self._read_json_file(self.session_table_name)
-        if all_sessions:
-            # Sort by created_at
-            all_sessions.sort(key=lambda x: x.get("created_at", 0))
-            first_session_date = all_sessions[0]["created_at"]
-            return datetime.fromtimestamp(first_session_date, tz=timezone.utc).date()
+        The claim is a lock file created only while no other process holds it, and taken over once its heartbeat is
+        stale.
 
+        Args:
+            worker_id (str): The id of this calculation, which heartbeats and releases the claim.
+
+        Returns:
+            Optional[Dict[str, Any]]: The claimed row, with when the last calculation finished and its fingerprint.
+                None when another process holds it.
+        """
+        # A file has no transaction or row lock, so this lock file is how two processes avoid overwriting each other's
+        # metrics
+        lock_path = self.db_path / f"{self.metrics_refreshes_table_name}_lock.json"
+
+        # Create directory if it doesn't exist
+        self.db_path.mkdir(parents=True, exist_ok=True)
+
+        for _ in range(METRICS_WRITE_RETRIES + 1):
+            try:
+                # Exclusive create, so of two processes only one claims
+                with open(lock_path, "x", encoding="utf-8") as f:
+                    json.dump([{"worker_id": worker_id}], f)
+                break
+            except FileExistsError:
+                pass
+            # A stale lock is taken over: the process that held it stopped, as its heartbeat touches the file
+            try:
+                if lock_path.stat().st_mtime > time.time() - METRICS_LOCK_SECONDS:
+                    return None
+            except FileNotFoundError:
+                continue
+            lock_path.unlink(missing_ok=True)
+        else:
+            return None
+
+        now = int(time.time())
+        for _ in range(METRICS_WRITE_RETRIES + 1):
+            refresh_rows, generation = self._read_json_file_with_generation(
+                self.metrics_refreshes_table_name, create_table_if_not_found=False
+            )
+            refresh_row = {
+                "id": METRICS_REFRESH_ID,
+                "finished_at": None,
+                "fingerprint": None,
+                **(refresh_rows[0] if refresh_rows else {}),
+                "locked_by": worker_id,
+                "locked_at": now,
+                "started_at": now,
+                "status": "running",
+                "error": None,
+            }
+            # Written only while the file is still at the generation read, so a rebuild's mark written since is kept
+            if self._write_json_file(
+                self.metrics_refreshes_table_name, [refresh_row], if_generation_match=generation, indent=None
+            ):
+                return refresh_row
+        lock_path.unlink(missing_ok=True)
         return None
 
-    def _get_all_sessions_for_metrics_calculation(
-        self, start_timestamp: Optional[int] = None, end_timestamp: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
-        """Get all sessions for metrics calculation."""
+    def _mark_metrics_refresh_rebuild(self) -> bool:
+        """Write a mark no fingerprint equals on the row of the metrics refreshes file, so the next calculation
+        rebuilds yesterday and today. False when another process wrote the file on every try."""
+        for _ in range(METRICS_WRITE_RETRIES + 1):
+            refresh_rows, generation = self._read_json_file_with_generation(
+                self.metrics_refreshes_table_name, create_table_if_not_found=False
+            )
+            if not refresh_rows or self._write_json_file(
+                self.metrics_refreshes_table_name,
+                [{**refresh_rows[0], "fingerprint": ["rebuild", uuid4().hex]}],
+                if_generation_match=generation,
+                indent=None,
+            ):
+                return True
+        return False
+
+    def _metrics_refresh_lock_held(self, worker_id: str) -> bool:
+        """Whether the lock file of the metrics refreshes is the one this worker created."""
         try:
-            sessions = self._read_json_file(self.session_table_name)
+            with open(self.db_path / f"{self.metrics_refreshes_table_name}_lock.json", "r", encoding="utf-8") as f:
+                lock = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return False
+        return bool(lock) and lock[0].get("worker_id") == worker_id
 
-            filtered_sessions = []
-            for session in sessions:
-                created_at = session.get("created_at", 0)
-                if start_timestamp is not None and created_at < start_timestamp:
-                    continue
-                if end_timestamp is not None and created_at >= end_timestamp:
-                    continue
+    def _heartbeat_metrics_refresh(self, worker_id: str) -> bool:
+        """Refresh locked_at for this worker's metrics refresh. False when another process took it over."""
+        if not self._metrics_refresh_lock_held(worker_id):
+            return False
+        os.utime(self.db_path / f"{self.metrics_refreshes_table_name}_lock.json")
+        for attempt in range(METRICS_WRITE_RETRIES + 1):
+            refresh_rows, generation = self._read_json_file_with_generation(
+                self.metrics_refreshes_table_name, create_table_if_not_found=False
+            )
+            if not refresh_rows or refresh_rows[0]["locked_by"] != worker_id:
+                return False
+            if self._write_json_file(
+                self.metrics_refreshes_table_name,
+                [{**refresh_rows[0], "locked_at": int(time.time())}],
+                if_generation_match=generation,
+                indent=None,
+            ):
+                break
+            if attempt == METRICS_WRITE_RETRIES:
+                raise RuntimeError(f"{self.metrics_refreshes_table_name} was written by another process on every try")
+        return True
 
-                # Only include necessary fields for metrics
-                filtered_session = {
-                    "user_id": session.get("user_id"),
-                    "session_data": session.get("session_data"),
-                    "runs": session.get("runs"),
-                    "created_at": session.get("created_at"),
-                    "session_type": session.get("session_type"),
-                }
-                filtered_sessions.append(filtered_session)
+    def _release_metrics_refresh(
+        self,
+        worker_id: Optional[str],
+        error: Optional[str] = None,
+        fingerprint: Optional[List[Any]] = None,
+        stopped: bool = False,
+        claimed_fingerprint: Optional[List[Any]] = None,
+    ) -> None:
+        """Release the row of the metrics refreshes file: completed, with the fingerprint, without an error, failed
+        with one, and as the last completed refresh left it when the calculation stopped. Then remove the lock file,
+        so the next calculation claims at once.
 
-            return filtered_sessions
+        Args:
+            worker_id (Optional[str]): The id of the calculation that claimed the row. None writes the row only while
+                no process holds it, and creates it before any refresh.
+            error (Optional[str]): The error the calculation failed with. None when it completed.
+            fingerprint (Optional[List[Any]]): The fingerprint of yesterday and today, stored once it completed.
+            stopped (bool): Whether the calculation stopped before it finished.
+            claimed_fingerprint (Optional[List[Any]]): The fingerprint of the claimed row. A rebuild that marked
+                another one since keeps its mark.
+        """
+        lock_path = self.db_path / f"{self.metrics_refreshes_table_name}_lock.json"
+        try:
+            if worker_id is None:
+                if lock_path.exists():
+                    return
+            elif not self._metrics_refresh_lock_held(worker_id):
+                return
+            for attempt in range(METRICS_WRITE_RETRIES + 1):
+                refresh_rows, generation = self._read_json_file_with_generation(
+                    self.metrics_refreshes_table_name, create_table_if_not_found=False
+                )
+                if worker_id is None and not refresh_rows:
+                    # Before any refresh there is no row to update
+                    refresh_row: Dict[str, Any] = {
+                        "id": METRICS_REFRESH_ID,
+                        "started_at": int(time.time()),
+                        "finished_at": None,
+                        "fingerprint": None,
+                    }
+                elif not refresh_rows or refresh_rows[0]["locked_by"] != worker_id:
+                    break
+                else:
+                    refresh_row = refresh_rows[0]
+                values: Dict[str, Any] = {"locked_by": None, "locked_at": None}
+                if stopped:
+                    # The days it did not reach stay open for the next calculation; a first one that stopped has none
+                    # to show
+                    finished = refresh_row["finished_at"] is not None
+                    values.update(
+                        status="completed" if finished else "failed", error=None if finished else METRICS_STOPPED_ERROR
+                    )
+                elif error is None:
+                    values.update(status="completed", error=None, finished_at=int(time.time()), fingerprint=fingerprint)
+                    if refresh_row["fingerprint"] != claimed_fingerprint:
+                        # A rebuild that marked the fingerprint after the claim keeps its mark, so the next
+                        # calculation rebuilds yesterday and today
+                        values["fingerprint"] = refresh_row["fingerprint"]
+                else:
+                    values.update(status="failed", error=error)
+                if self._write_json_file(
+                    self.metrics_refreshes_table_name,
+                    [{**refresh_row, **values}],
+                    if_generation_match=generation,
+                    indent=None,
+                ):
+                    break
+                if attempt == METRICS_WRITE_RETRIES:
+                    raise RuntimeError(
+                        f"{self.metrics_refreshes_table_name} was written by another process on every try"
+                    )
+            if worker_id is not None:
+                lock_path.unlink(missing_ok=True)
+        except Exception as e:
+            log_debug(f"Error releasing metrics refresh: {e}")
+
+    def _write_metrics_rows(
+        self,
+        rows_by_key: Optional[Dict[Tuple[Any, ...], Dict[str, Any]]],
+        rows_generation: Tuple[int, int, int],
+        periods: List[Tuple[List[Dict[str, Any]], bool, Optional[int]]],
+        worker_id: str,
+    ) -> bool:
+        """Write the component metrics rows of the calculated days, then the aggregate metrics rows of each calculated
+        day and month. False when another process took the refresh over, and nothing more was written.
+
+        Args:
+            rows_by_key (Optional[Dict[Tuple[Any, ...], Dict[str, Any]]]): Every component metrics row, by key. None
+                when no row changed.
+            rows_generation (Tuple[int, int, int]): The generation of the component metrics file when its rows were
+                read.
+            periods (List[Tuple[List[Dict[str, Any]], bool, Optional[int]]]): The aggregate metrics rows of each day and
+                month, from build_aggregate_metrics_rows, whether its component rows changed, and the version of its
+                everyone row read before its runs.
+            worker_id (str): The id of this calculation.
+        """
+        # The months this write rebuilds, which a rebuilt day of theirs leaves to be rebuilt here
+        month_starts = {
+            period_rows[0]["date"] for period_rows, _, _ in periods if period_rows[0]["aggregation_period"] == "monthly"
+        }
+        if rows_by_key is None and not periods:
+            return True
+        # Checked before the rows are written, so a process whose lock went stale never overwrites the rows of the
+        # process that took the refresh over
+        if not self._heartbeat_metrics_refresh(worker_id):
+            return False
+        if rows_by_key is not None:
+            if not self._write_json_file(
+                self.component_metrics_table_name,
+                list(rows_by_key.values()),
+                if_generation_match=rows_generation,
+                indent=None,
+            ):
+                # Written since it was read, by a process that took the refresh over
+                return False
+            if not self._heartbeat_metrics_refresh(worker_id):
+                return False
+
+        # Written last, so a version never moves without the rows it tells of, and read again when another process
+        # wrote since, so a reopen written then is kept
+        for attempt in range(METRICS_WRITE_RETRIES + 1):
+            aggregate_metrics_rows, generation = self._read_json_file_with_generation(self.aggregate_metrics_table_name)
+            aggregate_metrics_by_key = get_metrics_rows_by_key(
+                deserialize_metrics_rows(aggregate_metrics_rows), AGGREGATE_METRICS_KEY_COLUMNS
+            )
+            for period_rows, rows_changed, read_version in periods:
+                write_aggregate_metrics_rows(aggregate_metrics_by_key, period_rows, rows_changed, read_version)
+                month_start = period_rows[0]["date"].replace(day=1)
+                if rows_changed and month_start not in month_starts:
+                    # Reopened with the day, so a calculation that stops before its months leaves the month for
+                    # the next
+                    reopen_metrics_month(aggregate_metrics_by_key, month_start)
+            if self._write_json_file(
+                self.aggregate_metrics_table_name,
+                list(aggregate_metrics_by_key.values()),
+                if_generation_match=generation,
+                indent=None,
+            ):
+                break
+            if attempt == METRICS_WRITE_RETRIES:
+                raise RuntimeError(f"{self.aggregate_metrics_table_name} was written by another process on every try")
+        return True
+
+    def calculate_metrics(self, rebuild_from: Optional[date] = None) -> Optional[list[dict]]:
+        """Calculate metrics for every day that changed since the last calculation.
+
+        One process calculates at a time: the others return at once, having read nothing.
+
+        Args:
+            rebuild_from (Optional[date]): Also rebuild every day from this date to today, as after a release that
+                changed how metrics are counted.
+
+        Returns:
+            Optional[list[dict]]: The metrics of the days calculated, or of today when nothing changed, as get_metrics
+                returns them. None when another process is calculating them.
+
+        Raises:
+            Exception: If an error occurs during metrics calculation.
+        """
+        try:
+            calculated_dates = self.calculate_metrics_dates(rebuild_from=rebuild_from)
+            if calculated_dates is None:
+                return None
+            if not calculated_dates:
+                # A refresh that changed no day answers with today's metrics
+                calculated_dates = [datetime.now(timezone.utc).date()]
+            metrics, _ = self._get_metrics_rows(calculated_dates[0], calculated_dates[-1], None)
+            return [metric for metric in metrics if metric["date"] in calculated_dates]
 
         except Exception as e:
-            log_error(f"Exception reading sessions for metrics: {str(e)}")
+            log_error(f"Exception refreshing metrics: {str(e)}")
             raise e
+
+    def calculate_metrics_dates(
+        self, should_stop: Optional[Callable[[], bool]] = None, rebuild_from: Optional[date] = None
+    ) -> Optional[List[date]]:
+        """Calculate metrics for every day that changed since the last calculation, as calculate_metrics does,
+        without reading back the metrics of those days.
+
+        The sessions and runs files are read once for every day, and the days are written together.
+
+        Args:
+            should_stop (Optional[Callable[[], bool]]): Checked before each day and month. Once it returns True, the
+                calculation writes the days it calculated, releases the refresh and stops; the next one continues from
+                the first day still open.
+            rebuild_from (Optional[date]): Also rebuild every day from this date to today.
+
+        Returns:
+            Optional[List[date]]: The days calculated, oldest first. None when another process is calculating them.
+
+        Raises:
+            Exception: If an error occurs during metrics calculation.
+        """
+        # Created before the claim, so a write during the first calculation reopens its day
+        if not (self.db_path / f"{self.aggregate_metrics_table_name}.json").exists():
+            self._read_json_file(self.aggregate_metrics_table_name, create_table_if_not_found=True)
+
+        if rebuild_from is not None:
+            # Reopened as a write reopens a day, before the claim, so a calculation another process is running
+            # leaves them to the next one
+            try:
+                for attempt in range(METRICS_WRITE_RETRIES + 1):
+                    aggregate_metrics_rows, generation = self._read_json_file_with_generation(
+                        self.aggregate_metrics_table_name
+                    )
+                    aggregate_metrics_by_key = get_metrics_rows_by_key(
+                        deserialize_metrics_rows(aggregate_metrics_rows), AGGREGATE_METRICS_KEY_COLUMNS
+                    )
+                    reopen_metrics_days_from(aggregate_metrics_by_key, rebuild_from)
+                    if self._write_json_file(
+                        self.aggregate_metrics_table_name,
+                        list(aggregate_metrics_by_key.values()),
+                        if_generation_match=generation,
+                        indent=None,
+                    ):
+                        break
+                    if attempt == METRICS_WRITE_RETRIES:
+                        raise RuntimeError(
+                            f"{self.aggregate_metrics_table_name} was written by another process on every try"
+                        )
+                # Yesterday and today are picked by the fingerprint, so it is marked for the next one too
+                if not self._mark_metrics_refresh_rebuild():
+                    return None
+            except Exception as e:
+                # Failed before the claim, so the refresh status shows it
+                self._release_metrics_refresh(None, error=database_error_message(e))
+                raise
+
+        worker_id = str(uuid4())
+        # Claimed before anything is read, so a process that finds another calculating reads nothing
+        refresh_row = self._claim_metrics_refresh(worker_id)
+        if refresh_row is None:
+            return None
+
+        try:
+            aggregate_metrics_by_key = get_metrics_rows_by_key(
+                self._read_metrics_file(self.aggregate_metrics_table_name), AGGREGATE_METRICS_KEY_COLUMNS
+            )
+
+            # Read after the versions of the days, so a run written while they are calculated moves its day. A
+            # manual compaction's usage, which no run carries, is read from the session's data
+            sessions = [
+                {**session, "compaction_metrics": (session.get("session_data") or {}).get("compaction_metrics")}
+                for session in self._read_json_file(self.session_table_name, create_table_if_not_found=False)
+            ]
+            runs = self._read_runs_file(create_table_if_not_found=False)
+            dates_to_process, fingerprint = get_metrics_dates_to_calculate(
+                aggregate_metrics_by_key, sessions, runs, refresh_row, rebuild_from
+            )
+
+            calculated_dates: List[date] = []
+            periods: List[Tuple[List[Dict[str, Any]], bool, Optional[int]]] = []
+            rows_changed = False
+            component_rows, rows_generation = self._read_json_file_with_generation(
+                self.component_metrics_table_name, create_table_if_not_found=False
+            )
+            rows_by_key = get_metrics_rows_by_key(
+                deserialize_metrics_rows(component_rows), COMPONENT_METRICS_KEY_COLUMNS
+            )
+            stopped = False
+            if dates_to_process:
+                run_ids = {run["run_id"] for run in runs if run.get("run_id")}
+                # Legacy runs are counted until the v3.0.0 migration is stamped, unless the runs file holds them too
+                if packaging_version.parse(
+                    self.get_latest_schema_version(self.session_table_name) or "2.0.0"
+                ) < packaging_version.parse("3.0.0"):
+                    legacy_runs = [run for run in get_metrics_legacy_runs(sessions) if run["run_id"] not in run_ids]
+                    runs = runs + legacy_runs
+                    if not self._heartbeat_metrics_refresh(worker_id):
+                        return None
+                    # A legacy run is dated on its own day, which may hold no session or run of the files
+                    today = datetime.now(timezone.utc).date()
+                    dates_to_process = sorted(
+                        set(dates_to_process)
+                        | {
+                            day
+                            for run in legacy_runs
+                            if run.get("created_at") is not None
+                            and (day := datetime.fromtimestamp(run["created_at"], tz=timezone.utc).date()) <= today
+                            and (
+                                refresh_row["finished_at"] is None or (rebuild_from is not None and day >= rebuild_from)
+                            )
+                        }
+                    )
+                start_timestamp = int(
+                    datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+                )
+                end_timestamp = int(
+                    datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+                    .replace(tzinfo=timezone.utc)
+                    .timestamp()
+                )
+                sessions_by_day = get_metrics_records_by_day(sessions, start_timestamp, end_timestamp)
+                runs_by_day = get_metrics_records_by_day(runs, start_timestamp, end_timestamp)
+                runs_by_id = {run["run_id"]: run for run in runs if run.get("run_id")}
+                stored_rows_by_day: Dict[date, List[Dict[str, Any]]] = {}
+                for row in rows_by_key.values():
+                    stored_rows_by_day.setdefault(row["date"], []).append(row)
+
+                for date_to_process in dates_to_process:
+                    if should_stop is not None and should_stop():
+                        stopped = True
+                        break
+                    aggregate_metrics_rows, day_rows_changed = calculate_date_metrics(
+                        rows_by_key,
+                        date_to_process,
+                        sessions_by_day.get(date_to_process, []),
+                        runs_by_day.get(date_to_process, []),
+                        stored_rows_by_day.get(date_to_process, []),
+                        runs_by_id,
+                    )
+                    stored_everyone_row = aggregate_metrics_by_key.get(("daily", date_to_process, ""))
+                    periods.append(
+                        (
+                            aggregate_metrics_rows,
+                            day_rows_changed,
+                            stored_everyone_row["version"] if stored_everyone_row is not None else None,
+                        )
+                    )
+                    rows_changed = rows_changed or day_rows_changed
+                    calculated_dates.append(date_to_process)
+
+            # A month row is read only once completed, so a month is built only once its last day can be completed
+            month_starts = sorted(
+                month_start
+                for month_start in set(get_months_to_calculate_metrics_for(calculated_dates))
+                | set(get_open_metrics_months(aggregate_metrics_by_key))
+                if metrics_day_completed(metrics_month_end(month_start))
+            )
+            for month_start in month_starts:
+                if stopped or (should_stop is not None and should_stop()):
+                    stopped = True
+                    break
+                stored_everyone_row = aggregate_metrics_by_key.get(("monthly", month_start, ""))
+                periods.append(
+                    (
+                        calculate_month_metrics(rows_by_key, month_start),
+                        False,
+                        stored_everyone_row["version"] if stored_everyone_row is not None else None,
+                    )
+                )
+
+            # One write of each file for every day and month, as each write replaces the whole file
+            if not self._write_metrics_rows(rows_by_key if rows_changed else None, rows_generation, periods, worker_id):
+                return None
+            if stopped:
+                self._release_metrics_refresh(worker_id, stopped=True)
+                return None
+
+        except Exception as e:
+            self._release_metrics_refresh(worker_id, error=database_error_message(e))
+            raise
+
+        self._release_metrics_refresh(
+            worker_id, fingerprint=fingerprint, claimed_fingerprint=refresh_row["fingerprint"]
+        )
+
+        if not calculated_dates:
+            log_debug("Metrics already calculated for all relevant dates.")
+            return []
+
+        log_debug("Updated metrics calculations")
+        return calculated_dates
+
+    def stop_metrics_refresh_on_read(self) -> None:
+        """Stop calculating metrics before a read, for a database whose metrics are calculated in the background."""
+        self._metrics_refreshed_at = float("inf")
+
+    def _get_metrics_by_owner(
+        self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
+    ) -> Tuple[List[dict], Optional[int]]:
+        """Get the metrics of each user and day from the component metrics, in the shape of the metrics table."""
+        rows = self._read_metrics_file(self.component_metrics_table_name)
+        if user_id is not None:
+            rows = [row for row in rows if row["user_id"] == user_id]
+        day_rows = [
+            row
+            for row in rows
+            if row["aggregation_period"] == "daily"
+            and (starting_date is None or row["date"] >= starting_date)
+            and (ending_date is None or row["date"] <= ending_date)
+        ]
+        if not day_rows:
+            return [], None
+
+        # Get the latest updated_at, scoped to the same user filter
+        latest_updated_at = max((row["updated_at"] for row in rows if row.get("updated_at") is not None), default=None)
+        return build_metrics_by_owner_from_rows(day_rows), latest_updated_at
+
+    def _get_aggregate_metrics_rows(
+        self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
+    ) -> Tuple[List[dict], Optional[int]]:
+        """Get the day rows of the aggregate metrics file in the shape of the metrics table: the everyone rows for
+        ``""``, one user's rows for a name, and every user's rows for ``None``."""
+        aggregate_metrics_rows = self._read_metrics_file(self.aggregate_metrics_table_name)
+        rows = sorted(
+            (
+                row
+                for row in aggregate_metrics_rows
+                if row["aggregation_period"] == "daily"
+                and (starting_date is None or row["date"] >= starting_date)
+                and (ending_date is None or row["date"] <= ending_date)
+                and (row["user_id"] != "" if user_id is None else row["user_id"] == user_id)
+                # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row. A
+                # day whose only run is a regenerated one has its tokens but no count
+                and (
+                    any(row[column] for column in AGGREGATE_METRICS_COUNT_COLUMNS if column != "users_count")
+                    or row["total_tokens"] > 0
+                )
+            ),
+            key=lambda row: (row["date"], row["user_id"]),
+        )
+        if not rows:
+            return [], None
+
+        # Get the latest updated_at, scoped to the same user filter
+        latest_updated_at = max(
+            (
+                row["updated_at"]
+                for row in aggregate_metrics_rows
+                if row["aggregation_period"] == "daily"
+                and (row["user_id"] != "" if user_id is None else row["user_id"] == user_id)
+                and row["updated_at"] is not None
+            ),
+            default=None,
+        )
+        return build_metrics_from_aggregate_metrics(rows), latest_updated_at
+
+    def _get_metrics_rows(
+        self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
+    ) -> Tuple[List[dict], Optional[int]]:
+        """Get the metrics of each user and day, as get_metrics returns them once the first calculate_metrics has
+        finished: a user's from that user's rows, the runs with no user from their component metrics rows."""
+        if user_id == "":
+            return self._get_metrics_by_owner(starting_date, ending_date, user_id)
+        metrics, latest_updated_at = self._get_aggregate_metrics_rows(starting_date, ending_date, user_id)
+        if user_id is not None:
+            return metrics, latest_updated_at
+
+        unowned_metrics, unowned_updated_at = self._get_metrics_by_owner(starting_date, ending_date, "")
+        latest_updated_at = max(
+            (updated_at for updated_at in [latest_updated_at, unowned_updated_at] if updated_at is not None),
+            default=None,
+        )
+        return sorted(metrics + unowned_metrics, key=lambda x: (x["date"], x["user_id"] or "")), latest_updated_at
+
+    def _metrics_calculated(self) -> bool:
+        """Whether the first calculate_metrics has finished, so reads take the metrics rows over agno_metrics."""
+        refresh_row = self._get_metrics_refresh_row()[0]
+        return refresh_row is not None and refresh_row["finished_at"] is not None
+
+    def _refresh_metrics_before_read(self) -> None:
+        """Calculate metrics before a read, at most once per minute per process, once a first calculate_metrics has
+        finished and unless metrics calculation is turned off. Another process calculating them holds the metrics
+        refresh, so the read goes on at once."""
+        if time.time() - self._metrics_refreshed_at < 60:
+            return
+        # Stamp first so failed runs are throttled too instead of retried on every read
+        self._metrics_refreshed_at = time.time()
+        try:
+            # A first build reads every run, so a read never waits for one: until it has finished, reads serve the
+            # deprecated metrics file
+            if not metrics_calculation_enabled() or not self._metrics_calculated():
+                return
+            self.calculate_metrics_dates()
+        except Exception as e:
+            log_warning(f"Could not refresh metrics before reading them: {str(e)}")
 
     def get_metrics(
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[dict], Optional[int]]:
-        """Get all metrics matching the given date range."""
+        """Get all metrics matching the given date range.
+
+        Metrics are read from the aggregate metrics and component metrics files once the first calculate_metrics has
+        finished, and from the deprecated metrics file until then. They are refreshed first, at most once per minute
+        per process, unless stop_metrics_refresh_on_read was called.
+
+        Args:
+            starting_date (Optional[date]): The starting date to filter metrics by.
+            ending_date (Optional[date]): The ending date to filter metrics by.
+            user_id (Optional[str]): The ID of the user to filter by. ``None`` returns metrics for all users.
+        """
         try:
-            metrics = self._read_json_file(self.metrics_table_name)
+            self._refresh_metrics_before_read()
+            if self._metrics_calculated():
+                return self._get_metrics_rows(starting_date, ending_date, user_id)
+
+            metrics = self._read_json_file(self.metrics_table_name, create_table_if_not_found=False)
+            # Records written before ownership existed hold a whole day, and only an
+            # unscoped read sees them: an owner filter excludes them already
+            if user_id is None:
+                metrics = drop_legacy_metrics(metrics)
 
             filtered_metrics = []
             latest_updated_at = None
@@ -936,44 +1959,266 @@ class JsonDb(BaseDb):
                     continue
                 if ending_date and metric_date > ending_date:
                     continue
+                if user_id is not None and metric.get("user_id") != user_id:
+                    continue
 
-                filtered_metrics.append(metric)
+                row = dict(metric)
+                # Map the sentinel empty-string user_id back to None.
+                if row.get("user_id") == "":
+                    row["user_id"] = None
+                filtered_metrics.append(row)
 
                 updated_at = metric.get("updated_at")
                 if updated_at and (latest_updated_at is None or updated_at > latest_updated_at):
                     latest_updated_at = updated_at
 
+            if filtered_metrics and not self._deprecated_metrics_logged:
+                self._deprecated_metrics_logged = True
+                log_warning(
+                    f"{self.metrics_table_name} is no longer updated and is served until a first build; "
+                    "call calculate_metrics() once to build the new metrics tables."
+                )
             return filtered_metrics, latest_updated_at
 
         except Exception as e:
             log_error(f"Exception getting metrics: {str(e)}")
             raise e
 
+    def get_metrics_by_date(
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+    ) -> Tuple[List[dict], Optional[int]]:
+        """Get the metrics of every user, one row per day, matching the given date range.
+
+        Read from the everyone rows of the aggregate metrics file once the first calculate_metrics has finished, and
+        from the deprecated metrics file until then. They are refreshed first, as get_metrics does.
+
+        Args:
+            starting_date (Optional[date]): The starting date to filter metrics by.
+            ending_date (Optional[date]): The ending date to filter metrics by.
+
+        Returns:
+            Tuple[List[dict], Optional[int]]: A tuple containing the metrics and the timestamp of the latest update.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            self._refresh_metrics_before_read()
+            if self._metrics_calculated():
+                return self._get_aggregate_metrics_rows(starting_date, ending_date, "")
+            return super().get_metrics_by_date(starting_date, ending_date)
+
+        except Exception as e:
+            log_error(f"Exception getting metrics: {str(e)}")
+            raise e
+
+    def get_metrics_refresh_status(self) -> Optional[Dict[str, Any]]:
+        """Get the status of the most recent calculate_metrics, from the metrics refreshes file.
+
+        Returns:
+            Optional[Dict[str, Any]]: The status ('running', 'completed' or 'failed'), when it started and finished,
+                and its error. None before the first calculation.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            return metrics_refresh_status(*self._get_metrics_refresh_row())
+
+        except Exception as e:
+            log_error(f"Exception getting metrics refresh status: {str(e)}")
+            raise e
+
+    def _get_component_metrics_totals_by_date(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str],
+        fields: List[str],
+        use_month_rows: bool = False,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """Total the component metrics of the given date range, every day from one period.
+
+        Args:
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with
+                no user.
+            fields (List[str]): The columns to total.
+            use_month_rows (bool): Total a calendar month inside the date range from its month aggregate metrics row, as
+                one date.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each date, and when they were last updated.
+        """
+        aggregate_metrics_rows = self._read_metrics_file(self.aggregate_metrics_table_name)
+        # Every owner is read from the everyone rows and a user from the user's rows; the runs with no user have no
+        # aggregate metrics row of their own, so they are read from their component rows
+        if user_id == "":
+            rows = [row for row in self._read_metrics_file(self.component_metrics_table_name) if row["user_id"] == ""]
+        else:
+            rows = [row for row in aggregate_metrics_rows if row["user_id"] == (user_id or "")]
+
+        # The component metrics file keeps day rows only, so the runs with no user are read day by day
+        full_months = metrics_full_months(starting_date, ending_date) if use_month_rows and user_id != "" else []
+        # Only a completed month's row stands for its days; an open one, reopened by a day rebuilt since or not
+        # yet built, is read from its days
+        month_starts = [
+            row["date"]
+            for row in aggregate_metrics_rows
+            if row["aggregation_period"] == "monthly"
+            and row["user_id"] == ""
+            and row["completed"]
+            and row["date"] in full_months
+        ]
+        return total_metrics_rows(rows, starting_date, ending_date, fields, month_starts=month_starts)
+
+    def get_component_metrics(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """Get the component metrics totals of each day in the given date range.
+
+        For every owner, each day is read from its everyone row; for one owner, from its rows. A read never calculates
+        them: calculate_metrics does.
+
+        Args:
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with
+                no user.
+            fields (Optional[List[str]]): The columns to total. ``None`` totals all.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each day, and when they were last updated.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            fields = resolve_metrics_fields(fields)
+            metrics, latest_updated_at = self._get_component_metrics_totals_by_date(
+                starting_date, ending_date, user_id, fields
+            )
+            return [list_metrics_totals_models(day_totals) for day_totals in metrics], latest_updated_at
+
+        except Exception as e:
+            log_error(f"Exception getting component metrics: {str(e)}")
+            raise e
+
+    def get_metrics_totals(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[Dict[str, Any], Optional[int]]:
+        """Get the component metrics totals of the whole given date range.
+
+        A calendar month inside the date range that has month rows is read from them, and every other day as
+        get_component_metrics reads it.
+
+        Args:
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with
+                no user.
+            fields (Optional[List[str]]): The columns to total. ``None`` totals all.
+
+        Returns:
+            Tuple[Dict[str, Any], Optional[int]]: The totals of the date range, and when they were last updated.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            fields = resolve_metrics_fields(fields)
+            totals, latest_updated_at = self._get_component_metrics_totals_by_date(
+                starting_date, ending_date, user_id, fields, use_month_rows=True
+            )
+            return list_metrics_totals_models(merge_metrics_totals(totals, fields)), latest_updated_at
+
+        except Exception as e:
+            log_error(f"Exception getting metrics totals: {str(e)}")
+            raise e
+
+    def get_metrics_versions(self, starting_date: date, ending_date: date) -> Optional[Dict[str, int]]:
+        """Get the version of every everyone row of a day or a month of the aggregate metrics in the given date range.
+
+        Metrics are refreshed first, as get_metrics refreshes them.
+
+        Args:
+            starting_date (date): The first day of the date range.
+            ending_date (date): The last day of the date range.
+
+        Returns:
+            Optional[Dict[str, int]]: The version of each everyone row, keyed by its aggregation period and date. The
+                same again only while no calculation wrote a row of the date range. ``None`` until the first
+                calculate_metrics has finished: a read would find no rows to total.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            self._refresh_metrics_before_read()
+            if not self._metrics_calculated():
+                return None
+
+            return metrics_versions(
+                [
+                    SimpleNamespace(**row)
+                    for row in self._read_metrics_file(self.aggregate_metrics_table_name)
+                    if row["user_id"] == "" and starting_date <= row["date"] <= ending_date
+                ]
+            )
+
+        except Exception as e:
+            log_error(f"Exception getting metrics versions: {str(e)}")
+            raise e
+
     # -- Knowledge methods --
 
-    def delete_knowledge_content(self, id: str):
+    @staticmethod
+    def _knowledge_item_is_visible(item: Dict[str, Any], user_id: Optional[str]) -> bool:
+        if user_id is None:
+            return True
+        owner = item.get("user_id")
+        return owner is None or owner == user_id
+
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): When set, only deletes rows owned by this user; unowned rows are kept.
 
         Raises:
             Exception: If an error occurs during deletion.
         """
         try:
             knowledge_items = self._read_json_file(self.knowledge_table_name)
-            knowledge_items = [item for item in knowledge_items if item.get("id") != id]
+            knowledge_items = [
+                item
+                for item in knowledge_items
+                if not (item.get("id") == id and (user_id is None or item.get("user_id") == user_id))
+            ]
             self._write_json_file(self.knowledge_table_name, knowledge_items)
 
         except Exception as e:
             log_error(f"Error deleting knowledge content: {str(e)}")
             raise e
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): Filter to rows owned by this user or unowned (shared) rows.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -985,7 +2230,7 @@ class JsonDb(BaseDb):
             knowledge_items = self._read_json_file(self.knowledge_table_name)
 
             for item in knowledge_items:
-                if item.get("id") == id:
+                if item.get("id") == id and self._knowledge_item_is_visible(item, user_id):
                     return KnowledgeRow.model_validate(item)
 
             return None
@@ -1001,6 +2246,7 @@ class JsonDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1010,6 +2256,7 @@ class JsonDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): Filter to rows owned by this user or unowned (shared) rows.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1023,6 +2270,10 @@ class JsonDb(BaseDb):
             # Apply linked_to filter if provided
             if linked_to is not None:
                 knowledge_items = [item for item in knowledge_items if item.get("linked_to") == linked_to]
+
+            # Apply owner scoping filter if provided
+            if user_id is not None:
+                knowledge_items = [item for item in knowledge_items if self._knowledge_item_is_visible(item, user_id)]
 
             total_count = len(knowledge_items)
 
@@ -1062,6 +2313,9 @@ class JsonDb(BaseDb):
             item_updated = False
             for i, existing_item in enumerate(knowledge_items):
                 if existing_item.get("id") == knowledge_row.id:
+                    # A scoped write must not overwrite an item it does not own
+                    if knowledge_row.user_id is not None and existing_item.get("user_id") != knowledge_row.user_id:
+                        raise ValueError(f"Knowledge content {knowledge_row.id} not found")
                     knowledge_items[i] = knowledge_dict
                     item_updated = True
                     break
@@ -1117,12 +2371,16 @@ class JsonDb(BaseDb):
             log_error(f"Error deleting eval run {eval_run_id}: {str(e)}")
             raise e
 
-    def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+    def delete_eval_runs(self, eval_run_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete multiple eval runs from the JSON file."""
         try:
             eval_runs = self._read_json_file(self.eval_table_name)
             original_count = len(eval_runs)
-            eval_runs = [run for run in eval_runs if run.get("run_id") not in eval_run_ids]
+            eval_runs = [
+                run
+                for run in eval_runs
+                if not (run.get("run_id") in eval_run_ids and (user_id is None or run.get("user_id") == user_id))
+            ]
 
             deleted_count = original_count - len(eval_runs)
             if deleted_count > 0:
@@ -1136,7 +2394,7 @@ class JsonDb(BaseDb):
             raise e
 
     def get_eval_run(
-        self, eval_run_id: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Get an eval run from the JSON file."""
         try:
@@ -1144,6 +2402,8 @@ class JsonDb(BaseDb):
 
             for run_data in eval_runs:
                 if run_data.get("run_id") == eval_run_id:
+                    if user_id is not None and run_data.get("user_id") != user_id:
+                        return None
                     if not deserialize:
                         return run_data
                     return EvalRunRecord.model_validate(run_data)
@@ -1167,6 +2427,7 @@ class JsonDb(BaseDb):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the JSON file with filtering and pagination."""
         try:
@@ -1182,6 +2443,8 @@ class JsonDb(BaseDb):
                 if workflow_id is not None and run_data.get("workflow_id") != workflow_id:
                     continue
                 if model_id is not None and run_data.get("model_id") != model_id:
+                    continue
+                if user_id is not None and run_data.get("user_id") != user_id:
                     continue
                 if eval_type is not None and len(eval_type) > 0:
                     if run_data.get("eval_type") not in eval_type:
@@ -1221,7 +2484,7 @@ class JsonDb(BaseDb):
             raise e
 
     def rename_eval_run(
-        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Rename an eval run in the JSON file."""
         try:
@@ -1229,6 +2492,8 @@ class JsonDb(BaseDb):
 
             for i, run_data in enumerate(eval_runs):
                 if run_data.get("run_id") == eval_run_id:
+                    if user_id is not None and run_data.get("user_id") != user_id:
+                        return None
                     run_data["name"] = name
                     run_data["updated_at"] = int(time.time())
                     eval_runs[i] = run_data
@@ -1247,127 +2512,24 @@ class JsonDb(BaseDb):
             log_error(f"Error renaming eval run {eval_run_id}: {str(e)}")
             raise e
 
-    # -- Culture methods --
+    def update_eval_run_user_id(self, eval_run_id: str, user_id: str) -> None:
+        """Set the owner (user_id) on an existing eval run.
 
-    def clear_cultural_knowledge(self) -> None:
-        """Delete all cultural knowledge from JSON file."""
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            user_id (str): The owner to set.
+        """
         try:
-            self._write_json_file(self.culture_table_name, [])
+            eval_runs = self._read_json_file(self.eval_table_name)
+            for i, run_data in enumerate(eval_runs):
+                if run_data.get("run_id") == eval_run_id:
+                    run_data["user_id"] = user_id
+                    eval_runs[i] = run_data
+                    self._write_json_file(self.eval_table_name, eval_runs)
+                    break
+
         except Exception as e:
-            log_error(f"Error clearing cultural knowledge: {str(e)}")
-            raise e
-
-    def delete_cultural_knowledge(self, id: str) -> None:
-        """Delete a cultural knowledge entry from JSON file."""
-        try:
-            cultural_knowledge = self._read_json_file(self.culture_table_name)
-            cultural_knowledge = [ck for ck in cultural_knowledge if ck.get("id") != id]
-            self._write_json_file(self.culture_table_name, cultural_knowledge)
-        except Exception as e:
-            log_error(f"Error deleting cultural knowledge: {str(e)}")
-            raise e
-
-    def get_cultural_knowledge(
-        self, id: str, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Get a cultural knowledge entry from JSON file."""
-        try:
-            cultural_knowledge = self._read_json_file(self.culture_table_name)
-            for ck in cultural_knowledge:
-                if ck.get("id") == id:
-                    if not deserialize:
-                        return ck
-                    return deserialize_cultural_knowledge_from_db(ck)
-            return None
-        except Exception as e:
-            log_error(f"Error getting cultural knowledge: {str(e)}")
-            raise e
-
-    def get_all_cultural_knowledge(
-        self,
-        name: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-        """Get all cultural knowledge from JSON file."""
-        try:
-            cultural_knowledge = self._read_json_file(self.culture_table_name)
-
-            # Filter
-            filtered = []
-            for ck in cultural_knowledge:
-                if name and ck.get("name") != name:
-                    continue
-                if agent_id and ck.get("agent_id") != agent_id:
-                    continue
-                if team_id and ck.get("team_id") != team_id:
-                    continue
-                filtered.append(ck)
-
-            # Sort
-            if sort_by:
-                filtered = apply_sorting(filtered, sort_by, sort_order)
-
-            total_count = len(filtered)
-
-            # Paginate
-            if limit and page:
-                start = (page - 1) * limit
-                filtered = filtered[start : start + limit]
-            elif limit:
-                filtered = filtered[:limit]
-
-            if not deserialize:
-                return filtered, total_count
-
-            return [deserialize_cultural_knowledge_from_db(ck) for ck in filtered]
-        except Exception as e:
-            log_error(f"Error getting all cultural knowledge: {str(e)}")
-            raise e
-
-    def upsert_cultural_knowledge(
-        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Upsert a cultural knowledge entry into JSON file."""
-        try:
-            if not cultural_knowledge.id:
-                cultural_knowledge.id = str(uuid4())
-
-            all_cultural_knowledge = self._read_json_file(self.culture_table_name, create_table_if_not_found=True)
-
-            # Serialize content, categories, and notes into a dict for DB storage
-            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
-
-            # Create the item dict with serialized content
-            ck_dict = {
-                "id": cultural_knowledge.id,
-                "name": cultural_knowledge.name,
-                "summary": cultural_knowledge.summary,
-                "content": content_dict if content_dict else None,
-                "metadata": cultural_knowledge.metadata,
-                "input": cultural_knowledge.input,
-                "created_at": cultural_knowledge.created_at,
-                "updated_at": int(time.time()),
-                "agent_id": cultural_knowledge.agent_id,
-                "team_id": cultural_knowledge.team_id,
-            }
-
-            # Remove existing entry
-            all_cultural_knowledge = [ck for ck in all_cultural_knowledge if ck.get("id") != cultural_knowledge.id]
-
-            # Add new entry
-            all_cultural_knowledge.append(ck_dict)
-
-            self._write_json_file(self.culture_table_name, all_cultural_knowledge)
-
-            return self.get_cultural_knowledge(cultural_knowledge.id, deserialize=deserialize)
-        except Exception as e:
-            log_error(f"Error upserting cultural knowledge: {str(e)}")
+            log_error(f"Error setting owner on eval run {eval_run_id}: {str(e)}")
             raise e
 
     # --- Traces ---

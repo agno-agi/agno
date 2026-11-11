@@ -1,4 +1,4 @@
-"""Tests for Knowledge._build_content_hash() method, verifying hash includes name and description."""
+"""Tests for Knowledge._build_content_hash() method, verifying hash includes name, description and owner."""
 
 from agno.knowledge.content import Content, FileData
 from agno.knowledge.document.base import Document
@@ -79,9 +79,8 @@ class MockVectorDb(VectorDb):
         return ["vector"]
 
 
-def test_url_hash_without_name_or_description():
+def test_url_hash_without_name_or_description(knowledge):
     """Test that URL hash without name/description is backward compatible."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(url="https://example.com/doc.pdf")
     content2 = Content(url="https://example.com/doc.pdf")
 
@@ -93,9 +92,8 @@ def test_url_hash_without_name_or_description():
     assert len(hash1) == 64  # SHA256 hex digest length
 
 
-def test_url_hash_with_different_names():
+def test_url_hash_with_different_names(knowledge):
     """Test that same URL with different names produces different hashes."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(url="https://example.com/doc.pdf", name="Document 1")
     content2 = Content(url="https://example.com/doc.pdf", name="Document 2")
     content3 = Content(url="https://example.com/doc.pdf")  # No name
@@ -110,9 +108,8 @@ def test_url_hash_with_different_names():
     assert hash2 != hash3
 
 
-def test_url_hash_with_different_descriptions():
+def test_url_hash_with_different_descriptions(knowledge):
     """Test that same URL with different descriptions produces different hashes."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(url="https://example.com/doc.pdf", description="First description")
     content2 = Content(url="https://example.com/doc.pdf", description="Second description")
     content3 = Content(url="https://example.com/doc.pdf")  # No description
@@ -127,9 +124,8 @@ def test_url_hash_with_different_descriptions():
     assert hash2 != hash3
 
 
-def test_url_hash_with_name_and_description():
+def test_url_hash_with_name_and_description(knowledge):
     """Test that URL hash includes both name and description."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(url="https://example.com/doc.pdf", name="Document 1", description="Description 1")
     content2 = Content(url="https://example.com/doc.pdf", name="Document 1", description="Description 2")
     content3 = Content(url="https://example.com/doc.pdf", name="Document 2", description="Description 1")
@@ -148,9 +144,8 @@ def test_url_hash_with_name_and_description():
     assert hash1 != hash3  # Different name
 
 
-def test_path_hash_with_name_and_description():
+def test_path_hash_with_name_and_description(knowledge):
     """Test that path hash includes both name and description."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(path="/path/to/file.pdf", name="File 1", description="Desc 1")
     content2 = Content(path="/path/to/file.pdf", name="File 1", description="Desc 2")
     content3 = Content(path="/path/to/file.pdf", name="File 2", description="Desc 1")
@@ -170,9 +165,8 @@ def test_path_hash_with_name_and_description():
     assert hash3 != hash4
 
 
-def test_path_hash_backward_compatibility():
+def test_path_hash_backward_compatibility(knowledge):
     """Test that path hash without name/description is backward compatible."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(path="/path/to/file.pdf")
     content2 = Content(path="/path/to/file.pdf")
 
@@ -182,9 +176,8 @@ def test_path_hash_backward_compatibility():
     assert hash1 == hash2
 
 
-def test_same_url_name_description_produces_same_hash():
+def test_same_url_name_description_produces_same_hash(knowledge):
     """Test that identical URL, name, and description produce the same hash."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(url="https://example.com/doc.pdf", name="Document", description="Description")
     content2 = Content(url="https://example.com/doc.pdf", name="Document", description="Description")
 
@@ -194,9 +187,8 @@ def test_same_url_name_description_produces_same_hash():
     assert hash1 == hash2
 
 
-def test_hash_order_matters():
+def test_hash_order_matters(knowledge):
     """Test that the order of name and description in hash is consistent."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
     # Same URL, name, description should always produce same hash
     content = Content(url="https://example.com/doc.pdf", name="Document", description="Description")
 
@@ -208,9 +200,8 @@ def test_hash_order_matters():
     assert hash1 == hash2 == hash3
 
 
-def test_hash_with_only_name():
+def test_hash_with_only_name(knowledge):
     """Test hash with URL and name but no description."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(url="https://example.com/doc.pdf", name="Document 1")
     content2 = Content(url="https://example.com/doc.pdf", name="Document 2")
     content3 = Content(url="https://example.com/doc.pdf")  # No name
@@ -224,9 +215,8 @@ def test_hash_with_only_name():
     assert hash2 != hash3
 
 
-def test_hash_with_only_description():
+def test_hash_with_only_description(knowledge):
     """Test hash with URL and description but no name."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(url="https://example.com/doc.pdf", description="Description 1")
     content2 = Content(url="https://example.com/doc.pdf", description="Description 2")
     content3 = Content(url="https://example.com/doc.pdf")  # No description
@@ -240,9 +230,8 @@ def test_hash_with_only_description():
     assert hash2 != hash3
 
 
-def test_file_data_hash_with_filename():
+def test_file_data_hash_with_filename(knowledge):
     """Test that file_data hash uses filename when available."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(file_data=FileData(content="test content", filename="file1.pdf"))
     content2 = Content(file_data=FileData(content="test content", filename="file2.pdf"))
     content3 = Content(file_data=FileData(content="different content", filename="file1.pdf"))
@@ -257,9 +246,8 @@ def test_file_data_hash_with_filename():
     assert hash1 == hash3
 
 
-def test_file_data_hash_with_type():
+def test_file_data_hash_with_type(knowledge):
     """Test that file_data hash uses type when filename is not available."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(file_data=FileData(content="test content", type="application/pdf"))
     content2 = Content(file_data=FileData(content="test content", type="text/plain"))
     content3 = Content(file_data=FileData(content="different content", type="application/pdf"))
@@ -274,9 +262,8 @@ def test_file_data_hash_with_type():
     assert hash1 == hash3
 
 
-def test_file_data_hash_with_size():
+def test_file_data_hash_with_size(knowledge):
     """Test that file_data hash uses size when filename and type are not available."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(file_data=FileData(content="test content", size=1024))
     content2 = Content(file_data=FileData(content="test content", size=2048))
     content3 = Content(file_data=FileData(content="different content", size=1024))
@@ -291,9 +278,8 @@ def test_file_data_hash_with_size():
     assert hash1 == hash3
 
 
-def test_file_data_hash_with_content_fallback():
+def test_file_data_hash_with_content_fallback(knowledge):
     """Test that file_data hash uses content hash when no filename/type/size/name/description."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(file_data=FileData(content="test content 1"))
     content2 = Content(file_data=FileData(content="test content 2"))
     content3 = Content(file_data=FileData(content="test content 1"))
@@ -308,9 +294,8 @@ def test_file_data_hash_with_content_fallback():
     assert hash1 == hash3
 
 
-def test_file_data_hash_with_name_and_description():
+def test_file_data_hash_with_name_and_description(knowledge):
     """Test that file_data hash includes both name/description and file_data fields."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(
         name="Document 1",
         description="Description 1",
@@ -345,9 +330,8 @@ def test_file_data_hash_with_name_and_description():
     assert hash1 != hash4
 
 
-def test_file_data_hash_priority_filename_over_type():
+def test_file_data_hash_priority_filename_over_type(knowledge):
     """Test that filename takes priority over type."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(file_data=FileData(content="test", filename="file.pdf", type="application/pdf"))
     content2 = Content(file_data=FileData(content="test", filename="file.pdf", type="text/plain"))
 
@@ -358,9 +342,8 @@ def test_file_data_hash_priority_filename_over_type():
     assert hash1 == hash2
 
 
-def test_file_data_hash_priority_type_over_size():
+def test_file_data_hash_priority_type_over_size(knowledge):
     """Test that type takes priority over size."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(file_data=FileData(content="test", type="application/pdf", size=1024))
     content2 = Content(file_data=FileData(content="test", type="application/pdf", size=2048))
 
@@ -371,9 +354,8 @@ def test_file_data_hash_priority_type_over_size():
     assert hash1 == hash2
 
 
-def test_file_data_hash_with_name_only():
+def test_file_data_hash_with_name_only(knowledge):
     """Test file_data hash with name but no description."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(name="Document 1", file_data=FileData(content="test content", filename="file1.pdf"))
     content2 = Content(name="Document 2", file_data=FileData(content="test content", filename="file1.pdf"))
     content3 = Content(file_data=FileData(content="test content", filename="file1.pdf"))
@@ -388,9 +370,8 @@ def test_file_data_hash_with_name_only():
     assert hash1 != hash3
 
 
-def test_file_data_hash_with_description_only():
+def test_file_data_hash_with_description_only(knowledge):
     """Test file_data hash with description but no name."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(description="Description 1", file_data=FileData(content="test content", filename="file1.pdf"))
     content2 = Content(description="Description 2", file_data=FileData(content="test content", filename="file1.pdf"))
     content3 = Content(file_data=FileData(content="test content", filename="file1.pdf"))
@@ -405,9 +386,8 @@ def test_file_data_hash_with_description_only():
     assert hash1 != hash3
 
 
-def test_file_data_hash_bytes_content():
+def test_file_data_hash_bytes_content(knowledge):
     """Test file_data hash with bytes content."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(file_data=FileData(content=b"test content bytes"))
     content2 = Content(file_data=FileData(content=b"test content bytes"))
     content3 = Content(file_data=FileData(content=b"different bytes"))
@@ -422,9 +402,8 @@ def test_file_data_hash_bytes_content():
     assert hash1 != hash3
 
 
-def test_file_data_hash_string_vs_bytes_same_content():
+def test_file_data_hash_string_vs_bytes_same_content(knowledge):
     """Test that string and bytes with same content produce different hashes (different types)."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(file_data=FileData(content="test content"))
     content2 = Content(file_data=FileData(content=b"test content"))
 
@@ -435,9 +414,8 @@ def test_file_data_hash_string_vs_bytes_same_content():
     assert hash1 != hash2
 
 
-def test_file_data_hash_all_fields_present():
+def test_file_data_hash_all_fields_present(knowledge):
     """Test file_data hash when all fields are present."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(
         name="Doc 1",
         description="Desc 1",
@@ -464,9 +442,8 @@ def test_file_data_hash_all_fields_present():
     assert hash1 != hash3
 
 
-def test_file_data_hash_empty_hash_parts_fallback():
+def test_file_data_hash_empty_hash_parts_fallback(knowledge):
     """Test that file_data with no name/description/fields uses content hash."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
     # FileData with content but no filename, type, size, name, or description
     content1 = Content(file_data=FileData(content="content1"))
     content2 = Content(file_data=FileData(content="content2"))
@@ -485,9 +462,8 @@ def test_file_data_hash_empty_hash_parts_fallback():
     assert len(hash1) == 64
 
 
-def test_document_content_hash_uses_document_url():
+def test_document_content_hash_uses_document_url(knowledge):
     """Documents from different URLs get unique content hashes."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
     content = Content(url="https://example.com")
 
     doc1 = Document(content="Page 1 content", meta_data={"url": "https://example.com/page1"})
@@ -509,9 +485,8 @@ def test_document_content_hash_uses_document_url():
     assert len(hash3) == 64
 
 
-def test_document_content_hash_is_deterministic():
+def test_document_content_hash_is_deterministic(knowledge):
     """Same document URL produces same hash (deterministic)."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
     content = Content(url="https://example.com")
 
     doc1 = Document(content="Page 1 content", meta_data={"url": "https://example.com/page1"})
@@ -524,9 +499,8 @@ def test_document_content_hash_is_deterministic():
     assert hash1 == hash2
 
 
-def test_document_content_hash_includes_content_name():
+def test_document_content_hash_includes_content_name(knowledge):
     """Document hash includes content name for uniqueness."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(url="https://example.com", name="Site A")
     content2 = Content(url="https://example.com", name="Site B")
 
@@ -539,9 +513,8 @@ def test_document_content_hash_includes_content_name():
     assert hash1 != hash2
 
 
-def test_document_content_hash_includes_content_description():
+def test_document_content_hash_includes_content_description(knowledge):
     """Document hash includes content description for uniqueness."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(url="https://example.com", description="Description A")
     content2 = Content(url="https://example.com", description="Description B")
 
@@ -554,9 +527,8 @@ def test_document_content_hash_includes_content_description():
     assert hash1 != hash2
 
 
-def test_document_content_hash_fallback_to_content_url():
+def test_document_content_hash_fallback_to_content_url(knowledge):
     """Document without URL in meta_data falls back to content URL."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
     content = Content(url="https://example.com/fallback")
 
     doc = Document(content="Page content", meta_data={})
@@ -567,9 +539,8 @@ def test_document_content_hash_fallback_to_content_url():
     assert len(hash1) == 64
 
 
-def test_document_content_hash_fallback_to_content_hash():
+def test_document_content_hash_fallback_to_content_hash(knowledge):
     """Document without any URL falls back to document content hash."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
     content = Content()  # No URL or path
 
     doc1 = Document(content="Page 1 content", meta_data={})
@@ -586,11 +557,10 @@ def test_document_content_hash_fallback_to_content_hash():
     assert hash1 == hash3
 
 
-def test_github_same_path_different_repos_produces_different_hashes():
+def test_github_same_path_different_repos_produces_different_hashes(knowledge):
     """Two GitHub uploads with the same file path but different repos must not collide."""
     from agno.knowledge.remote_content.github import GitHubConfig
 
-    knowledge = Knowledge(vector_db=MockVectorDb())
     cfg = GitHubConfig(id="gh", name="GH", branch="main")
 
     content_a = Content(name="README.md", remote_content=cfg.file("README.md", repo="orgA/x"))
@@ -599,11 +569,10 @@ def test_github_same_path_different_repos_produces_different_hashes():
     assert knowledge._build_content_hash(content_a) != knowledge._build_content_hash(content_b)
 
 
-def test_github_same_repo_same_path_produces_same_hash():
+def test_github_same_repo_same_path_produces_same_hash(knowledge):
     """Deduplication still works when the full source identity matches."""
     from agno.knowledge.remote_content.github import GitHubConfig
 
-    knowledge = Knowledge(vector_db=MockVectorDb())
     cfg = GitHubConfig(id="gh", name="GH", branch="main")
 
     content_a = Content(name="README.md", remote_content=cfg.file("README.md", repo="orgA/x"))
@@ -612,11 +581,10 @@ def test_github_same_repo_same_path_produces_same_hash():
     assert knowledge._build_content_hash(content_a) == knowledge._build_content_hash(content_b)
 
 
-def test_github_different_branches_produces_different_hashes():
+def test_github_different_branches_produces_different_hashes(knowledge):
     """A branch override is part of the source identity and must affect the hash."""
     from agno.knowledge.remote_content.github import GitHubConfig
 
-    knowledge = Knowledge(vector_db=MockVectorDb())
     cfg = GitHubConfig(id="gh", name="GH", repo="orgA/x")
 
     content_a = Content(name="README.md", remote_content=cfg.file("README.md", branch="main"))
@@ -625,11 +593,9 @@ def test_github_different_branches_produces_different_hashes():
     assert knowledge._build_content_hash(content_a) != knowledge._build_content_hash(content_b)
 
 
-def test_s3_same_key_different_buckets_produces_different_hashes():
+def test_s3_same_key_different_buckets_produces_different_hashes(knowledge):
     """Same S3 key pulled from two different buckets must not collide."""
     from agno.knowledge.remote_content.remote_content import S3Content
-
-    knowledge = Knowledge(vector_db=MockVectorDb())
 
     content_a = Content(name="report.pdf", remote_content=S3Content(bucket_name="bucket-a", key="report.pdf"))
     content_b = Content(name="report.pdf", remote_content=S3Content(bucket_name="bucket-b", key="report.pdf"))
@@ -637,11 +603,9 @@ def test_s3_same_key_different_buckets_produces_different_hashes():
     assert knowledge._build_content_hash(content_a) != knowledge._build_content_hash(content_b)
 
 
-def test_gcs_same_blob_different_buckets_produces_different_hashes():
+def test_gcs_same_blob_different_buckets_produces_different_hashes(knowledge):
     """Same GCS blob name pulled from two different buckets must not collide."""
     from agno.knowledge.remote_content.remote_content import GCSContent
-
-    knowledge = Knowledge(vector_db=MockVectorDb())
 
     content_a = Content(name="data.csv", remote_content=GCSContent(bucket_name="bucket-a", blob_name="data.csv"))
     content_b = Content(name="data.csv", remote_content=GCSContent(bucket_name="bucket-b", blob_name="data.csv"))
@@ -649,11 +613,9 @@ def test_gcs_same_blob_different_buckets_produces_different_hashes():
     assert knowledge._build_content_hash(content_a) != knowledge._build_content_hash(content_b)
 
 
-def test_azure_blob_same_blob_different_configs_produces_different_hashes():
+def test_azure_blob_same_blob_different_configs_produces_different_hashes(knowledge):
     """Same Azure blob name from two different configs (different containers) must not collide."""
     from agno.knowledge.remote_content.remote_content import AzureBlobContent
-
-    knowledge = Knowledge(vector_db=MockVectorDb())
 
     content_a = Content(name="file.txt", remote_content=AzureBlobContent(config_id="az-a", blob_name="file.txt"))
     content_b = Content(name="file.txt", remote_content=AzureBlobContent(config_id="az-b", blob_name="file.txt"))
@@ -661,11 +623,9 @@ def test_azure_blob_same_blob_different_configs_produces_different_hashes():
     assert knowledge._build_content_hash(content_a) != knowledge._build_content_hash(content_b)
 
 
-def test_sharepoint_same_path_different_sites_produces_different_hashes():
+def test_sharepoint_same_path_different_sites_produces_different_hashes(knowledge):
     """Same SharePoint file path from two different sites must not collide."""
     from agno.knowledge.remote_content.remote_content import SharePointContent
-
-    knowledge = Knowledge(vector_db=MockVectorDb())
 
     content_a = Content(
         name="spec.docx",
@@ -679,9 +639,8 @@ def test_sharepoint_same_path_different_sites_produces_different_hashes():
     assert knowledge._build_content_hash(content_a) != knowledge._build_content_hash(content_b)
 
 
-def test_non_remote_content_hash_unchanged():
+def test_non_remote_content_hash_unchanged(knowledge):
     """Pure URL / path content (no remote_content) retains its prior hash — backward compat."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
 
     content_a = Content(url="https://example.com/doc.pdf", name="Doc")
     content_b = Content(url="https://example.com/doc.pdf", name="Doc")
@@ -690,11 +649,10 @@ def test_non_remote_content_hash_unchanged():
     assert knowledge._build_content_hash(content_a) == knowledge._build_content_hash(content_b)
 
 
-def test_same_path_different_metadata_produces_different_hashes():
+def test_same_path_different_metadata_produces_different_hashes(knowledge):
     """Inserting the same document with different metadata and
     upsert=False must not collapse onto the same content identity
     """
-    knowledge = Knowledge(vector_db=MockVectorDb())
 
     content1 = Content(path="./demo.pdf", metadata={"doc_id": 1, "collection_id": 1, "server_id": "10"})
     content2 = Content(path="./demo.pdf", metadata={"doc_id": 1, "collection_id": 1, "server_id": "11"})
@@ -705,9 +663,8 @@ def test_same_path_different_metadata_produces_different_hashes():
     assert hash1 != hash2
 
 
-def test_same_path_same_metadata_produces_same_hash():
+def test_same_path_same_metadata_produces_same_hash(knowledge):
     """Identical content + identical metadata must still dedup."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
 
     metadata = {"doc_id": 1, "collection_id": 1, "server_id": "10"}
     content1 = Content(path="./demo.pdf", metadata=dict(metadata))
@@ -716,9 +673,8 @@ def test_same_path_same_metadata_produces_same_hash():
     assert knowledge._build_content_hash(content1) == knowledge._build_content_hash(content2)
 
 
-def test_metadata_hash_independent_of_key_order():
+def test_metadata_hash_independent_of_key_order(knowledge):
     """The same metadata declared in a different key order must hash identically."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
 
     content1 = Content(path="./demo.pdf", metadata={"doc_id": 1, "server_id": "10", "collection_id": 1})
     content2 = Content(path="./demo.pdf", metadata={"server_id": "10", "collection_id": 1, "doc_id": 1})
@@ -726,9 +682,8 @@ def test_metadata_hash_independent_of_key_order():
     assert knowledge._build_content_hash(content1) == knowledge._build_content_hash(content2)
 
 
-def test_path_hash_without_metadata_backward_compatible():
+def test_path_hash_without_metadata_backward_compatible(knowledge):
     """A path with no metadata must hash the same as when no metadata segment is added."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
 
     content_no_meta = Content(path="./demo.pdf")
     content_empty_meta = Content(path="./demo.pdf", metadata={})
@@ -736,9 +691,8 @@ def test_path_hash_without_metadata_backward_compatible():
     assert knowledge._build_content_hash(content_no_meta) == knowledge._build_content_hash(content_empty_meta)
 
 
-def test_url_hash_with_metadata_differs_from_without():
+def test_url_hash_with_metadata_differs_from_without(knowledge):
     """Adding metadata to otherwise-identical URL content changes the hash."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
 
     content_no_meta = Content(url="https://example.com/doc.pdf", name="Doc")
     content_with_meta = Content(url="https://example.com/doc.pdf", name="Doc", metadata={"tenant": "a"})
@@ -746,9 +700,8 @@ def test_url_hash_with_metadata_differs_from_without():
     assert knowledge._build_content_hash(content_no_meta) != knowledge._build_content_hash(content_with_meta)
 
 
-def test_document_content_hash_includes_metadata():
+def test_document_content_hash_includes_metadata(knowledge):
     """Multi-page document hash also incorporates content metadata for uniqueness."""
-    knowledge = Knowledge(vector_db=MockVectorDb())
 
     content1 = Content(url="https://example.com", metadata={"server_id": "10"})
     content2 = Content(url="https://example.com", metadata={"server_id": "11"})
@@ -759,3 +712,69 @@ def test_document_content_hash_includes_metadata():
     hash2 = knowledge._build_document_content_hash(doc, content2)
 
     assert hash1 != hash2
+
+
+def test_owner_produces_different_hash_for_the_same_file():
+    """Two owners uploading the same file must not collide."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+
+    alice = Content(name="report.txt", user_id="alice", file_data=FileData(filename="report.txt", content=b"a"))
+    bob = Content(name="report.txt", user_id="bob", file_data=FileData(filename="report.txt", content=b"b"))
+
+    assert knowledge._build_content_hash(alice) != knowledge._build_content_hash(bob)
+
+
+def test_unowned_content_hash_backward_compatible():
+    """Content with no owner retains its prior hash — backward compat."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+
+    unowned = Content(url="https://example.com/doc.pdf", name="Doc")
+    same_unowned = Content(url="https://example.com/doc.pdf", name="Doc")
+    owned = Content(url="https://example.com/doc.pdf", name="Doc", user_id="alice")
+
+    assert knowledge._build_content_hash(unowned) == knowledge._build_content_hash(same_unowned)
+    assert knowledge._build_content_hash(owned) != knowledge._build_content_hash(unowned)
+
+
+def test_same_owner_same_content_produces_same_hash():
+    """Deduplication still works when the same owner re-uploads the same content."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+
+    first = Content(name="notes", user_id="alice", path="notes.md")
+    second = Content(name="notes", user_id="alice", path="notes.md")
+
+    assert knowledge._build_content_hash(first) == knowledge._build_content_hash(second)
+
+
+def test_empty_string_owner_is_a_real_owner():
+    """The guard is ``is not None``, so ``""`` hashes as an owner, not as unowned content."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+
+    empty_owner = Content(url="https://example.com/doc.pdf", name="Doc", user_id="")
+    unowned = Content(url="https://example.com/doc.pdf", name="Doc")
+
+    assert knowledge._build_content_hash(empty_owner) != knowledge._build_content_hash(unowned)
+
+
+def test_owner_produces_different_document_hash_for_the_same_page():
+    """Two owners crawling the same page must not collide on the document hash."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+    doc = Document(content="Page content", meta_data={"url": "https://example.com/page"})
+
+    alice = Content(url="https://example.com", name="Site", user_id="alice")
+    bob = Content(url="https://example.com", name="Site", user_id="bob")
+
+    assert knowledge._build_document_content_hash(doc, alice) != knowledge._build_document_content_hash(doc, bob)
+
+
+def test_empty_string_owner_is_a_real_owner_for_document_hashes():
+    """The same ``""`` rule holds for document hashes."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+    doc = Document(content="Page content", meta_data={"url": "https://example.com/page"})
+
+    empty_owner = Content(url="https://example.com", name="Site", user_id="")
+    unowned = Content(url="https://example.com", name="Site")
+
+    assert knowledge._build_document_content_hash(doc, empty_owner) != knowledge._build_document_content_hash(
+        doc, unowned
+    )

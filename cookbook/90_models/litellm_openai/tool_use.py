@@ -9,7 +9,7 @@ from agno.tools.websearch import WebSearchTools
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=LiteLLMOpenAI(id="gpt-4o"),
+    model=LiteLLMOpenAI(id="gpt-5.6-luna"),
     tools=[WebSearchTools()],
     markdown=True,
 )

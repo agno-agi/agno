@@ -1,7 +1,9 @@
 import base64
 import json
+import tempfile
 
 from agno.media import Audio, File, Image, Video
+from agno.media.storage.local import LocalMediaStorage
 from agno.models.message import Message
 from agno.run.agent import RunInput, RunOutput
 from agno.utils.media import (
@@ -15,6 +17,7 @@ from agno.utils.media import (
     reconstruct_video_from_dict,
     reconstruct_videos,
 )
+from agno.utils.media_offload import offload_run_media
 
 
 def test_reconstruct_image_from_base64():
@@ -452,3 +455,42 @@ def test_file_text_roundtrip_through_message():
 
     assert restored.files is not None
     assert restored.files[0].content == original
+
+
+def test_reconstruction_keeps_the_stored_url_and_filepath():
+    """A media object's own url is what the row keeps: the reference's url is only a fallback for
+    media that arrived without one, so reconstruction hands back the origin."""
+    from agno.utils.media import reconstruct_image_from_dict
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        storage = LocalMediaStorage(base_path=tmpdir)
+        img = Image(id="i1", mime_type="image/png", url="https://origin.example.com/chart.png")
+        img.content = b"CHART"
+        run = RunOutput(run_id="r1", images=[img])
+        offload_run_media(run, storage, "s1")
+
+        stored = run.images[0].to_dict()
+        assert stored["url"] == "https://origin.example.com/chart.png"
+
+        rebuilt = reconstruct_image_from_dict(stored)
+        assert rebuilt.url == "https://origin.example.com/chart.png"
+        assert rebuilt.media_reference.storage_key == run.images[0].media_reference.storage_key
+
+
+def test_message_round_trip_keeps_the_persisted_url():
+    """Message.from_dict rebuilt offloaded media field by field and read url off the reference,
+    so the url the row actually stored was discarded on every read-back."""
+    from agno.models.message import Message
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        storage = LocalMediaStorage(base_path=tmpdir)
+        img = Image(id="i1", mime_type="image/png", url="https://origin.example.com/c.png")
+        img.content = b"CHART"
+        msg = Message(role="user", content="hi", images=[img])
+        run = RunOutput(run_id="r1", messages=[msg])
+        offload_run_media(run, storage, "s1")
+
+        rebuilt = Message.from_dict(run.messages[0].to_dict())
+
+        assert rebuilt.images[0].url == "https://origin.example.com/c.png"
+        assert rebuilt.images[0].media_reference is not None

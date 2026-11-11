@@ -48,29 +48,55 @@ class LlamaIndexVectorDb(VectorDb):
     def id_exists(self, id: str) -> bool:
         raise NotImplementedError
 
-    def content_hash_exists(self, content_hash: str) -> bool:
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         raise NotImplementedError
 
-    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         logger.warning("LlamaIndexVectorDb.insert() not supported - please check the vectorstore manually.")
         raise NotImplementedError
 
     async def async_insert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         logger.warning("LlamaIndexVectorDb.async_insert() not supported - please check the vectorstore manually.")
         raise NotImplementedError
 
-    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         logger.warning("LlamaIndexVectorDb.upsert() not supported - please check the vectorstore manually.")
         raise NotImplementedError
 
-    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         logger.warning("LlamaIndexVectorDb.async_upsert() not supported - please check the vectorstore manually.")
         raise NotImplementedError
 
     def search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """
         Returns relevant documents matching the query.
@@ -79,6 +105,7 @@ class LlamaIndexVectorDb(VectorDb):
             query (str): The query string to search for.
             limit (int): The maximum number of documents to return. Defaults to 5.
             filters (Optional[Dict[str, Any]]): Filters to apply to the search. Defaults to None.
+            user_id (Optional[str]): Ignored - LlamaIndex results are not scoped per user.
 
         Returns:
             List[Document]: A list of relevant documents matching the query.
@@ -87,6 +114,12 @@ class LlamaIndexVectorDb(VectorDb):
         """
         if filters is not None:
             log_warning("Filters are not supported in LlamaIndex. No filters will be applied.")
+
+        if user_id is not None:
+            log_warning(
+                "Per-user isolation is not supported in LlamaIndex. The retriever owns these chunks, "
+                "so results are not scoped to the caller."
+            )
 
         if not isinstance(self.knowledge_retriever, BaseRetriever):
             raise ValueError(f"Knowledge retriever is not of type BaseRetriever: {self.knowledge_retriever}")
@@ -105,9 +138,13 @@ class LlamaIndexVectorDb(VectorDb):
         return documents
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
-        return self.search(query, limit, filters)
+        return self.search(query, limit, filters, user_id)
 
     def drop(self) -> None:
         raise NotImplementedError
@@ -145,17 +182,23 @@ class LlamaIndexVectorDb(VectorDb):
         """
         raise NotImplementedError("update_metadata not supported for LlamaIndex vectorstores")
 
-    def delete_by_content_id(self, content_id: str) -> bool:
+    def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
         """
         Delete documents by content ID.
         Not implemented for LlamaIndex wrapper.
 
         Args:
             content_id (str): The content ID to delete
+            user_id (Optional[str]): Ignored - LlamaIndex deletes are not scoped per user.
 
         Returns:
             bool: False as this operation is not supported
         """
+        if user_id is not None:
+            log_warning(
+                "Per-user isolation is not supported in LlamaIndex. The retriever owns these chunks, "
+                "so user_id is ignored."
+            )
         logger.warning(
             "LlamaIndexVectorDb.delete_by_content_id() not supported - please check the vectorstore manually."
         )

@@ -35,7 +35,6 @@ class TestSqliteDbFromDictRoundTrip:
         original = SqliteDb(
             db_file="/tmp/test.db",
             session_table="s",
-            culture_table="c",
             memory_table="m",
             metrics_table="met",
             eval_table="e",
@@ -56,7 +55,6 @@ class TestSqliteDbFromDictRoundTrip:
         restored = SqliteDb.from_dict(serialized)
 
         assert restored.session_table_name == "s"
-        assert restored.culture_table_name == "c"
         assert restored.memory_table_name == "m"
         assert restored.metrics_table_name == "met"
         assert restored.eval_table_name == "e"

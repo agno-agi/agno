@@ -25,7 +25,7 @@ task = (
 
 agent = Agent(
     model=Claude(
-        id="claude-sonnet-4-20250514",
+        id="claude-sonnet-4-5",
         thinking={"type": "enabled", "budget_tokens": 2048},
         betas=["interleaved-thinking-2025-05-14"],
     ),

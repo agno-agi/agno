@@ -22,7 +22,7 @@ db = PostgresDb(db_url=db_url)
 # Create Memory Manager
 # ---------------------------------------------------------------------------
 memory_manager = MemoryManager(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     additional_instructions="""
     IMPORTANT: Don't store any memories about the user's name. Just say "The User" instead of referencing the user's name.
     """,
@@ -33,7 +33,7 @@ memory_manager = MemoryManager(
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     db=db,
     memory_manager=memory_manager,
     update_memory_on_run=True,

@@ -155,7 +155,6 @@ class TestTracesOnlyContract:
             ("upsert_knowledge_content", (object(),)),
             ("create_eval_run", (object(),)),
             ("delete_eval_runs", (["rid"],)),
-            ("upsert_cultural_knowledge", (object(),)),
             ("upsert_learning", ("id", "type", {})),
             ("delete_learning", ("id",)),
         ],

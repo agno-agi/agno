@@ -32,8 +32,10 @@ The Agent-as-Config feature allows you to:
 | `save_workflow.py` | Save a multi-step workflow to the database |
 | `get_workflow.py` | Load a workflow and execute its steps |
 | `registry.py` | Use a registry for non-serializable components |
+| `external_agents.py` | Save and load ClaudeAgent and CodexAgent components, with a registry sandbox |
 | `auto_populate_registry.py` | Inspect how AgentOS auto-discovers components from teams and workflows |
 | `auto_populate_registry_os.py` | Serve an AgentOS and see the auto-discovered components over the API |
+| `user_isolation_os.py` | Serve an AgentOS with per-user component isolation |
 
 ---
 
@@ -51,7 +53,7 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 agent = Agent(
     id="my-agent",
     name="My Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     db=db,
 )
 
@@ -95,6 +97,47 @@ agent.delete()
 agent.delete(hard_delete=True)
 ```
 
+### External Agents
+
+`ClaudeAgent` and `CodexAgent` save and load like `Agent`. The stored config
+names the adapter under `sdk`, so `get_agent_by_id` rebuilds the right class.
+The db, a Pydantic `output_schema` and the sandbox are stored as references
+and resolved from the registry; a sandbox needs an `id` to be referenced.
+Native option objects (`options`, `client_options`), the Codex process `env`
+and `codex_bin` are refused on save, since a stored config cannot carry
+callables, host paths or credentials. External agents can be run on their own
+but not used as team members or workflow steps.
+
+```python
+from agno.agent import get_agent_by_id
+from agno.agents.claude import ClaudeAgent
+from agno.registry import Registry
+from agno.sandbox.docker import DockerSandbox
+
+sandbox = DockerSandbox("agno-sandbox:local", id="docker-local", network="isolated")
+registry = Registry(dbs=[db], sandboxes=[sandbox])
+
+ClaudeAgent(id="coder", permission_mode="acceptEdits", db=db, sandbox=sandbox).save()
+
+coder = get_agent_by_id(db=db, id="coder", registry=registry, strict=True)
+```
+
+Through the components API, a stored external agent is an `agent` component
+whose config carries `"sdk": "claude-agent-sdk"` or `"sdk": "codex"`. A stored
+config names the working directory, MCP servers, plugins and permission mode
+the harness runs with, so AgentOS serves a stored agent without a sandbox only
+when the deployer opts in with `Registry(allow_host_execution=True)`;
+until then it is listed but answers 422. A stored sandboxed agent needs no
+opt-in: `POST /agents/{id}/runs` submits it to the durable sandbox queue like a
+registered one, as long as the sandbox is in the registry the AgentOS was given
+(`Registry(sandboxes=[...])`, or a code-defined agent that uses it). The ticket
+carries the version the request loaded, and the queue worker rebuilds that
+version from the database before running it on the registry sandbox; an
+explicit `version` form field pins one. The same requirements as for a
+registered sandboxed agent apply: a durable queue, a PostgresDb, and a sandbox
+with a shared `checkpoints=` store. Saving an `Agent` over a stored external
+agent, or the reverse, is refused so an id never changes kind.
+
 ---
 
 ## Teams
@@ -115,14 +158,14 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 researcher = Agent(
     id="researcher-agent",
     name="Researcher",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     role="Research and gather information",
 )
 
 writer = Agent(
     id="writer-agent",
     name="Writer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     role="Write content based on research",
 )
 
@@ -130,7 +173,7 @@ writer = Agent(
 team = Team(
     id="content-team",
     name="Content Creation Team",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     members=[researcher, writer],
     description="A team that researches and creates content",
     db=db,
@@ -181,14 +224,14 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 research_agent = Agent(
     id="research-agent",
     name="Research Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     role="Extract key insights from data",
 )
 
 content_agent = Agent(
     id="content-agent",
     name="Content Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     role="Create content based on research",
 )
 
@@ -260,7 +303,7 @@ class OutputSchema(BaseModel):
 registry = Registry(
     name="My Registry",
     tools=[DuckDuckGoTools(), my_custom_tool],
-    models=[OpenAIChat(id="gpt-4o-mini")],
+    models=[OpenAIChat(id="gpt-5.6-luna")],
     schemas=[InputSchema, OutputSchema],
 )
 ```
@@ -313,14 +356,14 @@ from agno.team import Team
 db = SqliteDb(db_file="tmp/auto_registry.db", id="auto-registry-db")
 
 researcher = Agent(id="researcher", model=OpenAIResponses(id="gpt-5.4"), db=db)
-writer = Agent(id="writer", model=OpenAIResponses(id="gpt-5.4-mini"))
+writer = Agent(id="writer", model=OpenAIResponses(id="gpt-5.6-luna"))
 team = Team(id="content-team", members=[researcher, writer])
 
 # No registry passed; components are discovered from the team members
 agent_os = AgentOS(teams=[team])
 
 print([f"{m.provider}:{m.id}" for m in agent_os.registry.models])
-# -> ['OpenAI:gpt-5.4', 'OpenAI:gpt-5.4-mini']
+# -> ['OpenAI:gpt-5.4', 'OpenAI:gpt-5.6-luna']
 ```
 
 Details:

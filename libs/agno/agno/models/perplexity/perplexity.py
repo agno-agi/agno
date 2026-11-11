@@ -5,8 +5,8 @@ from typing import Any, Dict, Optional, Type, Union
 from pydantic import BaseModel
 
 from agno.exceptions import ModelAuthenticationError, ModelProviderError
+from agno.metrics import MessageMetrics
 from agno.models.message import Citations, UrlCitation
-from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.utils.log import log_debug, log_warning
 
@@ -34,7 +34,7 @@ class Perplexity(OpenAILike):
         name (str): The model name. Defaults to "Perplexity".
         provider (str): The provider name. Defaults to "Perplexity".
         api_key (Optional[str]): The API key.
-        base_url (str): The base URL. Defaults to "https://api.perplexity.ai/chat/completions".
+        base_url (str): The base URL. Defaults to "https://api.perplexity.ai/".
         max_tokens (int): The maximum number of tokens. Defaults to 1024.
     """
 
@@ -203,4 +203,9 @@ class Perplexity(OpenAILike):
             metrics.reasoning_tokens = completion_tokens_details.reasoning_tokens or 0
 
         metrics.audio_total_tokens = metrics.audio_input_tokens + metrics.audio_output_tokens
+
+        # Perplexity sends the cost as a breakdown dict, with the request total under total_cost
+        cost = getattr(response_usage, "cost", None)
+        if isinstance(cost, dict):
+            metrics.cost = cost.get("total_cost")
         return metrics

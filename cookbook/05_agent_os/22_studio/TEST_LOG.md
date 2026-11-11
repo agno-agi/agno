@@ -1,14 +1,12 @@
 # Test Log: 22_studio
 
-The first five entries and the Validation section record the 2026-07-24 pass
-against Agno source commit `45bfff9f2aa6ec11b7386c3cd3bf6d1141d005dc`, loaded
-through `PYTHONPATH=/Users/ab/code/worktrees/agno-agent-os-rewrite/libs/agno`.
-The two `studio_runner_*` entries record the 2026-08-06 pass against the
-`feat/studio-runner-tools` worktree; each carries its own provenance.
-
-Provider credentials were loaded with `direnv exec .`; no credential values
-were recorded. Server-backed examples used port `7792` to avoid interfering
-with other AgentOS lessons, and the listener was stopped after every run.
+All seven examples record the 2026-08-18 live pass for the Studio 3.0 rewrite
+(draft-by-default lifecycle, StudioResult envelopes, archive/restore), against
+worktree commit `9ea0b121a` on branch `feat/studio-3.0`, loaded through
+`PYTHONPATH=/Users/ab/code/worktrees/agno-studio-3.0/libs/agno` with
+`.venvs/demo/bin/python`. Provider credentials came from the shell environment;
+no credential values were recorded. Server-backed examples listened on port
+`7777` and every listener was stopped after its run.
 
 ### standalone_studio_agent.py
 
@@ -16,14 +14,17 @@ with other AgentOS lessons, and the listener was stopped after every run.
 
 **Test mode:** LIVE
 
-**Description:** Ran a standalone Claude Studio Agent with Registry discovery,
-SQLite component persistence, and `StudioTools(versions=True)`. The Agent
-listed registered models and tools, created an Agent, edited it to a draft,
-listed both versions, and published the draft.
+**Description:** The LLM-driven 3.0 ladder plus the direct-Python section. The
+Claude agent discovered exact registry names, created a draft agent, validated
+it, previewed the draft with `run_agent(version=1)`, published v1, appended a
+draft v2 via `edit_agent`, listed both versions, and published v2. The direct
+section then composed a workflow with a compound `loop` step, validated it,
+appended a guarded edit, and hit the stale-guard refusal.
 
-**Result:** Run `5e61007c-7f6f-4611-be11-8ce2dd58468b` completed with exact
-model ID `claude-sonnet-4-6`. Component `studio-math-tutor-9794e075` progressed
-from published v1 to draft v2 and then published v2; v2 became current.
+**Result:** Component `studio-math-tutor-93854a91` reached current version 2
+with stages `['published', 'published']`; preview run answered 42 before any
+publish. Direct section: `claim-review-8da0941f` validated, guarded edit
+appended v2, stale guard returned `version_conflict` with `retryable: true`.
 
 ---
 
@@ -33,13 +34,12 @@ from published v1 to draft v2 and then published v2; v2 became current.
 
 **Test mode:** LIVE
 
-**Description:** Started AgentOS on port `7792`, checked health plus Registry
-and Components discovery, then asked the live Studio Agent to discover the
-registered model, tool, and database and create one persisted Agent.
+**Description:** Served the AgentOS app, then ran the `--demo` HTTP client:
+POST to the studio agent's run endpoint as `studio-demo-user`, instructing a
+`publish=true` create.
 
-**Result:** Run `967a66e1-b258-41ba-82b4-e800b76f9242` completed. Component
-`api-math-guide-147c45ec` was stored as published v1 with `gpt-5.5`, the exact
-registered `calculator` toolkit, and the registered `studio-tools-db`.
+**Result:** Run `3a330d26` COMPLETED; component `api-math-guide-8ce75a74` v1
+published, `ComponentResponse.user_id` reported owner `studio-demo-user`.
 
 ---
 
@@ -47,15 +47,15 @@ registered `calculator` toolkit, and the registered `studio-tools-db`.
 
 **Status:** PASS
 
-**Test mode:** LIVE
+**Test mode:** LIVE (`--auto`)
 
-**Description:** Ran the console Studio Agent with an underspecified create
-request and resolved every `RunRequirement` through `Agent.continue_run`.
+**Description:** Console HITL flow: the run paused for user feedback, then a
+user-input form (tool selection + instructions), then confirmation of the
+gated `create_agent`, resolved deterministically.
 
-**Result:** Run `90860bfe-c585-47be-a86f-3561929c9548` paused exactly once for
-structured user feedback, once for free-text user input, and once for
-confirmation, in that order. After approval it completed and persisted
-`console-research-buddy-2cb46ffb` with the selected `calculator` toolkit.
+**Result:** Pause sequence `['user_feedback', 'user_input', 'confirmation']`;
+final run COMPLETED; `console-research-buddy-b1d193fb` created as a draft
+(stages `['draft']`, no current version) owned by `console-hitl-user`.
 
 ---
 
@@ -63,16 +63,14 @@ confirmation, in that order. After approval it completed and persisted
 
 **Status:** PASS
 
-**Test mode:** LIVE
+**Test mode:** LIVE (server + `--demo`)
 
-**Description:** Started AgentOS on port `7792`, submitted an underspecified
-Agent run over HTTP, and continued the same run by round-tripping the updated
-serialized tool payload through the Agent continuation endpoint.
+**Description:** The same three-pause HITL flow driven through the AgentOS
+REST API with `user_id` form fields on run and continue.
 
-**Result:** Run `6e96543b-9c28-4dfb-9bd0-b6662c6634f7` exposed exactly the
-feedback, input, and confirmation pauses in order, then completed. The
-confirmed call persisted `os-research-buddy-75a4e73f` with the selected
-`calculator` toolkit and `studio-hitl-agentos-db`.
+**Result:** Pause sequence `['user_feedback', 'user_input', 'confirmation']`;
+run `d8363ead` COMPLETED; `os-research-buddy-6974b5d3` created as an
+unpublished draft owned by `agentos-hitl-user`.
 
 ---
 
@@ -80,34 +78,16 @@ confirmed call persisted `os-research-buddy-75a4e73f` with the selected
 
 **Status:** PASS
 
-**Test mode:** LIVE
+**Test mode:** LIVE (server + `--demo`)
 
-**Description:** Started AgentOS on port `7792` and exercised Registry
-discovery plus the Components create, read, filtered-list, update,
-current-config, and delete endpoints with real HTTP requests.
+**Description:** The 3.0 REST lifecycle end to end: create a draft, confirm
+the draft-only component returns 404 on the public run endpoint, append a
+config with a version guard, hit 409 on a stale guard, publish v2, rename,
+archive (DELETE -> 204, GET -> 404), and restore.
 
-**Result:** Registry discovery returned all five registered resources,
-including both current model IDs, `calculator`, and the SQLite database.
-Component `registry-crud-agent-fa59682f` was created as published v1, renamed,
-read through `/configs/current`, deleted with HTTP 204, and confirmed absent
-with HTTP 404.
-
----
-
-### studio_runner_dispatcher.py
-
-**Status:** PASS
-
-**Test mode:** LIVE
-
-**Description:** Tested 2026-08-06 against the `feat/studio-runner-tools`
-worktree via `PYTHONPATH=/Users/ab/code/agno-worktrees/studio-runners/libs/agno`.
-Built a Haiku Writer component with StudioTools, then asked a runner-only
-Dispatcher Agent to discover and delegate to it through StudioRunnerTools.
-
-**Result:** The dispatcher called list_agents/list_teams/list_workflows, then
-run_agent(agent_id=haiku-writer) and returned the delegated haiku. No mutation
-tools were exposed to the dispatcher.
+**Result:** `registry-lifecycle-agent-386f6b59`: draft dispatch 404 before
+publish; guarded append produced v2 and the stale guard 409'd; archive then
+restore brought the component back at v2. Registry reported 5 resources.
 
 ---
 
@@ -117,33 +97,61 @@ tools were exposed to the dispatcher.
 
 **Test mode:** LIVE
 
-**Description:** Tested 2026-08-06 against the `feat/studio-runner-tools`
-worktree. Called StudioRunnerTools methods directly: list_agents, run_agent by
-exact id, and a registry-less run_agent against a tool-bearing component.
+**Description:** Created and published two agents through StudioTools
+envelopes, listed them via `StudioRunnerTools`, ran one live, and demonstrated
+the registry-guard refusal on a runner constructed without the registry.
 
-**Result:** Listing returned both built components, the greeter run completed
-with content, and the registry-less runner refused the calculator agent with
-"references registry-backed resources (tools); construct StudioRunnerTools
-with the registry to run it."
+**Result:** Live run COMPLETED. The registry-less refusal named the exact
+missing tool functions (`add` ... `square_root`) and noted that reads and
+edits still load the component.
 
 ---
 
-## Validation (2026-07-24 pass)
+### studio_runner_dispatcher.py
 
-- All five Python targets of that pass passed worktree-pinned compilation and
-  targeted Ruff format/check; the two 2026-08-06 `studio_runner_*` additions
-  were format/pattern-checked in their own pass (seven files total now check
-  clean).
-- The focused StudioTools, Registry-router, and Components-router unit suites
-  passed all 157 tests.
-- All five capability-specific examples were executed live; the two HITL
-  examples proved real pause/continue behavior and the Registry example proved
-  actual component CRUD.
-- Every temporary listener on port `7792` was stopped after its client
-  completed.
-- App construction emitted the current-source duplicate `get_config` OpenAPI
-  operation-ID warning for component configuration routes; no lesson code
-  overrides framework route metadata.
-- The assigned legacy `studio_tool/` lesson was removed after all replacements
-  passed.
-- `git diff --check` passed for the rewritten and deleted paths.
+**Status:** PASS
+
+**Test mode:** LIVE
+
+**Description:** A dispatcher agent holding only `StudioRunnerTools` listed
+agents/teams/workflows and dispatched the published `haiku-writer` on request.
+
+**Result:** `run_agent(agent_id=haiku-writer, ...)` COMPLETED and returned a
+haiku; discovery listed only what dispatch admits.
+
+### registry_learning.py
+
+**Status:** PASS
+
+**Test mode:** LIVE
+
+**Description:** Added 2026-08-21 for the learning-in-Studio change, run from
+worktree branch `feat/learning-in-studio` via
+`PYTHONPATH=<worktree>/libs/agno .venv/bin/python` (the demo venv was not
+present on this machine). Declared two `LearningMachine`s on the Registry
+(`shared-brain` / `research-brain`, namespaces `shared` / `research`, model
+declared), listed them with `list_learning`, created the published
+`profile-coach` agent with `learning_name="shared-brain"`, read the stored
+config, requested an undeclared name, rehydrated the agent through
+`get_agent_by_id`, ran it as user `ash`, then detached with `learning_name=""`.
+
+**Result:** `list_learning` printed both machines with per-store modes and
+namespaces; the stored config carried `{'name': 'shared-brain'}` (a reference,
+not the machine); `get_component` showed `learning_name: shared-brain`;
+`my-own-brain` was refused with `learning_not_found`; the rehydrated agent held
+the same machine object (`agent.learning is shared_brain: True`) with
+`SqliteDb` injected and `gpt-5.5` as declared on the machine; the tool list for user `ash` included
+`update_user_memory` plus the entity tools, and without a user only the entity
+tools. The live run called `update_user_memory(task=User's name is Ash.)` and
+answered "Got it, Ash."; the detach wrote a version with no `learning` key.
+
+---
+
+**Addendum (same day):** the `enable_learning=True` section was added after the
+live pass and verified in a key-less re-run of the same file (the section needs
+no provider): `note-taker` stored `learning: True`, rehydrated through
+`get_agent_by_id`, and `initialize_agent` produced the default machine with
+`user_profile` + `user_memory` on `gpt-5.5`; the rest of the output matched the
+live pass.
+
+---

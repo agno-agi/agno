@@ -53,14 +53,14 @@ def reset_retry_count(step_input: StepInput, run_context: RunContext) -> StepOut
 # ---------------------------------------------------------------------------
 retry_agent = Agent(
     name="Retry Handler",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You are handling a retry attempt. Acknowledge this is a retry and try a different approach.",
     markdown=True,
 )
 
 max_retries_agent = Agent(
     name="Max Retries Handler",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Maximum retries reached. Provide a helpful fallback response and suggest alternatives.",
     markdown=True,
 )

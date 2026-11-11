@@ -25,14 +25,14 @@ if not CEL_AVAILABLE:
 # ---------------------------------------------------------------------------
 detailed_agent = Agent(
     name="Detailed Analyst",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You provide detailed, in-depth analysis with examples and data.",
     markdown=True,
 )
 
 brief_agent = Agent(
     name="Brief Analyst",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You provide brief, executive-summary style analysis. Keep it short.",
     markdown=True,
 )

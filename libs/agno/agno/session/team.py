@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
@@ -7,6 +8,7 @@ from pydantic import BaseModel
 
 from agno.models.message import Message
 from agno.run.agent import RunOutput, RunStatus
+from agno.run.base import HISTORY_SKIP_STATUSES
 from agno.run.team import TeamRunOutput
 from agno.session.summary import SessionSummary
 from agno.utils.log import log_debug, log_warning
@@ -42,10 +44,18 @@ class TeamSession:
     # The unix timestamp when this session was last updated
     updated_at: Optional[int] = None
 
-    def to_dict(self) -> Dict[str, Any]:
-        session_dict = asdict(self)
+    def to_dict(self, include_runs: bool = True) -> Dict[str, Any]:
+        # Exclude runs from asdict to avoid the deep serialization cost. Serialize
+        # a shallow copy so we never mutate a live (possibly shared/cached) session
+        # while another thread reads self.runs.
+        session_copy = copy.copy(self)
+        session_copy.runs = None
+        session_dict = asdict(session_copy)
 
-        session_dict["runs"] = [run.to_dict() for run in self.runs] if self.runs else None
+        if include_runs:
+            session_dict["runs"] = [run.to_dict() for run in self.runs] if self.runs else None
+        else:
+            session_dict.pop("runs", None)
         session_dict["summary"] = self.summary.to_dict() if self.summary else None
 
         return session_dict
@@ -104,6 +114,12 @@ class TeamSession:
 
         for i, existing_run in enumerate(self.runs or []):
             if existing_run.run_id == run_response.run_id:
+                # queue_attempt is sticky: the generation stamp lives on the
+                # stored row (written by the queue worker's fenced patch), and
+                # a whole-run save from execution - which never knows its
+                # attempt - must not erase it
+                if getattr(run_response, "queue_attempt", None) is None:
+                    run_response.queue_attempt = getattr(existing_run, "queue_attempt", None)
                 self.runs[i] = run_response
                 break
         else:
@@ -159,7 +175,7 @@ class TeamSession:
             return []
 
         if skip_statuses is None:
-            skip_statuses = [RunStatus.paused, RunStatus.cancelled, RunStatus.error]
+            skip_statuses = list(HISTORY_SKIP_STATUSES)
 
         session_runs = self.runs
 

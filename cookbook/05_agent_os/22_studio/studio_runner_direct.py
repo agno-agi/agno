@@ -3,10 +3,12 @@ StudioRunnerTools called directly: list, run, and refusal semantics
 ===================================================================
 
 The runner's tools are plain methods, so a platform can call them without a
-wielding model. This example builds one component, lists it, runs it by id,
-and shows the registry guard: a runner constructed without the registry
-refuses to run a component whose stored config references registry-backed
-resources, because the rebuild would silently drop them.
+wielding model. This example builds two published components, lists them, runs
+one by id, and shows the registry guard: a runner constructed without the
+registry refuses to run a component whose stored config references
+registry-backed resources, because the rebuild would silently drop them.
+Dispatch resolves only published versions; creates pass publish=True here (the
+draft-inert behavior is demonstrated in registry_and_components.py).
 
 Prerequisites: OPENAI_API_KEY
 Run: .venvs/demo/bin/python cookbook/05_agent_os/22_studio/studio_runner_direct.py
@@ -45,17 +47,23 @@ registry = Registry(
 )
 
 builder = StudioTools(registry=registry, db=db, default_model_id="gpt-5.5")
-builder.create_agent(
-    name="Greeter",
-    instructions="Greet the user in one short sentence.",
-    model_id="gpt-5.5",
-)
-builder.create_agent(
-    name="Calculator Agent",
-    instructions="Solve arithmetic with the calculator tool.",
-    model_id="gpt-5.5",
-    tool_names=["calculator"],
-)
+# Every StudioTools result is a StudioResult envelope; branch on ok and
+# error.code, never on message text.
+for name, instructions, tool_names in (
+    ("Greeter", "Greet the user in one short sentence.", None),
+    ("Calculator Agent", "Solve arithmetic with the calculator tool.", ["calculator"]),
+):
+    result = json.loads(
+        builder.create_agent(
+            name=name,
+            instructions=instructions,
+            model_id="gpt-5.5",
+            tool_names=tool_names,
+            publish=True,
+        )
+    )
+    if not result["ok"]:
+        raise RuntimeError(f"create_agent failed: {result['error']['code']}")
 
 
 # ---------------------------------------------------------------------------

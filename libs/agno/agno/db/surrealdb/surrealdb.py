@@ -1,49 +1,107 @@
+import time
 from datetime import date, datetime, timedelta, timezone
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union
+from uuid import uuid4
+
+from packaging import version as packaging_version
 
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
 from agno.db.base import BaseDb, SessionType
-from agno.db.postgres.utils import (
-    get_dates_to_calculate_metrics_for,
-)
+from agno.db.migrations.manager import MigrationManager
 from agno.db.schemas import UserMemory
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.surrealdb import utils
 from agno.db.surrealdb.metrics import (
-    bulk_upsert_metrics,
-    calculate_date_metrics,
-    fetch_all_sessions_data,
-    get_all_sessions_for_metrics_calculation,
-    get_metrics_calculation_starting_date,
+    build_metrics_rows_fields,
+    bulk_upsert_metrics_rows,
+    desurrealize_metric,
+    desurrealize_metrics_refresh,
+    desurrealize_metrics_row,
+    get_all_runs_for_component_metrics_calculation,
+    get_all_sessions_for_component_metrics_calculation,
+    get_all_sessions_with_legacy_runs_for_component_metrics_calculation,
+    heartbeat_metrics_refresh,
+    metrics_record_id,
+    reopen_metrics_day,
+    reopen_metrics_days_from,
 )
 from agno.db.surrealdb.models import (
     TableType,
-    deserialize_cultural_knowledge,
     deserialize_eval_run_record,
     deserialize_knowledge_row,
     deserialize_user_memories,
     deserialize_user_memory,
     desurrealize_eval_run_record,
+    desurrealize_run_row,
     desurrealize_session,
     desurrealize_user_memory,
     get_schema,
     get_session_type,
-    serialize_cultural_knowledge,
     serialize_eval_run_record,
     serialize_knowledge_row,
+    serialize_run_row,
     serialize_session,
     serialize_user_memory,
 )
 from agno.db.surrealdb.queries import COUNT_QUERY, WhereClause, order_limit_start
-from agno.db.surrealdb.utils import build_client
-from agno.db.utils import deserialize_session, deserialize_sessions
+from agno.db.surrealdb.utils import build_client, database_error, is_transaction_conflict
+from agno.db.utils import (
+    AGGREGATE_METRICS_COUNT_COLUMNS,
+    AGGREGATE_METRICS_KEY_COLUMNS,
+    COMPONENT_METRICS_KEY_COLUMNS,
+    HISTORY_SKIP_STATUSES,
+    METRICS_BATCH_SIZE,
+    METRICS_LOCK_SECONDS,
+    METRICS_REFRESH_ID,
+    METRICS_STOPPED_ERROR,
+    METRICS_SUM_COLUMNS,
+    METRICS_TOKEN_FIELDS,
+    add_metrics_month_totals,
+    aggregate_metrics_rows_to_write,
+    build_aggregate_metrics_month_rows,
+    build_aggregate_metrics_rows,
+    build_metrics_by_owner_from_rows,
+    build_metrics_from_aggregate_metrics,
+    build_single_run_row,
+    calculate_date_component_metrics,
+    component_metrics_rows_to_write,
+    database_error_message,
+    deserialize_run,
+    deserialize_session,
+    deserialize_sessions,
+    drop_legacy_metrics,
+    filter_context_runs,
+    get_metrics_legacy_runs,
+    get_metrics_records_by_day,
+    get_metrics_reopen_session_ids,
+    get_months_to_calculate_metrics_for,
+    list_metrics_totals_models,
+    merge_metrics_totals,
+    merge_runs_table_with_legacy_blob,
+    metrics_calculation_enabled,
+    metrics_day_completed,
+    metrics_day_to_reopen,
+    metrics_days_since_last_calculation,
+    metrics_full_months,
+    metrics_month_end,
+    metrics_nested_run_ids,
+    metrics_refresh_status,
+    metrics_remote_member_team_session_ids,
+    metrics_versions,
+    resolve_metrics_fields,
+    total_metrics_rows,
+)
+from agno.run.agent import RunOutput
+from agno.run.base import RunStatus
+from agno.run.team import TeamRunOutput
+from agno.run.workflow import WorkflowRunOutput
 from agno.session import Session
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
@@ -61,11 +119,14 @@ class SurrealDb(BaseDb):
         db_ns: str,
         db_db: str,
         session_table: Optional[str] = None,
+        runs_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
+        component_metrics_table: Optional[str] = None,
+        aggregate_metrics_table: Optional[str] = None,
+        metrics_refreshes_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
-        culture_table: Optional[str] = None,
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         id: Optional[str] = None,
@@ -82,9 +143,11 @@ class SurrealDb(BaseDb):
             session_table: The name of the session table.
             memory_table: The name of the memory table.
             metrics_table: The name of the metrics table.
+            component_metrics_table: The name of the table to store the metrics of each agent, team and workflow.
+            aggregate_metrics_table: The name of the table to store the metrics of each user.
+            metrics_refreshes_table: The name of the table to store the metrics refreshes.
             eval_table: The name of the eval table.
             knowledge_table: The name of the knowledge table.
-            culture_table: The name of the culture table.
             traces_table: The name of the traces table.
             spans_table: The name of the spans table.
             id: The ID of the database.
@@ -97,14 +160,19 @@ class SurrealDb(BaseDb):
         super().__init__(
             id=id,
             session_table=session_table,
+            runs_table=runs_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
+            component_metrics_table=component_metrics_table,
+            aggregate_metrics_table=aggregate_metrics_table,
+            metrics_refreshes_table=metrics_refreshes_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
-            culture_table=culture_table,
             traces_table=traces_table,
             spans_table=spans_table,
         )
+        if metrics_table is not None:
+            log_warning("metrics_table is deprecated; use component_metrics_table and aggregate_metrics_table.")
         self._client = client
         self._db_url = db_url
         self._db_creds = db_creds
@@ -114,6 +182,16 @@ class SurrealDb(BaseDb):
         self._agents_table_name: str = "agno_agents"
         self._teams_table_name: str = "agno_teams"
         self._workflows_table_name: str = "agno_workflows"
+
+        # Zero means never refreshed; get_metrics uses this to refresh lazily, at most once per minute.
+        # stop_metrics_refresh_on_read sets it to infinity, so reads never calculate
+        self._metrics_refreshed_at: float = 0.0
+        # Reads warn once that the deprecated metrics table is served until a first calculate_metrics has finished
+        self._deprecated_metrics_logged: bool = False
+        # The days whose metrics a write could not reopen, retried by the next write
+        self._metrics_days_not_reopened: Set[date] = set()
+        # Whether a session holds legacy runs, None until a read of every session found out
+        self._metrics_legacy_runs: Optional[bool] = None
 
     @property
     def client(self) -> Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection]:
@@ -125,10 +203,10 @@ class SurrealDb(BaseDb):
     def table_names(self) -> dict[TableType, str]:
         return {
             "agents": self._agents_table_name,
-            "culture": self.culture_table_name,
             "evals": self.eval_table_name,
             "knowledge": self.knowledge_table_name,
             "memories": self.memory_table_name,
+            "runs": self.runs_table_name,
             "sessions": self.session_table_name,
             "spans": self.span_table_name,
             "teams": self._teams_table_name,
@@ -151,10 +229,6 @@ class SurrealDb(BaseDb):
             raise Exception("Failed to retrieve database information")
         return table_name in response.get("tables", [])
 
-    def _table_exists(self, table_name: str) -> bool:
-        """Deprecated: Use table_exists() instead."""
-        return self.table_exists(table_name)
-
     def _create_table(self, table_type: TableType, table_name: str):
         query = get_schema(table_type, table_name)
         self.client.query(query)
@@ -162,12 +236,12 @@ class SurrealDb(BaseDb):
     def _get_table(self, table_type: TableType, create_table_if_not_found: bool = True):
         if table_type == "sessions":
             table_name = self.session_table_name
+        elif table_type == "runs":
+            table_name = self.runs_table_name
         elif table_type == "memories":
             table_name = self.memory_table_name
         elif table_type == "knowledge":
             table_name = self.knowledge_table_name
-        elif table_type == "culture":
-            table_name = self.culture_table_name
         elif table_type == "users":
             table_name = self._users_table_name
         elif table_type == "agents":
@@ -180,6 +254,12 @@ class SurrealDb(BaseDb):
             table_name = self.eval_table_name
         elif table_type == "metrics":
             table_name = self.metrics_table_name
+        elif table_type == "component_metrics":
+            table_name = self.component_metrics_table_name
+        elif table_type == "aggregate_metrics":
+            table_name = self.aggregate_metrics_table_name
+        elif table_type == "metrics_refreshes":
+            table_name = self.metrics_refreshes_table_name
         elif table_type == "traces":
             table_name = self.trace_table_name
         elif table_type == "spans":
@@ -190,18 +270,38 @@ class SurrealDb(BaseDb):
         else:
             raise NotImplementedError(f"Unknown table type: {table_type}")
 
-        if create_table_if_not_found and not self._table_exists(table_name):
+        if create_table_if_not_found and not self.table_exists(table_name):
             self._create_table(table_type, table_name)
+            # Store the schema version for the created sessions table, which holds no legacy runs for metrics
+            if table_type == "sessions":
+                latest_schema_version = MigrationManager(self).latest_schema_version
+                self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
 
         return table_name
 
-    def get_latest_schema_version(self):
-        """Get the latest version of the database schema."""
-        pass
+    def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
+        """Get the schema version stamped for the given table.
 
-    def upsert_schema_version(self, version: str) -> None:
-        """Upsert the schema version into the database."""
-        pass
+        Defaults to "2.0.0" when nothing is stamped so the MigrationManager
+        runs migrations instead of skipping the table.
+        """
+        result = self.client.query(
+            "SELECT version FROM ONLY $record",
+            {"record": RecordID(self.versions_table_name, table_name)},
+        )
+        if isinstance(result, dict) and result.get("version"):
+            return str(result["version"])
+        return "2.0.0"
+
+    def upsert_schema_version(self, table_name: str = "", version: str = "") -> None:
+        """Record the schema version stamp for the given table."""
+        self.client.query(
+            "UPSERT ONLY $record CONTENT $content",
+            {
+                "record": RecordID(self.versions_table_name, table_name),
+                "content": {"table_name": table_name, "version": version, "updated_at": int(time.time())},
+            },
+        )
 
     def _query(
         self,
@@ -232,6 +332,269 @@ class SurrealDb(BaseDb):
         total_count = int(total_count)
         return total_count
 
+    # --- Runs ---
+
+    def _get_session_runs_data(self, session_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Return raw run_data dicts for a session, ordered by run_index then created_at.
+
+        When ``limit`` is set, push the "most recent N context-relevant runs" filter
+        down to the DB: drop member sub-runs (``parent_run_id`` set), drop terminal-skip
+        statuses, order newest-first and take ``limit`` rows, then reverse back to
+        chronological order. SurrealDB uses ``IS NONE`` for null checks (not ``IS NULL``),
+        and the ``status IS NONE OR`` guard keeps runs with no status from being dropped
+        by ``NOT IN $skip``.
+        """
+        try:
+            runs_table = self._get_table("runs", create_table_if_not_found=False)
+        except Exception:
+            return []
+        if limit is not None:
+            rows_raw = self._query(
+                f"SELECT *, run_index ?? 0 AS _ri, created_at ?? 0 AS _ca FROM {runs_table} "
+                "WHERE session_id = $sid "
+                "AND parent_run_id IS NONE AND (status IS NONE OR status NOT IN $skip) "
+                "ORDER BY _ri DESC, _ca DESC LIMIT $lim",
+                {"sid": session_id, "skip": HISTORY_SKIP_STATUSES, "lim": limit},
+                dict,
+            )
+            rows = [desurrealize_run_row(r) for r in rows_raw]
+            run_data = [r["run_data"] for r in rows if "run_data" in r]
+            run_data.reverse()
+            return run_data
+        rows_raw = self._query(
+            f"SELECT *, run_index ?? 0 AS _ri, created_at ?? 0 AS _ca FROM {runs_table} "
+            "WHERE session_id = $sid ORDER BY _ri ASC, _ca ASC",
+            {"sid": session_id},
+            dict,
+        )
+        rows = [desurrealize_run_row(r) for r in rows_raw]
+        return [r["run_data"] for r in rows if "run_data" in r]
+
+    def _get_sessions_runs(self, session_ids: List[str]) -> Optional[Dict[str, List[Dict[str, Any]]]]:
+        """Run dicts for several sessions in one read, used by the search fallback."""
+        return self._get_sessions_runs_data(session_ids)
+
+    def _get_sessions_runs_data(self, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+        if not session_ids:
+            return {}
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
+        for sid in session_ids:
+            grouped[sid] = self._get_session_runs_data(sid)
+        return grouped
+
+    def upsert_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> None:
+        """Upsert a single run row into the runs table (O(1) operation).
+
+        Optimized for updating existing runs (e.g., status changes in HITL or
+        background mode) without re-upserting all runs in the session.
+
+        For new runs, ``run_index`` should be provided or will be read from
+        ``run_data``. For updates to existing runs, ``run_index`` is preserved
+        from the original insert.
+
+        Args:
+            run: The run object or dictionary to upsert.
+            session_id: The session ID this run belongs to.
+            user_id: Optional user ID to associate with the run.
+            run_index: Optional run index for new runs.
+
+        Raises:
+            ValueError: If the run has no run_id.
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            runs_table = self._get_table("runs", create_table_if_not_found=True)
+            if runs_table is None:
+                return
+
+            row = build_single_run_row(
+                run=run,
+                session_id=session_id,
+                user_id=user_id,
+                run_index=run_index,
+            )
+
+            # Preserve the original run_index if the record already exists
+            existing = self._query_one(
+                "SELECT * FROM ONLY $record",
+                {"record": RecordID(runs_table, row["run_id"])},
+                dict,
+            )
+            if existing is not None and "run_index" in existing:
+                row["run_index"] = existing["run_index"]
+            # UPSERT CONTENT replaces the whole record, so a resumed run keeps the created_at it was stored with
+            if existing is not None and isinstance(existing.get("created_at"), datetime):
+                row["created_at"] = int(existing["created_at"].timestamp())
+
+            content = serialize_run_row(row, runs_table)
+            self._query_one(
+                "UPSERT ONLY $record CONTENT $content",
+                {"record": RecordID(runs_table, row["run_id"]), "content": content},
+                dict,
+            )
+            # The stored created_at, which a resumed run keeps
+            self._reopen_metrics_days([row["created_at"]])
+        except Exception as e:
+            log_error(f"Exception upserting run into runs table: {str(e)}")
+            raise e
+
+    def _delete_session_runs(self, session_id: str) -> int:
+        try:
+            runs_table = self._get_table("runs", create_table_if_not_found=False)
+        except Exception:
+            return 0
+        result = self.client.query(
+            f"DELETE FROM {runs_table} WHERE session_id = $sid RETURN BEFORE",
+            {"sid": session_id},
+        )
+        if isinstance(result, list):
+            return len(result)
+        return 0
+
+    def cleanup_legacy_runs_field(self, force: bool = False) -> bool:
+        """Unset the legacy ``runs`` field from session records."""
+        try:
+            sessions_table = self._get_table("sessions", create_table_if_not_found=False)
+        except Exception:
+            return False
+
+        sessions_raw = self._query(f"SELECT * FROM {sessions_table}", {}, dict)
+        if not sessions_raw:
+            return False
+
+        if not force:
+            pending = sum(1 for s in sessions_raw if s.get("runs"))
+            if pending > 0:
+                raise RuntimeError(
+                    f"Refusing to unset {sessions_table}.runs: {pending} session(s) still have "
+                    "non-null `runs` content. Run MigrationManager(db).up() first, or pass force=True."
+                )
+
+        self.client.query(f"UPDATE {sessions_table} UNSET runs", {})
+        log_info(f"Unset runs on session records in {sessions_table}")
+        return True
+
+    def get_run(
+        self, run_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]]]:
+        try:
+            runs_table = self._get_table("runs", create_table_if_not_found=False)
+        except Exception:
+            return None
+        raw = self._query_one(
+            "SELECT * FROM ONLY $record",
+            {"record": RecordID(runs_table, run_id)},
+            dict,
+        )
+        if raw is None:
+            return None
+        row = desurrealize_run_row(raw)
+        if not deserialize:
+            return row
+        return deserialize_run(row.get("run_type"), row["run_data"])
+
+    def get_runs(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[RunStatus] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
+        try:
+            runs_table = self._get_table("runs", create_table_if_not_found=False)
+        except Exception:
+            return [] if deserialize else ([], 0)
+
+        where = WhereClause()
+        if session_id is not None:
+            where = where.and_("session_id", session_id)
+        if user_id is not None:
+            where = where.and_("user_id", user_id)
+        if agent_id is not None:
+            where = where.and_("agent_id", agent_id)
+        if team_id is not None:
+            where = where.and_("team_id", team_id)
+        if workflow_id is not None:
+            where = where.and_("workflow_id", workflow_id)
+        if status is not None:
+            status_value = status.value if isinstance(status, RunStatus) else status
+            where = where.and_("status", status_value)
+
+        where_clause, where_vars = where.build()
+        total_count = self._count(runs_table, where_clause, where_vars)
+
+        order_clause = order_limit_start(sort_by or "run_index", sort_order or "asc", limit, page)
+        query = dedent(f"""
+            SELECT *
+            FROM {runs_table}
+            {where_clause}
+            {order_clause}
+        """)
+        rows_raw = self._query(query, where_vars, dict)
+        rows = [desurrealize_run_row(r) for r in rows_raw]
+
+        if not deserialize:
+            return list(rows), total_count
+        return [deserialize_run(r.get("run_type"), r["run_data"]) for r in rows]
+
+    def _scrub_run_ids_from_legacy_blob(self, run_ids: List[str]) -> None:
+        """Remove ``run_ids`` from every session record's legacy ``runs`` array.
+
+        Partial-migration hygiene: SurrealDB v3 keeps the pre-migration ``runs``
+        array on the session record as backup. Deleting from the runs table
+        alone leaves that array intact, and the read path's
+        ``merge_runs_table_with_legacy_blob`` resurrects the ghost.
+        """
+        if not run_ids:
+            return
+        try:
+            sessions_table = self._get_table("sessions", create_table_if_not_found=False)
+            self.client.query(
+                f"UPDATE {sessions_table} SET runs = array::filter(runs, |$r| $r.run_id NOT IN $rids) "
+                f"WHERE runs IS NOT NONE AND array::any(runs, |$r| $r.run_id IN $rids)",
+                {"rids": list(run_ids)},
+            )
+        except Exception:
+            # Best-effort; the primary delete already succeeded.
+            pass
+
+    def delete_run(self, run_id: str) -> bool:
+        try:
+            runs_table = self._get_table("runs", create_table_if_not_found=False)
+        except Exception:
+            return False
+        res = self.client.delete(RecordID(runs_table, run_id))
+        self._scrub_run_ids_from_legacy_blob([run_id])
+        return bool(res)
+
+    def delete_runs(self, run_ids: List[str]) -> None:
+        if not run_ids:
+            return
+        try:
+            runs_table = self._get_table("runs", create_table_if_not_found=False)
+        except Exception:
+            return
+        records = [RecordID(runs_table, rid) for rid in run_ids]
+        params: Dict[str, Any] = {"records": records}
+        self.client.query(
+            f"DELETE FROM {runs_table} WHERE id IN $records",
+            params,
+        )
+        self._scrub_run_ids_from_legacy_blob(run_ids)
+
     # --- Sessions ---
     def clear_sessions(self) -> None:
         """Delete all session rows from the database.
@@ -251,9 +614,16 @@ class SurrealDb(BaseDb):
                 f"DELETE FROM {table} WHERE id = $record AND user_id = $user_id RETURN BEFORE",
                 {"record": RecordID(table, session_id), "user_id": user_id},
             )
-            return isinstance(res, list) and len(res) > 0
-        res = self.client.delete(RecordID(table, session_id))
-        return bool(res)
+            deleted = isinstance(res, list) and len(res) > 0
+        else:
+            res = self.client.delete(RecordID(table, session_id))
+            deleted = bool(res)
+        if deleted:
+            try:
+                self._delete_session_runs(session_id)
+            except Exception as e:
+                log_error(f"Failed to cascade-delete runs for session {session_id}: {str(e)}")
+        return deleted
 
     def delete_sessions(self, session_ids: list[str], user_id: Optional[str] = None) -> None:
         table = self._get_table(table_type="sessions")
@@ -267,6 +637,12 @@ class SurrealDb(BaseDb):
             query += " AND user_id = $user_id"
             params["user_id"] = user_id
         self.client.query(query, params)
+        # Cascade-delete runs for each session
+        for sid in session_ids:
+            try:
+                self._delete_session_runs(sid)
+            except Exception as e:
+                log_error(f"Failed to cascade-delete runs for session {sid}: {str(e)}")
 
     def get_session(
         self,
@@ -274,6 +650,7 @@ class SurrealDb(BaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         r"""
         Read a session from the database.
@@ -311,6 +688,24 @@ class SurrealDb(BaseDb):
 
         desurrealized = desurrealize_session(raw)
 
+        # Attach runs from the runs table, merged with any legacy `runs` blob.
+        try:
+            legacy_runs = desurrealized.get("runs")
+            if runs_limit is not None and not legacy_runs:
+                # Fully migrated: push "most recent N" down to the DB (indexed).
+                desurrealized["runs"] = self._get_session_runs_data(session_id, limit=runs_limit)
+            else:
+                # Full load + merge. Also the un-migrated fallback: the legacy blob
+                # holds the whole history in one column, so "last N" can't be pushed
+                # to SQL — load all, merge, then filter+slice to match the migrated path.
+                runs_data = self._get_session_runs_data(session_id)
+                merged = merge_runs_table_with_legacy_blob(runs_data, legacy_runs)
+                if runs_limit is not None:
+                    merged = filter_context_runs(merged)[-runs_limit:]
+                desurrealized["runs"] = merged
+        except Exception as e:
+            log_error(f"Failed to load runs for session {session_id}: {str(e)}")
+
         if not deserialize:
             return desurrealized
 
@@ -329,6 +724,7 @@ class SurrealDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         r"""
         Get all sessions in the given table. Can filter by user_id and entity_id.
@@ -344,7 +740,7 @@ class SurrealDb(BaseDb):
             page (Optional[int]): The page number to return. Defaults to None.
             sort_by (Optional[str]): The field to sort by. Defaults to None.
             sort_order (Optional[str]): The sort order. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the sessions. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
 
         Returns:
             Union[List[Session], Tuple[List[Dict], int]]:
@@ -433,6 +829,20 @@ class SurrealDb(BaseDb):
         sessions_raw = self._query(query, where_vars, dict)
         converted_sessions_raw = [desurrealize_session(session) for session in sessions_raw]
 
+        # Search scans skip the runs table; the record's legacy runs field is kept for merging later.
+        # Attach runs from the runs table, merged with legacy blob
+        if include_runs and converted_sessions_raw:
+            try:
+                runs_by_session = self._get_sessions_runs_data(
+                    [s["session_id"] for s in converted_sessions_raw if s.get("session_id")]
+                )
+                for s in converted_sessions_raw:
+                    sid = s.get("session_id")
+                    if sid:
+                        s["runs"] = merge_runs_table_with_legacy_blob(runs_by_session.get(sid, []), s.get("runs"))
+            except Exception as e:
+                log_error(f"Failed to attach runs to sessions: {str(e)}")
+
         if not deserialize:
             return list(converted_sessions_raw), total_count
 
@@ -481,9 +891,17 @@ class SurrealDb(BaseDb):
         else:
             session_raw = self._query_one("UPDATE ONLY $record SET session_name = $name", vars, dict)
 
-        if session_raw is None or not deserialize:
-            return session_raw
+        if session_raw is None:
+            return None
         desurrealized = desurrealize_session(session_raw)
+        # Attach runs from the runs table, merged with legacy blob
+        try:
+            runs_data = self._get_session_runs_data(session_id)
+            desurrealized["runs"] = merge_runs_table_with_legacy_blob(runs_data, desurrealized.get("runs"))
+        except Exception as e:
+            log_error(f"Failed to load runs for renamed session {session_id}: {str(e)}")
+        if not deserialize:
+            return desurrealized
         return deserialize_session(session_type, desurrealized)
 
     def upsert_session(
@@ -508,26 +926,52 @@ class SurrealDb(BaseDb):
         table = self._get_table("sessions")
 
         existing = self.client.query(
-            f"SELECT user_id FROM {table} WHERE id = $record",
+            "SELECT user_id, runs, agent, team, workflow, created_at, session_data.compaction_metrics "
+            f"FROM {table} WHERE id = $record",
             {"record": RecordID(table, session.session_id)},
         )
+        legacy_runs: Any = None
+        existing_row: Dict[str, Any] = {}
+        stored_session: Optional[Dict[str, Any]] = None
         if isinstance(existing, list) and len(existing) > 0:
-            existing_uid = existing[0].get("user_id") if isinstance(existing[0], dict) else None
+            existing_row = existing[0] if isinstance(existing[0], dict) else {}
+            stored_session = {**desurrealize_session(dict(existing_row)), "session_id": session.session_id}
+            existing_uid = existing_row.get("user_id")
             if existing_uid is not None and existing_uid != session.user_id:
                 return None
+            # Carry legacy `runs` blob forward: UPSERT CONTENT replaces the whole
+            # record, and serialize_session(include_runs=False) omits `runs`, so
+            # bare upsert would silently erase pre-v3 history that only lives in
+            # the legacy blob (upgrade-without-migration data loss).
+            legacy_runs = existing_row.get("runs")
+
+        content = serialize_session(session, self.table_names, include_runs=False)
+        if legacy_runs is not None:
+            content["runs"] = legacy_runs
+        # The stored created_at, which a session keeps
+        if existing_row and existing_row.get("created_at") is not None:
+            content["created_at"] = existing_row["created_at"]
 
         session_raw = self._query_one(
             "UPSERT ONLY $record CONTENT $content",
             {
                 "record": RecordID(table, session.session_id),
-                "content": serialize_session(session, self.table_names),
+                "content": content,
             },
             dict,
         )
-        if session_raw is None or not deserialize:
-            return session_raw
+        if session_raw is None:
+            return None
 
+        # Runs are persisted separately via upsert_run by the caller (agent loop).
         desurrealized = desurrealize_session(session_raw)
+        if get_metrics_reopen_session_ids([stored_session] if stored_session else [], [desurrealized]):
+            self._reopen_metrics_days([desurrealized.get("created_at")])
+        # Attach in-memory runs so the caller sees them on the returned session
+        desurrealized["runs"] = [r.to_dict() if hasattr(r, "to_dict") else r for r in (session.runs or [])]
+
+        if not deserialize:
+            return desurrealized
         return deserialize_session(session_type, desurrealized)
 
     def upsert_sessions(
@@ -551,18 +995,56 @@ class SurrealDb(BaseDb):
         session_type = get_session_type(sessions[0])
         table = self._get_table("sessions")
         sessions_raw: List[Dict[str, Any]] = []
+        stored_sessions: Dict[str, Dict[str, Any]] = {}
         for session in sessions:
-            # UPSERT does only work for one record at a time
+            # UPSERT does only work for one record at a time. Read the existing
+            # `runs` blob first so we can carry it forward -- otherwise UPSERT
+            # CONTENT would wipe any pre-v3 history on the row (see the
+            # single-record upsert_session above for the full rationale).
+            existing = self.client.query(
+                "SELECT runs, user_id, agent, team, workflow, created_at, session_data.compaction_metrics "
+                f"FROM {table} WHERE id = $record",
+                {"record": RecordID(table, session.session_id)},
+            )
+            legacy_runs: Any = None
+            if isinstance(existing, list) and len(existing) > 0 and isinstance(existing[0], dict):
+                legacy_runs = existing[0].get("runs")
+                stored_sessions[session.session_id] = existing[0]
+
+            content = serialize_session(session, self.table_names, include_runs=False)
+            if legacy_runs is not None:
+                content["runs"] = legacy_runs
+            # The stored created_at, which a session keeps
+            stored_session = stored_sessions.get(session.session_id)
+            if stored_session and stored_session.get("created_at") is not None:
+                content["created_at"] = stored_session["created_at"]
+
             session_raw = self._query_one(
                 "UPSERT ONLY $record CONTENT $content",
                 {
                     "record": RecordID(table, session.session_id),
-                    "content": serialize_session(session, self.table_names),
+                    "content": content,
                 },
                 dict,
             )
             if session_raw:
                 sessions_raw.append(session_raw)
+        written_sessions = [desurrealize_session(dict(session_raw)) for session_raw in sessions_raw]
+        reopen_session_ids = get_metrics_reopen_session_ids(
+            [
+                {**desurrealize_session(dict(row)), "session_id": session_id}
+                for session_id, row in stored_sessions.items()
+            ],
+            written_sessions,
+        )
+        # The stored created_at, which a session keeps
+        self._reopen_metrics_days(
+            [
+                written_session.get("created_at")
+                for written_session in written_sessions
+                if written_session["session_id"] in reopen_session_ids
+            ]
+        )
         if not deserialize:
             return list(sessions_raw)
 
@@ -582,161 +1064,12 @@ class SurrealDb(BaseDb):
         table = self._get_table("memories")
         _ = self.client.delete(table)
 
-    # -- Cultural Knowledge methods --
-    def clear_cultural_knowledge(self) -> None:
-        """Delete all cultural knowledge from the database.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        table = self._get_table("culture")
-        _ = self.client.delete(table)
-
-    def delete_cultural_knowledge(self, id: str) -> None:
-        """Delete cultural knowledge by ID.
-
-        Args:
-            id (str): The ID of the cultural knowledge to delete.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        table = self._get_table("culture")
-        rec_id = RecordID(table, id)
-        self.client.delete(rec_id)
-
-    def get_cultural_knowledge(
-        self, id: str, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Get cultural knowledge by ID.
-
-        Args:
-            id (str): The ID of the cultural knowledge to retrieve.
-            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge object. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The cultural knowledge if found, None otherwise.
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        table = self._get_table("culture")
-        rec_id = RecordID(table, id)
-        result = self.client.select(rec_id)
-
-        if result is None:
-            return None
-
-        if not deserialize:
-            return result  # type: ignore
-
-        return deserialize_cultural_knowledge(result)  # type: ignore
-
-    def get_all_cultural_knowledge(
-        self,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        name: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-        """Get all cultural knowledge with filtering and pagination.
-
-        Args:
-            agent_id (Optional[str]): Filter by agent ID.
-            team_id (Optional[str]): Filter by team ID.
-            name (Optional[str]): Filter by name (case-insensitive partial match).
-            limit (Optional[int]): Maximum number of results to return.
-            page (Optional[int]): Page number for pagination.
-            sort_by (Optional[str]): Field to sort by.
-            sort_order (Optional[str]): Sort order ('asc' or 'desc').
-            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge objects. Defaults to True.
-
-        Returns:
-            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-                - When deserialize=True: List of CulturalKnowledge objects
-                - When deserialize=False: Tuple with list of dictionaries and total count
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        table = self._get_table("culture")
-
-        # Build where clauses
-        where_clauses: List[WhereClause] = []
-        if agent_id is not None:
-            agent_rec_id = RecordID(self._get_table("agents"), agent_id)
-            where_clauses.append(("agent", "=", agent_rec_id))  # type: ignore
-        if team_id is not None:
-            team_rec_id = RecordID(self._get_table("teams"), team_id)
-            where_clauses.append(("team", "=", team_rec_id))  # type: ignore
-        if name is not None:
-            where_clauses.append(("string::lowercase(name)", "CONTAINS", name.lower()))  # type: ignore
-
-        # Build query for total count
-        count_query = COUNT_QUERY.format(
-            table=table,
-            where=""
-            if not where_clauses
-            else f"WHERE {' AND '.join(f'{w[0]} {w[1]} ${chr(97 + i)}' for i, w in enumerate(where_clauses))}",  # type: ignore
-        )
-        params = {chr(97 + i): w[2] for i, w in enumerate(where_clauses)}  # type: ignore
-        total_count = self._query_one(count_query, params, int) or 0
-
-        # Build main query
-        order_limit = order_limit_start(sort_by, sort_order, limit, page)
-        query = f"SELECT * FROM {table}"
-        if where_clauses:
-            query += f" WHERE {' AND '.join(f'{w[0]} {w[1]} ${chr(97 + i)}' for i, w in enumerate(where_clauses))}"  # type: ignore
-        query += order_limit
-
-        results = self._query(query, params, list) or []
-
-        if not deserialize:
-            return results, total_count  # type: ignore
-
-        return [deserialize_cultural_knowledge(r) for r in results]  # type: ignore
-
-    def upsert_cultural_knowledge(
-        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Upsert cultural knowledge in SurrealDB.
-
-        Args:
-            cultural_knowledge (CulturalKnowledge): The cultural knowledge to upsert.
-            deserialize (Optional[bool]): Whether to deserialize the result. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The upserted cultural knowledge.
-
-        Raises:
-            Exception: If an error occurs during upsert.
-        """
-        table = self._get_table("culture", create_table_if_not_found=True)
-        serialized = serialize_cultural_knowledge(cultural_knowledge, table)
-
-        result = self.client.upsert(serialized["id"], serialized)
-
-        if result is None:
-            return None
-
-        if not deserialize:
-            return result  # type: ignore
-
-        return deserialize_cultural_knowledge(result)  # type: ignore
-
     def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None) -> None:
         """Delete a user memory from the database.
 
         Args:
             memory_id (str): The ID of the memory to delete.
             user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
-
-        Returns:
-            bool: True if deletion was successful, False otherwise.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -817,7 +1150,7 @@ class SurrealDb(BaseDb):
 
         Args:
             memory_id (str): The ID of the memory to get.
-            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
             user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
 
         Returns:
@@ -868,7 +1201,7 @@ class SurrealDb(BaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
-            deserialize (Optional[bool]): Whether to serialize the memories. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
 
 
         Returns:
@@ -987,7 +1320,7 @@ class SurrealDb(BaseDb):
 
         Args:
             memory (UserMemory): The user memory to upsert.
-            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
 
         Returns:
             Optional[Union[UserMemory, Dict[str, Any]]]:
@@ -1062,12 +1395,1033 @@ class SurrealDb(BaseDb):
         return list(deserialize_user_memories(raw))
 
     # --- Metrics ---
+    def _reopen_metrics_days(self, created_ats: Sequence[Optional[int]]) -> None:
+        """Reopen the metrics of each day a write changed, right after the write, so the next calculation rebuilds
+        it.
+
+        SurrealDB has no savepoint, so the reopen is a transaction of its own after the write's: a failed reopen never
+        fails the write itself, and the days it could not reopen are retried by the next write.
+
+        Args:
+            created_ats (Sequence[Optional[int]]): The stored created_at of each run or session the write changed.
+        """
+        # Sorted, so two writers reopening the same days write them in the same order
+        days = sorted(
+            {day for created_at in created_ats if (day := metrics_day_to_reopen(created_at)) is not None}
+            | self._metrics_days_not_reopened
+        )
+        if not days:
+            return
+        try:
+            # Looked up only when a day reopens. None when no day was calculated yet
+            aggregate_metrics_table = self._get_table_if_exists("aggregate_metrics")
+            if aggregate_metrics_table is None:
+                self._metrics_days_not_reopened.clear()
+                return
+            for day in days:
+                reopen_metrics_day(self.client, aggregate_metrics_table, day)
+            self._metrics_days_not_reopened.difference_update(days)
+        except Exception as e:
+            self._metrics_days_not_reopened.update(days)
+            log_warning(
+                f"Could not reopen the metrics of {', '.join(str(day) for day in days)}: "
+                f"{database_error_message(database_error(e))}"
+            )
+
+    def _get_table_if_exists(self, table_type: TableType) -> Optional[str]:
+        """Get the name of a table, None when it was never created: SurrealDB 3 raises on a read of a table that was
+        never written."""
+        table_name = self._get_table(table_type, create_table_if_not_found=False)
+        return table_name if self.table_exists(table_name) else None
+
+    def _get_metrics_table(self, table_type: TableType, table_name: str) -> str:
+        """Get a metrics table, creating it on first use."""
+        try:
+            return self._get_table(table_type, create_table_if_not_found=True)
+        except Exception as exc:
+            # Another replica may have completed the first-time DDL meanwhile: SurrealDB fails the later DEFINE TABLE
+            # with "already exists", or with a transaction conflict
+            if ("already exists" not in str(exc) and not is_transaction_conflict(exc)) or not self.table_exists(
+                table_name
+            ):
+                raise
+            return table_name
+
+    def _get_metrics_refresh_row(self, refreshes_table: str) -> Tuple[Optional[Dict[str, Any]], int]:
+        """Get the row of the metrics refreshes table, and the locked_at at or before which its lock is stale, by the
+        database's clock."""
+        result = self._query_one(
+            dedent(f"""
+                RETURN {{
+                    row: (SELECT * FROM ONLY $refresh),
+                    stale_lock_threshold: time::unix(time::now()) - {METRICS_LOCK_SECONDS}
+                }}
+            """),
+            {"refresh": RecordID(refreshes_table, METRICS_REFRESH_ID)},
+            dict,
+        )
+        if result is None:
+            raise Exception("Failed to read the metrics refresh row")
+        refresh_row = desurrealize_metrics_refresh(result["row"]) if result["row"] is not None else None
+        return refresh_row, result["stale_lock_threshold"]
+
+    def _claim_metrics_refresh(self, refreshes_table: str, worker_id: str) -> Optional[Dict[str, Any]]:
+        """Claim the row of the metrics refreshes table, so one process calculates metrics at a time.
+
+        Args:
+            refreshes_table (str): The metrics refreshes table.
+            worker_id (str): The id of this calculation, which heartbeats and releases the claim.
+
+        Returns:
+            Optional[Dict[str, Any]]: The claimed row, with when the last calculation finished and its fingerprint.
+                None when another process holds it.
+        """
+        try:
+            # One statement, so two processes never both find the row free. A stale lock is taken over: the process
+            # that held it stopped
+            response = self.client.query(
+                dedent(f"""
+                    UPSERT $refresh SET
+                        locked_by = $worker_id,
+                        locked_at = time::unix(time::now()),
+                        started_at = time::unix(time::now()),
+                        status = "running",
+                        error = NONE
+                    WHERE locked_by = NONE OR locked_at <= time::unix(time::now()) - {METRICS_LOCK_SECONDS}
+                    RETURN AFTER
+                """),
+                {"refresh": RecordID(refreshes_table, METRICS_REFRESH_ID), "worker_id": worker_id},
+            )
+        except Exception as e:
+            # Another process claimed it at the same moment: SurrealDB fails the later write with a transaction conflict
+            if not is_transaction_conflict(e):
+                raise
+            return None
+        if isinstance(response, list) and len(response) > 0 and isinstance(response[0], dict):
+            return desurrealize_metrics_refresh(response[0])
+        return None
+
+    def _mark_metrics_refresh_rebuild(self, refreshes_table: str) -> bool:
+        """Write a mark no fingerprint equals on the row of the metrics refreshes table, so the next calculation
+        rebuilds yesterday and today. False when a calculation's write conflicted with it through every try."""
+        for _ in range(3):
+            try:
+                self.client.query(
+                    "UPDATE $refresh SET fingerprint = $mark RETURN NONE",
+                    {"refresh": RecordID(refreshes_table, METRICS_REFRESH_ID), "mark": ["rebuild", uuid4().hex]},
+                )
+                return True
+            except Exception as e:
+                # A calculation heartbeats the row in each day's transaction: SurrealDB fails the later write with a
+                # transaction conflict
+                if not is_transaction_conflict(e):
+                    raise
+        return False
+
+    def _heartbeat_metrics_refresh(self, refreshes_table: str, worker_id: str) -> bool:
+        """Refresh locked_at for this worker's metrics refresh. False when another process took it over."""
+        return bool(self._query(*heartbeat_metrics_refresh(refreshes_table, worker_id), dict))
+
+    def _release_metrics_refresh(
+        self,
+        refreshes_table: str,
+        worker_id: Optional[str],
+        error: Optional[str] = None,
+        fingerprint: Optional[List[Any]] = None,
+        stopped: bool = False,
+        claimed_fingerprint: Optional[List[Any]] = None,
+    ) -> None:
+        """Release the row of the metrics refreshes table: completed, with the fingerprint, without an error, failed
+        with one, and as the last completed refresh left it when the calculation stopped.
+
+        Args:
+            refreshes_table (str): The metrics refreshes table.
+            worker_id (Optional[str]): The id of the calculation that claimed the row. None writes the row only while
+                no process holds it, and creates it before any refresh.
+            error (Optional[str]): The error the calculation failed with. None when it completed.
+            fingerprint (Optional[List[Any]]): The fingerprint of yesterday and today, stored once it completed.
+            stopped (bool): Whether the calculation stopped before it finished.
+            claimed_fingerprint (Optional[List[Any]]): The fingerprint of the claimed row. A rebuild that marked
+                another one since keeps its mark.
+        """
+        variables: Dict[str, Any] = {"refresh": RecordID(refreshes_table, METRICS_REFRESH_ID), "worker_id": worker_id}
+        if stopped:
+            # The days it did not reach stay open for the next calculation; a first one that stopped has none to show
+            variables["stopped_error"] = METRICS_STOPPED_ERROR
+            assignments = (
+                'status = IF finished_at != NONE THEN "completed" ELSE "failed" END, '
+                "error = IF finished_at != NONE THEN NONE ELSE $stopped_error END"
+            )
+        elif error is None:
+            variables["fingerprint"] = fingerprint
+            # A rebuild that marked the fingerprint after the claim keeps its mark, so the next calculation rebuilds
+            # yesterday and today. No fingerprint is stored as NONE, which a claim of None compares equal to
+            variables["claimed_fingerprint"] = claimed_fingerprint
+            assignments = (
+                'status = "completed", error = NONE, finished_at = time::unix(time::now()), '
+                "fingerprint = IF fingerprint != $claimed_fingerprint THEN fingerprint ELSE $fingerprint END"
+            )
+        else:
+            variables["error"] = error
+            assignments = 'status = "failed", error = $error'
+        try:
+            if worker_id is None:
+                # Before any refresh there is no row to update
+                self._query(
+                    "UPSERT $refresh SET started_at = started_at ?? time::unix(time::now()), locked_by = NONE, "
+                    f"locked_at = NONE, {assignments} WHERE locked_by = NONE RETURN NONE",
+                    variables,
+                    dict,
+                )
+            else:
+                self._query(
+                    f"UPDATE $refresh SET locked_by = NONE, locked_at = NONE, {assignments} "
+                    "WHERE locked_by = $worker_id RETURN NONE",
+                    variables,
+                    dict,
+                )
+        except Exception as e:
+            log_debug(f"Error releasing metrics refresh: {e}")
+
+    def _get_metrics_fingerprint(
+        self, sessions_table: str, runs_table: Optional[str], yesterday: date
+    ) -> Optional[List[Any]]:
+        """Get the count and update times of the sessions and runs of yesterday and today. None while one of them was
+        updated in the current second, which a second update in that same second would leave unchanged."""
+        start_timestamp = datetime.combine(yesterday, datetime.min.time()).replace(tzinfo=timezone.utc)
+        # The database's clock, which stamps updated_at
+        current_time = self._query_one("RETURN time::unix(time::now())", {}, int)
+        fingerprint: List[Any] = [yesterday.isoformat()]
+        for source_table in [sessions_table, runs_table]:
+            if source_table is None:
+                continue
+            result = self._query_one(
+                dedent(f"""
+                    SELECT
+                        count() AS count,
+                        math::sum(time::unix(updated_at)) AS total_updated_at,
+                        math::max(time::unix(updated_at)) AS latest_updated_at
+                    FROM {source_table}
+                    WHERE created_at >= $start
+                    GROUP ALL
+                """),
+                {"start": start_timestamp},
+                dict,
+            ) or {"count": 0, "total_updated_at": 0}
+            # With no rows there is no latest update
+            if result["count"] and current_time is not None and result["latest_updated_at"] >= current_time:
+                return None
+            fingerprint.extend([result["count"], int(result["total_updated_at"] or 0)])
+        return fingerprint
+
+    def _get_metrics_dates_to_calculate(
+        self,
+        aggregate_metrics_table: str,
+        sessions_table: str,
+        runs_table: Optional[str],
+        refresh_row: Dict[str, Any],
+        rebuild_from: Optional[date] = None,
+    ) -> Tuple[List[date], Optional[List[Any]]]:
+        """Get the days whose metrics a calculation rebuilds, and the fingerprint of yesterday and today.
+
+        Args:
+            aggregate_metrics_table (str): The aggregate metrics table.
+            sessions_table (str): The sessions table.
+            runs_table (Optional[str]): The runs table. None when no run was written yet.
+            refresh_row (Dict[str, Any]): The row of the metrics refreshes table, from _claim_metrics_refresh.
+            rebuild_from (Optional[date]): The first day of a rebuild.
+
+        Returns:
+            Tuple[List[date], Optional[List[Any]]]: The days, oldest first, and the fingerprint to keep on the row of
+                the metrics refreshes table.
+        """
+        today = datetime.now(timezone.utc).date()
+        yesterday = today - timedelta(days=1)
+        dates_to_process: Set[date] = set()
+        fingerprint = self._get_metrics_fingerprint(sessions_table, runs_table, yesterday)
+        first_calculation = refresh_row["finished_at"] is None
+        # Yesterday and today, when their sessions or runs changed since the last calculation
+        if first_calculation or fingerprint is None or fingerprint != refresh_row["fingerprint"]:
+            dates_to_process.update([yesterday, today])
+
+        # Every earlier day still open: not yet completed, or reopened by a write since
+        result = self._query(
+            dedent(f"""
+                SELECT date FROM {aggregate_metrics_table}
+                WHERE aggregation_period = "daily" AND user_id = "" AND completed = false AND date < $yesterday
+            """),
+            {"yesterday": datetime.combine(yesterday, datetime.min.time()).replace(tzinfo=timezone.utc)},
+            dict,
+        )
+        dates_to_process.update(record["date"].date() for record in result)
+        # Every earlier day from the day before the last calculation finished, whose writes reopened nothing while it
+        # was yesterday or today
+        if not first_calculation:
+            dates_to_process.update(metrics_days_since_last_calculation(refresh_row["finished_at"], yesterday))
+
+        # Until a first calculation has finished, every day with a session or a run not yet completed; with
+        # rebuild_from, every day with one from that date on. Only days with data, so one session dated long ago never
+        # builds every empty day since
+        if first_calculation or rebuild_from is not None:
+            completed_days: Set[date] = set()
+            if first_calculation:
+                result = self._query(
+                    f'SELECT date FROM {aggregate_metrics_table} WHERE aggregation_period = "daily" AND user_id = "" '
+                    "AND completed = true",
+                    {},
+                    dict,
+                )
+                completed_days = {record["date"].date() for record in result}
+            for source_table in [sessions_table, runs_table]:
+                if source_table is None:
+                    continue
+                result = self._query(
+                    f"SELECT time::floor(created_at, 1d) AS day FROM {source_table} GROUP BY day", {}, dict
+                )
+                for record in result:
+                    data_date = record["day"].date()
+                    # A rebuild takes every day with data from its first day, completed or not
+                    rebuilt = rebuild_from is not None and data_date >= rebuild_from
+                    if data_date <= today and (rebuilt or (first_calculation and data_date not in completed_days)):
+                        dates_to_process.add(data_date)
+
+        return sorted(dates_to_process), fingerprint
+
+    def _get_open_metrics_months(self, aggregate_metrics_table: str) -> List[date]:
+        """Get the first day of every month before the current one whose month row is still open: not completed yet,
+        or reopened by a day a calculation rebuilt before it stopped."""
+        current_month = datetime.now(timezone.utc).date().replace(day=1)
+        result = self._query(
+            dedent(f"""
+                SELECT date FROM {aggregate_metrics_table}
+                WHERE aggregation_period = "monthly" AND user_id = "" AND completed = false AND date < $current_month
+            """),
+            {"current_month": datetime.combine(current_month, datetime.min.time()).replace(tzinfo=timezone.utc)},
+            dict,
+        )
+        return [record["date"].date() for record in result]
+
+    def _get_metrics_legacy_runs(
+        self,
+        sessions_table: str,
+        runs_table: Optional[str],
+        start_timestamp: datetime,
+        end_timestamp: datetime,
+    ) -> List[Dict[str, Any]]:
+        """Get the runs not yet migrated out of the sessions' legacy runs field, created in the given time range.
+
+        Args:
+            sessions_table (str): The sessions table.
+            runs_table (Optional[str]): The runs table. A run it also holds is read from there.
+            start_timestamp (datetime): The start of the range, included.
+            end_timestamp (datetime): The end of the range, not included.
+
+        Returns:
+            List[Dict[str, Any]]: The legacy runs, dated and typed as the v3.0.0 migration writes them.
+        """
+        legacy_runs: List[Dict[str, Any]] = []
+        page = 1
+        while True:
+            # Read a page at a time, so only the runs not yet migrated are held, never every legacy runs field
+            sessions = get_all_sessions_with_legacy_runs_for_component_metrics_calculation(
+                self.client, sessions_table, start_timestamp, end_timestamp, page
+            )
+            if not sessions:
+                return legacy_runs
+            page_legacy_runs = get_metrics_legacy_runs(sessions)
+            # The runs table wins on a run in both, as merge_runs_table_with_legacy_blob does
+            stored_run_ids: Set[str] = set()
+            if runs_table is not None and page_legacy_runs:
+                stored_run_ids = set(
+                    self._query(
+                        f"SELECT VALUE run_id FROM {runs_table} WHERE run_id IN $ids",
+                        {"ids": [run["run_id"] for run in page_legacy_runs]},
+                        str,
+                    )
+                )
+            legacy_runs.extend(run for run in page_legacy_runs if run["run_id"] not in stored_run_ids)
+            page += 1
+
+    def _get_metrics_parent_runs(self, runs_table: str, parent_run_ids: List[str]) -> List[Dict[str, Any]]:
+        """Get the stored runs that started the given runs, and the runs that started those, up to the whole run."""
+        parent_runs: List[Dict[str, Any]] = []
+        seen_run_ids: Set[str] = set()
+        while parent_run_ids:
+            seen_run_ids.update(parent_run_ids)
+            parents_query = (
+                "SELECT run_id, run_type, agent_id, team_id, workflow_id, parent_run_id "
+                f"FROM {runs_table} WHERE run_id IN $ids"
+            )
+            parent_runs.extend(self._query(parents_query, {"ids": parent_run_ids}, dict))
+            parent_run_ids = sorted(
+                {run["parent_run_id"] for run in parent_runs if run.get("parent_run_id")} - seen_run_ids
+            )
+        return parent_runs
+
+    def _get_aggregate_metrics_rows_to_write(
+        self, aggregate_metrics_table: str, aggregate_metrics_rows: List[Dict[str, Any]], rows_changed: bool
+    ) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]], List[RecordID]]:
+        """Compare a period's rows of the aggregate metrics table, from build_aggregate_metrics_rows, with the rows
+        stored for it.
+
+        Returns the everyone row to write, or None when the stored one stands, the user rows that are new or changed,
+        and the id of every stored user row the period no longer has.
+        """
+        period, period_date = aggregate_metrics_rows[0]["aggregation_period"], aggregate_metrics_rows[0]["date"]
+        result = self._query(
+            f"SELECT * FROM {aggregate_metrics_table} WHERE aggregation_period = $period AND date = $date",
+            {"period": period, "date": datetime.combine(period_date, datetime.min.time()).replace(tzinfo=timezone.utc)},
+            dict,
+        )
+        everyone_row, changed_rows, stale_user_ids = aggregate_metrics_rows_to_write(
+            aggregate_metrics_rows, [desurrealize_metrics_row(record) for record in result], rows_changed
+        )
+        stale_ids = [
+            metrics_record_id(
+                aggregate_metrics_table,
+                {"aggregation_period": period, "date": period_date, "user_id": user_id},
+                AGGREGATE_METRICS_KEY_COLUMNS,
+            )
+            for user_id in stale_user_ids
+        ]
+        return everyone_row, changed_rows, stale_ids
+
+    def _calculate_date_metrics(
+        self,
+        table: str,
+        aggregate_metrics_table: str,
+        sessions_table: str,
+        runs_table: Optional[str],
+        date_to_process: date,
+        legacy_runs: List[Dict[str, Any]],
+        legacy_runs_by_id: Dict[str, Dict[str, Any]],
+        refreshes_table: str,
+        worker_id: str,
+        should_stop: Optional[Callable[[], bool]] = None,
+    ) -> bool:
+        """Rebuild one day's component and aggregate metrics rows in one transaction. False when nothing was written."""
+        start_timestamp = datetime.combine(date_to_process, datetime.min.time()).replace(tzinfo=timezone.utc)
+        end_timestamp = start_timestamp + timedelta(days=1)
+
+        # Read before the day's runs, so a run written while they are read moves it
+        read_version = self._query_one(
+            "SELECT VALUE version FROM ONLY $record",
+            {
+                "record": metrics_record_id(
+                    aggregate_metrics_table,
+                    {"aggregation_period": "daily", "date": date_to_process, "user_id": ""},
+                    AGGREGATE_METRICS_KEY_COLUMNS,
+                )
+            },
+            int,
+        )
+
+        sessions = get_all_sessions_for_component_metrics_calculation(
+            self.client, sessions_table, start_timestamp, end_timestamp
+        )
+        runs: List[Dict[str, Any]] = []
+        if runs_table is not None:
+            day_runs = get_all_runs_for_component_metrics_calculation(
+                self.client, runs_table, start_timestamp, end_timestamp, should_stop=should_stop
+            )
+            if day_runs is None:
+                return False
+            runs = day_runs
+            # Checked once the runs are read too, so a stop never waits for the rest of a large day
+            if should_stop is not None and should_stop():
+                return False
+        # A legacy run migrated to the runs table since the legacy runs were read is among the day's runs, and is
+        # counted from there
+        day_run_ids = {run["run_id"] for run in runs if run.get("run_id")}
+        runs.extend(run for run in legacy_runs if run["run_id"] not in day_run_ids)
+
+        # A run started by a run of another day, such as a member run after midnight, names that run's agent, team
+        # or workflow as its parent, read from the legacy runs of the rebuild or the runs table
+        day_run_ids = {run["run_id"] for run in runs if run.get("run_id")}
+        parent_run_ids = sorted({run["parent_run_id"] for run in runs if run.get("parent_run_id")} - day_run_ids)
+        parent_runs = [legacy_runs_by_id[run_id] for run_id in parent_run_ids if run_id in legacy_runs_by_id]
+        parent_run_ids = [run_id for run_id in parent_run_ids if run_id not in legacy_runs_by_id]
+        nested_run_ids = metrics_nested_run_ids(runs)
+        # A nested run also stored as a legacy run of its own is counted from that run, whatever day it is on
+        stored_run_ids: Set[str] = {run_id for run_id in nested_run_ids if run_id in legacy_runs_by_id}
+
+        if runs_table is not None:
+            # A nested run also stored as a run of its own is counted from that row, whatever day it is on
+            run_ids = sorted(nested_run_ids)
+            if run_ids:
+                stored_run_ids.update(
+                    self._query(f"SELECT VALUE run_id FROM {runs_table} WHERE run_id IN $ids", {"ids": run_ids}, str)
+                )
+
+            # A remote member's run after midnight is named by its team's run of the day before
+            team_session_ids = sorted(metrics_remote_member_team_session_ids(runs))
+            if team_session_ids:
+                team_runs = get_all_runs_for_component_metrics_calculation(
+                    self.client,
+                    runs_table,
+                    start_timestamp - timedelta(days=1),
+                    start_timestamp,
+                    team_session_ids,
+                    should_stop=should_stop,
+                )
+                if team_runs is None:
+                    return False
+                parent_runs.extend(team_runs)
+                parent_run_ids.extend(run["parent_run_id"] for run in team_runs if run.get("parent_run_id"))
+
+            parent_runs.extend(self._get_metrics_parent_runs(runs_table, parent_run_ids))
+
+        records = calculate_date_component_metrics(date_to_process, sessions, runs, stored_run_ids, parent_runs)
+        result = self._query(
+            f'SELECT * FROM {table} WHERE aggregation_period = "daily" AND date = $date',
+            {"date": start_timestamp},
+            dict,
+        )
+        stored_rows = [desurrealize_metrics_row(record) for record in result]
+
+        changed_rows, stale_keys = component_metrics_rows_to_write(records, stored_rows)
+        stored_ids = {
+            tuple(row[column] for column in COMPONENT_METRICS_KEY_COLUMNS[2:]): row["id"] for row in stored_rows
+        }
+        everyone_row, changed_aggregate_metrics_rows, stale_aggregate_metrics_ids = (
+            self._get_aggregate_metrics_rows_to_write(
+                aggregate_metrics_table,
+                build_aggregate_metrics_rows(records, "daily", date_to_process, metrics_day_completed(date_to_process)),
+                rows_changed=bool(changed_rows or stale_keys),
+            )
+        )
+
+        # Each day is its own transaction, so a day that fails never holds back the rows of the days before it. The
+        # refresh is heartbeated in it, so a process whose lock went stale never overwrites the rows of the process
+        # that took the refresh over
+        return bulk_upsert_metrics_rows(
+            self.client,
+            heartbeat_metrics_refresh(refreshes_table, worker_id),
+            aggregate_metrics_table,
+            table=table,
+            component_metrics_records=changed_rows,
+            stale_ids=[stored_ids[key] for key in stale_keys],
+            aggregate_metrics_rows=changed_aggregate_metrics_rows,
+            stale_aggregate_metrics_ids=stale_aggregate_metrics_ids,
+            everyone_row=everyone_row,
+            read_version=read_version,
+            # Reopened with the day, so a calculation that stops before its months leaves the month for the next
+            reopen_month_start=date_to_process.replace(day=1) if changed_rows or stale_keys else None,
+        )
+
+    def _calculate_month_metrics(
+        self, table: str, aggregate_metrics_table: str, month_start: date, refreshes_table: str, worker_id: str
+    ) -> bool:
+        """Rebuild the month rows of the aggregate metrics table from the component metrics rows of the month's days,
+        written in one transaction. False when another process took the refresh over, and nothing was written."""
+        read_version = self._query_one(
+            "SELECT VALUE version FROM ONLY $record",
+            {
+                "record": metrics_record_id(
+                    aggregate_metrics_table,
+                    {"aggregation_period": "monthly", "date": month_start, "user_id": ""},
+                    AGGREGATE_METRICS_KEY_COLUMNS,
+                )
+            },
+            int,
+        )
+        # A day and a page at a time, so a month of many rows is added up a batch at a time instead of held whole
+        per_owner: Dict[Tuple[str, str, str, str, str], Dict[str, Any]] = {}
+        for day_offset in range(metrics_month_end(month_start).day):
+            day_start = datetime.combine(month_start + timedelta(days=day_offset), datetime.min.time()).replace(
+                tzinfo=timezone.utc
+            )
+            page = 1
+            while True:
+                result = self._query(
+                    dedent(f"""
+                        SELECT * FROM {table}
+                        WHERE aggregation_period = "daily" AND date = $date
+                        {order_limit_start("id", "ASC", METRICS_BATCH_SIZE, page)}
+                    """),
+                    {"date": day_start},
+                    dict,
+                )
+                if not result:
+                    break
+                add_metrics_month_totals(per_owner, [desurrealize_metrics_row(record) for record in result])
+                page += 1
+
+        # Added up per owner and component over the month, so a user of several days is one user of the month
+        everyone_row, changed_aggregate_metrics_rows, stale_aggregate_metrics_ids = (
+            self._get_aggregate_metrics_rows_to_write(
+                aggregate_metrics_table, build_aggregate_metrics_month_rows(month_start, per_owner), rows_changed=False
+            )
+        )
+
+        # The refresh is heartbeated in the transaction of the rows, so a process whose lock went stale never
+        # overwrites the rows of the process that took the refresh over
+        return bulk_upsert_metrics_rows(
+            self.client,
+            heartbeat_metrics_refresh(refreshes_table, worker_id),
+            aggregate_metrics_table,
+            aggregate_metrics_rows=changed_aggregate_metrics_rows,
+            stale_aggregate_metrics_ids=stale_aggregate_metrics_ids,
+            everyone_row=everyone_row,
+            read_version=read_version,
+        )
+
+    def calculate_metrics(self, rebuild_from: Optional[date] = None) -> Optional[list[dict]]:
+        """Calculate metrics for every day that changed since the last calculation.
+
+        One process calculates at a time, whichever process or replica it runs in: the others return at once,
+        having read nothing.
+
+        Args:
+            rebuild_from (Optional[date]): Also rebuild every day from this date to today, as after a release that
+                changed how metrics are counted.
+
+        Returns:
+            Optional[list[dict]]: The metrics of the days calculated, or of today when nothing changed, as
+                get_metrics returns them. None when another process is calculating them.
+
+        Raises:
+            Exception: If an error occurs during metrics calculation.
+        """
+        try:
+            calculated_dates = self.calculate_metrics_dates(rebuild_from=rebuild_from)
+            if calculated_dates is None:
+                return None
+            if not calculated_dates:
+                # A refresh that changed no day answers with today's metrics
+                calculated_dates = [datetime.now(timezone.utc).date()]
+            metrics, _ = self._get_metrics_rows(calculated_dates[0], calculated_dates[-1], None)
+            return [metric for metric in metrics if metric["date"] in calculated_dates]
+
+        except Exception as e:
+            log_error(f"Exception refreshing metrics: {str(e)}")
+            raise e
+
+    def calculate_metrics_dates(
+        self, should_stop: Optional[Callable[[], bool]] = None, rebuild_from: Optional[date] = None
+    ) -> Optional[List[date]]:
+        """Calculate metrics for every day that changed since the last calculation, as calculate_metrics does,
+        without reading back the metrics of those days.
+
+        Args:
+            should_stop (Optional[Callable[[], bool]]): Checked before each day and month, and between pages of a day's
+                runs. Once it returns True, the calculation releases the refresh and stops; the next one continues
+                from the first day still open.
+            rebuild_from (Optional[date]): Also rebuild every day from this date to today.
+
+        Returns:
+            Optional[List[date]]: The days calculated, oldest first. None when another process is calculating them.
+
+        Raises:
+            Exception: If an error occurs during metrics calculation.
+        """
+        table = self._get_metrics_table("component_metrics", self.component_metrics_table_name)
+        aggregate_metrics_table = self._get_metrics_table("aggregate_metrics", self.aggregate_metrics_table_name)
+        refreshes_table = self._get_metrics_table("metrics_refreshes", self.metrics_refreshes_table_name)
+        sessions_table = self._get_table_if_exists("sessions")
+        if sessions_table is None:
+            log_debug("No session data found. Won't calculate metrics.")
+            return []
+        runs_table = self._get_table_if_exists("runs")
+
+        if rebuild_from is not None:
+            # Reopened as a write reopens a day, before the claim, so a calculation another process is running
+            # leaves them to the next one
+            try:
+                # A statement of its own, without the refresh row: a day's calculation heartbeats that row
+                reopen_metrics_days_from(self.client, aggregate_metrics_table, rebuild_from)
+                # Yesterday and today are picked by the fingerprint, so it is marked for the next one too
+                if not self._mark_metrics_refresh_rebuild(refreshes_table):
+                    return None
+            except Exception as e:
+                # Failed before the claim, so the refresh status shows it
+                self._release_metrics_refresh(
+                    refreshes_table,
+                    None,
+                    error=database_error_message(database_error(e)),
+                )
+                raise
+
+        worker_id = str(uuid4())
+        # Claimed before anything is read, so a process that finds another calculating reads nothing
+        refresh_row = self._claim_metrics_refresh(refreshes_table, worker_id)
+        if refresh_row is None:
+            return None
+
+        try:
+            dates_to_process, fingerprint = self._get_metrics_dates_to_calculate(
+                aggregate_metrics_table, sessions_table, runs_table, refresh_row, rebuild_from
+            )
+
+            legacy_runs_by_day: Dict[date, List[Dict[str, Any]]] = {}
+            legacy_runs_by_id: Dict[str, Dict[str, Any]] = {}
+            if rebuild_from is not None:
+                # Every session is read again, for the legacy runs a process of an earlier release saved since
+                self._metrics_legacy_runs = None
+            # Read once for every day until the v3.0.0 migration is stamped: no index finds one day's legacy runs. A
+            # store created by 3.0 or 3.1 stamps no version, so they are read only while a read of every session found
+            # some
+            # Nothing is stamped while the versions table was never written, whose read SurrealDB 3 refuses
+            if (
+                dates_to_process
+                and self._metrics_legacy_runs is not False
+                and (
+                    not self.table_exists(self.versions_table_name)
+                    or packaging_version.parse(self.get_latest_schema_version(self.session_table_name) or "2.0.0")
+                    < packaging_version.parse("3.0.0")
+                )
+            ):
+                start_timestamp = datetime.combine(dates_to_process[0], datetime.min.time()).replace(
+                    tzinfo=timezone.utc
+                )
+                end_timestamp = datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time()).replace(
+                    tzinfo=timezone.utc
+                )
+                if self._metrics_legacy_runs is None:
+                    # The first read reads every session, so one that finds no legacy runs finds none anywhere
+                    start_timestamp = datetime.fromtimestamp(0, tz=timezone.utc)
+                    end_timestamp = max(end_timestamp, datetime.now(timezone.utc) + timedelta(seconds=1))
+                for legacy_run_day, day_legacy_runs in get_metrics_records_by_day(
+                    self._get_metrics_legacy_runs(sessions_table, runs_table, start_timestamp, end_timestamp),
+                    int(start_timestamp.timestamp()),
+                    int(end_timestamp.timestamp()),
+                ).items():
+                    legacy_runs_by_day[legacy_run_day] = day_legacy_runs
+                    legacy_runs_by_id.update({run["run_id"]: run for run in day_legacy_runs})
+                if not self._heartbeat_metrics_refresh(refreshes_table, worker_id):
+                    return None
+                if self._metrics_legacy_runs is None:
+                    self._metrics_legacy_runs = bool(legacy_runs_by_id)
+                # A legacy run is dated on its own day, which may hold no session or run of the tables
+                today = datetime.now(timezone.utc).date()
+                dates_to_process = sorted(
+                    set(dates_to_process)
+                    | {
+                        day
+                        for day in legacy_runs_by_day
+                        if day <= today
+                        and (refresh_row["finished_at"] is None or (rebuild_from is not None and day >= rebuild_from))
+                    }
+                )
+
+            calculated_dates: List[date] = []
+            for date_to_process in dates_to_process:
+                if should_stop is not None and should_stop():
+                    self._release_metrics_refresh(refreshes_table, worker_id, stopped=True)
+                    return None
+                for _ in range(2):
+                    try:
+                        calculated = self._calculate_date_metrics(
+                            table,
+                            aggregate_metrics_table,
+                            sessions_table,
+                            runs_table,
+                            date_to_process,
+                            legacy_runs_by_day.get(date_to_process, []),
+                            legacy_runs_by_id,
+                            refreshes_table,
+                            worker_id,
+                            should_stop,
+                        )
+                        break
+                    except Exception as e:
+                        # A write reopened the day at the same moment: SurrealDB fails the later write with a
+                        # transaction conflict, and the day is calculated again
+                        if not is_transaction_conflict(e):
+                            raise
+                else:
+                    # The write that conflicted both times reopened the day, so the next calculation picks it up
+                    continue
+                if not calculated:
+                    if should_stop is not None and should_stop():
+                        self._release_metrics_refresh(refreshes_table, worker_id, stopped=True)
+                    return None
+                calculated_dates.append(date_to_process)
+
+            # A month row is read only once completed, so a month is built only once its last day can be completed
+            month_starts = sorted(
+                month_start
+                for month_start in set(get_months_to_calculate_metrics_for(calculated_dates))
+                | set(self._get_open_metrics_months(aggregate_metrics_table))
+                if metrics_day_completed(metrics_month_end(month_start))
+            )
+            for month_start in month_starts:
+                if should_stop is not None and should_stop():
+                    self._release_metrics_refresh(refreshes_table, worker_id, stopped=True)
+                    return None
+                if not self._calculate_month_metrics(
+                    table, aggregate_metrics_table, month_start, refreshes_table, worker_id
+                ):
+                    return None
+
+        except Exception as e:
+            self._release_metrics_refresh(refreshes_table, worker_id, error=database_error_message(database_error(e)))
+            raise
+
+        self._release_metrics_refresh(
+            refreshes_table, worker_id, fingerprint=fingerprint, claimed_fingerprint=refresh_row["fingerprint"]
+        )
+
+        if not calculated_dates:
+            log_debug("Metrics already calculated for all relevant dates.")
+            return []
+
+        log_debug("Updated metrics calculations")
+        return calculated_dates
+
+    def stop_metrics_refresh_on_read(self) -> None:
+        """Stop calculating metrics before a read, for a database whose metrics are calculated in the background."""
+        self._metrics_refreshed_at = float("inf")
+
+    def _get_metrics_by_owner(
+        self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
+    ) -> Tuple[List[dict], Optional[int]]:
+        """Get the metrics of each user and day from the component metrics, in the shape of the metrics table."""
+        table = self._get_table_if_exists("component_metrics")
+        if table is None:
+            return [], None
+
+        where = WhereClause().and_("aggregation_period", "daily")
+        if starting_date:
+            where = where.and_(
+                "date", datetime.combine(starting_date, datetime.min.time()).replace(tzinfo=timezone.utc), ">="
+            )
+        if ending_date:
+            where = where.and_(
+                "date", datetime.combine(ending_date, datetime.min.time()).replace(tzinfo=timezone.utc), "<="
+            )
+        if user_id is not None:
+            where = where.and_("user_id", user_id)
+        where_clause, where_vars = where.build()
+
+        # Only what build_metrics_by_owner_from_rows reads, so the maps of timings are never decoded
+        fields = [
+            "date",
+            "user_id",
+            "component_type",
+            "sessions_count",
+            "runs_count",
+            *[field for field in METRICS_TOKEN_FIELDS if field in METRICS_SUM_COLUMNS],
+            "token_details",
+            "model_metrics",
+            "created_at",
+            "updated_at",
+        ]
+
+        result = self._query(f"SELECT {', '.join(fields)} FROM {table} {where_clause}", where_vars, dict)
+        rows = [desurrealize_metrics_row(record) for record in result]
+        if not rows:
+            return [], None
+
+        # Get the latest updated_at, scoped to the same user filter
+        user_filter = "WHERE user_id = $user_id" if user_id is not None else ""
+        latest_record = self._query_one(
+            f"SELECT updated_at FROM {table} {user_filter} ORDER BY updated_at DESC LIMIT 1",
+            {"user_id": user_id},
+            dict,
+        )
+        latest_updated_at = desurrealize_metrics_row(latest_record)["updated_at"] if latest_record else None
+
+        return build_metrics_by_owner_from_rows(rows), latest_updated_at
+
+    def _get_aggregate_metrics_rows(
+        self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
+    ) -> Tuple[List[dict], Optional[int]]:
+        """Get the day rows of the aggregate metrics table in the shape of the metrics table: the everyone rows for
+        ``""``, one user's rows for a name, and every user's rows for ``None``."""
+        aggregate_metrics_table = self._get_table_if_exists("aggregate_metrics")
+        if aggregate_metrics_table is None:
+            return [], None
+
+        where = WhereClause().and_("aggregation_period", "daily")
+        if starting_date:
+            where = where.and_(
+                "date", datetime.combine(starting_date, datetime.min.time()).replace(tzinfo=timezone.utc), ">="
+            )
+        if ending_date:
+            where = where.and_(
+                "date", datetime.combine(ending_date, datetime.min.time()).replace(tzinfo=timezone.utc), "<="
+            )
+        where = where.and_("user_id", "", "!=") if user_id is None else where.and_("user_id", user_id)
+        where_clause, where_vars = where.build()
+        # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row. A day whose
+        # only run is a regenerated one has its tokens but no count
+        counted = " OR ".join(
+            [
+                *[f"{column} > 0" for column in AGGREGATE_METRICS_COUNT_COLUMNS if column != "users_count"],
+                "total_tokens > 0",
+            ]
+        )
+
+        # Only what build_metrics_from_aggregate_metrics reads, so the maps of timings are never decoded
+        fields = [
+            "date",
+            "user_id",
+            *AGGREGATE_METRICS_COUNT_COLUMNS,
+            *[field for field in METRICS_TOKEN_FIELDS if field in METRICS_SUM_COLUMNS],
+            "token_details",
+            "model_metrics",
+            "created_at",
+            "updated_at",
+        ]
+
+        result = self._query(
+            f"SELECT {', '.join(fields)} FROM {aggregate_metrics_table} {where_clause} AND ({counted}) "
+            "ORDER BY date ASC, user_id ASC",
+            where_vars,
+            dict,
+        )
+        rows = [desurrealize_metrics_row(record) for record in result]
+        if not rows:
+            return [], None
+
+        # Get the latest updated_at, scoped to the same user filter
+        user_filter = 'user_id != ""' if user_id is None else "user_id = $user_id"
+        latest_record = self._query_one(
+            f'SELECT updated_at FROM {aggregate_metrics_table} WHERE aggregation_period = "daily" '
+            f"AND {user_filter} ORDER BY updated_at DESC LIMIT 1",
+            {"user_id": user_id},
+            dict,
+        )
+        latest_updated_at = desurrealize_metrics_row(latest_record)["updated_at"] if latest_record else None
+        return build_metrics_from_aggregate_metrics(rows), latest_updated_at
+
+    def _get_metrics_rows(
+        self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
+    ) -> Tuple[List[dict], Optional[int]]:
+        """Get the metrics of each user and day, as get_metrics returns them once the first calculate_metrics has
+        finished: a user's from that user's rows, the runs with no user from their component metrics rows."""
+        if user_id == "":
+            return self._get_metrics_by_owner(starting_date, ending_date, user_id)
+        metrics, latest_updated_at = self._get_aggregate_metrics_rows(starting_date, ending_date, user_id)
+        if user_id is not None:
+            return metrics, latest_updated_at
+
+        unowned_metrics, unowned_updated_at = self._get_metrics_by_owner(starting_date, ending_date, "")
+        latest_updated_at = max(
+            (updated_at for updated_at in [latest_updated_at, unowned_updated_at] if updated_at is not None),
+            default=None,
+        )
+        return sorted(metrics + unowned_metrics, key=lambda x: (x["date"], x["user_id"] or "")), latest_updated_at
+
+    def _metrics_calculated(self, refreshes_table: Optional[str]) -> bool:
+        """Whether the first calculate_metrics has finished, so reads take the metrics tables over agno_metrics."""
+        refresh_row = self._get_metrics_refresh_row(refreshes_table)[0] if refreshes_table is not None else None
+        return refresh_row is not None and refresh_row["finished_at"] is not None
+
+    def _refresh_metrics_before_read(self) -> None:
+        """Calculate metrics before a read, at most once per minute per process, once a first calculate_metrics has
+        finished and unless metrics calculation is turned off. Another process calculating them holds the metrics
+        refresh, so the read goes on at once."""
+        if time.time() - self._metrics_refreshed_at < 60:
+            return
+        # Stamp first so failed runs are throttled too instead of retried on every read
+        self._metrics_refreshed_at = time.time()
+        try:
+            # A first build reads every run, so a read never waits for one: until it has finished, reads serve the
+            # deprecated metrics table
+            if not metrics_calculation_enabled() or not self._metrics_calculated(
+                self._get_table_if_exists("metrics_refreshes")
+            ):
+                return
+            self.calculate_metrics_dates()
+        except Exception as e:
+            log_warning(f"Could not refresh metrics before reading them: {str(e)}")
+
     def get_metrics(
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
         """Get all metrics matching the given date range.
+
+        Metrics are read from the aggregate metrics and component metrics once the first calculate_metrics has finished,
+        and from the deprecated metrics table until then. They are refreshed first, at most once per minute per
+        process, unless stop_metrics_refresh_on_read was called.
+
+        Args:
+            starting_date (Optional[date]): The starting date to filter metrics by.
+            ending_date (Optional[date]): The ending date to filter metrics by.
+            user_id (Optional[str]): If set, only return this user's bucket. Defaults to None (all
+                buckets, including the unowned one).
+
+        Returns:
+            Tuple[List[dict], Optional[int]]: A tuple containing the metrics and the timestamp of the latest update.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            self._refresh_metrics_before_read()
+            if self._metrics_calculated(self._get_table_if_exists("metrics_refreshes")):
+                return self._get_metrics_rows(starting_date, ending_date, user_id)
+
+            # Read without creating it: no calculation writes it any more
+            table = self._get_table_if_exists("metrics")
+            if table is None:
+                return [], None
+
+            where = WhereClause()
+
+            # starting_date - need to convert date to datetime for comparison
+            if starting_date is not None:
+                starting_datetime = datetime.combine(starting_date, datetime.min.time()).replace(tzinfo=timezone.utc)
+                where = where.and_("date", starting_datetime, ">=")
+
+            # ending_date - need to convert date to datetime for comparison
+            if ending_date is not None:
+                ending_datetime = datetime.combine(ending_date, datetime.min.time()).replace(tzinfo=timezone.utc)
+                where = where.and_("date", ending_datetime, "<=")
+
+            if user_id is not None:
+                where = where.and_("user_id", user_id)
+
+            where_clause, where_vars = where.build()
+
+            # Query
+            query = dedent(f"""
+                SELECT *
+                FROM {table}
+                {where_clause}
+                ORDER BY date ASC
+            """)
+
+            results = self._query(query, where_vars, dict)
+            # Records written before ownership existed hold a whole day, and only an
+            # unscoped read sees them: an owner filter excludes them already
+            if user_id is None:
+                results = drop_legacy_metrics(results)
+
+            # Get the latest updated_at from all results
+            latest_update = None
+            if results:
+                # Find the maximum updated_at timestamp
+                latest_update = max(int(r["updated_at"].timestamp()) for r in results)
+
+                if not self._deprecated_metrics_logged:
+                    self._deprecated_metrics_logged = True
+                    log_warning(
+                        f"{self.metrics_table_name} is no longer updated and is served until a first build; "
+                        "call calculate_metrics() once to build the new metrics tables."
+                    )
+                return [desurrealize_metric(r) for r in results], latest_update
+
+            return [], latest_update
+
+        except Exception as e:
+            log_error(f"Exception getting metrics: {str(e)}")
+            raise e
+
+    def get_metrics_by_date(
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+    ) -> Tuple[List[dict], Optional[int]]:
+        """Get the metrics of every user, one row per day, matching the given date range.
+
+        Read from the everyone rows of the aggregate metrics once the first calculate_metrics has finished, and from the
+        deprecated metrics table until then. They are refreshed first, as get_metrics does.
 
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
@@ -1079,126 +2433,228 @@ class SurrealDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
-        table = self._get_table("metrics")
-
-        where = WhereClause()
-
-        # starting_date - need to convert date to datetime for comparison
-        if starting_date is not None:
-            starting_datetime = datetime.combine(starting_date, datetime.min.time()).replace(tzinfo=timezone.utc)
-            where = where.and_("date", starting_datetime, ">=")
-
-        # ending_date - need to convert date to datetime for comparison
-        if ending_date is not None:
-            ending_datetime = datetime.combine(ending_date, datetime.min.time()).replace(tzinfo=timezone.utc)
-            where = where.and_("date", ending_datetime, "<=")
-
-        where_clause, where_vars = where.build()
-
-        # Query
-        query = dedent(f"""
-            SELECT *
-            FROM {table}
-            {where_clause}
-            ORDER BY date ASC
-        """)
-
-        results = self._query(query, where_vars, dict)
-
-        # Get the latest updated_at from all results
-        latest_update = None
-        if results:
-            # Find the maximum updated_at timestamp
-            latest_update = max(int(r["updated_at"].timestamp()) for r in results)
-
-            # Transform results to match expected format
-            transformed_results = []
-            for r in results:
-                transformed = dict(r)
-
-                # Convert RecordID to string
-                if hasattr(transformed.get("id"), "id"):
-                    transformed["id"] = transformed["id"].id
-                elif isinstance(transformed.get("id"), RecordID):
-                    transformed["id"] = str(transformed["id"].id)
-
-                # Convert datetime objects to Unix timestamps
-                if isinstance(transformed.get("created_at"), datetime):
-                    transformed["created_at"] = int(transformed["created_at"].timestamp())
-                if isinstance(transformed.get("updated_at"), datetime):
-                    transformed["updated_at"] = int(transformed["updated_at"].timestamp())
-                if isinstance(transformed.get("date"), datetime):
-                    transformed["date"] = int(transformed["date"].timestamp())
-
-                transformed_results.append(transformed)
-
-            return transformed_results, latest_update
-
-        return [], latest_update
-
-    def calculate_metrics(self) -> Optional[List[Dict[str, Any]]]:  # More specific return type
-        """Calculate metrics for all dates without complete metrics.
-
-        Returns:
-            Optional[List[Dict[str, Any]]]: The calculated metrics.
-
-        Raises:
-            Exception: If an error occurs during metrics calculation.
-        """
         try:
-            table = self._get_table("metrics")  # Removed create_table_if_not_found parameter
-
-            starting_date = get_metrics_calculation_starting_date(self.client, table, self.get_sessions)
-
-            if starting_date is None:
-                log_info("No session data found. Won't calculate metrics.")
-                return None
-
-            dates_to_process = get_dates_to_calculate_metrics_for(starting_date)
-            if not dates_to_process:
-                log_info("Metrics already calculated for all relevant dates.")
-                return None
-
-            start_timestamp = datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc)
-            end_timestamp = datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time()).replace(
-                tzinfo=timezone.utc
-            )
-
-            sessions = get_all_sessions_for_metrics_calculation(
-                self.client, self._get_table("sessions"), start_timestamp, end_timestamp
-            )
-
-            all_sessions_data = fetch_all_sessions_data(
-                sessions=sessions,  # Added parameter name for clarity
-                dates_to_process=dates_to_process,
-                start_timestamp=int(start_timestamp.timestamp()),  # This expects int
-            )
-            if not all_sessions_data:
-                log_info("No new session data found. Won't calculate metrics.")
-                return None
-
-            metrics_records = []
-
-            for date_to_process in dates_to_process:
-                date_key = date_to_process.isoformat()
-                sessions_for_date = all_sessions_data.get(date_key, {})
-
-                # Skip dates with no sessions
-                if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
-                    continue
-
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
-                metrics_records.append(metrics_record)
-
-            results = []  # Initialize before the if block
-            if metrics_records:
-                results = bulk_upsert_metrics(self.client, table, metrics_records)
-
-            log_debug("Updated metrics calculations")
-            return results
+            self._refresh_metrics_before_read()
+            if self._metrics_calculated(self._get_table_if_exists("metrics_refreshes")):
+                return self._get_aggregate_metrics_rows(starting_date, ending_date, "")
+            return super().get_metrics_by_date(starting_date, ending_date)
 
         except Exception as e:
-            log_error(f"Exception refreshing metrics: {str(e)}")
+            log_error(f"Exception getting metrics: {str(e)}")
+            raise e
+
+    def get_metrics_refresh_status(self) -> Optional[Dict[str, Any]]:
+        """Get the status of the most recent calculate_metrics, from the metrics refreshes table.
+
+        Returns:
+            Optional[Dict[str, Any]]: The status ('running', 'completed' or 'failed'), when it started and finished,
+                and its error. None before the first calculation.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            refreshes_table = self._get_table_if_exists("metrics_refreshes")
+            if refreshes_table is None:
+                return None
+            return metrics_refresh_status(*self._get_metrics_refresh_row(refreshes_table))
+
+        except Exception as e:
+            log_error(f"Exception getting metrics refresh status: {str(e)}")
+            raise e
+
+    def _get_component_metrics_totals_by_date(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str],
+        fields: List[str],
+        use_month_rows: bool = False,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """Total the component metrics of the given date range, every day from one period.
+
+        Args:
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with
+                no user.
+            fields (List[str]): The columns to total.
+            use_month_rows (bool): Total a calendar month inside the date range from its month aggregate metrics row, as
+                one date.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each date, and when they were last updated.
+        """
+        aggregate_metrics_table = self._get_table_if_exists("aggregate_metrics")
+        # Every owner is read from the everyone rows and a user from the user's rows; the runs with no user have no
+        # aggregate metrics row of their own, so they are read from their component rows
+        table_type: TableType = "component_metrics" if user_id == "" else "aggregate_metrics"
+        table = self._get_table_if_exists(table_type)
+        if aggregate_metrics_table is None or table is None:
+            return [], None
+        selected_fields = build_metrics_rows_fields(fields, table_type)
+
+        # The component metrics table keeps day rows only, so the runs with no user are read day by day
+        full_months = metrics_full_months(starting_date, ending_date) if use_month_rows and user_id != "" else []
+        # The full months follow each other, so a range finds them however long the window is
+        month_starts_query = (
+            f"""SELECT VALUE date FROM {aggregate_metrics_table}
+                    WHERE aggregation_period = "monthly" AND user_id = "" AND completed = true
+                        AND date >= $first_month AND date <= $last_month"""
+            if full_months
+            else "[]"
+        )
+        # One block is one transaction, so a rebuild writing between its queries is never half seen. Only a completed
+        # month's row stands for its days; an open one, reopened by a day rebuilt since or not yet built, is
+        # read from its days
+        result = self._query_one(
+            dedent(f"""
+                {{
+                    LET $month_starts = ({month_starts_query});
+                    LET $days = (
+                        SELECT {selected_fields} FROM {table}
+                        WHERE user_id = $user_id AND aggregation_period = "daily" AND date >= $start AND date <= $end
+                            AND time::group(date, "month") NOT IN $month_starts
+                    );
+                    LET $months = (
+                        SELECT {selected_fields} FROM {table}
+                        WHERE user_id = $user_id AND aggregation_period = "monthly" AND date IN $month_starts
+                    );
+                    RETURN {{ month_starts: $month_starts, records: array::concat($days, $months) }};
+                }}
+            """),
+            {
+                "first_month": datetime.combine(full_months[0], datetime.min.time()).replace(tzinfo=timezone.utc)
+                if full_months
+                else None,
+                "last_month": datetime.combine(full_months[-1], datetime.min.time()).replace(tzinfo=timezone.utc)
+                if full_months
+                else None,
+                "start": datetime.combine(starting_date, datetime.min.time()).replace(tzinfo=timezone.utc),
+                "end": datetime.combine(ending_date, datetime.min.time()).replace(tzinfo=timezone.utc),
+                "user_id": user_id or "",
+            },
+            dict,
+        )
+        if result is None:
+            return [], None
+        return total_metrics_rows(
+            [desurrealize_metrics_row(record) for record in result["records"]],
+            starting_date,
+            ending_date,
+            fields,
+            month_starts=[month_start.date() for month_start in result["month_starts"]],
+        )
+
+    def get_component_metrics(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """Get the component metrics totals of each day in the given date range.
+
+        For every owner, each day is read from its everyone row; for one owner, from its rows. A read never calculates
+        them: calculate_metrics does.
+
+        Args:
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with
+                no user.
+            fields (Optional[List[str]]): The columns to total. ``None`` totals all.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each day, and when they were last updated.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            fields = resolve_metrics_fields(fields)
+            metrics, latest_updated_at = self._get_component_metrics_totals_by_date(
+                starting_date, ending_date, user_id, fields
+            )
+            return [list_metrics_totals_models(day_totals) for day_totals in metrics], latest_updated_at
+
+        except Exception as e:
+            log_error(f"Exception getting component metrics: {str(e)}")
+            raise e
+
+    def get_metrics_totals(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[Dict[str, Any], Optional[int]]:
+        """Get the component metrics totals of the whole given date range.
+
+        A calendar month inside the date range that has month rows is read from them, and every other day as
+        get_component_metrics reads it.
+
+        Args:
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with
+                no user.
+            fields (Optional[List[str]]): The columns to total. ``None`` totals all.
+
+        Returns:
+            Tuple[Dict[str, Any], Optional[int]]: The totals of the date range, and when they were last updated.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            fields = resolve_metrics_fields(fields)
+            totals, latest_updated_at = self._get_component_metrics_totals_by_date(
+                starting_date, ending_date, user_id, fields, use_month_rows=True
+            )
+            return list_metrics_totals_models(merge_metrics_totals(totals, fields)), latest_updated_at
+
+        except Exception as e:
+            log_error(f"Exception getting metrics totals: {str(e)}")
+            raise e
+
+    def get_metrics_versions(self, starting_date: date, ending_date: date) -> Optional[Dict[str, int]]:
+        """Get the version of every everyone row of a day or a month of the aggregate metrics in the given date range.
+
+        Metrics are refreshed first, as get_metrics refreshes them.
+
+        Args:
+            starting_date (date): The first day of the date range.
+            ending_date (date): The last day of the date range.
+
+        Returns:
+            Optional[Dict[str, int]]: The version of each everyone row, keyed by its aggregation period and date. The
+                same again only while no calculation wrote a row of the date range. ``None`` until the first
+                calculate_metrics has finished, or without an aggregate metrics table: a read would find no rows to
+                total.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            self._refresh_metrics_before_read()
+            table = self._get_table_if_exists("aggregate_metrics")
+            if table is None or not self._metrics_calculated(self._get_table_if_exists("metrics_refreshes")):
+                return None
+
+            result = self._query(
+                f'SELECT aggregation_period, date, version FROM {table} WHERE user_id = "" AND date >= $start '
+                "AND date <= $end",
+                {
+                    "start": datetime.combine(starting_date, datetime.min.time()).replace(tzinfo=timezone.utc),
+                    "end": datetime.combine(ending_date, datetime.min.time()).replace(tzinfo=timezone.utc),
+                },
+                dict,
+            )
+            return metrics_versions([SimpleNamespace(**desurrealize_metrics_row(record)) for record in result])
+
+        except Exception as e:
+            log_error(f"Exception getting metrics versions: {str(e)}")
             raise e
 
     # --- Knowledge ---
@@ -1211,27 +2667,47 @@ class SurrealDb(BaseDb):
         table = self._get_table("knowledge")
         _ = self.client.delete(table)
 
-    def delete_knowledge_content(self, id: str):
+    # Unowned knowledge rows have no user_id field at all, so owner scoping tests ``user_id IS NONE``.
+
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): If set, only delete the row if owned by this user. Unowned rows
+                are shared content.
         """
         table = self._get_table("knowledge")
-        self.client.delete(RecordID(table, id))
+        if user_id is None:
+            self.client.delete(RecordID(table, id))
+            return
+        res = self.client.query(
+            f"DELETE FROM {table} WHERE id = $record AND user_id = $user_id RETURN BEFORE",
+            {"record": RecordID(table, id), "user_id": user_id},
+        )
+        if not (isinstance(res, list) and len(res) > 0):
+            log_debug(f"Skipping delete of knowledge content {id}: not owned by {user_id}")
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): If set, only return the row if owned by this user or unowned.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
         """
         table = self._get_table("knowledge")
         record_id = RecordID(table, id)
-        raw = self._query_one("SELECT * FROM ONLY $record_id", {"record_id": record_id}, dict)
+        if user_id is None:
+            raw = self._query_one("SELECT * FROM ONLY $record_id", {"record_id": record_id}, dict)
+            return deserialize_knowledge_row(raw) if raw else None
+        raw = self._query_one(
+            "SELECT * FROM ONLY $record_id WHERE user_id = $user_id OR user_id IS NONE",
+            {"record_id": record_id, "user_id": user_id},
+            dict,
+        )
         return deserialize_knowledge_row(raw) if raw else None
 
     def get_knowledge_contents(
@@ -1241,6 +2717,7 @@ class SurrealDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1250,6 +2727,7 @@ class SurrealDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): If set, only return rows owned by this user or unowned.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1265,6 +2743,15 @@ class SurrealDb(BaseDb):
             where.and_("linked_to", linked_to)
 
         where_clause, where_vars = where.build()
+
+        # WhereClause only chains AND, so the owner scope is appended raw
+        if user_id is not None:
+            scope_predicate = "(user_id = $user_id OR user_id IS NONE)"
+            if where_clause:
+                where_clause = f"{where_clause} AND {scope_predicate}"
+            else:
+                where_clause = f"WHERE {scope_predicate}"
+            where_vars["user_id"] = user_id
 
         # Total count
         total_count = self._count(table, where_clause, where_vars)
@@ -1291,6 +2778,13 @@ class SurrealDb(BaseDb):
         """
         knowledge_table_name = self._get_table("knowledge")
         record = RecordID(knowledge_table_name, knowledge_row.id)
+
+        # A scoped write must not overwrite a record it does not own
+        if knowledge_row.user_id is not None:
+            stored = self._query_one("SELECT * FROM ONLY $record", {"record": record}, dict)
+            if stored is not None and stored.get("user_id") != knowledge_row.user_id:
+                raise ValueError(f"Knowledge content {knowledge_row.id} not found")
+
         query = "UPSERT ONLY $record CONTENT $content"
         result = self._query_one(
             query, {"record": record, "content": serialize_knowledge_row(knowledge_row, knowledge_table_name)}, dict
@@ -1327,24 +2821,31 @@ class SurrealDb(BaseDb):
         )
         return deserialize_eval_run_record(result) if result else None
 
-    def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+    def delete_eval_runs(self, eval_run_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete multiple eval runs from the database.
 
         Args:
             eval_run_ids (List[str]): List of eval run IDs to delete.
+            user_id (Optional[str]): If set, only delete runs owned by this user.
         """
         table = self._get_table("evals")
         records = [RecordID(table, id) for id in eval_run_ids]
-        _ = self.client.query(f"DELETE FROM {table} WHERE id IN $records", {"records": records})  # type: ignore[dict-item]
+        query = f"DELETE FROM {table} WHERE id IN $records"
+        bindings: Dict[str, Any] = {"records": records}
+        if user_id is not None:
+            query += " AND user_id = $user_id"
+            bindings["user_id"] = user_id
+        _ = self.client.query(query, bindings)  # type: ignore[dict-item]
 
     def get_eval_run(
-        self, eval_run_id: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Get an eval run from the database.
 
         Args:
             eval_run_id (str): The ID of the eval run to get.
-            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval run. Defaults to True.
+            user_id (Optional[str]): If set, only return the run if owned by this user.
 
         Returns:
             Optional[Union[EvalRunRecord, Dict[str, Any]]]:
@@ -1357,6 +2858,8 @@ class SurrealDb(BaseDb):
         table = self._get_table("evals")
         record = RecordID(table, eval_run_id)
         result = self._query_one("SELECT * FROM ONLY $record", {"record": record}, dict)
+        if result is not None and user_id is not None and result.get("user_id") != user_id:
+            return None
         if not result or not deserialize:
             return desurrealize_eval_run_record(result) if result is not None else None
         return deserialize_eval_run_record(result)
@@ -1374,6 +2877,7 @@ class SurrealDb(BaseDb):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.
 
@@ -1386,9 +2890,10 @@ class SurrealDb(BaseDb):
             team_id (Optional[str]): The ID of the team to filter by.
             workflow_id (Optional[str]): The ID of the workflow to filter by.
             model_id (Optional[str]): The ID of the model to filter by.
+            user_id (Optional[str]): If set, only return runs owned by this user.
             eval_type (Optional[List[EvalType]]): The type of eval to filter by.
             filter_type (Optional[EvalFilterType]): The type of filter to apply.
-            deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
 
         Returns:
             Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
@@ -1401,17 +2906,25 @@ class SurrealDb(BaseDb):
         table = self._get_table("evals")
 
         where = WhereClause()
-        if filter_type is not None:
-            if filter_type == EvalFilterType.AGENT:
-                where.and_("agent", RecordID(self._get_table("agents"), agent_id))
-            elif filter_type == EvalFilterType.TEAM:
-                where.and_("team", RecordID(self._get_table("teams"), team_id))
-            elif filter_type == EvalFilterType.WORKFLOW:
-                where.and_("workflow", RecordID(self._get_table("workflows"), workflow_id))
+        if user_id is not None:
+            where.and_("user_id", user_id)
+        if agent_id is not None:
+            where.and_("agent", RecordID(self._get_table("agents"), agent_id))
+        if team_id is not None:
+            where.and_("team", RecordID(self._get_table("teams"), team_id))
+        if workflow_id is not None:
+            where.and_("workflow", RecordID(self._get_table("workflows"), workflow_id))
         if model_id is not None:
             where.and_("model_id", model_id)
-        if eval_type is not None:
-            where.and_("eval_type", eval_type)
+        if eval_type is not None and len(eval_type) > 0:
+            where.and_("eval_type", [et.value for et in eval_type], "IN")
+        if filter_type is not None:
+            if filter_type == EvalFilterType.AGENT:
+                where.and_("agent", None, "!=")
+            elif filter_type == EvalFilterType.TEAM:
+                where.and_("team", None, "!=")
+            elif filter_type == EvalFilterType.WORKFLOW:
+                where.and_("workflow", None, "!=")
         where_clause, where_vars = where.build()
 
         # Order
@@ -1430,18 +2943,19 @@ class SurrealDb(BaseDb):
         result = self._query(query, where_vars, dict)
 
         if not deserialize:
-            return list(result), total_count
+            return [desurrealize_eval_run_record(x) for x in result], total_count
         return [deserialize_eval_run_record(x) for x in result]
 
     def rename_eval_run(
-        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Update the name of an eval run in the database.
 
         Args:
             eval_run_id (str): The ID of the eval run to update.
             name (str): The new name of the eval run.
-            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval run. Defaults to True.
+            user_id (Optional[str]): If set, only rename the run if owned by this user.
 
         Returns:
             Optional[Union[EvalRunRecord, Dict[str, Any]]]:
@@ -1452,7 +2966,15 @@ class SurrealDb(BaseDb):
             Exception: If there is an error updating the eval run.
         """
         table = self._get_table("evals")
-        vars = {"record": RecordID(table, eval_run_id), "name": name}
+        record = RecordID(table, eval_run_id)
+
+        # Only rename if owned by this user.
+        if user_id is not None:
+            existing = self._query_one("SELECT * FROM ONLY $record", {"record": record}, dict)
+            if not existing or existing.get("user_id") != user_id:
+                return None
+
+        vars = {"record": record, "name": name}
 
         # Query
         query = dedent("""
@@ -1461,9 +2983,22 @@ class SurrealDb(BaseDb):
         """)
         raw = self._query_one(query, vars, dict)
 
-        if not raw or not deserialize:
-            return raw
+        if not raw:
+            return None
+        if not deserialize:
+            return desurrealize_eval_run_record(raw)
         return deserialize_eval_run_record(raw)
+
+    def update_eval_run_user_id(self, eval_run_id: str, user_id: str) -> None:
+        """Set the owner (user_id) on an existing eval run.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            user_id (str): The owner to set.
+        """
+        table = self._get_table("evals")
+        record = RecordID(table, eval_run_id)
+        _ = self.client.query("UPDATE ONLY $record SET user_id = $user_id", {"record": record, "user_id": user_id})
 
     # --- Traces ---
     def upsert_trace(self, trace: "Trace") -> None:

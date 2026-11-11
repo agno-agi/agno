@@ -43,7 +43,7 @@ def add_to_watchlist(run_context: RunContext, symbol: str) -> str:
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[add_to_watchlist],
     session_state={"watchlist": []},
     instructions="You MUST use the add_to_watchlist tool when the user asks to add a stock. The user's watchlist is: {watchlist}",

@@ -143,12 +143,26 @@ class TestBuildInput:
         assert len(steps) == 1
         assert steps[0]["type"] == "user_input"
 
-    def test_assistant_message_without_tool_calls_skipped(self):
-        """Assistant messages without tool calls produce no steps (text responses are not re-sent)."""
+    def test_assistant_text_becomes_model_output(self):
+        """An unchained request (store=False, or a compacted history) must carry the model's own
+        replies, or it sees the user's turns with none of its answers."""
         model = self._make_model()
         messages = [Message(role="assistant", content="I can help")]
         steps = model._build_input(messages)
-        assert len(steps) == 0
+        assert steps == [{"type": "model_output", "content": [{"type": "text", "text": "I can help"}]}]
+
+    def test_chained_request_does_not_resend_the_prior_reply(self):
+        """With a previous_interaction_id the server holds the prior turns, so only what follows
+        the last chained reply is sent."""
+        model = self._make_model()
+        messages = [
+            Message(role="user", content="q0"),
+            Message(role="assistant", content="a0", provider_data={"interaction_id": "int_0"}),
+            Message(role="user", content="q1"),
+        ]
+        kwargs = model._get_request_kwargs(messages)
+        assert kwargs["previous_interaction_id"] == "int_0"
+        assert [step["type"] for step in kwargs["input"]] == ["user_input"]
 
     def test_tool_call_message(self):
         model = self._make_model()
@@ -233,7 +247,7 @@ class TestGetRequestKwargs:
         model = self._make_model()
         messages = [Message(role="user", content="Hello")]
         kwargs = model._get_request_kwargs(messages)
-        assert kwargs["model"] == "gemini-3-flash-preview"
+        assert kwargs["model"] == "gemini-3.7-flash"
         assert "input" in kwargs
         assert "system_instruction" not in kwargs
 
@@ -1309,7 +1323,7 @@ class TestInvoke:
 
         mock_client.interactions.create.assert_called_once()
         call_kwargs = mock_client.interactions.create.call_args[1]
-        assert call_kwargs["model"] == "gemini-3-flash-preview"
+        assert call_kwargs["model"] == "gemini-3.7-flash"
         assert "input" in call_kwargs
 
     def test_invoke_passes_tools(self):
@@ -2293,7 +2307,7 @@ class TestToDict:
     def test_basic_serialization(self):
         model = GeminiInteractions(api_key="test-key")
         d = model.to_dict()
-        assert d["id"] == "gemini-3-flash-preview"
+        assert d["id"] == "gemini-3.7-flash"
         assert d["name"] == "GeminiInteractions"
         assert d["provider"] == "Google"
 

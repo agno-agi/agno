@@ -28,7 +28,7 @@ async def main():
     # 1. Create a local agent
     summarizer = Agent(
         name="Summarizer",
-        model=OpenAIResponses(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.6-luna"),
         instructions="You summarize information concisely in 2-3 sentences.",
     )
 
@@ -43,7 +43,7 @@ async def main():
     # 3. Create a team with both local and remote agents
     team = Team(
         name="Hybrid Research Team",
-        model=OpenAIResponses(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.6-luna"),
         members=[summarizer, remote_explorer],
         instructions="""\
 You are a research team leader. You have access to:

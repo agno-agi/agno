@@ -14,7 +14,7 @@ from agno.tools.websearch import WebSearchTools
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=Groq(id="llama-3.3-70b-versatile"),
+    model=Groq(id="openai/gpt-oss-120b"),
     tools=[WebSearchTools(), Newspaper4kTools()],
     description="You are a senior NYT researcher writing an article on a topic.",
     instructions=[

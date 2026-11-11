@@ -29,7 +29,7 @@ def main() -> None:
     db = PostgresDb(db_url)
 
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
         db=db,
         add_history_to_context=True,
         num_history_runs=10,
@@ -53,7 +53,7 @@ def main() -> None:
     agent.print_response("What is the weather in New York?")
 
     # Turn 5 — Back to OpenAI Chat to summarize all history
-    agent.model = OpenAIChat(id="gpt-4o")
+    agent.model = OpenAIChat(id="gpt-5.6-luna")
     agent.print_response("Summarize all the weather we checked.")
 
     # Turn 6 — Claude summarizes (sees history from all providers)

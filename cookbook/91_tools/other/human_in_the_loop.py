@@ -76,7 +76,7 @@ def get_top_hackernews_stories(num_stories: int) -> Iterator[str]:
 
 # Initialize the agent
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[get_top_hackernews_stories],
     markdown=True,
 )
