@@ -71,7 +71,8 @@ class AutoAccept(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def read_saved_executor(cls, data: Any) -> Any:
-        """A policy that names executor_type and executor_id allows that one executor, and uses it by default."""
+        """A policy that names executor_type and executor_id allows that one executor, uses it by
+        default, and approves no Project unless it says so."""
         if isinstance(data, dict) and ("executor_type" in data or "executor_id" in data):
             if "default_executor" in data or "executors" in data:
                 # The Routine API returns both forms, so a policy read from it can be sent back as it is.
@@ -82,7 +83,9 @@ class AutoAccept(BaseModel):
             executor_id = data.get("executor_id")
             data = {key: value for key, value in data.items() if key not in ("executor_type", "executor_id")}
             if executor_id is not None:
-                data.update(default_executor=executor_id, executors=[executor_id])
+                # This shape is from when a policy approved no Project. It reads the same from a request
+                # and from storage.
+                data = {"approve_projects": False, **data, "default_executor": executor_id, "executors": [executor_id]}
         return data
 
 

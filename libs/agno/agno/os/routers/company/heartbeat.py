@@ -221,13 +221,8 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             except ValueError:
                 # The executor is gone or its ID is shared; the policy is returned without a kind.
                 pass
-        return {
-            **raw,
-            "default_executor": policy.default_executor,
-            "executors": policy.executors,
-            "executor_type": kind,
-            "executor_id": policy.default_executor,
-        }
+        # Every field with the value in force, so a policy stored in the earlier shape states what it does.
+        return {**policy.model_dump(), "executor_type": kind, "executor_id": policy.default_executor}
 
     async def routine_responses(rows):
         latest = await call(schedule_db.get_latest_schedule_runs, [row["id"] for row in rows])
@@ -373,12 +368,16 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
                 raise HTTPException(422, "Invalid cron expression")
             if updates["cron_expr"] is None:
                 updates["cron_expr"] = ""
-        from agno.company.routines import _authorize_auto_accept
+        from agno.company.routines import _authorize_auto_accept, _stored_policy
 
         if "auto_accept" in updates:
             updates.pop("auto_accept")
             # Save every field with its value, so the stored policy states all it grants.
             policy = body.auto_accept.model_dump() if body.auto_accept else False
+            stored = row["payload"]["metadata"].get("auto_accept")
+            if policy and stored and _stored_policy(stored)[0] == body.auto_accept:
+                # The stored policy sent back is not a new one: it keeps its form, its version and its count.
+                policy = stored
             await _authorize_auto_accept(request, policy, agent_os)
             updates["payload"] = {**row["payload"], "metadata": {**row["payload"]["metadata"], "auto_accept": policy}}
         product_id = row["payload"]["metadata"]["product_id"]

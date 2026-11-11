@@ -430,6 +430,58 @@ def test_a_policy_sent_with_executor_type_and_executor_id_is_read_as_a_default_a
     assert system.stored(routine_id)["metadata"]["auto_accept"] == stored
 
 
+def test_the_old_shape_approves_no_project_whether_it_is_sent_or_stored(system):
+    product_id, routine_id = system.declare(auto_accept=False)
+    path = f"/company/routines/{routine_id}"
+    sent = {"executor_type": "agent", "executor_id": "writer", "limits": {"expires_at": FUTURE}}
+    # A client that wrote this before needed no projects:write, and its Routine approved no Project.
+    without = [scope for scope in SCOPES if scope != "projects:write"]
+    patched = system.client.patch(path, json={"auto_accept": sent}, headers=headers(without))
+    assert patched.status_code == 200, patched.text
+    assert system.stored(routine_id)["metadata"]["auto_accept"]["approve_projects"] is False
+    assert patched.json()["payload"]["metadata"]["auto_accept"]["approve_projects"] is False
+    assert AutoAccept.model_validate(sent).approve_projects is False
+    # In the new form it is on unless the policy says otherwise.
+    assert AutoAccept.model_validate({"default_executor": "writer"}).approve_projects is True
+    created = system.api_routine(product_id, sent, scopes=without, name="second")
+    assert created.status_code == 201, created.text
+    assert system.stored(created.json()["id"])["metadata"]["auto_accept"]["approve_projects"] is False
+
+
+def test_a_stored_policy_read_from_the_api_and_sent_back_keeps_its_version_and_its_count(system):
+    product_id = system.client.post("/company/products", json={"name": "SDK"}, headers=headers(SCOPES)).json()["id"]
+    routine_id = legacy(system, product_id)
+    project, task = system.proposes(product_id, routine_id)
+    system.manager.transition_project(project_id=project["id"], target="active", reason="Approved by a person")
+    system.tick()
+    accepted = system.db.get_task(task["id"])
+    assert accepted["status"] == "in_progress"
+    before = system.stored(routine_id)["metadata"]["auto_accept"]
+    version = _policy_fingerprint(system.db.get_schedule(routine_id))
+    assert system.db.count_company_acceptances(routine_id, version, "") == 1
+
+    path = f"/company/routines/{routine_id}"
+    read = system.client.get(path, headers=headers(SCOPES)).json()["payload"]["metadata"]["auto_accept"]
+    # The response states what the stored policy does.
+    assert read["approve_projects"] is False and read["executors"] == ["writer"]
+    sent_back = system.client.patch(path, json={"auto_accept": read}, headers=headers(SCOPES))
+    assert sent_back.status_code == 200, sent_back.text
+    assert sent_back.json()["payload"]["metadata"]["auto_accept"] == read
+    assert system.stored(routine_id)["metadata"]["auto_accept"] == before
+    assert _policy_fingerprint(system.db.get_schedule(routine_id)) == version
+    assert system.db.count_company_acceptances(routine_id, version, "") == 1
+    # Work it accepted is still its work.
+    asyncio.run(_check_automatic_policy(system.db, accepted))
+    # The same holds for the request an existing client sends: the policy in the shape it was saved in.
+    assert system.client.patch(path, json={"auto_accept": before}, headers=headers(SCOPES)).status_code == 200
+    assert system.stored(routine_id)["metadata"]["auto_accept"] == before
+    # A change is a new policy, stored in the new form with a new version.
+    changed = system.client.patch(path, json={"auto_accept": {**read, "max_open": 2}}, headers=headers(SCOPES))
+    assert changed.status_code == 200, changed.text
+    assert "executor_type" not in system.stored(routine_id)["metadata"]["auto_accept"]
+    assert _policy_fingerprint(system.db.get_schedule(routine_id)) != version
+
+
 def test_a_policy_saved_before_this_change_keeps_its_version():
     # Versions computed on main, where a policy named executor_type and executor_id.
     saved = [

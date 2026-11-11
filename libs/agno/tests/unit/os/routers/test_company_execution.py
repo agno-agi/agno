@@ -398,7 +398,6 @@ def test_auto_accept_human_scope_and_executor_fence(system):
             "executor_type": "agent",
             "executor_id": "writer",
             "required_checks": ["executor_registered"],
-            "approve_projects": False,
             "limits": {"expires_at": 4102444800},
         },
     }
@@ -602,12 +601,7 @@ async def test_policy_defaults_expiry_and_content_fingerprint(system):
     client, db, os, queue = system
     scopes = SCOPES + ["routines:write", "routines:read", "schedules:write", "schedules:read"]
     product = client.post("/company/products", json={"name": "Docs"}, headers=headers()).json()
-    policy = {
-        "executor_type": "agent",
-        "executor_id": "writer",
-        "approve_projects": False,
-        "limits": {"expires_at": 4102444800},
-    }
+    policy = {"executor_type": "agent", "executor_id": "writer", "limits": {"expires_at": 4102444800}}
     body = dict(
         product_id=product["id"],
         name="intake",
@@ -718,12 +712,7 @@ def test_project_completion_policy_requires_projects_write(system, generic):
     client, db, os, queue = system
     scopes = SCOPES + ["routines:write", "routines:read", "schedules:write", "schedules:read"]
     product = client.post("/company/products", json={"name": "Docs"}, headers=headers()).json()
-    policy = {
-        "executor_type": "agent",
-        "executor_id": "writer",
-        "approve_projects": False,
-        "limits": {"expires_at": 4102444800},
-    }
+    policy = {"executor_type": "agent", "executor_id": "writer", "limits": {"expires_at": 4102444800}}
     response = client.post(
         "/company/routines",
         json=dict(
@@ -835,12 +824,7 @@ def test_pending_routine_retry_rechecks_and_refreshes_human_grant(system, monkey
         executor_type="agent",
         executor_id="writer",
         cron_expr="0 * * * *",
-        auto_accept={
-            "executor_type": "agent",
-            "executor_id": "writer",
-            "approve_projects": False,
-            "limits": {"expires_at": 4102444800},
-        },
+        auto_accept={"executor_type": "agent", "executor_id": "writer", "limits": {"expires_at": 4102444800}},
     )
     original = db.add_product_routine
 

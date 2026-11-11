@@ -441,8 +441,7 @@ def _stored_policy(raw):
     """
     from agno.company.declarations import AutoAccept
 
-    legacy = "executor_type" in raw and "default_executor" not in raw
-    return AutoAccept.model_validate({"approve_projects": False, **raw} if legacy else raw), legacy
+    return AutoAccept.model_validate(raw), "executor_type" in raw and "default_executor" not in raw
 
 
 def _policy_fingerprint(schedule):
