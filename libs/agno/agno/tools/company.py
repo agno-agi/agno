@@ -63,6 +63,30 @@ def _saved_no_caller(authority):
     return authority is None
 
 
+def _scoped_user(run_context, user_isolation):
+    """The owner a Company read or write is limited to: None leaves it unscoped."""
+    user = _identity(run_context)
+    authority = _authority(run_context)
+    if authority is not None:
+        ctx = authority.context
+        if (authority.service_account or authority.provider.enforces_token_scopes) and (
+            (ctx.admin_scope or "agent_os:admin") in ctx.scopes
+        ):
+            return None
+    if user_isolation or (isinstance(user, str) and user.startswith("sa:")):
+        if not user:
+            if isinstance(authority, _RoutineAuthorization) and authority.original is None:
+                # An unowned Routine fires unscoped like any unowned schedule, still bound to its Product.
+                return None
+            if _run_kind(run_context) == "task" and _saved_no_caller(authority):
+                # A Task run with no caller authority, as in a deployment without authorization, acts as
+                # the starter its run names, and unscoped when it names none. It stays bound to its Product.
+                return getattr(run_context, "user_id", None)
+            raise PermissionError("Caller identity is required under user isolation")
+        return user
+    return None
+
+
 def _permission(resource, action, run_context):
     authority = _authority(run_context)
     if authority is not None:
@@ -198,6 +222,7 @@ class CompanyTools(Toolkit):
         decision_tools: bool = True,
         summary_tools: bool = True,
         refresh_tools: bool = True,
+        wiki_tools: bool = True,
         agent_id: Optional[str] = None,
         interfaces: Any = None,
         registry: Any = None,
@@ -230,10 +255,9 @@ class CompanyTools(Toolkit):
             "propose_company_task",
             "edit_company_project",
             "edit_company_task",
-            "list_company_wiki",
-            "read_company_wiki",
-            "update_product_status",
         ]
+        if wiki_tools:
+            names += ["list_company_wiki", "read_company_wiki", "update_product_status"]
         if decision_tools:
             names += ["log_company_decision", "search_company_decisions"]
         if summary_tools:
@@ -249,26 +273,7 @@ class CompanyTools(Toolkit):
         )
 
     def _scoped_user(self, run_context):
-        user = _identity(run_context)
-        authority = _authority(run_context)
-        if authority is not None:
-            ctx = authority.context
-            if (authority.service_account or authority.provider.enforces_token_scopes) and (
-                (ctx.admin_scope or "agent_os:admin") in ctx.scopes
-            ):
-                return None
-        if self.user_isolation or (isinstance(user, str) and user.startswith("sa:")):
-            if not user:
-                if isinstance(authority, _RoutineAuthorization) and authority.original is None:
-                    # An unowned Routine fires unscoped like any unowned schedule, still bound to its Product.
-                    return None
-                if _run_kind(run_context) == "task" and _saved_no_caller(authority):
-                    # A Task run with no caller authority, as in a deployment without authorization, acts as
-                    # the starter its run names, and unscoped when it names none. It stays bound to its Product.
-                    return getattr(run_context, "user_id", None)
-                raise PermissionError("Caller identity is required under user isolation")
-            return user
-        return None
+        return _scoped_user(run_context, self.user_isolation)
 
     def _authorization_on(self) -> bool:
         """Whether this deployment checks permissions. Where it does not, a declared auto_accept acts."""

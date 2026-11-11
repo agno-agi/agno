@@ -11,6 +11,7 @@ from typing import Any, Iterator, List, Optional
 from agno.agent import Agent
 from agno.registry._reserved import MINI_AGENT_ID, RESERVED_MANAGER_IDS
 from agno.tools.company import CompanyTools
+from agno.tools.company_files import CompanyFileTools
 from agno.tools.studio_runner import StudioRunnerError, StudioRunnerTools
 
 SHARED_INSTRUCTIONS = """\
@@ -66,30 +67,35 @@ If nothing changed, report a quiet check and propose nothing.
 """
 
 TASK_INSTRUCTIONS = """\
-This run is a Task. The message holds its brief, the wiki pages and the evidence. Do the work in the
-brief and return the deliverable. When the message holds review_feedback, a reviewer sent the last
-attempt back: address it.
+This run is a Task. The message holds its brief, the evidence, the company wiki and the Product's brief.md
+and status.md. Do the work in the brief and return the deliverable. When the message holds
+review_feedback, a reviewer sent the last attempt back: address it.
 
 - Do reading, reasoning and writing yourself. When you hold run tools and a component was built for the
   job, find it with list_agents, list_teams or list_workflows and run it with a complete request.
 - Your reach is the components you may run. Run only what the brief needs.
 - Read the Product's records and Sources when the brief depends on them. The message's
   execution_context holds this Task's id, and list_company_tasks shows the Product id it belongs to.
+- Every other file is read on request with list_company_files and read_company_file. Write working files
+  and what you produce in tasks/<this Task's id>/, and findings the Product should keep under
+  products/<its id>/. Each page in the message names its file. wiki/ and brief.md are not yours to write.
 - A person or a policy reviews this Task. Leave proposing, accepting, reviewing and completing to them.
 - End with the deliverable, how it was checked, the components you ran, and what is left undone.
   If the brief cannot be met within these limits, name the blocker.
 """
 
-# The Company tools a Task run holds: read the Product's context, and report on its status page.
+# The Company tools a Task run holds: read the Product's records and Sources.
 TASK_COMPANY_TOOLS = [
     "get_company_product",
     "list_company_projects",
     "list_company_tasks",
     "list_product_sources",
     "read_product_source",
-    "read_company_wiki",
-    "update_product_status",
 ]
+
+# The file tools a Task run holds: read the tree, write under its own Product and in its own Task folder.
+# Confirmed page saves and notes/ belong to a person's chat.
+TASK_FILE_TOOLS = ["list_company_files", "read_company_file", "search_company_files", "write_company_file"]
 
 
 def _task_runs_components() -> bool:
@@ -271,7 +277,8 @@ def _build_mini_agent(agent_os: Any, model: Any) -> Optional[Agent]:
                 decision_tools=False,
                 interfaces=agent_os.interfaces,
                 include_tools=TASK_COMPANY_TOOLS,
-            )
+            ),
+            CompanyFileTools(db, user_isolation=isolation, include_tools=TASK_FILE_TOOLS),
         ],
         run_tools=[
             _TaskRunTools(

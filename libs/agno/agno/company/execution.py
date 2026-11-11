@@ -604,25 +604,11 @@ async def _reservation_recorded(worker: Any, job: Dict[str, Any]) -> bool:
 
 
 async def _task_input(manager: Any, task: Dict[str, Any], *, accepted_execution: bool = False) -> str:
-    pages = []
-    # Both namespaces have company-wide read visibility. No Source credentials,
-    # Product metadata, other Tasks or caller-supplied runtime state are forwarded.
-    for product_id in (None, task["product_id"]):
-        page = 1
-        while True:
-            rows, total = await _call(manager, "list_wiki", product_id, limit=100, page=page)
-            for row in rows:
-                value = await _call(manager, "read_wiki", product_id, row.path)
-                pages.append(
-                    {
-                        "namespace": "company" if product_id is None else "product",
-                        "path": row.path,
-                        "content": value.content,
-                    }
-                )
-            if page * 100 >= total:
-                break
-            page += 1
+    from agno.company.files import _always_loaded
+
+    # Company-wide read visibility. No Source credentials, Product metadata, other Tasks or
+    # caller-supplied runtime state are forwarded. Every other file is read on request.
+    pages = await _always_loaded(manager, task["product_id"])
     payload = {"brief": task.get("brief"), "wiki": pages, "evidence": task.get("evidence") or []}
     feedback = _review_feedback(task)
     if feedback:

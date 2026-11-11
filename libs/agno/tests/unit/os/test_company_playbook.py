@@ -312,8 +312,12 @@ async def test_super_agent_runs_company_tools_with_injected_identity(tmp_path, m
                         },
                     ),
                     (
-                        "update_product_status",
-                        {"product_id": product["id"], "content": "Draft proposed", "expected_version": 1},
+                        "write_company_file",
+                        {
+                            "path": f"products/{product['id']}/status.md",
+                            "content": "Draft proposed",
+                            "expected_version": 1,
+                        },
                     ),
                     ("log_company_decision", {"decision": "Review first", "reasoning": "Approval required"}),
                 ]
