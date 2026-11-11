@@ -2322,8 +2322,8 @@ def get_workflow_router(
             )
             raise HTTPException(status_code=409, detail=detail)
 
-        # A continued workflow does not pass its stored dispatch lineage to its steps, so the
-        # tool-level check cannot see that a Company Task started this run. Refuse it here.
+        # The tool-level check covers only steps that call a tool: a function step of a run that a
+        # Company Task started would still run. Refuse the whole run here.
         try:
             require_task_authority(getattr(existing_run, "metadata", None), current_authorization())
         except PermissionError as exc:
