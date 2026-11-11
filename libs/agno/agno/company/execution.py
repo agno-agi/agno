@@ -636,6 +636,10 @@ def _review_feedback(task: Dict[str, Any]) -> Optional[str]:
 
 _RUN_TOOLS = {"run_agent": "agent", "run_team": "team", "run_workflow": "workflow"}
 
+# How a run tool words a run that was not allowed: a permission the caller lacks, the Task's acceptance,
+# or the runner's limit on nested runs. Every other error is a run that failed.
+_NOT_ALLOWED = ("Permission required", "The policy that accepted this Task does not allow", "Refusing to dispatch")
+
 
 def _invoked_components(run: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """The agents, teams and workflows a run started through the run tools, in call order."""
@@ -644,7 +648,7 @@ def _invoked_components(run: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
         kind = _RUN_TOOLS.get(tool.get("tool_name"))
         if kind is None:
             continue
-        result = tool.get("result")
+        raw = result = tool.get("result")
         if isinstance(result, str):
             try:
                 result = json.loads(result)
@@ -655,7 +659,10 @@ def _invoked_components(run: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
         entry = {"type": kind, "id": result.get(kind + "_id") or requested}
         if result.get("run_id"):
             entry["run_id"] = result["run_id"]
-        entry["status"] = "REFUSED" if result.get("error") or tool.get("tool_call_error") else result.get("status")
+        if result.get("error") or tool.get("tool_call_error"):
+            entry["status"] = "REFUSED" if str(result.get("error") or raw).startswith(_NOT_ALLOWED) else "FAILED"
+        else:
+            entry["status"] = result.get("status")
         invoked.append(entry)
     return invoked
 

@@ -765,11 +765,50 @@ def test_invoked_components_are_read_from_the_run_tool_calls():
                 "tool_call_error": True,
                 "result": "x",
             },
+            {
+                "tool_name": "run_agent",
+                "tool_args": {"agent_id": "editor"},
+                "tool_call_error": True,
+                "result": "Permission required: agents:editor:run",
+            },
+            {"tool_name": "run_team", "tool_args": {"team_id": "editors"}, "tool_call_error": True},
         ]
     }
     assert _invoked_components(run) == [
         {"type": "agent", "id": "writer", "run_id": "r1", "status": "COMPLETED"},
-        {"type": "team", "id": "editors", "status": "REFUSED"},
-        {"type": "workflow", "id": "draft", "status": "REFUSED"},
+        {"type": "team", "id": "editors", "status": "FAILED"},
+        {"type": "workflow", "id": "draft", "status": "FAILED"},
+        {"type": "agent", "id": "editor", "status": "REFUSED"},
+        {"type": "team", "id": "editors", "status": "FAILED"},
     ]
     assert _invoked_components(None) == [] and _invoked_components({"tools": None}) == []
+
+
+def test_a_run_that_was_not_allowed_is_refused_and_one_that_failed_is_failed(system):
+    from agno.tools.studio_runner import StudioRunnerTools
+
+    def recorded(tool, arguments, reply):
+        return _invoked_components({"tools": [{"tool_name": tool, "tool_args": arguments, "result": reply}]})[0]
+
+    # The Task's acceptance does not allow the component.
+    tools = system.mini.tools.run_tools[0]
+    with authorization_scope(lambda: task_authority(run_components=[])):
+        policy = tools.run_agent("writer", "Write the notes")
+    assert recorded("run_agent", {"agent_id": "writer"}, policy)["status"] == "REFUSED", policy
+    # The runner's own limit on how deep runs may nest.
+    depth = StudioRunnerTools(include_agents=[system.writer], max_dispatch_depth=0).run_agent("writer", "Write")
+    assert recorded("run_agent", {"agent_id": "writer"}, depth)["status"] == "REFUSED", depth
+    # Nothing forbade these runs. They could not happen.
+    with authorization_scope(lambda: task_authority()):
+        missing = tools.run_agent("nobody", "Write the notes")
+        system.writer.model.invoke = None
+        crashed = tools.run_agent("writer", "Write the notes")
+    assert recorded("run_agent", {"agent_id": "nobody"}, missing) == {"type": "agent", "id": "nobody", "status": "FAILED"}
+    assert recorded("run_agent", {"agent_id": "writer"}, crashed)["status"] in ("FAILED", "ERROR"), crashed
+
+
+def test_a_task_records_a_component_that_does_not_exist_as_failed(system):
+    proposal = system.proposal()
+    system.accept(proposal["id"])
+    saved = system.execute(proposal["id"], [("run_agent", {"agent_id": "nobody", "message": "Write the notes"})])
+    assert saved["result"]["invoked"] == [{"type": "agent", "id": "nobody", "status": "FAILED"}]
