@@ -37,14 +37,16 @@ whoever created the Product. User isolation does not restrict Company records.
 it runs on Mini Agent. Naming `executor_type="agent"`, `executor_id="miniagent"` does
 the same. It reads Sources and existing work, proposes only evidence-backed
 Backlog Tasks, and updates status without accepting work. Mini Agent is a
-restricted agent for unattended work: Company tools
+restricted agent for unattended work. In a Routine run it holds Company tools
 and the Routine skills only, no Platform Builder, no run or platform tools, and
-proposal-only authority. It works with or without `manager=OSManager(...)`, but
+proposal-only authority. In a Task run it does the accepted work; see
+"Decisions from chat and Mini Agent Tasks" below. It works with or without `manager=OSManager(...)`, but
 needs `CompanyConfig(model=...)` or a registry model. The stored schedule, the
 Routine API and the run and session records all name it: endpoint
 `/agents/miniagent/runs`, `target_type` `agent`, `target_id` `miniagent`.
 Mini Agent is hidden from `GET /agents`, `GET /config`, MCP and A2A, and a
-person cannot chat with it. Super Agent refuses a run with Routine authority,
+person cannot chat with it: it refuses every run that is not a Company Routine
+or a Company Task. Super Agent refuses a run with Routine authority,
 and a Routine that names Super Agent or any other framework ID is refused.
 
 Check both configurations without model calls or an active scheduler:
@@ -193,8 +195,10 @@ Company work by talking to Super Agent at `/teams/superagent`. It reads company
 details, Products, Projects, Tasks, Sources and the playbook, proposes Projects
 and Backlog Tasks, edits owned proposals, updates `status.md` with a version check,
 saves company details, creates Routines and logs decisions. It can add website
-Sources with permission and Product ownership. Acceptance, completion, ownership
-changes, local Source additions, Product maintenance and outbound summaries are
+Sources with permission and Product ownership. When the person asks, it approves
+a Project, accepts a Task and reviews a finished one; see "Decisions from chat
+and Mini Agent Tasks". Ownership changes, local Source additions, Product
+maintenance and outbound summaries are
 not among its Company tools. Routines use the model from `CompanyConfig(model=...)`,
 otherwise the first registry model. If neither exists, diagnostics warns, a
 Routine on Mini Agent fails with that reason, and manual APIs still work.
@@ -220,6 +224,7 @@ retaining a known old ID explicitly is necessary for those references.
 | `06_execute_tasks.py` | Durable execution, duplicate starts, ordinary run history and attention with no model call. |
 | `12_task_board.py` | Direct start from Backlog, `last_run`, `allowed_transitions` and a board read by status with no model call. |
 | `13_start_tasks_from_chat.py` | Super Agent starts a human-accepted Task, ends its turn with the receipt, and answers status and unrelated questions while the Task runs. Add `--serve` to try it from the AgentOS UI on `localhost:7777` with a seeded, accepted Task. Live model; PostgreSQL. |
+| `14_work_to_done_in_chat.py` | A person takes work from a proposal to Done in a Super Agent chat: approve the Project, accept the Task on Mini Agent, start it, read the result and complete it. Mini Agent runs another agent to do the work, and the Task records it. Live model; PostgreSQL. |
 
 `06_execute_tasks.py` starts an accepted workflow Task through its ordinary run
 route and the durable queue, waits for In review, reads paged history and checks
@@ -313,6 +318,59 @@ clears it from failed attention while preserving the result as history. Starting
 a new attempt clears the previous result. `failed=false`
 includes all other Tasks, including those with no result. The Task table is
 created with its execution, evidence and result columns in the initial schema.
+
+### Decisions from chat and Mini Agent Tasks
+
+Three Super Agent tools record a person's decision. Each runs only for a person in
+chat, under that person's permissions, and writes that person on the transition.
+Routine runs, Task runs, the automation tick, service accounts, the scheduler
+identity and, under user isolation, anonymous callers are refused. The tools check
+who is calling. Whether the person asked is left to Super Agent's instructions.
+
+| Tool | Change | The person needs |
+| --- | --- | --- |
+| `approve_company_project` | Project: proposed to active | `projects:write` |
+| `accept_company_task` | Task: Backlog to Ready, with an executor | `tasks:write` and run permission on the executor |
+| `review_company_task` with `complete` | Task: In review to Done | `tasks:write` |
+| `review_company_task` with `send_back` | Task: In review to Ready, same executor | `tasks:write` and run permission on the executor |
+
+A Task sent back keeps its executor. The person's reason is saved on the
+transition and given to the executor's next attempt as `review_feedback` in its
+input. Starting stays a separate step, with `start_company_task`.
+
+A Task accepted with no executor names agent `miniagent`. This holds for
+`POST /company/tasks/{id}/transitions`, for `POST /company/tasks` with status
+Ready, and for `accept_company_task`. Give `executor_type` and `executor_id`
+together, or leave both out. The stored Task, the API response, the permission
+check (`agents:miniagent:run`) and the run all name Mini Agent. A named agent,
+team or workflow works as before. Super Agent and Platform Builder are refused as
+executors.
+
+What Mini Agent may do follows the kind of run:
+
+| | Routine run | Task a person accepted | Task a policy accepted |
+| --- | --- | --- | --- |
+| Company tools | read, propose, intake, status, refresh, summary | read the Product, its Projects, Tasks and Sources; update `status.md` | the same as a person-accepted Task |
+| Run tools (`list_*`, `run_*`) | none | yes, for components the accepting person may run | none |
+| Instructions | read Sources and propose | do the work in the brief | do the work in the brief |
+
+Mini Agent never runs Super Agent, Platform Builder or itself, holds no Studio,
+scheduler, shell, file or web tools, and stops after 30 tool calls in a run. The
+run tools check the run themselves: called in a Routine run they return an error.
+A component Mini Agent runs acts with its own tools, so accept a Task on Mini
+Agent only when you would run those components yourself.
+
+When a Task run finishes, the components it started through the run tools are
+saved on the Task as `result.invoked`: type, id, run id and status, with
+`REFUSED` for a run that was not allowed.
+
+A run that executes a Task, on any executor, cannot move a Project or Task
+between stages through the Company manager. People decide in the Company pages,
+the API or chat.
+
+```bash
+.venvs/demo/bin/python cookbook/05_agent_os/30_company/14_work_to_done_in_chat.py
+```
 
 ## Cascading archive
 

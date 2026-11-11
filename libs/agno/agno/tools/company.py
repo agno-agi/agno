@@ -185,6 +185,7 @@ class CompanyTools(Toolkit):
         agent_id: Optional[str] = None,
         interfaces: Any = None,
         registry: Any = None,
+        include_tools: Optional[List[str]] = None,
     ):
         self._interfaces_explicit = interfaces is not None
         self.interfaces = interfaces if interfaces is not None else []
@@ -228,6 +229,7 @@ class CompanyTools(Toolkit):
             tools=[getattr(self, name) for name in names],
             async_tools=[(getattr(self, "a" + name), name) for name in names],
             requires_confirmation_tools=["confirm_company_details"],
+            include_tools=include_tools,
         )
 
     def _scoped_user(self, run_context):

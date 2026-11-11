@@ -515,3 +515,13 @@ SQLite and with `COMPANY_DB=postgres`, with no model calls.
 **Description:** A Routine with no executor now names agent `miniagent` directly, and a Routine that names Super Agent is refused. The API, the stored schedule and the endpoint all name Mini Agent. Reran `05_super_agent_company.py`, and `10_weekly_product_review.py --check` with and without `--with-os-manager`, with a placeholder `OPENAI_API_KEY`.
 
 **Result:** All three exited 0. The assertions on `target_type` `agent`, `target_id` `miniagent` and endpoint `/agents/miniagent/runs` passed. No model calls were made.
+
+---
+
+### 14_work_to_done_in_chat.py (2026-11-11)
+
+**Status:** PASS
+
+**Description:** Live run with `gpt-5.6-luna` for Super Agent, Mini Agent and the Release Writer agent, local PostgreSQL and the durable queue, no authorization. In one chat a person asks Super Agent to create a Product and propose a Project and a Task, then to approve the Project, accept the Task with no executor, start it, show the result and complete it.
+
+**Result:** Exit 0 and all assertions passed. Super Agent called one tool per decision: `approve_company_project`, `accept_company_task`, `start_company_task`, `get_company_task_status`, `review_company_task`. The Task was accepted on agent `miniagent`. Mini Agent ran the Release Writer agent, and the Task saved `agent release-writer: COMPLETED` under `result.invoked`. The Task history reads Backlog to Ready by sam, Ready to In progress by sam, In progress to In review by the run, In review to Done by sam with the reason "The notes read well." Replies took 3 to 14 seconds each.

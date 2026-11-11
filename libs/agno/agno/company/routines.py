@@ -146,11 +146,24 @@ class _RoutineResultGuardrail(BaseGuardrail):
         self.check(run_input, run_output)
 
 
-class _RoutineBoundary(BaseGuardrail):
-    """Keep Routine runs on Mini Agent, and every other run off it.
+def _run_kind(run_context: Any = None) -> Optional[str]:
+    """ "routine" for a Routine run, "task" for a run that executes an accepted Task, None for every other run."""
+    from agno.run.authorization import current_authorization
 
-    A Routine runs unattended on untrusted Sources with proposal-only authority. With routine=True the
-    component accepts only runs that carry that authority. With routine=False it refuses them.
+    authority = current_authorization() or getattr(run_context, "authorization", None)
+    if isinstance(authority, _RoutineAuthorization):
+        return "routine"
+    if isinstance(authority, _ExecutorAuthorization) and authority.task_id:
+        return "task"
+    return None
+
+
+class _RoutineBoundary(BaseGuardrail):
+    """Keep unattended Company runs on Mini Agent, and every other run off it.
+
+    A Routine runs on untrusted Sources with proposal-only authority. With routine=True the component
+    accepts only Routine runs and runs that execute an accepted Task. With routine=False it refuses
+    Routine runs.
     """
 
     def __init__(self, routine: bool):
@@ -158,12 +171,12 @@ class _RoutineBoundary(BaseGuardrail):
 
     def check(self, run_input: Any = None) -> None:
         from agno.exceptions import InputCheckError
-        from agno.run.authorization import current_authorization
 
-        if isinstance(current_authorization(), _RoutineAuthorization) != self.routine:
-            raise InputCheckError(
-                "This agent runs Company Routines only" if self.routine else "Company Routines run on Mini Agent"
-            )
+        kind = _run_kind()
+        if self.routine and kind is None:
+            raise InputCheckError("Mini Agent runs Company Routines and Tasks only")
+        if not self.routine and kind == "routine":
+            raise InputCheckError("Company Routines run on Mini Agent")
 
     async def async_check(self, run_input: Any = None) -> None:
         self.check(run_input)

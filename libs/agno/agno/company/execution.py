@@ -3,13 +3,13 @@
 import asyncio
 import json
 from contextvars import ContextVar
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb
 from agno.db.schemas.tasks import task_run_id
 from agno.exceptions import ComponentRehydrationError, InputCheckError
-from agno.registry._reserved import RESERVED_MANAGER_IDS
+from agno.registry._reserved import MINI_AGENT_ID, RESERVED_MANAGER_IDS
 from agno.run.authorization import RunAuthorization
 
 # Trusted, request-local handoff to the existing run routes. It never comes from
@@ -57,6 +57,12 @@ def _registered_component(registry: Any, executor_type: str, executor_id: Option
 
 
 def _executor(registry: Any, executor_type: Optional[str], executor_id: Optional[str], accepting: bool = False) -> Any:
+    if (executor_type, executor_id) == ("agent", MINI_AGENT_ID):
+        # Among framework IDs only Mini Agent executes Tasks. It is served for Company runs, outside the registry lists.
+        component = getattr(registry, "_mini_agent", None)
+        if component is None:
+            raise ValueError("Mini Agent is unavailable: configure CompanyConfig(model=...) or name another executor")
+        return component
     if executor_type not in {"agent", "team", "workflow"} or executor_id in RESERVED_MANAGER_IDS:
         raise ValueError("Select a registered agent, team or workflow executor")
     component = _registered_component(registry, executor_type, executor_id)
@@ -354,6 +360,9 @@ async def _reconcile_task_run(
         "content": data.get("content"),
         "content_type": data.get("content_type"),
     }
+    invoked = _invoked_components(data)
+    if invoked:
+        result["invoked"] = invoked
     checkout = None
     if run["status"] == "COMPLETED":
         from agno.company.sandbox import _is_sandboxed, _project_checkout
@@ -458,6 +467,10 @@ async def _check_task(worker: Any, job: Dict[str, Any]) -> None:
     from agno.run.authorization import current_authorization
 
     authority = current_authorization()
+    if isinstance(authority, _ExecutorAuthorization):
+        acceptances = [entry for entry in task["transitions"] if entry.get("target") == "ready"]
+        # A person read the brief of a Task they accepted. Nobody read one a policy accepted.
+        authority.run_components = [] if acceptances and acceptances[-1].get("auto_accept") else None
     if authority is not None:
         try:
             await authority.arequire(
@@ -499,6 +512,9 @@ async def _project_run(worker: Any, job: Dict[str, Any], status: str, error: Opt
             raise ValueError("Completed Task run is not durably readable")
         data = output.to_dict()
         result = {key: data.get(key) for key in ("run_id", "status", "content", "content_type")}
+        invoked = _invoked_components(data)
+        if invoked:
+            result["invoked"] = invoked
         from agno.company.sandbox import _project_checkout
 
         checkout, result = await _project_checkout(db, task, component, data, result)
@@ -572,6 +588,9 @@ async def _task_input(manager: Any, task: Dict[str, Any], *, accepted_execution:
                 break
             page += 1
     payload = {"brief": task.get("brief"), "wiki": pages, "evidence": task.get("evidence") or []}
+    feedback = _review_feedback(task)
+    if feedback:
+        payload["review_feedback"] = feedback
     # Only the authorized execution route supplies this flag; a Task dictionary
     # or its brief alone does not establish acceptance.
     if accepted_execution:
@@ -587,6 +606,42 @@ async def _task_input(manager: Any, task: Dict[str, Any], *, accepted_execution:
             ),
         }
     return json.dumps(payload, ensure_ascii=False)
+
+
+def _review_feedback(task: Dict[str, Any]) -> Optional[str]:
+    """The reviewer's reason when the latest attempt was sent back from review, else None."""
+    history = task.get("transitions") or []
+    attempts = [index for index, entry in enumerate(history) if entry.get("attempt")]
+    if not attempts:
+        return None
+    returns = [entry for entry in history[attempts[-1] + 1 :] if entry.get("from") == "in_review"]
+    return returns[-1].get("reason") if returns and returns[-1].get("target") == "ready" else None
+
+
+_RUN_TOOLS = {"run_agent": "agent", "run_team": "team", "run_workflow": "workflow"}
+
+
+def _invoked_components(run: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The agents, teams and workflows a run started through the run tools, in call order."""
+    invoked: List[Dict[str, Any]] = []
+    for tool in (run or {}).get("tools") or []:
+        kind = _RUN_TOOLS.get(tool.get("tool_name"))
+        if kind is None:
+            continue
+        result = tool.get("result")
+        if isinstance(result, str):
+            try:
+                result = json.loads(result)
+            except ValueError:
+                result = None
+        result = result if isinstance(result, dict) else {}
+        requested = (tool.get("tool_args") or {}).get(kind + "_id")
+        entry = {"type": kind, "id": result.get(kind + "_id") or requested}
+        if result.get("run_id"):
+            entry["run_id"] = result["run_id"]
+        entry["status"] = "REFUSED" if result.get("error") or tool.get("tool_call_error") else result.get("status")
+        invoked.append(entry)
+    return invoked
 
 
 def _validate_executor_tools(component: Any) -> None:
@@ -613,13 +668,20 @@ def _validate_executor_tools(component: Any) -> None:
 
 
 class _ExecutorAuthorization(RunAuthorization):
-    """Attenuate the caller's authority for Company execution and its delegation."""
+    """Attenuate the caller's authority for Company execution and its delegation.
 
-    def __init__(self, original: Optional[RunAuthorization]):
+    task_id names the accepted Task this run executes. The queue sets it from the claimed job.
+    run_components bounds what Mini Agent may run in that Task: None leaves it to the saved permissions
+    of the person who accepted, and a list admits only the (type, id) pairs in it.
+    """
+
+    def __init__(self, original: Optional[RunAuthorization], task_id: Optional[str] = None):
         from agno.os.auth import _default_authorization_provider
         from agno.os.authz.provider import AuthorizationContext
 
         self.original = original
+        self.task_id = task_id
+        self.run_components: Optional[List[Tuple[str, str]]] = []
         super().__init__(
             original.provider if original else _default_authorization_provider(),
             original.context if original else AuthorizationContext(),
@@ -640,7 +702,7 @@ class _ExecutorAuthorization(RunAuthorization):
             await self.original.arequire(resource, action, resource_id)
 
     def snapshot(self) -> Dict[str, Any]:
-        return {**super().snapshot(), "company_executor": True}
+        return {**super().snapshot(), "company_executor": True, "company_task_id": self.task_id}
 
 
 def _mount_executors(os: Any) -> None:

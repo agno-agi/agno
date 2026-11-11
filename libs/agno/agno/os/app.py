@@ -773,15 +773,12 @@ class AgentOS:
             self.teams = [*(self.teams or []), self._manager.team]
 
         if self._mini_agent is not None:
-            from agno.company.details import _company_instructions
-            from agno.company.mini_agent import INSTRUCTIONS
-
             if self.registry is None:
                 self.registry = Registry()
             self.registry.exclude_components([self._mini_agent])
-            # Served so the scheduler can reach it; listings leave it out.
+            self.registry._mini_agent = self._mini_agent
+            # Served so the scheduler and the Task queue can reach it; listings leave it out.
             self.agents = [*(self.agents or []), self._mini_agent]
-            self._mini_agent.instructions = _company_instructions(self._company_db, [INSTRUCTIONS])
         self._apply_manager_manifest()
 
         self._initialize_agents()

@@ -4,6 +4,8 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from agno.registry._reserved import MINI_AGENT_ID
+
 
 class ProductCreate(BaseModel):
     name: str = Field(..., min_length=1)
@@ -121,6 +123,15 @@ class ProjectTransition(BaseModel):
         return value
 
 
+def _ready_executor(executor_type: Any, executor_id: Any) -> Any:
+    """The executor a Task enters Ready with: the one named, or Mini Agent when none is named."""
+    if executor_type is None and executor_id is None:
+        return "agent", MINI_AGENT_ID
+    if executor_type is None or executor_id is None or not executor_id.strip():
+        raise ValueError("Give executor_type and executor_id together, or leave both out to use Mini Agent")
+    return executor_type, executor_id
+
+
 class TaskCreate(BaseModel):
     executor_type: Optional[Literal["agent", "team", "workflow"]] = None
     executor_id: Optional[str] = Field(None, min_length=1)
@@ -142,8 +153,8 @@ class TaskCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_executor(self) -> "TaskCreate":
-        if self.status == "ready" and (self.executor_type is None or self.executor_id is None):
-            raise ValueError("Ready requires an executor type and id")
+        if self.status == "ready":
+            self.executor_type, self.executor_id = _ready_executor(self.executor_type, self.executor_id)
         return self
 
 
@@ -237,8 +248,7 @@ class TaskTransition(BaseModel):
     @model_validator(mode="after")
     def validate_executor(self) -> "TaskTransition":
         if self.target == "ready":
-            if self.executor_type is None or self.executor_id is None or not self.executor_id.strip():
-                raise ValueError("Ready requires an executor type and id")
+            self.executor_type, self.executor_id = _ready_executor(self.executor_type, self.executor_id)
         elif self.executor_type is not None or self.executor_id is not None:
             raise ValueError("Only Ready can set an executor")
         return self
