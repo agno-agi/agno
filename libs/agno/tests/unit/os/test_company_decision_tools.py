@@ -284,6 +284,41 @@ def test_a_first_attempt_carries_no_review_feedback(system):
     assert "review_feedback" not in message
 
 
+def test_review_feedback_survives_a_failed_attempt_and_its_retry(system):
+    client, db, agent_os, queue = system
+    _, task = records(client)
+    in_review(client, db, queue, task["id"])
+    assert review(agent_os, context(), task, "send_back", "Add the changelog").startswith("Sent 'Draft'")
+    manager = CompanyManager(db, agent_os.registry)
+
+    def feedback():
+        message = json.loads(asyncio.run(_task_input(manager, db.get_task(task["id"]), accepted_execution=True)))
+        return message.get("review_feedback")
+
+    # The attempt that received the reason fails.
+    assert "Queued" in call(agent_os, "start_company_task", context(), task_id=task["id"])
+    failed = db.get_task(task["id"])
+    assert failed["status"] == "in_progress" and failed["transitions"][-1]["attempt"] == 2
+    asyncio.run(queue.store.claim_job(queue.worker_id, queue.config.lock_grace_seconds))
+    asyncio.run(queue.store.complete_job(failed["job_id"], queue.worker_id, 1, "failed"))
+    db.complete_task_run(
+        task["id"],
+        failed["job_id"],
+        {"run_id": failed["job_id"], "status": "ERROR", "content": "The model failed"},
+        expected_transitions=failed["transitions"],
+    )
+    assert feedback() == "Add the changelog"
+    # The retry is a new attempt, and it is told the same reason.
+    retried = client.post(f"/company/tasks/{task['id']}/runs", headers=headers())
+    assert retried.status_code == 202, retried.text
+    assert db.get_task(task["id"])["transitions"][-1]["attempt"] == 3
+    assert feedback() == "Add the changelog"
+
+    # An attempt that reaches review ends the feedback: the next reviewer decides on the new result.
+    finish(db, queue, task["id"], attempt=3)
+    assert feedback() is None
+
+
 # ----------------------------------------------------------------- each decision needs the person's grants
 
 DECISIONS = {

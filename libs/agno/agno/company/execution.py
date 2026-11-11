@@ -624,13 +624,14 @@ async def _task_input(manager: Any, task: Dict[str, Any], *, accepted_execution:
 
 
 def _review_feedback(task: Dict[str, Any]) -> Optional[str]:
-    """The reviewer's reason when the latest attempt was sent back from review, else None."""
-    history = task.get("transitions") or []
-    attempts = [index for index, entry in enumerate(history) if entry.get("attempt")]
-    if not attempts:
-        return None
-    returns = [entry for entry in history[attempts[-1] + 1 :] if entry.get("from") == "in_review"]
-    return returns[-1].get("reason") if returns and returns[-1].get("target") == "ready" else None
+    """The reviewer's reason when the last review sent the Task back, until an attempt reaches review again."""
+    reviews = [
+        entry
+        for entry in task.get("transitions") or []
+        if entry.get("from") == "in_review" or entry.get("target") == "in_review"
+    ]
+    last = reviews[-1] if reviews else {}
+    return last.get("reason") if last.get("from") == "in_review" and last.get("target") == "ready" else None
 
 
 _RUN_TOOLS = {"run_agent": "agent", "run_team": "team", "run_workflow": "workflow"}
