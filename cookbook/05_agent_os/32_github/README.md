@@ -2,19 +2,23 @@
 
 The `GitHub` interface receives a GitHub App's webhook deliveries for the
 repositories you choose and hands each verified event to a handler. Unlike chat
-interfaces, it is not bound to an agent: the handler decides what an event
-becomes, for example a Company Task.
+interfaces, it doesn't run an agent itself: the handler decides what an event
+becomes, for example a Company Task. AgentOS still needs an agent, team,
+workflow, knowledge base or database to start; `basic.py` passes a database.
 
 What the interface does before calling the handler:
 
 - Refuses deliveries without a valid `X-Hub-Signature-256` signature for the
   webhook's secret (400 when missing, 403 when wrong).
 - Answers GitHub's `ping`.
+- Reads both of GitHub's content types: `application/json`, and the form
+  encoding (`payload=<JSON>`) that the REST API uses by default for repository
+  webhooks.
 - Ignores, with a 200 and a reason: repositories it does not watch, events it
-  does not handle (default `issues.opened` and `issue_comment.created`), bots
-  (including the App's own `[bot]` account; `handle_bot_events=True` accepts
-  bots such as Dependabot), and text carrying Agno's own marker, which every
-  comment Agno posts includes.
+  does not handle (default `issues.opened` and `issue_comment.created`), and
+  bots, including the App's own `[bot]` account, so what the App posts isn't
+  handled again. `handle_bot_events=True` accepts bots such as Dependabot; the
+  handler must then recognize the App's own events itself.
 - Passes the installation that sent the delivery as `event.installation_id`,
   so the handler can act with that installation's token.
 - Answers a redelivery of a delivery it already handled from the first run
@@ -149,9 +153,9 @@ Read #2 with installation 12345678's token: open, 0 comments
 ## Without an App
 
 A repository webhook with a personal token also works for receiving events: set
-the same secret on the webhook and leave `GITHUB_APP_ID` unset. Comments Agno
-posts with a personal token appear as that person's, and are recognized by
-Agno's marker rather than by the account.
+the same secret on the webhook and leave `GITHUB_APP_ID` unset. Comments posted
+with a personal token appear as that person's, so they aren't ignored as a
+bot's; prefer an App when the handler will post.
 
 ```bash
 gh api repos/$GITHUB_REPOSITORY/hooks -X POST -f name=web \

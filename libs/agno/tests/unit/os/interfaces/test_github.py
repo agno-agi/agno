@@ -7,6 +7,7 @@ import json
 import threading
 import time
 from dataclasses import dataclass
+from urllib.parse import urlencode
 from datetime import datetime, timezone
 
 import httpx
@@ -18,7 +19,6 @@ from agno.agent import Agent
 from agno.os import AgentOS
 from agno.os.authz import Authorization
 from agno.os.interfaces.github import GitHub, GitHubEvent
-from agno.os.interfaces.github.events import MARKER
 
 SECRET = "github-webhook-secret"
 
@@ -145,7 +145,7 @@ def test_events_outside_the_watch_are_acknowledged_and_ignored(client, received,
     assert received == []
 
 
-def test_comments_are_handled_and_agnos_own_are_not(client, received):
+def test_comments_are_handled(client, received):
     comment = {
         "action": "created",
         "repository": {"full_name": "agno-agi/agno"},
@@ -167,9 +167,10 @@ def test_comments_are_handled_and_agnos_own_are_not(client, received):
         "author": "alice",
     }
 
-    own = {**comment, "comment": {**comment["comment"], "body": f"Findings\n{MARKER}task=t-1 attempt=1 -->"}}
-    assert deliver(client, own, event="issue_comment").json() == {"status": "ignored", "reason": "written by Agno"}
-    assert len(received) == 1
+    # Text a person writes is handled whatever it contains, hidden HTML comments included.
+    hidden = {**comment, "comment": {**comment["comment"], "body": "Same here <!-- agno:task=t-1 -->"}}
+    assert deliver(client, hidden, event="issue_comment", delivery="d-2").status_code == 202
+    assert len(received) == 2
 
 
 def test_a_handler_failure_asks_for_a_redelivery():
@@ -192,6 +193,9 @@ def test_configuration_is_checked(monkeypatch):
             GitHub(lambda event: None, repositories=repositories, webhook_secret=SECRET)
     monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", SECRET)
     assert GitHub(lambda event: None, repositories=["agno-agi/agno"]).webhook_secret == SECRET
+    # A single string is one repository or event, not a sequence of characters.
+    single = GitHub(lambda event: None, repositories="Agno-AGI/agno", events="issues.opened")
+    assert single.repositories == {"agno-agi/agno"} and single.events == {"issues.opened"}
 
 
 def test_agentos_serves_deliveries_without_its_own_bearer_token(received):
@@ -317,15 +321,31 @@ def test_a_recorded_event_is_never_reported_as_failed():
     assert response.status_code == 202 and response.json() == {"status": "recorded", "delivery_id": "d-1"}
 
 
-def test_bot_events_can_be_handled_while_agnos_own_text_stays_ignored():
+def test_bot_events_can_be_handled_when_asked():
     received = []
-    client = TestClient(app_for(received.append, handle_bot_events=True))
     bot = issue_opened(sender={"login": "dependabot[bot]", "type": "Bot"})
-    assert deliver(client, bot, delivery="d-1").status_code == 202
-    own = issue_opened(sender={"login": "agno[bot]", "type": "Bot"})
-    own["issue"]["body"] = f"Tracked\n{MARKER}task=t-1 -->"
-    assert deliver(client, own, delivery="d-2").json() == {"status": "ignored", "reason": "written by Agno"}
+    assert deliver(TestClient(app_for(received.append)), bot).json()["status"] == "ignored"
+    assert deliver(TestClient(app_for(received.append, handle_bot_events=True)), bot).status_code == 202
     assert [event.sender for event in received] == ["dependabot[bot]"]
+
+
+def test_form_encoded_deliveries_are_read_like_json(received):
+    # The REST API creates repository webhooks with the form content type unless told otherwise.
+    client = TestClient(app_for(received.append))
+    body = urlencode({"payload": json.dumps(issue_opened())}).encode()
+    signature = "sha256=" + hmac.new(SECRET.encode(), body, hashlib.sha256).hexdigest()
+    headers = {
+        "X-GitHub-Event": "issues",
+        "X-GitHub-Delivery": "d-form",
+        "X-Hub-Signature-256": signature,
+        "Content-Type": "application/x-www-form-urlencoded",
+    }
+    response = client.post("/github/events", content=body, headers=headers)
+    assert response.status_code == 202 and received[0].issue["number"] == 7
+    empty = b"other=1"
+    signature = "sha256=" + hmac.new(SECRET.encode(), empty, hashlib.sha256).hexdigest()
+    headers.update({"X-GitHub-Delivery": "d-empty", "X-Hub-Signature-256": signature})
+    assert client.post("/github/events", content=empty, headers=headers).status_code == 400
 
 
 def test_two_interfaces_share_an_app_with_their_own_routes(recwarn):

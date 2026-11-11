@@ -39,3 +39,13 @@
 **Result:** The delivery returned 202 `{"status": "recorded", "delivery_id": ..., "result": {"received": 1}}` straight away, and the server printed the event, then "Read #6 with installation 180936050's token: open, 0 comments". The replay returned the same answer with `"duplicate": true`; the handler did not run again. `GET /github/status` returned `{"status": "available"}`.
 
 ---
+
+### basic.py, JSON and form-encoded deliveries (2026-11-11)
+
+**Status:** PASS
+
+**Description:** Served `basic.py` and sent two signed `issues.opened` deliveries the way GitHub formats them: one as `application/json`, and one as `application/x-www-form-urlencoded` with the JSON in its `payload` field, which is what a repository webhook created through the REST API sends by default. The form payload's issue body contained `&` and `=`.
+
+**Result:** Both returned 202 `recorded`, and the server printed both issues; the form payload decoded intact. Before this change, the form delivery was answered 400 "The delivery is not JSON" while the webhook's ping still succeeded.
+
+---

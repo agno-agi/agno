@@ -2,6 +2,7 @@ import asyncio
 import inspect
 import json
 import time
+from urllib.parse import parse_qs
 from collections import OrderedDict
 from typing import Any, Awaitable, Callable, Collection, Dict, Optional, Tuple, Union
 
@@ -47,6 +48,17 @@ class DeliveryLog:
 
     def forget(self, delivery_id: str) -> None:
         self._seen.pop(delivery_id, None)
+
+
+def _payload_text(body: bytes, content_type: str) -> str:
+    """The JSON payload of a delivery. A webhook set to the form content type, the REST API's default for
+    repository webhooks, sends it as payload=<url-encoded JSON>; the signature covers the raw body."""
+    if content_type.split(";")[0].strip().lower() == "application/x-www-form-urlencoded":
+        values = parse_qs(body.decode(), keep_blank_values=True).get("payload")
+        if not values:
+            raise ValueError("The form delivery has no payload field")
+        return values[0]
+    return body.decode()
 
 
 async def _run(handler: EventHandler, event: GitHubEvent) -> Optional[Dict[str, Any]]:
@@ -97,7 +109,7 @@ def attach_routes(
         if name == "ping":
             return {"status": "pong"}
         try:
-            payload = json.loads(body)
+            payload = json.loads(_payload_text(body, request.headers.get("content-type", "")))
         except ValueError:
             raise HTTPException(status_code=400, detail="The delivery is not JSON")
         if not isinstance(payload, dict):

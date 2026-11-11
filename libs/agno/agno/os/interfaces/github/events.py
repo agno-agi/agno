@@ -1,9 +1,6 @@
 from dataclasses import dataclass
 from typing import Any, Collection, Dict, Optional
 
-# Issues and comments Agno writes carry this marker, so the events they cause are not handled again.
-MARKER = "<!-- agno:"
-
 DEFAULT_EVENTS = ("issues.opened", "issue_comment.created")
 
 
@@ -88,10 +85,7 @@ def ignore_reason(
         return f"repository {event.repository} is not watched"
     if event.kind not in events:
         return f"{event.kind} is not handled"
-    # Bots include this integration's own GitHub App. Whoever posts Agno's text, its marker identifies it.
+    # Bots include this integration's own GitHub App, so what it posts is not handled again.
     if event.sender_type == "Bot" and not handle_bot_events:
         return f"sent by {event.sender}"
-    text = (event.comment or {}).get("body") if event.comment else (event.issue or {}).get("body")
-    if MARKER in (text or ""):
-        return "written by Agno"
     return None
