@@ -144,6 +144,35 @@ class _TaskRunTools(StudioRunnerTools):
             raise StudioRunnerError(refusal)
         return super()._inherited_dispatch_state(run_context)
 
+    def _agent_for_run(self, agent_id: str, actor: Optional[str] = None) -> Any:
+        from agno.company.sandbox import _is_sandboxed
+
+        agent = super()._agent_for_run(agent_id, actor=actor)
+        if _is_sandboxed(agent):
+            # Starting a Task on a sandboxed executor checks its repository and that no other sandboxed
+            # Task is live. A run from inside another Task passes neither check.
+            raise StudioRunnerError(
+                f"Agent '{agent.id}' runs in a sandbox, and a sandboxed agent runs only as a Task's own executor. "
+                f"Do not run it from this Task. Report that a person must accept the Task on agent '{agent.id}' "
+                "for it to do this work."
+            )
+        return agent
+
+    def _list_payload(self, component_type: str, key: str, actor: Optional[str] = None) -> str:
+        from agno.company.sandbox import _is_sandboxed
+
+        payload = super()._list_payload(component_type, key, actor=actor)
+        if component_type != "agent":
+            return payload
+        sandboxed = {agent.id for agent in self._iter_agents(for_dispatch=True) if _is_sandboxed(agent)}
+        data = json.loads(payload)
+        if not sandboxed or key not in data:
+            return payload
+        listed = [row for row in data[key] if row.get("id") not in sandboxed]
+        data["total"] = data.get("total", len(data[key])) - (len(data[key]) - len(listed))
+        data[key], data["count"] = listed, len(listed)
+        return json.dumps(data)
+
     def _require_no_cycle(
         self, running: List[str], inherited: List[str], component_type: str, component_id: str
     ) -> str:
@@ -233,7 +262,10 @@ class _KindInstructions:
 
 
 def _runnable(agent_os: Any, kind: str) -> Any:
-    """The served components of one kind that Mini Agent may run: never a framework component."""
+    """The served components of one kind that Mini Agent resolves: never a framework component.
+
+    A sandboxed agent is among them so that its ID and name resolve to a refusal that says how to run it.
+    """
     from agno.agents.base import BaseExternalAgent
     from agno.utils.live_sequence import LiveSequence
 

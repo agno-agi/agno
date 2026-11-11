@@ -274,3 +274,74 @@ def test_the_chat_tool_edits_a_title_after_acceptance_and_refuses_a_new_brief(sy
     tools.edit_company_task(task_id, "Release notes", "Write the release notes", _agno_run_context=chat())
     stored = system.db.get_task(task_id)
     assert (stored["title"], stored["brief"]) == ("Release notes", "Write the release notes")
+
+
+# ----------------------------------------------------------------- a sandboxed executor runs only its own Task
+
+
+def sandboxed(system, monkeypatch):
+    """Serve a sandboxed agent next to the writer and record every run it is given."""
+    from agno.sandbox import Repository
+    from agno.sandbox.docker import DockerSandbox
+    from agno.sandbox.fixture import FixtureAgent
+
+    engineer = FixtureAgent(
+        id="engineer",
+        name="Engineer",
+        sandbox=DockerSandbox("unused", env={"AGNO_SANDBOX_TEST_RUNTIME": "1"}),
+        repository=Repository("https://github.com/a/b"),
+    )
+    runs = []
+
+    def run(*args, **kwargs):
+        runs.append(args)
+        raise AssertionError("The sandboxed agent ran outside the sandbox gate")
+
+    async def arun(*args, **kwargs):
+        run(*args, **kwargs)
+
+    monkeypatch.setattr(engineer, "run", run)
+    monkeypatch.setattr(engineer, "arun", arun)
+    system.os.agents.append(engineer)
+    return runs
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("named", ["engineer", "Engineer"])
+def test_mini_agent_does_not_list_or_run_a_sandboxed_agent(system, monkeypatch, use_async, named):
+    import json
+
+    from agno.run.authorization import authorization_scope
+    from tests.unit.os.test_mini_agent_tasks import task_authority
+
+    runs = sandboxed(system, monkeypatch)
+    tools = system.mini.tools.run_tools[0]
+    with authorization_scope(lambda: task_authority()):
+        if use_async:
+            listed = asyncio.run(tools.alist_agents())
+            reply = asyncio.run(tools.arun_agent(named, "Fix the bug"))
+            healthy = asyncio.run(tools.arun_agent("writer", "Write"))
+        else:
+            listed = tools.list_agents()
+            reply = tools.run_agent(named, "Fix the bug")
+            healthy = tools.run_agent("writer", "Write")
+    assert [row["id"] for row in json.loads(listed)["agents"]] == ["writer"]
+    error = json.loads(reply)["error"]
+    assert "sandbox" in error and "accept the Task on" in error and "engineer" in error, error
+    assert runs == []
+    # A component with no sandbox still runs.
+    assert json.loads(healthy)["status"] == "COMPLETED"
+
+
+def test_a_task_run_on_mini_agent_reports_the_sandboxed_agent_as_a_refusal(system, monkeypatch):
+    runs = sandboxed(system, monkeypatch)
+    scopes = [*SCOPES, "agents:engineer:run", "agents:engineer:read"]
+    proposal = system.proposal()
+    system.accept(proposal["id"], scopes=scopes)
+    saved = system.execute(
+        proposal["id"],
+        [("list_agents", {}), ("run_agent", {"agent_id": "engineer", "message": "Fix the bug"})],
+        scopes=scopes,
+    )
+    content = saved["result"]["content"]
+    assert "accept the Task on" in content and runs == [], content
