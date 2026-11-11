@@ -365,6 +365,48 @@ def test_operation_ids_fall_back_to_entity_type_when_name_missing():
     assert "msteams_webhook_agent" in operation_ids
 
 
+@pytest.mark.parametrize("kind", ["agent", "team", "workflow"])
+def test_paused_run_sends_only_approval_notice(kind, caplog):
+    from unittest.mock import AsyncMock
+
+    from agno.run.agent import RunOutput
+    from agno.run.base import RunStatus
+    from agno.run.team import TeamRunOutput
+    from agno.run.workflow import WorkflowRunOutput
+
+    output_cls = {"agent": RunOutput, "team": TeamRunOutput, "workflow": WorkflowRunOutput}[kind]
+    response = output_cls(run_id="paused-run", status=RunStatus.paused, content="partial content")
+    entity = SimpleNamespace(id="entity-1", name="Stub", db=None, arun=AsyncMock(return_value=response))
+    client, env_patch = _build_test_client(**{kind: entity})
+    try:
+        with (
+            patch("agno.os.interfaces.msteams.router.typing_indicator_async", new_callable=AsyncMock),
+            patch("agno.os.interfaces.msteams.router.send_teams_message_async", new_callable=AsyncMock) as send,
+        ):
+            assert (
+                client.post(
+                    "/messages",
+                    json={
+                        "type": "message",
+                        "text": "hello",
+                        "serviceUrl": "https://svc/",
+                        "from": {"id": "user"},
+                        "conversation": {"id": "personal", "conversationType": "personal"},
+                    },
+                ).status_code
+                == 200
+            )
+        assert send.await_count == 1
+        assert (
+            send.call_args.args[2]
+            == "This request needs an approval step, which isn't available in Microsoft Teams yet."
+        )
+        assert "paused-run" in caplog.text
+        assert "partial content" not in str(send.call_args_list)
+    finally:
+        env_patch.stop()
+
+
 @pytest.mark.parametrize("kind", ["personal", "groupChat", "channel"])
 def test_conversation_scoped_reset_and_reference(tmp_path, kind):
     from unittest.mock import AsyncMock

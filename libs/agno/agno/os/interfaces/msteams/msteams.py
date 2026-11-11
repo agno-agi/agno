@@ -154,7 +154,11 @@ class MSTeams(BaseInterface):
 
     def send_alert(self, user_id: str, text: str) -> bool:
         """Blocking twin of :meth:`asend_alert`, for scripts and schedulers."""
-        return asyncio.run(self.asend_alert(user_id, text))
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self.asend_alert(user_id, text))
+        raise RuntimeError("send_alert cannot be called from a running event loop; await asend_alert instead")
 
     def _resolve_entity(self):
         if self.agent is not None:

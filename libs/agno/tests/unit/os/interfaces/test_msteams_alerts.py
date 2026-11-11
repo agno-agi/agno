@@ -316,6 +316,20 @@ def test_sync_send_alert_delegates_to_async():
         env_patch.stop()
 
 
+@pytest.mark.asyncio
+async def test_sync_send_alert_rejects_running_loop_without_starting_work():
+    teams, agent, env_patch = _build_teams_interface()
+    try:
+        with patch.object(teams, "asend_alert", new_callable=AsyncMock) as send:
+            with pytest.raises(
+                RuntimeError, match="send_alert cannot be called from a running event loop; await asend_alert instead"
+            ):
+                teams.send_alert("user-1", "hello")
+            send.assert_not_called()
+    finally:
+        env_patch.stop()
+
+
 def test_sync_send_alert_returns_false_on_missing_session():
     teams, agent, env_patch = _build_teams_interface()
     try:
