@@ -1,4 +1,4 @@
-"""Credentials for calling the GitHub API: a GitHub App's installation tokens, or a plain token.
+"""Credentials for calling the GitHub API as a GitHub App.
 
 A GitHub App signs a short-lived JWT with its private key and exchanges it for an installation token
 (valid for an hour), scoped to the repositories and permissions the installation grants. Tokens are
@@ -11,7 +11,7 @@ import time
 from datetime import datetime
 from os import getenv
 from pathlib import Path
-from typing import Any, Dict, Optional, Protocol, Tuple, Union
+from typing import Any, Dict, Optional, Tuple, Union
 
 import httpx
 
@@ -21,28 +21,12 @@ _HEADERS = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "20
 _EXPIRY_MARGIN = 60
 
 
-class GitHubCredentials(Protocol):
-    """Gives a token for calling GitHub on behalf of one installation, or the only account a token has."""
-
-    def token(self, installation_id: Optional[int] = None) -> str: ...
-
-    async def atoken(self, installation_id: Optional[int] = None) -> str: ...
-
-
-class GitHubToken:
-    """A personal or fine-grained access token. The installation is ignored."""
-
-    def __init__(self, token: Optional[str] = None):
-        value = token or getenv("GITHUB_ACCESS_TOKEN")
-        if not value:
-            raise ValueError("A GitHub token is required: pass token or set GITHUB_ACCESS_TOKEN")
-        self._token = value
-
-    def token(self, installation_id: Optional[int] = None) -> str:
-        return self._token
-
-    async def atoken(self, installation_id: Optional[int] = None) -> str:
-        return self._token
+def _is_file(value: str) -> bool:
+    # A long string that isn't a path (e.g. a base64-encoded key) makes is_file() raise instead of returning False.
+    try:
+        return Path(value).expanduser().is_file()
+    except (OSError, ValueError):
+        return False
 
 
 class GitHubAppCredentials:
@@ -67,8 +51,11 @@ class GitHubAppCredentials:
         key = private_key or getenv("GITHUB_APP_PRIVATE_KEY")
         if not key and getenv("GITHUB_APP_PRIVATE_KEY_PATH"):
             key = Path(getenv("GITHUB_APP_PRIVATE_KEY_PATH", "")).expanduser().read_text()
-        if key and "-----BEGIN" not in key and Path(key).expanduser().is_file():
+        if key and "-----BEGIN" not in key and _is_file(key):
             key = Path(key).expanduser().read_text()
+        if key and "-----BEGIN" in key and "\\n" in key and "\n" not in key.strip():
+            # A PEM kept on one line in a .env file, with its line breaks written as \n.
+            key = key.replace("\\n", "\n")
         if not key or "-----BEGIN" not in key:
             raise ValueError(
                 "A GitHub App private key (PEM) is required: pass private_key or set GITHUB_APP_PRIVATE_KEY "

@@ -21,12 +21,13 @@ Serve for a GitHub App (create and install it first; see README.md):
     ngrok http 7777
 """
 
+import asyncio
 import hashlib
 import hmac
 import json
 import sys
 from os import getenv
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Set
 
 import httpx
 from agno.db.sqlite import SqliteDb
@@ -38,6 +39,8 @@ from agno.utils.github_auth import GitHubAppCredentials
 # Create the handler
 # ---------------------------------------------------------------------------
 received: List[GitHubEvent] = []
+# Work that runs after a delivery is acknowledged; kept so it isn't garbage-collected mid-run.
+follow_ups: Set["asyncio.Task[None]"] = set()
 # Set when serving for a GitHub App; deliveries then name the installation whose token reads the issue.
 credentials = GitHubAppCredentials() if getenv("GITHUB_APP_ID") else None
 
@@ -67,12 +70,15 @@ async def read_back(event: GitHubEvent) -> None:
 
 
 async def record(event: GitHubEvent) -> Dict[str, Any]:
+    # GitHub gives up on a delivery after 10 seconds: record the event, return, and do slow work after.
     received.append(event)
     issue = event.issue or {}
     print(
         f"{event.kind} on {event.repository} #{issue.get('number')} by {event.sender}: {issue.get('title')}"
     )
-    await read_back(event)
+    task = asyncio.create_task(read_back(event))
+    follow_ups.add(task)
+    task.add_done_callback(follow_ups.discard)
     return {"received": len(received)}
 
 
@@ -105,13 +111,16 @@ def run_check() -> None:
     client = TestClient(app)
 
     def deliver(
-        event: str, payload: Dict[str, Any], key: str = "local-check-secret"
+        event: str,
+        payload: Dict[str, Any],
+        delivery: str,
+        key: str = "local-check-secret",
     ) -> Dict[str, Any]:
         body = json.dumps(payload).encode()
         signature = "sha256=" + hmac.new(key.encode(), body, hashlib.sha256).hexdigest()
         headers = {
             "X-GitHub-Event": event,
-            "X-GitHub-Delivery": "check",
+            "X-GitHub-Delivery": delivery,
             "X-Hub-Signature-256": signature,
         }
         response = client.post("/github/events", content=body, headers=headers)
@@ -128,15 +137,21 @@ def run_check() -> None:
             "user": {"login": "alice"},
         },
     }
-    print(deliver("issues", opened))
-    print(deliver("issues", {**opened, "repository": {"full_name": "someone/else"}}))
+    print(deliver("issues", opened, "d-1"))
+    # GitHub redelivers with the same X-GitHub-Delivery: answered from the first run.
+    print(deliver("issues", opened, "d-1"))
     print(
-        deliver("issues", {**opened, "sender": {"login": "my-app[bot]", "type": "Bot"}})
+        deliver(
+            "issues", {**opened, "repository": {"full_name": "someone/else"}}, "d-2"
+        )
     )
-    print(deliver("issues", opened, key="wrong-secret"))
+    bot = {**opened, "sender": {"login": "my-app[bot]", "type": "Bot"}}
+    print(deliver("issues", bot, "d-3"))
+    print(deliver("issues", opened, "d-4", key="wrong-secret"))
     assert len(received) == 1, received
     print(
-        "Handled 1 of 4 deliveries: the other repository, the App's own bot and the bad signature were refused."
+        "Handled 1 of 5 deliveries: the redelivery was answered from the first run, and the "
+        "other repository, the App's own bot and the bad signature were refused."
     )
 
 

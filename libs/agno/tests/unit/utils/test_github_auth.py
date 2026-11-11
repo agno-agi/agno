@@ -10,7 +10,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from agno.utils.github_auth import GitHubAppCredentials, GitHubToken
+from agno.utils.github_auth import GitHubAppCredentials
 
 
 @pytest.fixture(scope="module")
@@ -93,7 +93,7 @@ def test_the_app_jwt_is_short_lived_and_signed_by_the_apps_key(key_pair):
 
 
 def test_configuration_comes_from_arguments_files_or_the_environment(monkeypatch, tmp_path, key_pair):
-    for name in ("GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY", "GITHUB_APP_PRIVATE_KEY_PATH", "GITHUB_ACCESS_TOKEN"):
+    for name in ("GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY", "GITHUB_APP_PRIVATE_KEY_PATH"):
         monkeypatch.delenv(name, raising=False)
     with pytest.raises(ValueError, match="App ID"):
         GitHubAppCredentials(private_key=key_pair[0])
@@ -111,7 +111,12 @@ def test_configuration_comes_from_arguments_files_or_the_environment(monkeypatch
     monkeypatch.setenv("GITHUB_APP_PRIVATE_KEY_PATH", str(pem))
     assert GitHubAppCredentials().app_id == "55"
 
-    with pytest.raises(ValueError, match="GITHUB_ACCESS_TOKEN"):
-        GitHubToken()
-    monkeypatch.setenv("GITHUB_ACCESS_TOKEN", "pat")
-    assert GitHubToken().token() == "pat" and asyncio.run(GitHubToken().atoken(3)) == "pat"
+
+def test_keys_from_env_files_and_values_that_are_not_paths(key_pair):
+    # A .env file keeps the PEM on one line with its breaks written as \n.
+    one_line = key_pair[0].strip().replace("\n", "\\n")
+    claims = jwt.decode(GitHubAppCredentials(app_id=1, private_key=one_line).app_jwt(), key_pair[1], ["RS256"])
+    assert claims["iss"] == "1"
+    # Too long to be a file name: the error names the setting instead of failing on the path check.
+    with pytest.raises(ValueError, match="private key"):
+        GitHubAppCredentials(app_id=1, private_key="QUJD" * 600)

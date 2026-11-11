@@ -4,9 +4,9 @@
 
 **Status:** PASS
 
-**Description:** Sends four signed deliveries in process to an AgentOS serving the GitHub interface for `agno-agi/agno`: a new issue, the same issue on another repository, one sent by the ignored login, and one signed with the wrong secret.
+**Description:** Sends five signed deliveries in process to an AgentOS serving the GitHub interface for `agno-agi/agno`: a new issue, a redelivery of it with the same `X-GitHub-Delivery`, the same issue on another repository, one sent by a GitHub App's bot account, and one signed with the wrong secret.
 
-**Result:** The new issue reached the handler and returned 202 `recorded`. The other repository and the ignored login returned 200 `ignored` with their reasons, and the wrong signature returned 403. The handler ran once.
+**Result:** The new issue reached the handler and returned 202 `recorded` with the handler's result under `result`. The redelivery returned the same answer with `"duplicate": true` without calling the handler. The other repository and the bot returned 200 `ignored` with their reasons, and the wrong signature returned 403. The handler ran once.
 
 ---
 
@@ -27,5 +27,15 @@
 **Description:** Created a GitHub App on a personal account (Issues read and write, Contents and Metadata read-only; Issues and Issue comment events; webhook to `<ngrok URL>/github/events`), installed it on a private test repository, deleted the earlier repository webhook, and served `basic.py` with `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY_PATH`. Opened an issue.
 
 **Result:** The `issues.opened` delivery was marked as coming from the App (`X-GitHub-Hook-Installation-Target-Type: integration`), carried installation `180936050`, and returned 202 `recorded`. The handler minted an installation token from the App's private key and read the issue back: "Read #4 with installation 180936050's token: open, 0 comments". The App's `installation` events returned 200 `ignored`. A first run without `GITHUB_APP_ID` received the event but skipped the read-back silently; the cookbook now prints at startup whether App credentials are configured.
+
+---
+
+### basic.py, served for a GitHub App after review changes (2026-11-11)
+
+**Status:** PASS
+
+**Description:** Served the updated `basic.py` for the same GitHub App and private test repository through ngrok: the handler records the event and returns, and reads the issue back afterwards. Opened an issue, then replayed its delivery from ngrok's inspector with the same `X-GitHub-Delivery`.
+
+**Result:** The delivery returned 202 `{"status": "recorded", "delivery_id": ..., "result": {"received": 1}}` straight away, and the server printed the event, then "Read #6 with installation 180936050's token: open, 0 comments". The replay returned the same answer with `"duplicate": true`; the handler did not run again. `GET /github/status` returned `{"status": "available"}`.
 
 ---

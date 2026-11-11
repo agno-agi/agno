@@ -5,7 +5,7 @@ from fastapi.routing import APIRouter
 
 from agno.os.interfaces.base import BaseInterface
 from agno.os.interfaces.github.events import DEFAULT_EVENTS
-from agno.os.interfaces.github.router import EventHandler, attach_routes
+from agno.os.interfaces.github.router import DeliveryLog, EventHandler, attach_routes
 
 
 class GitHub(BaseInterface):
@@ -13,7 +13,10 @@ class GitHub(BaseInterface):
 
     Unlike chat interfaces, GitHub is not bound to an agent: the handler decides what an event becomes,
     e.g. a Company Task. It must record the event durably before returning, because GitHub does not
-    retry a failed delivery on its own.
+    retry a failed delivery on its own. GitHub also gives up on a delivery after 10 seconds, so the
+    handler should record and return quickly, and leave slow work to run after it returns. A redelivery
+    of one this process already handled doesn't run the handler again; a handler that must never act
+    twice on one event across restarts also keys its own records durably.
     """
 
     type = "github"
@@ -30,16 +33,19 @@ class GitHub(BaseInterface):
         repositories: Sequence[str],
         webhook_secret: Optional[str] = None,
         events: Sequence[str] = DEFAULT_EVENTS,
+        handle_bot_events: bool = False,
         prefix: str = "/github",
         tags: Optional[List[str]] = None,
     ):
         """
         Args:
-            handler: Called with each verified, watched event; may be async. Its return value is merged into
-                the response.
+            handler: Called with each verified, watched event; may be async. A sync handler runs in the
+                threadpool. It may return a JSON-serializable dict, sent back under "result".
             repositories: The repositories to watch, as "owner/name".
             webhook_secret: The secret set on the webhook. Defaults to GITHUB_WEBHOOK_SECRET.
             events: The event and action pairs to handle, e.g. "issues.opened".
+            handle_bot_events: Also handle events sent by bots, e.g. Dependabot. Agno's own comments stay
+                ignored through their marker.
             prefix: Mount path; the webhook's payload URL is <prefix>/events.
             tags: OpenAPI tags.
         """
@@ -53,14 +59,19 @@ class GitHub(BaseInterface):
         self.webhook_secret = secret
         self.repositories = watched
         self.events = set(events)
+        self.handle_bot_events = handle_bot_events
+        self.deliveries = DeliveryLog()
         self.prefix = prefix
         self.tags = tags or ["GitHub"]
 
     def get_router(self, use_async: bool = True, **kwargs) -> APIRouter:
-        return attach_routes(
+        self.router = attach_routes(
             router=APIRouter(prefix=self.prefix, tags=self.tags),  # type: ignore
             handler=self.handler,
             secret=self.webhook_secret,
             repositories=self.repositories,
             events=self.events,
+            handle_bot_events=self.handle_bot_events,
+            deliveries=self.deliveries,
         )
+        return self.router

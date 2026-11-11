@@ -1,9 +1,15 @@
 """The GitHub interface accepts only signed deliveries for watched repositories and hands each event to its handler."""
 
+import asyncio
 import hashlib
 import hmac
 import json
+import threading
+import time
+from dataclasses import dataclass
+from datetime import datetime, timezone
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -65,7 +71,7 @@ def client(received):
 def test_a_signed_new_issue_reaches_the_handler(client, received):
     response = deliver(client, issue_opened())
     assert response.status_code == 202
-    assert response.json() == {"status": "recorded", "task_id": "t-1"}
+    assert response.json() == {"status": "recorded", "delivery_id": "d-1", "result": {"task_id": "t-1"}}
 
     event = received[0]
     assert (event.delivery_id, event.kind, event.repository, event.sender) == (
@@ -202,3 +208,146 @@ def test_agentos_serves_deliveries_without_its_own_bearer_token(received):
     assert deliver(client, issue_opened()).status_code == 202
     assert deliver(client, issue_opened(), signature="sha256=" + "0" * 64).status_code == 403
     assert len(received) == 1
+
+
+def app_for(handler, **options):
+    app = FastAPI()
+    app.include_router(GitHub(handler, repositories=["agno-agi/agno"], webhook_secret=SECRET, **options).get_router())
+    return app
+
+
+def test_a_redelivery_runs_the_handler_once_unless_the_first_attempt_failed():
+    calls = []
+
+    def handler(event):
+        calls.append(event.delivery_id)
+        if len(calls) == 2:
+            raise RuntimeError("database unavailable")
+        return {"task_id": f"t-{len(calls)}"}
+
+    client = TestClient(app_for(handler))
+    first = deliver(client, issue_opened(), delivery="d-1").json()
+    again = deliver(client, issue_opened(), delivery="d-1").json()
+    assert again == {**first, "duplicate": True} and calls == ["d-1"]
+
+    # A failed delivery is forgotten, so GitHub's redelivery retries it.
+    assert deliver(client, issue_opened(), delivery="d-2").status_code == 500
+    retried = deliver(client, issue_opened(), delivery="d-2")
+    assert retried.status_code == 202 and "duplicate" not in retried.json()
+    assert calls == ["d-1", "d-2", "d-2"]
+
+
+def test_a_redelivery_during_a_slow_first_attempt_waits_for_it():
+    started, release, calls = asyncio.Event(), asyncio.Event(), []
+
+    async def handler(event):
+        calls.append(event.delivery_id)
+        started.set()
+        await release.wait()
+        return {"task_id": "t-1"}
+
+    async def scenario():
+        transport = httpx.ASGITransport(app=app_for(handler))
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            body = json.dumps(issue_opened()).encode()
+            signature = "sha256=" + hmac.new(SECRET.encode(), body, hashlib.sha256).hexdigest()
+            headers = {"X-GitHub-Event": "issues", "X-GitHub-Delivery": "d-1", "X-Hub-Signature-256": signature}
+            first = asyncio.create_task(client.post("/github/events", content=body, headers=headers))
+            await started.wait()
+            second = asyncio.create_task(client.post("/github/events", content=body, headers=headers))
+            await asyncio.sleep(0.05)
+            assert not second.done()
+            release.set()
+            return (await first).json(), (await second).json()
+
+    first, second = asyncio.run(scenario())
+    assert second == {**first, "duplicate": True} and calls == ["d-1"]
+
+
+def test_sync_handlers_run_in_the_threadpool():
+    threads = set()
+
+    def slow(event):
+        threads.add(threading.get_ident())
+        time.sleep(0.5)
+
+    async def scenario():
+        transport = httpx.ASGITransport(app=app_for(slow))
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            requests = []
+            for index in range(3):
+                body = json.dumps(issue_opened()).encode()
+                signature = "sha256=" + hmac.new(SECRET.encode(), body, hashlib.sha256).hexdigest()
+                headers = {
+                    "X-GitHub-Event": "issues",
+                    "X-GitHub-Delivery": f"d-{index}",
+                    "X-Hub-Signature-256": signature,
+                }
+                requests.append(client.post("/github/events", content=body, headers=headers))
+            started = time.monotonic()
+            responses = await asyncio.gather(*requests)
+            return time.monotonic() - started, [response.status_code for response in responses]
+
+    elapsed, statuses = asyncio.run(scenario())
+    # One after another would take 1.5s; on the event loop thread they would block every other request.
+    assert statuses == [202, 202, 202] and elapsed < 1.2
+    assert threading.get_ident() not in threads
+
+
+@dataclass
+class Receipt:
+    task_id: str
+    at: datetime
+
+
+def test_a_recorded_event_is_never_reported_as_failed():
+    # Results the encoder handles are sent back under "result", which can't replace the status.
+    at = datetime(2026, 11, 11, tzinfo=timezone.utc)
+    client = TestClient(app_for(lambda event: Receipt("t-1", at)))
+    assert deliver(client, issue_opened()).json()["result"] == {"task_id": "t-1", "at": "2026-11-11T00:00:00+00:00"}
+    client = TestClient(app_for(lambda event: {"status": "overwritten"}))
+    assert deliver(client, issue_opened()).json() == {
+        "status": "recorded",
+        "delivery_id": "d-1",
+        "result": {"status": "overwritten"},
+    }
+    # A result that can't be sent back is left out; the event is still recorded, not a 500.
+    client = TestClient(app_for(lambda event: {"lock": threading.Lock()}))
+    response = deliver(client, issue_opened())
+    assert response.status_code == 202 and response.json() == {"status": "recorded", "delivery_id": "d-1"}
+
+
+def test_bot_events_can_be_handled_while_agnos_own_text_stays_ignored():
+    received = []
+    client = TestClient(app_for(received.append, handle_bot_events=True))
+    bot = issue_opened(sender={"login": "dependabot[bot]", "type": "Bot"})
+    assert deliver(client, bot, delivery="d-1").status_code == 202
+    own = issue_opened(sender={"login": "agno[bot]", "type": "Bot"})
+    own["issue"]["body"] = f"Tracked\n{MARKER}task=t-1 -->"
+    assert deliver(client, own, delivery="d-2").json() == {"status": "ignored", "reason": "written by Agno"}
+    assert [event.sender for event in received] == ["dependabot[bot]"]
+
+
+def test_two_interfaces_share_an_app_with_their_own_routes(recwarn):
+    interfaces = [
+        GitHub(lambda event: None, repositories=["agno-agi/agno"], webhook_secret=SECRET),
+        GitHub(lambda event: None, repositories=["agno-agi/docs"], webhook_secret=SECRET, prefix="/github/docs"),
+    ]
+    app = FastAPI()
+    for interface in interfaces:
+        router = interface.get_router()
+        assert interface.router is router
+        app.include_router(router)
+    operation_ids = [
+        operation["operationId"] for path in app.openapi()["paths"].values() for operation in path.values()
+    ]
+    assert sorted(operation_ids) == [
+        "github_events_github",
+        "github_events_github_docs",
+        "github_status_github",
+        "github_status_github_docs",
+    ]
+    assert not [warning for warning in recwarn if "Duplicate Operation ID" in str(warning.message)]
+    client = TestClient(app)
+    assert client.get("/github/status").json() == {"status": "available"}
+    assert client.get("/github/docs/status").json() == {"status": "available"}

@@ -12,15 +12,38 @@ What the interface does before calling the handler:
 - Answers GitHub's `ping`.
 - Ignores, with a 200 and a reason: repositories it does not watch, events it
   does not handle (default `issues.opened` and `issue_comment.created`), bots
-  (including the App's own `[bot]` account), and text carrying Agno's own
-  marker, which every comment Agno posts includes.
+  (including the App's own `[bot]` account; `handle_bot_events=True` accepts
+  bots such as Dependabot), and text carrying Agno's own marker, which every
+  comment Agno posts includes.
 - Passes the installation that sent the delivery as `event.installation_id`,
   so the handler can act with that installation's token.
+- Answers a redelivery of a delivery it already handled from the first run
+  (`"duplicate": true`) without calling the handler again. A redelivery that
+  arrives while the first is still running waits for it.
 
 The handler must record the event before it returns. GitHub does not retry a
 failed delivery on its own, so the interface reports success (202) only after
 the handler returns, and a handler error returns 500 so the delivery can be
-redelivered from the App's **Advanced** settings.
+redelivered from the App's **Advanced** settings; a failed delivery is then
+handled again.
+
+Writing a handler:
+
+- **Return within a few seconds.** GitHub gives up on a delivery after 10
+  seconds and marks it failed. Record the event, return, and run slow work
+  afterwards; `basic.py` reads the issue back that way.
+- **Sync or async.** A sync handler runs in the threadpool, so it doesn't hold
+  up other deliveries.
+- **Return a JSON-serializable dict, or nothing.** It's sent back under
+  `"result"`. A result that can't be encoded is left out; the delivery still
+  succeeds, since the event is already recorded.
+- **Make it safe to receive an event twice.** Duplicate detection is per
+  process and lasts ten minutes; across restarts and replicas, key the records
+  the handler creates on something stable such as the repository and issue
+  number.
+
+`GET <prefix>/status` answers `{"status": "available"}`, to check the interface
+is mounted.
 
 `agno.utils.github_auth.GitHubAppCredentials` mints the installation tokens: it
 signs a short-lived JWT with the App's private key and exchanges it for a token
