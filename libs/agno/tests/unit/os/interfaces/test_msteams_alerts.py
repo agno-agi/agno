@@ -17,7 +17,12 @@ def _build_teams_interface(env=None):
     stub_agent = SimpleNamespace(id="agent-1", name="Stub", db=fake_db)
     env_patch = _patch.dict(
         "os.environ",
-        {"MICROSOFT_APP_ID": "app-id", "MICROSOFT_APP_PASSWORD": "secret", **(env or {})},
+        {
+            "MICROSOFT_APP_ID": "app-id",
+            "MICROSOFT_APP_PASSWORD": "secret",
+            "MICROSOFT_APP_TENANT_ID": "tenant",
+            **(env or {}),
+        },
         clear=True,
     )
     env_patch.start()
@@ -129,7 +134,7 @@ async def test_alert_uses_the_newest_session_that_carries_a_ref(tmp_path):
 
     with patch.dict(
         "os.environ",
-        {"MICROSOFT_APP_ID": "app-id", "MICROSOFT_APP_PASSWORD": "secret"},
+        {"MICROSOFT_APP_ID": "app-id", "MICROSOFT_APP_PASSWORD": "secret", "MICROSOFT_APP_TENANT_ID": "tenant"},
         clear=True,
     ):
         teams = MSTeams(agent=stub_agent)
@@ -174,7 +179,7 @@ async def test_alert_orders_candidates_by_created_at_not_updated_at(tmp_path):
 
     with patch.dict(
         "os.environ",
-        {"MICROSOFT_APP_ID": "app-id", "MICROSOFT_APP_PASSWORD": "secret"},
+        {"MICROSOFT_APP_ID": "app-id", "MICROSOFT_APP_PASSWORD": "secret", "MICROSOFT_APP_TENANT_ID": "tenant"},
         clear=True,
     ):
         teams = MSTeams(agent=stub_agent)
@@ -196,7 +201,7 @@ async def test_send_alert_returns_false_when_entity_has_no_db():
     stub_agent = SimpleNamespace(id="agent-1", name="Stub", db=None)
     with _patch.dict(
         "os.environ",
-        {"MICROSOFT_APP_ID": "app-id", "MICROSOFT_APP_PASSWORD": "secret"},
+        {"MICROSOFT_APP_ID": "app-id", "MICROSOFT_APP_PASSWORD": "secret", "MICROSOFT_APP_TENANT_ID": "tenant"},
         clear=True,
     ):
         teams = MSTeams(agent=stub_agent)
@@ -234,7 +239,7 @@ async def test_send_alert_works_with_team_entity():
     stub_team = SimpleNamespace(id="team-1", name="Squad", db=fake_db)
     with _patch.dict(
         "os.environ",
-        {"MICROSOFT_APP_ID": "app-id", "MICROSOFT_APP_PASSWORD": "secret"},
+        {"MICROSOFT_APP_ID": "app-id", "MICROSOFT_APP_PASSWORD": "secret", "MICROSOFT_APP_TENANT_ID": "tenant"},
         clear=True,
     ):
         teams = MSTeams(team=stub_team)
@@ -255,7 +260,7 @@ async def test_send_alert_works_with_workflow_entity():
     stub_wf = SimpleNamespace(id="wf-1", name="Nightly", db=fake_db)
     with _patch.dict(
         "os.environ",
-        {"MICROSOFT_APP_ID": "app-id", "MICROSOFT_APP_PASSWORD": "secret"},
+        {"MICROSOFT_APP_ID": "app-id", "MICROSOFT_APP_PASSWORD": "secret", "MICROSOFT_APP_TENANT_ID": "tenant"},
         clear=True,
     ):
         teams = MSTeams(workflow=stub_wf)
@@ -280,7 +285,7 @@ async def test_send_alert_awaits_async_db():
     stub_agent = SimpleNamespace(id="agent-1", name="Stub", db=fake_async_db)
     with _patch.dict(
         "os.environ",
-        {"MICROSOFT_APP_ID": "app-id", "MICROSOFT_APP_PASSWORD": "secret"},
+        {"MICROSOFT_APP_ID": "app-id", "MICROSOFT_APP_PASSWORD": "secret", "MICROSOFT_APP_TENANT_ID": "tenant"},
         clear=True,
     ):
         teams = MSTeams(agent=stub_agent)

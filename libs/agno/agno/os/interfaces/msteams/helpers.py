@@ -20,7 +20,7 @@ _TOKEN_EXPIRY_SKEW_SECONDS = 60
 class MSTeamsConfig:
     app_id: str
     app_password: str
-    tenant_id: str = "botframework.com"
+    tenant_id: str
     request_timeout: int = 30
 
     _cached_token: Optional[str] = field(default=None, repr=False)
@@ -34,26 +34,25 @@ class MSTeamsConfig:
         tenant_id: Optional[str] = None,
         request_timeout: int = 30,
     ) -> "MSTeamsConfig":
-        """Resolve config from constructor args, then ``MICROSOFT_APP_*`` env vars.
-
-        Raises ``ValueError`` when a credential is missing, except under the
-        credential-free bypass below.
-        """
+        """Resolve and validate credentials from args, then MICROSOFT_APP_* env vars."""
         from agno.os.interfaces.msteams.security import dev_bypass_enabled
 
-        aid = app_id or os.getenv("MICROSOFT_APP_ID")
-        secret = app_password or os.getenv("MICROSOFT_APP_PASSWORD")
-        tid = tenant_id or os.getenv("MICROSOFT_APP_TENANT_ID") or "botframework.com"
+        aid = (app_id or os.getenv("MICROSOFT_APP_ID") or "").strip()
+        secret = (app_password or os.getenv("MICROSOFT_APP_PASSWORD") or "").strip()
+        tid = (tenant_id or os.getenv("MICROSOFT_APP_TENANT_ID") or "").strip()
 
         # Both must be missing, not either: half-configured would leave app_id
         # empty, which the validator reads as "no credentials" and waves past.
         if dev_bypass_enabled() and not aid and not secret:
+            log_warning("MICROSOFT_APP_SKIP_JWT_VALIDATION=true — Bot Framework JWT check disabled")
             return cls(app_id="", app_password="", tenant_id=tid, request_timeout=request_timeout)
 
         if not aid:
             raise ValueError("MICROSOFT_APP_ID is not set. Set the environment variable or pass app_id.")
         if not secret:
             raise ValueError("MICROSOFT_APP_PASSWORD is not set. Set the environment variable or pass app_password.")
+        if not tid:
+            raise ValueError("MICROSOFT_APP_TENANT_ID is not set. Set the environment variable or pass tenant_id.")
 
         return cls(
             app_id=aid,
@@ -63,11 +62,12 @@ class MSTeamsConfig:
         )
 
     def token_url(self) -> str:
-        # 'botframework.com' is the multi-tenant issuer used by MultiTenant bots
         return f"{_LOGIN_BASE}/{self.tenant_id}/oauth2/v2.0/token"
 
 
 async def _get_bot_token(config: MSTeamsConfig) -> str:
+    if not config.app_id and not config.app_password:
+        return ""
     now = time.time()
     if config._cached_token and config._token_expires_at - _TOKEN_EXPIRY_SKEW_SECONDS > now:
         return config._cached_token
@@ -178,7 +178,8 @@ async def _download_attachment(
     if use_bot_token:
         try:
             token = await _get_bot_token(config)
-            headers["Authorization"] = f"Bearer {token}"
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
         except Exception as e:
             status = e.response.status_code if isinstance(e, httpx.HTTPStatusError) else None
             log_warning(f"Attachment token failed: {name}, status={status}, {type(e).__name__}")
@@ -330,11 +331,10 @@ async def _post_activity(
     config: MSTeamsConfig,
     reply_to_activity_id: Optional[str] = None,
 ) -> Optional[dict]:
-    token = await _get_bot_token(config)
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-    }
+    headers = {"Content-Type": "application/json"}
+    if config.app_id:
+        token = await _get_bot_token(config)
+        headers["Authorization"] = f"Bearer {token}"
 
     try:
         async with httpx.AsyncClient(timeout=config.request_timeout) as client:
