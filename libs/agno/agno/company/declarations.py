@@ -49,16 +49,17 @@ class AutoAccept(BaseModel):
     """What happens to a Routine's proposals with no person. Every field has a default.
 
     The Routine's Tasks are accepted and run, and finished work waits In review for a person. A Task
-    runs on the executor its proposal suggests, or on this executor when it suggests none.
-    approve_projects also approves a Project the Routine proposed when one of its Tasks is accepted;
-    turn it off for a person to approve each Project. max_open is the most Tasks of this Routine
-    that may be Ready, In progress or In review at once; it applies when limits is not set. limits
-    adds a lifetime count and an expiry.
+    runs on the executor its proposal suggests, or on default_executor when it suggests none.
+    executors limits which executors a proposal may suggest; left out, any registered executor is
+    accepted. Mini Agent and default_executor are always allowed. approve_projects also approves a
+    Project the Routine proposed when one of its Tasks is accepted; turn it off for a person to
+    approve each Project. max_open is the most Tasks of this Routine that may be Ready, In progress
+    or In review at once; it applies when limits is not set. limits adds a lifetime count and an expiry.
     """
 
     model_config = ConfigDict(extra="forbid", strict=True)
-    executor_type: Literal["agent", "team", "workflow"] = "agent"
-    executor_id: str = Field(default=MINI_AGENT_ID, min_length=1)
+    default_executor: str = Field(default=MINI_AGENT_ID, min_length=1)
+    executors: Optional[List[str]] = None
     source_ids: Optional[List[str]] = None
     work_scope: Optional[AcceptanceScope] = None
     required_checks: List[str] = Field(default_factory=lambda: ["executor_registered"], min_length=1)
@@ -69,9 +70,17 @@ class AutoAccept(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def default_executor(cls, data: Any) -> Any:
-        """A policy with no executor uses Mini Agent. A null counts as left out."""
-        return _default_executor(data)
+    def read_saved_executor(cls, data: Any) -> Any:
+        """A policy that names executor_type and executor_id allows that one executor, and uses it by default."""
+        if isinstance(data, dict) and ("executor_type" in data or "executor_id" in data):
+            if "default_executor" in data or "executors" in data:
+                raise ValueError("Name executors with default_executor and executors only")
+            data = _default_executor(data)
+            executor_id = data.get("executor_id")
+            data = {key: value for key, value in data.items() if key not in ("executor_type", "executor_id")}
+            if executor_id is not None:
+                data.update(default_executor=executor_id, executors=[executor_id])
+        return data
 
 
 class Routine(BaseModel):

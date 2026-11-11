@@ -280,6 +280,55 @@ def _schedule_fields(product_id: str, routine: Routine, registry: Any, *, agent_
 _DECLARED = {"declared": True}
 
 
+def _executor_kind(registry: Any, executor_id: str) -> str:
+    """The kind of the one registered component with this id. A policy names executors by id only.
+
+    Studio components cannot share an id across kinds. Code-defined ones can, and such an id is
+    refused here: the kind is never guessed.
+    """
+    from agno.registry._reserved import MINI_AGENT_ID
+
+    if executor_id == MINI_AGENT_ID:
+        return "agent"
+    kinds = []
+    for kind in ("agent", "team", "workflow"):
+        try:
+            if _registered_component(registry, kind, executor_id) is not None:
+                kinds.append(kind)
+        except ValueError:
+            continue
+    if len(kinds) > 1:
+        raise ValueError(f"Executor ID '{executor_id}' is shared by {' and '.join(kinds)}. Give each its own ID")
+    if not kinds:
+        raise ValueError(f"Executor '{executor_id}' is not a registered agent, team or workflow")
+    return kinds[0]
+
+
+def _may_suggest(registry: Any, policy: Any, suggested: Any) -> bool:
+    """Whether a proposal may name this executor: any, unless the policy lists executors."""
+    from agno.registry._reserved import MINI_AGENT_ID
+
+    if policy.executors is None:
+        return True
+    try:
+        return (
+            suggested[1] in {*policy.executors, MINI_AGENT_ID}
+            and _executor_kind(registry, suggested[1]) == suggested[0]
+        )
+    except ValueError:
+        return False
+
+
+def _policy_executors(registry: Any, policy: Any) -> List[str]:
+    """The run endpoints of a policy's default and listed executors, after the executor checks."""
+    endpoints = []
+    for executor_id in dict.fromkeys([policy.default_executor, *(policy.executors or [])]):
+        kind = _executor_kind(registry, executor_id)
+        _automatic_executor(registry, kind, executor_id)
+        endpoints.append(f"/{kind}s/{executor_id}/runs")
+    return endpoints
+
+
 def _declared_schedule_fields(
     product_id: str, routine: Routine, registry: Any, *, agent_os: Any = None, trusted: bool = False
 ) -> Dict[str, Any]:
@@ -293,7 +342,7 @@ def _declared_schedule_fields(
     fields = _schedule_fields(product_id, routine, registry, agent_os=agent_os)
     if routine.auto_accept:
         policy = routine.auto_accept
-        _automatic_executor(registry, policy.executor_type, policy.executor_id)
+        _policy_executors(registry, policy)
         if agent_os is not None and any(name not in _acceptance_checks(agent_os) for name in policy.required_checks):
             raise ValueError("Unknown automatic acceptance check")
         fields["payload"]["metadata"]["auto_accept"] = policy.model_dump()
@@ -348,8 +397,8 @@ async def _authorize_auto_accept(request, policy, agent_os=None):
             parsed = AutoAccept.model_validate(policy)
             if parsed.limits is not None and parsed.limits.expires_at <= int(time.time()):
                 raise ValueError("Automatic acceptance expiry must be in the future")
+            endpoints = _policy_executors(getattr(agent_os, "registry", None), parsed)
             if agent_os is not None:
-                _automatic_executor(agent_os.registry, parsed.executor_type, parsed.executor_id)
                 if any(name not in _acceptance_checks(agent_os) for name in parsed.required_checks):
                     raise ValueError("Unknown automatic acceptance check")
         except ValueError as exc:
@@ -359,9 +408,9 @@ async def _authorize_auto_accept(request, policy, agent_os=None):
                 await authority.arequire("projects", "write")
             except PermissionError as exc:
                 raise HTTPException(403, str(exc))
-        await _require_endpoint_permission(
-            request, f"/{parsed.executor_type}s/{parsed.executor_id}/runs", "POST", action="accept"
-        )
+        # The author must be allowed to run the default executor and each listed one themselves.
+        for endpoint in endpoints:
+            await _require_endpoint_permission(request, endpoint, "POST", action="accept")
 
 
 async def _stamp_auto_accept(request, payload, agent_os=None):
@@ -385,15 +434,15 @@ async def _stamp_auto_accept(request, payload, agent_os=None):
 
 
 def _stored_policy(raw):
-    """A stored policy, and whether it was saved before approve_projects existed.
+    """A stored policy, and whether it was saved before this form (it names executor_type and executor_id).
 
-    Such a policy keeps the rules it was saved under: it approves no Project, its executor is fixed,
-    and its lifetime count and expiry are its only limits.
+    Such a policy allows that one executor and uses it by default. It keeps the rest of what it was
+    saved under: it approves no Project, and its lifetime count and expiry are its only limits.
     """
     from agno.company.declarations import AutoAccept
 
-    legacy = "approve_projects" not in raw
-    return AutoAccept.model_validate({**raw, "approve_projects": False} if legacy else raw), legacy
+    legacy = "executor_type" in raw
+    return AutoAccept.model_validate({"approve_projects": False, **raw} if legacy else raw), legacy
 
 
 def _policy_fingerprint(schedule):
@@ -405,10 +454,11 @@ def _policy_fingerprint(schedule):
     if policy:
         parsed, legacy = _stored_policy(policy)
         content = parsed.model_dump()
-        # A policy saved before a field existed keeps the version it was saved with, and its budget.
         if legacy:
-            content.pop("approve_projects")
-            content.pop("max_open")
+            # The version it was saved with, so its budget does not change.
+            kept = ("source_ids", "work_scope", "required_checks", "limits", "complete_projects")
+            saved = {"executor_type": policy["executor_type"], "executor_id": policy["executor_id"]}
+            content = {**saved, **{key: content[key] for key in kept}}
         if not content["complete_projects"]:
             content.pop("complete_projects")
     return hashlib.sha256(json.dumps(content, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
@@ -905,13 +955,15 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
         acceptance_resource = "projects" if completing else "tasks"
         if metadata.get("product_id") != task["product_id"]:
             raise _AutomationSkip("Proposal is outside the Routine Product")
-        # A Task runs on the executor its proposal suggests, or on the policy's when it suggests none.
+        # A Task runs on the executor its proposal suggests, or on the default when it suggests none.
         suggested = (task.get("executor_type"), task.get("executor_id"))
-        executor = (policy.executor_type, policy.executor_id)
-        chosen_by = "policy"
-        if suggested != (None, None) and suggested != executor:
-            if legacy or completing:
-                raise _AutomationSkip("Proposed executor is outside automatic acceptance authorization")
+        saved_kind = metadata["auto_accept"]["executor_type"] if legacy else None
+        default = (saved_kind or _executor_kind(os.registry, policy.default_executor), policy.default_executor)
+        if suggested == (None, None):
+            executor, chosen_by = default, "default"
+        elif suggested != default and (completing or legacy or not _may_suggest(os.registry, policy, suggested)):
+            raise _AutomationSkip("Proposed executor is outside automatic acceptance authorization")
+        else:
             executor, chosen_by = suggested, "proposal"
         scope = policy.work_scope
         if scope and (
@@ -1087,7 +1139,7 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
                     executor_type=executor[0],
                     executor_id=executor[1],
                     expected_updated_at=task["updated_at"],
-                    # The record says whether the Routine's proposal or the policy chose the executor.
+                    # The record says whether the executor came from the Routine's proposal or the default.
                     auto_accept={**receipt, "executor_chosen_by": chosen_by},
                 )
         if accepted is None:
