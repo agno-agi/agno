@@ -184,3 +184,42 @@ async def test_a_continue_does_not_fix_the_hook_mode_of_later_runs(tmp_path, hoo
     assert later.status.value == "COMPLETED"
     assert guardrail.checked == ["done", "again"]
     assert hook_errors == []
+
+
+class _ModeGuardrail(BaseGuardrail):
+    """Records which of its two checks ran, and on what output."""
+
+    def __init__(self) -> None:
+        self.checked: List[tuple] = []
+
+    def check(self, run_input: Any = None, run_output: Any = None) -> None:
+        self.checked.append(("sync", getattr(run_output, "content", None)))
+
+    async def async_check(self, run_input: Any = None, run_output: Any = None) -> None:
+        self.checked.append(("async", getattr(run_output, "content", None)))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["agent", "team"])
+@pytest.mark.parametrize("continue_async", [False, True], ids=["arun-then-continue", "run-then-acontinue"])
+async def test_guardrail_runs_on_a_continue_of_the_other_mode(tmp_path, hook_errors, kind, continue_async):
+    # A fresh run leaves the guardrail's bound check for its own mode in the component's hooks.
+    # A continue of the other mode on the same instance has to run the check for its own mode:
+    # a sync continue can only skip an async check.
+    db = SqliteDb(db_file=str(tmp_path / "other-mode.db"))
+    guardrail = _ModeGuardrail()
+    component = _component(kind, db, _PAUSE + [("content", "done")], post_hooks=[guardrail])
+
+    if continue_async:
+        paused = component.run("go", session_id="s")
+    else:
+        paused = await component.arun("go", session_id="s")
+    assert paused.is_paused
+    guardrail.checked.clear()
+
+    kwargs = dict(run_id=paused.run_id, session_id="s", requirements=_confirmed(paused.requirements))
+    result = await component.acontinue_run(**kwargs) if continue_async else component.continue_run(**kwargs)
+
+    assert result.status.value == "COMPLETED"
+    assert guardrail.checked == [("async" if continue_async else "sync", "done")]
+    assert hook_errors == []
