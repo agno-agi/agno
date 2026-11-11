@@ -91,8 +91,9 @@ permission for the run to be recorded as successful. The saved Routine creator
 and authorization remain unchanged for scheduled runs; only edits to the
 executor, instructions or acceptance policy save the editor's authorization. A
 Routine with automatic acceptance accepts proposals with the saved grant of the
-user who authorized it, so under user isolation only that user can trigger it
-manually.
+user who authorized it, so only that user or an admin can trigger it manually. A
+policy declared in code has no author: where authorization is off, whoever may
+run the Routine can trigger it.
 
 ## Work records
 
@@ -339,8 +340,10 @@ recorded as paused, and nothing is decided. `start_company_task` and
 After the confirmation, each tool runs under the confirming person's permissions and
 writes that person on the transition. Routine runs, Task runs, the automation tick,
 service accounts, the scheduler identity and, under user isolation, anonymous callers
-are refused. The name in the confirmation must be the record's name, so the person
-decides on the record they were shown.
+are refused. Where authorization is on, a run that carries no permissions is refused
+too, by these tools, by `start_company_task` and by the two auto-accept tools: there
+is nobody to check. The name in the confirmation must be the record's name, so the
+person decides on the record they were shown.
 
 | Tool | Confirmation shows | Change | The person needs |
 | --- | --- | --- | --- |
@@ -955,8 +958,10 @@ Every field has a default:
   needs a real worker names it as the executor, in the policy or on the proposal.
 - **A policy saved with `executor_type` and `executor_id`** keeps working. It
   allows that one executor and uses it by default, approves no Project, and keeps
-  its version and its acceptance count. The API still reads those two fields and
-  stores them as `default_executor` and a list of that one ID.
+  its version and its acceptance count. The API still reads those two fields, and
+  a policy sent in that shape means the same: `default_executor`, a list of that
+  one ID, and `approve_projects` false unless the request says otherwise. A
+  stored policy read from the API and sent back unchanged is not rewritten.
 - **Where it is set.** In a Routine declaration in code or YAML, through
   `POST` or `PATCH /company/routines` (`"auto_accept": true` or an object), from
   the UI, or from chat. A declaration applies when the Routine is first
@@ -977,11 +982,12 @@ declared in code has no person behind it, so the two kinds of deployment differ:
 | While it waits | | `get_company_product` and a Backlog or unfiltered listing from `list_company_tasks` return `auto_accept_waiting_for_a_person` with the Routine, so Super Agent says it is waiting when asked for the Product's status or for what needs a decision |
 | Who each decision is recorded as | The Routine and the policy version, with `declared` | The Routine, the policy version and that person |
 
-- **The one action keeps the declared policy.** From chat, a Routine whose
-  declared policy no person has turned on keeps that policy as declared. Naming
-  an executor in the request changes its `default_executor` only. Through the
-  API, `"auto_accept": true` writes the default policy, so send the declared
-  fields to keep them.
+- **Turning it on from chat keeps the Routine's policy.** A Routine that has a
+  policy keeps it: one its code declares, or one a person set. Naming an
+  executor in the request changes its `default_executor` only, and a policy that
+  did not change keeps its version. The defaults are for a Routine with no
+  policy. Through the API, `"auto_accept": true` writes the default policy, so
+  send the fields to keep them.
 - **With authorization off**, every caller is a trusted operator. The tick
   checks that the Routine is enabled and its policy unchanged, that the proposal
   is this Routine's own and in its Product, that the executor is registered and
@@ -993,30 +999,37 @@ declared in code has no person behind it, so the two kinds of deployment differ:
   holds the Company read tools and can update the status page of its own
   Product. With a named executor, that executor's other tools are its own.
 - **The declared marker** is written only when the deployment's own declaration
-  first creates the Routine. The Routine API and the chat tools write the
-  person's grant instead, so a person who changes a declared Routine's
-  instructions, executor or policy makes it theirs. The generic schedule routes
+  first creates the Routine, in the same write as the Routine. A Routine that
+  already exists under the name keeps its grant. The Routine API and the chat
+  tools write the person's grant instead, so a person who changes a declared
+  Routine's instructions, executor or policy makes it theirs. The generic schedule routes
   refuse a Company Routine and drop the key from any other schedule, the
   ScheduleManager drops it from every write, and Platform Builder's schedule
   tools take no payload.
 
 **From chat.** `turn_on_routine_auto_accept` pauses and shows the Routine's name,
 its Product's name and the default executor when the person named one; it
-refuses when a name is not the stored one. `turn_off_routine_auto_accept` does
+refuses when a name is not the stored one. For a Routine that already has a
+policy a person set, the confirmation also shows that policy on one line in
+`kept_policy`. A call without it changes nothing and replies with the line, so
+Super Agent asks again with the policy shown. `turn_off_routine_auto_accept` does
 not pause. Both go through the Routine API's PATCH handler as the chatting
 person, so they need what PATCH needs: `routines:write`, `schedules:write`,
 `tasks:write`, `wiki:read`, `projects:write` and run permission on the Routine's
 executor and on each executor the policy names.
 
-**The Routine API response.** A policy is returned with `default_executor` and
-`executors`. For one release it also carries `executor_type` and `executor_id`,
+**The Routine API response.** A policy is returned with every field and the
+value in force, including for a policy stored in the earlier shape. For one
+release it also carries `executor_type` and `executor_id`,
 set from `default_executor` and marked deprecated in the schema, so a client
 that reads them keeps working.
 
 **On the record.** Each automatic approval and acceptance carries `auto_accept`
 with the Routine ID and the policy version, `declared` for a declared policy,
 and on an acceptance whether the executor came from the proposal or the default.
-`get_company_product` returns the latest 20 as `automatic_decisions`.
+`get_company_product` returns the latest 20 as `automatic_decisions`, read from
+the Product's 100 most recently changed Projects and Tasks. It reads them only
+for a Product that has a Routine with a policy.
 
 ```bash
 .venvs/demo/bin/python cookbook/05_agent_os/30_company/15_policy_source_to_done.py
