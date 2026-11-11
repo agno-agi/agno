@@ -2994,7 +2994,7 @@ class AsyncMySQLDb(AsyncBaseDb):
         refreshes_table = await self._get_metrics_table("metrics_refreshes", self.metrics_refreshes_table_name)
         sessions_table = await self._get_table(table_type="sessions")
         if table is None or aggregate_metrics_table is None or refreshes_table is None or sessions_table is None:
-            log_info("No session data found. Won't calculate metrics.")
+            log_debug("No session data found. Won't calculate metrics.")
             return []
         runs_table = await self._get_table(table_type="runs")
 
@@ -3130,7 +3130,7 @@ class AsyncMySQLDb(AsyncBaseDb):
         )
 
         if not calculated_dates:
-            log_info("Metrics already calculated for all relevant dates.")
+            log_debug("Metrics already calculated for all relevant dates.")
             return []
 
         log_debug("Updated metrics calculations")
