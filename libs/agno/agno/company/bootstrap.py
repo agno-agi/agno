@@ -20,15 +20,22 @@ async def arehydrate_product(
     scoped_user_id: Optional[str] = None,
     *,
     agent_os: Any = None,
+    trusted: bool = False,
 ):
-    """Insert declared records once, repair interrupted linking, and retain later edits."""
+    """Insert declared records once, repair interrupted linking, and retain later edits.
+
+    trusted marks the deployment's own code and YAML declarations, which may carry auto_accept. The
+    policy is saved when a Routine is first created; an existing Routine keeps its stored setting.
+    """
     import time
 
     product_id = product.id or str(uuid5(NAMESPACE_URL, "agno:company:product:" + product.name))
     routine_fields = []
     for routine in product.routines:
         try:
-            routine_fields.append(_declared_schedule_fields(product_id, routine, registry, agent_os=agent_os))
+            routine_fields.append(
+                _declared_schedule_fields(product_id, routine, registry, agent_os=agent_os, trusted=trusted)
+            )
         except ValueError as exc:
             raise ValueError(
                 f"Product {product.name!r}, Routine {routine.name!r}, "
@@ -125,6 +132,13 @@ async def arehydrate_product(
                 if existing is None:
                     raise
                 schedule = Schedule.from_dict(existing)
+            else:
+                if routine.auto_accept:
+                    # No person wrote this policy. The marker says it runs as the deployment.
+                    from agno.company.routines import _DECLARED
+
+                    payload = {**(schedule.payload or {}), "_agno_company_acceptance": dict(_DECLARED)}
+                    await _call(schedule_db, "update_schedule", schedule.id, payload=payload)
         if (
             schedule.managed_by != "company"
             or (schedule.payload or {}).get("metadata", {}).get("product_id") != product_id
@@ -144,11 +158,18 @@ def rehydrate_product(
     scoped_user_id: Optional[str] = None,
     *,
     agent_os: Any = None,
+    trusted: bool = False,
 ):
     """Synchronous startup counterpart; use arehydrate_product inside an event loop."""
     return asyncio.run(
         arehydrate_product(
-            db, product, registry, schedule_db=schedule_db, scoped_user_id=scoped_user_id, agent_os=agent_os
+            db,
+            product,
+            registry,
+            schedule_db=schedule_db,
+            scoped_user_id=scoped_user_id,
+            agent_os=agent_os,
+            trusted=trusted,
         )
     )
 
@@ -162,7 +183,7 @@ async def _company_lifespan(app: Any, agent_os: Any):
     for declaration in agent_os.company.products:
         product = declaration if isinstance(declaration, Product) else Product.model_validate(declaration)
         await arehydrate_product(
-            agent_os._company_db, product, agent_os.registry, schedule_db=agent_os.db, agent_os=agent_os
+            agent_os._company_db, product, agent_os.registry, schedule_db=agent_os.db, agent_os=agent_os, trusted=True
         )
     # Super Agent tools start Task runs through this app's executor route, as the HTTP API does.
     agent_os._company_app = app

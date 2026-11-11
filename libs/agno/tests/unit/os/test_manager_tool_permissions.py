@@ -84,6 +84,8 @@ TASK_RUN_TOOLS = {
     "approve_company_project",
     "accept_company_task",
     "review_company_task",
+    "turn_on_routine_auto_accept",
+    "turn_off_routine_auto_accept",
 }
 
 

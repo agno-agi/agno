@@ -1570,7 +1570,12 @@ def test_executor_edit_reauthorizes_existing_policy_and_restamps_grant(tmp_path,
                 executor_type="agent",
                 executor_id="reader",
                 cron_expr="0 * * * *",
-                auto_accept=dict(executor_type="agent", executor_id="reader", limits={"expires_at": 4102444800}),
+                auto_accept=dict(
+                    executor_type="agent",
+                    executor_id="reader",
+                    approve_projects=False,
+                    limits={"expires_at": 4102444800},
+                ),
             ),
             headers=admin,
         )

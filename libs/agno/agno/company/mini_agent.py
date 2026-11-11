@@ -275,6 +275,7 @@ def _build_mini_agent(agent_os: Any, model: Any) -> Optional[Agent]:
                 decision_tools=False,
                 interfaces=agent_os.interfaces,
                 include_tools=TASK_COMPANY_TOOLS,
+                own_product_status=True,
             )
         ],
         run_tools=[

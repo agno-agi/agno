@@ -168,7 +168,7 @@ def _routine_declaration(name, executor_type, executor_id, template, instruction
     )
 
 
-def _page(result, limit, page):
+def _page(result, limit, page, **notes):
     rows, total = result
     from agno.db.schemas.tasks import public_task
 
@@ -177,9 +177,20 @@ def _page(result, limit, page):
         {
             "data": rows,
             "meta": {"page": page, "limit": limit, "total_count": total, "total_pages": (total + limit - 1) // limit},
+            **{name: value for name, value in notes.items() if value},
         },
         default=str,
     )
+
+
+def _executed_task(run_context):
+    """The id of the accepted Task this run executes, or None for a Routine run and every other run."""
+    from agno.company.execution import _ExecutorAuthorization
+
+    authority = _authority(run_context)
+    if isinstance(authority, _ExecutorAuthorization) and not isinstance(authority, _RoutineAuthorization):
+        return authority.task_id
+    return None
 
 
 class CompanyTools(Toolkit):
@@ -201,7 +212,10 @@ class CompanyTools(Toolkit):
         interfaces: Any = None,
         registry: Any = None,
         include_tools: Optional[List[str]] = None,
+        own_product_status: bool = False,
     ):
+        # A run that executes a Task may then update the status page of that Task's Product only.
+        self._own_product_status = own_product_status
         self._interfaces_explicit = interfaces is not None
         self.interfaces = interfaces if interfaces is not None else []
         self._automation_history_retention_days = 30
@@ -680,11 +694,25 @@ class CompanyTools(Toolkit):
 
     @requires_permission()
     def get_company_product(self, product_id: str, _agno_run_context: Optional[Any] = None) -> str:
-        """Read a Product's purpose and current configuration."""
+        """Read a Product's purpose, configuration and status.
+
+        automatic_decisions lists what a Routine's auto-accept approved or accepted with no person, newest
+        first, with the Routine. auto_accept_at_limit lists Routines that are waiting for a person to
+        complete or cancel an open Task. Report both when asked for the status.
+        """
         _permission("products", "read", _agno_run_context)
-        product = self._sync().get(product_id)
+        manager = self._sync()
+        product = manager.get(product_id)
         if product is None:
             raise LookupError("Product not found")
+        try:
+            # The decisions name Projects and Tasks, so they need the caller's read permission on both.
+            _permission("projects", "read", _agno_run_context)
+            _permission("tasks", "read", _agno_run_context)
+        except PermissionError:
+            return _public_json(product)
+        product.update({key: value for key, value in manager.auto_accept_status(product_id).items() if value != []})
+        product.setdefault("automatic_decisions", [])
         return _public_json(product)
 
     @requires_permission()
@@ -721,6 +749,9 @@ class CompanyTools(Toolkit):
     ) -> str:
         """List Tasks across owners, optionally filtered by status.
 
+        A Backlog listing also returns auto_accept_at_limit: Routines whose auto-accept is waiting for a
+        person to complete or cancel an open Task. Say so when listing what needs a decision.
+
         Args:
             product_id: Product ID; null includes all Products.
             status: backlog, ready, in_progress, in_review, done or cancelled; null includes all statuses.
@@ -734,7 +765,13 @@ class CompanyTools(Toolkit):
         page = _empty_to_none(page)
         page = 1 if page is None else page
         _permission("tasks", "read", _agno_run_context)
-        return _page(self._sync().list_tasks(product_id=product_id, status=status, limit=limit, page=page), limit, page)
+        manager = self._sync()
+        result = manager.list_tasks(product_id=product_id, status=status, limit=limit, page=page)
+        at_limit: List[Dict[str, Any]] = []
+        if status == "backlog":
+            for listed in dict.fromkeys(row["product_id"] for row in result[0]):
+                at_limit.extend(manager.auto_accept_status(listed)["auto_accept_at_limit"])
+        return _page(result, limit, page, auto_accept_at_limit=at_limit)
 
     @requires_permission()
     def propose_company_project(
@@ -875,6 +912,11 @@ class CompanyTools(Toolkit):
     ) -> str:
         """Update status.md after reading it; supply the version read to prevent lost edits."""
         _permission("wiki", "write", _agno_run_context)
+        task_id = _executed_task(_agno_run_context) if self._own_product_status else None
+        if task_id is not None:
+            task = self._sync().get_task(task_id)
+            if task is None or task["product_id"] != product_id:
+                raise PermissionError("A Task run updates the status of its own Product only")
         return _public_json(
             asdict(
                 self._sync().write_wiki(
@@ -975,11 +1017,26 @@ class CompanyTools(Toolkit):
 
     @requires_permission()
     async def aget_company_product(self, product_id: str, _agno_run_context: Optional[Any] = None) -> str:
-        """Read a Product's purpose and current configuration."""
+        """Read a Product's purpose, configuration and status.
+
+        automatic_decisions lists what a Routine's auto-accept approved or accepted with no person, newest
+        first, with the Routine. auto_accept_at_limit lists Routines that are waiting for a person to
+        complete or cancel an open Task. Report both when asked for the status.
+        """
         await _apermission("products", "read", _agno_run_context)
-        product = await self._async().get(product_id)
+        manager = self._async()
+        product = await manager.get(product_id)
         if product is None:
             raise LookupError("Product not found")
+        try:
+            # The decisions name Projects and Tasks, so they need the caller's read permission on both.
+            await _apermission("projects", "read", _agno_run_context)
+            await _apermission("tasks", "read", _agno_run_context)
+        except PermissionError:
+            return _public_json(product)
+        status = await manager.auto_accept_status(product_id)
+        product.update({key: value for key, value in status.items() if value != []})
+        product.setdefault("automatic_decisions", [])
         return _public_json(product)
 
     @requires_permission()
@@ -1016,6 +1073,9 @@ class CompanyTools(Toolkit):
     ) -> str:
         """List Tasks across owners, optionally filtered by status.
 
+        A Backlog listing also returns auto_accept_at_limit: Routines whose auto-accept is waiting for a
+        person to complete or cancel an open Task. Say so when listing what needs a decision.
+
         Args:
             product_id: Product ID; null includes all Products.
             status: backlog, ready, in_progress, in_review, done or cancelled; null includes all statuses.
@@ -1029,9 +1089,13 @@ class CompanyTools(Toolkit):
         page = _empty_to_none(page)
         page = 1 if page is None else page
         await _apermission("tasks", "read", _agno_run_context)
-        return _page(
-            await self._async().list_tasks(product_id=product_id, status=status, limit=limit, page=page), limit, page
-        )
+        manager = self._async()
+        result = await manager.list_tasks(product_id=product_id, status=status, limit=limit, page=page)
+        at_limit: List[Dict[str, Any]] = []
+        if status == "backlog":
+            for listed in dict.fromkeys(row["product_id"] for row in result[0]):
+                at_limit.extend((await manager.auto_accept_status(listed))["auto_accept_at_limit"])
+        return _page(result, limit, page, auto_accept_at_limit=at_limit)
 
     @requires_permission()
     async def apropose_company_project(
@@ -1176,6 +1240,11 @@ class CompanyTools(Toolkit):
     ) -> str:
         """Update status.md after reading it; supply the version read to prevent lost edits."""
         await _apermission("wiki", "write", _agno_run_context)
+        task_id = _executed_task(_agno_run_context) if self._own_product_status else None
+        if task_id is not None:
+            task = await self._async().get_task(task_id)
+            if task is None or task["product_id"] != product_id:
+                raise PermissionError("A Task run updates the status of its own Product only")
         return _public_json(
             asdict(
                 await self._async().write_wiki(

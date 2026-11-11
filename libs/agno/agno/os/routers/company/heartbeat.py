@@ -9,7 +9,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from agno.company.declarations import AutoAccept, Product, Routine, Source
 from agno.company.manager import AsyncCompanyManager, CompanyManager
@@ -57,6 +57,12 @@ class RoutineUpdate(BaseModel):
     cron_expr: Optional[str] = None
     timezone: Optional[str] = None
     auto_accept: Optional[Union[Literal[False], AutoAccept]] = None
+
+    @field_validator("auto_accept", mode="before")
+    @classmethod
+    def default_policy(cls, value: Any) -> Any:
+        """true is the default policy, as in a Routine declaration."""
+        return AutoAccept() if value is True else value
 
 
 class Setup(Product):
@@ -314,7 +320,9 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         from agno.company.routines import _authorize_auto_accept
 
         if "auto_accept" in updates:
-            policy = updates.pop("auto_accept")
+            updates.pop("auto_accept")
+            # Save every field with its value, so the stored policy states all it grants.
+            policy = body.auto_accept.model_dump() if body.auto_accept else False
             await _authorize_auto_accept(request, policy, agent_os)
             updates["payload"] = {**row["payload"], "metadata": {**row["payload"]["metadata"], "auto_accept": policy}}
         product_id = row["payload"]["metadata"]["product_id"]
@@ -347,6 +355,9 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             }
         update = await call(ScheduleUpdate, **updates)
         return await routine_response(await call(handlers["update_schedule"], routine_id, update, request))
+
+    # Super Agent's chat tools change a Routine through this handler, as the chatting person.
+    agent_os._routine_api_update = update_routine
 
     @router.post("/routines/{routine_id}/pause", response_model=RoutineResponse)
     async def pause_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
