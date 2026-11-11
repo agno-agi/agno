@@ -762,11 +762,13 @@ class CompanyTools(Toolkit):
         manager = self._sync()
         result = manager.list_tasks(product_id=product_id, status=status, limit=limit, page=page)
         at_limit: List[Dict[str, Any]] = []
-        if status == "backlog":
+        # A listing that holds Backlog work is where a person looks for what needs a decision.
+        if status in (None, "backlog"):
             for listed in dict.fromkeys(row["product_id"] for row in result[0]):
                 at_limit.extend(manager.auto_accept_status(listed)["auto_accept_at_limit"])
         # A Routine waiting to be turned on has proposed nothing, so it is listed whatever the page holds.
-        waiting = manager.auto_accept_waiting(product_id) if status == "backlog" and self._authorization_on() else []
+        decides = status in (None, "backlog") and self._authorization_on()
+        waiting = manager.auto_accept_waiting(product_id) if decides else []
         return _page(result, limit, page, auto_accept_at_limit=at_limit, auto_accept_waiting_for_a_person=waiting)
 
     @requires_permission()
@@ -1085,13 +1087,13 @@ class CompanyTools(Toolkit):
         manager = self._async()
         result = await manager.list_tasks(product_id=product_id, status=status, limit=limit, page=page)
         at_limit: List[Dict[str, Any]] = []
-        if status == "backlog":
+        # A listing that holds Backlog work is where a person looks for what needs a decision.
+        if status in (None, "backlog"):
             for listed in dict.fromkeys(row["product_id"] for row in result[0]):
                 at_limit.extend((await manager.auto_accept_status(listed))["auto_accept_at_limit"])
         # A Routine waiting to be turned on has proposed nothing, so it is listed whatever the page holds.
-        waiting = (
-            await manager.auto_accept_waiting(product_id) if status == "backlog" and self._authorization_on() else []
-        )
+        decides = status in (None, "backlog") and self._authorization_on()
+        waiting = await manager.auto_accept_waiting(product_id) if decides else []
         return _page(result, limit, page, auto_accept_at_limit=at_limit, auto_accept_waiting_for_a_person=waiting)
 
     @requires_permission()

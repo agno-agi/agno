@@ -512,6 +512,7 @@ def test_the_bound_is_the_routines_open_tasks_and_a_person_makes_room(open_syste
         (item["routine"], item["open_tasks"], item["max_open"], item["proposals_waiting"]) for item in at_limit
     ] == [("intake", 2, 2, 1)]
     assert json.loads(tools.list_company_tasks(status="backlog"))["auto_accept_at_limit"] == at_limit
+    assert json.loads(tools.list_company_tasks())["auto_accept_at_limit"] == at_limit
     assert json.loads(asyncio.run(tools.alist_company_tasks(status="backlog")))["auto_accept_at_limit"] == at_limit
     assert "auto_accept_at_limit" not in json.loads(tools.list_company_tasks(status="ready"))
 
@@ -716,8 +717,9 @@ def test_with_authorization_on_one_confirmation_turns_on_the_declared_routine_an
     assert waiting(system, use_async=use_async) == [("intake", "docs", "writer")]
     assert waiting(system, "other", use_async=use_async) == []
     # With no Product named, the list covers the company.
-    everywhere = json.loads(company_tools(system).list_company_tasks(status="backlog"))
-    assert [item["routine_id"] for item in everywhere["auto_accept_waiting_for_a_person"]] == [routine_id]
+    for listing in ({"status": "backlog"}, {}):
+        everywhere = json.loads(company_tools(system).list_company_tasks(**listing))
+        assert [item["routine_id"] for item in everywhere["auto_accept_waiting_for_a_person"]] == [routine_id]
     assert "auto_accept_waiting_for_a_person" not in json.loads(
         company_tools(system).list_company_tasks(status="ready")
     )

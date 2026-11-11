@@ -933,7 +933,7 @@ Every field has a default:
   are open, the next proposal waits in Backlog until a person completes or
   cancels one. A Task whose run failed stays In progress, so it still counts
   until a person retries it, returns it to Backlog or cancels it.
-  `get_company_product` and a Backlog listing from `list_company_tasks` return
+  `get_company_product` and a Backlog or unfiltered listing from `list_company_tasks` return
   `auto_accept_at_limit` for a Routine that is waiting this way.
 - **Projects.** A Routine's Project takes its ID from the Product, the Routine
   and the name. Only such a Project is approved, and only at the moment one of
@@ -974,7 +974,7 @@ declared in code has no person behind it, so the two kinds of deployment differ:
 | At startup | The Routine runs on its schedule and its policy acts | The Routine and its policy wait. Code cannot give a Routine a person's grant, so its runs are refused and the tick accepts nothing |
 | What a person does | Nothing | One action, once: turn auto-accept on for the Routine. In chat that is "turn on auto-accept for the feedback-intake Routine" and one confirmation. Through the API it is `PATCH /company/routines/{id}` with `auto_accept` |
 | After that | | The Routine runs on its schedule and its declared policy acts, both under that person's saved permissions |
-| While it waits | | `get_company_product` and a Backlog listing from `list_company_tasks` return `auto_accept_waiting_for_a_person` with the Routine, so Super Agent says it is waiting when asked for the Product's status or for what needs a decision |
+| While it waits | | `get_company_product` and a Backlog or unfiltered listing from `list_company_tasks` return `auto_accept_waiting_for_a_person` with the Routine, so Super Agent says it is waiting when asked for the Product's status or for what needs a decision |
 | Who each decision is recorded as | The Routine and the policy version, with `declared` | The Routine, the policy version and that person |
 
 - **The one action keeps the declared policy.** From chat, a Routine whose
