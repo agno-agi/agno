@@ -956,14 +956,21 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
             raise _AutomationSkip("Proposal is outside the Routine Product")
         # A Task runs on the executor its proposal suggests, or on the default when it suggests none.
         suggested = (task.get("executor_type"), task.get("executor_id"))
-        saved_kind = metadata["auto_accept"]["executor_type"] if legacy else None
-        default = (saved_kind or _executor_kind(os.registry, policy.default_executor), policy.default_executor)
+
+        def default():
+            # Read from the registry only for a Task that needs it: a default that was removed, or
+            # whose ID two kinds now share, does not stop a proposal that names another executor.
+            saved_kind = metadata["auto_accept"]["executor_type"] if legacy else None
+            return (saved_kind or _executor_kind(os.registry, policy.default_executor), policy.default_executor)
+
         if suggested == (None, None):
-            executor, chosen_by = default, "default"
-        elif suggested != default and (completing or legacy or not _may_suggest(os.registry, policy, suggested)):
-            raise _AutomationSkip("Proposed executor is outside automatic acceptance authorization")
-        else:
+            executor, chosen_by = default(), "default"
+        elif (not (completing or legacy) and _may_suggest(os.registry, policy, suggested)) or (
+            suggested[1] == policy.default_executor and suggested == default()
+        ):
             executor, chosen_by = suggested, "proposal"
+        else:
+            raise _AutomationSkip("Proposed executor is outside automatic acceptance authorization")
         scope = policy.work_scope
         if scope and (
             (scope.product_ids is not None and task["product_id"] not in scope.product_ids)

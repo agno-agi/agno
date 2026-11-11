@@ -295,6 +295,31 @@ def test_a_list_of_executors_limits_what_a_proposal_may_suggest(open_system):
     assert chosen == {"listed": "proposal", "default": "proposal", "mini": "proposal", "none": "default"}
 
 
+@pytest.mark.parametrize("broken", ["unregistered", "shared"])
+@pytest.mark.parametrize("listed", [None, ["writer"]], ids=["any-executor", "listed"])
+def test_a_proposal_that_names_a_valid_executor_does_not_need_the_default(open_system, broken, listed):
+    registry = open_system.os.registry
+    reviewer = Agent(id="reviewer", name="Reviewer", model=ScriptedModel(), db=open_system.db)
+    registry.agents.append(reviewer)
+    policy = AutoAccept(default_executor="reviewer", executors=listed)
+    product_id, routine_id = open_system.declare(auto_accept=policy)
+    # After the policy was saved, its default executor was removed, or a team took the same ID.
+    if broken == "unregistered":
+        registry.agents.remove(reviewer)
+    else:
+        registry.teams.append(Team(id="reviewer", name="Reviewers", members=[reviewer], model=ScriptedModel()))
+    _, named = open_system.proposes(product_id, routine_id, title="Names the writer", executor=("agent", "writer"))
+    _, plain = open_system.proposes(product_id, routine_id, title="Names no executor")
+    outcomes = open_system.tick()
+    accepted = open_system.db.get_task(named["id"])
+    assert (accepted["status"], accepted["executor_id"]) == ("in_progress", "writer"), outcomes
+    assert receipts(accepted)[0][2]["executor_chosen_by"] == "proposal"
+    # A Task that needs the default is not accepted, and the tick says why.
+    outcome = open_system.outcome(outcomes, plain["id"])
+    assert outcome["status"] == "failed" and "reviewer" in outcome["reason"], outcome
+    assert open_system.db.get_task(plain["id"])["status"] == "backlog"
+
+
 @pytest.mark.parametrize("field", ["default_executor", "executors"])
 @pytest.mark.parametrize("executor_id", [MANAGER_TEAM_ID, BUILDER_ID, "missing", "no-database"])
 def test_every_executor_a_policy_names_passes_the_executor_checks(system, field, executor_id):
