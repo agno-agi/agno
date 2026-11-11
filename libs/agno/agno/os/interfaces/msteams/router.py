@@ -9,8 +9,8 @@ from pydantic import BaseModel, Field
 from agno.agent.agent import Agent
 from agno.agent.remote import RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
-from agno.os.interfaces.teams.helpers import (
-    TeamsConfig,
+from agno.os.interfaces.msteams.helpers import (
+    MSTeamsConfig,
     build_conversation_ref,
     download_attachments_async,
     extract_activity_content,
@@ -18,7 +18,7 @@ from agno.os.interfaces.teams.helpers import (
     send_teams_message_async,
     typing_indicator_async,
 )
-from agno.os.interfaces.teams.security import validate_bot_framework_jwt
+from agno.os.interfaces.msteams.security import validate_bot_framework_jwt
 from agno.session.agent import AgentSession
 from agno.session.team import TeamSession
 from agno.session.workflow import WorkflowSession
@@ -74,7 +74,7 @@ def _format_reasoning(text: str) -> str:
     return "\n".join(lines)
 
 
-class TeamsWebhookResponse(BaseModel):
+class MSTeamsWebhookResponse(BaseModel):
     status: str = Field(default="ok", description="Processing status")
 
 
@@ -89,7 +89,7 @@ def attach_routes(
     app_password: Optional[str] = None,
     tenant_id: Optional[str] = None,
     request_timeout: int = 30,
-    config: Optional[TeamsConfig] = None,
+    config: Optional[MSTeamsConfig] = None,
 ) -> APIRouter:
     if agent is None and team is None and workflow is None:
         raise ValueError("Either agent, team, or workflow must be provided.")
@@ -106,23 +106,23 @@ def attach_routes(
     # The interface passes its own config so the cached bot token is shared with
     # the proactive-alert path; built here only when the router is used directly.
     if config is None:
-        config = TeamsConfig.init(
+        config = MSTeamsConfig.init(
             app_id=app_id,
             app_password=app_password,
             tenant_id=tenant_id,
             request_timeout=request_timeout,
         )
 
-    @router.get("/status", operation_id=f"teams_status_{op_suffix}")
+    @router.get("/status", operation_id=f"msteams_status_{op_suffix}")
     async def status():
         return {"status": "available"}
 
     @router.post(
         "/messages",
-        operation_id=f"teams_webhook_{op_suffix}",
-        name="teams_webhook",
+        operation_id=f"msteams_webhook_{op_suffix}",
+        name="msteams_webhook",
         description="Process inbound Microsoft Teams Bot Framework activities",
-        response_model=TeamsWebhookResponse,
+        response_model=MSTeamsWebhookResponse,
         responses={
             200: {"description": "Activity accepted"},
             403: {"description": "Invalid Bot Framework JWT"},
@@ -141,7 +141,7 @@ def attach_routes(
             raise HTTPException(status_code=400, detail="Invalid JSON body")
 
         background_tasks.add_task(process_activity, activity)
-        return TeamsWebhookResponse(status="processing")
+        return MSTeamsWebhookResponse(status="processing")
 
     async def process_activity(activity: dict):
         activity_type = activity.get("type")

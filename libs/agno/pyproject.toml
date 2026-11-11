@@ -72,7 +72,7 @@ dev = [
   "agno[postgres]",
   # First-party interfaces exercised by the unit suite
   "agno[slack]",
-  "agno[microsoft-teams]",
+  "agno[msteams]",
   "agno[agui]",
   "agno[a2a]",
   "agno[scheduler]",
@@ -180,7 +180,6 @@ scrapegraph = ["scrapegraph-py>=2.0.0"]
 seltz = ["seltz>=0.2.0"]
 superserve = ["superserve"]
 tavily = ["tavily-python>=0.7.9"]
-microsoft-teams = ["pyjwt[crypto]>=2.8.0"]
 telegram = ["pyTelegramBotAPI>=4.32.0", "aiohttp"]
 todoist = ["todoist-api-python"]
 trafilatura = ["trafilatura"]
@@ -259,6 +258,7 @@ a2a = ["a2a-sdk[http-server]>=1.2.2,<2"]
 
 # Dependencies for Slack integration
 slack = ["slack_sdk>=3.40.0", "aiohttp>=3.7.3,<4"]
+msteams = ["pyjwt[crypto]>=2.8.0"]
 
 # Dependencies for Embedders
 huggingface = [
@@ -349,7 +349,6 @@ tools = [
   "agno[seltz]",
   "agno[superserve]",
   "agno[tavily]",
-  "agno[microsoft-teams]",
   "agno[telegram]",
   "agno[todoist]",
   "agno[trafilatura]",
@@ -436,6 +435,7 @@ tests = [
   "agno[pages]",
     "agno[a2a]",
     "agno[slack]",
+    "agno[msteams]",
     "agno[dev]",
     "agno[models]",
     "agno[tools]",

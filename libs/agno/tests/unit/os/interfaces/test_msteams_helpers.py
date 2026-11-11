@@ -3,9 +3,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from agno.os.interfaces.teams.helpers import (
+from agno.os.interfaces.msteams.helpers import (
     ActivityContent,
-    TeamsConfig,
+    MSTeamsConfig,
     _clean_mention_text,
     _get_bot_token,
     _post_activity,
@@ -20,17 +20,17 @@ from agno.os.interfaces.teams.helpers import (
 )
 
 
-def _make_config(**overrides) -> TeamsConfig:
+def _make_config(**overrides) -> MSTeamsConfig:
     base = {
         "app_id": "app-id",
         "app_password": "secret",
         "tenant_id": "botframework.com",
     }
     base.update(overrides)
-    return TeamsConfig(**base)
+    return MSTeamsConfig(**base)
 
 
-# === TeamsConfig.init env-var handling ===
+# === MSTeamsConfig.init env-var handling ===
 
 
 def test_config_init_from_env_vars():
@@ -43,7 +43,7 @@ def test_config_init_from_env_vars():
         },
         clear=True,
     ):
-        cfg = TeamsConfig.init()
+        cfg = MSTeamsConfig.init()
     assert cfg.app_id == "env-app"
     assert cfg.app_password == "env-pwd"
     assert cfg.tenant_id == "tenant-123"
@@ -51,20 +51,20 @@ def test_config_init_from_env_vars():
 
 def test_config_init_arg_overrides_env():
     with patch.dict("os.environ", {"MICROSOFT_APP_ID": "env-app", "MICROSOFT_APP_PASSWORD": "env-pwd"}, clear=True):
-        cfg = TeamsConfig.init(app_id="arg-app")
+        cfg = MSTeamsConfig.init(app_id="arg-app")
     assert cfg.app_id == "arg-app"
 
 
 def test_config_init_missing_app_id_raises():
     with patch.dict("os.environ", {}, clear=True):
         with pytest.raises(ValueError, match="MICROSOFT_APP_ID"):
-            TeamsConfig.init(app_password="secret")
+            MSTeamsConfig.init(app_password="secret")
 
 
 def test_config_init_missing_password_raises():
     with patch.dict("os.environ", {}, clear=True):
         with pytest.raises(ValueError, match="MICROSOFT_APP_PASSWORD"):
-            TeamsConfig.init(app_id="app-id")
+            MSTeamsConfig.init(app_id="app-id")
 
 
 def test_dev_bypass_requires_both_credentials_absent():
@@ -76,20 +76,20 @@ def test_dev_bypass_requires_both_credentials_absent():
         clear=True,
     ):
         with pytest.raises(ValueError, match="MICROSOFT_APP_ID"):
-            TeamsConfig.init()
+            MSTeamsConfig.init()
 
 
 def test_dev_bypass_allows_a_fully_credential_free_config():
     """The genuine dev shape -- neither credential set -- still builds."""
     with patch.dict("os.environ", {"MICROSOFT_APP_SKIP_JWT_VALIDATION": "true"}, clear=True):
-        cfg = TeamsConfig.init()
+        cfg = MSTeamsConfig.init()
     assert cfg.app_id == ""
     assert cfg.app_password == ""
 
 
 def test_config_defaults_to_botframework_tenant():
     with patch.dict("os.environ", {"MICROSOFT_APP_ID": "a", "MICROSOFT_APP_PASSWORD": "b"}, clear=True):
-        cfg = TeamsConfig.init()
+        cfg = MSTeamsConfig.init()
     assert cfg.tenant_id == "botframework.com"
 
 
@@ -262,7 +262,7 @@ def test_extract_content_image_only_still_returns():
 @pytest.mark.asyncio
 async def test_send_message_posts_markdown_activity():
     cfg = _make_config()
-    with patch("agno.os.interfaces.teams.helpers._post_activity", new_callable=AsyncMock) as mock_post:
+    with patch("agno.os.interfaces.msteams.helpers._post_activity", new_callable=AsyncMock) as mock_post:
         await send_teams_message_async(
             "https://svc.example.com",
             "conv-1",
@@ -284,7 +284,7 @@ async def test_send_message_posts_markdown_activity():
 @pytest.mark.asyncio
 async def test_send_message_skips_empty_content():
     cfg = _make_config()
-    with patch("agno.os.interfaces.teams.helpers._post_activity", new_callable=AsyncMock) as mock_post:
+    with patch("agno.os.interfaces.msteams.helpers._post_activity", new_callable=AsyncMock) as mock_post:
         await send_teams_message_async("svc", "conv", "", cfg)
         await send_teams_message_async("svc", "conv", "   ", cfg)
         await send_teams_message_async("svc", "conv", None, cfg)
@@ -294,7 +294,7 @@ async def test_send_message_skips_empty_content():
 @pytest.mark.asyncio
 async def test_send_message_italics_wraps_each_line():
     cfg = _make_config()
-    with patch("agno.os.interfaces.teams.helpers._post_activity", new_callable=AsyncMock) as mock_post:
+    with patch("agno.os.interfaces.msteams.helpers._post_activity", new_callable=AsyncMock) as mock_post:
         await send_teams_message_async("svc", "conv", "line1\nline2", cfg, italics=True)
     activity = mock_post.call_args.args[2]
     # Two trailing spaces, not a bare newline: this is sent as markdown, which
@@ -311,7 +311,7 @@ async def test_send_message_coerces_pydantic_model():
         answer: str
 
     cfg = _make_config()
-    with patch("agno.os.interfaces.teams.helpers._post_activity", new_callable=AsyncMock) as mock_post:
+    with patch("agno.os.interfaces.msteams.helpers._post_activity", new_callable=AsyncMock) as mock_post:
         await send_teams_message_async("svc", "conv", Payload(answer="42"), cfg)
     activity = mock_post.call_args.args[2]
     assert '"answer": "42"' in activity["text"]
@@ -325,7 +325,7 @@ async def test_send_message_includes_bot_identity():
     """`from` is passed through when the caller supplies it."""
     cfg = _make_config()
     bot_id = {"id": "28:bot-guid", "name": "Agno Bot"}
-    with patch("agno.os.interfaces.teams.helpers._post_activity", new_callable=AsyncMock) as mock_post:
+    with patch("agno.os.interfaces.msteams.helpers._post_activity", new_callable=AsyncMock) as mock_post:
         await send_teams_message_async("svc", "conv", "hi", cfg, bot_identity=bot_id)
     activity = mock_post.call_args.args[2]
     assert activity["from"] == bot_id
@@ -334,7 +334,7 @@ async def test_send_message_includes_bot_identity():
 @pytest.mark.asyncio
 async def test_send_message_omits_bot_identity_when_absent():
     cfg = _make_config()
-    with patch("agno.os.interfaces.teams.helpers._post_activity", new_callable=AsyncMock) as mock_post:
+    with patch("agno.os.interfaces.msteams.helpers._post_activity", new_callable=AsyncMock) as mock_post:
         await send_teams_message_async("svc", "conv", "hi", cfg)
     activity = mock_post.call_args.args[2]
     assert "from" not in activity
@@ -343,7 +343,7 @@ async def test_send_message_omits_bot_identity_when_absent():
 @pytest.mark.asyncio
 async def test_typing_indicator_sends_typing_activity():
     cfg = _make_config()
-    with patch("agno.os.interfaces.teams.helpers._post_activity", new_callable=AsyncMock) as mock_post:
+    with patch("agno.os.interfaces.msteams.helpers._post_activity", new_callable=AsyncMock) as mock_post:
         await typing_indicator_async("svc", "conv-1", cfg, reply_to_activity_id="act-1")
     activity = mock_post.call_args.args[2]
     assert activity["type"] == "typing"
@@ -354,7 +354,7 @@ async def test_typing_indicator_sends_typing_activity():
 async def test_typing_indicator_includes_bot_identity():
     cfg = _make_config()
     bot_id = {"id": "28:bot-guid"}
-    with patch("agno.os.interfaces.teams.helpers._post_activity", new_callable=AsyncMock) as mock_post:
+    with patch("agno.os.interfaces.msteams.helpers._post_activity", new_callable=AsyncMock) as mock_post:
         await typing_indicator_async("svc", "conv", cfg, bot_identity=bot_id)
     activity = mock_post.call_args.args[2]
     assert activity["from"] == bot_id
@@ -365,7 +365,7 @@ async def test_typing_indicator_includes_bot_identity():
 async def test_typing_indicator_swallows_errors():
     cfg = _make_config()
     with patch(
-        "agno.os.interfaces.teams.helpers._post_activity",
+        "agno.os.interfaces.msteams.helpers._post_activity",
         new_callable=AsyncMock,
         side_effect=RuntimeError("boom"),
     ):
@@ -398,20 +398,20 @@ def test_extract_conversation_ref_returns_none_when_missing():
 
 
 def test_extract_conversation_ref_rejects_incomplete_ref():
-    bad = {"teams_conversation_ref": {"conversation_id": "conv-1"}}
+    bad = {"msteams_conversation_ref": {"conversation_id": "conv-1"}}
     assert extract_conversation_ref(bad) is None
 
-    bad = {"teams_conversation_ref": {"service_url": "https://svc"}}
+    bad = {"msteams_conversation_ref": {"service_url": "https://svc"}}
     assert extract_conversation_ref(bad) is None
 
-    bad = {"teams_conversation_ref": "garbage"}
+    bad = {"msteams_conversation_ref": "garbage"}
     assert extract_conversation_ref(bad) is None
 
 
 def test_extract_conversation_ref_returns_valid_ref():
     session_data = {
         "session_state": {"foo": "bar"},
-        "teams_conversation_ref": {
+        "msteams_conversation_ref": {
             "service_url": "https://svc",
             "conversation_id": "conv-1",
             "bot_identity": {"id": "28:bot"},
@@ -428,24 +428,24 @@ def test_merge_conversation_ref_preserves_existing_keys():
     ref = build_conversation_ref("https://svc", "conv-1", {"id": "28:bot"})
     merged = merge_conversation_ref(existing, ref)
 
-    assert "teams_conversation_ref" not in existing
+    assert "msteams_conversation_ref" not in existing
     assert merged["session_state"] == {"foo": "bar"}
     assert merged["images"] == ["x.png"]
-    assert merged["teams_conversation_ref"] == ref
+    assert merged["msteams_conversation_ref"] == ref
 
 
 def test_merge_conversation_ref_handles_none_session_data():
     ref = build_conversation_ref("https://svc", "conv-1", None)
     merged = merge_conversation_ref(None, ref)
-    assert merged == {"teams_conversation_ref": ref}
+    assert merged == {"msteams_conversation_ref": ref}
 
 
 def test_merge_conversation_ref_overwrites_stale_ref():
     old_ref = build_conversation_ref("https://old-svc", "old-conv", None)
-    existing = {"teams_conversation_ref": old_ref}
+    existing = {"msteams_conversation_ref": old_ref}
     new_ref = build_conversation_ref("https://new-svc", "new-conv", {"id": "28:bot"})
     merged = merge_conversation_ref(existing, new_ref)
-    assert merged["teams_conversation_ref"]["service_url"] == "https://new-svc"
+    assert merged["msteams_conversation_ref"]["service_url"] == "https://new-svc"
 
 
 @pytest.mark.asyncio
@@ -462,7 +462,7 @@ async def test_download_attachments_returns_images_and_files():
             return b"pngbytes", "image/png"
         return b"pdfbytes", "application/pdf"
 
-    with patch("agno.os.interfaces.teams.helpers._download_attachment", side_effect=fake_download):
+    with patch("agno.os.interfaces.msteams.helpers._download_attachment", side_effect=fake_download):
         run_kwargs, skipped = await download_attachments_async(parsed, cfg)
 
     assert skipped == []
@@ -488,7 +488,7 @@ async def test_download_attachments_image_keeps_the_activitys_declared_type():
     async def fake_download(url, config, use_bot_token=True):
         return b"pngbytes", "application/octet-stream"
 
-    with patch("agno.os.interfaces.teams.helpers._download_attachment", side_effect=fake_download):
+    with patch("agno.os.interfaces.msteams.helpers._download_attachment", side_effect=fake_download):
         run_kwargs, skipped = await download_attachments_async(parsed, cfg)
 
     assert skipped == []
@@ -507,7 +507,7 @@ async def test_download_attachments_records_failures():
     async def fake_download(url, config, use_bot_token=True):
         return None, None
 
-    with patch("agno.os.interfaces.teams.helpers._download_attachment", side_effect=fake_download):
+    with patch("agno.os.interfaces.msteams.helpers._download_attachment", side_effect=fake_download):
         run_kwargs, skipped = await download_attachments_async(parsed, cfg)
 
     assert run_kwargs == {}
@@ -526,7 +526,7 @@ async def test_download_attachments_skips_missing_url():
         file_attachments=[],
     )
     cfg = _make_config()
-    with patch("agno.os.interfaces.teams.helpers._download_attachment", new_callable=AsyncMock) as mock_dl:
+    with patch("agno.os.interfaces.msteams.helpers._download_attachment", new_callable=AsyncMock) as mock_dl:
         run_kwargs, skipped = await download_attachments_async(parsed, cfg)
     mock_dl.assert_not_called()
     assert run_kwargs == {}
@@ -553,7 +553,7 @@ async def test_download_attachments_unsupported_mime_is_skipped():
         # no content-type header at all, then a type outside the allowlist
         return (b"binbytes", None) if url.endswith("report") else (b"mp4bytes", "video/mp4")
 
-    with patch("agno.os.interfaces.teams.helpers._download_attachment", side_effect=fake_download):
+    with patch("agno.os.interfaces.msteams.helpers._download_attachment", side_effect=fake_download):
         run_kwargs, skipped = await download_attachments_async(parsed, cfg)
 
     assert "files" not in run_kwargs
@@ -621,7 +621,7 @@ async def test_download_attachments_image_sent_as_a_file_is_still_an_image():
     async def fake_download(url, config, use_bot_token=True):
         return b"pngbytes", "image/png"
 
-    with patch("agno.os.interfaces.teams.helpers._download_attachment", side_effect=fake_download):
+    with patch("agno.os.interfaces.msteams.helpers._download_attachment", side_effect=fake_download):
         run_kwargs, skipped = await download_attachments_async(parsed, cfg)
 
     assert skipped == []
@@ -645,7 +645,7 @@ async def test_download_attachments_resolves_supported_mime_from_filename():
     async def fake_download(url, config, use_bot_token=True):
         return b"pdfbytes", None
 
-    with patch("agno.os.interfaces.teams.helpers._download_attachment", side_effect=fake_download):
+    with patch("agno.os.interfaces.msteams.helpers._download_attachment", side_effect=fake_download):
         run_kwargs, skipped = await download_attachments_async(parsed, cfg)
 
     assert skipped == []
@@ -674,7 +674,7 @@ async def test_download_attachments_prefers_content_download_url():
         requested.append(url)
         return b"pdfbytes", "application/pdf"
 
-    with patch("agno.os.interfaces.teams.helpers._download_attachment", side_effect=fake_download):
+    with patch("agno.os.interfaces.msteams.helpers._download_attachment", side_effect=fake_download):
         run_kwargs, skipped = await download_attachments_async(parsed, cfg)
 
     assert requested == ["https://download.example/preauth/report.pdf"]
@@ -697,7 +697,7 @@ async def test_download_attachments_falls_back_to_content_url():
         requested.append(url)
         return b"bytes", "application/pdf"
 
-    with patch("agno.os.interfaces.teams.helpers._download_attachment", side_effect=fake_download):
+    with patch("agno.os.interfaces.msteams.helpers._download_attachment", side_effect=fake_download):
         await download_attachments_async(parsed, cfg)
 
     assert requested == ["https://ex/plain.pdf"]
@@ -716,7 +716,7 @@ async def test_download_attachments_supported_mime_is_preserved():
     async def fake_download(url, config, use_bot_token=True):
         return b"pdfbytes", "application/pdf"
 
-    with patch("agno.os.interfaces.teams.helpers._download_attachment", side_effect=fake_download):
+    with patch("agno.os.interfaces.msteams.helpers._download_attachment", side_effect=fake_download):
         run_kwargs, skipped = await download_attachments_async(parsed, cfg)
 
     assert skipped == []
@@ -797,7 +797,7 @@ async def test_post_activity_returns_none_when_response_has_no_json():
     assert result is None
 
 
-# === TeamsConfig tenant env override ===
+# === MSTeamsConfig tenant env override ===
 
 
 def test_config_init_uses_arg_tenant_over_env():
@@ -812,7 +812,7 @@ def test_config_init_uses_arg_tenant_over_env():
         },
         clear=True,
     ):
-        cfg = TeamsConfig.init(tenant_id="arg-tenant")
+        cfg = MSTeamsConfig.init(tenant_id="arg-tenant")
     assert cfg.tenant_id == "arg-tenant"
 
 
@@ -822,7 +822,7 @@ def test_config_init_uses_arg_tenant_over_env():
 @pytest.mark.asyncio
 async def test_get_jwks_caches_within_ttl():
     """Second call inside TTL must not re-fetch OpenID metadata or JWKS."""
-    from agno.os.interfaces.teams import security as teams_security
+    from agno.os.interfaces.msteams import security as teams_security
 
     teams_security._jwks_cache["keys"] = None
     teams_security._jwks_cache["fetched_at"] = 0.0
@@ -840,11 +840,11 @@ async def test_get_jwks_caches_within_ttl():
 
     with (
         patch(
-            "agno.os.interfaces.teams.security._fetch_openid_metadata",
+            "agno.os.interfaces.msteams.security._fetch_openid_metadata",
             new_callable=AsyncMock,
             side_effect=fake_metadata,
         ),
-        patch("agno.os.interfaces.teams.security._fetch_jwks", new_callable=AsyncMock, side_effect=fake_jwks),
+        patch("agno.os.interfaces.msteams.security._fetch_jwks", new_callable=AsyncMock, side_effect=fake_jwks),
     ):
         keys1 = await teams_security._get_jwks()
         keys2 = await teams_security._get_jwks()
@@ -860,13 +860,13 @@ async def test_get_jwks_caches_within_ttl():
 
 @pytest.mark.asyncio
 async def test_get_jwks_raises_when_metadata_missing_jwks_uri():
-    from agno.os.interfaces.teams import security as teams_security
+    from agno.os.interfaces.msteams import security as teams_security
 
     teams_security._jwks_cache["keys"] = None
     teams_security._jwks_cache["fetched_at"] = 0.0
 
     with patch(
-        "agno.os.interfaces.teams.security._fetch_openid_metadata", new_callable=AsyncMock, return_value={"issuer": "x"}
+        "agno.os.interfaces.msteams.security._fetch_openid_metadata", new_callable=AsyncMock, return_value={"issuer": "x"}
     ):
         with pytest.raises(RuntimeError, match="jwks_uri"):
             await teams_security._get_jwks()
@@ -878,7 +878,7 @@ async def test_get_jwks_raises_when_metadata_missing_jwks_uri():
 @pytest.mark.asyncio
 async def test_get_jwks_refetches_after_ttl_expiry():
     """After TTL expiry, next call should hit metadata + JWKS endpoints again."""
-    from agno.os.interfaces.teams import security as teams_security
+    from agno.os.interfaces.msteams import security as teams_security
 
     # Seed cache as if fetched long ago
     teams_security._jwks_cache["keys"] = [{"kty": "RSA", "kid": "old"}]
@@ -886,12 +886,12 @@ async def test_get_jwks_refetches_after_ttl_expiry():
 
     with (
         patch(
-            "agno.os.interfaces.teams.security._fetch_openid_metadata",
+            "agno.os.interfaces.msteams.security._fetch_openid_metadata",
             new_callable=AsyncMock,
             return_value={"jwks_uri": "https://example/jwks", "issuer": "https://api.botframework.com"},
         ) as mock_meta,
         patch(
-            "agno.os.interfaces.teams.security._fetch_jwks",
+            "agno.os.interfaces.msteams.security._fetch_jwks",
             new_callable=AsyncMock,
             return_value=[{"kty": "RSA", "kid": "new"}],
         ) as mock_jwks,

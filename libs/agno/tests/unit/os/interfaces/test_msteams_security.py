@@ -2,8 +2,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from agno.os.interfaces.teams import security as teams_security
-from agno.os.interfaces.teams.security import validate_bot_framework_jwt
+from agno.os.interfaces.msteams import security as teams_security
+from agno.os.interfaces.msteams.security import validate_bot_framework_jwt
 
 APP_ID = "test-app-id"
 
@@ -45,13 +45,13 @@ async def test_missing_bearer_prefix_returns_false():
 
 @pytest.mark.asyncio
 async def test_bearer_prefix_is_case_insensitive():
-    with patch("agno.os.interfaces.teams.security._get_jwks", new_callable=AsyncMock, return_value=[]):
+    with patch("agno.os.interfaces.msteams.security._get_jwks", new_callable=AsyncMock, return_value=[]):
         assert await validate_bot_framework_jwt("bearer not-a-real-jwt", APP_ID) is False
 
 
 @pytest.mark.asyncio
 async def test_malformed_jwt_returns_false():
-    with patch("agno.os.interfaces.teams.security._get_jwks", new_callable=AsyncMock, return_value=[]):
+    with patch("agno.os.interfaces.msteams.security._get_jwks", new_callable=AsyncMock, return_value=[]):
         assert await validate_bot_framework_jwt("Bearer garbage.not.jwt", APP_ID) is False
 
 
@@ -89,7 +89,7 @@ def _client_that_really_validates():
     from fastapi import APIRouter, FastAPI
     from fastapi.testclient import TestClient
 
-    from agno.os.interfaces.teams.router import attach_routes
+    from agno.os.interfaces.msteams.router import attach_routes
 
     router = APIRouter()
     env = patch.dict(
@@ -127,8 +127,8 @@ def test_repeated_unknown_kid_refetches_jwks_only_once():
     client, env = _client_that_really_validates()
     try:
         with (
-            patch("agno.os.interfaces.teams.security._fetch_openid_metadata", side_effect=fake_metadata),
-            patch("agno.os.interfaces.teams.security._fetch_jwks", side_effect=fake_keys),
+            patch("agno.os.interfaces.msteams.security._fetch_openid_metadata", side_effect=fake_metadata),
+            patch("agno.os.interfaces.msteams.security._fetch_jwks", side_effect=fake_keys),
         ):
             headers = {"Authorization": f"Bearer {_token_with_kid('made-up-kid')}"}
             for _ in range(5):
@@ -200,7 +200,7 @@ async def test_valid_signature_returns_true():
     fake_key = {"kty": "RSA", "kid": "test-kid", "n": "AA", "e": "AQAB"}
 
     with (
-        patch("agno.os.interfaces.teams.security._get_jwks", new_callable=AsyncMock, return_value=[fake_key]),
+        patch("agno.os.interfaces.msteams.security._get_jwks", new_callable=AsyncMock, return_value=[fake_key]),
         patch("jwt.get_unverified_header", return_value={"kid": "test-kid", "alg": "RS256"}),
         patch("jwt.algorithms.RSAAlgorithm.from_jwk", return_value="fake-public-key"),
         patch("jwt.decode", return_value={"iss": "https://api.botframework.com", "aud": APP_ID, "exp": 9999999999}),
@@ -215,7 +215,7 @@ async def test_signature_verification_failure_returns_false():
     fake_key = {"kty": "RSA", "kid": "test-kid", "n": "AA", "e": "AQAB"}
 
     with (
-        patch("agno.os.interfaces.teams.security._get_jwks", new_callable=AsyncMock, return_value=[fake_key]),
+        patch("agno.os.interfaces.msteams.security._get_jwks", new_callable=AsyncMock, return_value=[fake_key]),
         patch("jwt.get_unverified_header", return_value={"kid": "test-kid"}),
         patch("jwt.algorithms.RSAAlgorithm.from_jwk", return_value="fake-public-key"),
         patch("jwt.decode", side_effect=jwt.InvalidSignatureError("bad sig")),
@@ -234,7 +234,7 @@ async def test_unknown_kid_forces_refresh_then_fails():
         return []  # empty both times
 
     with (
-        patch("agno.os.interfaces.teams.security._get_jwks", new_callable=AsyncMock, side_effect=fake_get_jwks),
+        patch("agno.os.interfaces.msteams.security._get_jwks", new_callable=AsyncMock, side_effect=fake_get_jwks),
         patch("jwt.get_unverified_header", return_value={"kid": "unknown-kid"}),
     ):
         assert await validate_bot_framework_jwt("Bearer x.y.z", APP_ID) is False
@@ -254,7 +254,7 @@ async def test_wrong_audience_returns_false():
     fake_key = {"kty": "RSA", "kid": "test-kid", "n": "AA", "e": "AQAB"}
 
     with (
-        patch("agno.os.interfaces.teams.security._get_jwks", new_callable=AsyncMock, return_value=[fake_key]),
+        patch("agno.os.interfaces.msteams.security._get_jwks", new_callable=AsyncMock, return_value=[fake_key]),
         patch("jwt.get_unverified_header", return_value={"kid": "test-kid"}),
         patch("jwt.algorithms.RSAAlgorithm.from_jwk", return_value="fake-public-key"),
         patch("jwt.decode", side_effect=jwt.InvalidAudienceError("wrong aud")),
@@ -269,7 +269,7 @@ async def test_wrong_issuer_returns_false():
     fake_key = {"kty": "RSA", "kid": "test-kid", "n": "AA", "e": "AQAB"}
 
     with (
-        patch("agno.os.interfaces.teams.security._get_jwks", new_callable=AsyncMock, return_value=[fake_key]),
+        patch("agno.os.interfaces.msteams.security._get_jwks", new_callable=AsyncMock, return_value=[fake_key]),
         patch("jwt.get_unverified_header", return_value={"kid": "test-kid"}),
         patch("jwt.algorithms.RSAAlgorithm.from_jwk", return_value="fake-public-key"),
         patch("jwt.decode", side_effect=jwt.InvalidIssuerError("wrong iss")),
@@ -284,7 +284,7 @@ async def test_expired_token_returns_false():
     fake_key = {"kty": "RSA", "kid": "test-kid", "n": "AA", "e": "AQAB"}
 
     with (
-        patch("agno.os.interfaces.teams.security._get_jwks", new_callable=AsyncMock, return_value=[fake_key]),
+        patch("agno.os.interfaces.msteams.security._get_jwks", new_callable=AsyncMock, return_value=[fake_key]),
         patch("jwt.get_unverified_header", return_value={"kid": "test-kid"}),
         patch("jwt.algorithms.RSAAlgorithm.from_jwk", return_value="fake-public-key"),
         patch("jwt.decode", side_effect=jwt.ExpiredSignatureError("expired")),

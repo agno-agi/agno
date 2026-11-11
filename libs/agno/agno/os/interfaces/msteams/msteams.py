@@ -6,18 +6,18 @@ from fastapi.routing import APIRouter
 from agno.agent import Agent, RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.interfaces.base import BaseInterface
-from agno.os.interfaces.teams.helpers import (
-    TeamsConfig,
+from agno.os.interfaces.msteams.helpers import (
+    MSTeamsConfig,
     extract_conversation_ref,
     send_teams_message_async,
 )
-from agno.os.interfaces.teams.router import _SESSION_DISPATCH, attach_routes
+from agno.os.interfaces.msteams.router import _SESSION_DISPATCH, attach_routes
 from agno.team import RemoteTeam, Team
 from agno.utils.log import log_warning
 from agno.workflow import RemoteWorkflow, Workflow
 
 
-class MicrosoftTeams(BaseInterface):
+class MSTeams(BaseInterface):
     """Microsoft Teams interface for agents, teams, and workflows.
 
     Serves ``GET /status`` and the Bot Framework webhook ``POST /messages``
@@ -26,7 +26,7 @@ class MicrosoftTeams(BaseInterface):
     inbound messages stored.
     """
 
-    type = "teams"
+    type = "msteams"
 
     # JWT validation happens inside the webhook — the base AgentOS auth
     # layer must NOT re-validate the request.
@@ -61,14 +61,14 @@ class MicrosoftTeams(BaseInterface):
         self.request_timeout = request_timeout
         # Built once and shared with the router: the cached bot access token
         # lives on it, so a per-call config would re-authenticate every time.
-        self._config: Optional[TeamsConfig] = None
+        self._config: Optional[MSTeamsConfig] = None
 
         if not (self.agent or self.team or self.workflow):
-            raise ValueError("MicrosoftTeams requires an agent, team, or workflow")
+            raise ValueError("MSTeams requires an agent, team, or workflow")
 
-    def _get_config(self) -> TeamsConfig:
+    def _get_config(self) -> MSTeamsConfig:
         if self._config is None:
-            self._config = TeamsConfig.init(
+            self._config = MSTeamsConfig.init(
                 app_id=self.app_id,
                 app_password=self.app_password,
                 tenant_id=self.tenant_id,
@@ -104,7 +104,7 @@ class MicrosoftTeams(BaseInterface):
         entity, entity_type = self._resolve_entity()
         db = getattr(entity, "db", None)
         if not isinstance(db, (BaseDb, AsyncBaseDb)):
-            log_warning("MicrosoftTeams.asend_alert: entity has no DB configured; cannot resolve user's conversation")
+            log_warning("MSTeams.asend_alert: entity has no DB configured; cannot resolve user's conversation")
             return False
 
         entity_id = getattr(entity, "id", None) or getattr(entity, "name", None) or entity_type
@@ -128,7 +128,7 @@ class MicrosoftTeams(BaseInterface):
             else:
                 sessions = db.get_sessions(**session_filter)  # type: ignore[assignment]
         except Exception as e:
-            log_warning(f"MicrosoftTeams.asend_alert: session lookup failed: {e}")
+            log_warning(f"MSTeams.asend_alert: session lookup failed: {e}")
             return False
 
         # First match, not the router's client-side max: this scan examines every

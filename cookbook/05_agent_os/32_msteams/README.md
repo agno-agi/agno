@@ -1,6 +1,6 @@
 # Microsoft Teams
 
-The `MicrosoftTeams` interface connects an Agent, Team, or Workflow to the
+The `MSTeams` interface connects an Agent, Team, or Workflow to the
 Microsoft Bot Framework. It verifies the inbound Bot Framework JWT, maps Teams
 users to AgentOS users and sessions, downloads inbound attachments, and returns
 text through the same channel. These examples focus on behavior that is
@@ -19,7 +19,7 @@ patterns.
 Teams JWT validation depends on `pyjwt[crypto]`. Install the optional extra:
 
 ```bash
-uv pip install "agno[microsoft-teams]"
+uv pip install "agno[msteams]"
 ```
 
 ## Prerequisites
@@ -70,7 +70,7 @@ export MICROSOFT_APP_PASSWORD="..."       # the secret Value, not the Secret ID
 export MICROSOFT_APP_TENANT_ID="..."      # required for a single-tenant bot
 export OPENAI_API_KEY="..."
 
-.venvs/demo/bin/python cookbook/05_agent_os/26_teams/basic.py
+.venvs/demo/bin/python cookbook/05_agent_os/32_msteams/basic.py
 ```
 
 Verify the credentials before sending a message. This is the same client-credentials
@@ -139,8 +139,8 @@ resolve to; the previous session is preserved in storage.
 
 Every inbound message persists the caller's `serviceUrl`, `conversation.id`,
 and the bot's `recipient` object onto the session that run used
-(`session_data.teams_conversation_ref`). Any code with a reference to the
-`MicrosoftTeams` instance can later push a message without an inbound
+(`session_data.msteams_conversation_ref`). Any code with a reference to the
+`MSTeams` instance can later push a message without an inbound
 trigger:
 
 ```python
@@ -196,7 +196,7 @@ it and the channel-scoped `from.id` otherwise:
 
    ```bash
    export ALERT_USER_ID="<full-user-id-from-the-query-above>"
-   .venvs/demo/bin/python cookbook/05_agent_os/26_teams/proactive_alert.py
+   .venvs/demo/bin/python cookbook/05_agent_os/32_msteams/proactive_alert.py
    ```
 
    The two examples register different agent ids against different databases, so

@@ -12,7 +12,7 @@ from a script. This example serves the bot and schedules one alert after 30s:
   3. Wait for the scheduled alert to fire    → proactive message
 
 Prerequisites: ALERT_USER_ID (see README.md), plus the credentials basic.py needs
-Run: .venvs/demo/bin/python cookbook/05_agent_os/26_teams/proactive_alert.py
+Run: .venvs/demo/bin/python cookbook/05_agent_os/32_msteams/proactive_alert.py
 """
 
 import asyncio
@@ -24,7 +24,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
-from agno.os.interfaces.teams import MicrosoftTeams
+from agno.os.interfaces.msteams import MSTeams
 
 # ---------------------------------------------------------------------------
 # Create the Teams AgentOS
@@ -47,7 +47,7 @@ assistant = Agent(
     ],
 )
 
-teams = MicrosoftTeams(agent=assistant)
+teams = MSTeams(agent=assistant)
 
 agent_os = AgentOS(
     id="teams-alerts-os",

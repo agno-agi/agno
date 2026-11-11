@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.sqlite import SqliteDb
-from agno.os.interfaces.teams.router import (
+from agno.os.interfaces.msteams.router import (
     _SESSION_DISPATCH,
     _format_reasoning,
     _resolve_session_config,
@@ -242,8 +242,8 @@ def test_new_session_survives_a_same_second_save_on_the_old_one(tmp_path):
     client, env_patch = _build_test_client(agent=agent)
     try:
         with (
-            patch("agno.os.interfaces.teams.router.typing_indicator_async"),
-            patch("agno.os.interfaces.teams.router.send_teams_message_async"),
+            patch("agno.os.interfaces.msteams.router.typing_indicator_async"),
+            patch("agno.os.interfaces.msteams.router.send_teams_message_async"),
         ):
             resp = client.post(
                 "/messages",
@@ -301,8 +301,8 @@ def test_conversation_ref_is_written_to_the_run_session_not_the_newest():
     client, env_patch = _build_test_client(agent=agent)
     try:
         with (
-            patch("agno.os.interfaces.teams.router.typing_indicator_async"),
-            patch("agno.os.interfaces.teams.router.send_teams_message_async"),
+            patch("agno.os.interfaces.msteams.router.typing_indicator_async"),
+            patch("agno.os.interfaces.msteams.router.send_teams_message_async"),
         ):
             resp = client.post(
                 "/messages",
@@ -322,7 +322,7 @@ def test_conversation_ref_is_written_to_the_run_session_not_the_newest():
 
     # Outcome first: the ref belongs on the run's session and nowhere else.
     # A latest-by-user re-read puts it on newer_session instead.
-    assert run_session.session_data["teams_conversation_ref"]["conversation_id"] == "conv-1"
+    assert run_session.session_data["msteams_conversation_ref"]["conversation_id"] == "conv-1"
     assert newer_session.session_data == {}
     # the merge must not drop keys that were already on the session
     assert run_session.session_data["existing"] == "kept"
@@ -345,8 +345,8 @@ def test_operation_ids_include_entity_name_suffix():
         attach_routes(router, agent=stub)
 
     operation_ids = {route.operation_id for route in router.routes if hasattr(route, "operation_id")}
-    assert "teams_status_weather_bot" in operation_ids
-    assert "teams_webhook_weather_bot" in operation_ids
+    assert "msteams_status_weather_bot" in operation_ids
+    assert "msteams_webhook_weather_bot" in operation_ids
 
 
 def test_operation_ids_fall_back_to_entity_type_when_name_missing():
@@ -360,5 +360,5 @@ def test_operation_ids_fall_back_to_entity_type_when_name_missing():
         attach_routes(router, agent=stub)
 
     operation_ids = {route.operation_id for route in router.routes if hasattr(route, "operation_id")}
-    assert "teams_status_agent" in operation_ids
-    assert "teams_webhook_agent" in operation_ids
+    assert "msteams_status_agent" in operation_ids
+    assert "msteams_webhook_agent" in operation_ids
