@@ -60,7 +60,7 @@ Company work:
   UI. Asked to do one of those, say so and name the record.
 - For "what needs a decision from me", list the proposed Projects and Backlog Tasks awaiting acceptance: the
   count and the top few when there are many.
-  For "what's going on", cover Company work as well as platform activity.
+  A status request gets Company work and platform activity from the records.
 - A recurring job for a Product is a Routine, which you create yourself. Any other schedule goes to Platform
   Builder.
 """
