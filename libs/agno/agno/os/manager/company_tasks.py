@@ -1,13 +1,13 @@
 """Super Agent tools for Company Tasks: start accepted work, read its state, and record a person's decisions.
 
 Starting reuses the Company start route's checks, duplicate handling and queue path, under
-the calling user's own authority. The decision tools approve a Project, accept a Task and
-review a finished one. They run only for a person in chat, under that person's permissions,
-and record that person on the transition.
+the calling user's own authority. The decision tools approve a Project, accept Tasks and
+review a finished one. Each decision pauses the run until the chatting person confirms it,
+runs under that person's permissions, and records that person on the transition.
 """
 
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from weakref import ReferenceType, ref
 
 from agno.tools import Toolkit
@@ -26,6 +26,11 @@ def _run_context_identity(run_context: Any):
     from agno.tools.company import _authority, _identity
 
     return _authority(run_context), _identity(run_context)
+
+
+def _same_name(given: Any, stored: Any) -> bool:
+    """Whether the name the person confirmed is the record's name, ignoring case and spacing."""
+    return " ".join(str(given or "").split()).casefold() == " ".join(str(stored or "").split()).casefold()
 
 
 def _refusal(authority: Any) -> Optional[str]:
@@ -53,6 +58,8 @@ class CompanyTaskTools(Toolkit):
             name="company_tasks",
             tools=[getattr(self, name) for name in names],
             async_tools=[(getattr(self, "a" + name), name) for name in names],
+            # A decision is the person's: the run pauses until they confirm the record and the change.
+            requires_confirmation_tools=["approve_company_project", "accept_company_task", "review_company_task"],
             # The receipt is the reply: the coordinator turn ends once the run is queued.
             stop_after_tool_call_tools=["start_company_task"],
             show_result_tools=["start_company_task"],
@@ -222,22 +229,29 @@ class CompanyTaskTools(Toolkit):
         except NotImplementedError:
             return "Not done: the configured database does not support Company work."
 
-    def approve_company_project(self, project_id: str, _agno_run_context: Optional[Any] = None) -> str:
-        """Approve a proposed Company Project for the person who asked.
+    def approve_company_project(
+        self, project_name: str, project_id: str, _agno_run_context: Optional[Any] = None
+    ) -> str:
+        """Approve a proposed Company Project. The run pauses for the person to confirm.
 
         Args:
+            project_name: The Project's name, as stored.
             project_id: The proposed Project to approve.
         """
         return "Approving a Project needs an asynchronous run. Approve it from AgentOS instead."
 
-    async def aapprove_company_project(self, project_id: str, _agno_run_context: Optional[Any] = None) -> str:
-        """Approve a proposed Company Project for the person who asked. It becomes active.
+    async def aapprove_company_project(
+        self, project_name: str, project_id: str, _agno_run_context: Optional[Any] = None
+    ) -> str:
+        """Approve a proposed Company Project. It becomes active. The run pauses for the person to
+        confirm the Project by name and ID.
 
         Call this only when the person asked, in this conversation, to approve this Project. A request
-        to plan, list or summarize work is not a request to approve it. The person is recorded as the
-        one who approved.
+        to plan, list or summarize work is not a request to approve it. The person who confirms is
+        recorded as the one who approved.
 
         Args:
+            project_name: The Project's name, as stored. The person confirms this name.
             project_id: The proposed Project to approve.
         """
         from dataclasses import replace
@@ -254,6 +268,8 @@ class CompanyTaskTools(Toolkit):
             project = await _manager_call(manager, "get_project", project_id)
             if project is None:
                 return "Not done: Project not found"
+            if not _same_name(project_name, project["name"]):
+                return f"Not done: Project {project_id} is named '{project['name']}'. Call again with that name."
             if project["status"] != "proposed":
                 return f"'{project['name']}' is {project['status']}; only a proposed Project can be approved."
             saved = replace(authority, enforce_tools=False) if authority is not None else None
@@ -275,39 +291,41 @@ class CompanyTaskTools(Toolkit):
 
     def accept_company_task(
         self,
-        task_id: str,
-        executor_type: Optional[str] = None,
-        executor_id: Optional[str] = None,
+        tasks: List[Dict[str, str]],
+        executor_type: Optional[str],
+        executor_id: Optional[str],
         _agno_run_context: Optional[Any] = None,
     ) -> str:
-        """Accept a Backlog Company Task with an executor for the person who asked.
+        """Accept Backlog Company Tasks with one executor. The run pauses for the person to confirm.
 
         Args:
-            task_id: The Backlog Task to accept.
-            executor_type: agent, team or workflow. Null with a null executor_id names Mini Agent.
-            executor_id: ID of that component; null with a null executor_type.
+            tasks: The Tasks to accept, each as {"title": the stored title, "task_id": the id}.
+            executor_type: agent, team or workflow. With no executor named, pass agent.
+            executor_id: ID of that component. With no executor named, pass miniagent.
         """
         return "Accepting a Task needs an asynchronous run. Accept it from AgentOS instead."
 
     async def aaccept_company_task(
         self,
-        task_id: str,
-        executor_type: Optional[str] = None,
-        executor_id: Optional[str] = None,
+        tasks: List[Dict[str, str]],
+        executor_type: Optional[str],
+        executor_id: Optional[str],
         _agno_run_context: Optional[Any] = None,
     ) -> str:
-        """Accept a Backlog Company Task with an executor for the person who asked. It becomes Ready.
+        """Accept Backlog Company Tasks with one executor. They become Ready. The run pauses for the
+        person to confirm each Task by title and ID, and the executor.
 
-        Call this only when the person asked, in this conversation, to accept this Task. A request to
-        plan, list or summarize work is not a request to accept it. The Task's Project must be active.
-        Name the executor the person named. With none named, leave both executor arguments out: the
-        Task then runs on Mini Agent, which does the work itself or runs the components the person
-        may run. Accepting does not start the Task; use start_company_task when the person asks.
+        Call this only when the person asked, in this conversation, to accept these Tasks. A request to
+        plan, list or summarize work is not a request to accept it. Pass every Task the person named in
+        one call, so they confirm once. Each Task's Project must be active. Name the executor the person
+        named. With none named, pass agent and miniagent: Mini Agent does the work itself or runs the
+        components the person may run. Accepting does not start a Task; use start_company_task when the
+        person asks.
 
         Args:
-            task_id: The Backlog Task to accept.
-            executor_type: agent, team or workflow. Null with a null executor_id names Mini Agent.
-            executor_id: ID of that component; null with a null executor_type.
+            tasks: The Tasks to accept, each as {"title": the stored title, "task_id": the id}.
+            executor_type: agent, team or workflow. With no executor named, pass agent.
+            executor_id: ID of that component. With no executor named, pass miniagent.
         """
         from dataclasses import replace
 
@@ -317,57 +335,81 @@ class CompanyTaskTools(Toolkit):
         from agno.run.authorization import authorization_scope
 
         async def call(agent_os: Any) -> str:
+            from fastapi import HTTPException
+
             authority, user_id = self._person(agent_os, _agno_run_context)
             kind, name = executor_type or None, executor_id or None
             if (kind is None) != (name is None):
                 return "Not done: give executor_type and executor_id together, or leave both out to use Mini Agent."
             if kind is None:
                 kind, name = "agent", MINI_AGENT_ID
+            if not tasks:
+                return "Not done: name at least one Task."
             starter = _TaskStarter(agent_os)
-            value = await starter.task(task_id)
-            title = value.get("title") or task_id
-            if value["status"] != "backlog":
-                return f"'{title}' is {_STATUS_WORDS.get(value['status'], value['status'])}; only a proposal can be accepted."
+            # Nothing is accepted unless every Task is the one the person confirmed, and still a proposal.
+            values = []
+            for item in tasks:
+                value = await starter.task(str(item.get("task_id") or ""))
+                title = value.get("title") or value["id"]
+                if not _same_name(item.get("title"), title):
+                    return f"Not done: Task {value['id']} is titled '{title}'. Call again with that title."
+                if value["status"] != "backlog":
+                    words = _STATUS_WORDS.get(value["status"], value["status"])
+                    return f"Not done: '{title}' is {words}; only a proposal can be accepted."
+                values.append(value)
             if authority is not None:
                 await authority.arequire("tasks", "write")
             # The transition route's decision: the person must be allowed to run the executor themselves.
             caller = _StartCaller.for_authority(getattr(agent_os, "_company_app", None), authority, user_id)
             await caller.require_accept(starter.endpoint({"executor_type": kind, "executor_id": name}))
             saved = replace(authority, enforce_tools=False) if authority is not None else None
-            with authorization_scope(lambda: saved):
-                record = await _manager_call(
-                    starter.manager,
-                    "transition_task",
-                    task_id=task_id,
-                    target="ready",
-                    reason="Accepted in chat",
-                    accepted_by=user_id,
-                    executor_type=kind,
-                    executor_id=name,
-                    expected_updated_at=value["updated_at"],
-                )
-            if record is None:
-                return f"Not done: '{title}' changed while it was being accepted. Read it again."
-            return f"Accepted '{title}' (Task {task_id}) for {kind} {name}. It is Ready and not started."
+            lines = []
+            for value in values:
+                title = value.get("title") or value["id"]
+                try:
+                    with authorization_scope(lambda: saved):
+                        record = await _manager_call(
+                            starter.manager,
+                            "transition_task",
+                            task_id=value["id"],
+                            target="ready",
+                            reason="Accepted in chat",
+                            accepted_by=user_id,
+                            executor_type=kind,
+                            executor_id=name,
+                            expected_updated_at=value["updated_at"],
+                        )
+                except HTTPException as exc:
+                    lines.append(f"Not done: '{title}' (Task {value['id']}): {exc.detail}")
+                except (PermissionError, LookupError, ValueError) as exc:
+                    lines.append(f"Not done: '{title}' (Task {value['id']}): {exc}")
+                else:
+                    if record is None:
+                        lines.append(f"Not done: '{title}' (Task {value['id']}) changed while it was being accepted.")
+                    else:
+                        lines.append(f"Accepted '{title}' (Task {value['id']}) for {kind} {name}.")
+            return " ".join(lines) + " Accepted Tasks are Ready and not started."
 
         return await self._decide(call)
 
     def review_company_task(
-        self, task_id: str, outcome: str, reason: str, _agno_run_context: Optional[Any] = None
+        self, task_title: str, outcome: str, reason: str, task_id: str, _agno_run_context: Optional[Any] = None
     ) -> str:
-        """Complete a Company Task in review, or send it back, for the person who asked.
+        """Complete a Company Task in review, or send it back. The run pauses for the person to confirm.
 
         Args:
-            task_id: The Task in review.
+            task_title: The Task's title, as stored.
             outcome: complete or send_back.
             reason: The person's reason, in their words.
+            task_id: The Task in review.
         """
         return "Reviewing a Task needs an asynchronous run. Review it from AgentOS instead."
 
     async def areview_company_task(
-        self, task_id: str, outcome: str, reason: str, _agno_run_context: Optional[Any] = None
+        self, task_title: str, outcome: str, reason: str, task_id: str, _agno_run_context: Optional[Any] = None
     ) -> str:
-        """Complete a Company Task in review, or send it back, for the person who asked.
+        """Complete a Company Task in review, or send it back. The run pauses for the person to confirm
+        the Task by title and ID, the outcome and the reason.
 
         Call this only when the person asked, in this conversation, to complete this Task or send it
         back. Show them the saved result first when they have not seen it. complete moves the Task to
@@ -375,9 +417,10 @@ class CompanyTaskTools(Toolkit):
         on its next attempt, which starts when the person asks, with start_company_task.
 
         Args:
-            task_id: The Task in review.
+            task_title: The Task's title, as stored. The person confirms this title.
             outcome: complete or send_back.
             reason: The person's reason, in their words. Required to send a Task back.
+            task_id: The Task in review.
         """
         from dataclasses import replace
 
@@ -394,6 +437,8 @@ class CompanyTaskTools(Toolkit):
             starter = _TaskStarter(agent_os)
             value = await starter.task(task_id)
             title = value.get("title") or task_id
+            if not _same_name(task_title, title):
+                return f"Not done: Task {task_id} is titled '{title}'. Call again with that title."
             if value["status"] != "in_review":
                 words = _STATUS_WORDS.get(value["status"], value["status"])
                 return f"'{title}' is {words}; only a Task in review can be completed or sent back."

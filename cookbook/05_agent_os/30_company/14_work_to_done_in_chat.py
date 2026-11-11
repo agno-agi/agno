@@ -2,7 +2,9 @@
 
 A person asks Super Agent to propose a Project and a Task, then decides each step in chat:
 approve the Project, accept the Task, start it, and complete it after reading the result.
-Super Agent records each decision under that person's permissions and makes none on its own.
+Each decision pauses the run. It shows the record's name, its id and what will change, and
+is recorded only after the person confirms, under that person's permissions. This script
+answers each confirmation as the person would in the AgentOS UI.
 
 The Task is accepted with no executor, so it names Mini Agent. In a Task a person accepted,
 Mini Agent does the work itself or runs the components that person may run. Here it runs the
@@ -17,6 +19,7 @@ authorization on, each decision needs the caller's own grants: projects:write to
 tasks:write and run permission on the executor to accept, and tasks:write to complete.
 """
 
+import json
 import os
 import time
 from typing import Any, Dict
@@ -82,8 +85,30 @@ def chat(client: TestClient, message: str, session_id: str) -> str:
     )
     response.raise_for_status()
     body = response.json()
+    print(f"\n> {message}")
+    while body.get("status") == "PAUSED":
+        # A decision waits here until the person confirms it. Nothing is recorded before that.
+        requirements = body["requirements"]
+        for requirement in requirements:
+            execution = requirement["tool_execution"]
+            print(
+                f"  Confirm {execution['tool_name']}: {json.dumps(execution['tool_args'])}"
+            )
+            requirement["confirmation"] = True
+            execution["confirmed"] = True
+        response = client.post(
+            f"/teams/superagent/runs/{body['run_id']}/continue",
+            data={
+                "requirements": json.dumps(requirements),
+                "session_id": session_id,
+                "user_id": PERSON,
+                "stream": "false",
+            },
+        )
+        response.raise_for_status()
+        body = response.json()
     tools = [tool.get("tool_name") for tool in body.get("tools") or []]
-    print(f"\n> {message}\n({time.monotonic() - started:.1f}s, tools: {tools})")
+    print(f"({time.monotonic() - started:.1f}s, tools: {tools})")
     print(body.get("content"))
     return body.get("content") or ""
 
@@ -112,8 +137,8 @@ if __name__ == "__main__":
             "Create a Product named SDK. In it, propose a Project named 'Release 2.4' and one "
             "Task in that Project: write the release notes for version 2.4 from these changes: "
             "added streaming for workflow runs; changed the default tool call limit from 8 to 24; "
-            "fixed a crash when a schedule has no timezone. The Release Writer agent was built "
-            "for writing release notes.",
+            "fixed a crash when a schedule has no timezone. Say in the brief that the Release "
+            "Writer agent writes the notes.",
             session,
         )
         task = only_task(client)

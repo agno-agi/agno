@@ -224,7 +224,7 @@ retaining a known old ID explicitly is necessary for those references.
 | `06_execute_tasks.py` | Durable execution, duplicate starts, ordinary run history and attention with no model call. |
 | `12_task_board.py` | Direct start from Backlog, `last_run`, `allowed_transitions` and a board read by status with no model call. |
 | `13_start_tasks_from_chat.py` | Super Agent starts a human-accepted Task, ends its turn with the receipt, and answers status and unrelated questions while the Task runs. Add `--serve` to try it from the AgentOS UI on `localhost:7777` with a seeded, accepted Task. Live model; PostgreSQL. |
-| `14_work_to_done_in_chat.py` | A person takes work from a proposal to Done in a Super Agent chat: approve the Project, accept the Task on Mini Agent, start it, read the result and complete it. Mini Agent runs another agent to do the work, and the Task records it. Live model; PostgreSQL. |
+| `14_work_to_done_in_chat.py` | A person takes work from a proposal to Done in a Super Agent chat: approve the Project, accept the Task on Mini Agent, start it, read the result and complete it. Each decision pauses for the person's confirmation. Mini Agent runs another agent to do the work, and the Task records it. Live model; PostgreSQL. |
 
 `06_execute_tasks.py` starts an accepted workflow Task through its ordinary run
 route and the durable queue, waits for In review, reads paged history and checks
@@ -321,27 +321,43 @@ created with its execution, evidence and result columns in the initial schema.
 
 ### Decisions from chat and Mini Agent Tasks
 
-Three Super Agent tools record a person's decision. Each runs only for a person in
-chat, under that person's permissions, and writes that person on the transition.
-Routine runs, Task runs, the automation tick, service accounts, the scheduler
-identity and, under user isolation, anonymous callers are refused. The tools check
-who is calling. Whether the person asked is left to Super Agent's instructions.
+Three Super Agent tools record a person's decision. Each uses `requires_confirmation`,
+the same mechanism as `confirm_company_details`: the run pauses, shows the record's
+name, its ID and what will change, and the tool runs only after the chatting person
+confirms. No decision is recorded without a confirmation. A scheduled run on
+`/teams/superagent/runs` that calls one of these tools pauses, its schedule run is
+recorded as paused, and nothing is decided. `start_company_task` and
+`get_company_task_status` do not pause.
 
-| Tool | Change | The person needs |
-| --- | --- | --- |
-| `approve_company_project` | Project: proposed to active | `projects:write` |
-| `accept_company_task` | Task: Backlog to Ready, with an executor | `tasks:write` and run permission on the executor |
-| `review_company_task` with `complete` | Task: In review to Done | `tasks:write` |
-| `review_company_task` with `send_back` | Task: In review to Ready, same executor | `tasks:write` and run permission on the executor |
+After the confirmation, each tool runs under the confirming person's permissions and
+writes that person on the transition. Routine runs, Task runs, the automation tick,
+service accounts, the scheduler identity and, under user isolation, anonymous callers
+are refused. The name in the confirmation must be the record's name, so the person
+decides on the record they were shown.
+
+| Tool | Confirmation shows | Change | The person needs |
+| --- | --- | --- | --- |
+| `approve_company_project` | Project name and ID | Project: proposed to active | `projects:write` |
+| `accept_company_task` | each Task's title and ID, and the executor | Tasks: Backlog to Ready | `tasks:write` and run permission on the executor |
+| `review_company_task` with `complete` | Task title and ID, the outcome, the reason | Task: In review to Done | `tasks:write` |
+| `review_company_task` with `send_back` | Task title and ID, the outcome, the reason | Task: In review to Ready, same executor | `tasks:write` and run permission on the executor |
+
+`accept_company_task` takes a list of Tasks, so one confirmation covers several.
+Nothing is accepted unless every listed Task is a proposal with the title shown.
+
+A run that pauses and is never answered stays paused. It does not expire and it
+decides nothing. The person can answer it later, or send a new message, which starts
+a new run and leaves the paused one as it is.
 
 A Task sent back keeps its executor. The person's reason is saved on the
 transition and given to the executor's next attempt as `review_feedback` in its
 input. Starting stays a separate step, with `start_company_task`.
 
 A Task accepted with no executor names agent `miniagent`. This holds for
-`POST /company/tasks/{id}/transitions`, for `POST /company/tasks` with status
-Ready, and for `accept_company_task`. Give `executor_type` and `executor_id`
-together, or leave both out. The stored Task, the API response, the permission
+`POST /company/tasks/{id}/transitions` and for `POST /company/tasks` with status
+Ready: give `executor_type` and `executor_id` together, or leave both out. In chat,
+Super Agent passes agent `miniagent` to `accept_company_task` so the confirmation
+shows it. The stored Task, the API response, the permission
 check (`agents:miniagent:run`) and the run all name Mini Agent. A named agent,
 team or workflow works as before. Super Agent and Platform Builder are refused as
 executors.

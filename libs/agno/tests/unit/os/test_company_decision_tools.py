@@ -1,4 +1,4 @@
-"""Super Agent records a person's Company decisions from chat, and nobody else's."""
+"""Super Agent records a person's Company decisions from chat, after that person confirms each one."""
 
 import asyncio
 import json
@@ -143,6 +143,31 @@ def call(agent_os, tool, run_context, **arguments):
     return asyncio.run(getattr(CompanyTaskTools(agent_os), "a" + tool)(**arguments, _agno_run_context=run_context))
 
 
+def approve(agent_os, run_context, project):
+    return call(
+        agent_os, "approve_company_project", run_context, project_name=project["name"], project_id=project["id"]
+    )
+
+
+def accept(agent_os, run_context, *tasks, executor=("agent", "writer")):
+    named = [{"title": task["title"], "task_id": task["id"]} for task in tasks]
+    return call(
+        agent_os, "accept_company_task", run_context, tasks=named, executor_type=executor[0], executor_id=executor[1]
+    )
+
+
+def review(agent_os, run_context, task, outcome, reason):
+    return call(
+        agent_os,
+        "review_company_task",
+        run_context,
+        task_title=task["title"],
+        outcome=outcome,
+        reason=reason,
+        task_id=task["id"],
+    )
+
+
 def state(db):
     return (
         [(row["id"], row["status"], row["executor_id"], len(row["transitions"])) for row in db.get_tasks(limit=100)[0]],
@@ -158,18 +183,16 @@ def test_a_person_takes_a_proposal_to_done_in_chat(system):
     project, task = records(client, approve=False)
 
     # A Task in a proposed Project waits for the Project.
-    assert call(agent_os, "accept_company_task", context(), task_id=task["id"]).startswith("Not done")
+    assert accept(agent_os, context(), task).startswith("Not done")
     assert db.get_task(task["id"])["status"] == "backlog"
 
-    reply = call(agent_os, "approve_company_project", context(), project_id=project["id"])
+    reply = approve(agent_os, context(), project)
     assert reply.startswith("Approved Project 'Release'"), reply
     approved = db.get_project(project["id"])
     assert approved["status"] == "active"
     assert approved["transitions"][-1]["user_id"] == "alice" and approved["transitions"][-1]["target"] == "active"
 
-    reply = call(
-        agent_os, "accept_company_task", context(), task_id=task["id"], executor_type="agent", executor_id="writer"
-    )
+    reply = accept(agent_os, context(), task)
     assert reply.startswith("Accepted 'Draft'") and "agent writer" in reply, reply
     accepted = db.get_task(task["id"])
     entry = accepted["transitions"][-1]
@@ -182,9 +205,7 @@ def test_a_person_takes_a_proposal_to_done_in_chat(system):
 
     assert "Queued" in call(agent_os, "start_company_task", context(), task_id=task["id"])
     finish(db, queue, task["id"])
-    reply = call(
-        agent_os, "review_company_task", context(), task_id=task["id"], outcome="complete", reason="Reads well"
-    )
+    reply = review(agent_os, context(), task, "complete", "Reads well")
     assert reply.startswith("Completed 'Draft'"), reply
     done = db.get_task(task["id"])
     assert done["status"] == "done"
@@ -194,7 +215,7 @@ def test_a_person_takes_a_proposal_to_done_in_chat(system):
 def test_accept_with_no_executor_names_mini_agent(system):
     client, db, agent_os, queue = system
     _, task = records(client)
-    reply = call(agent_os, "accept_company_task", context(), task_id=task["id"])
+    reply = accept(agent_os, context(), task, executor=(None, None))
     assert f"agent {MINI_AGENT_ID}" in reply, reply
     accepted = db.get_task(task["id"])
     assert (accepted["status"], accepted["executor_type"], accepted["executor_id"]) == ("ready", "agent", MINI_AGENT_ID)
@@ -205,15 +226,16 @@ def test_accept_on_mini_agent_needs_its_run_grant(system):
     _, task = records(client)
     without = [scope for scope in SCOPES if scope != f"agents:{MINI_AGENT_ID}:run"]
     before = state(db)
-    assert call(agent_os, "accept_company_task", context(scopes=without), task_id=task["id"]).startswith("Not done")
+    for executor in ((None, None), ("agent", MINI_AGENT_ID)):
+        assert accept(agent_os, context(scopes=without), task, executor=executor).startswith("Not done")
     assert state(db) == before
 
 
-@pytest.mark.parametrize("half", [{"executor_type": "agent"}, {"executor_id": "writer"}])
+@pytest.mark.parametrize("half", [("agent", None), (None, "writer")])
 def test_accept_names_both_executor_fields_or_neither(system, half):
     client, db, agent_os, queue = system
     _, task = records(client)
-    reply = call(agent_os, "accept_company_task", context(), task_id=task["id"], **half)
+    reply = accept(agent_os, context(), task, executor=half)
     assert "leave both out to use Mini Agent" in reply and db.get_task(task["id"])["status"] == "backlog"
 
 
@@ -223,14 +245,7 @@ def test_accept_refuses_framework_and_unknown_executors(system, executor):
     _, task = records(client)
     scopes = [*SCOPES, "agents:*:run", "teams:*:run"]
     before = state(db)
-    reply = call(
-        agent_os,
-        "accept_company_task",
-        context(scopes=scopes),
-        task_id=task["id"],
-        executor_type=executor[0],
-        executor_id=executor[1],
-    )
+    reply = accept(agent_os, context(scopes=scopes), task, executor=executor)
     assert reply.startswith("Not done"), reply
     assert state(db) == before
 
@@ -240,17 +255,11 @@ def test_send_back_returns_the_task_to_ready_with_the_reason(system):
     _, task = records(client)
     in_review(client, db, queue, task["id"])
     before = state(db)
-    assert "needs the person's reason" in call(
-        agent_os, "review_company_task", context(), task_id=task["id"], outcome="send_back", reason=" "
-    )
-    assert "complete or send_back" in call(
-        agent_os, "review_company_task", context(), task_id=task["id"], outcome="approve", reason="ok"
-    )
+    assert "needs the person's reason" in review(agent_os, context(), task, "send_back", " ")
+    assert "complete or send_back" in review(agent_os, context(), task, "approve", "ok")
     assert state(db) == before
 
-    reply = call(
-        agent_os, "review_company_task", context(), task_id=task["id"], outcome="send_back", reason="Add the changelog"
-    )
+    reply = review(agent_os, context(), task, "send_back", "Add the changelog")
     assert reply.startswith("Sent 'Draft'") and "agent writer" in reply, reply
     returned = db.get_task(task["id"])
     entry = returned["transitions"][-1]
@@ -277,17 +286,17 @@ def test_a_first_attempt_carries_no_review_feedback(system):
 # ----------------------------------------------------------------- each decision needs the person's grants
 
 DECISIONS = {
-    "approve_company_project": (lambda ids: {"project_id": ids["proposed"]}, ["projects:write"]),
+    "approve_company_project": (lambda ids, ctx, os: approve(os, ctx, ids["proposed"]), ["projects:write"]),
     "accept_company_task": (
-        lambda ids: {"task_id": ids["backlog"], "executor_type": "agent", "executor_id": "writer"},
+        lambda ids, ctx, os: accept(os, ctx, ids["backlog"]),
         ["tasks:write", "agents:writer:run"],
     ),
     "review_company_task:complete": (
-        lambda ids: {"task_id": ids["review"], "outcome": "complete", "reason": "Good"},
+        lambda ids, ctx, os: review(os, ctx, ids["review"], "complete", "Good"),
         ["tasks:write"],
     ),
     "review_company_task:send_back": (
-        lambda ids: {"task_id": ids["review"], "outcome": "send_back", "reason": "Again"},
+        lambda ids, ctx, os: review(os, ctx, ids["review"], "send_back", "Again"),
         ["tasks:write", "agents:writer:run"],
     ),
 }
@@ -295,11 +304,11 @@ DECISIONS = {
 
 def seeded(client, db, queue):
     """One record waiting for each decision."""
-    _, review = records(client)
-    in_review(client, db, queue, review["id"])
+    _, review_task = records(client)
+    in_review(client, db, queue, review_task["id"])
     _, backlog = records(client)
     proposed, _ = records(client, approve=False)
-    return {"review": review["id"], "backlog": backlog["id"], "proposed": proposed["id"]}
+    return {"review": review_task, "backlog": backlog, "proposed": proposed}
 
 
 @pytest.mark.parametrize(
@@ -308,14 +317,14 @@ def seeded(client, db, queue):
 def test_each_decision_needs_the_persons_grant(system, decision, missing):
     client, db, agent_os, queue = system
     ids = seeded(client, db, queue)
-    arguments = DECISIONS[decision][0](ids)
+    decide = DECISIONS[decision][0]
     before = state(db)
     without = [scope for scope in SCOPES if scope != missing]
-    reply = call(agent_os, decision.split(":")[0], context(scopes=without), **arguments)
+    reply = decide(ids, context(scopes=without), agent_os)
     assert reply.startswith("Not done"), reply
     assert state(db) == before
     # The same call with the grant decides.
-    assert not call(agent_os, decision.split(":")[0], context(), **arguments).startswith("Not done")
+    assert not decide(ids, context(), agent_os).startswith("Not done")
     assert state(db) != before
 
 
@@ -341,7 +350,7 @@ def test_only_a_person_decides(system, decision, caller):
     before = state(db)
     token = _automatic_task.set({"id": "task"}) if caller == "automation-tick" else None
     try:
-        reply = call(agent_os, decision.split(":")[0], automated_callers()[caller], **DECISIONS[decision][0](ids))
+        reply = DECISIONS[decision][0](ids, automated_callers()[caller], agent_os)
     finally:
         if token is not None:
             _automatic_task.reset(token)
@@ -355,7 +364,7 @@ def test_an_anonymous_caller_decides_only_without_user_isolation(system, decisio
     ids = seeded(client, db, queue)
     before = state(db)
     anonymous = RunContext(run_id="r", session_id="s", user_id=None, authorization=None)
-    reply = call(agent_os, decision.split(":")[0], anonymous, **DECISIONS[decision][0](ids))
+    reply = DECISIONS[decision][0](ids, anonymous, agent_os)
     if agent_os.user_isolation:
         assert reply.startswith("Not done") and "signed-in person" in reply, reply
         assert state(db) == before
@@ -374,14 +383,49 @@ def test_decisions_refuse_a_record_in_the_wrong_stage(system):
         headers=headers(),
     )
     before = state(db)
-    assert "only a proposed Project" in call(agent_os, "approve_company_project", context(), project_id=active["id"])
-    assert "only a proposal" in call(agent_os, "accept_company_task", context(), task_id=ready["id"])
-    for task_id in (ids["backlog"], ready["id"]):
-        reply = call(agent_os, "review_company_task", context(), task_id=task_id, outcome="complete", reason="ok")
-        assert "only a Task in review" in reply
-    assert "not found" in call(agent_os, "approve_company_project", context(), project_id="missing").lower()
-    assert "not found" in call(agent_os, "accept_company_task", context(), task_id="missing").lower()
+    assert "only a proposed Project" in approve(agent_os, context(), active)
+    assert "only a proposal" in accept(agent_os, context(), ready)
+    for task in (ids["backlog"], ready):
+        assert "only a Task in review" in review(agent_os, context(), task, "complete", "ok")
+    missing = {"id": "missing", "name": "Release", "title": "Draft"}
+    assert "not found" in approve(agent_os, context(), missing).lower()
+    assert "not found" in accept(agent_os, context(), missing).lower()
+    assert "not found" in review(agent_os, context(), missing, "complete", "ok").lower()
+    assert "name at least one Task" in accept(agent_os, context())
     assert state(db) == before
+
+
+def test_a_decision_applies_only_to_the_record_the_person_confirmed_by_name(system):
+    client, db, agent_os, queue = system
+    ids = seeded(client, db, queue)
+    before = state(db)
+    wrong_project = {**ids["proposed"], "name": "Another Project"}
+    assert "is named 'Release'" in approve(agent_os, context(), wrong_project)
+    wrong_task = {**ids["backlog"], "title": "Another Task"}
+    assert "is titled 'Draft'" in accept(agent_os, context(), wrong_task)
+    assert "is titled 'Draft'" in review(agent_os, context(), {**ids["review"], "title": "Other"}, "complete", "ok")
+    assert state(db) == before
+    # Case and spacing do not matter.
+    assert approve(agent_os, context(), {**ids["proposed"], "name": "  release "}).startswith("Approved")
+
+
+def test_one_call_accepts_several_tasks_or_none(system):
+    client, db, agent_os, queue = system
+    project, first = records(client)
+    second = client.post(
+        "/company/tasks",
+        json={"product_id": first["product_id"], "project_id": project["id"], "title": "Second", "brief": "Write"},
+        headers=headers(),
+    ).json()
+    before = state(db)
+    # One Task that is not the confirmed one stops the whole call.
+    assert "is titled 'Second'" in accept(agent_os, context(), first, {**second, "title": "Third"})
+    assert state(db) == before
+    reply = accept(agent_os, context(), first, second)
+    assert reply.count("Accepted '") == 2 and "Not done" not in reply, reply
+    for task in (first, second):
+        saved = db.get_task(task["id"])
+        assert (saved["status"], saved["executor_id"], saved["accepted_by"]) == ("ready", "writer", "alice")
 
 
 def test_the_sync_tools_decide_nothing(system):
@@ -389,9 +433,14 @@ def test_the_sync_tools_decide_nothing(system):
     ids = seeded(client, db, queue)
     before = state(db)
     tools = CompanyTaskTools(agent_os)
-    for name, (arguments, _) in DECISIONS.items():
-        reply = getattr(tools, name.split(":")[0])(**arguments(ids), _agno_run_context=context())
-        assert "asynchronous run" in reply
+    replies = [
+        tools.approve_company_project("Release", ids["proposed"]["id"], _agno_run_context=context()),
+        tools.accept_company_task(
+            [{"title": "Draft", "task_id": ids["backlog"]["id"]}], "agent", "writer", _agno_run_context=context()
+        ),
+        tools.review_company_task("Draft", "complete", "Good", ids["review"]["id"], _agno_run_context=context()),
+    ]
+    assert all("asynchronous run" in reply for reply in replies)
     assert state(db) == before
 
 
@@ -404,7 +453,7 @@ def test_task_and_routine_runs_cannot_move_work_through_the_manager(system, kind
     client, db, agent_os, queue = system
     ids = seeded(client, db, queue)
     authority = (
-        _ExecutorAuthorization(context().authorization, task_id=ids["review"])
+        _ExecutorAuthorization(context().authorization, task_id=ids["review"]["id"])
         if kind == "task-run"
         else _RoutineAuthorization(context().authorization, routine_id="routine", product_id=None)
     )
@@ -418,15 +467,196 @@ def test_task_and_routine_runs_cannot_move_work_through_the_manager(system, kind
     executor = {"executor_type": "agent", "executor_id": "writer"}
     with authorization_scope(lambda: authority):
         for task_id, target, extra in (
-            (ids["backlog"], "ready", executor),
-            (ids["review"], "done", {}),
-            (ids["review"], "ready", executor),
-            (ids["review"], "backlog", {}),
-            (ids["backlog"], "cancelled", {}),
+            (ids["backlog"]["id"], "ready", executor),
+            (ids["review"]["id"], "done", {}),
+            (ids["review"]["id"], "ready", executor),
+            (ids["review"]["id"], "backlog", {}),
+            (ids["backlog"]["id"], "cancelled", {}),
         ):
             with pytest.raises(PermissionError, match="Routine and Task runs cannot"):
                 move("transition_task", task_id=task_id, target=target, **extra)
         for target in ("active", "cancelled"):
             with pytest.raises(PermissionError, match="Routine and Task runs cannot"):
-                move("transition_project", project_id=ids["proposed"], target=target)
+                move("transition_project", project_id=ids["proposed"]["id"], target=target)
     assert state(db) == before
+
+
+# ----------------------------------------------------------------- nothing is decided without a confirmation
+
+
+def test_the_decision_tools_pause_and_the_run_tools_do_not(system):
+    client, db, agent_os, queue = system
+    functions = CompanyTaskTools(agent_os).get_async_functions()
+    for name in ("approve_company_project", "accept_company_task", "review_company_task"):
+        assert functions[name].requires_confirmation is True, name
+    for name in ("start_company_task", "get_company_task_status"):
+        assert not functions[name].requires_confirmation, name
+
+
+@pytest.fixture
+def chat(tmp_path):
+    from tests.unit.os.test_mini_agent_tasks import System
+
+    value = System(tmp_path)
+    yield value
+    value.db.close()
+
+
+def chat_records(chat):
+    """One record waiting for each decision, on an AgentOS that serves Super Agent."""
+    from tests.unit.os.test_mini_agent_tasks import headers as chat_headers
+
+    review_task = chat.proposal()
+    chat.accept(review_task["id"])
+    chat.execute(review_task["id"])
+    assert chat.db.get_task(review_task["id"])["status"] == "in_review"
+    backlog = chat.proposal()
+    proposed = chat.client.post(
+        "/company/projects", json={"product_id": backlog["product_id"], "name": "Proposed"}, headers=chat_headers()
+    ).json()
+    return {"review": review_task, "backlog": backlog, "proposed": proposed}
+
+
+def tool_calls(ids):
+    """Each decision as the model calls it, with what the confirmation must show."""
+    backlog, review_task, proposed = ids["backlog"], ids["review"], ids["proposed"]
+    return {
+        "approve": ("approve_company_project", {"project_name": proposed["name"], "project_id": proposed["id"]}),
+        "accept": (
+            "accept_company_task",
+            {
+                "tasks": [{"title": backlog["title"], "task_id": backlog["id"]}],
+                "executor_type": "agent",
+                "executor_id": "writer",
+            },
+        ),
+        "complete": (
+            "review_company_task",
+            {"task_title": review_task["title"], "outcome": "complete", "reason": "Good", "task_id": review_task["id"]},
+        ),
+        "send_back": (
+            "review_company_task",
+            {
+                "task_title": review_task["title"],
+                "outcome": "send_back",
+                "reason": "Redo",
+                "task_id": review_task["id"],
+            },
+        ),
+    }
+
+
+def person(scopes=None):
+    from tests.unit.os.test_mini_agent_tasks import SCOPES as CHAT_SCOPES
+
+    return RunAuthorization(
+        ScopeAuthorizationProvider(),
+        AuthorizationContext(
+            principal_id="alice", scopes=CHAT_SCOPES if scopes is None else scopes, claims={"sub": "alice"}
+        ),
+        enforce_tools=False,
+    )
+
+
+def ask(chat, tool, arguments, session="chat"):
+    from tests.unit.os.test_mini_agent_tasks import ScriptedModel
+
+    chat.os.manager.model = ScriptedModel([(tool, arguments)])
+    with authorization_scope(person):
+        return asyncio.run(chat.os.manager.arun("Decide", user_id="alice", session_id=session))
+
+
+@pytest.mark.parametrize("decision", ["approve", "accept", "complete", "send_back"])
+@pytest.mark.parametrize("answer", ["unanswered", "rejected", "confirmed"])
+def test_no_decision_is_recorded_without_a_confirmation(chat, decision, answer):
+    from tests.unit.os.test_mini_agent_tasks import ScriptedModel
+
+    ids = chat_records(chat)
+    tool, arguments = tool_calls(ids)[decision]
+    before = state(chat.db)
+    paused = ask(chat, tool, arguments)
+    assert paused.is_paused and state(chat.db) == before
+    # The confirmation shows the record's name, its ID and what will change.
+    assert len(paused.requirements) == 1
+    shown = paused.requirements[0].tool_execution
+    assert shown.tool_name == tool and shown.tool_args == arguments
+
+    if answer == "unanswered":
+        # The person says something else instead. The paused decision stays undecided.
+        chat.os.manager.model = ScriptedModel()
+        with authorization_scope(person):
+            asyncio.run(chat.os.manager.arun("What is the status?", user_id="alice", session_id="chat"))
+        assert state(chat.db) == before
+        return
+    if answer == "rejected":
+        paused.requirements[0].reject("Not now")
+    else:
+        paused.requirements[0].confirm()
+    with authorization_scope(person):
+        result = asyncio.run(chat.os.manager.acontinue_run(run_response=paused, user_id="alice"))
+    if answer == "rejected":
+        assert state(chat.db) == before, result.content
+        return
+    assert state(chat.db) != before, result.content
+    record = (
+        chat.db.get_project(ids["proposed"]["id"])
+        if decision == "approve"
+        else chat.db.get_task(ids["backlog" if decision == "accept" else "review"]["id"])
+    )
+    assert record["transitions"][-1]["user_id"] == "alice"
+    assert (
+        record["status"] == {"approve": "active", "accept": "ready", "complete": "done", "send_back": "ready"}[decision]
+    )
+
+
+def test_one_confirmation_covers_several_tasks(chat):
+    from tests.unit.os.test_mini_agent_tasks import headers as chat_headers
+
+    first = chat.proposal()
+    second = chat.client.post(
+        "/company/tasks",
+        json={"product_id": first["product_id"], "project_id": first["project_id"], "title": "Second"},
+        headers=chat_headers(),
+    ).json()
+    named = [{"title": task["title"], "task_id": task["id"]} for task in (first, second)]
+    paused = ask(chat, "accept_company_task", {"tasks": named, "executor_type": "agent", "executor_id": "writer"})
+    assert paused.is_paused and len(paused.requirements) == 1
+    assert paused.requirements[0].tool_execution.tool_args["tasks"] == named
+    assert {chat.db.get_task(task["id"])["status"] for task in (first, second)} == {"backlog"}
+    paused.requirements[0].confirm()
+    with authorization_scope(person):
+        asyncio.run(chat.os.manager.acontinue_run(run_response=paused, user_id="alice"))
+    for task in (first, second):
+        saved = chat.db.get_task(task["id"])
+        assert (saved["status"], saved["executor_id"], saved["accepted_by"]) == ("ready", "writer", "alice")
+
+
+@pytest.mark.parametrize("decision", ["approve", "accept", "complete", "send_back"])
+def test_a_scheduled_run_on_super_agent_pauses_and_decides_nothing(chat, decision):
+    from agno.registry._reserved import MANAGER_TEAM_ID
+    from agno.run.authorization import AUTHORIZATION_HEADER
+    from agno.scheduler.executor import terminal_run_status
+    from tests.unit.os.test_mini_agent_tasks import SCOPES as CHAT_SCOPES
+    from tests.unit.os.test_mini_agent_tasks import ScriptedModel
+
+    ids = chat_records(chat)
+    tool, arguments = tool_calls(ids)[decision]
+    before = state(chat.db)
+    chat.os.manager.model = ScriptedModel([(tool, arguments)])
+    # A schedule fires its target with the scheduler's token and the saved authority of its creator.
+    scopes = [*CHAT_SCOPES, f"teams:{MANAGER_TEAM_ID}:run"]
+    snapshot = {"context": {"principal_id": "alice", "scopes": scopes}, "service_account": False}
+    response = chat.client.post(
+        f"/teams/{MANAGER_TEAM_ID}/runs",
+        data={"message": "Decide everything that is waiting", "stream": "false", "user_id": "alice"},
+        headers={
+            "Authorization": "Bearer " + chat.os._internal_service_token,
+            AUTHORIZATION_HEADER: json.dumps(snapshot),
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "PAUSED" and body["requirements"][0]["tool_execution"]["tool_name"] == tool
+    # The scheduler records the run as paused and does not retry or resume it.
+    assert terminal_run_status(body, company_routine=False) == ("paused", None)
+    assert state(chat.db) == before

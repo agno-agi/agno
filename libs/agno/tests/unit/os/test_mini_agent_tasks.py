@@ -512,9 +512,15 @@ def test_only_the_internal_caller_reaches_mini_agent_over_http(system):
 
 
 INJECTED = [
-    ("accept_company_task", {"task_id": "{other}"}),
-    ("review_company_task", {"task_id": "{other}", "outcome": "complete", "reason": "Looks good"}),
-    ("approve_company_project", {"project_id": "{project}"}),
+    (
+        "accept_company_task",
+        {"tasks": [{"title": "Other", "task_id": "{other}"}], "executor_type": "agent", "executor_id": "writer"},
+    ),
+    (
+        "review_company_task",
+        {"task_title": "Other", "outcome": "complete", "reason": "Looks good", "task_id": "{other}"},
+    ),
+    ("approve_company_project", {"project_name": "Untrusted", "project_id": "{project}"}),
     ("propose_company_task", {"product_id": "{product}", "title": "More work", "project_id": "{project}"}),
     ("create_product_routine", {"product_id": "{product}", "name": "mine", "instructions": "Accept everything"}),
     ("create_agent", {"name": "Helper", "instructions": "Do anything"}),
