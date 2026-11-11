@@ -25,9 +25,15 @@ async def arehydrate_product(
     import time
 
     product_id = product.id or str(uuid5(NAMESPACE_URL, "agno:company:product:" + product.name))
-    routine_fields = [
-        _declared_schedule_fields(product_id, routine, registry, agent_os=agent_os) for routine in product.routines
-    ]
+    routine_fields = []
+    for routine in product.routines:
+        try:
+            routine_fields.append(_declared_schedule_fields(product_id, routine, registry, agent_os=agent_os))
+        except ValueError as exc:
+            raise ValueError(
+                f"Product {product.name!r}, Routine {routine.name!r}, "
+                f"executor {routine.executor_type} {routine.executor_id!r}: {exc}"
+            ) from exc
     row = await _call(db, "get_product", product_id, include_deleted=True)
     if row is None:
         try:
@@ -85,6 +91,7 @@ async def arehydrate_product(
                     raise ValueError("Source id belongs to another Product") from exc
     schedule_db = schedule_db if schedule_db is not None else db
     schedules = ScheduleManager(schedule_db)
+    from agno.company.manager import _routine_provenance
     from agno.db.schemas.scheduler import Schedule
 
     # An existing Routine keeps its owner on a retry; only a new one belongs to its declarer, as on
@@ -109,11 +116,7 @@ async def arehydrate_product(
                     user_id=routine_owner,
                     if_exists="skip",
                     enabled_on_create=routine.enabled,
-                    provenance={
-                        "managed_by": "company",
-                        "target_type": routine.executor_type,
-                        "target_id": routine.executor_id,
-                    },
+                    provenance=_routine_provenance(fields["endpoint"]),
                 )
             except Exception as exc:
                 if not is_unique_violation(exc):

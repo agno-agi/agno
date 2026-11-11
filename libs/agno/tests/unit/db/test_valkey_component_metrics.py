@@ -547,7 +547,7 @@ def test_calculate_metrics_reads_sessions_and_runs_in_batches_capped_by_size(db,
     counted"""
     _seed(db)
     monkeypatch.setattr("agno.db.valkey.valkey.METRICS_BATCH_BYTES", 1)
-    monkeypatch.setattr("agno.db.valkey.valkey.VALKEY_BATCH_LIMIT", 2)
+    monkeypatch.setattr("agno.db.valkey.valkey.METRICS_BATCH_SIZE", 2)
     get_metrics_key_batches = db._get_metrics_key_batches
     batches: List[List[Any]] = []
 

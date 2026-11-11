@@ -96,6 +96,7 @@ from agno.os.utils import (
     update_cors_middleware,
 )
 from agno.registry import Registry
+from agno.registry._reserved import _listed
 from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.team import RemoteTeam, Team, TeamFactory
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -741,23 +742,23 @@ class AgentOS:
         from agno.os.manager.manager import _build_manager
 
         self._manager_catalog_checked: Set[int] = set()
-        self._company_manager: Optional[Agent] = None
-        self.company_manager_unavailable_reason: Optional[str] = None
+        self._mini_agent: Optional[Agent] = None
+        self._mini_agent_unavailable_reason: Optional[str] = None
         if self.company is not None:
-            from agno.company.company_manager import _build_company_manager
             from agno.company.execution import _mount_executors
+            from agno.company.mini_agent import _build_mini_agent
 
             _mount_executors(self)
 
             company_model = self.company.model
             if company_model is None and self.registry is not None and self.registry.models:
                 company_model = self.registry.models[0]
-            self._company_manager = _build_company_manager(self, company_model)
-            if self._company_manager is None:
-                self.company_manager_unavailable_reason = (
-                    "Company Manager unavailable: configure CompanyConfig(model=...) or Registry(models=[...])"
+            self._mini_agent = _build_mini_agent(self, company_model)
+            if self._mini_agent is None:
+                self._mini_agent_unavailable_reason = (
+                    "Mini Agent unavailable: configure CompanyConfig(model=...) or Registry(models=[...])"
                     if company_model is None
-                    else "Company Manager unavailable: Company requires a database"
+                    else "Mini Agent unavailable: Company requires a database"
                 )
 
         self._manager: Optional["_Manager"] = None
@@ -771,54 +772,16 @@ class AgentOS:
             self.agents = list(self.agents or [])
             self.teams = [*(self.teams or []), self._manager.team]
 
-        if self._company_manager is not None:
+        if self._mini_agent is not None:
+            from agno.company.details import _company_instructions
+            from agno.company.mini_agent import INSTRUCTIONS
+
             if self.registry is None:
                 self.registry = Registry()
-            self.registry.exclude_components([self._company_manager])
-            if self._manager is not None:
-                from agno.company.company_manager import _build_company_manager
-                from agno.os.manager.prompts import (
-                    COMPANY_COORDINATION_INSTRUCTIONS,
-                    COMPANY_TASK_RUN_INSTRUCTIONS,
-                    FOCUSED_EXECUTION_INSTRUCTIONS,
-                )
-
-                # A separate member keeps the manager's execution policy off the served
-                # Company Manager, which direct chat and Routines run.
-                member = _build_company_manager(self, self._company_manager.model)
-                assert member is not None
-                member.tool_call_limit = self._manager.config.member_tool_call_limit
-                assert isinstance(member.instructions, str)
-                member.instructions = [member.instructions, FOCUSED_EXECUTION_INSTRUCTIONS]
-                self.registry.exclude_components([member])
-                self._manager.company_manager = member
-                assert isinstance(self._manager.team.members, list)
-                self._manager.team.members.append(member)
-                assert isinstance(self._manager.team.instructions, list)
-                company_instructions = COMPANY_COORDINATION_INSTRUCTIONS
-                if self._company_db is not None:
-                    from agno.os.manager.company_tasks import CompanyTaskTools
-
-                    assert isinstance(self._manager.team.tools, list)
-                    self._manager.team.tools.append(CompanyTaskTools(self))
-                    company_instructions += COMPANY_TASK_RUN_INSTRUCTIONS
-                self._manager.team.instructions.append(company_instructions)
-            self.agents = [*(self.agents or []), self._company_manager]
-        if self._company_db is not None:
-            from agno.company.details import _company_instructions
-
-            contextual_managers: List[Any] = [self._company_manager]
-            if self._manager is not None:
-                contextual_managers.extend([self._manager.team, self._manager.company_manager])
-            for contextual_manager in contextual_managers:
-                if contextual_manager is not None:
-                    base_instructions = contextual_manager.instructions
-                    contextual_manager.instructions = _company_instructions(
-                        self._company_db,
-                        [base_instructions] if isinstance(base_instructions, str) else list(base_instructions or []),
-                        # Super Agent hears about Tasks its conversations started; the managers do not.
-                        task_updates=self._manager is not None and contextual_manager is self._manager.team,
-                    )
+            self.registry.exclude_components([self._mini_agent])
+            # Served so the scheduler can reach it; listings leave it out.
+            self.agents = [*(self.agents or []), self._mini_agent]
+            self._mini_agent.instructions = _company_instructions(self._company_db, [INSTRUCTIONS])
         self._apply_manager_manifest()
 
         self._initialize_agents()
@@ -856,25 +819,6 @@ class AgentOS:
         """The OS Manager team, or None when disabled. Supports run() and arun()."""
         return self._manager.team if self._manager is not None else None
 
-    @property
-    def company_manager(self) -> Optional[Agent]:
-        """The built-in Company Manager, or None with an unavailable reason."""
-        return self._company_manager
-
-    @property
-    def product_manager(self) -> Optional[Agent]:
-        """Deprecated alias of ``company_manager``."""
-        log_warning("AgentOS.product_manager is deprecated; use AgentOS.company_manager.")
-        return self._company_manager
-
-    @property
-    def product_manager_unavailable_reason(self) -> Optional[str]:
-        """Deprecated alias of ``company_manager_unavailable_reason``."""
-        log_warning(
-            "AgentOS.product_manager_unavailable_reason is deprecated; use AgentOS.company_manager_unavailable_reason."
-        )
-        return self.company_manager_unavailable_reason
-
     def _owned_by_manager(self, component: Any) -> bool:
         """True for the manager's team and members, which never enter the registry."""
         return (getattr(component, "_registry_excluded", False) is True) or (
@@ -884,14 +828,9 @@ class AgentOS:
     def _apply_manager_manifest(self) -> None:
         """Set default UI descriptions and prompts without replacing application settings."""
         from agno.os.config import AgentOSConfig
-        from agno.registry._reserved import COMPANY_MANAGER_ID, RESERVED_MEMBER_IDS
+        from agno.registry._reserved import RESERVED_MEMBER_IDS
 
         defaults = self._manager.manifest() if self._manager is not None else {}
-        # Company Manager is served with or without OS Manager, so it always gets its own chat card.
-        if self._company_manager is not None:
-            from agno.company.company_manager import _company_manager_manifest
-
-            defaults[COMPANY_MANAGER_ID] = _company_manager_manifest()
         if not defaults:
             return
         if self.config is None:
@@ -1241,7 +1180,7 @@ class AgentOS:
 
     def _get_a2a_agents(self) -> Optional[List[Any]]:
         """The agents the A2A interface serves: external agents (Claude, Codex, ...) next to the local agents."""
-        a2a_agents = [a for a in (self.agents or []) if isinstance(a, (Agent, BaseExternalAgent))]
+        a2a_agents = [a for a in _listed(self.agents) if isinstance(a, (Agent, BaseExternalAgent))]
         return a2a_agents or None
 
     def _get_a2a_security_schemes(self) -> Optional[Dict[str, Any]]:
@@ -1266,7 +1205,7 @@ class AgentOS:
             [*(self.agents or []), *(self.teams or []), *(self.workflows or [])],
             owned=[
                 *(self._manager.components if self._manager is not None else []),
-                *([self._company_manager] if self._company_manager is not None else []),
+                *([self._mini_agent] if self._mini_agent is not None else []),
             ],
         )
         duplicate_ids: List[str] = []
@@ -1455,7 +1394,7 @@ class AgentOS:
                     self._prepare_sandboxed_agent(entry, self.db)
 
         # Manager specialists need normal initialization, but are not served agents.
-        agents_to_initialize = [*self._agents, *(self._manager.agents if self._manager else [])]
+        agents_to_initialize = [*self._agents, *([self._manager.builder] if self._manager else [])]
         if not agents_to_initialize:
             return
 
@@ -3452,14 +3391,13 @@ class AgentOS:
 
         for db_id, dbs in self.dbs.items():
             if db_id not in dbs_with_specific_config:
-                # Collect unique table names from all databases with the same id, the deprecated metrics table first
+                # Collect unique table names from all databases with the same id
                 unique_tables = list(
                     dict.fromkeys(
                         table_name
                         for db in dbs
                         for table_name in (
                             (
-                                db.metrics_table_name,
                                 db.component_metrics_table_name,
                                 db.aggregate_metrics_table_name,
                                 db.metrics_refreshes_table_name,

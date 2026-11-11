@@ -220,9 +220,9 @@ def reviewed_task(client, db, queue):
     return db.get_task(task["id"])
 
 
-def context():
+def context(scopes=SCOPES):
     authority = RunAuthorization(
-        ScopeAuthorizationProvider(), AuthorizationContext(principal_id="alice", scopes=SCOPES, claims={"sub": "alice"})
+        ScopeAuthorizationProvider(), AuthorizationContext(principal_id="alice", scopes=scopes, claims={"sub": "alice"})
     )
     return RunContext(run_id="chat-run", session_id="chat-1", user_id="alice", authorization=authority)
 
@@ -248,3 +248,33 @@ def test_super_agent_continues_a_task_with_the_persons_words(system):
     assert functions["continue_company_task"].stop_after_tool_call is True
     state = json.loads(asyncio.run(tools.aget_company_task_status(task["id"], _agno_run_context=context())))
     assert state["attempt"] == 2 and state["follow_up"]["message"] == "Go with A" and state["run_status"] == "PENDING"
+
+
+def test_a_cancelled_project_refuses_a_reply_before_queueing(system):
+    client, db, agent_os, queue = system
+    task = reviewed_task(client, db, queue)
+    client.post(
+        f"/company/projects/{task['project_id']}/transitions",
+        json={"target": "cancelled", "reason": "Dropped"},
+        headers=headers(),
+    ).raise_for_status()
+
+    response = client.post(f"/company/tasks/{task['id']}/continue", json={"message": "Go with A"}, headers=headers())
+    assert response.status_code == 409 and response.json()["detail"] == "Cannot start Task work in a cancelled Project"
+    reply = asyncio.run(
+        CompanyTaskTools(agent_os).acontinue_company_task(task["id"], "Go", _agno_run_context=context())
+    )
+    assert reply == "Not continued: Cannot start Task work in a cancelled Project"
+    assert asyncio.run(queue.store.get_job(task_run_id(task["id"], 2))) is None
+
+
+@pytest.mark.parametrize("missing", ["tasks:write", "wiki:read", "agents:writer:run"])
+def test_continuing_needs_the_start_routes_grants(system, missing):
+    client, db, agent_os, queue = system
+    task = reviewed_task(client, db, queue)
+    scopes = [scope for scope in SCOPES if scope != missing]
+    reply = asyncio.run(
+        CompanyTaskTools(agent_os).acontinue_company_task(task["id"], "Go", _agno_run_context=context(scopes))
+    )
+    assert reply.startswith("Not continued:"), reply
+    assert asyncio.run(queue.store.get_job(task_run_id(task["id"], 2))) is None

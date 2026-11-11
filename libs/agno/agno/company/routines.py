@@ -9,6 +9,7 @@ from agno.company.declarations import Routine
 from agno.company.execution import _call, _ExecutorAuthorization, _registered_component, _validate_executor_tools
 from agno.company.scheduler import CompanyScheduleExecutor
 from agno.db.schemas.scheduler import COMPANY_AUTOMATION_SCHEDULE_ID, RUN_ENDPOINT_RE
+from agno.db.schemas.tasks import CancelledProjectError
 from agno.guardrails.base import BaseGuardrail
 from agno.skills import LocalSkills, Skills
 
@@ -145,6 +146,29 @@ class _RoutineResultGuardrail(BaseGuardrail):
         self.check(run_input, run_output)
 
 
+class _RoutineBoundary(BaseGuardrail):
+    """Keep Routine runs on Mini Agent, and every other run off it.
+
+    A Routine runs unattended on untrusted Sources with proposal-only authority. With routine=True the
+    component accepts only runs that carry that authority. With routine=False it refuses them.
+    """
+
+    def __init__(self, routine: bool):
+        self.routine = routine
+
+    def check(self, run_input: Any = None) -> None:
+        from agno.exceptions import InputCheckError
+        from agno.run.authorization import current_authorization
+
+        if isinstance(current_authorization(), _RoutineAuthorization) != self.routine:
+            raise InputCheckError(
+                "This agent runs Company Routines only" if self.routine else "Company Routines run on Mini Agent"
+            )
+
+    async def async_check(self, run_input: Any = None) -> None:
+        self.check(run_input)
+
+
 def _failed_routines(db: Any, products: Any) -> int:
     from agno.scheduler import ScheduleManager
 
@@ -186,18 +210,20 @@ async def _afailed_routines(db: Any, products: Any) -> int:
 
 
 def _routine_executor_endpoint(executor_type: str, executor_id: str, registry: Any, *, agent_os: Any = None) -> str:
-    from agno.registry._reserved import COMPANY_MANAGER_ID, RESERVED_MANAGER_IDS
+    from agno.registry._reserved import MINI_AGENT_ID, RESERVED_MANAGER_IDS
 
-    if executor_id == COMPANY_MANAGER_ID:
+    if executor_id == MINI_AGENT_ID:
         if executor_type != "agent":
-            raise ValueError("Company Manager Routine executor_type must be 'agent'")
-        component = agent_os.company_manager if agent_os is not None else None
+            raise ValueError("Mini Agent Routine executor_type must be 'agent'")
+        component = getattr(agent_os, "_mini_agent", None)
         if component is None:
-            reason = getattr(agent_os, "company_manager_unavailable_reason", None)
-            raise ValueError(reason or "Company Manager unavailable: configure CompanyConfig on the owning AgentOS")
+            reason = getattr(agent_os, "_mini_agent_unavailable_reason", None)
+            raise ValueError(reason or "Mini Agent unavailable: configure CompanyConfig on the owning AgentOS")
     elif executor_id in RESERVED_MANAGER_IDS:
-        # OS Manager and its specialists can edit the platform; Routines run unattended on untrusted Sources.
-        raise ValueError("Only the Company Manager can execute Routines among framework managers")
+        # Super Agent and Platform Builder can edit the platform; Routines run unattended on untrusted Sources.
+        raise ValueError(
+            f"Among framework agents, only Mini Agent runs Routines: name agent '{MINI_AGENT_ID}' or leave the executor out"
+        )
     else:
         component = _registered_component(registry, executor_type, executor_id)
         if component is None:
@@ -694,19 +720,26 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
 
                 reason = str(exc.detail) if isinstance(exc, HTTPException) else str(exc)
                 denied = isinstance(exc, PermissionError) or (isinstance(exc, HTTPException) and exc.status_code == 403)
+                cancelled_project = False
                 if denied and task is not None and task["status"] == "ready":
                     # A revoked accepting identity needs human attention, not a
                     # fresh failed dispatch on every tick. Never withdraw a run.
-                    await _call(
-                        db,
-                        "transition_task",
-                        task["id"],
-                        "backlog",
-                        reason,
-                        expected_updated_at=task["updated_at"],
-                    )
-                expected = isinstance(exc, _AutomationSkip) or (
-                    denied and task is not None and task["status"] == "backlog"
+                    try:
+                        await _call(
+                            db,
+                            "transition_task",
+                            task["id"],
+                            "backlog",
+                            reason,
+                            expected_updated_at=task["updated_at"],
+                        )
+                    except CancelledProjectError:
+                        cancelled_project = True
+                expected = (
+                    isinstance(exc, _AutomationSkip)
+                    or (denied and task is not None and task["status"] == "backlog")
+                    or isinstance(exc, CancelledProjectError)
+                    or cancelled_project
                 )
                 outcomes.append(
                     {"task_id": candidate["id"], "status": "skipped" if expected else "failed", "reason": reason}
@@ -859,6 +892,14 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
             if isinstance(os._company_db, AsyncBaseDb)
             else CompanyManager(os._company_db, os.registry)
         )
+        if not completing:
+            project = await _manager_call(manager, "get_project", task["project_id"])
+            if project and project["status"] in {"proposed", "cancelled"}:
+                raise _AutomationSkip(
+                    "Project approval is required before automatic Task acceptance"
+                    if project["status"] == "proposed"
+                    else "Cannot accept Task work in a cancelled Project"
+                )
         # Avoid Source IO for exhausted policies. The transaction repeats this
         # check under the Product lock, so concurrent acceptances remain bounded.
         if (
@@ -990,14 +1031,17 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
             if task["status"] == "ready":
                 # Withdraw only the unchanged, unstarted acceptance. Backlog and
                 # its transition reason expose the work for human attention.
-                await _call(
-                    os._company_db,
-                    "transition_task",
-                    task["id"],
-                    "backlog",
-                    str(exc),
-                    expected_updated_at=task["updated_at"],
-                )
+                try:
+                    await _call(
+                        os._company_db,
+                        "transition_task",
+                        task["id"],
+                        "backlog",
+                        str(exc),
+                        expected_updated_at=task["updated_at"],
+                    )
+                except CancelledProjectError:
+                    pass
             raise
         if task["status"] == "ready" and task.get("job_id"):
             queue = getattr(self.app.state, "queue_worker", None)
@@ -1031,7 +1075,10 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
                     detail = response.json().get("detail", response.text)
                 except ValueError:
                     detail = response.text
-                if response.status_code == 409 and detail == "The previous Task run is still active":
+                if response.status_code == 409 and detail in {
+                    "The previous Task run is still active",
+                    "Cannot start Task work in a cancelled Project",
+                }:
                     raise _AutomationSkip(detail)
                 raise HTTPException(response.status_code, detail)
             result = response.json()

@@ -272,7 +272,7 @@ class Authorization:
             )
             renames = ", ".join(f"{old} -> {new}" for old, new in FORMER_MANAGER_IDS.items())
             raise ValueError(
-                f"Stored authorization policies use manager IDs renamed in Agno 3.2: {found}. "
+                f"Stored authorization policies use manager IDs replaced in Agno 3.2: {found}. "
                 f"Update these policies to the new IDs ({renames}) before starting."
             )
 

@@ -227,7 +227,6 @@ class DynamoDb(BaseDb):
             ("sessions", self.session_table_name),
             ("runs", self.runs_table_name),
             ("memories", self.memory_table_name),
-            ("metrics", self.metrics_table_name),
             ("component_metrics", self.component_metrics_table_name),
             ("aggregate_metrics", self.aggregate_metrics_table_name),
             ("metrics_refreshes", self.metrics_refreshes_table_name),
@@ -2285,6 +2284,7 @@ class DynamoDb(BaseDb):
         """
         legacy_runs_by_day: Dict[date, List[Dict[str, Any]]] = {}
         legacy_runs_by_id: Dict[str, Dict[str, Any]] = {}
+        counted_runs: Set[Tuple[Any, str]] = set()
         for session_type in METRICS_COMPONENT_TYPES:
             # A session holds runs created after it started and before it was last written
             query_kwargs: Dict[str, Any] = {
@@ -2331,9 +2331,13 @@ class DynamoDb(BaseDb):
                     )
                 }
                 for legacy_run in legacy_runs:
-                    # A run kept in two sessions, or read on an earlier page, is counted once
-                    if legacy_run["run_id"] in migrated_run_ids or legacy_run["run_id"] in legacy_runs_by_id:
+                    # A run kept twice in one session's legacy runs is counted once
+                    if (
+                        legacy_run["run_id"] in migrated_run_ids
+                        or (legacy_run["session_id"], legacy_run["run_id"]) in counted_runs
+                    ):
                         continue
+                    counted_runs.add((legacy_run["session_id"], legacy_run["run_id"]))
                     legacy_run_day = datetime.fromtimestamp(legacy_run["created_at"], tz=timezone.utc).date()
                     legacy_runs_by_day.setdefault(legacy_run_day, []).append(legacy_run)
                     legacy_runs_by_id[legacy_run["run_id"]] = legacy_run
@@ -2724,7 +2728,7 @@ class DynamoDb(BaseDb):
             or refreshes_table_name is None
             or not self.table_exists(sessions_table_name)
         ):
-            log_info("No session data found. Won't calculate metrics.")
+            log_debug("No session data found. Won't calculate metrics.")
             return []
         runs_table_name = self._get_table("runs", create_table_if_not_found=True)
         if runs_table_name is None:
@@ -2859,7 +2863,7 @@ class DynamoDb(BaseDb):
         )
 
         if not calculated_dates:
-            log_info("Metrics already calculated for all relevant dates.")
+            log_debug("Metrics already calculated for all relevant dates.")
             return []
 
         log_debug("Updated metrics calculations")

@@ -31,17 +31,21 @@ The HTTP layer records the authenticated caller as the creator. Company records
 are shared: reads need the read scope and writes need the write or delete scope,
 whoever created the Product. User isolation does not restrict Company records.
 
-## Weekly Company Manager review
+## Weekly Mini Agent review
 
-`10_weekly_product_review.py` runs a Company Routine with the framework's
-`company-manager` agent. It reads Sources and existing work, proposes
-only evidence-backed Backlog Tasks, and updates status without accepting work.
-The same declaration works with or without OS Manager; no application agent is
-needed. Company Manager is the only framework manager that can run a Routine:
-OS Manager, Platform Builder and Platform Manager can change the platform, and
-Routines run unattended on Source content, so they are refused as executors.
-Company Manager stays out of Studio's reusable registry and is served through
-its normal agent routes whether or not OS Manager is enabled.
+`10_weekly_product_review.py` declares a Company Routine with no executor, so
+it runs on Mini Agent. Naming `executor_type="agent"`, `executor_id="miniagent"` does
+the same. It reads Sources and existing work, proposes only evidence-backed
+Backlog Tasks, and updates status without accepting work. Mini Agent is a
+restricted agent for unattended work: Company tools
+and the Routine skills only, no Platform Builder, no run or platform tools, and
+proposal-only authority. It works with or without `manager=OSManager(...)`, but
+needs `CompanyConfig(model=...)` or a registry model. The stored schedule, the
+Routine API and the run and session records all name it: endpoint
+`/agents/miniagent/runs`, `target_type` `agent`, `target_id` `miniagent`.
+Mini Agent is hidden from `GET /agents`, `GET /config`, MCP and A2A, and a
+person cannot chat with it. Super Agent refuses a run with Routine authority,
+and a Routine that names Super Agent or any other framework ID is refused.
 
 Check both configurations without model calls or an active scheduler:
 
@@ -52,7 +56,7 @@ Check both configurations without model calls or an active scheduler:
 
 Start the local server with `--enable-weekly-review` to opt in to Monday reviews
 at 09:00 `Europe/London`. Use `--source /absolute/path/to/docs.md` to select a
-local Source, and `--with-os-manager` to serve OS Manager alongside it. Scheduled runs require
+local Source, and `--with-os-manager` to serve Super Agent alongside it. Scheduled runs require
 provider credentials and incur model usage. Automatic acceptance remains off.
 Omitting the opt-in flag creates no new Routine; it does not remove a previously
 saved schedule. Pause an existing Routine through its Company API/UI control.
@@ -65,11 +69,12 @@ A code/YAML declaration's `user_id` is attribution, not a grant. An authorized
 execution-changing PATCH (for example, updating `instructions`) can authorize an
 existing declared Routine. A timing-only edit does not replace its authority.
 For direct Python bootstrap or `CompanyManager.create_routine`, pass the owning
-`AgentOS` as `agent_os=agent_os` when selecting a framework manager.
+`AgentOS` as `agent_os=agent_os` when the Routine runs on Mini Agent.
 
 The caller needs Routine/schedule configuration permissions and the target's
 agent/team run permission; scheduled result polling also needs the target's read
-permission. Grant only the Company tools the review uses: Sources and existing
+permission. For a Routine on Mini Agent these are `agents:miniagent:run` and
+`agents:miniagent:read`. A grant on Super Agent is not a grant on Mini Agent. Grant only the Company tools the review uses: Sources and existing
 work reads, proposal writes, wiki reads/writes and decision recall. Delegation
 retains those grants and Routine restrictions. Company-wide collaborative reads
 keep their existing visibility; Source contents and mutations retain Product
@@ -98,15 +103,28 @@ manually.
 A Product contains Projects and Routines. Every new Task belongs to a Project
 in that Product: `project_id` is required by Task creation and proposal/Intake
 tools. HTTP rejects omission with 422; Python managers and tools raise
-`ValueError`. When no Project fits, propose one with `propose_company_project`,
-then pass its ID to the Task proposal. A Backlog Task can move between Projects
+`ValueError`. Backlog drafts can be created under a `proposed` Project so people
+can review the plan. The Project must be approved before its Tasks move to Ready
+or start a run; creating a Task directly in Ready also requires approval.
+When no Project fits, propose one with `propose_company_project` and use its ID
+for Backlog proposals. A human can then transition it to `active`. Project approval
+does not accept or execute Tasks.
+New Backlog proposals reuse an existing Task with the same key. A Backlog Task can move between Projects
 but cannot clear its Project. Existing nullable storage rows remain readable.
+
+Routine instructions can make these two approval steps explicit:
+
+> Propose up to three improvements with evidence, expected impact and acceptance
+> criteria. Check existing work for duplicates. Create Backlog Tasks under a
+> suitable Project, proposing one if needed. Report that a proposed Project
+> needs human approval before those Tasks can be accepted or run.
+> Do not approve Projects, accept Tasks or execute work.
 
 Projects start `proposed` and move to `active`, then `done`. A Project can be
 `cancelled` from any non-terminal state, and its terminal states cannot transition.
 Tasks are created in `backlog` by default; `POST /company/tasks` also accepts
 `status` set to `ready` (with `executor_type` and `executor_id`, under the same
-acceptance checks as the Ready transition) or `cancelled`. Tasks move through
+acceptance checks as the Ready transition) or `cancelled` under an approved Project. Tasks move through
 `ready`, `in_progress`, `in_review`, and `done`. Each transition takes `target`
 and a non-empty `reason`; history is returned on the record. A Task can move to
 Backlog, Ready or Cancelled from any other state, including `done` and `cancelled`.
@@ -140,12 +158,12 @@ Project still required to belong to the same Product. Manager and storage
 methods retain explicit owner filters for direct callers.
 
 
-## Playbook and Company Manager
+## Playbook and Super Agent
 
 | File | Demonstrates |
 | --- | --- |
 | `04_manage_playbook.py` | Sync/async wiki namespaces, atomic page creation, version conflicts and the learning decision log without a model. |
-| `05_company_manager.py` | Model resolution, a standalone Company Manager, bounded Company tools and explicit MCP publication without a model call. |
+| `05_super_agent_company.py` | Company work through Super Agent's Company tools: company details, a Product with a Routine on Mini Agent, a proposal, status and a decision, without a model call. |
 
 Each Product has a durable wiki namespace with `brief.md` (human direction) and
 `status.md` (current work). A second namespace holds company context. Default
@@ -166,27 +184,21 @@ Listings support text, agent, session and age filters plus standard paging.
 The server stamps human identity; agents get identity from injected run context.
 Automatic learning recall includes human and agent decisions across the company;
 explicit searches can still filter by agent. The learning machine binds the agent
-ID when supplying decision tools. Standalone CompanyTools and direct MCP calls
+ID when supplying decision tools. Standalone CompanyTools
 leave agent attribution unset. The log is append-only: later outcomes are new
 entries that reference the original decision.
 
-Company Manager uses `CompanyConfig(model=...)`, otherwise the first declared
-registry model. If neither exists, its unavailable reason appears in diagnostics
-and manual APIs still work. It is served at `GET /agents/company-manager`
-and `POST /agents/company-manager/runs`. When Super Agent is enabled it also
-gets a separate Company Manager member that carries the manager's tool-call limit and
-focused instructions; the served agent, which direct chat and Routines use, keeps its
-own policy. It was previously named Product Manager with the id
-`product-manager-internal`; that id stays reserved, and `AgentOS.product_manager`
-remains a deprecated alias of `AgentOS.company_manager`. Its id is reserved and its tools stay out of
-the registry. It proposes Projects and Backlog Tasks, edits owned proposals,
-updates `status.md` with a version check, and logs decisions through its learning
-machine. It can read Sources and add website Sources with permission and Product
-ownership. Acceptance, completion, ownership changes, local Source additions and
-scheduling remain outside its tools.
+With `CompanyConfig`, Super Agent holds the Company tools itself. People do
+Company work by talking to Super Agent at `/teams/superagent`. It reads company
+details, Products, Projects, Tasks, Sources and the playbook, proposes Projects
+and Backlog Tasks, edits owned proposals, updates `status.md` with a version check,
+saves company details, creates Routines and logs decisions. It can add website
+Sources with permission and Product ownership. Acceptance, completion, ownership
+changes, local Source additions, Product maintenance and outbound summaries are
+not among its Company tools. Routines use the model from `CompanyConfig(model=...)`,
+otherwise the first registry model. If neither exists, diagnostics warns, a
+Routine on Mini Agent fails with that reason, and manual APIs still work.
 
-CompanyTools can be published explicitly with `MCPConfig(tools=[...])`, following
-the existing MCP toolkit convention. Direct MCP calls have the same write fence.
 The examples make no provider calls; they do not demonstrate live model quality.
 The heartbeat examples below demonstrate Routines and Sources.
 
@@ -282,7 +294,7 @@ same session and owner in both isolation modes. The ordinary session ownership
 check still rejects unrelated sessions. For a legacy session created by a starter,
 Company recovers with the recorded reservation identity and transfers an idle
 session to the Task owner only after matching its original reservation and run. Engineering executors cannot be started yet. Framework-reserved executors,
-including Company Manager and OS Manager, cannot be accepted or started as
+including Super Agent and Platform Builder, cannot be accepted or started as
 Task executors.
 
 Executor input contains only the Task brief, its evidence and the current
@@ -385,14 +397,14 @@ create it visibly but inactive. The default is `True`. Enable it later from the
 UI or `POST /company/routines/{id}/resume`. The initial value applies only when
 creating a routine; startup preserves saved enabled/disabled choices and other
 human edits. The same flag is accepted when creating a routine through the API
-or the sync/async Company Manager and Company tools.
+or the sync/async `CompanyManager` and Company tools.
 
 The executor must already be registered; an invalid declared target fails startup
-instead of silently dropping its Routine. Give it `CompanyTools(db)` and
+with an error naming the Product, the Routine and the executor. Give it `CompanyTools(db)` and
 `load_routine_skills()` for reader, Intake and Summary tools. AgentOS binds its
 interfaces to custom `CompanyTools(db)` executors automatically; an explicit
 `interfaces=` override is preserved, and `summary_tools=False` disables delivery.
-Company Manager has no outbound Summary tool. Enable the existing AgentOS scheduler and queue to run schedules; the
+Super Agent has no outbound Summary tool; Mini Agent does. Enable the existing AgentOS scheduler and queue to run schedules; the
 cookbook only creates and inspects them. Scheduling alone never grants acceptance.
 The OS scheduler database owns Routine definitions/history even with a separate
 Company database. `metadata.routine_ids` links them to Products.
@@ -400,9 +412,41 @@ Company database. `metadata.routine_ids` links them to Products.
 The templates are packaged `SKILL.md` files under `agno/company/skills`, loaded
 through `LocalSkills`. Creation snapshots the selected Skill's instructions into
 the schedule, with the Product id explicitly included in the model message.
-Following scheduler behavior, restarting or editing a Skill never overwrites
-human-edited schedule instructions. Apply revised instructions to an existing
-Routine with an authorized PATCH to `/company/routines/{id}`.
+Following scheduler behavior, restarting or editing a Skill or code declaration
+never overwrites saved schedule instructions.
+
+### Update saved Routine instructions
+
+For an existing Routine, inspect its saved instructions before upgrading a
+proposal workflow. Keep its custom purpose, evidence requirements and constraints,
+and add the Project approval step: create Backlog proposals in a suitable Project,
+then wait for human approval before accepting or running its Tasks.
+
+Apply the **complete revised instruction text** with an authorized PATCH:
+
+```http
+PATCH /company/routines/{routine_id}
+Content-Type: application/json
+
+{"instructions": "Your complete revised instructions, including the Project approval step."}
+```
+
+The `instructions` field replaces the saved text; it does not append a paragraph.
+Supply the instruction text only, without the stored Product-context prefix;
+the endpoint adds that context. Do not send the schedule's raw payload or
+delete/recreate the Routine. An instructions-only update retains its ID, owner,
+executor, cadence, run history and acceptance policy. Keep customized instructions
+instead of replacing them wholesale with a new template.
+
+Make the update between runs. A scheduled Routine can be paused while editing
+and resumed afterward; on-demand Routines cannot be paused. An in-flight run may
+still use its original instructions. Read back the saved instructions, restart,
+and verify a subsequent run can create Backlog proposals before Project approval.
+Acceptance and execution still wait for approval. Existing Task auto-accept policies
+still apply where configured; this edit does not grant Project approval or change them.
+
+### Source readers
+
 Source types are `git` (a local checkout), `markdown` (a
 file or directory), and `website` (a single page). Optional `config.paths` limits
 local reads to relative files. Workspace exclusions and path confinement apply;
@@ -441,7 +485,7 @@ such a rejection. It stores hashes and links, without copying document content
 into the Task. Reuse the issue key across content and wording edits; a distinct issue
 has a distinct key. Database uniqueness remains scoped to the Product.
 Routines must use evidence-backed Intake: plain `propose_company_task` and
-Company service Task creation reject Routine authority. Human and Company Manager
+Company service Task creation reject Routine authority. Human and Super Agent
 proposals retain their normal behavior.
 
 `/company/routines` wraps the scheduler. Writes require both `routines:write`
@@ -486,7 +530,7 @@ success. No live messages are sent by this cookbook.
 
 Task evidence identity and deduplication are part of the initial Company schema.
 Task responses expose `origin`, `routine_id` and `dedupe_key`. Human-created Tasks
-have origin `human`, Company Manager proposals have `product_manager`, and Routine
+have origin `human`, agent proposals, including Super Agent's, have `product_manager`, and Routine
 proposals have `routine` with the trusted Routine id.
 Automatic acceptance is opt-in as described below.
 
@@ -634,8 +678,8 @@ Every authorization names an exact executor type and ID. A proposal with no
 executor receives that authorized executor at acceptance. A proposal that names
 an executor must name the same one. It must belong to the Routine's Product and
 carry the framework's Routine origin. `propose_company_task` and
-`intake_product_source` require a Project and can name a proposed executor; neither can
-accept work. Source IDs and work scope are optional bounds. Omitted Source/scope
+`intake_product_source` can create Backlog drafts in a proposed Project and name a
+proposed executor; neither can accept work. Source IDs and work scope are optional bounds. Omitted Source/scope
 bounds impose no additional restriction; an empty allowed-ID list permits no matching work.
 `project_ids` can include `null` for legacy Tasks without a Project; new Tasks require a Project. Unknown fields and
 check names fail closed. A Source bound requires verified reader evidence.
@@ -694,7 +738,7 @@ checking the caller's authority.
 In a local deployment with authentication disabled, API callers are trusted
 operators, as for the existing scheduler. Code/YAML declarations remain
 proposal-only: write an automatic authorization through the human API.
-Executors and Company Manager retain no `schedules:write` or SchedulerTools.
+Executors and Mini Agent hold no `schedules:write` or SchedulerTools.
 Private authorization is removed from public payloads and executor input;
 Routine metadata is data, never a source of broader executor authority.
 
@@ -733,8 +777,8 @@ are protected. The Refresh Skill updates status.md to reflect the remaining work
 The maintenance tool requires Routine authority, Product ownership when
 isolation applies, `products:read`, `projects:read`, `projects:delete`,
 `tasks:read`, `tasks:delete`, `wiki:read` and `wiki:write` on the saved caller.
-No scheduler-write grant is added. Company Manager does not receive maintenance
-or outbound Summary tools. Existing schedule instructions retain the scheduler's
+No scheduler-write grant is added. Super Agent does not receive maintenance
+or outbound Summary tools; Routines use them on Mini Agent. Existing schedule instructions retain the scheduler's
 snapshot behavior; apply the revised Refresh Skill through an authorized PATCH.
 
 Products, Projects and Tasks list routes accept `sort_by=updated_at` and
@@ -830,7 +874,7 @@ when its policy sets `complete_projects: true`.
 A custom Routine does maintenance only when it calls the Refresh tool, and
 Summary bookkeeping only when it calls the Summary tool.
 
-Company Manager and executors can call `add_product_source(product_id, reference, config=None)`
+Super Agent and executors can call `add_product_source(product_id, reference, config=None)`
 when granted `sources:write` and permitted to write the Product. Repository and
 path Sources remain human-added. Source storage has a single existing JSON
 field, `config`: server-stamped `config.metadata.agent_id` or
