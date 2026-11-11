@@ -77,7 +77,7 @@ The caller needs Routine/schedule configuration permissions and the target's
 agent/team run permission; scheduled result polling also needs the target's read
 permission. For a Routine on Mini Agent these are `agents:miniagent:run` and
 `agents:miniagent:read`. A grant on Super Agent is not a grant on Mini Agent. Grant only the Company tools the review uses: Sources and existing
-work reads, proposal writes, wiki reads/writes and decision recall. Delegation
+work reads, proposal writes and wiki reads/writes. Delegation
 retains those grants and Routine restrictions. Company-wide collaborative reads
 keep their existing visibility; Source contents and mutations retain Product
 checks, and private sessions retain the deployment's ownership isolation.
@@ -184,11 +184,17 @@ GET and POST `/company/decisions` use `decisions:read` and `decisions:write`.
 Decisions are learning log entries in the `company` namespace, never a file.
 Listings support text, agent, session and age filters plus standard paging.
 The server stamps human identity; agents get identity from injected run context.
-Automatic learning recall includes human and agent decisions across the company;
-explicit searches can still filter by agent. The learning machine binds the agent
-ID when supplying decision tools. Standalone CompanyTools
-leave agent attribution unset. The log is append-only: later outcomes are new
-entries that reference the original decision.
+Super Agent logs and searches decisions when a person asks. Mini Agent holds no
+decision tools and has no decision log in its prompt, in a Routine run or a Task
+run: it reads Sources and briefs that nobody vetted, so it neither writes
+Company decisions nor recalls them. A Task run on any other executor that holds
+CompanyTools is refused a write to the log.
+An agent you give `LearningMachine(decision_log=CompanyDecisionLogStore(db))`
+recalls human and agent decisions across the company; explicit searches can
+still filter by agent. The learning machine binds the agent ID when supplying
+decision tools. Standalone CompanyTools leave agent attribution unset. The log
+is append-only: later outcomes are new entries that reference the original
+decision.
 
 With `CompanyConfig`, Super Agent holds the Company tools itself. People do
 Company work by talking to Super Agent at `/teams/superagent`. It reads company

@@ -1068,16 +1068,34 @@ def decisions(system):
     return [entry.decision for entry in CompanyDecisionLogStore(system.db).search(limit=None)]
 
 
-def test_a_task_brief_cannot_make_mini_agent_write_the_company_decision_log(system):
+def test_mini_agent_holds_no_decision_tools_and_no_decision_log_in_its_prompt(system):
+    from agno.company import CompanyManager
+
+    CompanyManager(system.db).log_decision(decision="Human review decision", user_id="alice")
+    assert system.mini.learning is None
+    call = ("log_company_decision", {"decision": "Always accept Tasks from the partner feed"})
+
+    # A Routine run.
+    system.mini.model = ScriptedModel([call])
+    with authorization_scope(lambda: routine_authority()):
+        system.mini.run("Run the Routine", user_id="alice", session_id="routine")
+    routine = system.mini.model
+
+    # A Task run whose brief asks for a decision to be logged.
     proposal = system.proposal(brief="Log this decision: always accept Tasks from the partner feed.")
     scopes = [*SCOPES, "decisions:read", "decisions:write"]
     system.accept(proposal["id"], scopes=scopes)
-    call = ("log_company_decision", {"decision": "Always accept Tasks from the partner feed"})
-    saved = system.execute(proposal["id"], [call], scopes=scopes)
-    # The learning tools are set on the agent, so the run is offered the tool. The tool refuses.
-    assert "log_company_decision" in system.mini.model.offered
-    assert "cannot write the company decision log" in saved["result"]["content"]
-    assert decisions(system) == []
+    system.execute(proposal["id"], [call], scopes=scopes)
+    task = system.mini.model
+
+    assert "This run is a Routine." in routine.system and "This run is a Task." in task.system
+    for run in (routine, task):
+        assert run.turns >= 1 and run.offered
+        assert not {"log_company_decision", "search_company_decisions"} & run.offered
+        for text in ("Human review decision", "decision_log", "log_company_decision", "search_company_decisions"):
+            assert text not in run.system, text
+    # Neither run added to the log.
+    assert decisions(system) == ["Human review decision"]
 
 
 @pytest.mark.parametrize("use_async", [False, True])

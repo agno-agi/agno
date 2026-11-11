@@ -9,8 +9,6 @@ import json
 from typing import Any, Iterator, List, Optional
 
 from agno.agent import Agent
-from agno.company.decisions import CompanyDecisionLogStore
-from agno.learn import LearningMachine
 from agno.registry._reserved import MINI_AGENT_ID, RESERVED_MANAGER_IDS
 from agno.tools.company import CompanyTools
 from agno.tools.studio_runner import StudioRunnerError, StudioRunnerTools
@@ -63,8 +61,6 @@ Sources and status:
 - List a Product's Sources before reading them, and use only the operations each Source supports.
 - Read status.md before updating it. On a conflict, read again and keep the other edit. Change
   existing text; do not add pages.
-- Log significant decisions with their reasoning and observed outcome through the learning tools.
-  A decision is a log entry, not a page.
 
 If nothing changed, report a quiet check and propose nothing.
 """
@@ -299,9 +295,6 @@ def _build_mini_agent(agent_os: Any, model: Any) -> Optional[Agent]:
         # The list depends on the run's authority, which no cache key covers.
         cache_callables=False,
         skills=load_routine_skills(),
-        learning=LearningMachine(
-            db=db, model=model, decision_log=CompanyDecisionLogStore(db, user_isolation=isolation)
-        ),
         instructions=_KindInstructions(db),
         # Runs unattended on untrusted Sources and briefs, so only a Company Routine or Task may start it.
         pre_hooks=[_RoutineBoundary(routine=True)],
