@@ -466,6 +466,84 @@ def test_task_can_read_status_and_recover_from_a_concurrent_update(system, use_a
     assert manager.read_wiki(product_id, "status.md").content == "Another person's update\nTask completed."
 
 
+def another_product(system, tmp_path):
+    """A second Product with a Source, which a Task of the first Product has no business with."""
+    product = system.client.post("/company/products", json={"name": "Other"}, headers=headers()).json()
+    notes = tmp_path / "other-notes"
+    notes.mkdir()
+    (notes / "notes.md").write_text("The other Product's notes.\n")
+    source = system.client.post(
+        "/company/sources",
+        json={"product_id": product["id"], "type": "markdown", "reference": str(notes)},
+        headers=headers([*SCOPES, "sources:write"]),
+    )
+    assert source.status_code == 201, source.text
+    return product, source.json()
+
+
+def test_a_task_run_reads_and_reports_on_its_own_product_only(system, tmp_path):
+    from agno.company.manager import CompanyManager
+
+    proposal = system.proposal()
+    other, source = another_product(system, tmp_path)
+    manager = CompanyManager(system.db, system.os.registry)
+    before = manager.read_wiki(other["id"], "status.md")
+    own = manager.read_wiki(proposal["product_id"], "status.md")
+    system.accept(proposal["id"])
+    saved = system.execute(
+        proposal["id"],
+        [
+            ("read_product_source", {"source_id": source["id"], "path": "notes.md"}),
+            (
+                "update_product_status",
+                {"product_id": other["id"], "content": "Hijacked", "expected_version": before.metadata.version},
+            ),
+            (
+                "update_product_status",
+                {"product_id": proposal["product_id"], "content": "Notes written", "expected_version": own.metadata.version},
+            ),
+        ],
+    )
+    assert saved["status"] == "in_review"
+    read, write, own_write = saved["result"]["content"].split("\n")
+    for refused in (read, write):
+        assert "A Task run is restricted to its Task's Product" in refused, refused
+    assert "The other Product's notes" not in saved["result"]["content"]
+    assert manager.read_wiki(other["id"], "status.md").content == before.content
+    # The Task's own Product is unaffected by the bound.
+    assert json.loads(own_write)["version"] == own.metadata.version + 1
+    assert manager.read_wiki(proposal["product_id"], "status.md").content == "Notes written"
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("tool", ["read_product_source", "update_product_status"])
+def test_the_product_bound_follows_a_task_run_through_restore_and_delegation(system, tmp_path, tool, use_async):
+    from agno.os.authz.run_context import restore_authorization
+    from agno.run import RunContext
+    from tests.unit.os.test_company_decision_tools import context as person
+
+    proposal = system.proposal()
+    other, source = another_product(system, tmp_path)
+    authority = _ExecutorAuthorization(person(scopes=SCOPES).authorization, task_id=proposal["id"])
+    authority.product_id = proposal["product_id"]
+    # A component the Task run starts wraps the authority, and a queued continuation restores it.
+    restored = restore_authorization(system.app, _ExecutorAuthorization(authority, task_id=proposal["id"]).snapshot())
+    assert restored.product_id == proposal["product_id"]
+    arguments = (
+        {"source_id": source["id"], "path": "notes.md"}
+        if tool == "read_product_source"
+        else {"product_id": other["id"], "content": "Hijacked", "expected_version": 1}
+    )
+    toolkit = system.mini.tools.task[0]
+    entrypoint = (toolkit.get_async_functions() if use_async else toolkit.get_functions())[tool].entrypoint
+    context = RunContext(run_id="run", session_id="session", user_id="alice")
+    for bound in (authority, _ExecutorAuthorization(authority, task_id=proposal["id"]), restored):
+        with authorization_scope(lambda: bound), pytest.raises(PermissionError, match="its Task's Product"):
+            result = entrypoint(**arguments, _agno_run_context=context)
+            if use_async:
+                asyncio.run(result)
+
+
 @pytest.mark.parametrize(
     "tool,arguments",
     [

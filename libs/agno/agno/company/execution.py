@@ -471,6 +471,7 @@ async def _check_task(worker: Any, job: Dict[str, Any]) -> None:
         acceptances = [entry for entry in task["transitions"] if entry.get("target") == "ready"]
         # A person read the brief of a Task they accepted. Nobody read one a policy accepted.
         authority.run_components = [] if acceptances and acceptances[-1].get("auto_accept") else None
+        authority.product_id = task["product_id"]
     if authority is not None:
         try:
             await authority.arequire(
@@ -697,6 +698,8 @@ class _ExecutorAuthorization(RunAuthorization):
     run_components bounds what Mini Agent may run in that Task: None leaves it to the saved permissions
     of the person who accepted and the starter's permissions, and a list admits only the (type, id) pairs in it.
     acceptance preserves the accepting person's component-run permissions through delegation and resume.
+    product_id is the Product of that Task. The queue sets it, and Product-scoped writes and Source reads
+    refuse another Product.
     """
 
     def __init__(self, original: Optional[RunAuthorization], task_id: Optional[str] = None):
@@ -709,6 +712,7 @@ class _ExecutorAuthorization(RunAuthorization):
         self.acceptance: Optional[RunAuthorization] = (
             original.acceptance if isinstance(original, _ExecutorAuthorization) else None
         )
+        self.product_id: Optional[str] = original.product_id if isinstance(original, _ExecutorAuthorization) else None
         super().__init__(
             original.provider if original else _default_authorization_provider(),
             original.context if original else AuthorizationContext(),
@@ -733,7 +737,12 @@ class _ExecutorAuthorization(RunAuthorization):
             await self.acceptance.arequire(resource, action, resource_id)
 
     def snapshot(self) -> Dict[str, Any]:
-        snapshot = {**super().snapshot(), "company_executor": True, "company_task_id": self.task_id}
+        snapshot = {
+            **super().snapshot(),
+            "company_executor": True,
+            "company_task_id": self.task_id,
+            "company_product_id": self.product_id,
+        }
         if self.acceptance is not None:
             snapshot["company_acceptance"] = self.acceptance.snapshot()
         return snapshot
