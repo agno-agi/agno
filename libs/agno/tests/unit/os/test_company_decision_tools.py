@@ -213,13 +213,33 @@ def test_a_person_takes_a_proposal_to_done_in_chat(system):
     assert (done["transitions"][-1]["user_id"], done["transitions"][-1]["reason"]) == ("alice", "Reads well")
 
 
-def test_accept_with_no_executor_names_mini_agent(system):
+def test_accept_with_no_executor_named_takes_the_one_the_proposal_suggests(system):
     client, db, agent_os, queue = system
-    _, task = records(client)
-    reply = accept(agent_os, context(), task, executor=(None, None))
+    project, plain = records(client)
+    suggested = client.post(
+        "/company/tasks",
+        json={
+            "product_id": plain["product_id"],
+            "project_id": project["id"],
+            "title": "Suggested",
+            "executor_type": "agent",
+            "executor_id": "writer",
+        },
+        headers=headers(),
+    ).json()
+    before = state(db)
+    # The person confirms the executor, so a call that names none accepts nothing and says which to name.
+    reply = accept(agent_os, context(), suggested, plain, executor=(None, None))
+    assert reply.startswith("Not done"), reply
+    assert "'Suggested' suggests agent writer" in reply and "'Draft' suggests none" in reply, reply
+    assert f"agent {MINI_AGENT_ID} when it suggests none" in reply and state(db) == before
+
+    assert accept(agent_os, context(), suggested, executor=("agent", "writer")).startswith("Accepted 'Suggested'")
+    reply = accept(agent_os, context(), plain, executor=("agent", MINI_AGENT_ID))
     assert f"agent {MINI_AGENT_ID}" in reply, reply
-    accepted = db.get_task(task["id"])
-    assert (accepted["status"], accepted["executor_type"], accepted["executor_id"]) == ("ready", "agent", MINI_AGENT_ID)
+    saved = db.get_task(plain["id"])
+    assert (saved["status"], saved["executor_type"], saved["executor_id"]) == ("ready", "agent", MINI_AGENT_ID)
+    assert db.get_task(suggested["id"])["executor_id"] == "writer"
 
 
 def test_accept_on_mini_agent_needs_its_run_grant(system):
@@ -237,7 +257,7 @@ def test_accept_names_both_executor_fields_or_neither(system, half):
     client, db, agent_os, queue = system
     _, task = records(client)
     reply = accept(agent_os, context(), task, executor=half)
-    assert "leave both out to use Mini Agent" in reply and db.get_task(task["id"])["status"] == "backlog"
+    assert "the call names no executor" in reply and db.get_task(task["id"])["status"] == "backlog"
 
 
 @pytest.mark.parametrize("executor", [("team", MANAGER_TEAM_ID), ("agent", BUILDER_ID), ("agent", "missing")])

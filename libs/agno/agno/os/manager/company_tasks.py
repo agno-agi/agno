@@ -307,8 +307,8 @@ class CompanyTaskTools(Toolkit):
         Args:
             tasks: The Tasks to accept, each as {"title": the stored title, "task_id": the id,
                 "updated_at": the Task's updated_at as the person saw it}.
-            executor_type: agent, team or workflow. With no executor named, pass agent.
-            executor_id: ID of that component. With no executor named, pass miniagent.
+            executor_type: agent, team or workflow.
+            executor_id: ID of that component.
         """
         return "Accepting a Task needs an asynchronous run. Accept it from AgentOS instead."
 
@@ -325,16 +325,17 @@ class CompanyTaskTools(Toolkit):
         Call this only when the person asked, in this conversation, to accept these Tasks. A request to
         plan, list or summarize work is not a request to accept it. Pass every Task the person named in
         one call, so they confirm once. Each Task's Project must be active. Name the executor the person
-        named. With none named, pass agent and miniagent: Mini Agent does the work itself or runs the
-        components the person may run. Accepting does not start a Task; use start_company_task when the
-        person asks.
+        named. With none named, pass the executor the Task's proposal suggests, which is the Task's own
+        executor_type and executor_id. When it suggests none, pass agent and miniagent: Mini Agent does
+        the work itself or runs the components the person may run. Tasks that take different executors
+        need one call each. Accepting does not start a Task; use start_company_task when the person asks.
 
         Args:
             tasks: The Tasks to accept, each as {"title": the stored title, "task_id": the id,
                 "updated_at": the Task's updated_at as the person saw it}. A Task edited after that is
                 not accepted: show it again first.
-            executor_type: agent, team or workflow. With no executor named, pass agent.
-            executor_id: ID of that component. With no executor named, pass miniagent.
+            executor_type: agent, team or workflow.
+            executor_id: ID of that component.
         """
         from dataclasses import replace
 
@@ -348,11 +349,7 @@ class CompanyTaskTools(Toolkit):
 
             authority, user_id = self._person(agent_os, _agno_run_context)
             kind, name = executor_type or None, executor_id or None
-            if (kind is None) != (name is None):
-                return "Not done: give executor_type and executor_id together, or leave both out to use Mini Agent."
-            if kind is None:
-                kind, name = "agent", MINI_AGENT_ID
-            if kind not in ("agent", "team", "workflow"):
+            if kind is not None and kind not in ("agent", "team", "workflow"):
                 return "Not done: executor_type is agent, team or workflow."
             if not tasks:
                 return "Not done: name at least one Task."
@@ -375,6 +372,19 @@ class CompanyTaskTools(Toolkit):
                         "Show it to them again, then call with its updated_at."
                     )
                 values.append(value)
+            if kind is None or name is None:
+                # The person confirms the executor, so the call names it.
+                suggested = [
+                    f"'{value.get('title') or value['id']}' suggests "
+                    + (f"{value['executor_type']} {value['executor_id']}" if value.get("executor_id") else "none")
+                    for value in values
+                ]
+                return (
+                    "Not done: the call names no executor, and the person confirms the executor. Call again with "
+                    f"the executor the Task suggests, or agent {MINI_AGENT_ID} when it suggests none: "
+                    + "; ".join(suggested)
+                    + "."
+                )
             # The transition route's decision: the person must be allowed to run the executor themselves.
             caller = _StartCaller.for_authority(getattr(agent_os, "_company_app", None), authority, user_id)
             await caller.require_accept(starter.endpoint({"executor_type": kind, "executor_id": name}))
