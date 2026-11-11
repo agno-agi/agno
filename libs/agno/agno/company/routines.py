@@ -414,22 +414,48 @@ async def _authorize_auto_accept(request, policy, agent_os=None):
             await _require_endpoint_permission(request, endpoint, "POST", action="accept")
 
 
-async def _stamp_auto_accept(request, payload, agent_os=None):
+def _only_turns_auto_accept_off(stored, payload):
+    """Whether a Routine payload differs from the stored one only by having no auto_accept policy."""
+
+    def rest(value):
+        value = {key: item for key, item in (value or {}).items() if key != "_agno_company_acceptance"}
+        metadata = value.get("metadata") or {}
+        return {**value, "metadata": {key: item for key, item in metadata.items() if key != "auto_accept"}}
+
+    return not ((payload or {}).get("metadata") or {}).get("auto_accept") and rest(stored) == rest(payload)
+
+
+async def _stamp_auto_accept(request, payload, agent_os=None, stored=None):
+    """Give a Routine payload the grant its auto_accept policy runs under.
+
+    stored is the Routine's payload before this edit. A payload that carries the stored declared
+    marker and the stored policy comes from an edit that does not set auto_accept. Where
+    authorization is on, that policy has no person behind it, and it stays that way.
+    """
     from agno.run.authorization import AUTHORIZATION_KEY, authorization_snapshot
 
     payload = dict(payload or {})
     metadata = dict(payload.get("metadata") or {})
-    payload.pop("_agno_company_acceptance", None)
+    carried = payload.pop("_agno_company_acceptance", None)
     policy = metadata.get("auto_accept")
     if policy:
-        await _authorize_auto_accept(request, policy, agent_os)
-        # Even in an unauthenticated local deployment this marker is generated
-        # here, never copied from a supplied payload. Executor snapshots cannot
-        # pass the human boundary above.
-        payload["_agno_company_acceptance"] = {
-            AUTHORIZATION_KEY: authorization_snapshot(),
-            "user_id": getattr(request.state, "user_id", None),
-        }
+        stored = stored or {}
+        if (
+            getattr(agent_os, "authorization", None)
+            and carried == _DECLARED
+            and stored.get("_agno_company_acceptance") == _DECLARED
+            and policy == (stored.get("metadata") or {}).get("auto_accept")
+        ):
+            payload["_agno_company_acceptance"] = dict(_DECLARED)
+        else:
+            await _authorize_auto_accept(request, policy, agent_os)
+            # Even in an unauthenticated local deployment this grant is generated
+            # here, never copied from a supplied payload. Executor snapshots cannot
+            # pass the human boundary above.
+            payload["_agno_company_acceptance"] = {
+                AUTHORIZATION_KEY: authorization_snapshot(),
+                "user_id": getattr(request.state, "user_id", None),
+            }
     payload["metadata"] = metadata
     return payload
 

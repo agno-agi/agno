@@ -374,8 +374,15 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
                 raise HTTPException(422, "Invalid cron expression")
             if updates["cron_expr"] is None:
                 updates["cron_expr"] = ""
-        from agno.company.routines import _authorize_auto_accept, _stored_policy
+        from agno.company.routines import _DECLARED, _authorize_auto_accept, _stored_policy
 
+        # A declared policy acts for no one where authorization is on. An edit that does not set
+        # auto_accept leaves it so: the payload below carries the stored marker and policy unchanged.
+        waiting = (
+            "auto_accept" not in updates
+            and bool(agent_os.authorization)
+            and row["payload"].get("_agno_company_acceptance") == _DECLARED
+        )
         if "auto_accept" in updates:
             updates.pop("auto_accept")
             # Save every field with its value, so the stored policy states all it grants.
@@ -385,7 +392,9 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
                 # The stored policy sent back is not a new one: it keeps its form, its version and its count.
                 policy = stored
             await _authorize_auto_accept(request, policy, agent_os)
-            updates["payload"] = {**row["payload"], "metadata": {**row["payload"]["metadata"], "auto_accept": policy}}
+            # The request sets auto_accept, so the stored grant is not carried into the new payload.
+            kept = {key: value for key, value in row["payload"].items() if key != "_agno_company_acceptance"}
+            updates["payload"] = {**kept, "metadata": {**row["payload"]["metadata"], "auto_accept": policy}}
         product_id = row["payload"]["metadata"]["product_id"]
         if "name" in updates:
             updates["name"] = product_id + "." + updates["name"]
@@ -403,8 +412,9 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             payload = updates.get("payload", row["payload"])
             policy = payload["metadata"].get("auto_accept")
             if policy:
-                await _authorize_auto_accept(request, policy, agent_os)
-                # Scheduler payload validation re-stamps the grant for this editor.
+                if not waiting:
+                    await _authorize_auto_accept(request, policy, agent_os)
+                # Scheduler payload validation re-stamps the grant for this editor, or keeps a waiting one.
                 updates["payload"] = payload
 
         if "instructions" in updates:
