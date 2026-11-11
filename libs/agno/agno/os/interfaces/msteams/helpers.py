@@ -16,7 +16,7 @@ _TOKEN_EXPIRY_SKEW_SECONDS = 60
 
 
 @dataclass
-class TeamsConfig:
+class MSTeamsConfig:
     app_id: str
     app_password: str
     tenant_id: str = "botframework.com"
@@ -32,13 +32,13 @@ class TeamsConfig:
         app_password: Optional[str] = None,
         tenant_id: Optional[str] = None,
         request_timeout: int = 30,
-    ) -> "TeamsConfig":
+    ) -> "MSTeamsConfig":
         """Resolve config from constructor args, then ``MICROSOFT_APP_*`` env vars.
 
         Raises ``ValueError`` when a credential is missing, except under the
         credential-free bypass below.
         """
-        from agno.os.interfaces.teams.security import dev_bypass_enabled
+        from agno.os.interfaces.msteams.security import dev_bypass_enabled
 
         aid = app_id or os.getenv("MICROSOFT_APP_ID")
         secret = app_password or os.getenv("MICROSOFT_APP_PASSWORD")
@@ -66,7 +66,7 @@ class TeamsConfig:
         return f"{_LOGIN_BASE}/{self.tenant_id}/oauth2/v2.0/token"
 
 
-async def _get_bot_token(config: TeamsConfig) -> str:
+async def _get_bot_token(config: MSTeamsConfig) -> str:
     now = time.time()
     if config._cached_token and config._token_expires_at - _TOKEN_EXPIRY_SKEW_SECONDS > now:
         return config._cached_token
@@ -150,7 +150,7 @@ def _attachment_download_url(att: dict) -> Optional[str]:
 
 
 async def _download_attachment(
-    url: str, config: TeamsConfig, use_bot_token: bool = True
+    url: str, config: MSTeamsConfig, use_bot_token: bool = True
 ) -> Tuple[Optional[bytes], Optional[str]]:
     headers: Dict[str, str] = {}
     if use_bot_token:
@@ -171,7 +171,7 @@ async def _download_attachment(
         return None, None
 
 
-async def download_attachments_async(parsed: ActivityContent, config: TeamsConfig) -> Tuple[dict, List[str]]:
+async def download_attachments_async(parsed: ActivityContent, config: MSTeamsConfig) -> Tuple[dict, List[str]]:
     """Returns (run_kwargs, skipped_labels); run_kwargs splats into ``entity.arun``."""
     from agno.media import File, Image
 
@@ -232,7 +232,7 @@ async def download_attachments_async(parsed: ActivityContent, config: TeamsConfi
     return run_kwargs, skipped
 
 
-_CONVERSATION_REF_KEY = "teams_conversation_ref"
+_CONVERSATION_REF_KEY = "msteams_conversation_ref"
 
 
 def build_conversation_ref(service_url: str, conversation_id: str, bot_identity: Optional[dict]) -> dict:
@@ -272,7 +272,7 @@ async def _post_activity(
     service_url: str,
     conversation_id: str,
     activity: dict,
-    config: TeamsConfig,
+    config: MSTeamsConfig,
     reply_to_activity_id: Optional[str] = None,
 ) -> Optional[dict]:
     token = await _get_bot_token(config)
@@ -304,7 +304,7 @@ async def _post_activity(
 async def typing_indicator_async(
     service_url: str,
     conversation_id: str,
-    config: TeamsConfig,
+    config: MSTeamsConfig,
     reply_to_activity_id: Optional[str] = None,
     bot_identity: Optional[dict] = None,
 ) -> None:
@@ -323,7 +323,7 @@ async def send_teams_message_async(
     service_url: str,
     conversation_id: str,
     message: Any,
-    config: TeamsConfig,
+    config: MSTeamsConfig,
     reply_to_activity_id: Optional[str] = None,
     italics: bool = False,
     bot_identity: Optional[dict] = None,

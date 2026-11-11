@@ -11,7 +11,7 @@ def _build_teams_interface(env=None):
     implementing BaseDb's ~50 abstract methods."""
     from unittest.mock import patch as _patch
 
-    from agno.os.interfaces.teams import MicrosoftTeams
+    from agno.os.interfaces.msteams import MSTeams
 
     fake_db = MagicMock(spec=BaseDb)
     stub_agent = SimpleNamespace(id="agent-1", name="Stub", db=fake_db)
@@ -21,14 +21,14 @@ def _build_teams_interface(env=None):
         clear=True,
     )
     env_patch.start()
-    return MicrosoftTeams(agent=stub_agent), stub_agent, env_patch
+    return MSTeams(agent=stub_agent), stub_agent, env_patch
 
 
 def _make_session_with_ref(service_url="https://svc", conv_id="conv-1"):
     return SimpleNamespace(
         session_id="s-1",
         session_data={
-            "teams_conversation_ref": {
+            "msteams_conversation_ref": {
                 "service_url": service_url,
                 "conversation_id": conv_id,
                 "bot_identity": {"id": "28:bot", "name": "Bot"},
@@ -45,7 +45,7 @@ async def test_send_alert_delivers_when_ref_saved():
     teams, agent, env_patch = _build_teams_interface()
     try:
         agent.db.get_sessions = MagicMock(return_value=[_make_session_with_ref()])
-        with patch("agno.os.interfaces.teams.teams.send_teams_message_async", new_callable=AsyncMock) as mock_send:
+        with patch("agno.os.interfaces.msteams.msteams.send_teams_message_async", new_callable=AsyncMock) as mock_send:
             ok = await teams.asend_alert(user_id="user-1", text="Regulatory update: ...")
         assert ok is True
         mock_send.assert_awaited_once()
@@ -68,7 +68,7 @@ async def test_send_alert_returns_false_when_no_sessions():
     teams, agent, env_patch = _build_teams_interface()
     try:
         agent.db.get_sessions = MagicMock(return_value=[])
-        with patch("agno.os.interfaces.teams.teams.send_teams_message_async", new_callable=AsyncMock) as mock_send:
+        with patch("agno.os.interfaces.msteams.msteams.send_teams_message_async", new_callable=AsyncMock) as mock_send:
             ok = await teams.asend_alert(user_id="never-chatted", text="hi")
         assert ok is False
         mock_send.assert_not_called()
@@ -82,7 +82,7 @@ async def test_send_alert_returns_false_when_session_has_no_ref():
     try:
         stale_session = SimpleNamespace(session_id="s-old", session_data={"other": "keys"})
         agent.db.get_sessions = MagicMock(return_value=[stale_session])
-        with patch("agno.os.interfaces.teams.teams.send_teams_message_async", new_callable=AsyncMock) as mock_send:
+        with patch("agno.os.interfaces.msteams.msteams.send_teams_message_async", new_callable=AsyncMock) as mock_send:
             ok = await teams.asend_alert(user_id="user-1", text="hi")
         assert ok is False
         mock_send.assert_not_called()
@@ -108,7 +108,7 @@ def _write_session(db, session_id, created_at, conv_id=None, updated_at=None):
                 agent_id="agent-1",
                 created_at=created_at,
                 updated_at=created_at if updated_at is None else updated_at,
-                session_data={"teams_conversation_ref": _conv_ref(conv_id)} if conv_id else None,
+                session_data={"msteams_conversation_ref": _conv_ref(conv_id)} if conv_id else None,
             )
         ],
         preserve_updated_at=True,
@@ -121,18 +121,18 @@ async def test_alert_uses_the_newest_session_that_carries_a_ref(tmp_path):
     user's next message the only reference that can be delivered to sits on the
     session before it."""
     from agno.db.sqlite import SqliteDb
-    from agno.os.interfaces.teams import MicrosoftTeams
+    from agno.os.interfaces.msteams import MSTeams
 
     db = SqliteDb(db_file=str(tmp_path / "alerts.db"))
     stub_agent = SimpleNamespace(id="agent-1", name="Stub", db=db)
-    send_target = "agno.os.interfaces.teams.teams.send_teams_message_async"
+    send_target = "agno.os.interfaces.msteams.msteams.send_teams_message_async"
 
     with patch.dict(
         "os.environ",
         {"MICROSOFT_APP_ID": "app-id", "MICROSOFT_APP_PASSWORD": "secret"},
         clear=True,
     ):
-        teams = MicrosoftTeams(agent=stub_agent)
+        teams = MSTeams(agent=stub_agent)
 
         _write_session(db, "teams:agent-1:user-1", 1_700_000_000, conv_id="conv-A")
         with patch(send_target, new_callable=AsyncMock) as mock_send:
@@ -163,7 +163,7 @@ async def test_alert_orders_candidates_by_created_at_not_updated_at(tmp_path):
     """Any save on an older session rewrites its updated_at. Ordering the
     candidates on that would resurrect its reference over the current one's."""
     from agno.db.sqlite import SqliteDb
-    from agno.os.interfaces.teams import MicrosoftTeams
+    from agno.os.interfaces.msteams import MSTeams
 
     db = SqliteDb(db_file=str(tmp_path / "alerts_order.db"))
     stub_agent = SimpleNamespace(id="agent-1", name="Stub", db=db)
@@ -177,8 +177,8 @@ async def test_alert_orders_candidates_by_created_at_not_updated_at(tmp_path):
         {"MICROSOFT_APP_ID": "app-id", "MICROSOFT_APP_PASSWORD": "secret"},
         clear=True,
     ):
-        teams = MicrosoftTeams(agent=stub_agent)
-        with patch("agno.os.interfaces.teams.teams.send_teams_message_async", new_callable=AsyncMock) as mock_send:
+        teams = MSTeams(agent=stub_agent)
+        with patch("agno.os.interfaces.msteams.msteams.send_teams_message_async", new_callable=AsyncMock) as mock_send:
             assert await teams.asend_alert(user_id="user-1", text="hi") is True
 
     assert mock_send.call_args.kwargs["conversation_id"] == "conv-B"
@@ -191,7 +191,7 @@ async def test_alert_orders_candidates_by_created_at_not_updated_at(tmp_path):
 async def test_send_alert_returns_false_when_entity_has_no_db():
     from unittest.mock import patch as _patch
 
-    from agno.os.interfaces.teams import MicrosoftTeams
+    from agno.os.interfaces.msteams import MSTeams
 
     stub_agent = SimpleNamespace(id="agent-1", name="Stub", db=None)
     with _patch.dict(
@@ -199,8 +199,8 @@ async def test_send_alert_returns_false_when_entity_has_no_db():
         {"MICROSOFT_APP_ID": "app-id", "MICROSOFT_APP_PASSWORD": "secret"},
         clear=True,
     ):
-        teams = MicrosoftTeams(agent=stub_agent)
-        with patch("agno.os.interfaces.teams.teams.send_teams_message_async", new_callable=AsyncMock) as mock_send:
+        teams = MSTeams(agent=stub_agent)
+        with patch("agno.os.interfaces.msteams.msteams.send_teams_message_async", new_callable=AsyncMock) as mock_send:
             ok = await teams.asend_alert(user_id="user-1", text="hi")
         assert ok is False
         mock_send.assert_not_called()
@@ -212,7 +212,7 @@ async def test_send_alert_swallows_lookup_errors():
     teams, agent, env_patch = _build_teams_interface()
     try:
         agent.db.get_sessions = MagicMock(side_effect=RuntimeError("db down"))
-        with patch("agno.os.interfaces.teams.teams.send_teams_message_async", new_callable=AsyncMock) as mock_send:
+        with patch("agno.os.interfaces.msteams.msteams.send_teams_message_async", new_callable=AsyncMock) as mock_send:
             ok = await teams.asend_alert(user_id="user-1", text="hi")
         assert ok is False
         mock_send.assert_not_called()
@@ -227,7 +227,7 @@ async def test_send_alert_swallows_lookup_errors():
 async def test_send_alert_works_with_team_entity():
     from unittest.mock import patch as _patch
 
-    from agno.os.interfaces.teams import MicrosoftTeams
+    from agno.os.interfaces.msteams import MSTeams
 
     fake_db = MagicMock(spec=BaseDb)
     fake_db.get_sessions = MagicMock(return_value=[_make_session_with_ref()])
@@ -237,8 +237,8 @@ async def test_send_alert_works_with_team_entity():
         {"MICROSOFT_APP_ID": "app-id", "MICROSOFT_APP_PASSWORD": "secret"},
         clear=True,
     ):
-        teams = MicrosoftTeams(team=stub_team)
-        with patch("agno.os.interfaces.teams.teams.send_teams_message_async", new_callable=AsyncMock) as mock_send:
+        teams = MSTeams(team=stub_team)
+        with patch("agno.os.interfaces.msteams.msteams.send_teams_message_async", new_callable=AsyncMock) as mock_send:
             ok = await teams.asend_alert(user_id="user-1", text="alert")
         assert ok is True
         mock_send.assert_awaited_once()
@@ -248,7 +248,7 @@ async def test_send_alert_works_with_team_entity():
 async def test_send_alert_works_with_workflow_entity():
     from unittest.mock import patch as _patch
 
-    from agno.os.interfaces.teams import MicrosoftTeams
+    from agno.os.interfaces.msteams import MSTeams
 
     fake_db = MagicMock(spec=BaseDb)
     fake_db.get_sessions = MagicMock(return_value=[_make_session_with_ref()])
@@ -258,8 +258,8 @@ async def test_send_alert_works_with_workflow_entity():
         {"MICROSOFT_APP_ID": "app-id", "MICROSOFT_APP_PASSWORD": "secret"},
         clear=True,
     ):
-        teams = MicrosoftTeams(workflow=stub_wf)
-        with patch("agno.os.interfaces.teams.teams.send_teams_message_async", new_callable=AsyncMock) as mock_send:
+        teams = MSTeams(workflow=stub_wf)
+        with patch("agno.os.interfaces.msteams.msteams.send_teams_message_async", new_callable=AsyncMock) as mock_send:
             ok = await teams.asend_alert(user_id="user-1", text="alert")
         assert ok is True
         mock_send.assert_awaited_once()
@@ -273,7 +273,7 @@ async def test_send_alert_awaits_async_db():
     from unittest.mock import patch as _patch
 
     from agno.db.base import AsyncBaseDb
-    from agno.os.interfaces.teams import MicrosoftTeams
+    from agno.os.interfaces.msteams import MSTeams
 
     fake_async_db = MagicMock(spec=AsyncBaseDb)
     fake_async_db.get_sessions = AsyncMock(return_value=[_make_session_with_ref()])
@@ -283,8 +283,8 @@ async def test_send_alert_awaits_async_db():
         {"MICROSOFT_APP_ID": "app-id", "MICROSOFT_APP_PASSWORD": "secret"},
         clear=True,
     ):
-        teams = MicrosoftTeams(agent=stub_agent)
-        with patch("agno.os.interfaces.teams.teams.send_teams_message_async", new_callable=AsyncMock) as mock_send:
+        teams = MSTeams(agent=stub_agent)
+        with patch("agno.os.interfaces.msteams.msteams.send_teams_message_async", new_callable=AsyncMock) as mock_send:
             ok = await teams.asend_alert(user_id="user-1", text="hi")
         assert ok is True
         fake_async_db.get_sessions.assert_awaited_once()
@@ -295,10 +295,10 @@ async def test_send_alert_awaits_async_db():
 
 
 def test_microsoft_teams_requires_entity():
-    from agno.os.interfaces.teams import MicrosoftTeams
+    from agno.os.interfaces.msteams import MSTeams
 
     with pytest.raises(ValueError, match="requires an agent, team, or workflow"):
-        MicrosoftTeams()
+        MSTeams()
 
 
 # === send_alert — blocking wrapper around asend_alert ===
@@ -308,7 +308,7 @@ def test_sync_send_alert_delegates_to_async():
     teams, agent, env_patch = _build_teams_interface()
     try:
         agent.db.get_sessions = MagicMock(return_value=[_make_session_with_ref()])
-        with patch("agno.os.interfaces.teams.teams.send_teams_message_async", new_callable=AsyncMock) as mock_send:
+        with patch("agno.os.interfaces.msteams.msteams.send_teams_message_async", new_callable=AsyncMock) as mock_send:
             ok = teams.send_alert(user_id="user-1", text="sync alert")
         assert ok is True
         mock_send.assert_awaited_once()
@@ -347,7 +347,7 @@ def _counting_post(token_fetches, activity_posts):
 
 @pytest.mark.asyncio
 async def test_two_alerts_reuse_one_bot_token():
-    """The cached token lives on TeamsConfig, so a per-call config re-authenticates."""
+    """The cached token lives on MSTeamsConfig, so a per-call config re-authenticates."""
     teams, agent, env_patch = _build_teams_interface()
     try:
         agent.db.get_sessions = MagicMock(return_value=[_make_session_with_ref()])

@@ -36,7 +36,7 @@ _MIN_FORCED_REFRESH_SECONDS = 60.0
 
 
 def dev_bypass_enabled() -> bool:
-    """Package-public: TeamsConfig consults it too, since credentials are
+    """Package-public: MSTeamsConfig consults it too, since credentials are
     optional in exactly this mode."""
     return os.getenv("MICROSOFT_APP_SKIP_JWT_VALIDATION", "").lower() == "true"
 
