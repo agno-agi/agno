@@ -9,6 +9,7 @@ import json
 from typing import Any, Dict, Optional, Tuple
 from weakref import ReferenceType, ref
 
+from agno.company.details import _remember_task
 from agno.tools import Toolkit
 
 
@@ -114,6 +115,8 @@ class CompanyTaskTools(Toolkit):
             return f"Not started: {exc.detail}"
         except (_TaskRunConflict, _TaskRunUnavailable) as exc:
             return f"Not started: {exc}"
+        if response.status_code == 202:
+            _remember_task(_agno_run_context, task_id)
         return _receipt("Queued", title, task_id, response)
 
     def continue_company_task(self, task_id: str, message: str, _agno_run_context: Optional[Any] = None) -> str:
@@ -160,6 +163,8 @@ class CompanyTaskTools(Toolkit):
             return f"Not continued: {exc.detail}"
         except (_TaskRunConflict, _TaskRunUnavailable) as exc:
             return f"Not continued: {exc}"
+        if response.status_code == 202:
+            _remember_task(_agno_run_context, task_id)
         return _receipt("Continued", title, task_id, response)
 
     def get_company_task_status(self, task_id: str, _agno_run_context: Optional[Any] = None) -> str:

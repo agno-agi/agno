@@ -278,3 +278,43 @@ def test_continuing_needs_the_start_routes_grants(system, missing):
     )
     assert reply.startswith("Not continued:"), reply
     assert asyncio.run(queue.store.get_job(task_run_id(task["id"], 2))) is None
+
+
+def test_later_turns_report_this_conversations_tasks_however_busy_the_company_is(system):
+    from agno.company.details import CONVERSATION_TASKS, CONVERSATION_TASKS_KEY, _CompanyInstructions
+
+    client, db, agent_os, queue = system
+    task = reviewed_task(client, db, queue)
+    run_context = context([*SCOPES, "company:read"])
+    run_context.session_state = {}
+    reply = asyncio.run(
+        CompanyTaskTools(agent_os).acontinue_company_task(task["id"], "Go", _agno_run_context=run_context)
+    )
+    assert reply.startswith("Continued")
+    assert run_context.session_state[CONVERSATION_TASKS_KEY] == [task["id"]]
+
+    # More than the old scan's 50 rows are updated after this conversation's Task.
+    for index in range(55):
+        client.post(
+            "/company/tasks",
+            json={"product_id": task["product_id"], "project_id": task["project_id"], "title": f"Other {index}"},
+            headers=headers(),
+        ).raise_for_status()
+    instructions = _CompanyInstructions(db, ["Base"], task_updates=True)
+    assert any(task["id"] in line for line in instructions(run_context))
+    assert any(task["id"] in line for line in asyncio.run(instructions.__acall__(run_context)))
+
+    # Session state can come with a request: an id from another conversation is not reported.
+    elsewhere = context([*SCOPES, "company:read"])
+    elsewhere.session_id = "chat-2"
+    elsewhere.session_state = {CONVERSATION_TASKS_KEY: [task["id"]]}
+    assert not any(task["id"] in line for line in instructions(elsewhere))
+
+    # The list keeps the latest Tasks once, newest last.
+    run_context.session_state[CONVERSATION_TASKS_KEY] = [f"t{index}" for index in range(CONVERSATION_TASKS)]
+    from agno.company.details import _remember_task
+
+    _remember_task(run_context, "t3")
+    _remember_task(run_context, "new")
+    remembered = run_context.session_state[CONVERSATION_TASKS_KEY]
+    assert len(remembered) == CONVERSATION_TASKS and remembered[-2:] == ["t3", "new"] and remembered.count("t3") == 1
