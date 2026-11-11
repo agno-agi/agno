@@ -44,8 +44,13 @@ def jwks(signing_key, monkeypatch):
     monkeypatch.setattr(
         security, "_fetch_openid_metadata", AsyncMock(return_value={"jwks_uri": "https://example.com/keys"})
     )
+
     # Stub the network fetch, not token decoding or the subclass's endorsement capture.
-    with patch("jwt.PyJWKClient.fetch_data", return_value={"keys": [key]}) as fetch:
+    def fetch_data(client):
+        client._last_successful_fetch = time.monotonic()
+        return {"keys": [key]}
+
+    with patch("jwt.PyJWKClient.fetch_data", autospec=True, side_effect=fetch_data) as fetch:
         yield key, fetch
 
 
@@ -58,7 +63,10 @@ async def test_invalid_header_rejected(header):
 @pytest.mark.asyncio
 async def test_valid_signature_returns_claims(signing_key, claims, jwks):
     token = _token(signing_key, claims)
-    assert await security.validate_bot_framework_jwt(f"bearer {token}", APP_ID, SERVICE_URL, "msteams") == claims
+    for _ in range(2):
+        assert await security.validate_bot_framework_jwt(f"bearer {token}", APP_ID, SERVICE_URL, "msteams") == claims
+    jwks[1].assert_called_once()
+    security._fetch_openid_metadata.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -71,6 +79,37 @@ async def test_invalid_claims_rejected(signing_key, claims, jwks, change):
         del claims["serviceurl"]
     token = _token(signing_key, claims)
     assert await security.validate_bot_framework_jwt(f"Bearer {token}", APP_ID, SERVICE_URL, "msteams") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["exp", "aud", "iss", "serviceurl"])
+async def test_required_claims(signing_key, claims, jwks, field):
+    del claims[field]
+    assert (
+        await security.validate_bot_framework_jwt(
+            f"Bearer {_token(signing_key, claims)}", APP_ID, SERVICE_URL, "msteams"
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_missing_kid_rejected(signing_key, claims, jwks):
+    token = jwt.encode(claims, signing_key, algorithm="RS256")
+    assert await security.validate_bot_framework_jwt(f"Bearer {token}", APP_ID, SERVICE_URL, "msteams") is None
+    jwks[1].assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_metadata_without_uri_is_not_accepted(signing_key, claims, jwks):
+    security._fetch_openid_metadata.return_value = {}
+    assert (
+        await security.validate_bot_framework_jwt(
+            f"Bearer {_token(signing_key, claims)}", APP_ID, SERVICE_URL, "msteams"
+        )
+        is None
+    )
+    jwks[1].assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -120,9 +159,7 @@ async def test_unknown_kids_use_client_cooldown(signing_key, claims, jwks):
             )
             is None
         )
-    # The base method normally stamps the cooldown during a network fetch.
-    # Its network stub does not; subsequent requests must still be cooled down.
-    assert fetch.call_count <= 2
+    assert fetch.call_count == 1
     security._fetch_openid_metadata.assert_awaited_once()
 
 
