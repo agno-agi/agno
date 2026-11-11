@@ -750,7 +750,10 @@ class CompanyTaskTools(Toolkit):
                     f"is kept. Call again with kept_policy set to this line: {line}"
                 )
             policy = AutoAccept.model_validate(
-                {**(kept.model_dump() if kept else {}), **({"default_executor": default_executor} if default_executor else {})}
+                {
+                    **(kept.model_dump() if kept else {}),
+                    **({"default_executor": default_executor} if default_executor else {}),
+                }
             )
             await self._patch_routine(agent_os, authority, user_id, routine_id, policy)
             projects = (
@@ -764,7 +767,13 @@ class CompanyTaskTools(Toolkit):
                 if policy.limits is None
                 else f"It accepts at most {policy.limits.max_acceptances} Tasks."
             )
-            source = ", with the policy its code declares" if declared else ", with the policy it already had" if kept else ""
+            source = (
+                ", with the policy its code declares"
+                if declared
+                else ", with the policy it already had"
+                if kept
+                else ""
+            )
             return (
                 f"Auto-accept is on for Routine '{stored}' ({routine_id}){source}. {projects} Tasks are accepted and "
                 f"run on {policy.default_executor}, unless a proposal names another executor{listed}. "

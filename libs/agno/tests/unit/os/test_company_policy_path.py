@@ -650,9 +650,15 @@ def test_auto_accept_is_reported_only_for_a_routine_that_has_it_on(open_system, 
 
     # A Routine with auto-accept on and room left: its open Tasks are read, and no Backlog or history.
     product_id, routine_id = open_system.declare(auto_accept=AutoAccept(max_open=2))
-    tasks = [open_system.proposes(product_id, routine_id, title=f"Task {n}")[1] for n in range(3)]
+    for n in range(3):
+        open_system.proposes(product_id, routine_id, title=f"Task {n}")
     made, listed = reads(open_system, monkeypatch, lambda: json.loads(tools.list_company_tasks(product_id=product_id)))
-    assert made == [("tasks", None, 20), ("tasks", "ready", 100), ("tasks", "in_progress", 100), ("tasks", "in_review", 100)]
+    assert made == [
+        ("tasks", None, 20),
+        ("tasks", "ready", 100),
+        ("tasks", "in_progress", 100),
+        ("tasks", "in_review", 100),
+    ]
     assert "auto_accept_at_limit" not in listed
 
     # At its limit, the waiting proposals are counted too. The decisions come from one page of each record.
@@ -716,7 +722,9 @@ def test_a_declared_routine_and_its_marker_are_one_write(open_system, monkeypatc
 def test_a_declaration_never_touches_the_grant_of_a_routine_that_exists(system):
     # A Product with no owner, and a Routine of it that alice created with her own policy and then archived.
     declaration = Product(id="docs", name="Docs")
-    asyncio.run(arehydrate_product(system.db, declaration, system.os.registry, schedule_db=system.db, agent_os=system.os))
+    asyncio.run(
+        arehydrate_product(system.db, declaration, system.os.registry, schedule_db=system.db, agent_os=system.os)
+    )
     created = system.api_routine("docs", {"default_executor": "writer", "executors": ["writer"]})
     assert created.status_code == 201, created.text
     routine_id = created.json()["id"]

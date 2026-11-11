@@ -688,7 +688,9 @@ class CompanyManager:
                 tasks += self._tasks_in(product_id, "backlog")
             status["auto_accept_at_limit"] = _at_limit(product, schedules, tasks)
         if decisions:
-            latest = dict(product_id=product_id, limit=_DECISION_RECORDS, sort_by="updated_at", sort_order="desc")
+            latest: Dict[str, Any] = dict(
+                product_id=product_id, limit=_DECISION_RECORDS, sort_by="updated_at", sort_order="desc"
+            )
             projects, _ = self.db.get_projects(**latest)
             recent, _ = self.db.get_tasks(**latest)
             status["automatic_decisions"] = _automatic_decisions(projects, recent, limit)
@@ -1625,9 +1627,7 @@ class AsyncCompanyManager:
         rows: List[Dict[str, Any]] = []
         page = 1
         while True:
-            batch, total = await _call(
-                self.db, "get_tasks", product_id=product_id, status=status, limit=100, page=page
-            )
+            batch, total = await _call(self.db, "get_tasks", product_id=product_id, status=status, limit=100, page=page)
             rows.extend(batch)
             if page * 100 >= total:
                 return rows
@@ -1658,7 +1658,9 @@ class AsyncCompanyManager:
                 tasks += await self._tasks_in(product_id, "backlog")
             status["auto_accept_at_limit"] = _at_limit(product, schedules, tasks)
         if decisions:
-            latest = dict(product_id=product_id, limit=_DECISION_RECORDS, sort_by="updated_at", sort_order="desc")
+            latest: Dict[str, Any] = dict(
+                product_id=product_id, limit=_DECISION_RECORDS, sort_by="updated_at", sort_order="desc"
+            )
             projects, _ = await _call(self.db, "get_projects", **latest)
             recent, _ = await _call(self.db, "get_tasks", **latest)
             status["automatic_decisions"] = _automatic_decisions(projects, recent, limit)
