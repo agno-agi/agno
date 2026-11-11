@@ -10788,18 +10788,29 @@ class PostgresDb(BaseDb):
                     or tasks is None
                 ):
                     raise ValueError("An automatic Project decision requires expected_updated_at and a Product")
-                task_histories = (
-                    (sess.execute(select(tasks.c.transitions).where(tasks.c.routine_id == auto_accept["routine_id"])))
-                    .scalars()
-                    .all()
-                )
-                project_histories = (
-                    (sess.execute(select(table.c.transitions).where(table.c.id != project_id))).scalars().all()
-                )
-                if _acceptance_count(
-                    list(task_histories) + list(project_histories), auto_accept["routine_id"], auto_accept["policy"]
-                ) >= auto_accept.get("max_acceptances", float("inf")):
-                    raise ValueError("Routine acceptance limit reached")
+                # A policy with no lifetime count has nothing to compare, so no history is read for it.
+                if "max_acceptances" in auto_accept:
+                    task_histories = (
+                        (
+                            sess.execute(
+                                select(tasks.c.transitions).where(tasks.c.routine_id == auto_accept["routine_id"])
+                            )
+                        )
+                        .scalars()
+                        .all()
+                    )
+                    project_histories = (
+                        (sess.execute(select(table.c.transitions).where(table.c.id != project_id))).scalars().all()
+                    )
+                    if (
+                        _acceptance_count(
+                            list(task_histories) + list(project_histories),
+                            auto_accept["routine_id"],
+                            auto_accept["policy"],
+                        )
+                        >= auto_accept["max_acceptances"]
+                    ):
+                        raise ValueError("Routine acceptance limit reached")
             row = sess.execute(stmt).fetchone()
             if row is None:
                 return None
@@ -11175,21 +11186,24 @@ class PostgresDb(BaseDb):
                 lock_child(sess, products, projects, table, task_id)
                 if expected_updated_at is _UNSET_UPDATED_AT or products is None:
                     raise ValueError("Automatic acceptance requires expected_updated_at and a Product")
-                prior = (
-                    sess.execute(
-                        select(table.c.transitions).where(
-                            table.c.routine_id == auto_accept["routine_id"], table.c.id != task_id
+                # A policy with no lifetime count has nothing to compare, so no history is read for it.
+                if "max_acceptances" in auto_accept:
+                    prior = (
+                        sess.execute(
+                            select(table.c.transitions).where(
+                                table.c.routine_id == auto_accept["routine_id"], table.c.id != task_id
+                            )
                         )
+                        .scalars()
+                        .all()
                     )
-                    .scalars()
-                    .all()
-                )
-                if projects is not None:
-                    prior = list(prior) + list((sess.execute(select(projects.c.transitions))).scalars().all())
-                if _acceptance_count(prior, auto_accept["routine_id"], auto_accept["policy"]) >= auto_accept.get(
-                    "max_acceptances", float("inf")
-                ):
-                    raise ValueError("Routine acceptance limit reached")
+                    if projects is not None:
+                        prior = list(prior) + list((sess.execute(select(projects.c.transitions))).scalars().all())
+                    if (
+                        _acceptance_count(prior, auto_accept["routine_id"], auto_accept["policy"])
+                        >= auto_accept["max_acceptances"]
+                    ):
+                        raise ValueError("Routine acceptance limit reached")
             else:
                 visible = sess.execute(stmt).fetchone()
                 if visible is None:

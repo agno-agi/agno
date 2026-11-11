@@ -8053,22 +8053,31 @@ class AsyncPostgresDb(AsyncBaseDb):
                     or tasks is None
                 ):
                     raise ValueError("An automatic Project decision requires expected_updated_at and a Product")
-                task_histories: Sequence[Optional[List[Dict[str, Any]]]] = (
-                    (
-                        await sess.execute(
-                            select(tasks.c.transitions).where(tasks.c.routine_id == auto_accept["routine_id"])
+                # A policy with no lifetime count has nothing to compare, so no history is read for it.
+                if "max_acceptances" in auto_accept:
+                    task_histories: Sequence[Optional[List[Dict[str, Any]]]] = (
+                        (
+                            await sess.execute(
+                                select(tasks.c.transitions).where(tasks.c.routine_id == auto_accept["routine_id"])
+                            )
                         )
+                        .scalars()
+                        .all()
                     )
-                    .scalars()
-                    .all()
-                )
-                project_histories: Sequence[Optional[List[Dict[str, Any]]]] = (
-                    (await sess.execute(select(table.c.transitions).where(table.c.id != project_id))).scalars().all()
-                )
-                if _acceptance_count(
-                    list(task_histories) + list(project_histories), auto_accept["routine_id"], auto_accept["policy"]
-                ) >= auto_accept.get("max_acceptances", float("inf")):
-                    raise ValueError("Routine acceptance limit reached")
+                    project_histories: Sequence[Optional[List[Dict[str, Any]]]] = (
+                        (await sess.execute(select(table.c.transitions).where(table.c.id != project_id)))
+                        .scalars()
+                        .all()
+                    )
+                    if (
+                        _acceptance_count(
+                            list(task_histories) + list(project_histories),
+                            auto_accept["routine_id"],
+                            auto_accept["policy"],
+                        )
+                        >= auto_accept["max_acceptances"]
+                    ):
+                        raise ValueError("Routine acceptance limit reached")
             row = (await sess.execute(stmt)).fetchone()
             if row is None:
                 return None
@@ -8452,23 +8461,26 @@ class AsyncPostgresDb(AsyncBaseDb):
                 await sess.run_sync(lock_child, products, projects, table, task_id)
                 if expected_updated_at is _UNSET_UPDATED_AT or products is None:
                     raise ValueError("Automatic acceptance requires expected_updated_at and a Product")
-                prior: Sequence[Optional[List[Dict[str, Any]]]] = (
-                    (
-                        await sess.execute(
-                            select(table.c.transitions).where(
-                                table.c.routine_id == auto_accept["routine_id"], table.c.id != task_id
+                # A policy with no lifetime count has nothing to compare, so no history is read for it.
+                if "max_acceptances" in auto_accept:
+                    prior: Sequence[Optional[List[Dict[str, Any]]]] = (
+                        (
+                            await sess.execute(
+                                select(table.c.transitions).where(
+                                    table.c.routine_id == auto_accept["routine_id"], table.c.id != task_id
+                                )
                             )
                         )
+                        .scalars()
+                        .all()
                     )
-                    .scalars()
-                    .all()
-                )
-                if projects is not None:
-                    prior = list(prior) + list((await sess.execute(select(projects.c.transitions))).scalars().all())
-                if _acceptance_count(prior, auto_accept["routine_id"], auto_accept["policy"]) >= auto_accept.get(
-                    "max_acceptances", float("inf")
-                ):
-                    raise ValueError("Routine acceptance limit reached")
+                    if projects is not None:
+                        prior = list(prior) + list((await sess.execute(select(projects.c.transitions))).scalars().all())
+                    if (
+                        _acceptance_count(prior, auto_accept["routine_id"], auto_accept["policy"])
+                        >= auto_accept["max_acceptances"]
+                    ):
+                        raise ValueError("Routine acceptance limit reached")
             else:
                 visible = (await sess.execute(stmt)).fetchone()
                 if visible is None:
