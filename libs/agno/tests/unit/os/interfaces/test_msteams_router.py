@@ -45,7 +45,7 @@ def test_attach_routes_requires_entity():
     router = APIRouter()
     with patch.dict(
         "os.environ",
-        {"MICROSOFT_APP_ID": "app", "MICROSOFT_APP_PASSWORD": "pw"},
+        {"MICROSOFT_APP_ID": "app", "MICROSOFT_APP_PASSWORD": "pw", "MICROSOFT_APP_TENANT_ID": "tenant"},
         clear=True,
     ):
         with pytest.raises(ValueError, match="agent, team, or workflow"):
@@ -161,7 +161,7 @@ def test_webhook_rejects_when_jwt_fails():
     router = APIRouter()
     with patch.dict(
         "os.environ",
-        {"MICROSOFT_APP_ID": "app-id", "MICROSOFT_APP_PASSWORD": "secret"},
+        {"MICROSOFT_APP_ID": "app-id", "MICROSOFT_APP_PASSWORD": "secret", "MICROSOFT_APP_TENANT_ID": "tenant"},
         clear=True,
     ):
         attach_routes(router, agent=_stub_agent_with_db())
@@ -340,7 +340,7 @@ def test_operation_ids_include_entity_name_suffix():
     router = APIRouter()
     with patch.dict(
         "os.environ",
-        {"MICROSOFT_APP_ID": "app", "MICROSOFT_APP_PASSWORD": "pw"},
+        {"MICROSOFT_APP_ID": "app", "MICROSOFT_APP_PASSWORD": "pw", "MICROSOFT_APP_TENANT_ID": "tenant"},
         clear=True,
     ):
         attach_routes(router, agent=stub)
@@ -355,7 +355,7 @@ def test_operation_ids_fall_back_to_entity_type_when_name_missing():
     router = APIRouter()
     with patch.dict(
         "os.environ",
-        {"MICROSOFT_APP_ID": "app", "MICROSOFT_APP_PASSWORD": "pw"},
+        {"MICROSOFT_APP_ID": "app", "MICROSOFT_APP_PASSWORD": "pw", "MICROSOFT_APP_TENANT_ID": "tenant"},
         clear=True,
     ):
         attach_routes(router, agent=stub)

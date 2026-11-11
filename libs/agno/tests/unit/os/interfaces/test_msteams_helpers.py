@@ -50,7 +50,11 @@ def test_config_init_from_env_vars():
 
 
 def test_config_init_arg_overrides_env():
-    with patch.dict("os.environ", {"MICROSOFT_APP_ID": "env-app", "MICROSOFT_APP_PASSWORD": "env-pwd"}, clear=True):
+    with patch.dict(
+        "os.environ",
+        {"MICROSOFT_APP_ID": "env-app", "MICROSOFT_APP_PASSWORD": "env-pwd", "MICROSOFT_APP_TENANT_ID": "tenant"},
+        clear=True,
+    ):
         cfg = MSTeamsConfig.init(app_id="arg-app")
     assert cfg.app_id == "arg-app"
 
@@ -87,10 +91,51 @@ def test_dev_bypass_allows_a_fully_credential_free_config():
     assert cfg.app_password == ""
 
 
-def test_config_defaults_to_botframework_tenant():
+def test_config_requires_explicit_tenant():
     with patch.dict("os.environ", {"MICROSOFT_APP_ID": "a", "MICROSOFT_APP_PASSWORD": "b"}, clear=True):
+        with pytest.raises(ValueError, match="MICROSOFT_APP_TENANT_ID"):
+            MSTeamsConfig.init()
+
+
+@pytest.mark.parametrize("from_env", [False, True])
+def test_config_strips_credentials_and_tenant(from_env):
+    values = {"app_id": " app ", "app_password": " secret ", "tenant_id": " tenant "}
+    env = (
+        {
+            "MICROSOFT_APP_ID": values["app_id"],
+            "MICROSOFT_APP_PASSWORD": values["app_password"],
+            "MICROSOFT_APP_TENANT_ID": values["tenant_id"],
+        }
+        if from_env
+        else {}
+    )
+    with patch.dict("os.environ", env, clear=True):
+        cfg = MSTeamsConfig.init(**({} if from_env else values))
+    assert (cfg.app_id, cfg.app_password, cfg.tenant_id) == ("app", "secret", "tenant")
+
+
+@pytest.mark.asyncio
+async def test_bypass_posts_without_auth_or_token_fetch(caplog):
+    import httpx
+
+    with patch.dict("os.environ", {"MICROSOFT_APP_SKIP_JWT_VALIDATION": "true"}, clear=True):
         cfg = MSTeamsConfig.init()
-    assert cfg.tenant_id == "botframework.com"
+    seen = []
+
+    async def post(self, url, headers, json):
+        seen.append(headers)
+        return httpx.Response(200, request=httpx.Request("POST", url), json={"id": "reply"})
+
+    with (
+        patch("httpx.AsyncClient.post", new=post),
+        patch("agno.os.interfaces.msteams.helpers._get_bot_token", new_callable=AsyncMock) as token,
+    ):
+        await _post_activity("https://svc", "personal", {"type": "message"}, cfg)
+        await _post_activity("https://svc", "personal", {"type": "message"}, cfg)
+    token.assert_not_called()
+    assert len(seen) == 2
+    assert all("Authorization" not in headers for headers in seen)
+    assert caplog.text.count("Bot Framework JWT check disabled") == 1
 
 
 def test_token_url_uses_tenant():
