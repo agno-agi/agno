@@ -12,6 +12,40 @@ from agno.db.utils import is_unique_violation
 from agno.scheduler import ScheduleManager
 
 
+async def _create_declared_routine(schedule_db: Any, fields: Any, owner: Optional[str], enabled: bool) -> Any:
+    """Insert a Routine that declares auto_accept, or return the Routine already stored under its name.
+
+    The insert carries the declared marker, so a Routine never exists with a policy and no grant. A
+    Routine that already exists is returned as it is: its grant belongs to whoever wrote it.
+    """
+    import time
+    from uuid import uuid4
+
+    from agno.company.manager import _routine_provenance
+    from agno.company.routines import _DECLARED
+    from agno.db.schemas.scheduler import Schedule
+    from agno.scheduler.cron import next_run_for
+
+    found = await _call(schedule_db, "get_schedule_by_name", fields["name"], user_id=owner)
+    if found is not None:
+        return Schedule.from_dict(found)
+    # No person wrote this policy. The marker says it runs as the deployment.
+    row = Schedule(
+        id=str(uuid4()),
+        user_id=owner,
+        name=fields["name"],
+        endpoint=fields["endpoint"],
+        payload={**fields["payload"], "_agno_company_acceptance": dict(_DECLARED)},
+        cron_expr=fields["cron"],
+        timezone=fields["timezone"],
+        enabled=enabled,
+        next_run_at=next_run_for(fields["cron"], fields["timezone"]),
+        created_at=int(time.time()),
+        **_routine_provenance(fields["endpoint"]),
+    )
+    return Schedule.from_dict(await _call(schedule_db, "create_schedule", row.to_dict()))
+
+
 async def arehydrate_product(
     db: Any,
     product: Product,
@@ -118,13 +152,17 @@ async def arehydrate_product(
             schedule = Schedule.from_dict(existing)
         else:
             try:
-                schedule = await schedules.acreate(
-                    **fields,
-                    user_id=routine_owner,
-                    if_exists="skip",
-                    enabled_on_create=routine.enabled,
-                    provenance=_routine_provenance(fields["endpoint"]),
-                )
+                if routine.auto_accept:
+                    # The schedule manager drops an acceptance grant from every payload it writes.
+                    schedule = await _create_declared_routine(schedule_db, fields, routine_owner, routine.enabled)
+                else:
+                    schedule = await schedules.acreate(
+                        **fields,
+                        user_id=routine_owner,
+                        if_exists="skip",
+                        enabled_on_create=routine.enabled,
+                        provenance=_routine_provenance(fields["endpoint"]),
+                    )
             except Exception as exc:
                 if not is_unique_violation(exc):
                     raise
@@ -132,13 +170,6 @@ async def arehydrate_product(
                 if existing is None:
                     raise
                 schedule = Schedule.from_dict(existing)
-            else:
-                if routine.auto_accept:
-                    # No person wrote this policy. The marker says it runs as the deployment.
-                    from agno.company.routines import _DECLARED
-
-                    payload = {**(schedule.payload or {}), "_agno_company_acceptance": dict(_DECLARED)}
-                    await _call(schedule_db, "update_schedule", schedule.id, payload=payload)
         if (
             schedule.managed_by != "company"
             or (schedule.payload or {}).get("metadata", {}).get("product_id") != product_id

@@ -611,6 +611,54 @@ def test_a_policy_with_limits_keeps_its_lifetime_count_and_gets_no_open_bound(sy
 # ----------------------------------------------------------------- the declared marker
 
 
+def test_a_declared_routine_and_its_marker_are_one_write(open_system, monkeypatch):
+    inserted = []
+    create = open_system.db.create_schedule
+    monkeypatch.setattr(open_system.db, "create_schedule", lambda row: inserted.append(row) or create(row))
+
+    def no_second_write(*args, **kwargs):
+        raise RuntimeError("the process stopped after the insert")
+
+    monkeypatch.setattr(open_system.db, "update_schedule", no_second_write)
+    product_id, routine_id = open_system.declare(auto_accept=True)
+    # The insert itself carries the marker, so no crash leaves a Routine with a policy and no grant.
+    assert [row["payload"]["_agno_company_acceptance"] for row in inserted] == [_DECLARED]
+    stored = open_system.db.get_schedule(routine_id)
+    assert stored["payload"]["metadata"]["auto_accept"] == AutoAccept().model_dump()
+    assert (stored["managed_by"], stored["target_type"], stored["target_id"]) == ("company", "agent", MINI_AGENT_ID)
+    assert stored["enabled"] and stored["user_id"] is None and stored["endpoint"] == f"/agents/{MINI_AGENT_ID}/runs"
+    monkeypatch.undo()
+    _, task = open_system.proposes(product_id, routine_id)
+    open_system.tick()
+    assert open_system.db.get_task(task["id"])["status"] == "in_progress"
+
+
+def test_a_declaration_never_touches_the_grant_of_a_routine_that_exists(system):
+    # A Product with no owner, and a Routine of it that alice created with her own policy and then archived.
+    declaration = Product(id="docs", name="Docs")
+    asyncio.run(arehydrate_product(system.db, declaration, system.os.registry, schedule_db=system.db, agent_os=system.os))
+    created = system.api_routine("docs", {"default_executor": "writer", "executors": ["writer"]})
+    assert created.status_code == 201, created.text
+    routine_id = created.json()["id"]
+    system.db.update_schedule(routine_id, user_id="alice")
+    archive = headers([*SCOPES, "routines:delete", "schedules:delete"])
+    archived = system.client.post(f"/company/routines/{routine_id}/archive", headers=archive)
+    assert archived.status_code == 200, archived.text
+    before = system.db.get_schedule(routine_id)
+    assert before["user_id"] == "alice" and before["payload"]["_agno_company_acceptance"]["user_id"] == "alice"
+
+    # The deployment then declares a Routine of that name with auto_accept, owned by alice.
+    routine = Routine(name="intake", instructions="Read the Sources and propose work.", auto_accept=True)
+    declaration = Product(id="docs", name="Docs", user_id="alice", routines=[routine])
+    asyncio.run(
+        arehydrate_product(
+            system.db, declaration, system.os.registry, schedule_db=system.db, agent_os=system.os, trusted=True
+        )
+    )
+    # The Routine that exists keeps its policy and its author's grant.
+    assert system.db.get_schedule(routine_id) == before
+
+
 def test_a_person_changing_a_declared_routine_replaces_the_declared_policy(open_system):
     product_id, routine_id = open_system.declare(auto_accept=True)
     _, task = open_system.proposes(product_id, routine_id)
