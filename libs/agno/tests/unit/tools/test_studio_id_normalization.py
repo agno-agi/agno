@@ -90,3 +90,41 @@ def test_a_missing_plain_id_or_name_gets_the_plain_message(studio, use_async):
     for sent in ("payroll", "Payroll Agent"):
         read = call(studio, "get_component", use_async, sent)
         assert read["error"]["message"] == "Component not found: " + sent
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("sent", ["tone-checker trouble", "tone-checker”,", "tone-checker ئ"])
+def test_a_stray_word_after_a_real_id_gets_a_did_you_mean(studio, sent, use_async):
+    # The lookup is not guessed. The error names the id the caller could have meant.
+    read = call(studio, "get_component", use_async, sent)
+    assert not read["ok"] and read["error"]["code"] == "component_not_found", read
+    assert "Did you mean 'tone-checker'? Send exactly that id." in read["error"]["message"]
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_an_edit_with_a_stray_word_changes_nothing(studio, use_async):
+    edited = call(studio, "edit_agent", use_async, "tone-checker trouble", instructions="Changed.")
+    assert not edited["ok"], edited
+    assert "Changed." not in json.dumps(call(studio, "get_component", use_async, "tone-checker")["data"])
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_no_hint_when_the_leading_text_is_not_a_component(studio, use_async):
+    read = call(studio, "get_component", use_async, "payroll trouble")
+    assert read["error"]["message"] == "Component not found: payroll trouble"
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_no_hint_for_a_component_the_caller_cannot_see(studio, use_async):
+    from agno.run.base import RunContext
+
+    alice = RunContext(run_id="run-a", session_id="sess-a", user_id="alice")
+    bob = RunContext(run_id="run-b", session_id="sess-b", user_id="bob")
+    created = json.loads(
+        studio.create_agent(name="Private Draft", instructions="Hello.", publish=False, _agno_run_context=alice)
+    )
+    assert created["ok"] and created["data"]["id"] == "private-draft", created
+    hidden = call(studio, "get_component", use_async, "private-draft trouble", _agno_run_context=bob)
+    assert hidden["error"]["message"] == "Component not found: private-draft trouble"
+    own = call(studio, "get_component", use_async, "private-draft trouble", _agno_run_context=alice)
+    assert "Did you mean 'private-draft'?" in own["error"]["message"]

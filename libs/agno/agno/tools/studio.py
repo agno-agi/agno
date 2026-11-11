@@ -1640,11 +1640,39 @@ class StudioTools(Toolkit):
             # catch an adapter that lacks the component catalog answers with a
             # raw traceback instead of the capability envelope.
             return None, None, self._error_from_exception(exc, "Failed to read component")
-        if row is None:
-            return None, None, error_result("component_not_found", _not_found(identifier))
-        if not self._visible_to(row, actor):
-            return None, None, error_result("component_not_found", _not_found(identifier))
+        if row is None or not self._visible_to(row, actor):
+            return (
+                None,
+                None,
+                error_result("component_not_found", _not_found(identifier) + self._meant(identifier, actor)),
+            )
         return row, resolved_id, None
+
+    def _meant(self, identifier: str, actor: Optional[str]) -> str:
+        """A hint when the text before stray characters is the id of a component the caller can see.
+
+        A model sometimes sends an id followed by a stray word. The lookup is not guessed; the error names
+        the id it could have meant. A component the caller cannot see is never named.
+        """
+        import re
+
+        leading = re.match(r"[A-Za-z0-9_.-]+", identifier)
+        if leading is None or leading.group(0) == identifier:
+            return ""
+        candidate = leading.group(0)
+        code_defined = any(
+            getattr(component, "id", None) == candidate
+            for components in (self._iter_agents(), self._iter_teams(), self._iter_workflows())
+            for component in components
+        )
+        if not code_defined:
+            try:
+                row = self.db.get_component(candidate) if self.db is not None else None
+            except NotImplementedError:
+                row = None
+            if row is None or not self._visible_to(row, actor):
+                return ""
+        return f" Did you mean {candidate!r}? Send exactly that id."
 
     @classmethod
     def _step_config_to_spec(cls, step: Dict[str, Any]) -> Dict[str, Any]:
