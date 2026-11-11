@@ -447,3 +447,23 @@ SQLite and with `COMPANY_DB=postgres`, with no model calls.
 **Result:** Offline configuration check passed. The combined 636-test regression suite also covers Company Routine authorization and restrictions.
 
 ---
+
+### 13_start_tasks_from_chat.py (2026-11-10)
+
+**Status:** PASS
+
+**Description:** Live run with `gpt-5.6-luna` for Super Agent, local PostgreSQL and the durable queue. A person accepts a Task with a 45 second Workflow executor; Super Agent is asked to start it, then asked its status and an unrelated question, then its status again after it finishes.
+
+**Result:** The start returned a receipt in 2.7s naming the Task and run. The status question answered "in progress, run Running" in 4.8s and the unrelated question in 1.7s, both while the Task ran. The Task reached In review with the executor's finding, its attempt recorded the chat session and run that requested it, and the final status answer reported "finished and waiting for review". A first run used `time.sleep` in the step, which blocks the event loop the in-process queue worker shares, so the status reply waited 48s; the step now awaits.
+
+---
+
+### 13_start_tasks_from_chat.py --serve (2026-11-10)
+
+**Status:** PASS
+
+**Description:** Served mode for the AgentOS UI: the same AgentOS on `localhost:7777` with a fixed schema, seeding one accepted Task once healthy. Driven over HTTP: read the printed Task id, asked Super Agent to start it, then read the Task. The scripted mode was rerun after the change.
+
+**Result:** The seeded Task id was printed after startup. "Start the task" returned the receipt with the run id, and the Task moved to in progress with the requesting session recorded in `requested_from`. The scripted rerun matched the earlier one: receipt 3.3s, status 4.6s and an unrelated answer 1.6s while the Task ran, then In review.
+
+---

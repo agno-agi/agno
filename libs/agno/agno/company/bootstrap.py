@@ -161,4 +161,9 @@ async def _company_lifespan(app: Any, agent_os: Any):
         await arehydrate_product(
             agent_os._company_db, product, agent_os.registry, schedule_db=agent_os.db, agent_os=agent_os
         )
-    yield
+    # Super Agent tools start Task runs through this app's executor route, as the HTTP API does.
+    agent_os._company_app = app
+    try:
+        yield
+    finally:
+        agent_os._company_app = None
