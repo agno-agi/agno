@@ -260,6 +260,13 @@ def _capture_metadata(step_input: StepInput, run_context: Optional[RunContext] =
     return StepOutput(content="captured")
 
 
+def _write_metadata(step_input: StepInput, run_context: Optional[RunContext] = None) -> StepOutput:
+    """A workflow step that writes to the metadata of its run."""
+    assert run_context is not None and run_context.metadata is not None
+    run_context.metadata["written_by_step"] = True
+    return StepOutput(content="written")
+
+
 @tool
 def read_metadata(run_context: Optional[RunContext] = None) -> str:
     """Records the metadata of the step agent's run."""
@@ -344,6 +351,26 @@ class TestWorkflowLineageSurvivesContinue:
         assert run2.status.value == "COMPLETED"
 
         assert _CAPTURED == [expected, expected]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+    async def test_a_step_metadata_write_on_a_continued_leg_reaches_the_stored_run(self, tmp_path, use_async):
+        # The run context and the stored run share one metadata dict on a fresh run, so a step's
+        # write is stored with the run. A continued leg has to keep that link.
+        def workflow(name: str, review: Optional[HumanReview]) -> Workflow:
+            db = SqliteDb(db_file=str(tmp_path / f"{name}.db"))
+            step = Step(name="write", executor=_write_metadata, human_review=review)
+            return Workflow(id="wf", name="WF", db=db, steps=[step], telemetry=False)
+
+        fresh = workflow("fresh", None)
+        fresh.run("go", session_id="s-wf", metadata={"tenant": "acme"})
+        stored = fresh.get_session(session_id="s-wf").runs[-1]
+        assert stored.metadata == {"tenant": "acme", "written_by_step": True}
+
+        paused = workflow("paused", HumanReview(requires_confirmation=True))
+        run2 = await _pause_then_resume_workflow(paused, use_async, False, {"tenant": "acme"})
+        assert run2.status.value == "COMPLETED"
+        assert run2.metadata == {"tenant": "acme", "written_by_step": True}
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("mode", ["never", "once"])
