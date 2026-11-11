@@ -428,13 +428,23 @@ def content_only(row):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stage", STAGES)
-async def test_title_and_brief_edit_at_every_stage_through_manager_and_storage(db, stage, monkeypatch):
+async def test_title_edits_at_every_stage_and_the_manager_edits_a_brief_only_in_backlog(db, stage, monkeypatch):
     m = manager(db)
     task, _ = await task_at(m, stage)
     monkeypatch.setattr(time, "time", lambda: 2_000_000_000)
-    edited = await call(m.update_task, task["id"], title="Retitled", brief="Rewritten")
-    assert (edited["title"], edited["brief"], edited["updated_at"]) == ("Retitled", "Rewritten", 2_000_000_000)
+    if stage == "backlog":
+        edited = await call(m.update_task, task["id"], title="Retitled", brief="Rewritten")
+        assert (edited["title"], edited["brief"], edited["updated_at"]) == ("Retitled", "Rewritten", 2_000_000_000)
+    else:
+        for fields in [{"brief": "Rewritten"}, {"brief": None}, {"title": "Retitled", "brief": "Rewritten"}]:
+            with pytest.raises(ValueError, match="^Accepted task scope requires a return to Backlog$"):
+                await call(m.update_task, task["id"], **fields)
+        assert await call(m.get_task, task["id"]) == task
+        # The stored brief sent with a new title is not a brief edit.
+        edited = await call(m.update_task, task["id"], title="Retitled", brief="Body")
+        assert (edited["title"], edited["brief"], edited["updated_at"]) == ("Retitled", "Body", 2_000_000_000)
     assert content_only(edited) == content_only(task)
+    # The store writes what it is given; the manager decides what an accepted Task accepts.
     for fields in [{"title": "Storage title"}, {"brief": "Storage brief"}, {"brief": None}]:
         direct = await call(db.update_task, task["id"], **fields)
         assert direct is not None and content_only(direct) == content_only(task)

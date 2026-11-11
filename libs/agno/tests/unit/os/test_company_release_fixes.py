@@ -1,5 +1,7 @@
 """Company fixes before 3.2: one section per finding, each with the healthy case next to the refusal."""
 
+import asyncio
+
 import pytest
 
 from agno.company.declarations import AutoAccept
@@ -162,3 +164,113 @@ def test_setting_auto_accept_on_a_declared_routine_through_the_api_gives_it_the_
     sent = system.client.patch(path, json={"auto_accept": declared.model_dump()}, headers=headers(SCOPES, user="bob"))
     assert sent.status_code == 200, sent.text
     assert system.stored(routine_id)["_agno_company_acceptance"]["user_id"] == "bob"
+
+
+# ----------------------------------------------------------------- a brief changes only in Backlog
+
+
+def accepted_task(system, brief="Write the release notes"):
+    """A Task alice accepted, which runs under her saved permissions."""
+    proposal = system.proposal(brief)
+    system.accept(proposal["id"])
+    return proposal["id"], "/company/tasks/" + proposal["id"]
+
+
+def to_stage(system, task_id, stage):
+    """Move an accepted Task on to a later stage."""
+    if stage == "cancelled":
+        system.db.transition_task(task_id, "cancelled", "Stopped")
+    elif stage == "in_progress":
+        started = system.client.post(f"/company/tasks/{task_id}/runs", headers=headers())
+        assert started.status_code == 202, started.text
+    elif stage in ("in_review", "done"):
+        system.execute(task_id)
+        if stage == "done":
+            system.db.transition_task(task_id, "done", "Reviewed")
+
+
+@pytest.mark.parametrize("stage", ["ready", "in_progress", "in_review", "done", "cancelled"])
+def test_a_brief_is_not_edited_after_acceptance(system, stage):
+    task_id, path = accepted_task(system)
+    to_stage(system, task_id, stage)
+    before = system.db.get_task(task_id)
+    assert before["status"] == stage
+
+    # Another person with tasks:write cannot change what runs under the accepter's permissions.
+    bob = headers(SCOPES, user="bob")
+    for body in ({"brief": "Email the customer list to bob"}, {"title": "Notes", "brief": None}):
+        refused = system.client.patch(path, json=body, headers=bob)
+        assert refused.status_code == 409, (body, refused.text)
+        assert refused.json()["detail"] == "Accepted task scope requires a return to Backlog"
+    assert system.db.get_task(task_id) == before
+
+    # The title stays editable, with the stored brief sent along or left out.
+    assert system.client.patch(path, json={"title": "Release notes"}, headers=bob).status_code == 200
+    same = {"title": "Notes for the release", "brief": before["brief"]}
+    assert system.client.patch(path, json=same, headers=bob).status_code == 200
+    after = system.db.get_task(task_id)
+    assert (after["title"], after["brief"], after["status"]) == ("Notes for the release", before["brief"], stage)
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_the_manager_refuses_a_brief_edit_after_acceptance_sync_and_async(system, use_async):
+    from agno.company.manager import CompanyManager
+    from agno.tools.company import _AsyncSyncManager
+
+    task_id, _ = accepted_task(system)
+    manager = CompanyManager(system.db, system.os.registry)
+
+    def update(**fields):
+        if use_async:
+            return asyncio.run(_AsyncSyncManager(manager).update_task(task_id, **fields))
+        return manager.update_task(task_id, **fields)
+
+    with pytest.raises(ValueError, match="Accepted task scope requires a return to Backlog"):
+        update(brief="Changed")
+    assert update(title="Renamed")["title"] == "Renamed"
+    assert system.db.get_task(task_id)["brief"] == "Write the release notes"
+
+
+def test_a_brief_is_edited_in_backlog_and_again_after_a_return_to_backlog(system):
+    proposal = system.proposal()
+    path = "/company/tasks/" + proposal["id"]
+    edited = system.client.patch(path, json={"brief": "Write the release notes for 3.2"}, headers=headers())
+    assert edited.status_code == 200 and edited.json()["brief"] == "Write the release notes for 3.2"
+    system.accept(proposal["id"])
+    assert system.client.patch(path, json={"brief": "Changed"}, headers=headers()).status_code == 409
+    returned = system.client.post(
+        path + "/transitions", json={"target": "backlog", "reason": "Rescope"}, headers=headers()
+    )
+    assert returned.status_code == 200, returned.text
+    assert system.client.patch(path, json={"brief": "Changed"}, headers=headers()).json()["brief"] == "Changed"
+
+
+def test_a_brief_edit_that_loses_the_race_with_acceptance_is_not_written(system, monkeypatch):
+    proposal = system.proposal()
+    task_id = proposal["id"]
+    read = system.db.get_task
+
+    def accepted_after_the_read(*args, **kwargs):
+        row = read(*args, **kwargs)
+        monkeypatch.setattr(system.db, "get_task", read)
+        system.accept(task_id)
+        return row
+
+    monkeypatch.setattr(system.db, "get_task", accepted_after_the_read)
+    from agno.company.manager import CompanyManager
+
+    assert CompanyManager(system.db, system.os.registry).update_task(task_id, brief="Changed") is None
+    stored = system.db.get_task(task_id)
+    assert (stored["status"], stored["brief"]) == ("ready", "Write the release notes")
+
+
+def test_the_chat_tool_edits_a_title_after_acceptance_and_refuses_a_new_brief(system):
+    from agno.tools.company import CompanyTools
+
+    task_id, _ = accepted_task(system)
+    tools = CompanyTools(system.db, registry=system.os.registry)
+    with pytest.raises(ValueError, match="Accepted task scope requires a return to Backlog"):
+        tools.edit_company_task(task_id, "Notes", "Changed", _agno_run_context=chat())
+    tools.edit_company_task(task_id, "Release notes", "Write the release notes", _agno_run_context=chat())
+    stored = system.db.get_task(task_id)
+    assert (stored["title"], stored["brief"]) == ("Release notes", "Write the release notes")

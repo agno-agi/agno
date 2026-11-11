@@ -152,10 +152,11 @@ read scope, matching Products. Edits and transitions are collaborative: callers 
 scope can update or transition another creator's work, even with user isolation
 enabled. This includes cancellation and returning Tasks to Backlog. The creator
 stays unchanged, and transition history records the acting caller. Ready still
-requires the caller's executor run permission; accepted Tasks keep their Project,
-evidence and executor until returned to Backlog, while title and brief stay
-editable at any stage (Company tools run by Routines and executors edit Backlog
-Tasks only). Delete and restore need the delete scope, not ownership.
+requires the caller's executor run permission; accepted Tasks keep their brief,
+Project, evidence and executor until returned to Backlog, because an accepted
+Task runs under its accepter's permissions. The title stays editable at any
+stage (Company tools run by Routines and executors edit Backlog Tasks only).
+Delete and restore need the delete scope, not ownership.
 New work can use another owner's Product or Project, with the Task and
 Project still required to belong to the same Product. Manager and storage
 methods retain explicit owner filters for direct callers.

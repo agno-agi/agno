@@ -860,7 +860,10 @@ class CompanyTools(Toolkit):
 
     @requires_permission()
     def edit_company_task(self, task_id: str, title: str, brief: str, _agno_run_context: Optional[Any] = None) -> str:
-        """Edit a Task's title and brief; automated runs only in Backlog. Never changes lifecycle, executor or ownership."""
+        """Edit a Task's title and brief. After acceptance only the title changes: pass the brief as stored.
+
+        Automated runs edit only in Backlog. Never changes lifecycle, executor or ownership.
+        """
         _permission("tasks", "write", _agno_run_context)
         manager = self._sync()
         row = manager.get_task(task_id)
@@ -1189,7 +1192,10 @@ class CompanyTools(Toolkit):
     async def aedit_company_task(
         self, task_id: str, title: str, brief: str, _agno_run_context: Optional[Any] = None
     ) -> str:
-        """Edit a Task's title and brief; automated runs only in Backlog. Never changes lifecycle, executor or ownership."""
+        """Edit a Task's title and brief. After acceptance only the title changes: pass the brief as stored.
+
+        Automated runs edit only in Backlog. Never changes lifecycle, executor or ownership.
+        """
         await _apermission("tasks", "write", _agno_run_context)
         manager = self._async()
         row = await manager.get_task(task_id)
