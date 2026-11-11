@@ -416,6 +416,50 @@ def test_attachment_notice_keeps_text_and_interface_cap(mime, content, notice):
     assert "files" not in entity.arun.call_args.kwargs
 
 
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("<at>Other</at> /new", "@Other /new"),
+        ("Display /new", "Display /new"),
+        ("<at>Bot</at> /new please", "Display /new please"),
+    ],
+)
+def test_non_commands_keep_mentions_and_reach_agent(text, expected):
+    from unittest.mock import AsyncMock
+
+    from agno.run.agent import RunOutput
+
+    entity = SimpleNamespace(
+        id="agent", name="Agent", db=None, arun=AsyncMock(return_value=RunOutput(run_id="run", content="hello"))
+    )
+    client, env = _build_test_client(agent=entity)
+    try:
+        with (
+            patch("agno.os.interfaces.msteams.router.typing_indicator_async", new_callable=AsyncMock),
+            patch("agno.os.interfaces.msteams.router.send_teams_message_async", new_callable=AsyncMock),
+        ):
+            response = client.post(
+                "/messages",
+                json={
+                    "type": "message",
+                    "text": text,
+                    "serviceUrl": "https://svc",
+                    "from": {"id": "u"},
+                    "conversation": {"id": "c", "conversationType": "groupChat"},
+                    "recipient": {"id": "bot", "name": "Display"},
+                    "entities": [
+                        {"type": "mention", "text": "<at>Bot</at>", "mentioned": {"id": "bot"}},
+                        {"type": "mention", "text": "<at>Other</at>", "mentioned": {"id": "other"}},
+                    ],
+                },
+            )
+        assert response.status_code == 200
+        entity.arun.assert_awaited_once()
+        assert entity.arun.call_args.args[0] == expected
+    finally:
+        env.stop()
+
+
 def test_mention_only_reaches_agent():
     from unittest.mock import AsyncMock
 
@@ -493,15 +537,18 @@ def test_paused_run_sends_only_approval_notice(kind, caplog):
 
 
 @pytest.mark.parametrize("kind", ["personal", "groupChat", "channel"])
-def test_conversation_scoped_reset_and_reference(tmp_path, kind):
+@pytest.mark.parametrize("reset_text", ["/new", "<at>Bot</at> /new", "  <at>Bot</at> \n /NeW  "])
+def test_conversation_scoped_reset_and_reference(tmp_path, kind, reset_text):
     from unittest.mock import AsyncMock
 
     db = SqliteDb(db_file=str(tmp_path / "scope.db"))
     seen = []
+    seen_text = []
 
     async def arun(text, **kwargs):
         sid = kwargs["session_id"]
         seen.append(sid)
+        seen_text.append(text)
         existing = db.get_session(session_id=sid, session_type=SessionType.AGENT)
         if existing is None:
             db.upsert_session(AgentSession(session_id=sid, agent_id="agent-1", user_id="user-1"))
@@ -522,8 +569,12 @@ def test_conversation_scoped_reset_and_reference(tmp_path, kind):
         "id": "act",
         "serviceUrl": "https://svc/",
         "from": {"id": "user-1"},
-        "recipient": {"id": "bot"},
-        "text": "hello",
+        "recipient": {"id": "bot", "name": "Display"},
+        "entities": [
+            {"type": "mention", "text": "<at>Bot</at>", "mentioned": {"id": "bot"}},
+            {"type": "mention", "text": "<at>Other</at>", "mentioned": {"id": "other"}},
+        ],
+        "text": "<at>Bot</at> hello <at>Other</at>",
     }
     own_conv = "thread;messageid=root" if kind == "channel" else kind
     try:
@@ -536,8 +587,10 @@ def test_conversation_scoped_reset_and_reference(tmp_path, kind):
                 assert client.post("/messages", json=activity).status_code == 200
             own_scope = f"msteams:agent-1:{own_conv}:user-1"
             assert seen == [own_scope, "msteams:agent-1:other:user-1", own_scope]
-            activity["text"] = "/new"
+            assert seen_text == ["Display hello @Other"] * 3
+            activity["text"] = reset_text
             assert client.post("/messages", json=activity).status_code == 200
+            assert len(seen) == 3, "A reset command must not invoke the entity"
             activity["text"] = "after reset"
             assert client.post("/messages", json=activity).status_code == 200
             assert seen[-1].startswith(own_scope + ":")

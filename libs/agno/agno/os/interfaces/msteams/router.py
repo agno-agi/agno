@@ -11,6 +11,7 @@ from agno.agent.remote import RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.os.interfaces.msteams.helpers import (
     MSTeamsConfig,
+    _clean_mention_text,
     build_conversation_ref,
     download_attachments_async,
     extract_activity_content,
@@ -186,7 +187,11 @@ def attach_routes(
                 return
 
             session_scope = f"msteams:{entity_id}:{conversation_id}:{user_id}"
-            if parsed.text.strip().lower() == "/new":
+            # Commands omit the addressing mention; model input keeps the bot's display name.
+            command_text = _clean_mention_text(
+                activity.get("text"), bot_identity, activity.get("entities"), strip_bot_mention=True
+            )
+            if command_text.lower() == "/new":
                 if not session_config.has_db:
                     await send_teams_message_async(
                         service_url,
