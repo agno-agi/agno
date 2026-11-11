@@ -72,6 +72,7 @@ dev = [
   "agno[postgres]",
   # First-party interfaces exercised by the unit suite
   "agno[slack]",
+  "agno[msteams]",
   "agno[agui]",
   "agno[a2a]",
   "agno[scheduler]",
@@ -257,6 +258,7 @@ a2a = ["a2a-sdk[http-server]>=1.2.2,<2"]
 
 # Dependencies for Slack integration
 slack = ["slack_sdk>=3.40.0", "aiohttp>=3.7.3,<4"]
+msteams = ["pyjwt[crypto]>=2.14.0"]
 
 # Dependencies for Embedders
 huggingface = [
@@ -433,6 +435,7 @@ tests = [
   "agno[pages]",
     "agno[a2a]",
     "agno[slack]",
+    "agno[msteams]",
     "agno[dev]",
     "agno[models]",
     "agno[tools]",

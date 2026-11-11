@@ -3,7 +3,7 @@
 AgentOS is a FastAPI-based runtime that turns agents, teams, workflows, and
 knowledge into roughly 80 REST endpoints and makes them available to the
 [AgentOS control plane](https://os.agno.com). The same runtime can also expose
-MCP, A2A, AG-UI, Slack, Telegram, and WhatsApp interfaces.
+MCP, A2A, AG-UI, Slack, Telegram, WhatsApp, and Microsoft Teams interfaces.
 
 ## Start here
 
@@ -58,6 +58,7 @@ surface.
 | [25_agentos_tools](./25_agentos_tools/) | Answer platform ops questions (usage, latency, tool statistics) with an agent using AgentOSTools. |
 | [26_authorization](./26_authorization/) | Replace the built-in scope check with managed roles, a user directory, an IdP, ReBAC, or your own provider. |
 | [28_compaction](./28_compaction/) | Keep long sessions inside the context window, and fold a session on demand over the `/compact` route. |
+| [32_msteams](./32_msteams/) | Serve Microsoft Teams agents, teams, and workflows with conversation-scoped sessions, inbound media, and personal-chat alerts. |
 
 ## Canonical ports
 
@@ -106,6 +107,7 @@ surface.
 | `25_agentos_tools` | `OPENAI_API_KEY` | Local SQLite with tracing enabled |
 | `26_authorization` | None for the local examples | Throwaway SQLite; `agno[os]`, and `agno[fga]` only to swap in a real OpenFGA |
 | `28_compaction` | `OPENAI_API_KEY` | `./cookbook/scripts/run_pgvector.sh`; AgentOS on 7777 for the REST script |
+| `32_msteams` | Required Microsoft app id, password, and tenant id; `OPENAI_API_KEY`; two credential sets for multiple instances | `agno[msteams]`, an Azure Bot registration, and a public HTTPS callback; live Teams checks require real credentials |
 
 Run cookbook files with `.venvs/demo/bin/python`. Development checks use
 `.venv`.
