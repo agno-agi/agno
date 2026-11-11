@@ -549,3 +549,21 @@ Two probes, run with the same setup and not part of the script:
 **Result:** Exit 0 and all assertions passed, in three runs; the third is on the policy that names executors by ID (`default_executor`, `executors`). The Routine run proposed the Project "Docs fixes" and one Task with evidence. The tick approved the Project and accepted the Task on agent `miniagent`, and each transition carries the Routine, the policy version, `declared`, and on the acceptance `executor_chosen_by: default`. Mini Agent did the Task itself with no run tools, and the Task stopped In review; a later tick left it there. Asked what the Routine decided without a person, Super Agent listed the approval and the acceptance. In the first run the brief asked for a file edit, which Mini Agent cannot make, and it reported that as a blocker; the Routine's instructions now ask for the corrected text as the deliverable, and the second run returned it.
 
 **Authorization on (`--authorization`), 2026-11-11:** PASS. The same declaration on a deployment that checks permissions, with one person signed in by a locally signed token. Asked what needs a decision, Super Agent answered that the `feedback-intake` Routine is waiting for a person to turn on its declared auto-accept policy. Asked to turn it on, the run paused on `turn_on_routine_auto_accept` with the Routine's name, the Product's name, the default executor and the Routine's ID. After one confirmation the Routine ran, the tick approved the Project and accepted the Task under that person's grant (no `declared` on the record), Mini Agent did the Task and it stopped In review. Exit 0 and all assertions passed. Both paths were rerun after the rebase onto the review fixes of the chat-decisions PR. The continue request logs `'_RoutineResultGuardrail' object is not callable`, which also happens without this change.
+
+---
+
+### 16_company_file_tree.py (2026-11-11)
+
+**Status:** PASS
+
+**Description:** No model call. SQLite in a temporary folder, `OSManager` and `CompanyConfig` on. The script makes the tool calls Super Agent would make: `save_company_page` creates `wiki/priorities.md` and adds a line to the Product's `brief.md`, `write_company_file` writes a Product page, a Task file and a note, and the list and search tools read them back. It then builds a Task's input and prints the files it loads.
+
+**Result:** Exit 0 and all assertions passed. A save against the version the person saw earlier was refused as changed. A wiki write through `write_company_file` was refused. The Task's input loaded the Product's `brief.md` and `status.md` and the three wiki pages, and did not contain the Product's `research.md`, the Task file or the note. The script calls `save_company_page` directly, so it does not show the pause; `tests/unit/os/test_company_file_tree.py` runs it through Super Agent and checks the pause, the confirmation contents and the refusal of a changed page.
+
+### 05_super_agent_company.py (2026-11-11, file tree)
+
+**Status:** PASS
+
+**Description:** Rerun after Super Agent's `update_product_status` was replaced by `write_company_file`. The status step now writes `products/<product-id>/status.md` through the file tree tools.
+
+**Result:** Exit 0 and all assertions passed. No model call.
