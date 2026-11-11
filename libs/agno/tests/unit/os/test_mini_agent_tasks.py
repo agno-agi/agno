@@ -500,7 +500,11 @@ def test_a_task_run_reads_and_reports_on_its_own_product_only(system, tmp_path):
             ),
             (
                 "update_product_status",
-                {"product_id": proposal["product_id"], "content": "Notes written", "expected_version": own.metadata.version},
+                {
+                    "product_id": proposal["product_id"],
+                    "content": "Notes written",
+                    "expected_version": own.metadata.version,
+                },
             ),
         ],
     )
@@ -881,7 +885,11 @@ def test_a_run_that_was_not_allowed_is_refused_and_one_that_failed_is_failed(sys
         missing = tools.run_agent("nobody", "Write the notes")
         system.writer.model.invoke = None
         crashed = tools.run_agent("writer", "Write the notes")
-    assert recorded("run_agent", {"agent_id": "nobody"}, missing) == {"type": "agent", "id": "nobody", "status": "FAILED"}
+    assert recorded("run_agent", {"agent_id": "nobody"}, missing) == {
+        "type": "agent",
+        "id": "nobody",
+        "status": "FAILED",
+    }
     assert recorded("run_agent", {"agent_id": "writer"}, crashed)["status"] in ("FAILED", "ERROR"), crashed
 
 

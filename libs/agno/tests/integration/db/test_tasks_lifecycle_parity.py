@@ -513,7 +513,9 @@ async def test_a_transition_applies_only_to_the_stage_and_run_the_caller_observe
     assert done["status"] == "done"
     # A second reviewer who observed the same review cannot send the finished Task back, even in the same second.
     executor = {"executor_type": "agent", "executor_id": "writer"}
-    assert await call(m.transition_task, task_id=task["id"], target="ready", reason="Redo", **executor, **observed) is None
+    assert (
+        await call(m.transition_task, task_id=task["id"], target="ready", reason="Redo", **executor, **observed) is None
+    )
     saved = await call(db.get_task, task["id"])
     assert (saved["status"], saved["transitions"][-1]["reason"]) == ("done", "Good")
 
