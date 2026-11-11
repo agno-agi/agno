@@ -783,6 +783,36 @@ def test_async_run_command_timeout():
         assert "1 seconds" in out
 
 
+def test_run_command_decodes_utf8_output(cp1252_subprocess_encoding):
+    """Command output is read as UTF-8, whatever the machine's default encoding is."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        # The closing quote is the UTF-8 bytes E2 80 9D, and cp1252 has no character for 9D.
+        out = ws.run_command(
+            [sys.executable, "-c", "import sys; sys.stdout.buffer.write('He said \\u201chi\\u201d'.encode('utf-8'))"]
+        )
+        assert out == "He said \u201chi\u201d"
+
+
+def test_run_command_reads_default_encoding_output_like_arun_command(cp1252_subprocess_encoding):
+    """Output in the machine's default encoding, as many Windows programs print, is read the same by both."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        # E9 is e-acute in cp1252 and is not valid UTF-8 on its own.
+        command = [sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'caf' + bytes([0xE9]))"]
+        assert ws.run_command(command) == asyncio.run(ws.arun_command(command)) == "caf\u00e9"
+
+
+def test_run_command_returns_output_that_is_not_valid_utf8_like_arun_command():
+    """A command whose output is not valid UTF-8 still returns it, as arun_command does."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        command = [sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'caf' + bytes([0xE9]))"]
+        out = ws.run_command(command)
+        assert not out.startswith("Error")
+        assert out == asyncio.run(ws.arun_command(command))
+
+
 # ------------------------------------------------------------------
 # Async siblings — spot-check parity with sync
 # ------------------------------------------------------------------

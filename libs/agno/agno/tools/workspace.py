@@ -38,6 +38,7 @@ from agno.tools import Toolkit
 from agno.tools._local_file_utils import DEFAULT_EXCLUDE_PATTERNS, EXEMPT_PREFIX, compile_exclude_patterns
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.path_safety import safe_join_relative_path
+from agno.utils.shell import decode_command_output, run_and_decode
 
 TEXT_EXTENSIONS = {
     # Markup and data
@@ -1043,13 +1044,7 @@ class Workspace(Toolkit):
         """
         try:
             log_info(f"run_command: {args}")
-            result = subprocess.run(
-                args,
-                capture_output=True,
-                text=True,
-                cwd=str(self.root),
-                timeout=timeout,
-            )
+            result = run_and_decode(args, cwd=str(self.root), timeout=timeout)
             if result.returncode != 0:
                 # tail=0 asks for no lines; [-0:] would return the whole output.
                 err = "\n".join(_strip_ansi(result.stderr).splitlines()[-tail:]) if tail > 0 else ""
@@ -1133,8 +1128,8 @@ class Workspace(Toolkit):
                 await proc.wait()
                 log_warning(f"arun_command timed out after {timeout}s: {args}")
                 return f"Error: command timed out after {timeout} seconds"
-            stdout = stdout_b.decode("utf-8", errors="replace") if stdout_b else ""
-            stderr = stderr_b.decode("utf-8", errors="replace") if stderr_b else ""
+            stdout = decode_command_output(stdout_b)
+            stderr = decode_command_output(stderr_b)
             if proc.returncode != 0:
                 err = "\n".join(_strip_ansi(stderr).splitlines()[-tail:]) if tail > 0 else ""
                 return f"Error (exit {proc.returncode}): {err}"

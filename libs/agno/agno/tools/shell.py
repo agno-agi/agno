@@ -3,6 +3,7 @@ from typing import List, Optional, Union
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info, log_warning
+from agno.utils.shell import run_and_decode
 
 
 class ShellTools(Toolkit):
@@ -48,16 +49,9 @@ class ShellTools(Toolkit):
         Returns:
             str: The output of the command.
         """
-        import subprocess
-
         try:
             log_info(f"Running shell command: {args}")
-            result = subprocess.run(
-                args,
-                capture_output=True,
-                text=True,
-                cwd=str(self.base_dir) if self.base_dir else None,
-            )
+            result = run_and_decode(args, cwd=str(self.base_dir) if self.base_dir else None)
             log_debug(f"Result: {result}")
             log_debug(f"Return code: {result.returncode}")
             if result.returncode != 0:

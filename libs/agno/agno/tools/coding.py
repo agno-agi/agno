@@ -10,6 +10,7 @@ from agno.exceptions import PathSecurityError
 from agno.tools import Toolkit
 from agno.utils.log import log_error, log_info, logger
 from agno.utils.path_safety import safe_join_relative_path
+from agno.utils.shell import run_and_decode
 
 
 @functools.lru_cache(maxsize=None)
@@ -625,14 +626,7 @@ class CodingTools(Toolkit):
                 args = command
                 use_shell = True
 
-            result = subprocess.run(
-                args,
-                shell=use_shell,
-                capture_output=True,
-                text=True,
-                timeout=effective_timeout,
-                cwd=str(self.base_dir),
-            )
+            result = run_and_decode(args, shell=use_shell, timeout=effective_timeout, cwd=str(self.base_dir))
 
             # Combine stdout and stderr
             output = result.stdout
@@ -645,9 +639,10 @@ class CodingTools(Toolkit):
             truncated_output, was_truncated, total_lines = self._truncate_output(output)
 
             if was_truncated:
-                # Save full output to temp file
+                # Save full output to temp file, as UTF-8 so read_file reads back what was written
                 tmp = tempfile.NamedTemporaryFile(
                     mode="w",
+                    encoding="utf-8",
                     delete=False,
                     suffix=".txt",
                     prefix="coding_tools_",
@@ -718,13 +713,7 @@ class CodingTools(Toolkit):
             cmd.append(pattern)
             cmd.append(str(resolved_path))
 
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=30,
-                cwd=str(self.base_dir),
-            )
+            result = run_and_decode(cmd, timeout=30, cwd=str(self.base_dir))
 
             output = result.stdout
             if not output:

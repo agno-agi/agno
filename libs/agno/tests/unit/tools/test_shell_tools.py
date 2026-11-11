@@ -59,3 +59,23 @@ def test_utils_shell_zero_tail_returns_empty():
         [sys.executable, "-c", "import sys; sys.stdout.write(chr(97) + chr(10) + chr(98) + chr(10) + chr(99))"], tail=0
     )
     assert out == ""
+
+
+def test_run_shell_command_decodes_utf8_output(cp1252_subprocess_encoding):
+    """Command output is read as UTF-8, whatever the machine's default encoding is."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tools = ShellTools(base_dir=tmp_dir)
+        # The closing quote is the UTF-8 bytes E2 80 9D, and cp1252 has no character for 9D.
+        out = tools.run_shell_command(
+            [sys.executable, "-c", "import sys; sys.stdout.buffer.write('He said \\u201chi\\u201d'.encode('utf-8'))"]
+        )
+        assert out == "He said \u201chi\u201d"
+
+
+def test_utils_shell_decodes_utf8_output(cp1252_subprocess_encoding):
+    from agno.utils.shell import run_shell_command as util_run_shell_command
+
+    out = util_run_shell_command(
+        [sys.executable, "-c", "import sys; sys.stdout.buffer.write('He said \\u201chi\\u201d'.encode('utf-8'))"]
+    )
+    assert out == "He said \u201chi\u201d"

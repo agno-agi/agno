@@ -1,5 +1,7 @@
 """Shared isolation for the unit suite."""
 
+import locale
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -23,6 +25,22 @@ def cp1252_default_encoding(monkeypatch):
 
     monkeypatch.setattr(Path, "read_text", read_text_cp1252)
     monkeypatch.setattr(Path, "write_text", write_text_cp1252)
+
+
+@pytest.fixture
+def cp1252_subprocess_encoding(monkeypatch):
+    """Run the test as if on a Windows machine whose default text encoding is cp1252: the locale
+    reports cp1252, and a subprocess.run call that asks for text without naming an encoding
+    decodes the command's output as cp1252."""
+    run = subprocess.run
+
+    def run_cp1252(*args, **kwargs):
+        if kwargs.get("text") and kwargs.get("encoding") is None:
+            kwargs["encoding"] = "cp1252"
+        return run(*args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", run_cp1252)
+    monkeypatch.setattr(locale, "getpreferredencoding", lambda do_setlocale=True: "cp1252")
 
 
 @pytest.fixture(autouse=True)

@@ -3,7 +3,6 @@
 import os
 import platform
 import stat
-import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,6 +10,7 @@ from typing import List, Optional
 
 from agno.exceptions import PathSecurityError
 from agno.utils.path_safety import safe_join_relative_path
+from agno.utils.shell import run_and_decode
 
 
 def is_safe_path(base_dir: Path, requested_path: str) -> bool:
@@ -162,13 +162,7 @@ def run_script(
         ensure_executable(script_path)
         cmd = [str(script_path), *(args or [])]
 
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        cwd=cwd,
-    )
+    result = run_and_decode(cmd, timeout=timeout, cwd=cwd)
 
     return ScriptResult(
         stdout=result.stdout,

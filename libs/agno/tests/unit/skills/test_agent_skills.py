@@ -598,6 +598,25 @@ def test_skill_script_execute_captures_stderr(temp_skill_dir: Path) -> None:
     assert "error message" in result["stderr"]
 
 
+def test_skill_script_execute_decodes_utf8_output(temp_skill_dir: Path, cp1252_subprocess_encoding) -> None:
+    """Script output is read as UTF-8, whatever the machine's default encoding is."""
+    scripts_dir = temp_skill_dir / "scripts"
+    test_script = scripts_dir / "utf8_output.py"
+    # The closing quote is the UTF-8 bytes E2 80 9D, and cp1252 has no character for 9D.
+    test_script.write_text(
+        "#!/usr/bin/env python3\nimport sys; sys.stdout.buffer.write('He said \\u201chi\\u201d'.encode('utf-8'))"
+    )
+
+    loader = LocalSkills(str(temp_skill_dir))
+    skills = Skills(loaders=[loader])
+
+    result_json = skills._get_skill_script("test-skill", "utf8_output.py", execute=True)
+    result = json.loads(result_json)
+
+    assert "error" not in result
+    assert result["stdout"] == "He said \u201chi\u201d"
+
+
 def test_skill_script_execute_nonzero_exit(temp_skill_dir: Path) -> None:
     """Test script with non-zero exit code."""
     scripts_dir = temp_skill_dir / "scripts"

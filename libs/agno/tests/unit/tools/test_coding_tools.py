@@ -1,3 +1,4 @@
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -304,6 +305,49 @@ def test_run_shell_stderr():
         assert "err" in result
 
 
+def test_run_shell_decodes_utf8_output(cp1252_subprocess_encoding):
+    """Command output is read as UTF-8, whatever the machine's default encoding is."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir, restrict_to_base_dir=False)
+
+        # The closing quote is the UTF-8 bytes E2 80 9D, and cp1252 has no character for 9D.
+        (base_dir / "say.py").write_text(
+            "import sys\nsys.stdout.buffer.write('He said \\u201chi\\u201d'.encode('utf-8'))\n"
+        )
+
+        result = tools.run_shell(f'"{sys.executable}" say.py')
+        assert "Exit code: 0" in result
+        assert "He said \u201chi\u201d" in result
+
+
+def test_run_shell_saves_truncated_output_as_utf8(cp1252_subprocess_encoding, monkeypatch):
+    """The full output saved for a truncated result is UTF-8, the encoding read_file reads it with."""
+    named_temporary_file = tempfile.NamedTemporaryFile
+
+    def named_temporary_file_cp1252(*args, **kwargs):
+        # As on a cp1252 machine: a text-mode temp file that names no encoding is written as cp1252.
+        if "b" not in kwargs.get("mode", "w+b") and kwargs.get("encoding") is None:
+            kwargs["encoding"] = "cp1252"
+        return named_temporary_file(*args, **kwargs)
+
+    monkeypatch.setattr(tempfile, "NamedTemporaryFile", named_temporary_file_cp1252)
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir, max_lines=2, restrict_to_base_dir=False)
+
+        # cp1252 cannot decode the closing quote's bytes, and has no character for the check mark.
+        (base_dir / "say.py").write_text(
+            "import sys\nsys.stdout.buffer.write('one\\ntwo\\nthree \\u2713 \\u201d\\n'.encode('utf-8'))\n"
+        )
+
+        result = tools.run_shell(f'"{sys.executable}" say.py')
+        assert "Full output saved to: " in result
+        saved_path = result.split("Full output saved to: ")[1].rstrip("]")
+        assert "three \u2713 \u201d" in Path(saved_path).read_text(encoding="utf-8")
+
+
 # --- grep tests ---
 
 
@@ -356,6 +400,20 @@ def test_grep_no_matches():
 
         result = tools.grep("nonexistent_pattern_xyz")
         assert "No matches" in result
+
+
+@pytest.mark.skipif(shutil.which("grep") is None, reason="grep is not installed")
+def test_grep_decodes_utf8_matches(cp1252_subprocess_encoding):
+    """A matching line is read as UTF-8, whatever the machine's default encoding is."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir, enable_grep=True)
+
+        # The closing quote is the UTF-8 bytes E2 80 9D, and cp1252 has no character for 9D.
+        (base_dir / "notes.txt").write_text("He said \u201chi\u201d\n", encoding="utf-8")
+
+        result = tools.grep("said")
+        assert "He said \u201chi\u201d" in result
 
 
 def test_grep_path_escape():
