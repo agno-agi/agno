@@ -8,7 +8,7 @@ import tempfile
 from contextlib import suppress
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence, Tuple
 from uuid import uuid4
 
 from agno.sandbox.agentcore.sandbox import AgentCoreSandbox, _Refusal
@@ -185,3 +185,46 @@ class AgentCoreCheckpointTransfer:
 
     def restore(self, handle: SandboxHandle, reference: CheckpointRef) -> Mapping[str, Any]:
         return _sync(self.arestore(handle, reference))
+
+    async def aresume(
+        self,
+        session_id: str,
+        reference: CheckpointRef,
+        *,
+        agent_id: Optional[str] = None,
+        generation: int = 1,
+        env: Optional[Mapping[str, str]] = None,
+    ) -> Tuple[SandboxHandle, Mapping[str, Any]]:
+        """Bring an ended generation back from the copy of its checkpoint kept on
+        AgentCore session storage, without moving the checkpoint from the store.
+
+        Needs a runtime deployed with session storage at ``/mnt/agno``; every
+        capture then keeps a copy there. ``reference`` must be the generation's
+        latest checkpoint, and only a copy with its exact SHA-256 and size is
+        restored, so agent code that rewrote the copy can only make this fail.
+        The copy is lost when the runtime is updated.
+
+        Returns a handle with a new incarnation, so handles to the ended microVM
+        stay refused, and the restored state. Raises ``SandboxError`` when there is
+        no matching copy, the generation is still running, or the restore fails;
+        the caller then restores from the store into a new generation as usual.
+        """
+        return await self.provider._aresume(
+            session_id,
+            agent_id=agent_id,
+            generation=generation,
+            env=env,
+            reference=reference,
+            limits=asdict(self.archive.limits),
+        )
+
+    def resume(
+        self,
+        session_id: str,
+        reference: CheckpointRef,
+        *,
+        agent_id: Optional[str] = None,
+        generation: int = 1,
+        env: Optional[Mapping[str, str]] = None,
+    ) -> Tuple[SandboxHandle, Mapping[str, Any]]:
+        return _sync(self.aresume(session_id, reference, agent_id=agent_id, generation=generation, env=env))

@@ -1,8 +1,10 @@
 """Deploy or remove an AgentCore Runtime for sandbox sessions. This creates AWS resources.
 
 Builds the ARM64 sandbox image from the Dockerfile, pushes it to an ECR
-repository, creates an execution role and a PUBLIC runtime without session
-storage, then prints the runtime ARN to pass as the sandbox image.
+repository, creates an execution role and a PUBLIC runtime, then prints the
+runtime ARN to pass as the sandbox image. --session-storage mounts AgentCore
+session storage at /mnt/agno, so an ended session can resume from the copy of
+its last checkpoint kept there.
 
   .venv/bin/python cookbook/frameworks/sandbox/agentcore/agentcore_setup.py deploy --name agno-sandbox
   .venv/bin/python cookbook/frameworks/sandbox/agentcore/agentcore_setup.py teardown --name agno-sandbox
@@ -144,9 +146,11 @@ def create_role(
     return role
 
 
-def deploy_runtime(control: Any, name: str, image: str, role: str) -> str:
+def deploy_runtime(
+    control: Any, name: str, image: str, role: str, session_storage: bool
+) -> str:
     runtime_name = name.replace("-", "_")
-    config = dict(
+    config: Dict[str, Any] = dict(
         agentRuntimeArtifact={"containerConfiguration": {"containerUri": image}},
         roleArn=role,
         networkConfiguration={"networkMode": "PUBLIC"},
@@ -156,6 +160,12 @@ def deploy_runtime(control: Any, name: str, image: str, role: str) -> str:
             "maxLifetime": MAX_LIFETIME,
         },
     )
+    if session_storage:
+        # Each capture keeps a copy of its checkpoint here, and
+        # AgentCoreCheckpointTransfer.aresume restores an ended session from it.
+        config["filesystemConfigurations"] = [
+            {"sessionStorage": {"mountPath": "/mnt/agno"}}
+        ]
     existing = [
         r
         for r in control.list_agent_runtimes()["agentRuntimes"]
@@ -195,6 +205,7 @@ def deploy(
     repository_name: Optional[str],
     role_arn: Optional[str],
     skip_build: bool,
+    session_storage: bool,
 ) -> None:
     region = session.region_name
     account = session.client("sts").get_caller_identity()["Account"]
@@ -208,7 +219,7 @@ def deploy(
     if not skip_build:
         build_and_push(ecr, image)
     role = role_arn or create_role(iam, name, account, region, repository)
-    print("Runtime ARN:", deploy_runtime(control, name, image, role))
+    print("Runtime ARN:", deploy_runtime(control, name, image, role, session_storage))
     print(
         f"Runtime maxLifetime: {MAX_LIFETIME} s, idle timeout: {IDLE_TIMEOUT} s."
         f" Keep AgentCoreSandbox(lifetime=...) at or below {MAX_LIFETIME}."
@@ -261,6 +272,11 @@ def main() -> None:
         action="store_true",
         help="Deploy the image already pushed with --tag",
     )
+    parser.add_argument(
+        "--session-storage",
+        action="store_true",
+        help="Mount session storage at /mnt/agno so ended sessions can resume from it",
+    )
     args = parser.parse_args()
     if args.skip_build and not args.tag:
         parser.error("--skip-build needs the --tag of an image already pushed")
@@ -273,6 +289,7 @@ def main() -> None:
             args.repository,
             args.role_arn,
             args.skip_build,
+            args.session_storage,
         )
     else:
         teardown(session, args.name, bool(args.repository), bool(args.role_arn))
