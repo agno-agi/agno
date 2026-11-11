@@ -157,7 +157,7 @@ def test_status_endpoint_reports_available():
 
 
 def test_webhook_rejects_when_jwt_fails():
-    """Enforced before the body is parsed."""
+    """A parsed activity cannot start background work without a valid token."""
     router = APIRouter()
     with patch.dict(
         "os.environ",

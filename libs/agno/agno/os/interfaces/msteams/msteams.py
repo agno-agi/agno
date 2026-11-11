@@ -1,6 +1,6 @@
 import asyncio
 import json
-from typing import List, Optional, Union
+from typing import List, Optional, Union, cast
 
 from fastapi.routing import APIRouter
 
@@ -119,7 +119,7 @@ class MSTeams(BaseInterface):
                 else:
                     result = db.get_sessions(**session_filter, page=page)  # type: ignore[arg-type]
                 sessions, total = result if isinstance(result, tuple) else (result, len(result))
-                for session in sessions:
+                for session in cast(List[dict], sessions):
                     data = session.get("session_data")
                     if isinstance(data, str):
                         data = json.loads(data)

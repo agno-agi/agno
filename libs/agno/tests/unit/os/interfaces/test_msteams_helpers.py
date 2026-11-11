@@ -871,13 +871,15 @@ async def test_attachment_type_resolution(mime, name, field):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("status", [403, None])
+@pytest.mark.parametrize("status", [403, None, "invalid-url"])
 async def test_failed_download_logs_no_url_or_exception_text(status, caplog):
     import httpx
 
     url = "https://example.com/report.pdf?tempauth=SECRET123"
 
     def handle(request):
+        if status == "invalid-url":
+            raise httpx.InvalidURL(f"Invalid URL: {url}")
         if status:
             return httpx.Response(status)
         raise httpx.ReadError(f"Failed at {url}", request=request)
@@ -890,8 +892,9 @@ async def test_failed_download_logs_no_url_or_exception_text(status, caplog):
     assert kwargs == {}
     assert skipped == ["report.pdf"]
     assert "report.pdf" in caplog.text
-    assert "HTTPStatusError" in caplog.text if status else "ReadError" in caplog.text
-    if status:
+    error_class = "InvalidURL" if status == "invalid-url" else "HTTPStatusError" if status else "ReadError"
+    assert error_class in caplog.text
+    if status == 403:
         assert "403" in caplog.text
     assert url not in caplog.text
     assert "SECRET123" not in caplog.text

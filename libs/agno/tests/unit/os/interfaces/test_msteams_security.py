@@ -1,8 +1,9 @@
+import asyncio
 import json
 import threading
 import time
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import MagicMock, patch
 
 import jwt
 import pytest
@@ -40,9 +41,9 @@ def _token(key, claims, kid="test-kid"):
 def jwks(signing_key, monkeypatch):
     key = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(signing_key.public_key()))
     key.update(kid="test-kid", use="sig", endorsements=["msteams"])
-    monkeypatch.setattr(security, "_jwk_client", None, raising=False)
+    monkeypatch.setattr(security, "_jwk_client", security._BotFrameworkJWKClient(security._OPENID_METADATA_URL))
     monkeypatch.setattr(
-        security, "_fetch_openid_metadata", AsyncMock(return_value={"jwks_uri": "https://example.com/keys"})
+        security, "_fetch_openid_metadata", MagicMock(return_value={"jwks_uri": "https://example.com/keys"})
     )
 
     # Stub the network fetch, not token decoding or the subclass's endorsement capture.
@@ -66,7 +67,7 @@ async def test_valid_signature_returns_claims(signing_key, claims, jwks):
     for _ in range(2):
         assert await security.validate_bot_framework_jwt(f"bearer {token}", APP_ID, SERVICE_URL, "msteams") == claims
     jwks[1].assert_called_once()
-    security._fetch_openid_metadata.assert_awaited_once()
+    security._fetch_openid_metadata.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -160,7 +161,27 @@ async def test_unknown_kids_use_client_cooldown(signing_key, claims, jwks):
             is None
         )
     assert fetch.call_count == 1
-    security._fetch_openid_metadata.assert_awaited_once()
+    security._fetch_openid_metadata.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_first_requests_discover_metadata_once(signing_key, claims, jwks):
+    metadata = security._fetch_openid_metadata
+
+    def discover():
+        assert threading.get_ident() != main_thread
+        return {"jwks_uri": "https://example.com/keys"}
+
+    main_thread = threading.get_ident()
+
+    metadata.side_effect = discover
+    token = _token(signing_key, claims)
+    results = await asyncio.gather(
+        *(security.validate_bot_framework_jwt(f"Bearer {token}", APP_ID, SERVICE_URL, "msteams") for _ in range(2))
+    )
+    assert results == [claims, claims]
+    assert metadata.call_count == 1
+    jwks[1].assert_called_once()
 
 
 @pytest.mark.asyncio
