@@ -519,6 +519,11 @@ async def _project_run(worker: Any, job: Dict[str, Any], status: str, error: Opt
         "content": error or ("Run cancelled" if status == "cancelled" else None),
     }
     checkout = None
+    if status != "completed":
+        # A run that failed or was cancelled may already have started components.
+        invoked = _invoked_components(await _unfinished_run(worker, job))
+        if invoked:
+            result["invoked"] = invoked
     if status == "completed":
         component = await worker._aresolve_job_component(job)
         if component is None:
@@ -543,6 +548,21 @@ async def _project_run(worker: Any, job: Dict[str, Any], status: str, error: Opt
         expected_transitions=task["transitions"],
         **({"checkout": checkout} if checkout is not None else {}),
     )
+
+
+async def _unfinished_run(worker: Any, job: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The saved run of a failed or cancelled attempt, or None when it saved none or cannot be read."""
+    try:
+        component = await worker._aresolve_job_component(job)
+        if component is None:
+            return None
+        output = await component.aget_run_output(job["id"], job["session_id"], user_id=job.get("user_id"))
+        return None if output is None else output.to_dict()
+    except Exception as exc:
+        from agno.utils.log import log_error
+
+        log_error(f"Failed to read run {job['id']} for the components it started; saving its result: {exc}")
+        return None
 
 
 async def _project_run_before_settle(
@@ -645,7 +665,15 @@ _NOT_ALLOWED = ("Permission required", "The policy that accepted this Task does 
 def _invoked_components(run: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """The agents, teams and workflows a run started through the run tools, in call order."""
     invoked: List[Dict[str, Any]] = []
-    for tool in (run or {}).get("tools") or []:
+    calls = (run or {}).get("tools")
+    if not calls:
+        # A run that failed saves no tool list. Its own tool messages hold the same calls.
+        calls = [
+            {**message, "result": message.get("content")}
+            for message in (run or {}).get("messages") or []
+            if message.get("role") == "tool" and not message.get("from_history")
+        ]
+    for tool in calls:
         kind = _RUN_TOOLS.get(tool.get("tool_name"))
         if kind is None:
             continue

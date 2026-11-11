@@ -34,9 +34,18 @@ def _same_name(given: Any, stored: Any) -> bool:
 
 
 def _same_version(given: Any, stored: Any) -> bool:
-    """Whether the updated_at the person confirmed is the Task's. A Task never edited has none."""
+    """Whether the updated_at the person confirmed is the record's. A Task never edited has none."""
     given = None if given in (None, "", "null") else str(given)
     return given == (None if stored is None else str(stored))
+
+
+def _user_isolation(agent_os: Any) -> bool:
+    """Whether per-user isolation is on, set on AgentOS or on its AuthorizationConfig."""
+    config = getattr(agent_os, "authorization_config", None)
+    return bool(
+        getattr(agent_os, "user_isolation", False)
+        or (getattr(agent_os, "authorization", False) and config is not None and config.user_isolation)
+    )
 
 
 def _refusal(authority: Any) -> Optional[str]:
@@ -101,7 +110,7 @@ class CompanyTaskTools(Toolkit):
         refusal = _refusal(authority)
         if refusal is not None:
             return refusal
-        if getattr(agent_os, "user_isolation", False) and not user_id:
+        if _user_isolation(agent_os) and not user_id:
             return "A signed-in person is required to start a Task."
 
         starter = _TaskStarter(agent_os)
@@ -215,7 +224,7 @@ class CompanyTaskTools(Toolkit):
 
         _require_human_creation(run_context, "decide Company work")
         authority, user_id = _run_context_identity(run_context)
-        if getattr(agent_os, "user_isolation", False) and not user_id:
+        if _user_isolation(agent_os) and not user_id:
             raise PermissionError("A signed-in person is required to decide Company work")
         return authority, user_id
 
@@ -236,21 +245,22 @@ class CompanyTaskTools(Toolkit):
             return "Not done: the configured database does not support Company work."
 
     def approve_company_project(
-        self, project_name: str, project_id: str, _agno_run_context: Optional[Any] = None
+        self, project_name: str, project_id: str, updated_at: Optional[int], _agno_run_context: Optional[Any] = None
     ) -> str:
         """Approve a proposed Company Project. The run pauses for the person to confirm.
 
         Args:
             project_name: The Project's name, as stored.
             project_id: The proposed Project to approve.
+            updated_at: The Project's updated_at as the person saw it.
         """
         return "Approving a Project needs an asynchronous run. Approve it from AgentOS instead."
 
     async def aapprove_company_project(
-        self, project_name: str, project_id: str, _agno_run_context: Optional[Any] = None
+        self, project_name: str, project_id: str, updated_at: Optional[int], _agno_run_context: Optional[Any] = None
     ) -> str:
         """Approve a proposed Company Project. It becomes active. The run pauses for the person to
-        confirm the Project by name and ID.
+        confirm the Project by name, ID and version.
 
         Call this only when the person asked, in this conversation, to approve this Project. A request
         to plan, list or summarize work is not a request to approve it. The person who confirms is
@@ -259,6 +269,8 @@ class CompanyTaskTools(Toolkit):
         Args:
             project_name: The Project's name, as stored. The person confirms this name.
             project_id: The proposed Project to approve.
+            updated_at: The Project's updated_at as the person saw it. A Project edited after that is
+                not approved: show it again first.
         """
         from dataclasses import replace
 
@@ -278,6 +290,11 @@ class CompanyTaskTools(Toolkit):
                 return f"Not done: Project {project_id} is named '{project['name']}'. Call again with that name."
             if project["status"] != "proposed":
                 return f"'{project['name']}' is {project['status']}; only a proposed Project can be approved."
+            if not _same_version(updated_at, project["updated_at"]):
+                return (
+                    f"Not done: '{project['name']}' (Project {project_id}) changed since the person saw it. "
+                    "Show it to them again, then call with its updated_at."
+                )
             saved = replace(authority, enforce_tools=False) if authority is not None else None
             with authorization_scope(lambda: saved):
                 record = await _manager_call(
@@ -426,6 +443,8 @@ class CompanyTaskTools(Toolkit):
         reason: str,
         task_id: str,
         reviewed_run_id: str,
+        executor_type: Optional[str] = None,
+        executor_id: Optional[str] = None,
         _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Complete a Company Task in review, or send it back. The run pauses for the person to confirm.
@@ -436,6 +455,8 @@ class CompanyTaskTools(Toolkit):
             reason: The person's reason, in their words.
             task_id: The Task in review.
             reviewed_run_id: The run_id returned by get_company_task_status for the result being reviewed.
+            executor_type: agent, when a Task sent back names no executor.
+            executor_id: miniagent, when a Task sent back names no executor.
         """
         return "Reviewing a Task needs an asynchronous run. Review it from AgentOS instead."
 
@@ -446,6 +467,8 @@ class CompanyTaskTools(Toolkit):
         reason: str,
         task_id: str,
         reviewed_run_id: str,
+        executor_type: Optional[str] = None,
+        executor_id: Optional[str] = None,
         _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Complete a Company Task in review, or send it back. The run pauses for the person to confirm
@@ -454,7 +477,8 @@ class CompanyTaskTools(Toolkit):
         Call this only when the person asked, in this conversation, to complete this Task or send it
         back. Show them the saved result first when they have not seen it. complete moves the Task to
         Done. send_back returns it to Ready with the same executor; the reason is given to the executor
-        on its next attempt, which starts when the person asks, with start_company_task.
+        on its next attempt, which starts when the person asks, with start_company_task. A Task that
+        names no executor is sent back to Mini Agent: pass agent and miniagent, so the person confirms it.
 
         Args:
             task_title: The Task's title, as stored. The person confirms this title.
@@ -462,11 +486,14 @@ class CompanyTaskTools(Toolkit):
             reason: The person's reason, in their words. Required to send a Task back.
             task_id: The Task in review.
             reviewed_run_id: The run_id returned by get_company_task_status for the result being reviewed.
+            executor_type: Leave null. Pass agent only to send back a Task that names no executor.
+            executor_id: Leave null. Pass miniagent only to send back a Task that names no executor.
         """
         from dataclasses import replace
 
         from agno.company.routines import _manager_call
         from agno.os.routers.company.runs import _StartCaller, _TaskStarter
+        from agno.registry._reserved import MINI_AGENT_ID
         from agno.run.authorization import authorization_scope
 
         async def call(agent_os: Any) -> str:
@@ -489,8 +516,23 @@ class CompanyTaskTools(Toolkit):
                 return "Not done: the Task's attempt changed. Read its latest result and request a new confirmation."
             executor: Dict[str, Any] = {}
             if outcome == "send_back":
-                # A return to Ready is a fresh acceptance of the same executor.
-                executor = {"executor_type": value["executor_type"], "executor_id": value["executor_id"]}
+                # A return to Ready is a fresh acceptance of the same executor, or of Mini Agent when the
+                # Task names none. The person confirms the executor, so the call names Mini Agent.
+                kept = (value.get("executor_type"), value.get("executor_id"))
+                named = (executor_type or None, executor_id or None)
+                if kept[1] is None:
+                    kept = ("agent", MINI_AGENT_ID)
+                    if named != kept:
+                        return (
+                            f"Not done: '{title}' names no executor, and the person confirms the executor. "
+                            f"Call again with executor_type agent and executor_id {MINI_AGENT_ID}."
+                        )
+                elif named not in ((None, None), kept):
+                    return (
+                        f"Not done: send_back returns '{title}' to its executor, {kept[0]} {kept[1]}. "
+                        "Call again with no executor."
+                    )
+                executor = {"executor_type": kept[0], "executor_id": kept[1]}
                 caller = _StartCaller.for_authority(getattr(agent_os, "_company_app", None), authority, user_id)
                 await caller.require_accept(starter.endpoint(executor))
             saved = replace(authority, enforce_tools=False) if authority is not None else None
@@ -512,6 +554,9 @@ class CompanyTaskTools(Toolkit):
                 return f"Not done: '{title}' changed while it was being reviewed. Read it again."
             if outcome == "complete":
                 return f"Completed '{title}' (Task {task_id}). It is Done."
-            return f"Sent '{title}' (Task {task_id}) back to Ready for {value['executor_type']} {value['executor_id']}. It is not started."
+            return (
+                f"Sent '{title}' (Task {task_id}) back to Ready for {executor['executor_type']} "
+                f"{executor['executor_id']}. It is not started."
+            )
 
         return await self._decide(call)

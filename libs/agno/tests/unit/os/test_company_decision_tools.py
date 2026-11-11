@@ -57,8 +57,7 @@ def headers(scopes=None, user="alice"):
     return {"Authorization": "Bearer " + token}
 
 
-@pytest.fixture(params=[False, True], ids=["shared", "isolated"])
-def system(request, tmp_path):
+def build(tmp_path, **os_options):
     db = SqliteDb(db_file=str(tmp_path / "company.db"))
     writer = Agent(id="writer", db=db)
     agent_os = AgentOS(
@@ -67,16 +66,21 @@ def system(request, tmp_path):
         registry=Registry(agents=[writer]),
         company=CompanyConfig(model=OpenAIResponses(id="gpt-5.6-luna")),
         telemetry=False,
-        user_isolation=request.param,
-        authorization=Authorization(verification_keys=[SECRET], algorithm="HS256"),
+        **{"authorization": Authorization(verification_keys=[SECRET], algorithm="HS256"), **os_options},
     )
     app = agent_os.get_app()
     queue = QueueWorker(InMemoryQueueStore(), lambda *a, **k: writer, QueueConfig(durable=True), authorization_app=app)
     queue._company_db = db
     app.state.queue_worker = queue
     agent_os._company_app = app
-    yield TestClient(app), db, agent_os, queue
-    db.close()
+    return TestClient(app), db, agent_os, queue
+
+
+@pytest.fixture(params=[False, True], ids=["shared", "isolated"])
+def system(request, tmp_path):
+    value = build(tmp_path, user_isolation=request.param)
+    yield value
+    value[1].close()
 
 
 def records(client, approve=True):
@@ -145,7 +149,12 @@ def call(agent_os, tool, run_context, **arguments):
 
 def approve(agent_os, run_context, project):
     return call(
-        agent_os, "approve_company_project", run_context, project_name=project["name"], project_id=project["id"]
+        agent_os,
+        "approve_company_project",
+        run_context,
+        project_name=project["name"],
+        project_id=project["id"],
+        updated_at=project.get("updated_at"),
     )
 
 
@@ -156,7 +165,7 @@ def accept(agent_os, run_context, *tasks, executor=("agent", "writer")):
     )
 
 
-def review(agent_os, run_context, task, outcome, reason):
+def review(agent_os, run_context, task, outcome, reason, **executor):
     return call(
         agent_os,
         "review_company_task",
@@ -166,6 +175,7 @@ def review(agent_os, run_context, task, outcome, reason):
         reason=reason,
         task_id=task["id"],
         reviewed_run_id=(agent_os._company_db.get_task(task["id"]) or {}).get("job_id") or "missing-run",
+        **executor,
     )
 
 
@@ -294,6 +304,58 @@ def test_send_back_returns_the_task_to_ready_with_the_reason(system):
     assert message["review_feedback"] == "Add the changelog"
     assert "Queued" in call(agent_os, "start_company_task", context(), task_id=task["id"])
     assert db.get_task(task["id"])["transitions"][-1]["attempt"] == 2
+
+
+def without_executor(client, db, queue):
+    """A Task in review that names no executor: it went back to Backlog after its attempt."""
+    _, task = records(client)
+    in_review(client, db, queue, task["id"])
+    for target in ("backlog", "in_review"):
+        moved = client.post(
+            f"/company/tasks/{task['id']}/transitions", json={"target": target, "reason": "Moved"}, headers=headers()
+        )
+        assert moved.status_code == 200, moved.text
+    saved = db.get_task(task["id"])
+    assert (saved["status"], saved["executor_type"], saved["executor_id"]) == ("in_review", None, None)
+    return saved
+
+
+def test_send_back_of_a_task_with_no_executor_names_mini_agent(system):
+    client, db, agent_os, queue = system
+    task = without_executor(client, db, queue)
+    before = state(db)
+    # The person confirms the executor, so a call that names none sends nothing back and says which to name.
+    reply = review(agent_os, context(), task, "send_back", "Redo")
+    assert reply.startswith("Not done") and "names no executor" in reply, reply
+    assert f"executor_type agent and executor_id {MINI_AGENT_ID}" in reply
+    assert review(
+        agent_os, context(), task, "send_back", "Redo", executor_type="agent", executor_id="writer"
+    ).startswith("Not done")
+    # Mini Agent is the executor, so the person needs its run grant.
+    without = context(scopes=[scope for scope in SCOPES if scope != f"agents:{MINI_AGENT_ID}:run"])
+    mini = {"executor_type": "agent", "executor_id": MINI_AGENT_ID}
+    assert review(agent_os, without, task, "send_back", "Redo", **mini).startswith("Not done")
+    assert state(db) == before
+
+    reply = review(agent_os, context(), task, "send_back", "Redo", **mini)
+    assert reply.startswith("Sent 'Draft'") and f"agent {MINI_AGENT_ID}" in reply, reply
+    returned = db.get_task(task["id"])
+    assert (returned["status"], returned["executor_type"], returned["executor_id"]) == ("ready", "agent", MINI_AGENT_ID)
+    # A completion needs no executor.
+    other = without_executor(client, db, queue)
+    assert review(agent_os, context(), other, "complete", "Good").startswith("Completed")
+
+
+def test_send_back_names_no_executor_but_the_tasks_own(system):
+    client, db, agent_os, queue = system
+    _, task = records(client)
+    in_review(client, db, queue, task["id"])
+    before = state(db)
+    # The confirmation would show an executor the Task does not return to.
+    reply = review(agent_os, context(), task, "send_back", "Redo", executor_type="agent", executor_id=MINI_AGENT_ID)
+    assert reply.startswith("Not done") and "agent writer" in reply and state(db) == before, reply
+    reply = review(agent_os, context(), task, "send_back", "Redo", executor_type="agent", executor_id="writer")
+    assert reply.startswith("Sent 'Draft'") and db.get_task(task["id"])["executor_id"] == "writer", reply
 
 
 def test_a_first_attempt_carries_no_review_feedback(system):
@@ -490,7 +552,7 @@ def test_the_sync_tools_decide_nothing(system):
     before = state(db)
     tools = CompanyTaskTools(agent_os)
     replies = [
-        tools.approve_company_project("Release", ids["proposed"]["id"], _agno_run_context=context()),
+        tools.approve_company_project("Release", ids["proposed"]["id"], None, _agno_run_context=context()),
         tools.accept_company_task(
             [{"title": "Draft", "task_id": ids["backlog"]["id"]}], "agent", "writer", _agno_run_context=context()
         ),
@@ -559,6 +621,44 @@ def test_accept_covers_only_the_version_of_the_task_the_person_confirmed(system)
     # The person reads the Task again and confirms that version. The model may send the number as text.
     latest = db.get_task(task["id"])
     assert accept(agent_os, context(), {**latest, "updated_at": str(latest["updated_at"])}).startswith("Accepted")
+
+
+def test_approve_covers_only_the_version_of_the_project_the_person_confirmed(system):
+    client, db, agent_os, queue = system
+    project, _ = records(client, approve=False)
+    before = state(db)
+    # The outcome changes after the person saw the Project. The name stays.
+    assert db.update_project(project["id"], expected_status="proposed", name="Release", outcome="Publish the secrets")
+    reply = approve(agent_os, context(), project)
+    assert reply.startswith("Not done") and "changed since" in reply, reply
+    assert state(db) == before and db.get_project(project["id"])["outcome"] == "Publish the secrets"
+    # The person reads the Project again and confirms that version. The model may send the number as text.
+    latest = db.get_project(project["id"])
+    assert approve(agent_os, context(), {**latest, "updated_at": str(latest["updated_at"])}).startswith("Approved")
+
+
+@pytest.mark.parametrize("decision", [*sorted(DECISIONS), "start_company_task"])
+def test_isolation_set_on_the_authorization_config_needs_a_signed_in_person_too(tmp_path, decision):
+    from agno.os.config import AuthorizationConfig
+
+    config = AuthorizationConfig(verification_keys=[SECRET], algorithm="HS256", user_isolation=True)
+    client, db, agent_os, queue = build(tmp_path, authorization=True, authorization_config=config)
+    try:
+        assert not agent_os.user_isolation
+        ids = seeded(client, db, queue)
+        # An admin token with no subject reaches Super Agent, where every other caller with none is refused.
+        nobody = context(user=None)
+        if decision == "start_company_task":
+            assert accept(agent_os, context(), ids["backlog"]).startswith("Accepted")
+            before = state(db)
+            reply = call(agent_os, "start_company_task", nobody, task_id=ids["backlog"]["id"])
+        else:
+            before = state(db)
+            reply = DECISIONS[decision][0](ids, nobody, agent_os)
+        assert "signed-in person" in reply, reply
+        assert state(db) == before
+    finally:
+        db.close()
 
 
 def db_update_time(db, task_id, updated_at):
@@ -675,7 +775,10 @@ def tool_calls(ids):
     """Each decision as the model calls it, with what the confirmation must show."""
     backlog, review_task, proposed = ids["backlog"], ids["review"], ids["proposed"]
     return {
-        "approve": ("approve_company_project", {"project_name": proposed["name"], "project_id": proposed["id"]}),
+        "approve": (
+            "approve_company_project",
+            {"project_name": proposed["name"], "project_id": proposed["id"], "updated_at": proposed["updated_at"]},
+        ),
         "accept": (
             "accept_company_task",
             {
@@ -811,6 +914,30 @@ def test_a_paused_acceptance_does_not_cover_a_brief_a_routine_edits_while_it_wai
     with authorization_scope(person):
         result = asyncio.run(chat.os.manager.acontinue_run(run_response=paused, user_id="alice"))
     assert chat.db.get_task(task["id"])["status"] == "backlog", result.content
+    assert "changed since" in result.content
+
+
+def test_a_paused_approval_does_not_cover_an_outcome_a_routine_edits_while_it_waits(chat):
+    ids = chat_records(chat)
+    proposed = ids["proposed"]
+    tool, arguments = tool_calls(ids)["approve"]
+    paused = ask(chat, tool, arguments)
+    assert paused.is_paused
+    assert paused.requirements[0].tool_execution.tool_args["updated_at"] == proposed["updated_at"]
+
+    # A Routine run rewrites the proposed Project's outcome while the confirmation waits.
+    edit = chat.mini.tools.routine[0].get_functions()["edit_company_project"].entrypoint
+    routine = _RoutineAuthorization(None, routine_id="routine", product_id=proposed["product_id"])
+    with authorization_scope(lambda: routine):
+        edit(
+            project_id=proposed["id"], name=proposed["name"], outcome="Publish the secrets", _agno_run_context=context()
+        )
+    assert chat.db.get_project(proposed["id"])["outcome"] == "Publish the secrets"
+
+    paused.requirements[0].confirm()
+    with authorization_scope(person):
+        result = asyncio.run(chat.os.manager.acontinue_run(run_response=paused, user_id="alice"))
+    assert chat.db.get_project(proposed["id"])["status"] == "proposed", result.content
     assert "changed since" in result.content
 
 
