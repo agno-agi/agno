@@ -323,6 +323,18 @@ def attach_routes(
                 except Exception as e:
                     log_warning(f"Could not persist conversation reference (non-fatal): {str(e)}")
 
+            if getattr(response, "is_paused", False):
+                log_warning(f"MSTeams run {response.run_id} needs approval")
+                await send_teams_message_async(
+                    service_url,
+                    conversation_id,
+                    "This request needs an approval step, which isn't available in Microsoft Teams yet.",
+                    config,
+                    reply_to_activity_id=activity_id,
+                    bot_identity=bot_identity,
+                )
+                return
+
             if response.status == "ERROR":
                 await send_teams_message_async(
                     service_url,

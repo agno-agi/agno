@@ -101,14 +101,23 @@ class ActivityContent:
     file_attachments: List[dict] = field(default_factory=list)
 
 
-_MENTION_TAG_RE = re.compile(r"<at>.*?</at>", flags=re.IGNORECASE | re.DOTALL)
+_MENTION_TAG_RE = re.compile(r"<at>(.*?)</at>", flags=re.IGNORECASE | re.DOTALL)
 
 
-def _clean_mention_text(text: str) -> str:
+def _clean_mention_text(
+    text: Optional[str], recipient: Optional[dict] = None, entities: Optional[List[dict]] = None
+) -> str:
     if not text:
         return ""
-    cleaned = _MENTION_TAG_RE.sub("", text)
-    return cleaned.strip()
+    if recipient and recipient.get("id") and recipient.get("name"):
+        for entity in entities or []:
+            if (
+                entity.get("type") == "mention"
+                and (entity.get("mentioned") or {}).get("id") == recipient["id"]
+                and entity.get("text")
+            ):
+                text = text.replace(entity["text"], recipient["name"])
+    return _MENTION_TAG_RE.sub(r"@\1", text).strip()
 
 
 def extract_activity_content(activity: dict) -> Optional[ActivityContent]:
@@ -119,7 +128,7 @@ def extract_activity_content(activity: dict) -> Optional[ActivityContent]:
         log_info(f"Ignoring non-message activity type: {activity_type}")
         return None
 
-    text = _clean_mention_text(activity.get("text", ""))
+    text = _clean_mention_text(activity.get("text"), activity.get("recipient"), activity.get("entities"))
 
     image_atts: List[dict] = []
     file_atts: List[dict] = []

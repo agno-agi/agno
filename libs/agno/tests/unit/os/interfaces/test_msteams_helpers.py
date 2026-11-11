@@ -204,15 +204,16 @@ def test_extract_content_plain_text():
     assert parsed.file_attachments == []
 
 
-def test_extract_content_strips_bot_mention():
+def test_extract_content_preserves_own_bot_display_name():
     activity = {
         "type": "message",
         "text": "<at>MyBot</at> what is the weather",
-        "entities": [{"type": "mention", "text": "<at>MyBot</at>"}],
+        "recipient": {"id": "bot", "name": "MyBot"},
+        "entities": [{"type": "mention", "text": "<at>MyBot</at>", "mentioned": {"id": "bot"}}],
     }
     parsed = extract_activity_content(activity)
     assert parsed is not None
-    assert parsed.text == "what is the weather"
+    assert parsed.text == "MyBot what is the weather"
 
 
 def test_extract_content_ignores_non_message_activity():
@@ -860,14 +861,25 @@ def test_clean_mention_returns_empty_for_none_input():
     assert _clean_mention_text(None) == ""  # type: ignore[arg-type]
 
 
-def test_clean_mention_strips_multiple_at_tags():
+def test_clean_mention_preserves_other_mentions():
     text = "<at>Bot</at> hi <at>User</at> there"
-    assert _clean_mention_text(text) == "hi  there"
+    assert _clean_mention_text(text) == "@Bot hi @User there"
+
+
+@pytest.mark.parametrize("mentioned_id,expected", [("bot", "Display"), ("other", "@Bot")])
+def test_mention_only_is_a_message(mentioned_id, expected):
+    activity = {
+        "type": "message",
+        "text": " <at>Bot</at> ",
+        "recipient": {"id": "bot", "name": "Display"},
+        "entities": [{"type": "mention", "text": "<at>Bot</at>", "mentioned": {"id": mentioned_id}}],
+    }
+    assert extract_activity_content(activity).text == expected
 
 
 def test_clean_mention_case_insensitive():
     text = "<AT>Bot</AT> hello"
-    assert _clean_mention_text(text) == "hello"
+    assert _clean_mention_text(text) == "@Bot hello"
 
 
 def test_clean_mention_leaves_plain_text_alone():
