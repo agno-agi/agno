@@ -4,6 +4,7 @@ import time
 from dataclasses import dataclass, field
 from mimetypes import guess_type
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 import httpx
 
@@ -149,8 +150,20 @@ def _attachment_download_url(att: dict) -> Optional[str]:
     return att.get("contentUrl")
 
 
+class _AttachmentTooLarge(ValueError):
+    pass
+
+
+# Archives are not readable model inputs; do not lose the accompanying text.
+_ARCHIVE_MIME_TYPES = {"application/zip", "application/x-zip-compressed", "application/x-zip"}
+
+
 async def _download_attachment(
-    url: str, config: MSTeamsConfig, use_bot_token: bool = True
+    url: str,
+    config: MSTeamsConfig,
+    use_bot_token: bool = False,
+    max_file_size: int = 1_073_741_824,
+    name: str = "image",
 ) -> Tuple[Optional[bytes], Optional[str]]:
     headers: Dict[str, str] = {}
     if use_bot_token:
@@ -158,20 +171,35 @@ async def _download_attachment(
             token = await _get_bot_token(config)
             headers["Authorization"] = f"Bearer {token}"
         except Exception as e:
-            log_warning(f"Could not fetch bot token for attachment download: {e}")
+            status = e.response.status_code if isinstance(e, httpx.HTTPStatusError) else None
+            log_warning(f"Attachment token failed: {name}, status={status}, {type(e).__name__}")
 
     try:
         async with httpx.AsyncClient(timeout=config.request_timeout) as client:
-            resp = await client.get(url, headers=headers, follow_redirects=True)
-            resp.raise_for_status()
-            mime = resp.headers.get("content-type", "").split(";")[0].strip() or None
-            return resp.content, mime
+            async with client.stream("GET", url, headers=headers, follow_redirects=True) as resp:
+                resp.raise_for_status()
+                length = resp.headers.get("content-length", "")
+                if length.isdigit() and int(length) > max_file_size:
+                    raise _AttachmentTooLarge
+                content = bytearray()
+                async for chunk in resp.aiter_bytes():
+                    if len(content) + len(chunk) > max_file_size:
+                        raise _AttachmentTooLarge
+                    content.extend(chunk)
+                mime = resp.headers.get("content-type", "").split(";")[0].strip().lower() or None
+                return bytes(content), mime
     except httpx.HTTPError as e:
-        log_warning(f"Attachment download failed for {url}: {e}")
+        status = e.response.status_code if isinstance(e, httpx.HTTPStatusError) else None
+        log_warning(f"Attachment download failed: {name}, status={status}, {type(e).__name__}")
         return None, None
 
 
-async def download_attachments_async(parsed: ActivityContent, config: MSTeamsConfig) -> Tuple[dict, List[str]]:
+async def download_attachments_async(
+    parsed: ActivityContent,
+    config: MSTeamsConfig,
+    service_url: Optional[str] = None,
+    max_file_size: int = 1_073_741_824,
+) -> Tuple[dict, List[str]]:
     """Returns (run_kwargs, skipped_labels); run_kwargs splats into ``entity.arun``."""
     from agno.media import File, Image
 
@@ -186,7 +214,16 @@ async def download_attachments_async(parsed: ActivityContent, config: MSTeamsCon
             # same loss as one whose download failed, which is already reported.
             skipped.append("image")
             continue
-        content, mime = await _download_attachment(url, config)
+        content_info = att.get("content")
+        preauthorized = isinstance(content_info, dict) and bool(content_info.get("downloadUrl"))
+        use_token = bool(service_url and urlparse(url).hostname == urlparse(service_url).hostname and not preauthorized)
+        try:
+            content, mime = await _download_attachment(
+                url, config, use_bot_token=use_token, max_file_size=max_file_size, name=att.get("name") or "image"
+            )
+        except _AttachmentTooLarge:
+            skipped.append(f"{att.get('name') or 'image'} (too large)")
+            continue
         if not content:
             skipped.append("image")
             continue
@@ -203,7 +240,16 @@ async def download_attachments_async(parsed: ActivityContent, config: MSTeamsCon
         if not url:
             skipped.append(name or "file")
             continue
-        content, mime = await _download_attachment(url, config)
+        content_info = att.get("content")
+        preauthorized = isinstance(content_info, dict) and bool(content_info.get("downloadUrl"))
+        use_token = bool(service_url and urlparse(url).hostname == urlparse(service_url).hostname and not preauthorized)
+        try:
+            content, mime = await _download_attachment(
+                url, config, use_bot_token=use_token, max_file_size=max_file_size, name=name or "file"
+            )
+        except _AttachmentTooLarge:
+            skipped.append(f"{name or 'file'} (too large)")
+            continue
         if not content:
             skipped.append(name or "file")
             continue
@@ -211,7 +257,7 @@ async def download_attachments_async(parsed: ActivityContent, config: MSTeamsCon
         # unsupported file with mime_type=None does not hide it -- the model falls
         # back to guessing from the filename and the provider rejects the run,
         # costing the user their message text as well as the attachment.
-        resolved_mime = mime or guess_type(name or "")[0]
+        resolved_mime = guess_type(name or "")[0] if not mime or mime == "application/octet-stream" else mime
         # An image uploaded from the paperclip arrives here rather than above:
         # Teams marks it as a file attachment, and only a pasted image carries an
         # image/* contentType. File's allowlist holds no image types at all, so
@@ -219,7 +265,7 @@ async def download_attachments_async(parsed: ActivityContent, config: MSTeamsCon
         if (resolved_mime or "").startswith("image/"):
             images.append(Image(content=content, mime_type=resolved_mime))
             continue
-        if resolved_mime not in File.valid_mime_types():
+        if resolved_mime in _ARCHIVE_MIME_TYPES or resolved_mime not in File.valid_mime_types():
             skipped.append(name or "file")
             continue
         files.append(File(content=content, mime_type=resolved_mime, filename=name))
@@ -297,7 +343,7 @@ async def _post_activity(
         log_error(f"Bot Connector rejected activity: {e.response.status_code} {e.response.text}")
         raise
     except Exception as e:
-        log_error(f"Unexpected error posting activity: {e}")
+        log_error(f"Unexpected error posting activity: {str(e)}")
         raise
 
 
@@ -316,7 +362,7 @@ async def typing_indicator_async(
     try:
         await _post_activity(service_url, conversation_id, activity, config, reply_to_activity_id)
     except Exception as e:
-        log_warning(f"Typing indicator failed (non-fatal): {e}")
+        log_warning(f"Typing indicator failed (non-fatal): {str(e)}")
 
 
 async def send_teams_message_async(
