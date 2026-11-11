@@ -476,19 +476,29 @@ def test_only_a_person_decides(system, decision, caller):
     assert state(db) == before
 
 
-@pytest.mark.parametrize("decision", sorted(DECISIONS))
-def test_an_anonymous_caller_decides_only_without_user_isolation(system, decision):
-    client, db, agent_os, queue = system
-    ids = seeded(client, db, queue)
-    before = state(db)
-    anonymous = RunContext(run_id="r", session_id="s", user_id=None, authorization=None)
-    reply = DECISIONS[decision][0](ids, anonymous, agent_os)
-    if agent_os.user_isolation:
-        assert reply.startswith("Not done") and "signed-in person" in reply, reply
-        assert state(db) == before
-    else:
-        # With no caller authority the deployment trusts its callers, as the Company API does.
-        assert not reply.startswith("Not done") and state(db) != before, reply
+@pytest.mark.parametrize("decision", [*sorted(DECISIONS), "start_company_task"])
+@pytest.mark.parametrize("authorization", [True, False], ids=["authorization-on", "authorization-off"])
+def test_a_run_with_no_authority_decides_only_where_authorization_is_off(tmp_path, decision, authorization):
+    client, db, agent_os, queue = build(tmp_path, **({} if authorization else {"authorization": None}))
+    try:
+        ids = seeded(client, db, queue)
+        nobody = RunContext(run_id="r", session_id="s", user_id=None, authorization=None)
+        if decision == "start_company_task":
+            assert accept(agent_os, context(), ids["backlog"]).startswith("Accepted")
+            before = state(db)
+            reply = call(agent_os, "start_company_task", nobody, task_id=ids["backlog"]["id"])
+        else:
+            before = state(db)
+            reply = DECISIONS[decision][0](ids, nobody, agent_os)
+        if authorization:
+            # The deployment checks permissions and this run carries none, so there is nobody to check.
+            assert "signed-in person" in reply, reply
+            assert state(db) == before
+        else:
+            # Where authorization is off the deployment trusts its callers, as the Company API does.
+            assert "signed-in person" not in reply and state(db) != before, reply
+    finally:
+        db.close()
 
 
 def test_decisions_refuse_a_record_in_the_wrong_stage(system):
