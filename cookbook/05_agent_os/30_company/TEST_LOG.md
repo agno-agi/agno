@@ -498,8 +498,6 @@ SQLite and with `COMPANY_DB=postgres`, with no model calls.
 
 ---
 
----
-
 ### 05_super_agent_company.py, 10_weekly_product_review.py (Mini Agent rename, 2026-11-11)
 
 **Status:** PASS
