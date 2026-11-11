@@ -47,8 +47,8 @@ def _reserved_manager_id_message(component_id: str) -> str:
     if current is not None:
         # Routines ran on the former Company manager as well. Mini Agent runs them now, not Super Agent.
         routine = component_id == "company-manager-internal"
-        also = f", and by '{MINI_AGENT_ID}' as a Routine executor" if routine else ""
-        return f"Manager ID '{component_id}' was replaced by '{current}' in Agno 3.2{also}. Use the new ID."
+        also = f", or '{MINI_AGENT_ID}' for a Routine executor" if routine else ""
+        return f"Manager ID '{component_id}' was replaced by '{current}' in Agno 3.2. Use the new ID{also}."
     return f"Component ID '{component_id}' is reserved. Please choose a different ID for your component."
 
 

@@ -124,6 +124,7 @@ from agno.utils.events import (
     handle_event,
 )
 from agno.utils.hooks import (
+    continue_post_hooks,
     normalize_post_hooks,
     normalize_pre_hooks,
 )
@@ -7528,15 +7529,6 @@ def continue_run_dispatch(
     session_id = run_response.session_id if run_response else session_id
     run_id_resolved: str = run_response.run_id if run_response else run_id  # type: ignore
 
-    # A component that continues a run has often never started one, so its hooks may still hold
-    # guardrail objects: normalise them here as a fresh run does.
-    if not team._hooks_normalised:
-        if team.pre_hooks:
-            team.pre_hooks = normalize_pre_hooks(team.pre_hooks)  # type: ignore
-        if team.post_hooks:
-            team.post_hooks = normalize_post_hooks(team.post_hooks)  # type: ignore
-        team._hooks_normalised = True
-
     session_id, user_id = _initialize_session(team, session_id=session_id, user_id=user_id)
 
     # Initialize the Team
@@ -8375,7 +8367,7 @@ def _continue_run(
                 if team.post_hooks is not None:
                     iterator = _execute_post_hooks(
                         team,
-                        hooks=team.post_hooks,  # type: ignore
+                        hooks=continue_post_hooks(team.post_hooks),
                         run_output=run_response,
                         run_context=run_context,
                         session=session,
@@ -8609,7 +8601,7 @@ def _continue_run_stream(
                 if team.post_hooks is not None:
                     iterator = _execute_post_hooks(
                         team,
-                        hooks=team.post_hooks,  # type: ignore
+                        hooks=continue_post_hooks(team.post_hooks),
                         run_output=run_response,
                         run_context=run_context,
                         session=session,
@@ -9287,15 +9279,6 @@ def acontinue_run_dispatch(  # type: ignore
     session_id_resolved = run_response.session_id if run_response else session_id
     run_id_resolved: str = run_response.run_id if run_response else run_id  # type: ignore
 
-    # A component that continues a run has often never started one, so its hooks may still hold
-    # guardrail objects: normalise them here as a fresh run does.
-    if not team._hooks_normalised:
-        if team.pre_hooks:
-            team.pre_hooks = normalize_pre_hooks(team.pre_hooks, async_mode=True)  # type: ignore
-        if team.post_hooks:
-            team.post_hooks = normalize_post_hooks(team.post_hooks, async_mode=True)  # type: ignore
-        team._hooks_normalised = True
-
     session_id_resolved, user_id = _initialize_session(team, session_id=session_id_resolved, user_id=user_id)
 
     # Fall back to the owner the run paused with, so the resume retrieves under the same scope.
@@ -9814,7 +9797,7 @@ async def _acontinue_run(
                 if team.post_hooks is not None:
                     async for _ in _aexecute_post_hooks(
                         team,
-                        hooks=team.post_hooks,  # type: ignore
+                        hooks=continue_post_hooks(team.post_hooks, async_mode=True),
                         run_output=run_response,
                         run_context=run_context,
                         session=team_session,
@@ -10464,7 +10447,7 @@ async def _acontinue_run_stream(
                 if team.post_hooks is not None:
                     async for event in _aexecute_post_hooks(
                         team,
-                        hooks=team.post_hooks,  # type: ignore
+                        hooks=continue_post_hooks(team.post_hooks, async_mode=True),
                         run_output=run_response,
                         run_context=run_context,
                         session=team_session,

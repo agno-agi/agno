@@ -116,6 +116,7 @@ from agno.utils.events import (
     handle_event,
 )
 from agno.utils.hooks import (
+    continue_post_hooks,
     normalize_post_hooks,
     normalize_pre_hooks,
 )
@@ -3380,15 +3381,6 @@ def continue_run_dispatch(
     session_id = run_response.session_id if run_response is not None else session_id
     run_id: str = run_response.run_id if run_response is not None else run_id  # type: ignore
 
-    # A component that continues a run has often never started one, so its hooks may still hold
-    # guardrail objects: normalise them here as a fresh run does.
-    if not agent._hooks_normalised:
-        if agent.pre_hooks:
-            agent.pre_hooks = normalize_pre_hooks(agent.pre_hooks)  # type: ignore
-        if agent.post_hooks:
-            agent.post_hooks = normalize_post_hooks(agent.post_hooks)  # type: ignore
-        agent._hooks_normalised = True
-
     session_id, user_id = initialize_session(
         agent,
         session_id=session_id,
@@ -3799,7 +3791,7 @@ def _continue_run(
                 if agent.post_hooks is not None:
                     post_hook_iterator = execute_post_hooks(
                         agent,
-                        hooks=agent.post_hooks,  # type: ignore
+                        hooks=continue_post_hooks(agent.post_hooks),
                         run_output=run_response,
                         run_context=run_context,
                         session=session,
@@ -4044,7 +4036,7 @@ def _continue_run_stream(
                 if agent.post_hooks is not None:
                     yield from execute_post_hooks(
                         agent,
-                        hooks=agent.post_hooks,  # type: ignore
+                        hooks=continue_post_hooks(agent.post_hooks),
                         run_output=run_response,
                         session=session,
                         run_context=run_context,
@@ -4290,15 +4282,6 @@ def acontinue_run_dispatch(  # type: ignore
 
     session_id = run_response.session_id if run_response is not None else session_id
     run_id: str = run_response.run_id if run_response is not None else run_id  # type: ignore
-
-    # A component that continues a run has often never started one, so its hooks may still hold
-    # guardrail objects: normalise them here as a fresh run does.
-    if not agent._hooks_normalised:
-        if agent.pre_hooks:
-            agent.pre_hooks = normalize_pre_hooks(agent.pre_hooks, async_mode=True)  # type: ignore
-        if agent.post_hooks:
-            agent.post_hooks = normalize_post_hooks(agent.post_hooks, async_mode=True)  # type: ignore
-        agent._hooks_normalised = True
 
     session_id, user_id = initialize_session(
         agent,
@@ -5069,7 +5052,7 @@ async def _acontinue_run(
                 if agent.post_hooks is not None:
                     async for _ in aexecute_post_hooks(
                         agent,
-                        hooks=agent.post_hooks,  # type: ignore
+                        hooks=continue_post_hooks(agent.post_hooks, async_mode=True),
                         run_output=run_response,
                         run_context=run_context,
                         session=agent_session,
@@ -5638,7 +5621,7 @@ async def _acontinue_run_stream(
                 if agent.post_hooks is not None:
                     async for event in aexecute_post_hooks(
                         agent,
-                        hooks=agent.post_hooks,  # type: ignore
+                        hooks=continue_post_hooks(agent.post_hooks, async_mode=True),
                         run_output=run_response,
                         run_context=run_context,
                         session=agent_session,

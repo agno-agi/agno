@@ -81,14 +81,15 @@ def gated() -> str:
     return "ran"
 
 
-def _component(kind: str, db: SqliteDb, guardrail: BaseGuardrail, script: List[tuple]):
+def _component(kind: str, db: SqliteDb, script: List[tuple], **hooks: Any):
     model = _ScriptedModel(f"m-{kind}", script)
     if kind == "agent":
-        return Agent(id="guarded", model=model, tools=[gated], db=db, post_hooks=[guardrail], telemetry=False)
+        return Agent(id="guarded", model=model, tools=[gated], db=db, telemetry=False, **hooks)
     member = Agent(id="bystander", name="Bystander", model=_ScriptedModel("m-member", [("content", "hi")]))
-    return Team(
-        id="guarded", model=model, members=[member], tools=[gated], db=db, post_hooks=[guardrail], telemetry=False
-    )
+    return Team(id="guarded", model=model, members=[member], tools=[gated], db=db, telemetry=False, **hooks)
+
+
+_PAUSE = [("tool", "gated", {}, "tc-1")]
 
 
 def _confirmed(requirements) -> List[RunRequirement]:
@@ -117,12 +118,12 @@ def hook_errors(monkeypatch) -> List[str]:
 async def test_guardrail_runs_on_a_continued_run(tmp_path, hook_errors, kind, use_async, stream):
     db = SqliteDb(db_file=str(tmp_path / "guardrail.db"))
 
-    paused = _component(kind, db, _RecordingGuardrail(), [("tool", "gated", {}, "tc-1")]).run("go", session_id="s")
+    paused = _component(kind, db, _PAUSE, post_hooks=[_RecordingGuardrail()]).run("go", session_id="s")
     assert paused.is_paused, "the gated tool should pause the first run"
 
     # The continuing component has never started a run, as a served copy has not.
     guardrail = _RecordingGuardrail()
-    component = _component(kind, db, guardrail, [("content", "done")])
+    component = _component(kind, db, [("content", "done")], post_hooks=[guardrail])
     kwargs = dict(run_id=paused.run_id, session_id="s", requirements=_confirmed(paused.requirements))
 
     if stream and use_async:
@@ -138,3 +139,48 @@ async def test_guardrail_runs_on_a_continued_run(tmp_path, hook_errors, kind, us
     assert result.status.value == "COMPLETED"
     assert hook_errors == []
     assert guardrail.checked == ["done"], "the guardrail did not check the continued run"
+
+
+async def _async_hook(run_output: Any = None) -> None:
+    """A function hook that only an async run can await."""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["agent", "team"])
+@pytest.mark.parametrize("where", ["pre_hooks", "post_hooks"])
+async def test_sync_continue_does_not_refuse_an_async_hook(tmp_path, kind, where):
+    # A run started with arun() may hold async hooks. Continuing it with continue_run() completed
+    # before guardrails were converted on this path, and still does.
+    db = SqliteDb(db_file=str(tmp_path / "async-hook.db"))
+    paused = await _component(kind, db, _PAUSE, **{where: [_async_hook]}).arun("go", session_id="s")
+    assert paused.is_paused
+
+    component = _component(kind, db, [("content", "done")], **{where: [_async_hook]})
+    result = component.continue_run(run_id=paused.run_id, session_id="s", requirements=_confirmed(paused.requirements))
+    assert result.status.value == "COMPLETED"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["agent", "team"])
+@pytest.mark.parametrize("continue_async", [False, True], ids=["sync-then-async", "async-then-sync"])
+async def test_a_continue_does_not_fix_the_hook_mode_of_later_runs(tmp_path, hook_errors, kind, continue_async):
+    # The component's own hooks are converted once, by its first fresh run, in that run's mode.
+    # A continue must not make that choice for it: the guardrail has to run in a later fresh run
+    # of the other mode on the same component.
+    db = SqliteDb(db_file=str(tmp_path / "mode.db"))
+    paused = _component(kind, db, _PAUSE, post_hooks=[_RecordingGuardrail()]).run("go", session_id="s")
+    assert paused.is_paused
+
+    guardrail = _RecordingGuardrail()
+    component = _component(kind, db, [("content", "done"), ("content", "again")], post_hooks=[guardrail])
+    kwargs = dict(run_id=paused.run_id, session_id="s", requirements=_confirmed(paused.requirements))
+    if continue_async:
+        await component.acontinue_run(**kwargs)
+        later = component.run("more", session_id="s2")
+    else:
+        component.continue_run(**kwargs)
+        later = await component.arun("more", session_id="s2")
+
+    assert later.status.value == "COMPLETED"
+    assert guardrail.checked == ["done", "again"]
+    assert hook_errors == []

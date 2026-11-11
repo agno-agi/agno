@@ -260,6 +260,14 @@ def _capture_metadata(step_input: StepInput, run_context: Optional[RunContext] =
     return StepOutput(content="captured")
 
 
+@tool
+def read_metadata(run_context: Optional[RunContext] = None) -> str:
+    """Records the metadata of the step agent's run."""
+    metadata = getattr(run_context, "metadata", None)
+    _CAPTURED.append(dict(metadata) if isinstance(metadata, dict) else None)
+    return "read"
+
+
 async def _pause_then_resume_workflow(workflow: Workflow, use_async: bool, stream: bool, run_metadata):
     """Pause on the step's confirmation, then continue from storage the way a later request does."""
     run1 = workflow.run("go", session_id="s-wf", metadata=dict(run_metadata))
@@ -294,10 +302,38 @@ class TestWorkflowLineageSurvivesContinue:
 
         run2 = await _pause_then_resume_workflow(workflow, use_async, stream, _DISPATCHED)
         assert run2.status.value == "COMPLETED"
-        assert len(_CAPTURED) == 1
-        captured = _CAPTURED[0] or {}
-        assert captured.get(_CHAIN) == ["team:outer"]
-        assert captured.get(_DEPTH) == 1
+        # The lineage, and the caller's own metadata with it.
+        assert _CAPTURED == [_DISPATCHED]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+    @pytest.mark.parametrize("run_metadata", [_DISPATCHED, {"tenant": "acme"}], ids=["dispatched", "top-level"])
+    async def test_a_continued_step_sees_the_metadata_a_fresh_step_sees(self, tmp_path, use_async, run_metadata):
+        # A step agent takes its own metadata only when the run carries none, so a continued run
+        # that carried part of the stored metadata would change what its tools and hooks read.
+        def workflow(name: str, review: Optional[HumanReview]) -> Workflow:
+            script = [("tool", "read_metadata", {}, "tc-read"), ("content", "finished")]
+            agent = Agent(
+                id="stepper",
+                model=_ScriptedModel("m-step", script),
+                tools=[read_metadata],
+                metadata={"agent_default": "x"},
+                telemetry=False,
+            )
+            db = SqliteDb(db_file=str(tmp_path / f"{name}.db"))
+            step = Step(name="read", agent=agent, human_review=review)
+            return Workflow(id="wf", name="WF", db=db, steps=[step], metadata={"owner": "wf"}, telemetry=False)
+
+        _CAPTURED.clear()
+        fresh = workflow("fresh", None).run("go", session_id="s-wf", metadata=dict(run_metadata))
+        assert fresh.status.value == "COMPLETED"
+        paused = workflow("paused", HumanReview(requires_confirmation=True))
+        run2 = await _pause_then_resume_workflow(paused, use_async, False, run_metadata)
+        assert run2.status.value == "COMPLETED"
+
+        assert len(_CAPTURED) == 2
+        assert _CAPTURED[0] == {"owner": "wf", **run_metadata}
+        assert _CAPTURED[1] == _CAPTURED[0]
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("mode", ["never", "once"])

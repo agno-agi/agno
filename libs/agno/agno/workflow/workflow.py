@@ -39,7 +39,7 @@ else:
 from agno.agent.agent import Agent
 from agno.agents.base import BaseExternalAgent
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
-from agno.db.schemas.scheduler import restore_reserved_run_metadata, strip_reserved_run_metadata
+from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.utils import resolve_db_from_config
 from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
 from agno.media import Audio, File, Image, Video
@@ -6879,14 +6879,16 @@ class Workflow:
         run_response.status = RunStatus.running
         run_response.error_requirements = None
 
-        # Create run context. The dispatch lineage, hop count and version stamp are stored on the
-        # paused run: the steps must see them, or a continue would reset the dispatch guard.
+        from copy import deepcopy
+
+        # Create run context. The steps see the metadata the run started with, which is stored on the
+        # paused run. It carries the dispatch lineage: without it a continue would reset the dispatch guard.
         run_context = RunContext(
             run_id=run_response.run_id or str(uuid4()),
             session_id=session_id,
             user_id=run_response.user_id,
             session_state=session.session_data.get("session_state", {}) if session.session_data else {},
-            metadata=restore_reserved_run_metadata(None, run_response.metadata),
+            metadata=deepcopy(run_response.metadata),
         )
 
         # Media comes off the paused run; WorkflowRunOutput.input carries none of its own.
@@ -8916,14 +8918,16 @@ class Workflow:
         session.upsert_run(run=run_response)
         await self._apersist_session_and_run(session=session, run=run_response)
 
-        # Create run context. The dispatch lineage, hop count and version stamp are stored on the
-        # paused run: the steps must see them, or a continue would reset the dispatch guard.
+        from copy import deepcopy
+
+        # Create run context. The steps see the metadata the run started with, which is stored on the
+        # paused run. It carries the dispatch lineage: without it a continue would reset the dispatch guard.
         run_context = RunContext(
             run_id=run_response.run_id or str(uuid4()),
             session_id=session_id,
             user_id=run_response.user_id,
             session_state=session.session_data.get("session_state", {}) if session.session_data else {},
-            metadata=restore_reserved_run_metadata(None, run_response.metadata),
+            metadata=deepcopy(run_response.metadata),
         )
 
         # Media comes off the paused run; WorkflowRunOutput.input carries none of its own.

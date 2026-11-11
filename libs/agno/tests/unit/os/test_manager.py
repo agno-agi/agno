@@ -2418,7 +2418,7 @@ def test_former_manager_ids_no_longer_resolve_and_name_the_new_id(db, family, fo
     response = client.post(f"/{family}/{former}/runs", data={"message": "hello", "stream": "false"})
     assert response.status_code == 422 and f"replaced by '{current}'" in response.text
     # Routines ran on the former Company manager as well, and Mini Agent runs them now.
-    assert (f"by '{MINI_AGENT_ID}' as a Routine executor" in response.text) == (former == "company-manager-internal")
+    assert (f"or '{MINI_AGENT_ID}' for a Routine executor" in response.text) == (former == "company-manager-internal")
     assert client.get(f"/{current_family}/{current}").status_code == 200
 
 
