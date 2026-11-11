@@ -777,7 +777,11 @@ class AgentOS:
             self.registry.exclude_components([self._company_manager])
             if self._manager is not None:
                 from agno.company.company_manager import _build_company_manager
-                from agno.os.manager.prompts import COMPANY_COORDINATION_INSTRUCTIONS, FOCUSED_EXECUTION_INSTRUCTIONS
+                from agno.os.manager.prompts import (
+                    COMPANY_COORDINATION_INSTRUCTIONS,
+                    COMPANY_TASK_RUN_INSTRUCTIONS,
+                    FOCUSED_EXECUTION_INSTRUCTIONS,
+                )
 
                 # A separate member keeps the manager's execution policy off the served
                 # Company Manager, which direct chat and Routines run.
@@ -791,7 +795,14 @@ class AgentOS:
                 assert isinstance(self._manager.team.members, list)
                 self._manager.team.members.append(member)
                 assert isinstance(self._manager.team.instructions, list)
-                self._manager.team.instructions.append(COMPANY_COORDINATION_INSTRUCTIONS)
+                company_instructions = COMPANY_COORDINATION_INSTRUCTIONS
+                if self._company_db is not None:
+                    from agno.os.manager.company_tasks import CompanyTaskTools
+
+                    assert isinstance(self._manager.team.tools, list)
+                    self._manager.team.tools.append(CompanyTaskTools(self))
+                    company_instructions += COMPANY_TASK_RUN_INSTRUCTIONS
+                self._manager.team.instructions.append(company_instructions)
             self.agents = [*(self.agents or []), self._company_manager]
         if self._company_db is not None:
             from agno.company.details import _company_instructions
@@ -3439,14 +3450,13 @@ class AgentOS:
 
         for db_id, dbs in self.dbs.items():
             if db_id not in dbs_with_specific_config:
-                # Collect unique table names from all databases with the same id, the deprecated metrics table first
+                # Collect unique table names from all databases with the same id
                 unique_tables = list(
                     dict.fromkeys(
                         table_name
                         for db in dbs
                         for table_name in (
                             (
-                                db.metrics_table_name,
                                 db.component_metrics_table_name,
                                 db.aggregate_metrics_table_name,
                                 db.metrics_refreshes_table_name,

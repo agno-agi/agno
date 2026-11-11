@@ -158,7 +158,7 @@ methods retain explicit owner filters for direct callers.
 | File | Demonstrates |
 | --- | --- |
 | `04_manage_playbook.py` | Sync/async wiki namespaces, atomic page creation, version conflicts and the learning decision log without a model. |
-| `05_company_manager.py` | Model resolution, a standalone Company Manager, bounded Company tools and explicit MCP publication without a model call. |
+| `05_company_manager.py` | Model resolution, a standalone Company Manager, and bounded Company tools without a model call. |
 
 Each Product has a durable wiki namespace with `brief.md` (human direction) and
 `status.md` (current work). A second namespace holds company context. Default
@@ -179,7 +179,7 @@ Listings support text, agent, session and age filters plus standard paging.
 The server stamps human identity; agents get identity from injected run context.
 Automatic learning recall includes human and agent decisions across the company;
 explicit searches can still filter by agent. The learning machine binds the agent
-ID when supplying decision tools. Standalone CompanyTools and direct MCP calls
+ID when supplying decision tools. Standalone CompanyTools
 leave agent attribution unset. The log is append-only: later outcomes are new
 entries that reference the original decision.
 
@@ -198,8 +198,6 @@ machine. It can read Sources and add website Sources with permission and Product
 ownership. Acceptance, completion, ownership changes, local Source additions and
 scheduling remain outside its tools.
 
-CompanyTools can be published explicitly with `MCPConfig(tools=[...])`, following
-the existing MCP toolkit convention. Direct MCP calls have the same write fence.
 The examples make no provider calls; they do not demonstrate live model quality.
 The heartbeat examples below demonstrate Routines and Sources.
 
@@ -220,6 +218,7 @@ retaining a known old ID explicitly is necessary for those references.
 | --- | --- |
 | `06_execute_tasks.py` | Durable execution, duplicate starts, ordinary run history and attention with no model call. |
 | `12_task_board.py` | Direct start from Backlog, `last_run`, `allowed_transitions` and a board read by status with no model call. |
+| `13_start_tasks_from_chat.py` | Super Agent starts a human-accepted Task, ends its turn with the receipt, and answers status and unrelated questions while the Task runs. Add `--serve` to try it from the AgentOS UI on `localhost:7777` with a seeded, accepted Task. Live model; PostgreSQL. |
 
 `06_execute_tasks.py` starts an accepted workflow Task through its ordinary run
 route and the durable queue, waits for In review, reads paged history and checks

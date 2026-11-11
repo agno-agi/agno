@@ -396,7 +396,6 @@ class AsyncPostgresDb(AsyncBaseDb):
             (self.session_table_name, "sessions"),
             (self.runs_table_name, "runs"),
             (self.memory_table_name, "memories"),
-            (self.metrics_table_name, "metrics"),
             (self.component_metrics_table_name, "component_metrics"),
             (self.aggregate_metrics_table_name, "aggregate_metrics"),
             (self.metrics_refreshes_table_name, "metrics_refreshes"),
@@ -8305,6 +8304,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         user_id: Optional[str] = None,
         run_db_id: Optional[str] = None,
         session_user_id: Optional[str] = None,
+        requested_from: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         from agno.db.schemas.tasks import task_run_fields
         from agno.db.sql.company import lock_child
@@ -8327,7 +8327,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             existing = dict(row._mapping)
             if existing["transitions"] != expected_transitions:
                 return None
-            fields = task_run_fields(existing, attempt, user_id, run_db_id, session_user_id)
+            fields = task_run_fields(existing, attempt, user_id, run_db_id, session_user_id, requested_from)
             stmt = (
                 table.update()
                 .where(

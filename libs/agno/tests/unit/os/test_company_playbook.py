@@ -279,40 +279,6 @@ async def test_automated_edit_guard_keeps_permission_and_product_refusals(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_direct_mcp_has_only_bounded_tools(tmp_path):
-    from fastmcp import Client
-
-    from agno.os import MCPConfig
-    from agno.os.mcp import build_mcp_server
-
-    db = SqliteDb(db_file=str(tmp_path / "mcp.db"))
-    product = CompanyManager(db).create(name="SDK")
-    project = CompanyManager(db).create_project(product_id=product["id"], name="Release")
-    CompanyManager(db).transition_project(project_id=project["id"], target="active", reason="Approved")
-    tools = CompanyTools(db)
-    os = AgentOS(db=db, company=CompanyConfig(), mcp=MCPConfig(tools=[tools], default_tools=False), telemetry=False)
-    async with Client(build_mcp_server(os)) as client:
-        surface = await client.list_tools()
-        assert {tool.name for tool in surface} == set(tools.functions)
-        for tool in surface:
-            assert "_agno_run_context" not in tool.inputSchema.get("properties", {})
-            assert "user_id" not in tool.inputSchema.get("properties", {})
-        result = await client.call_tool(
-            "propose_company_task", {"product_id": product["id"], "title": "MCP proposal", "project_id": project["id"]}
-        )
-        assert not result.is_error
-        rows, _ = CompanyManager(db).list_tasks()
-        assert rows[0]["status"] == "backlog" and rows[0]["user_id"] is None
-        result = await client.call_tool("log_company_decision", {"decision": "MCP decision"})
-        assert not result.is_error
-        decisions, _ = CompanyManager(db).list_decisions()
-        assert decisions[0].agent_id is None
-        for forbidden in ["transition_company_task", "accept_company_task", "complete_company_task"]:
-            result = await client.call_tool(forbidden, {"task_id": rows[0]["id"]}, raise_on_error=False)
-            assert result.is_error
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["sync", "async", "http"])
 async def test_company_manager_runs_tools_with_injected_identity(tmp_path, mode):
     from agno.models.base import Model
