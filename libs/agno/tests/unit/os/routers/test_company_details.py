@@ -81,7 +81,8 @@ def test_next_manager_runs_use_saved_details_without_products(tmp_path):
     from agno.models.message import MessageMetrics
     from agno.models.response import ModelResponse
     from agno.os import OSManager
-    from agno.registry._reserved import COMPANY_MANAGER_ID, MANAGER_TEAM_ID
+    from agno.registry._reserved import MANAGER_TEAM_ID
+    from agno.utils.agent import execute_instructions
 
     class ContextModel(Model):
         def __init__(self):
@@ -127,36 +128,35 @@ def test_next_manager_runs_use_saved_details_without_products(tmp_path):
     client = TestClient(os.get_app())
     admin = headers(["agent_os:admin"])
     data = client.get("/company/details", headers=admin).json()
-    for component_type, component_id in [("agents", COMPANY_MANAGER_ID), ("teams", MANAGER_TEAM_ID)]:
-        scope = f"{component_type}:{component_id}:run"
-        first = client.post(
-            f"/{component_type}/{component_id}/runs",
-            data={"message": "What do we do?", "stream": "false"},
-            headers=headers([scope, "company:read"]),
-        )
-        assert first.status_code == 200, first.text
-        assert first.json()["content"] == "original description"
-        denied = client.post(
-            f"/{component_type}/{component_id}/runs",
-            data={"message": "What do we do?", "stream": "false"},
-            headers=headers([scope]),
-        )
-        assert denied.status_code == 200, denied.text
-        assert denied.json()["content"] == "no company context"
+    scope = f"teams:{MANAGER_TEAM_ID}:run"
+    first = client.post(
+        f"/teams/{MANAGER_TEAM_ID}/runs",
+        data={"message": "What do we do?", "stream": "false"},
+        headers=headers([scope, "company:read"]),
+    )
+    assert first.status_code == 200, first.text
+    assert first.json()["content"] == "original description"
+    denied = client.post(
+        f"/teams/{MANAGER_TEAM_ID}/runs",
+        data={"message": "What do we do?", "stream": "false"},
+        headers=headers([scope]),
+    )
+    assert denied.status_code == 200, denied.text
+    assert denied.json()["content"] == "no company context"
+    assert "original description" in "\n".join(execute_instructions(os._mini_agent.instructions))
     changed = client.patch(
         "/company/details",
         json={"expected_updated_at": data["updated_at"], "description": "new description"},
         headers=admin,
     )
     assert changed.status_code == 200
-    for component_type, component_id in [("agents", COMPANY_MANAGER_ID), ("teams", MANAGER_TEAM_ID)]:
-        updated = client.post(
-            f"/{component_type}/{component_id}/runs",
-            data={"message": "What do we do?", "stream": "false"},
-            headers=admin,
-        )
-        assert updated.status_code == 200, updated.text
-        assert updated.json()["content"] == "new description"
+    updated = client.post(
+        f"/teams/{MANAGER_TEAM_ID}/runs", data={"message": "What do we do?", "stream": "false"}, headers=admin
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["content"] == "new description"
+    # Mini Agent reads the same details for its next Routine.
+    assert "new description" in "\n".join(execute_instructions(os._mini_agent.instructions))
     db.close()
 
 
@@ -240,13 +240,15 @@ def _company_os(db, **company):
 
 
 def _assert_managers_answer(client):
-    from agno.registry._reserved import COMPANY_MANAGER_ID, MANAGER_TEAM_ID
+    from agno.registry._reserved import MANAGER_TEAM_ID, MINI_AGENT_ID
 
     assert client.get("/agents").status_code == 200
     assert client.get("/teams").status_code == 200
-    for path in (f"/agents/{COMPANY_MANAGER_ID}/runs", f"/teams/{MANAGER_TEAM_ID}/runs"):
-        run = client.post(path, data={"message": "hello", "stream": "false"})
-        assert run.status_code == 200 and run.json()["content"] == "local answer"
+    run = client.post(f"/teams/{MANAGER_TEAM_ID}/runs", data={"message": "hello", "stream": "false"})
+    assert run.status_code == 200 and run.json()["content"] == "local answer"
+    # Mini Agent is still served, and still refuses a person's run.
+    run = client.post(f"/agents/{MINI_AGENT_ID}/runs", data={"message": "hello", "stream": "false"})
+    assert run.status_code == 200 and run.json()["content"] == "This agent runs Company Routines only"
 
 
 def test_startup_applies_configuration_without_products(tmp_path):
@@ -369,18 +371,17 @@ def test_custom_admin_scope_controls_who_can_edit(tmp_path):
 
 
 class CompanyEditModel(Model):
-    """Script delegation/edit calls and echo fresh context without a provider."""
+    """Script details edit calls and echo fresh context without a provider."""
 
-    def __init__(self, delegate=False, company_name="Acme"):
+    def __init__(self, company_name="Acme"):
         super().__init__(id="offline-company-edit", provider="test")
-        self.delegate = delegate
         self.company_name = company_name
 
     def invoke(self, messages, *args, **kwargs):
         start = max(i for i, message in enumerate(messages) if message.role == "user")
         results = [message for message in messages[start + 1 :] if message.role == "tool"]
         if results:
-            if not self.delegate and results[-1].tool_name == "update_company_details":
+            if results[-1].tool_name == "update_company_details":
                 try:
                     pending = json.loads(results[-1].content)
                 except (ValueError, TypeError):
@@ -406,12 +407,8 @@ class CompanyEditModel(Model):
         if "What does our company do?" in str(messages[start].content):
             context = "\n".join(str(message.content) for message in messages if message.role == "system")
             return ModelResponse(role="assistant", content=context, response_usage=MessageMetrics())
-        name = "delegate_task_to_member" if self.delegate else "update_company_details"
-        arguments = (
-            {"member_id": "company-manager", "task": "Our company is Acme. We build warehouse robots."}
-            if self.delegate
-            else {"name": self.company_name, "description": "We build warehouse robots."}
-        )
+        name = "update_company_details"
+        arguments = {"name": self.company_name, "description": "We build warehouse robots."}
         return ModelResponse(
             role="assistant",
             tool_calls=[
@@ -441,16 +438,16 @@ class CompanyEditModel(Model):
 
 
 @pytest.mark.parametrize("can_write", [False, True])
-def test_chat_delegates_details_edit_with_caller_permissions_and_fresh_context(tmp_path, can_write):
+def test_chat_edits_details_with_caller_permissions_and_fresh_context(tmp_path, can_write):
     from agno.os import OSManager
 
     db_path = str(tmp_path / "chat.db")
     db = SqliteDb(db_file=db_path)
     auth = Authorization(verification_keys=[SECRET], algorithm="HS256", audience="details-test")
-    manager = OSManager(model=CompanyEditModel(delegate=True), access_docs=False, offload_tool_results=False)
+    manager = OSManager(model=CompanyEditModel(), access_docs=False, offload_tool_results=False)
     company = CompanyConfig(model=CompanyEditModel(), name="Initial", description="Initial description")
     os = AgentOS(db=db, manager=manager, company=company, authorization=auth, telemetry=False)
-    scopes = ["teams:superagent:run", "agents:company-manager:run", "company:read"]
+    scopes = ["teams:superagent:run", "company:read"]
     if can_write:
         scopes.append("company:write")
     with TestClient(os.get_app()) as client:
@@ -474,18 +471,13 @@ def test_chat_delegates_details_edit_with_caller_permissions_and_fresh_context(t
         assert (saved["name"], saved["description"]) == ("Acme", "We build warehouse robots.")
         assert "Acme" in response.json()["content"]
         assert "We build warehouse robots." in response.json()["content"]
-        for path in ("/teams/superagent/runs", "/agents/company-manager/runs"):
-            fresh = client.post(
-                path,
-                headers=headers(scopes),
-                data={
-                    "message": "What does our company do?",
-                    "stream": "false",
-                    "session_id": "new-" + path.split("/")[2],
-                },
-            )
-            assert fresh.status_code == 200, fresh.text
-            assert '"name": "Acme", "description": "We build warehouse robots."' in fresh.json()["content"]
+        fresh = client.post(
+            "/teams/superagent/runs",
+            headers=headers(scopes),
+            data={"message": "What does our company do?", "stream": "false", "session_id": "new-superagent"},
+        )
+        assert fresh.status_code == 200, fresh.text
+        assert '"name": "Acme", "description": "We build warehouse robots."' in fresh.json()["content"]
     db.close()
     fresh_db = SqliteDb(db_file=db_path)
     restarted = AgentOS(
@@ -505,12 +497,15 @@ def test_replacing_details_requires_real_confirmation_through_superagent(tmp_pat
     original = db.update_company(initial["updated_at"], name="Acme", description="We build warehouse robots.")
     os = AgentOS(
         db=db,
-        manager=OSManager(model=CompanyEditModel(delegate=True), access_docs=False, offload_tool_results=False),
+        manager=OSManager(
+            model=CompanyEditModel(company_name="Acme Robotics"), access_docs=False, offload_tool_results=False
+        ),
         company=CompanyConfig(model=CompanyEditModel(company_name="Acme Robotics")),
         authorization=Authorization(verification_keys=[SECRET], algorithm="HS256", audience="details-test"),
         telemetry=False,
     )
-    scopes = ["teams:superagent:run", "agents:company-manager:run", "company:read", "company:write"]
+    # Super Agent edits the details itself: its run grant and the company scopes are enough.
+    scopes = ["teams:superagent:run", "company:read", "company:write"]
     with TestClient(os.get_app()) as client:
         response = client.post(
             "/teams/superagent/runs",

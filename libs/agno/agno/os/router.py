@@ -60,6 +60,7 @@ from agno.os.service_accounts import TOKEN_PREFIX as SERVICE_ACCOUNT_TOKEN_PREFI
 from agno.os.service_accounts import VerificationStatus
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import resolve_ws_jwt_config
+from agno.registry._reserved import _listed
 from agno.team.factory import TeamFactory
 from agno.utils.log import logger
 
@@ -178,7 +179,7 @@ def get_base_router(
         },
     )
     async def config(request: Request) -> ConfigResponse:
-        agents_in_scope = list(os.agents or [])
+        agents_in_scope = _listed(os.agents)
         teams_in_scope = list(os.teams or [])
         workflows_in_scope = list(os.workflows or [])
         if getattr(request.state, "authorization_enabled", False):
