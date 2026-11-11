@@ -396,7 +396,6 @@ class AsyncPostgresDb(AsyncBaseDb):
             (self.session_table_name, "sessions"),
             (self.runs_table_name, "runs"),
             (self.memory_table_name, "memories"),
-            (self.metrics_table_name, "metrics"),
             (self.component_metrics_table_name, "component_metrics"),
             (self.aggregate_metrics_table_name, "aggregate_metrics"),
             (self.metrics_refreshes_table_name, "metrics_refreshes"),
