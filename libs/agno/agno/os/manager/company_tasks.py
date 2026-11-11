@@ -57,6 +57,35 @@ def _unsigned(agent_os: Any, authority: Any, user_id: Any) -> bool:
     )
 
 
+def _policy_line(policy: Any) -> str:
+    """A Routine's stored auto-accept policy on one line, for the person to confirm before it is kept."""
+    from datetime import datetime, timezone
+
+    parts = [
+        f"default executor {policy.default_executor}",
+        "proposals may name "
+        + ("any executor" if policy.executors is None else ", ".join(policy.executors) or "no other executor"),
+        "approves its Projects" if policy.approve_projects else "a person approves its Projects",
+    ]
+    if policy.limits is None:
+        parts.append(f"at most {policy.max_open} Tasks open")
+    else:
+        expires = datetime.fromtimestamp(policy.limits.expires_at, timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        parts.append(f"at most {policy.limits.max_acceptances} acceptances, expires {expires}")
+    if policy.source_ids is not None:
+        parts.append("Sources " + (", ".join(policy.source_ids) or "none"))
+    scope = policy.work_scope
+    if scope is not None and scope.product_ids is not None:
+        parts.append("Products " + (", ".join(scope.product_ids) or "none"))
+    if scope is not None and scope.project_ids is not None:
+        parts.append("Projects " + (", ".join(str(item) for item in scope.project_ids) or "none"))
+    if policy.required_checks != ["executor_registered"]:
+        parts.append("checks " + ", ".join(policy.required_checks))
+    if policy.complete_projects:
+        parts.append("completes Projects")
+    return "; ".join(parts)
+
+
 def _refusal(authority: Any) -> Optional[str]:
     from agno.company.execution import _automatic_task, _ExecutorAuthorization
     from agno.company.routines import _RoutineAuthorization
@@ -653,6 +682,7 @@ class CompanyTaskTools(Toolkit):
         routine_name: str,
         product_name: str,
         default_executor: Optional[str],
+        kept_policy: Optional[str],
         routine_id: str,
         _agno_run_context: Optional[Any] = None,
     ) -> str:
@@ -662,6 +692,7 @@ class CompanyTaskTools(Toolkit):
             routine_name: The Routine's name, as stored.
             product_name: The name of the Routine's Product, as stored.
             default_executor: ID of the agent, team or workflow. Null unless the person names one.
+            kept_policy: Null, unless the Routine already has a policy a person set.
             routine_id: The Routine.
         """
         return "Turning auto-accept on needs an asynchronous run. Change the Routine from AgentOS instead."
@@ -671,38 +702,55 @@ class CompanyTaskTools(Toolkit):
         routine_name: str,
         product_name: str,
         default_executor: Optional[str],
+        kept_policy: Optional[str],
         routine_id: str,
         _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Turn auto-accept on for a Company Routine. The run pauses for the person to confirm the
-        Routine by name, its Product by name, and the default executor.
+        Routine by name, its Product by name, the default executor, and the policy that is kept.
 
         With auto-accept on, the Projects this Routine proposes are approved and its Tasks are accepted
         and run with no person, and finished work waits In review. A Task runs on the executor its
         proposal suggests, or on the default executor when it suggests none. Call this only when the
         person asked to turn auto-accept on for this Routine.
 
-        A Routine that declares auto-accept in code and waits for a person keeps its declared policy,
-        and from then on the Routine and its policy run under this person's permissions.
+        A Routine that already has a policy keeps it: one its code declares, or one a person set. Only
+        its default executor changes, and only when the person names one. From then on the Routine and
+        its policy run under this person's permissions.
 
         Args:
             routine_name: The Routine's name, as stored. The person confirms this name.
             product_name: The name of the Routine's Product, as stored. The person confirms this name.
             default_executor: ID of the agent, team or workflow that runs a Task whose proposal
-                suggests no executor. Null unless the person names one: the Routine's declared policy
-                is then kept, or Mini Agent is used when it declares none.
+                suggests no executor. Null unless the person names one: the Routine's policy is then
+                kept as it is, or Mini Agent is used when it has none.
+            kept_policy: Null, unless the Routine already has a policy a person set. Then that policy
+                on one line, as this tool gives it when it is left out, so the person confirms what is kept.
             routine_id: The Routine.
         """
         from agno.company.declarations import AutoAccept
-        from agno.company.routines import _DECLARED
+        from agno.company.routines import _DECLARED, _stored_policy
 
         async def call(agent_os: Any) -> str:
             authority, user_id = self._person(agent_os, _agno_run_context, "turn a Routine's auto-accept on")
             stored, payload = await self._named_routine(agent_os, routine_id, routine_name, product_name)
-            # A policy declared in code that no person has turned on is kept as declared.
-            declared = payload.get("_agno_company_acceptance") == _DECLARED and payload["metadata"].get("auto_accept")
+            # A Routine that has a policy keeps it. The defaults are for a Routine with none.
+            raw = payload["metadata"].get("auto_accept")
+            kept = _stored_policy(raw)[0] if raw else None
+            declared = kept is not None and payload.get("_agno_company_acceptance") == _DECLARED
+            line = _policy_line(kept) if kept is not None else None
+            # A policy a person set is shown on the confirmation before it is kept under this person's
+            # name. What the confirmation shows is always the stored policy.
+            shown = (kept_policy or "").strip() or None
+            if not (_same_name(shown, line) if shown is not None else line is None or declared):
+                if line is None:
+                    return f"Not done: Routine '{stored}' has no policy to keep. Call again with kept_policy null."
+                return (
+                    f"Not done: Routine '{stored}' already has a policy, and the person confirms the policy that "
+                    f"is kept. Call again with kept_policy set to this line: {line}"
+                )
             policy = AutoAccept.model_validate(
-                {**(declared or {}), **({"default_executor": default_executor} if default_executor else {})}
+                {**(kept.model_dump() if kept else {}), **({"default_executor": default_executor} if default_executor else {})}
             )
             await self._patch_routine(agent_os, authority, user_id, routine_id, policy)
             projects = (
@@ -711,11 +759,16 @@ class CompanyTaskTools(Toolkit):
                 else "A person approves its Projects. Its"
             )
             listed = f" from {', '.join(policy.executors)}" if policy.executors else ""
+            bound = (
+                f"At most {policy.max_open} of its Tasks are open at once."
+                if policy.limits is None
+                else f"It accepts at most {policy.limits.max_acceptances} Tasks."
+            )
+            source = ", with the policy its code declares" if declared else ", with the policy it already had" if kept else ""
             return (
-                f"Auto-accept is on for Routine '{stored}' ({routine_id})"
-                f"{', with the policy its code declares' if declared else ''}. {projects} Tasks are accepted and "
+                f"Auto-accept is on for Routine '{stored}' ({routine_id}){source}. {projects} Tasks are accepted and "
                 f"run on {policy.default_executor}, unless a proposal names another executor{listed}. "
-                f"Finished work waits In review. At most {policy.max_open} of its Tasks are open at once."
+                f"Finished work waits In review. {bound}"
             )
 
         return await self._decide(call)

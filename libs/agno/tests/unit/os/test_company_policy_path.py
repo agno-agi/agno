@@ -23,7 +23,7 @@ from agno.company.routines import (
 from agno.os.auth import INTERNAL_SCHEDULER_USER_ID
 from agno.os.authz.provider import AuthorizationContext
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider
-from agno.os.manager.company_tasks import CompanyTaskTools
+from agno.os.manager.company_tasks import CompanyTaskTools, _policy_line
 from agno.registry._reserved import BUILDER_ID, MANAGER_TEAM_ID, MINI_AGENT_ID
 from agno.run import RunContext
 from agno.run.authorization import AUTHORIZATION_KEY, RunAuthorization, authorization_scope
@@ -715,10 +715,10 @@ def chat(scopes=None, user="alice", **authority_fields):
     return RunContext(run_id="chat-run", session_id="chat-session", user_id=user, authorization=authority)
 
 
-def turn_on(system, routine_id, context=None, routine="intake", product="Docs", executor=None):
+def turn_on(system, routine_id, context=None, routine="intake", product="Docs", executor=None, kept=None):
     tools = CompanyTaskTools(system.os)
     call = tools.aturn_on_routine_auto_accept(
-        routine, product, executor, routine_id, _agno_run_context=context or chat()
+        routine, product, executor, kept, routine_id, _agno_run_context=context or chat()
     )
     return asyncio.run(call)
 
@@ -734,7 +734,7 @@ def test_turning_auto_accept_on_pauses_and_turning_it_off_does_not(system):
     assert not functions["turn_off_routine_auto_accept"].requires_confirmation
     functions["turn_on_routine_auto_accept"].process_entrypoint()
     shown = set(functions["turn_on_routine_auto_accept"].parameters["required"])
-    assert shown == {"routine_name", "product_name", "default_executor", "routine_id"}
+    assert shown == {"routine_name", "product_name", "default_executor", "kept_policy", "routine_id"}
 
 
 def company_tools(system):
@@ -803,9 +803,69 @@ def test_a_person_who_names_an_executor_changes_only_the_declared_default(system
         **declared.model_dump(),
         "default_executor": MINI_AGENT_ID,
     }
-    # A policy a person already turned on is not a declared one: turning it on again sets the defaults.
-    assert turn_on(system, routine_id).startswith("Auto-accept is on for Routine 'intake' (" + routine_id + "). Its")
-    assert system.stored(routine_id)["metadata"]["auto_accept"] == AutoAccept().model_dump()
+    # A declared policy may be confirmed with its line too. A line that is not the stored policy is refused.
+    other_product, other_routine = system.declare(auto_accept=declared, product="Other")
+    before = system.db.get_schedule(other_routine)
+    assert "already has a policy" in turn_on(system, other_routine, product="Other", kept="default executor miniagent")
+    assert system.db.get_schedule(other_routine) == before
+    assert turn_on(system, other_routine, product="Other", kept=_policy_line(declared)).startswith("Auto-accept is on")
+
+
+def test_turning_auto_accept_on_keeps_a_policy_a_person_wrote(system):
+    product_id, routine_id = system.declare(auto_accept=False)
+    path = f"/company/routines/{routine_id}"
+    written = {
+        "default_executor": "writer",
+        "executors": ["writer"],
+        "approve_projects": False,
+        "limits": {"max_acceptances": 3, "expires_at": FUTURE},
+    }
+    assert system.client.patch(path, json={"auto_accept": written}, headers=headers(SCOPES)).status_code == 200
+    before = system.db.get_schedule(routine_id)
+    policy, version = before["payload"]["metadata"]["auto_accept"], _policy_fingerprint(before)
+
+    project, task = system.proposes(product_id, routine_id)
+    system.manager.transition_project(project_id=project["id"], target="active", reason="Approved by a person")
+    system.tick()
+    accepted = system.db.get_task(task["id"])
+    assert accepted["status"] == "in_progress", accepted
+
+    # The person confirms the policy that is kept. A call that does not show it changes nothing and says what to show.
+    line = _policy_line(AutoAccept.model_validate(policy))
+    assert line == (
+        "default executor writer; proposals may name writer; a person approves its Projects; "
+        "at most 3 acceptances, expires 2100-01-01 00:00 UTC"
+    )
+    scoped = AutoAccept(source_ids=["notes"], work_scope={"project_ids": ["p1"]}, complete_projects=True, executors=[])
+    assert _policy_line(scoped) == (
+        "default executor miniagent; proposals may name no other executor; approves its Projects; "
+        "at most 5 Tasks open; Sources notes; Projects p1; completes Projects"
+    )
+    bob = chat(user="bob")
+    for refused in (turn_on(system, routine_id, bob), turn_on(system, routine_id, bob, kept="default executor writer")):
+        assert refused.startswith("Not done") and "already has a policy" in refused and line in refused, refused
+        assert system.db.get_schedule(routine_id) == before
+
+    # Confirmed, the policy is kept as it is, with its version, and from then on it runs under this person.
+    reply = turn_on(system, routine_id, bob, kept=line)
+    assert "with the policy it already had" in reply and "A person approves its Projects" in reply, reply
+    assert "from writer" in reply and "at most 3 Tasks" in reply, reply
+    after = system.stored(routine_id)
+    assert after["metadata"]["auto_accept"] == policy
+    assert _policy_fingerprint(system.db.get_schedule(routine_id)) == version
+    assert after["_agno_company_acceptance"]["user_id"] == "bob"
+    asyncio.run(_check_automatic_policy(system.db, accepted))
+
+    # Naming an executor changes the default and nothing else.
+    assert turn_on(system, routine_id, executor=MINI_AGENT_ID, kept=line).startswith("Auto-accept is on")
+    assert system.stored(routine_id)["metadata"]["auto_accept"] == {**policy, "default_executor": MINI_AGENT_ID}
+
+    # A Routine with no policy has nothing to keep, and gets the defaults.
+    other_product, other_routine = system.declare(auto_accept=False, product="Other")
+    assert "has no policy to keep" in turn_on(system, other_routine, product="Other", kept=line)
+    assert system.stored(other_routine)["metadata"]["auto_accept"] is False
+    assert turn_on(system, other_routine, product="Other").startswith("Auto-accept is on")
+    assert system.stored(other_routine)["metadata"]["auto_accept"] == AutoAccept().model_dump()
 
 
 def test_where_authorization_is_off_a_declared_routine_is_not_reported_as_waiting(open_system):
@@ -853,6 +913,7 @@ def test_super_agent_pauses_before_auto_accept_is_turned_on(system):
         "routine_name": "intake",
         "product_name": "Docs",
         "default_executor": "writer",
+        "kept_policy": None,
         "routine_id": routine_id,
     }
     system.os.manager.model = ScriptedModel([("turn_on_routine_auto_accept", arguments)])
@@ -896,7 +957,7 @@ def test_auto_accept_is_turned_on_only_for_the_routine_the_person_confirmed(syst
     )
     assert system.db.get_schedule(routine_id) == before
     tools = CompanyTaskTools(system.os)
-    assert "asynchronous run" in tools.turn_on_routine_auto_accept("intake", "Docs", None, routine_id)
+    assert "asynchronous run" in tools.turn_on_routine_auto_accept("intake", "Docs", None, None, routine_id)
     assert "asynchronous run" in tools.turn_off_routine_auto_accept("intake", routine_id)
     assert system.db.get_schedule(routine_id) == before
     # A schedule listing shows the Routine under its Product's ID. That name is the same Routine.
@@ -954,8 +1015,8 @@ def test_a_run_with_no_authority_changes_auto_accept_only_where_authorization_is
         assert reply.startswith("Not done") and "signed-in person" in reply, reply
     assert system.db.get_schedule(routine_id) == before
     # Where authorization is off every caller is a trusted operator.
-    product_id, routine_id = open_system.declare(auto_accept=False)
-    assert turn_on(open_system, routine_id, nobody).startswith("Auto-accept is on")
+    product_id, routine_id = open_system.declare(auto_accept=False, product="Open")
+    assert turn_on(open_system, routine_id, nobody, product="Open").startswith("Auto-accept is on")
     assert open_system.stored(routine_id)["metadata"]["auto_accept"] == AutoAccept().model_dump()
     assert turn_off(open_system, routine_id, nobody).startswith("Auto-accept is off")
     assert open_system.stored(routine_id)["metadata"]["auto_accept"] is False
