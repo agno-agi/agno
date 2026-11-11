@@ -1,4 +1,4 @@
-"""Bounded Company tools for agents and direct MCP calls.
+"""Bounded Company tools for agents.
 
 Identity is injected by the framework. No tool can accept or complete work,
 reassign ownership, edit a Product brief, or change local Sources. Human chats
@@ -177,7 +177,7 @@ class CompanyTools(Toolkit):
         self.db = db
         self.registry = registry
         self.user_isolation = user_isolation
-        # Supplied by the learning machine, never by the model or an MCP argument.
+        # Supplied by the learning machine, never by the model.
         self._agent_id = agent_id
         names = [
             "update_company_details",
