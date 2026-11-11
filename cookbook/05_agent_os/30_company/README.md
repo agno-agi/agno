@@ -338,12 +338,14 @@ decides on the record they were shown.
 | Tool | Confirmation shows | Change | The person needs |
 | --- | --- | --- | --- |
 | `approve_company_project` | Project name and ID | Project: proposed to active | `projects:write` |
-| `accept_company_task` | each Task's title and ID, and the executor | Tasks: Backlog to Ready | `tasks:write` and run permission on the executor |
+| `accept_company_task` | each Task's title, ID and version (`updated_at`), and the executor | Tasks: Backlog to Ready | `tasks:write` and run permission on the executor |
 | `review_company_task` with `complete` | Task title and ID, the outcome, the reason | Task: In review to Done | `tasks:write` |
 | `review_company_task` with `send_back` | Task title and ID, the outcome, the reason | Task: In review to Ready, same executor | `tasks:write` and run permission on the executor |
 
 `accept_company_task` takes a list of Tasks, so one confirmation covers several.
 Nothing is accepted unless every listed Task is a proposal with the title shown.
+Each Task names the `updated_at` the person saw. A Task edited after that is not
+accepted: read it again and request a new confirmation.
 
 A run that pauses and is never answered stays paused. It does not expire and it
 decides nothing. The person can answer it later, or send a new message, which starts
@@ -357,20 +359,23 @@ Review confirmations include `reviewed_run_id` from `get_company_task_status`.
 If another attempt runs while a confirmation is pending, that confirmation is
 refused. Read the new result and request a new confirmation before deciding it.
 
-A Task accepted with no executor names agent `miniagent`. This holds for
-`POST /company/tasks/{id}/transitions` and for `POST /company/tasks` with status
-Ready: give `executor_type` and `executor_id` together, or leave both out. In chat,
-Super Agent passes agent `miniagent` to `accept_company_task` so the confirmation
-shows it. The stored Task, the API response, the permission
-check (`agents:miniagent:run`) and the run all name Mini Agent. A named agent,
-team or workflow works as before. Super Agent and Platform Builder are refused as
-executors.
+A Task that names no executor, and is accepted with none, names agent `miniagent`.
+This holds for `POST /company/tasks/{id}/transitions` and for `POST /company/tasks`
+with status Ready: give `executor_type` and `executor_id` together, or leave both
+out. A move to Ready with no executor keeps the executor the Task already names, so
+a Task sent back from review stays with its executor and a proposal that suggests
+an executor is accepted on it. In chat, Super Agent passes the executor to
+`accept_company_task` so the confirmation shows it: the one the person named, else
+the one the proposal suggests, else agent `miniagent`. A call that names no
+executor is refused. The stored Task, the API response, the permission check (for
+Mini Agent, `agents:miniagent:run`) and the run all name that executor. Super Agent
+and Platform Builder are refused as executors.
 
 What Mini Agent may do follows the kind of run:
 
 | | Routine run | Task a person accepted | Task a policy accepted |
 | --- | --- | --- | --- |
-| Company tools | read, propose, intake, status, refresh, summary | read the Product, its Projects, Tasks and Sources; update `status.md` | the same as a person-accepted Task |
+| Company tools | read, propose, intake, status, refresh, summary | read the Product, its Projects, Tasks and Sources; update `status.md`. A Source read or a status update for another Product is refused | the same as a person-accepted Task |
 | Run tools (`list_*`, `run_*`) | none | yes, for components both the accepting person and the starter may run | none |
 | Instructions | read Sources and propose | do the work in the brief | do the work in the brief |
 
@@ -387,7 +392,12 @@ it, and reread it after a version conflict to preserve concurrent edits.
 
 When a Task run finishes, the components it started through the run tools are
 saved on the Task as `result.invoked`: type, id, run id and status, with
-`REFUSED` for a run that was not allowed.
+`REFUSED` for a run that was not allowed and `FAILED` for any other error.
+
+A component that pauses for a confirmation inside a Task run cannot continue: the
+Task's result names it as the blocker, and continuing that run through the
+component's own continue route is refused. Send the Task back, or run the
+component yourself.
 
 A run that executes a Task, on any executor, cannot move a Project or Task
 between stages through the Company manager. People decide in the Company pages,
