@@ -88,6 +88,37 @@ def _at_limit(product: Dict[str, Any], schedules: List[Optional[Dict[str, Any]]]
     return waiting
 
 
+def _waiting_for_a_person(schedules: Any, product_id: Optional[str]) -> List[Dict[str, Any]]:
+    """Routines whose auto_accept is declared in code and that no person has turned on."""
+    from agno.company.routines import _DECLARED, _stored_policy
+
+    waiting = []
+    for schedule in schedules:
+        payload = schedule.get("payload") or {}
+        metadata = payload.get("metadata") or {}
+        if (
+            schedule.get("managed_by") != "company"
+            or not schedule.get("enabled")
+            or not metadata.get("auto_accept")
+            or metadata.get("deleted_at") is not None
+            or payload.get("_agno_company_acceptance") != _DECLARED
+            or product_id not in (None, metadata.get("product_id"))
+        ):
+            continue
+        policy, _ = _stored_policy(metadata["auto_accept"])
+        waiting.append(
+            {
+                "routine_id": schedule["id"],
+                "routine": schedule["name"].removeprefix(str(metadata.get("product_id")) + "."),
+                "product_id": metadata.get("product_id"),
+                "default_executor": policy.default_executor,
+                "note": "This Routine declares auto-accept and does not run until a person turns it on. "
+                "Turn auto-accept on for it once; it and its declared policy then run under that person's permissions.",
+            }
+        )
+    return waiting
+
+
 def _routine_project_id(product_id: str, routine_id: Optional[str], name: str) -> str:
     """The id of the Project a Routine proposes under this name in a Product."""
     from uuid import NAMESPACE_URL, uuid5
@@ -625,6 +656,16 @@ class CompanyManager:
             "automatic_decisions": _automatic_decisions(records["list_projects"], records["list_tasks"], limit),
             "auto_accept_at_limit": _at_limit(product or {}, schedules, records["list_tasks"]),
         }
+
+    def auto_accept_waiting(self, product_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Routines that declare auto_accept in code and wait for a person to turn it on.
+
+        This applies where authorization is on: there a declared policy acts for no one until a person adopts it.
+        """
+        from agno.scheduler import ScheduleManager
+
+        rows = ScheduleManager(self.schedule_db).list_all()
+        return _waiting_for_a_person([row.to_dict() for row in rows], product_id)
 
     def attention(self, product_id: Optional[str] = None) -> Dict[str, Any]:
         """Company-wide counts over the same filters used by the Task list."""
@@ -1565,6 +1606,16 @@ class AsyncCompanyManager:
             "automatic_decisions": _automatic_decisions(records["list_projects"], records["list_tasks"], limit),
             "auto_accept_at_limit": _at_limit(product or {}, schedules, records["list_tasks"]),
         }
+
+    async def auto_accept_waiting(self, product_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Routines that declare auto_accept in code and wait for a person to turn it on.
+
+        This applies where authorization is on: there a declared policy acts for no one until a person adopts it.
+        """
+        from agno.scheduler import ScheduleManager
+
+        rows = await ScheduleManager(self.schedule_db).alist_all()
+        return _waiting_for_a_person([row.to_dict() for row in rows], product_id)
 
     async def attention(self, product_id: Optional[str] = None) -> Dict[str, Any]:
         """Company-wide counts over the same filters used by the Task list."""

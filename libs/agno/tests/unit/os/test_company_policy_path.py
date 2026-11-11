@@ -682,7 +682,7 @@ def chat(scopes=None, user="alice", **authority_fields):
     return RunContext(run_id="chat-run", session_id="chat-session", user_id=user, authorization=authority)
 
 
-def turn_on(system, routine_id, context=None, routine="intake", product="Docs", executor=MINI_AGENT_ID):
+def turn_on(system, routine_id, context=None, routine="intake", product="Docs", executor=None):
     tools = CompanyTaskTools(system.os)
     call = tools.aturn_on_routine_auto_accept(
         routine, product, executor, routine_id, _agno_run_context=context or chat()
@@ -702,6 +702,110 @@ def test_turning_auto_accept_on_pauses_and_turning_it_off_does_not(system):
     functions["turn_on_routine_auto_accept"].process_entrypoint()
     shown = set(functions["turn_on_routine_auto_accept"].parameters["required"])
     assert shown == {"routine_name", "product_name", "default_executor", "routine_id"}
+
+
+def company_tools(system):
+    """Super Agent's Company tools, bound to the deployment as AgentOS binds them."""
+    return next(tool for tool in system.os.manager.tools if isinstance(tool, CompanyTools))
+
+
+def waiting(system, product_id="docs", use_async=False):
+    tools = company_tools(system)
+    if use_async:
+        shown = json.loads(asyncio.run(tools.aget_company_product(product_id)))
+        listed = json.loads(asyncio.run(tools.alist_company_tasks(product_id=product_id, status="backlog")))
+    else:
+        shown = json.loads(tools.get_company_product(product_id))
+        listed = json.loads(tools.list_company_tasks(product_id=product_id, status="backlog"))
+    assert shown.get("auto_accept_waiting_for_a_person") == listed.get("auto_accept_waiting_for_a_person")
+    return [
+        (item["routine"], item["product_id"], item["default_executor"])
+        for item in shown.get("auto_accept_waiting_for_a_person") or []
+    ]
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_with_authorization_on_one_confirmation_turns_on_the_declared_routine_and_its_policy(system, use_async):
+    declared = AutoAccept(default_executor="writer", executors=["writer"], approve_projects=False, max_open=2)
+    product_id, routine_id = system.declare(auto_accept=declared)
+    system.declare(auto_accept=False, product="Other")
+    before = system.stored(routine_id)
+    assert AUTHORIZATION_KEY not in before
+
+    # Until a person acts, the Product's status and the list of what needs a decision say so.
+    assert waiting(system, use_async=use_async) == [("intake", "docs", "writer")]
+    assert waiting(system, "other", use_async=use_async) == []
+    # With no Product named, the list covers the company.
+    everywhere = json.loads(company_tools(system).list_company_tasks(status="backlog"))
+    assert [item["routine_id"] for item in everywhere["auto_accept_waiting_for_a_person"]] == [routine_id]
+    assert "auto_accept_waiting_for_a_person" not in json.loads(
+        company_tools(system).list_company_tasks(status="ready")
+    )
+
+    # One confirmation: the Routine runs under this person's grant, and so does the policy its code declares.
+    reply = turn_on(system, routine_id)
+    assert "with the policy its code declares" in reply and "run on writer" in reply, reply
+    after = system.stored(routine_id)
+    assert after["metadata"]["auto_accept"] == declared.model_dump() == before["metadata"]["auto_accept"]
+    assert after[AUTHORIZATION_KEY]["context"]["principal_id"] == "alice"
+    assert after["_agno_company_acceptance"]["user_id"] == "alice"
+    assert waiting(system, use_async=use_async) == []
+
+    project, task = system.proposes(product_id, routine_id)
+    system.manager.transition_project(project_id=project["id"], target="active", reason="Approved by a person")
+    system.tick()
+    accepted = system.db.get_task(task["id"])
+    assert (accepted["status"], accepted["executor_id"]) == ("in_progress", "writer")
+    assert [(target, user, "declared" in receipt) for target, user, receipt in receipts(accepted)] == [
+        ("ready", "alice", False)
+    ]
+
+
+def test_a_person_who_names_an_executor_changes_only_the_declared_default(system):
+    declared = AutoAccept(default_executor="writer", max_open=2)
+    product_id, routine_id = system.declare(auto_accept=declared)
+    assert turn_on(system, routine_id, executor=MINI_AGENT_ID).startswith("Auto-accept is on")
+    assert system.stored(routine_id)["metadata"]["auto_accept"] == {
+        **declared.model_dump(),
+        "default_executor": MINI_AGENT_ID,
+    }
+    # A policy a person already turned on is not a declared one: turning it on again sets the defaults.
+    assert turn_on(system, routine_id).startswith("Auto-accept is on for Routine 'intake' (" + routine_id + "). Its")
+    assert system.stored(routine_id)["metadata"]["auto_accept"] == AutoAccept().model_dump()
+
+
+def test_where_authorization_is_off_a_declared_routine_is_not_reported_as_waiting(open_system):
+    product_id, routine_id = open_system.declare(auto_accept=True)
+    assert open_system.manager.auto_accept_waiting(product_id) != []
+    assert waiting(open_system) == []
+
+
+def test_the_routine_api_still_returns_executor_type_and_executor_id_marked_deprecated(system):
+    product_id, routine_id = system.declare(auto_accept=False)
+    path = f"/company/routines/{routine_id}"
+    assert system.client.get(path, headers=headers(SCOPES)).json()["payload"]["metadata"]["auto_accept"] is False
+    patched = system.client.patch(path, json={"auto_accept": {"default_executor": "writer"}}, headers=headers(SCOPES))
+    assert patched.status_code == 200, patched.text
+    listed = system.client.get("/company/routines", params={"product_id": product_id}, headers=headers(SCOPES))
+    for returned in (patched.json(), system.client.get(path, headers=headers(SCOPES)).json(), listed.json()["data"][0]):
+        policy = returned["payload"]["metadata"]["auto_accept"]
+        assert (policy["default_executor"], policy["executors"]) == ("writer", None)
+        assert (policy["executor_type"], policy["executor_id"]) == ("agent", "writer")
+        assert policy["max_open"] == 5 and "_agno_company_acceptance" not in returned["payload"]
+    # They are returned only: the stored policy does not hold them.
+    assert "executor_type" not in system.stored(routine_id)["metadata"]["auto_accept"]
+
+    # A policy stored with the two fields is returned with the new ones too.
+    legacy_id = legacy(system, product_id)
+    policy = system.client.get(f"/company/routines/{legacy_id}", headers=headers(SCOPES)).json()["payload"]["metadata"][
+        "auto_accept"
+    ]
+    assert (policy["executor_type"], policy["executor_id"]) == ("agent", "writer")
+    assert (policy["default_executor"], policy["executors"]) == ("writer", ["writer"])
+
+    schema = system.client.get("/openapi.json").json()["components"]["schemas"]["RoutineAutoAccept"]["properties"]
+    assert schema["executor_type"]["deprecated"] is True and schema["executor_id"]["deprecated"] is True
+    assert "deprecated" not in schema["default_executor"]
 
 
 def test_super_agent_pauses_before_auto_accept_is_turned_on(system):
@@ -754,7 +858,7 @@ def test_auto_accept_is_turned_on_only_for_the_routine_the_person_confirmed(syst
     )
     assert system.db.get_schedule(routine_id) == before
     tools = CompanyTaskTools(system.os)
-    assert "asynchronous run" in tools.turn_on_routine_auto_accept("intake", "Docs", MINI_AGENT_ID, routine_id)
+    assert "asynchronous run" in tools.turn_on_routine_auto_accept("intake", "Docs", None, routine_id)
     assert "asynchronous run" in tools.turn_off_routine_auto_accept("intake", routine_id)
     assert system.db.get_schedule(routine_id) == before
     # A schedule listing shows the Routine under its Product's ID. That name is the same Routine.

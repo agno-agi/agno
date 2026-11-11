@@ -283,6 +283,11 @@ class CompanyTools(Toolkit):
             return user
         return None
 
+    def _authorization_on(self) -> bool:
+        """Whether this deployment checks permissions. Where it does not, a declared auto_accept acts."""
+        agent_os = self._agent_os_ref() if self._agent_os_ref else None
+        return bool(getattr(agent_os, "authorization", None))
+
     def _sync(self):
         if isinstance(self.db, AsyncBaseDb):
             raise TypeError("Use async Company tools with an asynchronous database")
@@ -713,6 +718,8 @@ class CompanyTools(Toolkit):
             return _public_json(product)
         product.update({key: value for key, value in manager.auto_accept_status(product_id).items() if value != []})
         product.setdefault("automatic_decisions", [])
+        if self._authorization_on() and (waiting := manager.auto_accept_waiting(product_id)):
+            product["auto_accept_waiting_for_a_person"] = waiting
         return _public_json(product)
 
     @requires_permission()
@@ -771,7 +778,9 @@ class CompanyTools(Toolkit):
         if status == "backlog":
             for listed in dict.fromkeys(row["product_id"] for row in result[0]):
                 at_limit.extend(manager.auto_accept_status(listed)["auto_accept_at_limit"])
-        return _page(result, limit, page, auto_accept_at_limit=at_limit)
+        # A Routine waiting to be turned on has proposed nothing, so it is listed whatever the page holds.
+        waiting = manager.auto_accept_waiting(product_id) if status == "backlog" and self._authorization_on() else []
+        return _page(result, limit, page, auto_accept_at_limit=at_limit, auto_accept_waiting_for_a_person=waiting)
 
     @requires_permission()
     def propose_company_project(
@@ -1037,6 +1046,8 @@ class CompanyTools(Toolkit):
         status = await manager.auto_accept_status(product_id)
         product.update({key: value for key, value in status.items() if value != []})
         product.setdefault("automatic_decisions", [])
+        if self._authorization_on() and (waiting := await manager.auto_accept_waiting(product_id)):
+            product["auto_accept_waiting_for_a_person"] = waiting
         return _public_json(product)
 
     @requires_permission()
@@ -1095,7 +1106,11 @@ class CompanyTools(Toolkit):
         if status == "backlog":
             for listed in dict.fromkeys(row["product_id"] for row in result[0]):
                 at_limit.extend((await manager.auto_accept_status(listed))["auto_accept_at_limit"])
-        return _page(result, limit, page, auto_accept_at_limit=at_limit)
+        # A Routine waiting to be turned on has proposed nothing, so it is listed whatever the page holds.
+        waiting = (
+            await manager.auto_accept_waiting(product_id) if status == "backlog" and self._authorization_on() else []
+        )
+        return _page(result, limit, page, auto_accept_at_limit=at_limit, auto_accept_waiting_for_a_person=waiting)
 
     @requires_permission()
     async def apropose_company_project(

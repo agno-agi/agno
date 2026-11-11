@@ -238,7 +238,10 @@ class CompanyTaskTools(Toolkit):
         return authority, user_id
 
     async def _named_routine(self, agent_os: Any, routine_id: str, routine_name: str, product_name: Any) -> Any:
-        """Check that the names the person confirmed are the stored Routine's and its Product's."""
+        """Check that the names the person confirmed are the stored Routine's and its Product's.
+
+        Returns the Routine's name and its stored payload.
+        """
         from agno.company.execution import _call
 
         row = await _call(agent_os.db, "get_schedule", routine_id) if agent_os.db is not None else None
@@ -257,7 +260,7 @@ class CompanyTaskTools(Toolkit):
                 raise ValueError(
                     f"Routine '{stored}' belongs to Product '{product['name']}'. Call again with that name."
                 )
-        return stored
+        return stored, row["payload"]
 
     async def _patch_routine(
         self, agent_os: Any, authority: Any, user_id: Any, routine_id: str, auto_accept: Any
@@ -650,7 +653,7 @@ class CompanyTaskTools(Toolkit):
         Args:
             routine_name: The Routine's name, as stored.
             product_name: The name of the Routine's Product, as stored.
-            default_executor: ID of the agent, team or workflow. With no executor named, pass miniagent.
+            default_executor: ID of the agent, team or workflow. Null unless the person names one.
             routine_id: The Routine.
         """
         return "Turning auto-accept on needs an asynchronous run. Change the Routine from AgentOS instead."
@@ -669,25 +672,41 @@ class CompanyTaskTools(Toolkit):
         With auto-accept on, the Projects this Routine proposes are approved and its Tasks are accepted
         and run with no person, and finished work waits In review. A Task runs on the executor its
         proposal suggests, or on the default executor when it suggests none. Call this only when the
-        person asked to turn auto-accept on for this Routine. With no executor named, pass miniagent.
+        person asked to turn auto-accept on for this Routine.
+
+        A Routine that declares auto-accept in code and waits for a person keeps its declared policy,
+        and from then on the Routine and its policy run under this person's permissions.
 
         Args:
             routine_name: The Routine's name, as stored. The person confirms this name.
             product_name: The name of the Routine's Product, as stored. The person confirms this name.
             default_executor: ID of the agent, team or workflow that runs a Task whose proposal
-                suggests no executor. With no executor named, pass miniagent.
+                suggests no executor. Null unless the person names one: the Routine's declared policy
+                is then kept, or Mini Agent is used when it declares none.
             routine_id: The Routine.
         """
         from agno.company.declarations import AutoAccept
+        from agno.company.routines import _DECLARED
 
         async def call(agent_os: Any) -> str:
             authority, user_id = self._person(agent_os, _agno_run_context, "turn a Routine's auto-accept on")
-            stored = await self._named_routine(agent_os, routine_id, routine_name, product_name)
-            policy = AutoAccept.model_validate({"default_executor": default_executor} if default_executor else {})
+            stored, payload = await self._named_routine(agent_os, routine_id, routine_name, product_name)
+            # A policy declared in code that no person has turned on is kept as declared.
+            declared = payload.get("_agno_company_acceptance") == _DECLARED and payload["metadata"].get("auto_accept")
+            policy = AutoAccept.model_validate(
+                {**(declared or {}), **({"default_executor": default_executor} if default_executor else {})}
+            )
             await self._patch_routine(agent_os, authority, user_id, routine_id, policy)
+            projects = (
+                "Its Projects are approved and its"
+                if policy.approve_projects
+                else "A person approves its Projects. Its"
+            )
+            listed = f" from {', '.join(policy.executors)}" if policy.executors else ""
             return (
-                f"Auto-accept is on for Routine '{stored}' ({routine_id}). Its Projects are approved and its Tasks "
-                f"are accepted and run on {policy.default_executor}, unless a proposal names another executor. "
+                f"Auto-accept is on for Routine '{stored}' ({routine_id})"
+                f"{', with the policy its code declares' if declared else ''}. {projects} Tasks are accepted and "
+                f"run on {policy.default_executor}, unless a proposal names another executor{listed}. "
                 f"Finished work waits In review. At most {policy.max_open} of its Tasks are open at once."
             )
 
@@ -719,7 +738,7 @@ class CompanyTaskTools(Toolkit):
 
         async def call(agent_os: Any) -> str:
             authority, user_id = self._person(agent_os, _agno_run_context, "turn a Routine's auto-accept off")
-            stored = await self._named_routine(agent_os, routine_id, routine_name, None)
+            stored, _ = await self._named_routine(agent_os, routine_id, routine_name, None)
             await self._patch_routine(agent_os, authority, user_id, routine_id, False)
             return f"Auto-accept is off for Routine '{stored}' ({routine_id}). Its proposals now wait for a person."
 
