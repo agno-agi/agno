@@ -198,7 +198,9 @@ async def _download_attachment(
                     content.extend(chunk)
                 mime = resp.headers.get("content-type", "").split(";")[0].strip().lower() or None
                 return bytes(content), mime
-    except httpx.HTTPError as e:
+    except _AttachmentTooLarge:
+        raise
+    except Exception as e:
         status = e.response.status_code if isinstance(e, httpx.HTTPStatusError) else None
         log_warning(f"Attachment download failed: {name}, status={status}, {type(e).__name__}")
         return None, None

@@ -20,12 +20,15 @@ _MISSING_CRYPTO_DETAIL = "`pyjwt[crypto]` not installed. Please install using `p
 
 class _BotFrameworkJWKClient(PyJWKClient):
     def fetch_data(self) -> Any:
+        # get_signing_key holds PyJWT's lock and runs off the event loop.
+        if self.uri == _OPENID_METADATA_URL:
+            self.uri = _fetch_openid_metadata()["jwks_uri"]
         data = super().fetch_data()
         self.endorsements = {key["kid"]: key.get("endorsements") for key in data.get("keys", []) if key.get("kid")}
         return data
 
 
-_jwk_client: Optional[_BotFrameworkJWKClient] = None
+_jwk_client = _BotFrameworkJWKClient(_OPENID_METADATA_URL, timeout=10)
 
 
 def dev_bypass_enabled() -> bool:
@@ -33,9 +36,9 @@ def dev_bypass_enabled() -> bool:
     return os.getenv("MICROSOFT_APP_SKIP_JWT_VALIDATION", "").lower() == "true"
 
 
-async def _fetch_openid_metadata() -> Dict[str, Any]:
-    async with httpx.AsyncClient(timeout=10) as client:
-        resp = await client.get(_OPENID_METADATA_URL)
+def _fetch_openid_metadata() -> Dict[str, Any]:
+    with httpx.Client(timeout=10) as client:
+        resp = client.get(_OPENID_METADATA_URL)
         resp.raise_for_status()
         return resp.json()
 
@@ -44,8 +47,6 @@ async def validate_bot_framework_jwt(
     auth_header: Optional[str], app_id: str, service_url: Optional[str], channel_id: Optional[str] = None
 ) -> Optional[Dict[str, Any]]:
     """Return verified claims, or None for an invalid Bot Framework activity."""
-    global _jwk_client
-
     if not app_id:
         if dev_bypass_enabled():
             return {}
@@ -60,9 +61,6 @@ async def validate_bot_framework_jwt(
         kid = jwt.get_unverified_header(token).get("kid")
         if not kid:
             return None
-        if _jwk_client is None:
-            metadata = await _fetch_openid_metadata()
-            _jwk_client = _BotFrameworkJWKClient(metadata["jwks_uri"], timeout=10)
         client = _jwk_client
         signing_key = await asyncio.to_thread(client.get_signing_key, kid)
         claims = jwt.decode(
