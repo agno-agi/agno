@@ -181,7 +181,8 @@ class CompanyFiles:
     @staticmethod
     def _read_result(location: _Location, data: Any, offset: int) -> Dict[str, Any]:
         if data is None:
-            raise LookupError(f"{location.tree_path} not found")
+            # A missing file is an answer, not a failure: version 0 is what creates it.
+            return {"path": location.tree_path, "exists": False, "version": 0}
         offset = max(offset, 0)
         content = data.content[offset : offset + READ_CHARS]
         result = {

@@ -191,6 +191,9 @@ def test_source_tools_and_tree_tools_read_different_places(tmp_path):
         _, source, note, outside = [tool.result for tool in result.tools]
         assert "FROM THE SOURCE DIRECTORY" in source and "NOTES FOLDER" not in source
         assert json.loads(note)["content"] == "FROM THE NOTES FOLDER"
+        # A file that is not there is an answer, and tells the model the version that creates it.
+        missing = call(files, "read_company_file", path="notes/absent.md")
+        assert missing == {"path": "notes/absent.md", "exists": False, "version": 0}
         assert "outside the company files" in outside
     finally:
         db.close()
@@ -586,8 +589,16 @@ def test_super_agent_owns_notes_with_or_without_company(tmp_path, company, use_a
             with pytest.raises(ValueError, match="wiki/ is not available here"):
                 call(files, "read_company_file", path="wiki/brief.md")
         else:
-            with pytest.raises(PermissionError, match="Permission required: wiki:read"):
-                call(files, "read_company_file", person(RUN_ONLY), path="wiki/brief.md")
+            # The top folders are named to anyone. What is inside the Company folders needs wiki:read.
+            assert "wiki/" in call(files, "list_company_files", person(RUN_ONLY))["folders"]
+            for tool, arguments in (
+                ("read_company_file", {"path": "wiki/brief.md"}),
+                ("list_company_files", {"folder": "wiki"}),
+                ("list_company_files", {"folder": "products"}),
+                ("search_company_files", {"query": "digest"}),
+            ):
+                with pytest.raises(PermissionError, match="Permission required: wiki:read"):
+                    call(files, tool, person(RUN_ONLY), use_async, **arguments)
             with pytest.raises(PermissionError, match="Only files in notes/ can be deleted"):
                 call(files, "delete_company_file", path="wiki/brief.md")
     finally:
@@ -625,6 +636,11 @@ def test_notes_are_shared_by_everyone_who_talks_to_super_agent(tmp_path):
         files = tree(system.os)
         alice = RunContext(run_id="run", session_id="a", user_id="alice")
         bob = RunContext(run_id="run", session_id="b", user_id="bob")
+        # Reading the wiki names no owner, so it asks for no identity. Listing Products is scoped to one.
+        nobody = RunContext(run_id="run", session_id="n", user_id=None)
+        assert json.loads(files.list_company_files(folder="wiki", _agno_run_context=nobody))["total"] == 2
+        with pytest.raises(PermissionError, match="Caller identity is required"):
+            files.list_company_files(folder="products", _agno_run_context=nobody)
         files.write_company_file(path="notes/ideas.md", content="From Alice", _agno_run_context=alice)
         assert json.loads(files.read_company_file(path="notes/ideas.md", _agno_run_context=bob))["content"] == (
             "From Alice"
