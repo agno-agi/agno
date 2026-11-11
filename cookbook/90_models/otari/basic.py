@@ -14,10 +14,10 @@ from agno.models.otari import Otari
 # Create Agent
 # ---------------------------------------------------------------------------
 
-agent = Agent(model=Otari(id="openai:gpt-4o"), markdown=True)
+agent = Agent(model=Otari(id="openai:gpt-5.6-luna"), markdown=True)
 
 # You can also select the provider by string, which resolves to the same class:
-# agent = Agent(model="otari:openai:gpt-4o", markdown=True)
+# agent = Agent(model="otari:openai:gpt-5.6-luna", markdown=True)
 
 # ---------------------------------------------------------------------------
 # Run Agent

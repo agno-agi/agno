@@ -9,15 +9,15 @@ from agno.models.utils import get_model, get_model_from_dict
 
 
 def test_otari_initialization_with_api_key():
-    model = Otari(id="openai:gpt-4o", api_key="test-api-key")
-    assert model.id == "openai:gpt-4o"
+    model = Otari(id="openai:gpt-5.6-luna", api_key="test-api-key")
+    assert model.id == "openai:gpt-5.6-luna"
     assert model.api_key == "test-api-key"
     assert model.base_url == "https://api.otari.ai/api/v1"
 
 
 def test_otari_initialization_without_api_key():
     with patch.dict(os.environ, {}, clear=True):
-        model = Otari(id="openai:gpt-4o")
+        model = Otari(id="openai:gpt-5.6-luna")
         client_params = None
         with pytest.raises(ModelAuthenticationError):
             client_params = model._get_client_params()
@@ -26,7 +26,7 @@ def test_otari_initialization_without_api_key():
 
 def test_otari_initialization_with_env_api_key():
     with patch.dict(os.environ, {"OTARI_API_KEY": "env-api-key"}):
-        model = Otari(id="openai:gpt-4o")
+        model = Otari(id="openai:gpt-5.6-luna")
         assert model.api_key == "env-api-key"
 
 
@@ -37,7 +37,7 @@ def test_otari_base_url_from_env():
 
 
 def test_otari_client_params():
-    model = Otari(id="openai:gpt-4o", api_key="test-api-key")
+    model = Otari(id="openai:gpt-5.6-luna", api_key="test-api-key")
     client_params = model._get_client_params()
     assert client_params["api_key"] == "test-api-key"
     assert client_params["base_url"] == "https://api.otari.ai/api/v1"
@@ -45,7 +45,7 @@ def test_otari_client_params():
 
 def test_otari_default_values():
     model = Otari(api_key="test-api-key")
-    assert model.id == "openai:gpt-4o"
+    assert model.id == "openai:gpt-5.6-luna"
     assert model.name == "Otari"
     assert model.provider == "Otari"
 
@@ -57,7 +57,13 @@ def test_otari_resolves_from_string_syntax():
 
 
 def test_otari_round_trips_through_dict():
-    model = Otari(id="openai:gpt-4o", api_key="test-api-key")
+    model = Otari(id="openai:gpt-5.6-luna", api_key="test-api-key")
     rebuilt = get_model_from_dict(model.to_dict())
     assert isinstance(rebuilt, Otari)
-    assert rebuilt.id == "openai:gpt-4o"
+    assert rebuilt.id == "openai:gpt-5.6-luna"
+
+
+def test_otari_empty_base_url_env_falls_back_to_default():
+    with patch.dict(os.environ, {"OTARI_BASE_URL": ""}):
+        model = Otari(api_key="test-api-key")
+        assert model.base_url == "https://api.otari.ai/api/v1"

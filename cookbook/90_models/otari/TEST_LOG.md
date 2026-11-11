@@ -2,34 +2,34 @@
 
 ### basic.py
 
-**Status:** SKIP
+**Status:** PASS
 
-**Description:** Basic Otari model cookbook covering sync, streaming, async, and async streaming agent responses.
+**Description:** Basic Otari model cookbook covering sync, streaming, async, and async streaming agent responses with `openai:gpt-5.6-luna` against otari.ai.
 
-**Result:** Not run locally because `OTARI_API_KEY` is not available in this checkout.
+**Result:** All four variants returned complete responses.
 
 ---
 
 ### tool_use.py
 
-**Status:** SKIP
+**Status:** PASS
 
-**Description:** Agent with `WebSearchTools()` covering sync, streaming, async, and async streaming tool calls.
+**Description:** Agent with `WebSearchTools()` covering sync, streaming, async, and async streaming tool calls with `openai:gpt-5.6-luna` against otari.ai.
 
-**Result:** Not run locally because `OTARI_API_KEY` is not available in this checkout.
+**Result:** All four variants called `web_search` and returned summaries. `reasoning_effort="none"` is required: with reasoning enabled, gpt-5.6-luna rejects function tools on `/v1/chat/completions` with a 400. Some searches logged "No results found" from the search backend; the agent retried and still answered.
 
 ---
 
 ### structured_output.py
 
-**Status:** SKIP
+**Status:** PASS
 
-**Description:** Agent with `output_schema=MovieScript` prompted with "New York".
+**Description:** Agent with `output_schema=MovieScript` prompted with "New York", using `openai:gpt-5.6-luna` against otari.ai.
 
-**Result:** Not run locally because `OTARI_API_KEY` is not available in this checkout.
+**Result:** Returned a populated `MovieScript` instance.
 
 ---
 
 ### Unit tests
 
-`libs/agno/tests/unit/models/test_otari.py`: 8 passed, without network access.
+`libs/agno/tests/unit/models/test_otari.py`: 9 passed, without network access.

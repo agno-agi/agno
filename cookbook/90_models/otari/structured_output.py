@@ -39,7 +39,7 @@ class MovieScript(BaseModel):
 
 # Agent that returns a structured output
 structured_output_agent = Agent(
-    model=Otari(id="openai:gpt-4o"),
+    model=Otari(id="openai:gpt-5.6-luna"),
     description="You write movie scripts.",
     output_schema=MovieScript,
 )

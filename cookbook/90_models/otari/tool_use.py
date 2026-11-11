@@ -16,7 +16,8 @@ from agno.tools.websearch import WebSearchTools
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=Otari(id="openai:gpt-4o"),
+    # gpt-5.6-luna only accepts function tools on chat completions with reasoning disabled
+    model=Otari(id="openai:gpt-5.6-luna", reasoning_effort="none"),
     tools=[WebSearchTools()],
     markdown=True,
 )

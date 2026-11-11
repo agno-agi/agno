@@ -59,8 +59,8 @@ python cookbook/90_models/otari/structured_output.py
 
 The model id is sent to the gateway unchanged, so any selector your gateway accepts works:
 
-- `openai:gpt-4o` or `anthropic:claude-sonnet-4-6` (`provider:model`) pins the provider.
-- `openai/gpt-4o` on otari.ai lets Otari choose where to serve the model.
+- `openai:gpt-5.6-luna` or `anthropic:claude-sonnet-4-6` (`provider:model`) pins the provider.
+- `openai/gpt-5.6-luna` on otari.ai lets Otari choose where to serve the model.
 - An alias or routing policy name configured on the gateway, such as `support-agent`.
 
 With the string syntax, everything after the first `otari:` is the model id, for example
