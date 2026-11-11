@@ -38,7 +38,10 @@ def restore_authorization(app: Any, snapshot: Optional[Dict[str, Any]]) -> Optio
     if snapshot.get("company_executor"):
         from agno.company.execution import _ExecutorAuthorization
 
-        return _ExecutorAuthorization(authority, task_id=snapshot.get("company_task_id"))
+        executor_authority = _ExecutorAuthorization(authority, task_id=snapshot.get("company_task_id"))
+        if snapshot.get("company_acceptance") is not None:
+            executor_authority.acceptance = restore_authorization(app, snapshot["company_acceptance"])
+        return executor_authority
     return authority
 
 

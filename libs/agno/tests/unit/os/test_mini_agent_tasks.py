@@ -159,10 +159,10 @@ class System:
         assert response.status_code == 200, response.text
         return response.json()
 
-    def execute(self, task_id, calls=(), scopes=None):
+    def execute(self, task_id, calls=(), scopes=None, user="alice"):
         """Start the accepted Task and run its queued job; return the saved Task."""
         self.mini.model = ScriptedModel(calls)
-        started = self.client.post(f"/company/tasks/{task_id}/runs", headers=headers(scopes))
+        started = self.client.post(f"/company/tasks/{task_id}/runs", headers=headers(scopes, user=user))
         assert started.status_code == 202, started.text
 
         async def run():
@@ -310,16 +310,107 @@ def test_a_task_a_person_accepted_runs_another_agent_and_records_it(system):
     assert json.loads(model.input)["brief"] == "Write the release notes"
 
 
-def test_mini_agent_runs_only_what_the_person_who_accepted_may_run(system):
+@pytest.mark.parametrize("accepting_may_run,starting_may_run", [(False, True), (True, False), (True, True)])
+def test_mini_agent_needs_both_accepting_and_starting_permissions(system, accepting_may_run, starting_may_run):
     proposal = system.proposal()
     without = [scope for scope in SCOPES if scope != "agents:writer:run"]
-    system.accept(proposal["id"], scopes=without)
+    system.accept(proposal["id"], scopes=SCOPES if accepting_may_run else without)
     saved = system.execute(
-        proposal["id"], [("run_agent", {"agent_id": "writer", "message": "Write the notes"})], scopes=without
+        proposal["id"],
+        [("run_agent", {"agent_id": "writer", "message": "Write the notes"})],
+        scopes=SCOPES if starting_may_run else without,
+        user="bob",
     )
-    assert system.writer.model.turns == 0
-    assert "Permission required" in saved["result"]["content"] or "permission" in saved["result"]["content"].lower()
-    assert [(entry["id"], entry["status"]) for entry in saved["result"]["invoked"]] == [("writer", "REFUSED")]
+    allowed = accepting_may_run and starting_may_run
+    assert system.writer.model.turns == int(allowed)
+    assert [(entry["id"], entry["status"]) for entry in saved["result"]["invoked"]] == [
+        ("writer", "COMPLETED" if allowed else "REFUSED")
+    ]
+    attempt = next(entry for entry in saved["transitions"] if entry.get("attempt"))
+    assert attempt["started_by"] == "bob" and saved["accepted_by"] == "alice"
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_accepting_permissions_survive_authorization_restore(system, use_async):
+    from agno.os.authz.run_context import restore_authorization
+    from tests.unit.os.test_company_decision_tools import context
+
+    authority = _ExecutorAuthorization(context(scopes=SCOPES, user="bob").authorization, task_id="task")
+    without = [scope for scope in SCOPES if scope != "agents:writer:run"]
+    authority.acceptance = context(scopes=without).authorization
+    restored = restore_authorization(system.app, authority.snapshot())
+    # Workers wrap restored authority again; repeated pauses must not drop the acceptance.
+    restored = restore_authorization(system.app, _ExecutorAuthorization(restored, task_id="task").snapshot())
+    with pytest.raises(PermissionError, match="agents:writer:run"):
+        if use_async:
+            asyncio.run(restored.arequire("agents", "run", "writer"))
+        else:
+            restored.require("agents", "run", "writer")
+
+
+@pytest.mark.parametrize("may_run", [False, True])
+def test_automatic_pickup_uses_the_accepting_persons_component_permissions(system, may_run):
+    from agno.company.routines import _CompanyScheduleExecutor
+
+    proposal = system.proposal()
+    scopes = SCOPES if may_run else [scope for scope in SCOPES if scope != "agents:writer:run"]
+    system.accept(proposal["id"], scopes=scopes)
+    system.mini.model = ScriptedModel([("run_agent", {"agent_id": "writer", "message": "Write"})])
+    executor = _CompanyScheduleExecutor(
+        system.os, system.app, base_url="http://test", internal_service_token=system.os._internal_service_token
+    )
+
+    async def execute():
+        await executor._dispatch(system.db.get_task(proposal["id"]))
+        job = await system.queue.store.claim_job(system.queue.worker_id, system.queue.config.lock_grace_seconds)
+        await system.queue._execute_claimed(job)
+
+    asyncio.run(execute())
+    saved = system.db.get_task(proposal["id"])
+    assert saved["status"] == "in_review"
+    assert system.writer.model.turns == int(may_run)
+    assert saved["result"]["invoked"][0]["status"] == ("COMPLETED" if may_run else "REFUSED")
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_task_can_read_status_and_recover_from_a_concurrent_update(system, use_async):
+    from agno.company.manager import CompanyManager
+    from agno.fs.errors import VersionConflictError
+    from agno.run import RunContext
+
+    proposal = system.proposal()
+    product_id = proposal["product_id"]
+    manager = CompanyManager(system.db, system.os.registry)
+    toolkit = system.mini.tools.task[0]
+    context = RunContext(run_id="run", session_id="session", user_id="alice")
+
+    def call(name, **arguments):
+        functions = toolkit.get_async_functions() if use_async else toolkit.get_functions()
+        entrypoint = functions[name].entrypoint
+        with authorization_scope(lambda: task_authority()):
+            result = entrypoint(**arguments, _agno_run_context=context)
+            return json.loads(asyncio.run(result) if use_async else result)
+
+    first = call("read_company_wiki", product_id=product_id, path="status.md")
+    manager.write_wiki(
+        product_id=product_id,
+        path="status.md",
+        content="Another person's update",
+        expected_version=first["metadata"]["version"],
+    )
+    with pytest.raises(VersionConflictError, match="version conflict"):
+        call(
+            "update_product_status",
+            product_id=product_id,
+            content="stale update",
+            expected_version=first["metadata"]["version"],
+        )
+    latest = call("read_company_wiki", product_id=product_id, path="status.md")
+    combined = latest["content"] + "\nTask completed."
+    call(
+        "update_product_status", product_id=product_id, content=combined, expected_version=latest["metadata"]["version"]
+    )
+    assert manager.read_wiki(product_id, "status.md").content == "Another person's update\nTask completed."
 
 
 @pytest.mark.parametrize(

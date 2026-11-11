@@ -73,6 +73,7 @@ TASK_COMPANY_TOOLS = [
     "list_company_tasks",
     "list_product_sources",
     "read_product_source",
+    "read_company_wiki",
     "update_product_status",
 ]
 

@@ -393,7 +393,13 @@ class CompanyTaskTools(Toolkit):
         return await self._decide(call)
 
     def review_company_task(
-        self, task_title: str, outcome: str, reason: str, task_id: str, _agno_run_context: Optional[Any] = None
+        self,
+        task_title: str,
+        outcome: str,
+        reason: str,
+        task_id: str,
+        reviewed_run_id: str,
+        _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Complete a Company Task in review, or send it back. The run pauses for the person to confirm.
 
@@ -402,14 +408,21 @@ class CompanyTaskTools(Toolkit):
             outcome: complete or send_back.
             reason: The person's reason, in their words.
             task_id: The Task in review.
+            reviewed_run_id: The run_id returned by get_company_task_status for the result being reviewed.
         """
         return "Reviewing a Task needs an asynchronous run. Review it from AgentOS instead."
 
     async def areview_company_task(
-        self, task_title: str, outcome: str, reason: str, task_id: str, _agno_run_context: Optional[Any] = None
+        self,
+        task_title: str,
+        outcome: str,
+        reason: str,
+        task_id: str,
+        reviewed_run_id: str,
+        _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Complete a Company Task in review, or send it back. The run pauses for the person to confirm
-        the Task by title and ID, the outcome and the reason.
+        the Task by title and ID, the reviewed run, the outcome and the reason.
 
         Call this only when the person asked, in this conversation, to complete this Task or send it
         back. Show them the saved result first when they have not seen it. complete moves the Task to
@@ -421,6 +434,7 @@ class CompanyTaskTools(Toolkit):
             outcome: complete or send_back.
             reason: The person's reason, in their words. Required to send a Task back.
             task_id: The Task in review.
+            reviewed_run_id: The run_id returned by get_company_task_status for the result being reviewed.
         """
         from dataclasses import replace
 
@@ -442,6 +456,8 @@ class CompanyTaskTools(Toolkit):
             if value["status"] != "in_review":
                 words = _STATUS_WORDS.get(value["status"], value["status"])
                 return f"'{title}' is {words}; only a Task in review can be completed or sent back."
+            if not reviewed_run_id or value.get("job_id") != reviewed_run_id:
+                return "Not done: the Task's attempt changed. Read its latest result and request a new confirmation."
             if authority is not None:
                 await authority.arequire("tasks", "write")
             executor: Dict[str, Any] = {}

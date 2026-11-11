@@ -353,6 +353,10 @@ A Task sent back keeps its executor. The person's reason is saved on the
 transition and given to the executor's next attempt as `review_feedback` in its
 input. Starting stays a separate step, with `start_company_task`.
 
+Review confirmations include `reviewed_run_id` from `get_company_task_status`.
+If another attempt runs while a confirmation is pending, that confirmation is
+refused. Read the new result and request a new confirmation before deciding it.
+
 A Task accepted with no executor names agent `miniagent`. This holds for
 `POST /company/tasks/{id}/transitions` and for `POST /company/tasks` with status
 Ready: give `executor_type` and `executor_id` together, or leave both out. In chat,
@@ -367,7 +371,7 @@ What Mini Agent may do follows the kind of run:
 | | Routine run | Task a person accepted | Task a policy accepted |
 | --- | --- | --- | --- |
 | Company tools | read, propose, intake, status, refresh, summary | read the Product, its Projects, Tasks and Sources; update `status.md` | the same as a person-accepted Task |
-| Run tools (`list_*`, `run_*`) | none | yes, for components the accepting person may run | none |
+| Run tools (`list_*`, `run_*`) | none | yes, for components both the accepting person and the starter may run | none |
 | Instructions | read Sources and propose | do the work in the brief | do the work in the brief |
 
 Mini Agent never runs Super Agent, Platform Builder or itself, holds no Studio,
@@ -375,6 +379,11 @@ scheduler, shell, file or web tools, and stops after 30 tool calls in a run. The
 run tools check the run themselves: called in a Routine run they return an error.
 A component Mini Agent runs acts with its own tools, so accept a Task on Mini
 Agent only when you would run those components yourself.
+
+The accepting person's saved permissions bound component runs throughout
+delegation and continuation; the starter's permissions still apply. Task runs
+can use `read_company_wiki` to read `status.md` and its version before updating
+it, and reread it after a version conflict to preserve concurrent edits.
 
 When a Task run finishes, the components it started through the run tools are
 saved on the Task as `result.invoked`: type, id, run id and status, with

@@ -165,6 +165,7 @@ def review(agent_os, run_context, task, outcome, reason):
         outcome=outcome,
         reason=reason,
         task_id=task["id"],
+        reviewed_run_id=(agent_os._company_db.get_task(task["id"]) or {}).get("job_id") or "missing-run",
     )
 
 
@@ -438,7 +439,7 @@ def test_the_sync_tools_decide_nothing(system):
         tools.accept_company_task(
             [{"title": "Draft", "task_id": ids["backlog"]["id"]}], "agent", "writer", _agno_run_context=context()
         ),
-        tools.review_company_task("Draft", "complete", "Good", ids["review"]["id"], _agno_run_context=context()),
+        tools.review_company_task("Draft", "complete", "Good", ids["review"]["id"], "run", _agno_run_context=context()),
     ]
     assert all("asynchronous run" in reply for reply in replies)
     assert state(db) == before
@@ -509,7 +510,8 @@ def chat_records(chat):
     review_task = chat.proposal()
     chat.accept(review_task["id"])
     chat.execute(review_task["id"])
-    assert chat.db.get_task(review_task["id"])["status"] == "in_review"
+    review_task = chat.db.get_task(review_task["id"])
+    assert review_task["status"] == "in_review"
     backlog = chat.proposal()
     proposed = chat.client.post(
         "/company/projects", json={"product_id": backlog["product_id"], "name": "Proposed"}, headers=chat_headers()
@@ -532,7 +534,13 @@ def tool_calls(ids):
         ),
         "complete": (
             "review_company_task",
-            {"task_title": review_task["title"], "outcome": "complete", "reason": "Good", "task_id": review_task["id"]},
+            {
+                "task_title": review_task["title"],
+                "outcome": "complete",
+                "reason": "Good",
+                "task_id": review_task["id"],
+                "reviewed_run_id": review_task["job_id"],
+            },
         ),
         "send_back": (
             "review_company_task",
@@ -541,6 +549,7 @@ def tool_calls(ids):
                 "outcome": "send_back",
                 "reason": "Redo",
                 "task_id": review_task["id"],
+                "reviewed_run_id": review_task["job_id"],
             },
         ),
     }
@@ -629,6 +638,38 @@ def test_one_confirmation_covers_several_tasks(chat):
     for task in (first, second):
         saved = chat.db.get_task(task["id"])
         assert (saved["status"], saved["executor_id"], saved["accepted_by"]) == ("ready", "writer", "alice")
+
+
+@pytest.mark.parametrize("outcome", ["complete", "send_back"])
+def test_review_confirmation_cannot_decide_a_newer_attempt(chat, outcome):
+    from tests.unit.os.test_mini_agent_tasks import headers as chat_headers
+
+    ids = chat_records(chat)
+    task = ids["review"]
+    tool, arguments = tool_calls(ids)["complete" if outcome == "complete" else "send_back"]
+    paused = ask(chat, tool, arguments)
+    assert paused.is_paused
+    returned = chat.client.post(
+        f"/company/tasks/{task['id']}/transitions",
+        json={"target": "ready", "reason": "Revise", "executor_type": "agent", "executor_id": MINI_AGENT_ID},
+        headers=chat_headers(user="bob"),
+    )
+    assert returned.status_code == 200, returned.text
+    revised = chat.execute(task["id"], [("list_agents", {})])
+    assert revised["status"] == "in_review" and revised["job_id"] != task["job_id"]
+    before = state(chat.db)
+    paused.requirements[0].confirm()
+    with authorization_scope(person):
+        result = asyncio.run(chat.os.manager.acontinue_run(run_response=paused, user_id="alice"))
+    assert state(chat.db) == before
+    assert "attempt changed" in result.content
+
+    fresh = ask(chat, tool, {**arguments, "reviewed_run_id": revised["job_id"]}, session="fresh-review")
+    assert fresh.is_paused
+    fresh.requirements[0].confirm()
+    with authorization_scope(person):
+        asyncio.run(chat.os.manager.acontinue_run(run_response=fresh, user_id="alice"))
+    assert chat.db.get_task(task["id"])["status"] == ("done" if outcome == "complete" else "ready")
 
 
 @pytest.mark.parametrize("decision", ["approve", "accept", "complete", "send_back"])

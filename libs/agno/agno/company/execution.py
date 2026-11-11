@@ -464,7 +464,7 @@ async def _check_task(worker: Any, job: Dict[str, Any]) -> None:
         await _check_automatic_policy(getattr(worker, "_company_schedule_db", None), task)
     except ValueError as exc:
         raise _TaskRunRefused(str(exc)) from exc
-    from agno.run.authorization import current_authorization
+    from agno.run.authorization import AUTHORIZATION_KEY, current_authorization
 
     authority = current_authorization()
     if isinstance(authority, _ExecutorAuthorization):
@@ -480,6 +480,21 @@ async def _check_task(worker: Any, job: Dict[str, Any]) -> None:
             )
         except PermissionError as exc:
             raise _TaskRunRefused(str(exc)) from exc
+    if isinstance(authority, _ExecutorAuthorization) and (job["component_type"], job["component_id"]) == (
+        "agent",
+        MINI_AGENT_ID,
+    ):
+        from agno.os.authz.run_context import restore_authorization
+
+        # Starting work must not expand the components its acceptance authorized.
+        # Keep the starter's checks too, including throughout nested delegation.
+        acceptance = acceptances[-1] if acceptances else {}
+        snapshot = acceptance.get(AUTHORIZATION_KEY)
+        if snapshot is not None:
+            authority.acceptance = restore_authorization(worker.authorization_app, snapshot)
+        elif AUTHORIZATION_KEY not in acceptance or authority.original is not None:
+            # Legacy or unscoped acceptance is not a grant to an authenticated starter.
+            authority.run_components = []
     component = await worker._aresolve_job_component(job)
     try:
         _validate_executor_tools(component)
@@ -672,7 +687,8 @@ class _ExecutorAuthorization(RunAuthorization):
 
     task_id names the accepted Task this run executes. The queue sets it from the claimed job.
     run_components bounds what Mini Agent may run in that Task: None leaves it to the saved permissions
-    of the person who accepted, and a list admits only the (type, id) pairs in it.
+    of the person who accepted and the starter's permissions, and a list admits only the (type, id) pairs in it.
+    acceptance preserves the accepting person's component-run permissions through delegation and resume.
     """
 
     def __init__(self, original: Optional[RunAuthorization], task_id: Optional[str] = None):
@@ -682,6 +698,9 @@ class _ExecutorAuthorization(RunAuthorization):
         self.original = original
         self.task_id = task_id
         self.run_components: Optional[List[Tuple[str, str]]] = []
+        self.acceptance: Optional[RunAuthorization] = (
+            original.acceptance if isinstance(original, _ExecutorAuthorization) else None
+        )
         super().__init__(
             original.provider if original else _default_authorization_provider(),
             original.context if original else AuthorizationContext(),
@@ -694,15 +713,22 @@ class _ExecutorAuthorization(RunAuthorization):
             raise PermissionError("Company executors cannot change schedules")
         if self.original is not None:
             self.original.require(resource, action, resource_id)
+        if self.acceptance is not None and resource in {"agents", "teams", "workflows"} and action == "run":
+            self.acceptance.require(resource, action, resource_id)
 
     async def arequire(self, resource: str, action: str, resource_id: Optional[str] = None) -> None:
         if resource == "schedules" and action != "read":
             raise PermissionError("Company executors cannot change schedules")
         if self.original is not None:
             await self.original.arequire(resource, action, resource_id)
+        if self.acceptance is not None and resource in {"agents", "teams", "workflows"} and action == "run":
+            await self.acceptance.arequire(resource, action, resource_id)
 
     def snapshot(self) -> Dict[str, Any]:
-        return {**super().snapshot(), "company_executor": True, "company_task_id": self.task_id}
+        snapshot = {**super().snapshot(), "company_executor": True, "company_task_id": self.task_id}
+        if self.acceptance is not None:
+            snapshot["company_acceptance"] = self.acceptance.snapshot()
+        return snapshot
 
 
 def _mount_executors(os: Any) -> None:
