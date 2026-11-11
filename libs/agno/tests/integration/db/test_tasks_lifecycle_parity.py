@@ -495,6 +495,30 @@ async def test_archived_task_and_archived_parent_still_refuse_content_edits(db):
 
 
 @pytest.mark.asyncio
+async def test_a_transition_applies_only_to_the_stage_and_run_the_caller_observed(db):
+    m = manager(db)
+    task, _ = await task_at(m, "ready")
+    running = await call(db.start_task_run, task["id"], 1, task["transitions"])
+    reviewed = await call(db.complete_task_run, task["id"], running["job_id"], {"status": "COMPLETED"})
+    assert reviewed["status"] == "in_review"
+    observed = dict(expected_status="in_review", expected_job_id=reviewed["job_id"])
+
+    # A caller that observed another stage, or another run, changes nothing.
+    for stale in ({**observed, "expected_status": "ready"}, {**observed, "expected_job_id": "another-run"}):
+        assert await call(db.transition_task, task["id"], "done", "Stale", **stale) is None
+        assert await call(m.transition_task, task_id=task["id"], target="done", reason="Stale", **stale) is None
+    assert (await call(db.get_task, task["id"]))["status"] == "in_review"
+
+    done = await call(m.transition_task, task_id=task["id"], target="done", reason="Good", **observed)
+    assert done["status"] == "done"
+    # A second reviewer who observed the same review cannot send the finished Task back, even in the same second.
+    executor = {"executor_type": "agent", "executor_id": "writer"}
+    assert await call(m.transition_task, task_id=task["id"], target="ready", reason="Redo", **executor, **observed) is None
+    saved = await call(db.get_task, task["id"])
+    assert (saved["status"], saved["transitions"][-1]["reason"]) == ("done", "Good")
+
+
+@pytest.mark.asyncio
 async def test_stale_acceptance_cannot_overwrite_a_backlog_roundtrip(db, monkeypatch):
     import agno.db.schemas.tasks as task_schema
 

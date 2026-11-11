@@ -493,6 +493,9 @@ class CompanyTaskTools(Toolkit):
                     reason=(reason or "").strip() or "Completed in chat",
                     accepted_by=user_id,
                     expected_updated_at=value["updated_at"],
+                    # Seconds cannot tell two writes in one second apart. The stage and the run can.
+                    expected_status="in_review",
+                    expected_job_id=reviewed_run_id,
                     **executor,
                 )
             if record is None:

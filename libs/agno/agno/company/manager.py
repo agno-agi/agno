@@ -511,6 +511,8 @@ class CompanyManager:
         executor_id: Optional[str] = None,
         expected_updated_at: Optional[int] = _UNSET_UPDATED_AT,
         auto_accept: Optional[Dict[str, Any]] = None,
+        expected_status: Optional[str] = None,
+        expected_job_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Apply an explicit transition; the caller enforces platform authorization."""
         from agno.company.execution import _ExecutorAuthorization
@@ -535,6 +537,8 @@ class CompanyManager:
             executor_id=executor_id,
             expected_updated_at=expected_updated_at,
             auto_accept=auto_accept,
+            expected_status=expected_status,
+            expected_job_id=expected_job_id,
         )
 
     def attention(self, product_id: Optional[str] = None) -> Dict[str, Any]:
@@ -1422,6 +1426,8 @@ class AsyncCompanyManager:
         executor_id: Optional[str] = None,
         expected_updated_at: Optional[int] = _UNSET_UPDATED_AT,
         auto_accept: Optional[Dict[str, Any]] = None,
+        expected_status: Optional[str] = None,
+        expected_job_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Apply an explicit transition; the caller enforces platform authorization."""
         from agno.company.execution import _ExecutorAuthorization
@@ -1446,6 +1452,8 @@ class AsyncCompanyManager:
             executor_id=executor_id,
             expected_updated_at=expected_updated_at,
             auto_accept=auto_accept,
+            expected_status=expected_status,
+            expected_job_id=expected_job_id,
         )
 
     async def attention(self, product_id: Optional[str] = None) -> Dict[str, Any]:

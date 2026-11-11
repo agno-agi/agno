@@ -550,6 +550,33 @@ def db_update_time(db, task_id, updated_at):
         session.execute(update(table).where(table.c.id == task_id).values(updated_at=updated_at))
 
 
+@pytest.mark.parametrize("stale,winner", [("complete", "send_back"), ("send_back", "complete")])
+def test_a_stale_review_cannot_overwrite_one_made_in_the_same_second(system, monkeypatch, stale, winner):
+    client, db, agent_os, queue = system
+    _, task = records(client)
+    in_review(client, db, queue, task["id"])
+    observed = db.get_task(task["id"])
+    original = CompanyManager.transition_task
+
+    def another_reviewer_first(self, **arguments):
+        # Another reviewer decides between this call's read and its write, in the same second.
+        executor = {"executor_type": "agent", "executor_id": "writer"} if winner == "send_back" else {}
+        with authorization_scope(lambda: None):
+            decided = db.transition_task(
+                task["id"], "ready" if winner == "send_back" else "done", "Decided first", accepted_by="bob", **executor
+            )
+        assert decided is not None
+        db_update_time(db, task["id"], observed["updated_at"])
+        return original(self, **arguments)
+
+    monkeypatch.setattr(CompanyManager, "transition_task", another_reviewer_first)
+    reply = review(agent_os, context(), task, stale, "Second opinion")
+    assert reply.startswith("Not done") and "changed while it was being reviewed" in reply, reply
+    saved = db.get_task(task["id"])
+    assert saved["status"] == ("ready" if winner == "send_back" else "done")
+    assert (saved["transitions"][-1]["user_id"], saved["transitions"][-1]["reason"]) == ("bob", "Decided first")
+
+
 # ----------------------------------------------------------------- a run that executes work decides nothing
 
 
