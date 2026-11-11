@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import func, literal, or_, select, union_all
 
 from agno.db.schemas.company import validate_company_details
+from agno.db.schemas.tasks import CancelledProjectError
 
 
 def active_parents(stmt: Any, table: Any, products: Any, projects: Any = None) -> Any:
@@ -41,10 +42,6 @@ def lock_product(sess: Any, products: Any, product_id: str) -> None:
     row = sess.execute(stmt.values(updated_at=products.c.updated_at).returning(products.c.id)).first()
     if row is None:
         raise ValueError("Product is missing or archived")
-
-
-class CancelledProjectError(ValueError):
-    pass
 
 
 def require_project(

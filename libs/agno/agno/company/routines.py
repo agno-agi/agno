@@ -9,7 +9,7 @@ from agno.company.declarations import Routine
 from agno.company.execution import _call, _ExecutorAuthorization, _registered_component, _validate_executor_tools
 from agno.company.scheduler import CompanyScheduleExecutor
 from agno.db.schemas.scheduler import COMPANY_AUTOMATION_SCHEDULE_ID, RUN_ENDPOINT_RE
-from agno.db.sql.company import CancelledProjectError
+from agno.db.schemas.tasks import CancelledProjectError
 from agno.guardrails.base import BaseGuardrail
 from agno.skills import LocalSkills, Skills
 

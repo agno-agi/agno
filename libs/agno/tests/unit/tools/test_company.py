@@ -2,6 +2,8 @@
 
 import inspect
 import json
+import subprocess
+import sys
 
 import pytest
 
@@ -11,6 +13,22 @@ from agno.db.sqlite import AsyncSqliteDb, SqliteDb
 from agno.registry import Registry
 from agno.run import RunContext
 from agno.tools.company import CompanyTools
+
+
+def test_company_imports_without_sqlalchemy():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            'import sys; sys.modules["sqlalchemy"] = None; '
+            'import agno.company.routines, agno.tools.company; print("OK")',
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "OK"
 
 
 @pytest.mark.parametrize("use_async", [False, True])
