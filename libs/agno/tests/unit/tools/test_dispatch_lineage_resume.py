@@ -26,6 +26,8 @@ from agno.run.requirement import RunRequirement
 from agno.team import Team
 from agno.tools import tool
 from agno.tools.studio_runner import StudioRunnerTools
+from agno.workflow import Step, Workflow
+from agno.workflow.types import HumanReview, StepInput, StepOutput
 
 _CHAIN = DISPATCH_CHAIN_METADATA_KEY
 _DEPTH = DISPATCH_DEPTH_METADATA_KEY
@@ -249,3 +251,92 @@ class TestGuardHoldsAcrossAPause:
         run2 = await _pause_then_resume(component, "agent", use_async, self_run)
         assert run2.status.value == "COMPLETED"
         assert solo.seen is None, "'once' recharged across a pause"
+
+
+def _capture_metadata(step_input: StepInput, run_context: Optional[RunContext] = None) -> StepOutput:
+    """A workflow step that records the metadata its run carries."""
+    metadata = getattr(run_context, "metadata", None)
+    _CAPTURED.append(dict(metadata) if isinstance(metadata, dict) else None)
+    return StepOutput(content="captured")
+
+
+async def _pause_then_resume_workflow(workflow: Workflow, use_async: bool, stream: bool, run_metadata):
+    """Pause on the step's confirmation, then continue from storage the way a later request does."""
+    run1 = workflow.run("go", session_id="s-wf", metadata=dict(run_metadata))
+    assert run1.is_paused, "the confirmation should pause the workflow before its step"
+    for requirement in run1.step_requirements or []:
+        requirement.confirm()
+    kwargs: Dict[str, Any] = dict(run_id=run1.run_id, session_id="s-wf", step_requirements=run1.step_requirements)
+    if stream and use_async:
+        async for _ in await workflow.acontinue_run(stream=True, **kwargs):
+            pass
+    elif stream:
+        for _ in workflow.continue_run(stream=True, **kwargs):
+            pass
+    elif use_async:
+        await workflow.acontinue_run(**kwargs)
+    else:
+        workflow.continue_run(**kwargs)
+    run2 = workflow.get_run_output(run_id=run1.run_id, session_id="s-wf")
+    assert run2 is not None
+    return run2
+
+
+class TestWorkflowLineageSurvivesContinue:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+    @pytest.mark.parametrize("stream", [False, True], ids=["run", "stream"])
+    async def test_dispatch_lineage_reaches_the_steps_of_a_continued_workflow(self, tmp_path, use_async, stream):
+        _CAPTURED.clear()
+        db = SqliteDb(db_file=str(tmp_path / "wf-resume.db"))
+        step = Step(name="gated", executor=_capture_metadata, human_review=HumanReview(requires_confirmation=True))
+        workflow = Workflow(id="wf", name="WF", db=db, steps=[step], telemetry=False)
+
+        run2 = await _pause_then_resume_workflow(workflow, use_async, stream, _DISPATCHED)
+        assert run2.status.value == "COMPLETED"
+        assert len(_CAPTURED) == 1
+        captured = _CAPTURED[0] or {}
+        assert captured.get(_CHAIN) == ["team:outer"]
+        assert captured.get(_DEPTH) == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("mode", ["never", "once"])
+    @pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+    @pytest.mark.parametrize("stream", [False, True], ids=["run", "stream"])
+    async def test_cycle_guard_holds_across_a_workflow_pause(self, tmp_path, mode, use_async, stream):
+        # Team 'a' dispatched this workflow. After the pause its step dispatches 'a' back:
+        # A -> workflow -> A must stay refused.
+        db = SqliteDb(db_file=str(tmp_path / "wf-cycle.db"))
+        a = _StubTeam("a")
+        runner = StudioRunnerTools(include_teams=[a], self_dispatch=mode)  # type: ignore[arg-type]
+        script = [
+            ("tool", "run_team", {"team_id": "a", "message": "go deeper"}, "tc-dispatch"),
+            ("content", "finished"),
+        ]
+        agent = Agent(id="stepper", model=_ScriptedModel("m-step", script), tools=[runner], telemetry=False)
+        step = Step(name="gated", agent=agent, human_review=HumanReview(requires_confirmation=True))
+        workflow = Workflow(id="wf", name="WF", db=db, steps=[step], telemetry=False)
+
+        nested = {_CHAIN: ["team:a", "workflow:wf"], _DEPTH: 1}
+        run2 = await _pause_then_resume_workflow(workflow, use_async, stream, nested)
+        assert run2.status.value == "COMPLETED"
+        assert a.seen is None, "the continued workflow re-entered its own dispatcher"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+    async def test_depth_cap_holds_across_a_workflow_pause(self, tmp_path, use_async):
+        db = SqliteDb(db_file=str(tmp_path / "wf-depth.db"))
+        c = _StubTeam("c")
+        runner = StudioRunnerTools(include_teams=[c])  # type: ignore[arg-type]
+        script = [
+            ("tool", "run_team", {"team_id": "c", "message": "go deeper"}, "tc-dispatch"),
+            ("content", "finished"),
+        ]
+        agent = Agent(id="stepper", model=_ScriptedModel("m-step", script), tools=[runner], telemetry=False)
+        step = Step(name="gated", agent=agent, human_review=HumanReview(requires_confirmation=True))
+        workflow = Workflow(id="wf", name="WF", db=db, steps=[step], telemetry=False)
+
+        at_cap = {_CHAIN: ["team:x", "team:y"], _DEPTH: 2}
+        run2 = await _pause_then_resume_workflow(workflow, use_async, False, at_cap)
+        assert run2.status.value == "COMPLETED"
+        assert c.seen is None, "the continued workflow dispatched past the depth cap"

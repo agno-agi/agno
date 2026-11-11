@@ -45,7 +45,10 @@ def is_framework_owned(component: Any) -> bool:
 def _reserved_manager_id_message(component_id: str) -> str:
     current = FORMER_MANAGER_IDS.get(component_id)
     if current is not None:
-        return f"Manager ID '{component_id}' was replaced by '{current}' in Agno 3.2. Use the new ID."
+        # Routines ran on the former Company manager as well. Mini Agent runs them now, not Super Agent.
+        routine = component_id == "company-manager-internal"
+        also = f", and by '{MINI_AGENT_ID}' as a Routine executor" if routine else ""
+        return f"Manager ID '{component_id}' was replaced by '{current}' in Agno 3.2{also}. Use the new ID."
     return f"Component ID '{component_id}' is reserved. Please choose a different ID for your component."
 
 

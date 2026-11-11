@@ -3380,6 +3380,15 @@ def continue_run_dispatch(
     session_id = run_response.session_id if run_response is not None else session_id
     run_id: str = run_response.run_id if run_response is not None else run_id  # type: ignore
 
+    # A component that continues a run has often never started one, so its hooks may still hold
+    # guardrail objects: normalise them here as a fresh run does.
+    if not agent._hooks_normalised:
+        if agent.pre_hooks:
+            agent.pre_hooks = normalize_pre_hooks(agent.pre_hooks)  # type: ignore
+        if agent.post_hooks:
+            agent.post_hooks = normalize_post_hooks(agent.post_hooks)  # type: ignore
+        agent._hooks_normalised = True
+
     session_id, user_id = initialize_session(
         agent,
         session_id=session_id,
@@ -4281,6 +4290,15 @@ def acontinue_run_dispatch(  # type: ignore
 
     session_id = run_response.session_id if run_response is not None else session_id
     run_id: str = run_response.run_id if run_response is not None else run_id  # type: ignore
+
+    # A component that continues a run has often never started one, so its hooks may still hold
+    # guardrail objects: normalise them here as a fresh run does.
+    if not agent._hooks_normalised:
+        if agent.pre_hooks:
+            agent.pre_hooks = normalize_pre_hooks(agent.pre_hooks, async_mode=True)  # type: ignore
+        if agent.post_hooks:
+            agent.post_hooks = normalize_post_hooks(agent.post_hooks, async_mode=True)  # type: ignore
+        agent._hooks_normalised = True
 
     session_id, user_id = initialize_session(
         agent,
