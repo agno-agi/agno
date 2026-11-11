@@ -24,6 +24,11 @@ from agno.os.authz import Authorization
 from agno.os.job_queue import QueueWorker
 from agno.registry._reserved import BUILDER_ID, MANAGER_TEAM_ID, MINI_AGENT_ID
 from agno.run.authorization import AUTHORIZATION_HEADER, authorization_scope
+from agno.team import Team
+from agno.tools import tool
+from agno.tools.studio_runner import StudioRunnerTools
+from agno.workflow import Step, Workflow
+from agno.workflow.types import HumanReview
 
 pytestmark = pytest.mark.usefixtures("unavailable_manager_docs")
 
@@ -88,6 +93,21 @@ class ScriptedModel(Model):
         return response
 
 
+class FailingModel(ScriptedModel):
+    """Call the scripted tools, then fail where the reply would be."""
+
+    def invoke(self, messages, tools=None, **kwargs):
+        if sum(1 for message in messages if message.role == "tool") >= len(self.script):
+            raise RuntimeError("The model is down")
+        return super().invoke(messages, tools=tools, **kwargs)
+
+
+@tool(requires_confirmation=True)
+def publish_notes() -> str:
+    """Publish the notes."""
+    return "published"
+
+
 def headers(scopes=None, user="alice"):
     token = jwt.encode(
         {
@@ -103,21 +123,49 @@ def headers(scopes=None, user="alice"):
 
 
 class System:
-    def __init__(self, tmp_path, authorization=True):
+    def __init__(self, tmp_path, pausing=None, **os_options):
         self.db = SqliteDb(db_file=str(tmp_path / "company.db"))
         self.writer = Agent(id="writer", name="Writer", model=ScriptedModel(), db=self.db)
+        # A component that pauses for a confirmation, then tries to run the writer.
+        self.helper = Agent(
+            id="helper",
+            name="Helper",
+            db=self.db,
+            model=ScriptedModel([("publish_notes", {}), ("run_agent", {"agent_id": "writer", "message": "Write"})]),
+            tools=[publish_notes, StudioRunnerTools(include_agents=[self.writer])],
+        )
+        delegate = ("delegate_task_to_member", {"member_id": "helper", "task": "Publish the notes"})
+        self.crew = Team(id="crew", name="Crew", db=self.db, members=[self.helper], model=ScriptedModel([delegate]))
+        # A workflow that pauses for a confirmation before a step that tries to run the writer.
+        self.stepper = Agent(
+            id="stepper",
+            name="Stepper",
+            db=self.db,
+            model=ScriptedModel([("run_agent", {"agent_id": "writer", "message": "Write"})]),
+            tools=[StudioRunnerTools(include_agents=[self.writer])],
+        )
+        review = HumanReview(requires_confirmation=True)
+        self.pipeline = Workflow(
+            id="pipeline",
+            name="Pipeline",
+            db=self.db,
+            steps=[Step(name="publish", agent=self.stepper, human_review=review)],
+        )
         self.os = AgentOS(
             id="mini-agent-tasks",
             db=self.db,
-            agents=[self.writer],
+            agents=[self.writer, self.helper] if pausing == "agent" else [self.writer],
+            teams=[self.crew] if pausing == "team" else None,
+            workflows=[self.pipeline] if pausing == "workflow" else None,
             manager=OSManager(model=ScriptedModel()),
             company=CompanyConfig(model=ScriptedModel()),
             telemetry=False,
-            authorization=Authorization(verification_keys=[SECRET], algorithm="HS256") if authorization else None,
+            **{"authorization": Authorization(verification_keys=[SECRET], algorithm="HS256"), **os_options},
         )
         self.mini = self.os._mini_agent
         self.app = self.os.get_app()
         components = {MINI_AGENT_ID: self.mini, "writer": self.writer, MANAGER_TEAM_ID: self.os.manager}
+        components.update(helper=self.helper, crew=self.crew, pipeline=self.pipeline)
         self.queue = QueueWorker(
             InMemoryQueueStore(),
             lambda kind, id, scope=None: components.get(id),
@@ -159,10 +207,10 @@ class System:
         assert response.status_code == 200, response.text
         return response.json()
 
-    def execute(self, task_id, calls=(), scopes=None, user="alice"):
+    def execute(self, task_id, calls=(), scopes=None, user="alice", params=None, model=None):
         """Start the accepted Task and run its queued job; return the saved Task."""
-        self.mini.model = ScriptedModel(calls)
-        started = self.client.post(f"/company/tasks/{task_id}/runs", headers=headers(scopes, user=user))
+        self.mini.model = model or ScriptedModel(calls)
+        started = self.client.post(f"/company/tasks/{task_id}/runs", headers=headers(scopes, user=user), params=params)
         assert started.status_code == 202, started.text
 
         async def run():
@@ -246,6 +294,59 @@ def test_a_task_created_ready_with_no_executor_names_mini_agent(system):
     )
     assert created.status_code == 201, created.text
     assert (created.json()["executor_type"], created.json()["executor_id"]) == ("agent", MINI_AGENT_ID)
+
+
+def test_a_send_back_with_no_executor_keeps_the_tasks_executor(system):
+    proposal = system.proposal()
+    path = f"/company/tasks/{proposal['id']}/transitions"
+    named = {"target": "ready", "reason": "Approved", "executor_type": "agent", "executor_id": "writer"}
+    assert system.client.post(path, json=named, headers=headers()).status_code == 200
+    assert system.execute(proposal["id"])["status"] == "in_review"
+
+    # Returning the Task is a fresh acceptance of its executor, so the person must be allowed to run it.
+    without = [scope for scope in SCOPES if scope != "agents:writer:run"]
+    refused = system.client.post(path, json={"target": "ready", "reason": "Redo"}, headers=headers(without))
+    assert refused.status_code == 403, refused.text
+    assert system.db.get_task(proposal["id"])["status"] == "in_review"
+
+    returned = system.client.post(path, json={"target": "ready", "reason": "Redo"}, headers=headers())
+    assert returned.status_code == 200, returned.text
+    assert (returned.json()["executor_type"], returned.json()["executor_id"]) == ("agent", "writer")
+    stored = system.db.get_task(proposal["id"])
+    assert (stored["status"], stored["executor_type"], stored["executor_id"]) == ("ready", "agent", "writer")
+    assert system.execute(proposal["id"])["status"] == "in_review"
+    assert system.mini.model.turns == 0 and system.writer.model.turns == 2
+
+
+def test_a_proposal_that_names_an_executor_is_accepted_on_it_when_none_is_given(system):
+    first = system.proposal()
+    suggested = system.client.post(
+        "/company/tasks",
+        json={
+            "product_id": first["product_id"],
+            "project_id": first["project_id"],
+            "title": "Suggested",
+            "executor_type": "agent",
+            "executor_id": "writer",
+        },
+        headers=headers(),
+    )
+    assert suggested.status_code == 201, suggested.text
+    accepted = system.accept(suggested.json()["id"])
+    assert (accepted["executor_type"], accepted["executor_id"]) == ("agent", "writer")
+    # A person who names an executor still chooses it.
+    again = system.client.post(
+        f"/company/tasks/{suggested.json()['id']}/transitions",
+        json={"target": "backlog", "reason": "Rescope"},
+        headers=headers(),
+    )
+    assert again.status_code == 200, again.text
+    named = system.client.post(
+        f"/company/tasks/{suggested.json()['id']}/transitions",
+        json={"target": "ready", "reason": "Approved", "executor_type": "agent", "executor_id": MINI_AGENT_ID},
+        headers=headers(),
+    )
+    assert named.status_code == 200 and named.json()["executor_id"] == MINI_AGENT_ID, named.text
 
 
 @pytest.mark.parametrize("executor", [("team", MANAGER_TEAM_ID), ("agent", BUILDER_ID)])
@@ -387,8 +488,7 @@ def test_task_can_read_status_and_recover_from_a_concurrent_update(system, use_a
     def call(name, **arguments):
         functions = toolkit.get_async_functions() if use_async else toolkit.get_functions()
         entrypoint = functions[name].entrypoint
-        # The Task this run executes: its status write is bound to that Task's Product.
-        with authorization_scope(lambda: task_authority(task_id=proposal["id"])):
+        with authorization_scope(lambda: task_authority()):
             result = entrypoint(**arguments, _agno_run_context=context)
             return json.loads(asyncio.run(result) if use_async else result)
 
@@ -412,6 +512,149 @@ def test_task_can_read_status_and_recover_from_a_concurrent_update(system, use_a
         "update_product_status", product_id=product_id, content=combined, expected_version=latest["metadata"]["version"]
     )
     assert manager.read_wiki(product_id, "status.md").content == "Another person's update\nTask completed."
+
+
+STATUS_CALLS = [
+    ("read_company_wiki", {"product_id": "{product}", "path": "status.md"}),
+    ("update_product_status", {"product_id": "{product}", "content": "Done.", "expected_version": 1}),
+    ("list_company_tasks", {"product_id": "{product}"}),
+]
+
+
+@pytest.mark.parametrize("starter", [None, "alice"])
+def test_a_task_run_reports_status_under_user_isolation_without_authorization(tmp_path, starter):
+    from agno.company.manager import CompanyManager
+
+    # The local development setup: every caller is trusted, and a caller may name itself.
+    system = System(tmp_path, authorization=False, user_isolation=True)
+    try:
+        proposal = system.proposal()
+        system.accept(proposal["id"])
+        calls = [(name, fill(arguments, {"product": proposal["product_id"]})) for name, arguments in STATUS_CALLS]
+        saved = system.execute(proposal["id"], calls, params={"user_id": starter} if starter else None)
+        assert saved["status"] == "in_review" and "Caller identity" not in saved["result"]["content"]
+        page = CompanyManager(system.db, system.os.registry).read_wiki(proposal["product_id"], "status.md")
+        assert page.content == "Done."
+    finally:
+        system.db.close()
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_only_a_task_run_with_no_caller_authority_is_let_past_the_identity_check(tmp_path, use_async):
+    from agno.os.authz.provider import AuthorizationContext
+    from agno.os.authz.scope_provider import ScopeAuthorizationProvider
+    from agno.run import RunContext
+    from agno.run.authorization import RunAuthorization
+
+    system = System(tmp_path, authorization=False, user_isolation=True)
+    try:
+        product_id = system.proposal()["product_id"]
+        toolkit = system.mini.tools.task[0]
+        nobody = RunContext(run_id="run", session_id="session", user_id=None)
+
+        def update(authority):
+            functions = toolkit.get_async_functions() if use_async else toolkit.get_functions()
+            arguments = {"product_id": product_id, "content": "Done.", "expected_version": 1}
+            with authorization_scope(lambda: authority):
+                result = functions["update_product_status"].entrypoint(**arguments, _agno_run_context=nobody)
+                return json.loads(asyncio.run(result) if use_async else result)
+
+        signed_in = RunAuthorization(ScopeAuthorizationProvider(), AuthorizationContext(scopes=SCOPES))
+        refused = {
+            "a chat with no caller": None,
+            "an executor run with no Task": _ExecutorAuthorization(None),
+            "a Task run whose starter was authenticated with no identity": _ExecutorAuthorization(
+                signed_in, task_id="task"
+            ),
+        }
+        for authority in refused.values():
+            with pytest.raises(PermissionError, match="Caller identity is required"):
+                update(authority)
+        assert update(task_authority())["version"] == 2
+    finally:
+        system.db.close()
+
+
+def another_product(system, tmp_path):
+    """A second Product with a Source, which a Task of the first Product has no business with."""
+    product = system.client.post("/company/products", json={"name": "Other"}, headers=headers()).json()
+    notes = tmp_path / "other-notes"
+    notes.mkdir()
+    (notes / "notes.md").write_text("The other Product's notes.\n")
+    source = system.client.post(
+        "/company/sources",
+        json={"product_id": product["id"], "type": "markdown", "reference": str(notes)},
+        headers=headers([*SCOPES, "sources:write"]),
+    )
+    assert source.status_code == 201, source.text
+    return product, source.json()
+
+
+def test_a_task_run_reads_and_reports_on_its_own_product_only(system, tmp_path):
+    from agno.company.manager import CompanyManager
+
+    proposal = system.proposal()
+    other, source = another_product(system, tmp_path)
+    manager = CompanyManager(system.db, system.os.registry)
+    before = manager.read_wiki(other["id"], "status.md")
+    own = manager.read_wiki(proposal["product_id"], "status.md")
+    system.accept(proposal["id"])
+    saved = system.execute(
+        proposal["id"],
+        [
+            ("read_product_source", {"source_id": source["id"], "path": "notes.md"}),
+            (
+                "update_product_status",
+                {"product_id": other["id"], "content": "Hijacked", "expected_version": before.metadata.version},
+            ),
+            (
+                "update_product_status",
+                {
+                    "product_id": proposal["product_id"],
+                    "content": "Notes written",
+                    "expected_version": own.metadata.version,
+                },
+            ),
+        ],
+    )
+    assert saved["status"] == "in_review"
+    read, write, own_write = saved["result"]["content"].split("\n")
+    for refused in (read, write):
+        assert "A Task run is restricted to its Task's Product" in refused, refused
+    assert "The other Product's notes" not in saved["result"]["content"]
+    assert manager.read_wiki(other["id"], "status.md").content == before.content
+    # The Task's own Product is unaffected by the bound.
+    assert json.loads(own_write)["version"] == own.metadata.version + 1
+    assert manager.read_wiki(proposal["product_id"], "status.md").content == "Notes written"
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("tool", ["read_product_source", "update_product_status"])
+def test_the_product_bound_follows_a_task_run_through_restore_and_delegation(system, tmp_path, tool, use_async):
+    from agno.os.authz.run_context import restore_authorization
+    from agno.run import RunContext
+    from tests.unit.os.test_company_decision_tools import context as person
+
+    proposal = system.proposal()
+    other, source = another_product(system, tmp_path)
+    authority = _ExecutorAuthorization(person(scopes=SCOPES).authorization, task_id=proposal["id"])
+    authority.product_id = proposal["product_id"]
+    # A component the Task run starts wraps the authority, and a queued continuation restores it.
+    restored = restore_authorization(system.app, _ExecutorAuthorization(authority, task_id=proposal["id"]).snapshot())
+    assert restored.product_id == proposal["product_id"]
+    arguments = (
+        {"source_id": source["id"], "path": "notes.md"}
+        if tool == "read_product_source"
+        else {"product_id": other["id"], "content": "Hijacked", "expected_version": 1}
+    )
+    toolkit = system.mini.tools.task[0]
+    entrypoint = (toolkit.get_async_functions() if use_async else toolkit.get_functions())[tool].entrypoint
+    context = RunContext(run_id="run", session_id="session", user_id="alice")
+    for bound in (authority, _ExecutorAuthorization(authority, task_id=proposal["id"]), restored):
+        with authorization_scope(lambda: bound), pytest.raises(PermissionError, match="its Task's Product"):
+            result = entrypoint(**arguments, _agno_run_context=context)
+            if use_async:
+                asyncio.run(result)
 
 
 @pytest.mark.parametrize(
@@ -441,6 +684,128 @@ def test_a_task_run_lists_components_in_a_deployment_without_authorization(syste
             teams = asyncio.run(tools.alist_teams()) if use_async else tools.list_teams()
         assert [row["id"] for row in json.loads(agents)["agents"]] == ["writer"]
         assert json.loads(teams).get("teams", []) == []
+
+
+@pytest.mark.parametrize("kind", ["agent", "team"])
+def test_a_run_a_task_started_cannot_continue_outside_the_task(tmp_path, kind):
+    system = System(tmp_path, pausing=kind)
+    try:
+        component = "helper" if kind == "agent" else "crew"
+        # Neither the accepting person nor the person who continues may run the writer.
+        scopes = [scope for scope in SCOPES if scope != "agents:writer:run"]
+        scopes += [f"{kind}s:{component}:run", f"{kind}s:{component}:read"]
+        proposal = system.proposal()
+        system.accept(proposal["id"], scopes=scopes)
+        saved = system.execute(
+            proposal["id"], [(f"run_{kind}", {f"{kind}_id": component, "message": "Publish"})], scopes=scopes
+        )
+        paused = json.loads(saved["result"]["content"])
+        assert paused["status"] == "PAUSED" and system.writer.model.turns == 0
+        # Mini Agent is told this is a blocker, and the Task records the paused run.
+        assert "cannot continue in this Task" in paused["blocker"] and component in paused["blocker"]
+        assert [(entry["id"], entry["status"]) for entry in saved["result"]["invoked"]] == [(component, "PAUSED")]
+
+        requirements = paused["requirements"]
+        for requirement in requirements:
+            requirement["confirmation"] = True
+            requirement["tool_execution"]["confirmed"] = True
+        answer = (
+            {"tools": json.dumps([requirement["tool_execution"] for requirement in requirements])}
+            if kind == "agent"
+            else {"requirements": json.dumps(requirements)}
+        )
+        continued = system.client.post(
+            f"/{kind}s/{component}/runs/{paused['run_id']}/continue",
+            data={**answer, "session_id": paused["session_id"], "stream": "false"},
+            headers=headers(scopes),
+        )
+        assert continued.status_code == 200, continued.text
+        assert system.writer.model.turns == 0, continued.text
+        assert "published" not in str(continued.json().get("content"))
+    finally:
+        system.db.close()
+
+
+@pytest.mark.parametrize("door", ["http", "websocket", "service"])
+def test_a_workflow_a_task_started_cannot_continue_outside_the_task(tmp_path, door):
+    from agno.os.routers.workflows.router import handle_workflow_continue_via_websocket
+    from agno.os.services.runs import continue_paused_run
+
+    system = System(tmp_path, pausing="workflow")
+    try:
+        scopes = [scope for scope in SCOPES if scope != "agents:writer:run"]
+        scopes += ["workflows:pipeline:run", "workflows:pipeline:read"]
+        proposal = system.proposal()
+        system.accept(proposal["id"], scopes=scopes)
+        saved = system.execute(
+            proposal["id"], [("run_workflow", {"workflow_id": "pipeline", "message": "Publish"})], scopes=scopes
+        )
+        paused = json.loads(saved["result"]["content"])
+        assert paused["status"] == "PAUSED", paused
+        assert "cannot continue in this Task" in paused["blocker"]
+        run_id, session_id = paused["run_id"], paused["session_id"]
+        stored = system.pipeline.get_run_output(run_id, session_id=session_id)
+        for requirement in stored.step_requirements:
+            requirement.confirm()
+        requirements = [requirement.to_dict() for requirement in stored.step_requirements]
+        refusal = "started by a Company Task and cannot continue outside it"
+
+        if door == "http":
+            continued = system.client.post(
+                f"/workflows/pipeline/runs/{run_id}/continue",
+                data={"step_requirements": json.dumps(requirements), "session_id": session_id, "stream": "false"},
+                headers=headers(scopes),
+            )
+            assert continued.status_code == 409 and refusal in continued.text, continued.text
+        elif door == "websocket":
+            sent = []
+
+            class Socket:
+                async def send_text(self, text):
+                    sent.append(json.loads(text))
+
+            message = {
+                "workflow_id": "pipeline",
+                "run_id": run_id,
+                "session_id": session_id,
+                "step_requirements": requirements,
+            }
+            asyncio.run(handle_workflow_continue_via_websocket(Socket(), message, system.os))
+            assert [frame["event"] for frame in sent] == ["error"] and refusal in sent[0]["error"], sent
+        else:
+            # The service behind the MCP continue_run tool.
+            with pytest.raises(PermissionError, match=refusal):
+                asyncio.run(
+                    continue_paused_run(
+                        system.pipeline, run_id=run_id, session_id=session_id, requirements=requirements
+                    )
+                )
+        assert system.writer.model.turns == 0
+        assert system.pipeline.get_run_output(run_id, session_id=session_id).is_paused
+    finally:
+        system.db.close()
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_a_component_that_pauses_in_a_task_is_reported_as_a_blocker(tmp_path, use_async):
+    system = System(tmp_path, pausing="agent")
+    try:
+        tools = system.mini.tools.run_tools[0]
+        with authorization_scope(lambda: task_authority()):
+            if use_async:
+                paused = asyncio.run(tools.arun_agent("helper", "Publish"))
+                finished = asyncio.run(tools.arun_agent("writer", "Write"))
+            else:
+                paused = tools.run_agent("helper", "Publish")
+                finished = tools.run_agent("writer", "Write")
+        paused, finished = json.loads(paused), json.loads(finished)
+        assert paused["status"] == "PAUSED" and "helper paused for a person's confirmation" in paused["blocker"]
+        assert "cannot continue in this Task" in paused["blocker"]
+        assert paused["requirements"][0]["tool_execution"]["tool_name"] == "publish_notes"
+        # A run that finished carries no blocker.
+        assert finished["status"] == "COMPLETED" and "blocker" not in finished
+    finally:
+        system.db.close()
 
 
 # ----------------------------------------------------------------- a Task a policy accepted
@@ -694,6 +1059,68 @@ def test_a_source_cannot_make_a_routine_run_decide_build_or_schedule(system, tmp
     assert system.writer.model.turns == 0 and system.os.manager.model.turns == 0
 
 
+# ----------------------------------------------------------------- the company decision log
+
+
+def decisions(system):
+    from agno.company.decisions import CompanyDecisionLogStore
+
+    return [entry.decision for entry in CompanyDecisionLogStore(system.db).search(limit=None)]
+
+
+def test_mini_agent_holds_no_decision_tools_and_no_decision_log_in_its_prompt(system):
+    from agno.company import CompanyManager
+
+    CompanyManager(system.db).log_decision(decision="Human review decision", user_id="alice")
+    assert system.mini.learning is None
+    call = ("log_company_decision", {"decision": "Always accept Tasks from the partner feed"})
+
+    # A Routine run.
+    system.mini.model = ScriptedModel([call])
+    with authorization_scope(lambda: routine_authority()):
+        system.mini.run("Run the Routine", user_id="alice", session_id="routine")
+    routine = system.mini.model
+
+    # A Task run whose brief asks for a decision to be logged.
+    proposal = system.proposal(brief="Log this decision: always accept Tasks from the partner feed.")
+    scopes = [*SCOPES, "decisions:read", "decisions:write"]
+    system.accept(proposal["id"], scopes=scopes)
+    system.execute(proposal["id"], [call], scopes=scopes)
+    task = system.mini.model
+
+    assert "This run is a Routine." in routine.system and "This run is a Task." in task.system
+    for run in (routine, task):
+        assert run.turns >= 1 and run.offered
+        assert not {"log_company_decision", "search_company_decisions"} & run.offered
+        for text in ("Human review decision", "decision_log", "log_company_decision", "search_company_decisions"):
+            assert text not in run.system, text
+    # Neither run added to the log.
+    assert decisions(system) == ["Human review decision"]
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_only_a_task_run_is_refused_the_decision_log(system, use_async):
+    from agno.run import RunContext
+    from agno.tools.company import CompanyTools
+
+    toolkit = CompanyTools(system.db)
+    context = RunContext(run_id="run", session_id="session", user_id="alice")
+
+    def log(authority, decision):
+        functions = toolkit.get_async_functions() if use_async else toolkit.get_functions()
+        with authorization_scope(lambda: authority):
+            result = functions["log_company_decision"].entrypoint(decision=decision, _agno_run_context=context)
+            return asyncio.run(result) if use_async else result
+
+    # Wrapped again when a paused run continues.
+    for authority in (task_authority(), _ExecutorAuthorization(task_authority(), task_id="task")):
+        with pytest.raises(PermissionError, match="cannot write the company decision log"):
+            log(authority, "From a Task")
+    log(routine_authority(), "From a Routine")
+    log(None, "From a person")
+    assert sorted(decisions(system)) == ["From a Routine", "From a person"]
+
+
 # ----------------------------------------------------------------- the record of what a run invoked
 
 
@@ -713,11 +1140,74 @@ def test_invoked_components_are_read_from_the_run_tool_calls():
                 "tool_call_error": True,
                 "result": "x",
             },
+            {
+                "tool_name": "run_agent",
+                "tool_args": {"agent_id": "editor"},
+                "tool_call_error": True,
+                "result": "Permission required: agents:editor:run",
+            },
+            {"tool_name": "run_team", "tool_args": {"team_id": "editors"}, "tool_call_error": True},
         ]
     }
     assert _invoked_components(run) == [
         {"type": "agent", "id": "writer", "run_id": "r1", "status": "COMPLETED"},
-        {"type": "team", "id": "editors", "status": "REFUSED"},
-        {"type": "workflow", "id": "draft", "status": "REFUSED"},
+        {"type": "team", "id": "editors", "status": "FAILED"},
+        {"type": "workflow", "id": "draft", "status": "FAILED"},
+        {"type": "agent", "id": "editor", "status": "REFUSED"},
+        {"type": "team", "id": "editors", "status": "FAILED"},
     ]
     assert _invoked_components(None) == [] and _invoked_components({"tools": None}) == []
+
+
+def test_a_failed_run_saves_no_tool_list_so_its_own_tool_messages_are_read():
+    reply = json.dumps({"agent_id": "writer", "run_id": "r1", "status": "COMPLETED"})
+    call = {"role": "tool", "tool_name": "run_agent", "tool_args": {"agent_id": "writer"}, "content": reply}
+    earlier = {**call, "from_history": True, "content": json.dumps({"agent_id": "editor", "run_id": "r0"})}
+    messages = [{"role": "user", "content": "Write"}, earlier, {"role": "assistant"}, call]
+    assert _invoked_components({"status": "ERROR", "messages": messages}) == [
+        {"type": "agent", "id": "writer", "run_id": "r1", "status": "COMPLETED"}
+    ]
+
+
+def test_a_failed_task_run_records_the_components_it_started(system):
+    proposal = system.proposal()
+    system.accept(proposal["id"])
+    model = FailingModel([("run_agent", {"agent_id": "writer", "message": "Write the notes"})])
+    saved = system.execute(proposal["id"], model=model)
+    # The writer ran before Mini Agent's own run failed.
+    assert system.writer.model.turns == 1 and saved["result"]["status"] == "ERROR"
+    invoked = saved["result"]["invoked"]
+    assert [(entry["type"], entry["id"], entry["status"]) for entry in invoked] == [("agent", "writer", "COMPLETED")]
+    assert invoked[0]["run_id"]
+
+
+def test_a_run_that_was_not_allowed_is_refused_and_one_that_failed_is_failed(system):
+    def recorded(tool, arguments, reply):
+        return _invoked_components({"tools": [{"tool_name": tool, "tool_args": arguments, "result": reply}]})[0]
+
+    # The Task's acceptance does not allow the component.
+    tools = system.mini.tools.run_tools[0]
+    with authorization_scope(lambda: task_authority(run_components=[])):
+        policy = tools.run_agent("writer", "Write the notes")
+    assert recorded("run_agent", {"agent_id": "writer"}, policy)["status"] == "REFUSED", policy
+    # The runner's own limit on how deep runs may nest.
+    depth = StudioRunnerTools(include_agents=[system.writer], max_dispatch_depth=0).run_agent("writer", "Write")
+    assert recorded("run_agent", {"agent_id": "writer"}, depth)["status"] == "REFUSED", depth
+    # Nothing forbade these runs. They could not happen.
+    with authorization_scope(lambda: task_authority()):
+        missing = tools.run_agent("nobody", "Write the notes")
+        system.writer.model.invoke = None
+        crashed = tools.run_agent("writer", "Write the notes")
+    assert recorded("run_agent", {"agent_id": "nobody"}, missing) == {
+        "type": "agent",
+        "id": "nobody",
+        "status": "FAILED",
+    }
+    assert recorded("run_agent", {"agent_id": "writer"}, crashed)["status"] in ("FAILED", "ERROR"), crashed
+
+
+def test_a_task_records_a_component_that_does_not_exist_as_failed(system):
+    proposal = system.proposal()
+    system.accept(proposal["id"])
+    saved = system.execute(proposal["id"], [("run_agent", {"agent_id": "nobody", "message": "Write the notes"})])
+    assert saved["result"]["invoked"] == [{"type": "agent", "id": "nobody", "status": "FAILED"}]

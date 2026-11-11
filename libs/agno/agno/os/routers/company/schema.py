@@ -248,7 +248,9 @@ class TaskTransition(BaseModel):
     @model_validator(mode="after")
     def validate_executor(self) -> "TaskTransition":
         if self.target == "ready":
-            self.executor_type, self.executor_id = _ready_executor(self.executor_type, self.executor_id)
+            # With no executor named, the route keeps the Task's executor, or names Mini Agent when it has none.
+            if self.executor_type is not None or self.executor_id is not None:
+                self.executor_type, self.executor_id = _ready_executor(self.executor_type, self.executor_id)
         elif self.executor_type is not None or self.executor_id is not None:
             raise ValueError("Only Ready can set an executor")
         return self

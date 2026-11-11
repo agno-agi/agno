@@ -471,6 +471,7 @@ async def _check_task(worker: Any, job: Dict[str, Any]) -> None:
         acceptances = [entry for entry in task["transitions"] if entry.get("target") == "ready"]
         # A person read the brief of a Task they accepted. Nobody read one a policy accepted.
         authority.run_components = [] if acceptances and acceptances[-1].get("auto_accept") else None
+        authority.product_id = task["product_id"]
     if authority is not None:
         try:
             await authority.arequire(
@@ -518,6 +519,11 @@ async def _project_run(worker: Any, job: Dict[str, Any], status: str, error: Opt
         "content": error or ("Run cancelled" if status == "cancelled" else None),
     }
     checkout = None
+    if status != "completed":
+        # A run that failed or was cancelled may already have started components.
+        invoked = _invoked_components(await _unfinished_run(worker, job))
+        if invoked:
+            result["invoked"] = invoked
     if status == "completed":
         component = await worker._aresolve_job_component(job)
         if component is None:
@@ -542,6 +548,21 @@ async def _project_run(worker: Any, job: Dict[str, Any], status: str, error: Opt
         expected_transitions=task["transitions"],
         **({"checkout": checkout} if checkout is not None else {}),
     )
+
+
+async def _unfinished_run(worker: Any, job: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The saved run of a failed or cancelled attempt, or None when it saved none or cannot be read."""
+    try:
+        component = await worker._aresolve_job_component(job)
+        if component is None:
+            return None
+        output = await component.aget_run_output(job["id"], job["session_id"], user_id=job.get("user_id"))
+        return None if output is None else output.to_dict()
+    except Exception as exc:
+        from agno.utils.log import log_error
+
+        log_error(f"Failed to read run {job['id']} for the components it started; saving its result: {exc}")
+        return None
 
 
 async def _project_run_before_settle(
@@ -624,26 +645,39 @@ async def _task_input(manager: Any, task: Dict[str, Any], *, accepted_execution:
 
 
 def _review_feedback(task: Dict[str, Any]) -> Optional[str]:
-    """The reviewer's reason when the latest attempt was sent back from review, else None."""
-    history = task.get("transitions") or []
-    attempts = [index for index, entry in enumerate(history) if entry.get("attempt")]
-    if not attempts:
-        return None
-    returns = [entry for entry in history[attempts[-1] + 1 :] if entry.get("from") == "in_review"]
-    return returns[-1].get("reason") if returns and returns[-1].get("target") == "ready" else None
+    """The reviewer's reason when the last review sent the Task back, until an attempt reaches review again."""
+    reviews = [
+        entry
+        for entry in task.get("transitions") or []
+        if entry.get("from") == "in_review" or entry.get("target") == "in_review"
+    ]
+    last = reviews[-1] if reviews else {}
+    return last.get("reason") if last.get("from") == "in_review" and last.get("target") == "ready" else None
 
 
 _RUN_TOOLS = {"run_agent": "agent", "run_team": "team", "run_workflow": "workflow"}
+
+# How a run tool words a run that was not allowed: a permission the caller lacks, the Task's acceptance,
+# or the runner's limit on nested runs. Every other error is a run that failed.
+_NOT_ALLOWED = ("Permission required", "The policy that accepted this Task does not allow", "Refusing to dispatch")
 
 
 def _invoked_components(run: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """The agents, teams and workflows a run started through the run tools, in call order."""
     invoked: List[Dict[str, Any]] = []
-    for tool in (run or {}).get("tools") or []:
+    calls = (run or {}).get("tools")
+    if not calls:
+        # A run that failed saves no tool list. Its own tool messages hold the same calls.
+        calls = [
+            {**message, "result": message.get("content")}
+            for message in (run or {}).get("messages") or []
+            if message.get("role") == "tool" and not message.get("from_history")
+        ]
+    for tool in calls:
         kind = _RUN_TOOLS.get(tool.get("tool_name"))
         if kind is None:
             continue
-        result = tool.get("result")
+        raw = result = tool.get("result")
         if isinstance(result, str):
             try:
                 result = json.loads(result)
@@ -654,7 +688,10 @@ def _invoked_components(run: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
         entry = {"type": kind, "id": result.get(kind + "_id") or requested}
         if result.get("run_id"):
             entry["run_id"] = result["run_id"]
-        entry["status"] = "REFUSED" if result.get("error") or tool.get("tool_call_error") else result.get("status")
+        if result.get("error") or tool.get("tool_call_error"):
+            entry["status"] = "REFUSED" if str(result.get("error") or raw).startswith(_NOT_ALLOWED) else "FAILED"
+        else:
+            entry["status"] = result.get("status")
         invoked.append(entry)
     return invoked
 
@@ -689,6 +726,8 @@ class _ExecutorAuthorization(RunAuthorization):
     run_components bounds what Mini Agent may run in that Task: None leaves it to the saved permissions
     of the person who accepted and the starter's permissions, and a list admits only the (type, id) pairs in it.
     acceptance preserves the accepting person's component-run permissions through delegation and resume.
+    product_id is the Product of that Task. The queue sets it, and Product-scoped writes and Source reads
+    refuse another Product.
     """
 
     def __init__(self, original: Optional[RunAuthorization], task_id: Optional[str] = None):
@@ -701,6 +740,7 @@ class _ExecutorAuthorization(RunAuthorization):
         self.acceptance: Optional[RunAuthorization] = (
             original.acceptance if isinstance(original, _ExecutorAuthorization) else None
         )
+        self.product_id: Optional[str] = original.product_id if isinstance(original, _ExecutorAuthorization) else None
         super().__init__(
             original.provider if original else _default_authorization_provider(),
             original.context if original else AuthorizationContext(),
@@ -725,7 +765,12 @@ class _ExecutorAuthorization(RunAuthorization):
             await self.acceptance.arequire(resource, action, resource_id)
 
     def snapshot(self) -> Dict[str, Any]:
-        snapshot = {**super().snapshot(), "company_executor": True, "company_task_id": self.task_id}
+        snapshot = {
+            **super().snapshot(),
+            "company_executor": True,
+            "company_task_id": self.task_id,
+            "company_product_id": self.product_id,
+        }
         if self.acceptance is not None:
             snapshot["company_acceptance"] = self.acceptance.snapshot()
         return snapshot

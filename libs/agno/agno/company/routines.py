@@ -441,7 +441,7 @@ def _stored_policy(raw):
     """
     from agno.company.declarations import AutoAccept
 
-    legacy = "executor_type" in raw
+    legacy = "executor_type" in raw and "default_executor" not in raw
     return AutoAccept.model_validate({"approve_projects": False, **raw} if legacy else raw), legacy
 
 
@@ -1248,11 +1248,13 @@ def _require_routine_product(product_id: Optional[str], authority: Any = None) -
 
     authority = authority or current_authorization()
     if (
-        isinstance(authority, _RoutineAuthorization)
+        isinstance(authority, _ExecutorAuthorization)
         and authority.product_id is not None
         and authority.product_id != product_id
     ):
-        raise PermissionError("Routine authority is restricted to its configured Product")
+        if isinstance(authority, _RoutineAuthorization):
+            raise PermissionError("Routine authority is restricted to its configured Product")
+        raise PermissionError("A Task run is restricted to its Task's Product")
 
 
 async def _require_active_routine_product(db: Any, product_id: Optional[str]) -> None:

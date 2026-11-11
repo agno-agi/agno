@@ -57,8 +57,7 @@ def headers(scopes=None, user="alice"):
     return {"Authorization": "Bearer " + token}
 
 
-@pytest.fixture(params=[False, True], ids=["shared", "isolated"])
-def system(request, tmp_path):
+def build(tmp_path, **os_options):
     db = SqliteDb(db_file=str(tmp_path / "company.db"))
     writer = Agent(id="writer", db=db)
     agent_os = AgentOS(
@@ -67,16 +66,21 @@ def system(request, tmp_path):
         registry=Registry(agents=[writer]),
         company=CompanyConfig(model=OpenAIResponses(id="gpt-5.6-luna")),
         telemetry=False,
-        user_isolation=request.param,
-        authorization=Authorization(verification_keys=[SECRET], algorithm="HS256"),
+        **{"authorization": Authorization(verification_keys=[SECRET], algorithm="HS256"), **os_options},
     )
     app = agent_os.get_app()
     queue = QueueWorker(InMemoryQueueStore(), lambda *a, **k: writer, QueueConfig(durable=True), authorization_app=app)
     queue._company_db = db
     app.state.queue_worker = queue
     agent_os._company_app = app
-    yield TestClient(app), db, agent_os, queue
-    db.close()
+    return TestClient(app), db, agent_os, queue
+
+
+@pytest.fixture(params=[False, True], ids=["shared", "isolated"])
+def system(request, tmp_path):
+    value = build(tmp_path, user_isolation=request.param)
+    yield value
+    value[1].close()
 
 
 def records(client, approve=True):
@@ -145,18 +149,23 @@ def call(agent_os, tool, run_context, **arguments):
 
 def approve(agent_os, run_context, project):
     return call(
-        agent_os, "approve_company_project", run_context, project_name=project["name"], project_id=project["id"]
+        agent_os,
+        "approve_company_project",
+        run_context,
+        project_name=project["name"],
+        project_id=project["id"],
+        updated_at=project.get("updated_at"),
     )
 
 
 def accept(agent_os, run_context, *tasks, executor=("agent", "writer")):
-    named = [{"title": task["title"], "task_id": task["id"]} for task in tasks]
+    named = [{"title": task["title"], "task_id": task["id"], "updated_at": task.get("updated_at")} for task in tasks]
     return call(
         agent_os, "accept_company_task", run_context, tasks=named, executor_type=executor[0], executor_id=executor[1]
     )
 
 
-def review(agent_os, run_context, task, outcome, reason):
+def review(agent_os, run_context, task, outcome, reason, **executor):
     return call(
         agent_os,
         "review_company_task",
@@ -166,6 +175,7 @@ def review(agent_os, run_context, task, outcome, reason):
         reason=reason,
         task_id=task["id"],
         reviewed_run_id=(agent_os._company_db.get_task(task["id"]) or {}).get("job_id") or "missing-run",
+        **executor,
     )
 
 
@@ -213,13 +223,33 @@ def test_a_person_takes_a_proposal_to_done_in_chat(system):
     assert (done["transitions"][-1]["user_id"], done["transitions"][-1]["reason"]) == ("alice", "Reads well")
 
 
-def test_accept_with_no_executor_names_mini_agent(system):
+def test_accept_with_no_executor_named_takes_the_one_the_proposal_suggests(system):
     client, db, agent_os, queue = system
-    _, task = records(client)
-    reply = accept(agent_os, context(), task, executor=(None, None))
+    project, plain = records(client)
+    suggested = client.post(
+        "/company/tasks",
+        json={
+            "product_id": plain["product_id"],
+            "project_id": project["id"],
+            "title": "Suggested",
+            "executor_type": "agent",
+            "executor_id": "writer",
+        },
+        headers=headers(),
+    ).json()
+    before = state(db)
+    # The person confirms the executor, so a call that names none accepts nothing and says which to name.
+    reply = accept(agent_os, context(), suggested, plain, executor=(None, None))
+    assert reply.startswith("Not done"), reply
+    assert "'Suggested' suggests agent writer" in reply and "'Draft' suggests none" in reply, reply
+    assert f"agent {MINI_AGENT_ID} when it suggests none" in reply and state(db) == before
+
+    assert accept(agent_os, context(), suggested, executor=("agent", "writer")).startswith("Accepted 'Suggested'")
+    reply = accept(agent_os, context(), plain, executor=("agent", MINI_AGENT_ID))
     assert f"agent {MINI_AGENT_ID}" in reply, reply
-    accepted = db.get_task(task["id"])
-    assert (accepted["status"], accepted["executor_type"], accepted["executor_id"]) == ("ready", "agent", MINI_AGENT_ID)
+    saved = db.get_task(plain["id"])
+    assert (saved["status"], saved["executor_type"], saved["executor_id"]) == ("ready", "agent", MINI_AGENT_ID)
+    assert db.get_task(suggested["id"])["executor_id"] == "writer"
 
 
 def test_accept_on_mini_agent_needs_its_run_grant(system):
@@ -237,7 +267,7 @@ def test_accept_names_both_executor_fields_or_neither(system, half):
     client, db, agent_os, queue = system
     _, task = records(client)
     reply = accept(agent_os, context(), task, executor=half)
-    assert "leave both out to use Mini Agent" in reply and db.get_task(task["id"])["status"] == "backlog"
+    assert "the call names no executor" in reply and db.get_task(task["id"])["status"] == "backlog"
 
 
 @pytest.mark.parametrize("executor", [("team", MANAGER_TEAM_ID), ("agent", BUILDER_ID), ("agent", "missing")])
@@ -276,12 +306,99 @@ def test_send_back_returns_the_task_to_ready_with_the_reason(system):
     assert db.get_task(task["id"])["transitions"][-1]["attempt"] == 2
 
 
+def without_executor(client, db, queue):
+    """A Task in review that names no executor: it went back to Backlog after its attempt."""
+    _, task = records(client)
+    in_review(client, db, queue, task["id"])
+    for target in ("backlog", "in_review"):
+        moved = client.post(
+            f"/company/tasks/{task['id']}/transitions", json={"target": target, "reason": "Moved"}, headers=headers()
+        )
+        assert moved.status_code == 200, moved.text
+    saved = db.get_task(task["id"])
+    assert (saved["status"], saved["executor_type"], saved["executor_id"]) == ("in_review", None, None)
+    return saved
+
+
+def test_send_back_of_a_task_with_no_executor_names_mini_agent(system):
+    client, db, agent_os, queue = system
+    task = without_executor(client, db, queue)
+    before = state(db)
+    # The person confirms the executor, so a call that names none sends nothing back and says which to name.
+    reply = review(agent_os, context(), task, "send_back", "Redo")
+    assert reply.startswith("Not done") and "names no executor" in reply, reply
+    assert f"executor_type agent and executor_id {MINI_AGENT_ID}" in reply
+    assert review(
+        agent_os, context(), task, "send_back", "Redo", executor_type="agent", executor_id="writer"
+    ).startswith("Not done")
+    # Mini Agent is the executor, so the person needs its run grant.
+    without = context(scopes=[scope for scope in SCOPES if scope != f"agents:{MINI_AGENT_ID}:run"])
+    mini = {"executor_type": "agent", "executor_id": MINI_AGENT_ID}
+    assert review(agent_os, without, task, "send_back", "Redo", **mini).startswith("Not done")
+    assert state(db) == before
+
+    reply = review(agent_os, context(), task, "send_back", "Redo", **mini)
+    assert reply.startswith("Sent 'Draft'") and f"agent {MINI_AGENT_ID}" in reply, reply
+    returned = db.get_task(task["id"])
+    assert (returned["status"], returned["executor_type"], returned["executor_id"]) == ("ready", "agent", MINI_AGENT_ID)
+    # A completion needs no executor.
+    other = without_executor(client, db, queue)
+    assert review(agent_os, context(), other, "complete", "Good").startswith("Completed")
+
+
+def test_send_back_names_no_executor_but_the_tasks_own(system):
+    client, db, agent_os, queue = system
+    _, task = records(client)
+    in_review(client, db, queue, task["id"])
+    before = state(db)
+    # The confirmation would show an executor the Task does not return to.
+    reply = review(agent_os, context(), task, "send_back", "Redo", executor_type="agent", executor_id=MINI_AGENT_ID)
+    assert reply.startswith("Not done") and "agent writer" in reply and state(db) == before, reply
+    reply = review(agent_os, context(), task, "send_back", "Redo", executor_type="agent", executor_id="writer")
+    assert reply.startswith("Sent 'Draft'") and db.get_task(task["id"])["executor_id"] == "writer", reply
+
+
 def test_a_first_attempt_carries_no_review_feedback(system):
     client, db, agent_os, queue = system
     _, task = records(client)
     manager = CompanyManager(db, agent_os.registry)
     message = json.loads(asyncio.run(_task_input(manager, db.get_task(task["id"]), accepted_execution=True)))
     assert "review_feedback" not in message
+
+
+def test_review_feedback_survives_a_failed_attempt_and_its_retry(system):
+    client, db, agent_os, queue = system
+    _, task = records(client)
+    in_review(client, db, queue, task["id"])
+    assert review(agent_os, context(), task, "send_back", "Add the changelog").startswith("Sent 'Draft'")
+    manager = CompanyManager(db, agent_os.registry)
+
+    def feedback():
+        message = json.loads(asyncio.run(_task_input(manager, db.get_task(task["id"]), accepted_execution=True)))
+        return message.get("review_feedback")
+
+    # The attempt that received the reason fails.
+    assert "Queued" in call(agent_os, "start_company_task", context(), task_id=task["id"])
+    failed = db.get_task(task["id"])
+    assert failed["status"] == "in_progress" and failed["transitions"][-1]["attempt"] == 2
+    asyncio.run(queue.store.claim_job(queue.worker_id, queue.config.lock_grace_seconds))
+    asyncio.run(queue.store.complete_job(failed["job_id"], queue.worker_id, 1, "failed"))
+    db.complete_task_run(
+        task["id"],
+        failed["job_id"],
+        {"run_id": failed["job_id"], "status": "ERROR", "content": "The model failed"},
+        expected_transitions=failed["transitions"],
+    )
+    assert feedback() == "Add the changelog"
+    # The retry is a new attempt, and it is told the same reason.
+    retried = client.post(f"/company/tasks/{task['id']}/runs", headers=headers())
+    assert retried.status_code == 202, retried.text
+    assert db.get_task(task["id"])["transitions"][-1]["attempt"] == 3
+    assert feedback() == "Add the changelog"
+
+    # An attempt that reaches review ends the feedback: the next reviewer decides on the new result.
+    finish(db, queue, task["id"], attempt=3)
+    assert feedback() is None
 
 
 # ----------------------------------------------------------------- each decision needs the person's grants
@@ -435,7 +552,7 @@ def test_the_sync_tools_decide_nothing(system):
     before = state(db)
     tools = CompanyTaskTools(agent_os)
     replies = [
-        tools.approve_company_project("Release", ids["proposed"]["id"], _agno_run_context=context()),
+        tools.approve_company_project("Release", ids["proposed"]["id"], None, _agno_run_context=context()),
         tools.accept_company_task(
             [{"title": "Draft", "task_id": ids["backlog"]["id"]}], "agent", "writer", _agno_run_context=context()
         ),
@@ -443,6 +560,141 @@ def test_the_sync_tools_decide_nothing(system):
     ]
     assert all("asynchronous run" in reply for reply in replies)
     assert state(db) == before
+
+
+def test_accept_names_the_executor_kind_in_a_sentence(system):
+    client, db, agent_os, queue = system
+    _, task = records(client)
+    before = state(db)
+    reply = accept(agent_os, context(), task, executor=("Agent", "writer"))
+    assert reply.startswith("Not done") and "agent, team or workflow" in reply, reply
+    assert state(db) == before
+
+
+def test_accept_says_ready_only_when_a_task_was_accepted(system):
+    client, db, agent_os, queue = system
+    _, waiting = records(client, approve=False)
+    # The Task's Project is not approved, so the move to Ready is refused.
+    reply = accept(agent_os, context(), waiting)
+    assert reply.startswith("Not done") and "Accepted" not in reply, reply
+    assert db.get_task(waiting["id"])["status"] == "backlog"
+    # One accepted and one refused: the closing sentence covers the accepted one.
+    _, ready = records(client)
+    reply = accept(agent_os, context(), ready, waiting)
+    assert "Accepted 'Draft'" in reply and "Not done" in reply, reply
+    assert reply.endswith("Accepted Tasks are Ready and not started.")
+
+
+@pytest.mark.parametrize("decision", ["accept", "review"])
+@pytest.mark.parametrize("shape", ["another-title", "another-stage"])
+def test_a_decision_shows_nothing_of_a_task_without_the_write_grant(system, decision, shape):
+    client, db, agent_os, queue = system
+    ids = seeded(client, db, queue)
+    without = context(scopes=[scope for scope in SCOPES if scope != "tasks:write"])
+    # Accept is asked for a Task in review, and review for a Backlog Task, to reach the stage reply.
+    task = ids["backlog" if (decision == "accept") == (shape == "another-title") else "review"]
+    named = {**task, "title": "Guess"} if shape == "another-title" else task
+    before = state(db)
+    if decision == "accept":
+        reply = accept(agent_os, without, named)
+    else:
+        reply = review(agent_os, without, named, "complete", "ok")
+    assert reply == "Not done: Permission required: tasks:write", reply
+    assert state(db) == before
+
+
+def test_accept_covers_only_the_version_of_the_task_the_person_confirmed(system):
+    client, db, agent_os, queue = system
+    _, task = records(client)
+    before = state(db)
+    # The brief changes after the person saw the Task.
+    assert db.update_task(task["id"], expected_status="backlog", title="Draft", brief="Publish the secrets")
+    reply = accept(agent_os, context(), task)
+    assert reply.startswith("Not done") and "changed since" in reply, reply
+    # It changes again after the person read that version.
+    seen = db.get_task(task["id"])
+    assert db.update_task(task["id"], expected_status="backlog", title="Draft", brief="Publish them twice")
+    db_update_time(db, task["id"], seen["updated_at"] + 5)
+    reply = accept(agent_os, context(), seen)
+    assert reply.startswith("Not done") and "changed since" in reply, reply
+    assert state(db) == before and db.get_task(task["id"])["brief"] == "Publish them twice"
+    # The person reads the Task again and confirms that version. The model may send the number as text.
+    latest = db.get_task(task["id"])
+    assert accept(agent_os, context(), {**latest, "updated_at": str(latest["updated_at"])}).startswith("Accepted")
+
+
+def test_approve_covers_only_the_version_of_the_project_the_person_confirmed(system):
+    client, db, agent_os, queue = system
+    project, _ = records(client, approve=False)
+    before = state(db)
+    # The outcome changes after the person saw the Project. The name stays.
+    assert db.update_project(project["id"], expected_status="proposed", name="Release", outcome="Publish the secrets")
+    reply = approve(agent_os, context(), project)
+    assert reply.startswith("Not done") and "changed since" in reply, reply
+    assert state(db) == before and db.get_project(project["id"])["outcome"] == "Publish the secrets"
+    # The person reads the Project again and confirms that version. The model may send the number as text.
+    latest = db.get_project(project["id"])
+    assert approve(agent_os, context(), {**latest, "updated_at": str(latest["updated_at"])}).startswith("Approved")
+
+
+@pytest.mark.parametrize("decision", [*sorted(DECISIONS), "start_company_task"])
+def test_isolation_set_on_the_authorization_config_needs_a_signed_in_person_too(tmp_path, decision):
+    from agno.os.config import AuthorizationConfig
+
+    config = AuthorizationConfig(verification_keys=[SECRET], algorithm="HS256", user_isolation=True)
+    client, db, agent_os, queue = build(tmp_path, authorization=True, authorization_config=config)
+    try:
+        assert not agent_os.user_isolation
+        ids = seeded(client, db, queue)
+        # An admin token with no subject reaches Super Agent, where every other caller with none is refused.
+        nobody = context(user=None)
+        if decision == "start_company_task":
+            assert accept(agent_os, context(), ids["backlog"]).startswith("Accepted")
+            before = state(db)
+            reply = call(agent_os, "start_company_task", nobody, task_id=ids["backlog"]["id"])
+        else:
+            before = state(db)
+            reply = DECISIONS[decision][0](ids, nobody, agent_os)
+        assert "signed-in person" in reply, reply
+        assert state(db) == before
+    finally:
+        db.close()
+
+
+def db_update_time(db, task_id, updated_at):
+    """Set a Task's updated_at, as a write made at that time leaves it."""
+    from sqlalchemy import update
+
+    table = db._get_table(table_type="tasks")
+    with db.Session() as session, session.begin():
+        session.execute(update(table).where(table.c.id == task_id).values(updated_at=updated_at))
+
+
+@pytest.mark.parametrize("stale,winner", [("complete", "send_back"), ("send_back", "complete")])
+def test_a_stale_review_cannot_overwrite_one_made_in_the_same_second(system, monkeypatch, stale, winner):
+    client, db, agent_os, queue = system
+    _, task = records(client)
+    in_review(client, db, queue, task["id"])
+    observed = db.get_task(task["id"])
+    original = CompanyManager.transition_task
+
+    def another_reviewer_first(self, **arguments):
+        # Another reviewer decides between this call's read and its write, in the same second.
+        executor = {"executor_type": "agent", "executor_id": "writer"} if winner == "send_back" else {}
+        with authorization_scope(lambda: None):
+            decided = db.transition_task(
+                task["id"], "ready" if winner == "send_back" else "done", "Decided first", accepted_by="bob", **executor
+            )
+        assert decided is not None
+        db_update_time(db, task["id"], observed["updated_at"])
+        return original(self, **arguments)
+
+    monkeypatch.setattr(CompanyManager, "transition_task", another_reviewer_first)
+    reply = review(agent_os, context(), task, stale, "Second opinion")
+    assert reply.startswith("Not done") and "changed while it was being reviewed" in reply, reply
+    saved = db.get_task(task["id"])
+    assert saved["status"] == ("ready" if winner == "send_back" else "done")
+    assert (saved["transitions"][-1]["user_id"], saved["transitions"][-1]["reason"]) == ("bob", "Decided first")
 
 
 # ----------------------------------------------------------------- a run that executes work decides nothing
@@ -523,11 +775,14 @@ def tool_calls(ids):
     """Each decision as the model calls it, with what the confirmation must show."""
     backlog, review_task, proposed = ids["backlog"], ids["review"], ids["proposed"]
     return {
-        "approve": ("approve_company_project", {"project_name": proposed["name"], "project_id": proposed["id"]}),
+        "approve": (
+            "approve_company_project",
+            {"project_name": proposed["name"], "project_id": proposed["id"], "updated_at": proposed["updated_at"]},
+        ),
         "accept": (
             "accept_company_task",
             {
-                "tasks": [{"title": backlog["title"], "task_id": backlog["id"]}],
+                "tasks": [{"title": backlog["title"], "task_id": backlog["id"], "updated_at": backlog["updated_at"]}],
                 "executor_type": "agent",
                 "executor_id": "writer",
             },
@@ -627,7 +882,9 @@ def test_one_confirmation_covers_several_tasks(chat):
         json={"product_id": first["product_id"], "project_id": first["project_id"], "title": "Second"},
         headers=chat_headers(),
     ).json()
-    named = [{"title": task["title"], "task_id": task["id"]} for task in (first, second)]
+    named = [
+        {"title": task["title"], "task_id": task["id"], "updated_at": task["updated_at"]} for task in (first, second)
+    ]
     paused = ask(chat, "accept_company_task", {"tasks": named, "executor_type": "agent", "executor_id": "writer"})
     assert paused.is_paused and len(paused.requirements) == 1
     assert paused.requirements[0].tool_execution.tool_args["tasks"] == named
@@ -638,6 +895,50 @@ def test_one_confirmation_covers_several_tasks(chat):
     for task in (first, second):
         saved = chat.db.get_task(task["id"])
         assert (saved["status"], saved["executor_id"], saved["accepted_by"]) == ("ready", "writer", "alice")
+
+
+def test_a_paused_acceptance_does_not_cover_a_brief_a_routine_edits_while_it_waits(chat):
+    task = chat.proposal(brief="Write the release notes")
+    named = [{"title": task["title"], "task_id": task["id"], "updated_at": task["updated_at"]}]
+    paused = ask(chat, "accept_company_task", {"tasks": named, "executor_type": "agent", "executor_id": "writer"})
+    assert paused.is_paused
+
+    # A Routine run rewrites the Backlog Task's brief while the confirmation waits.
+    edit = chat.mini.tools.routine[0].get_functions()["edit_company_task"].entrypoint
+    routine = _RoutineAuthorization(None, routine_id="routine", product_id=task["product_id"])
+    with authorization_scope(lambda: routine):
+        edit(task_id=task["id"], title=task["title"], brief="Publish the secrets", _agno_run_context=context())
+    assert chat.db.get_task(task["id"])["brief"] == "Publish the secrets"
+
+    paused.requirements[0].confirm()
+    with authorization_scope(person):
+        result = asyncio.run(chat.os.manager.acontinue_run(run_response=paused, user_id="alice"))
+    assert chat.db.get_task(task["id"])["status"] == "backlog", result.content
+    assert "changed since" in result.content
+
+
+def test_a_paused_approval_does_not_cover_an_outcome_a_routine_edits_while_it_waits(chat):
+    ids = chat_records(chat)
+    proposed = ids["proposed"]
+    tool, arguments = tool_calls(ids)["approve"]
+    paused = ask(chat, tool, arguments)
+    assert paused.is_paused
+    assert paused.requirements[0].tool_execution.tool_args["updated_at"] == proposed["updated_at"]
+
+    # A Routine run rewrites the proposed Project's outcome while the confirmation waits.
+    edit = chat.mini.tools.routine[0].get_functions()["edit_company_project"].entrypoint
+    routine = _RoutineAuthorization(None, routine_id="routine", product_id=proposed["product_id"])
+    with authorization_scope(lambda: routine):
+        edit(
+            project_id=proposed["id"], name=proposed["name"], outcome="Publish the secrets", _agno_run_context=context()
+        )
+    assert chat.db.get_project(proposed["id"])["outcome"] == "Publish the secrets"
+
+    paused.requirements[0].confirm()
+    with authorization_scope(person):
+        result = asyncio.run(chat.os.manager.acontinue_run(run_response=paused, user_id="alice"))
+    assert chat.db.get_project(proposed["id"])["status"] == "proposed", result.content
+    assert "changed since" in result.content
 
 
 @pytest.mark.parametrize("outcome", ["complete", "send_back"])

@@ -42,7 +42,36 @@ class RoutineLastRun(BaseModel):
     error: Optional[str] = None
 
 
+class RoutineAutoAccept(BaseModel):
+    """A Routine's auto_accept policy as the API returns it. The policy's other fields are returned as stored."""
+
+    model_config = ConfigDict(extra="allow")
+    default_executor: str
+    executors: Optional[List[str]] = None
+    executor_type: Optional[str] = Field(
+        default=None,
+        description="Deprecated, removed in the next release: the kind of default_executor.",
+        json_schema_extra={"deprecated": True},
+    )
+    executor_id: Optional[str] = Field(
+        default=None,
+        description="Deprecated, removed in the next release: read default_executor.",
+        json_schema_extra={"deprecated": True},
+    )
+
+
+class RoutineMetadata(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    auto_accept: Union[Literal[False], RoutineAutoAccept] = False
+
+
+class RoutinePayload(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    metadata: RoutineMetadata
+
+
 class RoutineResponse(ScheduleResponse):
+    payload: RoutinePayload  # type: ignore[assignment]
     schedule_type: Literal["scheduled", "on_demand"]
     last_run: Optional[RoutineLastRun] = None
     deleted_at: Optional[int] = None
@@ -178,8 +207,35 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         # One reverse flag orders equal timestamps by id in the same direction as the timestamp.
         return sorted(rows, key=lambda row: (get_sort_value(row, sort_by), row["id"]), reverse=reverse)
 
+    async def returned_policy(raw):
+        """The stored policy, with the two executor fields it had before default_executor."""
+        from agno.company.routines import _executor_kind, _stored_policy
+
+        if not raw:
+            return False
+        policy, legacy = _stored_policy(raw)
+        kind = raw["executor_type"] if legacy else None
+        if kind is None:
+            try:
+                kind = await asyncio.to_thread(_executor_kind, agent_os.registry, policy.default_executor)
+            except ValueError:
+                # The executor is gone or its ID is shared; the policy is returned without a kind.
+                pass
+        return {
+            **raw,
+            "default_executor": policy.default_executor,
+            "executors": policy.executors,
+            "executor_type": kind,
+            "executor_id": policy.default_executor,
+        }
+
     async def routine_responses(rows):
         latest = await call(schedule_db.get_latest_schedule_runs, [row["id"] for row in rows])
+        policies = [await returned_policy(row["payload"]["metadata"].get("auto_accept")) for row in rows]
+        rows = [
+            {**row, "payload": {**row["payload"], "metadata": {**row["payload"]["metadata"], "auto_accept": policy}}}
+            for row, policy in zip(rows, policies)
+        ]
         return [
             {
                 **row,

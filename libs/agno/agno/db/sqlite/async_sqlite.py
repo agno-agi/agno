@@ -7646,6 +7646,8 @@ class AsyncSqliteDb(AsyncBaseDb):
         executor_id: Optional[str] = None,
         expected_updated_at: Optional[int] = _UNSET_UPDATED_AT,
         auto_accept: Optional[Dict[str, Any]] = None,
+        expected_status: Optional[str] = None,
+        expected_job_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Apply a lifecycle transition only if the observed state still matches."""
         from agno.db.schemas.tasks import _acceptance_count, task_transition_fields
@@ -7685,6 +7687,10 @@ class AsyncSqliteDb(AsyncBaseDb):
             if row is None:
                 return None
             existing = dict(row._mapping)
+            if expected_status is not None and existing["status"] != expected_status:
+                return None
+            if expected_job_id is not None and existing["job_id"] != expected_job_id:
+                return None
             fields = task_transition_fields(existing, target, reason, accepted_by, executor_type, executor_id)
             if auto_accept is not None:
                 fields["transitions"][-1]["auto_accept"] = auto_accept

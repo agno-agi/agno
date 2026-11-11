@@ -6,9 +6,9 @@ Each decision pauses the run. It shows the record's name, its id and what will c
 is recorded only after the person confirms, under that person's permissions. This script
 answers each confirmation as the person would in the AgentOS UI.
 
-The Task is accepted with no executor, so it names Mini Agent. In a Task a person accepted,
-Mini Agent does the work itself or runs the components that person may run. Here it runs the
-Release Writer agent, and the Task records that it did.
+The person accepts the Task for Mini Agent, and the confirmation shows that executor. In a
+Task a person accepted, Mini Agent does the work itself or runs the components that person may
+run. Here it runs the Release Writer agent, and the Task records that it did.
 
 Prerequisites: PostgreSQL (./cookbook/scripts/run_pgvector.sh) and OPENAI_API_KEY.
 
@@ -149,7 +149,7 @@ if __name__ == "__main__":
         chat(client, "Approve the Release 2.4 Project.", session)
         chat(
             client,
-            "Accept the release notes Task. Name no executor, so it runs on Mini Agent.",
+            "Accept the release notes Task for Mini Agent.",
             session,
         )
         chat(client, "Start that Task.", session)

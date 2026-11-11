@@ -16,7 +16,7 @@ from pydantic import BeforeValidator
 
 from agno.company.declarations import Product, Routine, Source
 from agno.company.manager import AsyncCompanyManager, CompanyManager
-from agno.company.routines import _require_routine_product, _RoutineAuthorization
+from agno.company.routines import _require_routine_product, _RoutineAuthorization, _run_kind
 from agno.company.sources import is_remote_git
 from agno.db.base import AsyncBaseDb
 from agno.run.authorization import current_authorization, requires_permission
@@ -54,6 +54,15 @@ def _identity(run_context):
     return authority.context.principal_id if authority is not None else getattr(run_context, "user_id", None)
 
 
+def _saved_no_caller(authority):
+    """Whether a Company run's authority wraps no caller authority, as when authorization is off."""
+    from agno.company.execution import _ExecutorAuthorization
+
+    while isinstance(authority, _ExecutorAuthorization):
+        authority = authority.original
+    return authority is None
+
+
 def _permission(resource, action, run_context):
     authority = _authority(run_context)
     if authority is not None:
@@ -73,6 +82,12 @@ def _require_plain_proposal(run_context):
         raise PermissionError(
             "Routines must propose Tasks through intake_product_source with evidence and a dedupe key"
         )
+
+
+def _require_decision_log_write(run_context):
+    # The log is company-wide and later runs recall it. A Task run acts on a brief that anyone may have written.
+    if _run_kind(run_context) == "task":
+        raise PermissionError("A Task run cannot write the company decision log. Report the decision in the result")
 
 
 def _require_human_creation(run_context, operation="create Company Products and Routines"):
@@ -168,16 +183,6 @@ def _page(result, limit, page, **notes):
     )
 
 
-def _executed_task(run_context):
-    """The id of the accepted Task this run executes, or None for a Routine run and every other run."""
-    from agno.company.execution import _ExecutorAuthorization
-
-    authority = _authority(run_context)
-    if isinstance(authority, _ExecutorAuthorization) and not isinstance(authority, _RoutineAuthorization):
-        return authority.task_id
-    return None
-
-
 class CompanyTools(Toolkit):
     """Company-wide reads, proposals and human-requested setup, following StudioTools injection.
 
@@ -197,10 +202,7 @@ class CompanyTools(Toolkit):
         interfaces: Any = None,
         registry: Any = None,
         include_tools: Optional[List[str]] = None,
-        own_product_status: bool = False,
     ):
-        # A run that executes a Task may then update the status page of that Task's Product only.
-        self._own_product_status = own_product_status
         self._interfaces_explicit = interfaces is not None
         self.interfaces = interfaces if interfaces is not None else []
         self._automation_history_retention_days = 30
@@ -260,9 +262,18 @@ class CompanyTools(Toolkit):
                 if isinstance(authority, _RoutineAuthorization) and authority.original is None:
                     # An unowned Routine fires unscoped like any unowned schedule, still bound to its Product.
                     return None
+                if _run_kind(run_context) == "task" and _saved_no_caller(authority):
+                    # A Task run with no caller authority, as in a deployment without authorization, acts as
+                    # the starter its run names, and unscoped when it names none. It stays bound to its Product.
+                    return getattr(run_context, "user_id", None)
                 raise PermissionError("Caller identity is required under user isolation")
             return user
         return None
+
+    def _authorization_on(self) -> bool:
+        """Whether this deployment checks permissions. Where it does not, a declared auto_accept acts."""
+        agent_os = self._agent_os_ref() if self._agent_os_ref else None
+        return bool(getattr(agent_os, "authorization", None))
 
     def _sync(self):
         if isinstance(self.db, AsyncBaseDb):
@@ -694,6 +705,8 @@ class CompanyTools(Toolkit):
             return _public_json(product)
         product.update({key: value for key, value in manager.auto_accept_status(product_id).items() if value != []})
         product.setdefault("automatic_decisions", [])
+        if self._authorization_on() and (waiting := manager.auto_accept_waiting(product_id)):
+            product["auto_accept_waiting_for_a_person"] = waiting
         return _public_json(product)
 
     @requires_permission()
@@ -749,10 +762,14 @@ class CompanyTools(Toolkit):
         manager = self._sync()
         result = manager.list_tasks(product_id=product_id, status=status, limit=limit, page=page)
         at_limit: List[Dict[str, Any]] = []
-        if status == "backlog":
+        # A listing that holds Backlog work is where a person looks for what needs a decision.
+        if status in (None, "backlog"):
             for listed in dict.fromkeys(row["product_id"] for row in result[0]):
                 at_limit.extend(manager.auto_accept_status(listed)["auto_accept_at_limit"])
-        return _page(result, limit, page, auto_accept_at_limit=at_limit)
+        # A Routine waiting to be turned on has proposed nothing, so it is listed whatever the page holds.
+        decides = status in (None, "backlog") and self._authorization_on()
+        waiting = manager.auto_accept_waiting(product_id) if decides else []
+        return _page(result, limit, page, auto_accept_at_limit=at_limit, auto_accept_waiting_for_a_person=waiting)
 
     @requires_permission()
     def propose_company_project(
@@ -893,11 +910,6 @@ class CompanyTools(Toolkit):
     ) -> str:
         """Update status.md after reading it; supply the version read to prevent lost edits."""
         _permission("wiki", "write", _agno_run_context)
-        task_id = _executed_task(_agno_run_context) if self._own_product_status else None
-        if task_id is not None:
-            task = self._sync().get_task(task_id)
-            if task is None or task["product_id"] != product_id:
-                raise PermissionError("A Task run updates the status of its own Product only")
         return _public_json(
             asdict(
                 self._sync().write_wiki(
@@ -929,6 +941,7 @@ class CompanyTools(Toolkit):
         reasoning = _empty_to_none(reasoning)
         context = _empty_to_none(context)
         outcome = _empty_to_none(outcome)
+        _require_decision_log_write(_agno_run_context)
         _permission("decisions", "write", _agno_run_context)
         self._scoped_user(_agno_run_context)
         return _public_json(
@@ -1017,6 +1030,8 @@ class CompanyTools(Toolkit):
         status = await manager.auto_accept_status(product_id)
         product.update({key: value for key, value in status.items() if value != []})
         product.setdefault("automatic_decisions", [])
+        if self._authorization_on() and (waiting := await manager.auto_accept_waiting(product_id)):
+            product["auto_accept_waiting_for_a_person"] = waiting
         return _public_json(product)
 
     @requires_permission()
@@ -1072,10 +1087,14 @@ class CompanyTools(Toolkit):
         manager = self._async()
         result = await manager.list_tasks(product_id=product_id, status=status, limit=limit, page=page)
         at_limit: List[Dict[str, Any]] = []
-        if status == "backlog":
+        # A listing that holds Backlog work is where a person looks for what needs a decision.
+        if status in (None, "backlog"):
             for listed in dict.fromkeys(row["product_id"] for row in result[0]):
                 at_limit.extend((await manager.auto_accept_status(listed))["auto_accept_at_limit"])
-        return _page(result, limit, page, auto_accept_at_limit=at_limit)
+        # A Routine waiting to be turned on has proposed nothing, so it is listed whatever the page holds.
+        decides = status in (None, "backlog") and self._authorization_on()
+        waiting = await manager.auto_accept_waiting(product_id) if decides else []
+        return _page(result, limit, page, auto_accept_at_limit=at_limit, auto_accept_waiting_for_a_person=waiting)
 
     @requires_permission()
     async def apropose_company_project(
@@ -1220,11 +1239,6 @@ class CompanyTools(Toolkit):
     ) -> str:
         """Update status.md after reading it; supply the version read to prevent lost edits."""
         await _apermission("wiki", "write", _agno_run_context)
-        task_id = _executed_task(_agno_run_context) if self._own_product_status else None
-        if task_id is not None:
-            task = await self._async().get_task(task_id)
-            if task is None or task["product_id"] != product_id:
-                raise PermissionError("A Task run updates the status of its own Product only")
         return _public_json(
             asdict(
                 await self._async().write_wiki(
@@ -1256,6 +1270,7 @@ class CompanyTools(Toolkit):
         reasoning = _empty_to_none(reasoning)
         context = _empty_to_none(context)
         outcome = _empty_to_none(outcome)
+        _require_decision_log_write(_agno_run_context)
         await _apermission("decisions", "write", _agno_run_context)
         self._scoped_user(_agno_run_context)
         return _public_json(
