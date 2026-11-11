@@ -89,6 +89,8 @@ async def test_former_id_policy_blocks_startup_on_every_adapter(db, resource, ef
         await auth._araise_if_former_manager_policies()
     assert f"legacy: {resource} run ({effect})" in str(raised.value)
     assert "os-manager-internal -> superagent" in str(raised.value)
+    # Mini Agent runs Routines now, so the rename to Super Agent alone would leave those runs uncovered.
+    assert "company-manager-internal as well: a policy for Routine runs needs miniagent" in str(raised.value)
 
 
 @pytest.mark.asyncio

@@ -260,7 +260,7 @@ class Authorization:
         Such a row no longer matches. A deny that stops matching would let a wildcard allow
         through, so a denied user would gain access to the manager without any error.
         """
-        from agno.registry._reserved import FORMER_MANAGER_IDS
+        from agno.registry._reserved import FORMER_MANAGER_IDS, FORMER_ROUTINE_EXECUTOR_ID, MINI_AGENT_ID
 
         resources = [f"{family}/{old}" for family in ("agents", "teams", "workflows") for old in FORMER_MANAGER_IDS]
         # A custom policy engine owns its own storage, which this check cannot read.
@@ -273,7 +273,8 @@ class Authorization:
             renames = ", ".join(f"{old} -> {new}" for old, new in FORMER_MANAGER_IDS.items())
             raise ValueError(
                 f"Stored authorization policies use manager IDs replaced in Agno 3.2: {found}. "
-                f"Update these policies to the new IDs ({renames}) before starting."
+                f"Update these policies to the new IDs ({renames}) before starting. "
+                f"Routines ran on {FORMER_ROUTINE_EXECUTOR_ID} as well: a policy for Routine runs needs {MINI_AGENT_ID}."
             )
 
     async def aassign(self, subject: str, role: str, actor: Optional[str] = None) -> None:
