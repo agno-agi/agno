@@ -25,16 +25,16 @@ def _build_teams_interface(env=None):
 
 
 def _make_session_with_ref(service_url="https://svc", conv_id="conv-1"):
-    return SimpleNamespace(
-        session_id="s-1",
-        session_data={
+    return {
+        "session_id": "s-1",
+        "session_data": {
             "msteams_conversation_ref": {
                 "service_url": service_url,
                 "conversation_id": conv_id,
                 "bot_identity": {"id": "28:bot", "name": "Bot"},
             }
         },
-    )
+    }
 
 
 # === Happy path ===
@@ -80,7 +80,7 @@ async def test_send_alert_returns_false_when_no_sessions():
 async def test_send_alert_returns_false_when_session_has_no_ref():
     teams, agent, env_patch = _build_teams_interface()
     try:
-        stale_session = SimpleNamespace(session_id="s-old", session_data={"other": "keys"})
+        stale_session = {"session_id": "s-old", "session_data": {"other": "keys"}}
         agent.db.get_sessions = MagicMock(return_value=[stale_session])
         with patch("agno.os.interfaces.msteams.msteams.send_teams_message_async", new_callable=AsyncMock) as mock_send:
             ok = await teams.asend_alert(user_id="user-1", text="hi")
@@ -360,6 +360,40 @@ async def test_two_alerts_reuse_one_bot_token():
         assert len(token_fetches) == 1
     finally:
         env_patch.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("json_data", [False, True])
+async def test_alert_finds_personal_ref_beyond_sixty_newer_sessions(tmp_path, json_data):
+    import json
+
+    from agno.db.sqlite import SqliteDb
+    from agno.os.interfaces.msteams import MSTeams
+
+    db = SqliteDb(db_file=str(tmp_path / "paged.db"))
+    _write_session(db, "msteams:agent-1:personal:user-1", 100, conv_id="personal")
+    for i in range(60):
+        _write_session(db, f"msteams:agent-1:channel-{i}:user-1", 200 + i)
+    original_get = db.get_sessions
+
+    def get_sessions(**kwargs):
+        assert kwargs["limit"] == 50
+        assert kwargs["deserialize"] is False
+        rows, total = original_get(**kwargs)
+        if json_data:
+            for row in rows:
+                row["session_data"] = json.dumps(row["session_data"])
+        return rows, total
+
+    with (
+        patch.object(db, "get_sessions", side_effect=get_sessions) as lookup,
+        patch("agno.os.interfaces.msteams.msteams.send_teams_message_async", new_callable=AsyncMock) as send,
+    ):
+        interface = MSTeams(agent=SimpleNamespace(id="agent-1", db=db))
+        interface._config = SimpleNamespace()
+        assert await interface.asend_alert("user-1", "hello") is True
+        assert [call.kwargs["page"] for call in lookup.call_args_list] == [1, 2]
+        assert send.call_args.kwargs["conversation_id"] == "personal"
 
 
 def test_two_sync_alerts_reuse_one_bot_token():

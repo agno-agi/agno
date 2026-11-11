@@ -1,4 +1,5 @@
 import asyncio
+import json
 from typing import List, Optional, Union
 
 from fastapi.routing import APIRouter
@@ -92,15 +93,7 @@ class MSTeams(BaseInterface):
         return self.router
 
     async def asend_alert(self, user_id: str, text: str) -> bool:
-        """Push a message to a user without an inbound trigger.
-
-        Delivers to the newest session carrying a conversation reference, which
-        is not always the newest session -- `/new` starts one without a
-        reference until the user's next message. Returns False, without raising,
-        when the entity has no db, when the lookup fails, or when none of the
-        user's recent sessions carries a reference. Transport failures after one
-        is found do raise.
-        """
+        """Send to the user's saved personal chat; return False when none can be resolved."""
         entity, entity_type = self._resolve_entity()
         db = getattr(entity, "db", None)
         if not isinstance(db, (BaseDb, AsyncBaseDb)):
@@ -113,34 +106,35 @@ class MSTeams(BaseInterface):
             session_type=_SESSION_DISPATCH[entity_type][0],
             user_id=user_id,
             component_id=entity_id,
-            # A window rather than limit=1: `/new` starts a session with no reference
-            # on it, so the newest session is unreachable until the user's next
-            # message. Same window the router uses to resolve the current session.
-            limit=5,
+            limit=50,
+            deserialize=False,
             # created_at, not updated_at: upsert rewrites updated_at on every save,
             # which lets a write to an older session float it above the current one.
             sort_by="created_at",
             sort_order="desc",
         )
-        try:
-            if isinstance(db, AsyncBaseDb):
-                sessions = await db.get_sessions(**session_filter)  # type: ignore[assignment]
-            else:
-                sessions = db.get_sessions(**session_filter)  # type: ignore[assignment]
-        except Exception as e:
-            log_warning(f"MSTeams.asend_alert: session lookup failed: {e}")
-            return False
-
-        # First match, not the router's client-side max: this scan examines every
-        # candidate, so a created_at tie cannot hide a reference behind whichever
-        # row the backend returns first. Rows stay deserialized here (the router
-        # asks for raw ones) because this reads session_data, a JSON column whose
-        # raw form is backend-dependent.
         ref = None
-        for session in sessions:
-            ref = extract_conversation_ref(session.session_data)  # type: ignore[union-attr]
-            if ref:
-                break
+        page = 1
+        try:
+            while not ref:
+                if isinstance(db, AsyncBaseDb):
+                    result = await db.get_sessions(**session_filter, page=page)  # type: ignore[arg-type]
+                else:
+                    result = db.get_sessions(**session_filter, page=page)  # type: ignore[arg-type]
+                sessions, total = result if isinstance(result, tuple) else (result, len(result))
+                for session in sessions:
+                    data = session.get("session_data")
+                    if isinstance(data, str):
+                        data = json.loads(data)
+                    ref = extract_conversation_ref(data)
+                    if ref:
+                        break
+                if not sessions or page * 50 >= total:
+                    break
+                page += 1
+        except Exception as e:
+            log_warning(f"MSTeams.asend_alert: session lookup failed: {str(e)}")
+            return False
         if not ref:
             return False
 
