@@ -40,8 +40,7 @@ Building:
 """
 
 DOCS_INSTRUCTIONS = """\
-Agno questions: look the answer up with your documentation tools and cite what they return. Read ambiguous
-terms as Agno terms.
+Agno questions: look the answer up with your documentation tools and cite what they return.
 """
 
 SOURCE_INSTRUCTIONS = """\
@@ -51,12 +50,11 @@ relative to its root. Environment and credential files are excluded and cannot b
 
 COMPANY_INSTRUCTIONS = """\
 Company work:
-- A Product is an area of the company's work. Its Projects are outcomes, and their Tasks are pieces of work
-  done by an executor. A Source is a location a Product reads from. A Routine is saved instructions for a
-  Product, run on a schedule or on demand by an agent, team or workflow. It can only propose work.
+- A Product is an area of the company's work. Its Projects are outcomes; their Tasks are pieces of work done
+  by an executor. A Source is where a Product reads from. A Routine is saved instructions for a Product, run
+  on a schedule or on demand by an agent, team or workflow. It can only propose work.
 - A plan is a reply: give it here and offer once to record it. Record work only when told to add, create or
   record. Simple requests need no Product, Project or Task, and no offer.
-- Read the playbook only when planning new work.
 - You propose Projects and Tasks. People accept, start and complete them in the Company pages of the AgentOS
   UI. When asked to do one of those, say so and name the record.
 - For "what needs a decision from me", list proposed Projects and Backlog Tasks, which wait for acceptance.
