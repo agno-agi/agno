@@ -248,6 +248,59 @@ def test_a_task_created_ready_with_no_executor_names_mini_agent(system):
     assert (created.json()["executor_type"], created.json()["executor_id"]) == ("agent", MINI_AGENT_ID)
 
 
+def test_a_send_back_with_no_executor_keeps_the_tasks_executor(system):
+    proposal = system.proposal()
+    path = f"/company/tasks/{proposal['id']}/transitions"
+    named = {"target": "ready", "reason": "Approved", "executor_type": "agent", "executor_id": "writer"}
+    assert system.client.post(path, json=named, headers=headers()).status_code == 200
+    assert system.execute(proposal["id"])["status"] == "in_review"
+
+    # Returning the Task is a fresh acceptance of its executor, so the person must be allowed to run it.
+    without = [scope for scope in SCOPES if scope != "agents:writer:run"]
+    refused = system.client.post(path, json={"target": "ready", "reason": "Redo"}, headers=headers(without))
+    assert refused.status_code == 403, refused.text
+    assert system.db.get_task(proposal["id"])["status"] == "in_review"
+
+    returned = system.client.post(path, json={"target": "ready", "reason": "Redo"}, headers=headers())
+    assert returned.status_code == 200, returned.text
+    assert (returned.json()["executor_type"], returned.json()["executor_id"]) == ("agent", "writer")
+    stored = system.db.get_task(proposal["id"])
+    assert (stored["status"], stored["executor_type"], stored["executor_id"]) == ("ready", "agent", "writer")
+    assert system.execute(proposal["id"])["status"] == "in_review"
+    assert system.mini.model.turns == 0 and system.writer.model.turns == 2
+
+
+def test_a_proposal_that_names_an_executor_is_accepted_on_it_when_none_is_given(system):
+    first = system.proposal()
+    suggested = system.client.post(
+        "/company/tasks",
+        json={
+            "product_id": first["product_id"],
+            "project_id": first["project_id"],
+            "title": "Suggested",
+            "executor_type": "agent",
+            "executor_id": "writer",
+        },
+        headers=headers(),
+    )
+    assert suggested.status_code == 201, suggested.text
+    accepted = system.accept(suggested.json()["id"])
+    assert (accepted["executor_type"], accepted["executor_id"]) == ("agent", "writer")
+    # A person who names an executor still chooses it.
+    again = system.client.post(
+        f"/company/tasks/{suggested.json()['id']}/transitions",
+        json={"target": "backlog", "reason": "Rescope"},
+        headers=headers(),
+    )
+    assert again.status_code == 200, again.text
+    named = system.client.post(
+        f"/company/tasks/{suggested.json()['id']}/transitions",
+        json={"target": "ready", "reason": "Approved", "executor_type": "agent", "executor_id": MINI_AGENT_ID},
+        headers=headers(),
+    )
+    assert named.status_code == 200 and named.json()["executor_id"] == MINI_AGENT_ID, named.text
+
+
 @pytest.mark.parametrize("executor", [("team", MANAGER_TEAM_ID), ("agent", BUILDER_ID)])
 def test_super_agent_and_platform_builder_stay_refused_as_executors(system, executor):
     proposal = system.proposal()
