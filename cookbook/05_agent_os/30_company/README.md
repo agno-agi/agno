@@ -262,8 +262,11 @@ A Routine reads Sources nobody vetted, so it writes no more than its skills need
 `status.md`, and the two pages the server composes from the summary and refresh
 tools. Mini Agent holds no file tools in a Routine run. On a named executor that
 holds them, `write_company_file` refuses every write in a Routine run, and the run
-is recorded as failed, as it is when `update_product_status` is refused. An
-unattended run never sees `notes/`.
+is recorded as failed, as it is when `update_product_status` is refused.
+
+A Routine run and a Task run never see `notes/`. A scheduled or service-account
+run of Super Agent is neither: it counts as a person's chat, and reads and writes
+`notes/`.
 
 A Task's input always carries the Product's `brief.md` and `status.md`, then every
 `wiki/` page: at most 8,000 characters a page and 40,000 in total. A longer page

@@ -70,8 +70,9 @@ class CompanyFileTools(Toolkit):
 
     Args:
         db: The Company database. Without it the tree is notes/ only.
-        notes_db: The AgentOS database that holds notes/. Without it there is no notes/. Unattended
-            runs never see notes/.
+        notes_db: The AgentOS database that holds notes/. Without it there is no notes/. A Routine
+            run and a Task run never see notes/. A scheduled or service-account run of an agent
+            that holds these tools counts as a person's chat, and reads and writes notes/.
         user_isolation: Deployment setting. With it on, a write to a Company folder needs a caller
             identity. It never narrows what is listed, searched or read.
         include_tools: Limit the tools registered.
@@ -105,7 +106,8 @@ class CompanyFileTools(Toolkit):
         )
 
     def _files(self, run_context: Any) -> CompanyFiles:
-        """The tree this run sees. notes/ is Super Agent's, so an unattended run gets the tree without it."""
+        """The tree this run sees. notes/ is Super Agent's, so a Routine run or a Task run gets the tree
+        without it. A scheduled or service-account run of Super Agent is not one of those, and sees notes/."""
         return self._unattended if isinstance(_authority(run_context), _ExecutorAuthorization) else self._all
 
     def _needs_wiki_permission(self, files: CompanyFiles, location: _Location) -> bool:

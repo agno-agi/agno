@@ -106,6 +106,31 @@ def pages(system, ids):
 # ----------------------------------------------------------------- one tree
 
 
+@pytest.mark.parametrize("use_async", [False, True])
+def test_every_folder_name_a_listing_returns_is_accepted_back(system, use_async):
+    ids = records(system)
+    files = tree(system.os)
+    call(files, "write_company_file", path=f"tasks/{ids['task']}/given.md", content="Material")
+    top = call(files, "list_company_files", None, use_async)["folders"]
+    assert top == ["wiki/", "products/", "tasks/", "notes/"]
+    named = [*top]
+    for folder in ("products/", "tasks/"):
+        named += [row["folder"] for row in call(files, "list_company_files", None, use_async, folder=folder)["folders"]]
+    assert f"products/{ids['product']}/" in named and f"tasks/{ids['task']}/" in named
+    for folder in named:
+        listed = call(files, "list_company_files", None, use_async, folder=folder)
+        assert listed["folder"] == folder.rstrip("/")
+        found = call(files, "search_company_files", None, use_async, query="Material", folder=folder)
+        assert found["folder"] == folder.rstrip("/")
+    # One trailing slash names a folder. A file path, and a doubled slash, are still refused.
+    for tool, arguments in (
+        ("read_company_file", {"path": "wiki/brief.md/"}),
+        ("list_company_files", {"folder": "wiki//"}),
+    ):
+        with pytest.raises(Exception, match="trailing slashes are not allowed"):
+            call(files, tool, None, use_async, **arguments)
+
+
 def test_the_tree_lists_its_folders_and_shows_each_product_by_id_and_name(system):
     ids = records(system)
     files = tree(system.os)
@@ -804,7 +829,7 @@ def test_search_reaches_every_product_and_long_listings_have_pages(system):
 
 
 @pytest.mark.parametrize("use_async", [False, True])
-def test_an_unattended_run_does_not_see_notes(system, use_async):
+def test_a_routine_run_and_a_task_run_do_not_see_notes(system, use_async):
     ids = records(system)
     files = tree(system.os)
     call(files, "write_company_file", path="notes/ideas.md", content="Private digest plan")
