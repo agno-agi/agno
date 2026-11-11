@@ -82,6 +82,19 @@ async def _call(target: Any, method: str, *args: Any, **kwargs: Any) -> Any:
     return await asyncio.to_thread(fn, *args, **kwargs)
 
 
+async def _project_run_block(db: Any, task: Dict[str, Any]) -> Optional[str]:
+    project_id = task.get("project_id")
+    if project_id is None:
+        return None
+    project = await _call(db, "get_project", project_id)
+    if project is None:
+        return None
+    return {
+        "proposed": "Approve the Project before starting Task work",
+        "cancelled": "Cannot start Task work in a cancelled Project",
+    }.get(project["status"])
+
+
 def _queued_run_id() -> str:
     submission = _task_submission.get()
     return task_run_id(submission["task"]["id"], submission["attempt"]) if submission else str(uuid4())
@@ -106,6 +119,7 @@ async def _reserve_task(db: Any, job: Dict[str, Any]) -> Optional[Dict[str, Any]
             user_id=payload.get("company_started_by", job.get("user_id")),
             run_db_id=payload["company_run_db_id"],
             session_user_id=job.get("user_id"),
+            **({"requested_from": payload["company_requested_from"]} if payload.get("company_requested_from") else {}),
         )
         task = reserved or await _call(db, "get_task", task["id"])
     if (
@@ -384,6 +398,7 @@ async def _enqueue_ticket(worker: Any, job: Dict[str, Any]) -> Dict[str, Any]:
             "company_task_attempt": submission["attempt"],
             "company_run_db_id": submission["run_db_id"],
             "company_started_by": submission.get("started_by"),
+            **({"company_requested_from": submission["requested_from"]} if submission.get("requested_from") else {}),
         },
     }
     try:
@@ -420,6 +435,11 @@ async def _check_task(worker: Any, job: Dict[str, Any]) -> None:
     db = getattr(worker, "_company_db", None)
     if db is None:
         raise ValueError("Company is unavailable for this queued Task")
+    current = await _call(db, "get_task", task_id)
+    if current is not None and not (job.get("payload") or {}).get("continue"):
+        reason = await _project_run_block(db, current)
+        if reason:
+            raise _TaskRunRefused(reason)
     task = await _reserve_task(db, job)
     if (
         task is None

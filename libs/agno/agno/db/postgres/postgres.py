@@ -3763,7 +3763,7 @@ class PostgresDb(BaseDb):
         refreshes_table = self._get_metrics_table("metrics_refreshes", self.metrics_refreshes_table_name)
         sessions_table = self._get_table(table_type="sessions")
         if table is None or aggregate_metrics_table is None or refreshes_table is None or sessions_table is None:
-            log_info("No session data found. Won't calculate metrics.")
+            log_debug("No session data found. Won't calculate metrics.")
             return []
         runs_table = self._get_table(table_type="runs")
 
@@ -3895,7 +3895,7 @@ class PostgresDb(BaseDb):
         )
 
         if not calculated_dates:
-            log_info("Metrics already calculated for all relevant dates.")
+            log_debug("Metrics already calculated for all relevant dates.")
             return []
 
         log_debug("Updated metrics calculations")
@@ -10852,7 +10852,12 @@ class PostgresDb(BaseDb):
             if proposal is not None:
                 return proposal
             require_project(
-                sess, projects, task_data.get("project_id"), task_data["product_id"], task_data.get("status", "backlog")
+                sess,
+                projects,
+                task_data.get("project_id"),
+                task_data["product_id"],
+                task_data.get("status", "backlog"),
+                reject_proposed=task_data.get("status", "backlog") != "backlog",
             )
             if task_data.get("dedupe_key") is not None:
                 from sqlalchemy.dialects.postgresql import insert
@@ -11025,20 +11030,28 @@ class PostgresDb(BaseDb):
         user_id: Optional[str] = None,
         run_db_id: Optional[str] = None,
         session_user_id: Optional[str] = None,
+        requested_from: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         from agno.db.schemas.tasks import task_run_fields
+        from agno.db.sql.company import lock_child
 
         table = self._get_table(table_type="tasks")
         if table is None:
             return None
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = self._get_table(table_type="projects", create_table_if_not_found=True)
         with self.Session() as sess, sess.begin():
+            try:
+                lock_child(sess, products, projects, table, task_id, reject_cancelled=True)
+            except ValueError:
+                return None
             row = (sess.execute(select(table).where(table.c.id == task_id, table.c.deleted_at.is_(None)))).fetchone()
             if row is None:
                 return None
             existing = dict(row._mapping)
             if existing["transitions"] != expected_transitions:
                 return None
-            fields = task_run_fields(existing, attempt, user_id, run_db_id, session_user_id)
+            fields = task_run_fields(existing, attempt, user_id, run_db_id, session_user_id, requested_from)
             stmt = (
                 table.update()
                 .where(
@@ -11144,7 +11157,7 @@ class PostgresDb(BaseDb):
     ) -> Optional[Dict[str, Any]]:
         """Apply a lifecycle transition only if the observed state still matches."""
         from agno.db.schemas.tasks import _acceptance_count, task_transition_fields
-        from agno.db.sql.company import lock_child, require_project
+        from agno.db.sql.company import lock_child, lock_product, require_project
 
         table = self._get_table(table_type="tasks")
         if table is None:
@@ -11175,6 +11188,11 @@ class PostgresDb(BaseDb):
                     >= auto_accept["max_acceptances"]
                 ):
                     raise ValueError("Routine acceptance limit reached")
+            else:
+                visible = sess.execute(stmt).fetchone()
+                if visible is None:
+                    return None
+                lock_product(sess, products, visible._mapping["product_id"])
             row = sess.execute(stmt).fetchone()
             if row is None:
                 return None
@@ -11182,11 +11200,15 @@ class PostgresDb(BaseDb):
             fields = task_transition_fields(existing, target, reason, accepted_by, executor_type, executor_id)
             if auto_accept is not None:
                 fields["transitions"][-1]["auto_accept"] = auto_accept
-            else:
-                lock_child(sess, products, projects, table, task_id)
-            if existing["status"] in {"done", "cancelled"}:
-                # Reopened work must not land in a completed or cancelled Project.
-                require_project(sess, projects, existing["project_id"], existing["product_id"], target)
+            require_project(
+                sess,
+                projects,
+                existing["project_id"],
+                existing["product_id"],
+                target if target == "ready" or existing["status"] in {"done", "cancelled"} else None,
+                reject_proposed=target == "ready",
+                reject_cancelled=target != "cancelled",
+            )
             update = table.update().where(
                 table.c.id == task_id,
                 table.c.deleted_at.is_(None),

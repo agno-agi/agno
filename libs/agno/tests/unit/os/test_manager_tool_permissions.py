@@ -76,6 +76,8 @@ MOVED_TOOLS = {
 }
 # Pauses for the person before it runs, so its refusal is asserted after the confirmation.
 CONFIRMED_TOOL = "confirm_company_details"
+# Async only, and checked with the Task start route's grants in test_company_task_tools.py.
+TASK_RUN_TOOLS = {"start_company_task", "get_company_task_status"}
 
 
 class OneToolModel(Model):
@@ -183,7 +185,7 @@ def company_records(os):
 
 def test_matrix_covers_every_tool_super_agent_holds(platform):
     os, _ = platform
-    assert held_tools(os) == set(MOVED_TOOLS) | {CONFIRMED_TOOL}
+    assert held_tools(os) == set(MOVED_TOOLS) | {CONFIRMED_TOOL} | TASK_RUN_TOOLS
     assert [member.id for member in os.manager.members] == [BUILDER_ID]
     # The platform read tools left off Super Agent stay in the toolkit.
     left_off = set(AgentOSTools(db=os.db).functions) - held_tools(os)

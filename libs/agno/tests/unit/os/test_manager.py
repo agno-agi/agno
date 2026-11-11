@@ -372,6 +372,8 @@ def test_builder_and_lead_carry_the_framework_toolkits(db, workspace, company_en
         assert isinstance(company, CompanyTools)
         assert "create_company_product" in company.functions
         assert not {"summarize_company_product", "refresh_company_product"} & set(company.functions)
+        task_runs = rest.pop(0)
+        assert set(task_runs.functions) == {"start_company_task", "get_company_task_status"}
     assert rest == []
 
     names = set()

@@ -373,9 +373,11 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         instructions.append(SOURCE_INSTRUCTIONS)
     company_db = agent_os._company_db
     if company_db is not None:
+        from agno.os.manager.company_tasks import CompanyTaskTools
         from agno.tools.company import CompanyTools
 
         tools.append(CompanyTools(company_db, summary_tools=False, refresh_tools=False, agent_id=config.id))
+        tools.append(CompanyTaskTools(agent_os))
         instructions.append(COMPANY_INSTRUCTIONS)
     if config.instructions:
         instructions.append(config.instructions)

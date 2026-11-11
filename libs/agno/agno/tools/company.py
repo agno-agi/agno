@@ -1,4 +1,4 @@
-"""Bounded Company tools for agents and direct MCP calls.
+"""Bounded Company tools for agents.
 
 Identity is injected by the framework. No tool can accept or complete work,
 reassign ownership, edit a Product brief, or change local Sources. Human chats
@@ -204,7 +204,7 @@ class CompanyTools(Toolkit):
         self.db = db
         self.registry = registry
         self.user_isolation = user_isolation
-        # Supplied by the learning machine, never by the model or an MCP argument.
+        # Supplied by the learning machine, never by the model.
         self._agent_id = agent_id
         names = [
             "update_company_details",
@@ -763,7 +763,9 @@ class CompanyTools(Toolkit):
             brief: Task brief. A brief the person dictated is saved in their words. Otherwise write it for the
                 executor: the outcome, the deliverable, how it is checked and any restrictions the person gave.
                 Null leaves it unspecified.
-            project_id: Required Project ID within the Product. Propose a Project first when none fits.
+            project_id: Required Project ID within the Product. Propose a Project first when none fits. A
+                proposed Project can hold Backlog drafts; human approval is required before accepting or
+                running them.
         """
         executor_type = _empty_to_none(executor_type)
         executor_id = _empty_to_none(executor_id)
@@ -1057,7 +1059,9 @@ class CompanyTools(Toolkit):
             brief: Task brief. A brief the person dictated is saved in their words. Otherwise write it for the
                 executor: the outcome, the deliverable, how it is checked and any restrictions the person gave.
                 Null leaves it unspecified.
-            project_id: Required Project ID within the Product. Propose a Project first when none fits.
+            project_id: Required Project ID within the Product. Propose a Project first when none fits. A
+                proposed Project can hold Backlog drafts; human approval is required before accepting or
+                running them.
         """
         executor_type = _empty_to_none(executor_type)
         executor_id = _empty_to_none(executor_id)
@@ -1378,7 +1382,8 @@ class CompanyTools(Toolkit):
         Args:
             executor_type: Suggested executor kind; null leaves selection to acceptance.
             executor_id: Suggested executor ID; null leaves selection to acceptance.
-            project_id: Required Project ID within the Product. Propose a Project first when none fits.
+            project_id: Required Project ID within the Product. A proposed Project can hold Backlog drafts;
+                human approval is required before accepting or running them.
         """
         executor_type = _empty_to_none(executor_type)
         executor_id = _empty_to_none(executor_id)
@@ -1580,7 +1585,8 @@ class CompanyTools(Toolkit):
         Args:
             executor_type: Suggested executor kind; null leaves selection to acceptance.
             executor_id: Suggested executor ID; null leaves selection to acceptance.
-            project_id: Required Project ID within the Product. Propose a Project first when none fits.
+            project_id: Required Project ID within the Product. A proposed Project can hold Backlog drafts;
+                human approval is required before accepting or running them.
         """
         executor_type = _empty_to_none(executor_type)
         executor_id = _empty_to_none(executor_id)

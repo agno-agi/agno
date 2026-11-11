@@ -9,6 +9,7 @@ from agno.company.declarations import Routine
 from agno.company.execution import _call, _ExecutorAuthorization, _registered_component, _validate_executor_tools
 from agno.company.scheduler import CompanyScheduleExecutor
 from agno.db.schemas.scheduler import COMPANY_AUTOMATION_SCHEDULE_ID, RUN_ENDPOINT_RE
+from agno.db.schemas.tasks import CancelledProjectError
 from agno.guardrails.base import BaseGuardrail
 from agno.skills import LocalSkills, Skills
 
@@ -730,19 +731,26 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
 
                 reason = str(exc.detail) if isinstance(exc, HTTPException) else str(exc)
                 denied = isinstance(exc, PermissionError) or (isinstance(exc, HTTPException) and exc.status_code == 403)
+                cancelled_project = False
                 if denied and task is not None and task["status"] == "ready":
                     # A revoked accepting identity needs human attention, not a
                     # fresh failed dispatch on every tick. Never withdraw a run.
-                    await _call(
-                        db,
-                        "transition_task",
-                        task["id"],
-                        "backlog",
-                        reason,
-                        expected_updated_at=task["updated_at"],
-                    )
-                expected = isinstance(exc, _AutomationSkip) or (
-                    denied and task is not None and task["status"] == "backlog"
+                    try:
+                        await _call(
+                            db,
+                            "transition_task",
+                            task["id"],
+                            "backlog",
+                            reason,
+                            expected_updated_at=task["updated_at"],
+                        )
+                    except CancelledProjectError:
+                        cancelled_project = True
+                expected = (
+                    isinstance(exc, _AutomationSkip)
+                    or (denied and task is not None and task["status"] == "backlog")
+                    or isinstance(exc, CancelledProjectError)
+                    or cancelled_project
                 )
                 outcomes.append(
                     {"task_id": candidate["id"], "status": "skipped" if expected else "failed", "reason": reason}
@@ -895,6 +903,14 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
             if isinstance(os._company_db, AsyncBaseDb)
             else CompanyManager(os._company_db, os.registry)
         )
+        if not completing:
+            project = await _manager_call(manager, "get_project", task["project_id"])
+            if project and project["status"] in {"proposed", "cancelled"}:
+                raise _AutomationSkip(
+                    "Project approval is required before automatic Task acceptance"
+                    if project["status"] == "proposed"
+                    else "Cannot accept Task work in a cancelled Project"
+                )
         # Avoid Source IO for exhausted policies. The transaction repeats this
         # check under the Product lock, so concurrent acceptances remain bounded.
         if (
@@ -1026,14 +1042,17 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
             if task["status"] == "ready":
                 # Withdraw only the unchanged, unstarted acceptance. Backlog and
                 # its transition reason expose the work for human attention.
-                await _call(
-                    os._company_db,
-                    "transition_task",
-                    task["id"],
-                    "backlog",
-                    str(exc),
-                    expected_updated_at=task["updated_at"],
-                )
+                try:
+                    await _call(
+                        os._company_db,
+                        "transition_task",
+                        task["id"],
+                        "backlog",
+                        str(exc),
+                        expected_updated_at=task["updated_at"],
+                    )
+                except CancelledProjectError:
+                    pass
             raise
         if task["status"] == "ready" and task.get("job_id"):
             queue = getattr(self.app.state, "queue_worker", None)
@@ -1067,7 +1086,10 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
                     detail = response.json().get("detail", response.text)
                 except ValueError:
                     detail = response.text
-                if response.status_code == 409 and detail == "The previous Task run is still active":
+                if response.status_code == 409 and detail in {
+                    "The previous Task run is still active",
+                    "Cannot start Task work in a cancelled Project",
+                }:
                     raise _AutomationSkip(detail)
                 raise HTTPException(response.status_code, detail)
             result = response.json()
