@@ -105,18 +105,22 @@ _MENTION_TAG_RE = re.compile(r"<at>(.*?)</at>", flags=re.IGNORECASE | re.DOTALL)
 
 
 def _clean_mention_text(
-    text: Optional[str], recipient: Optional[dict] = None, entities: Optional[List[dict]] = None
+    text: Optional[str],
+    recipient: Optional[dict] = None,
+    entities: Optional[List[dict]] = None,
+    *,
+    strip_bot_mention: bool = False,
 ) -> str:
     if not text:
         return ""
-    if recipient and recipient.get("id") and recipient.get("name"):
+    if recipient and recipient.get("id") and (recipient.get("name") or strip_bot_mention):
         for entity in entities or []:
             if (
                 entity.get("type") == "mention"
                 and (entity.get("mentioned") or {}).get("id") == recipient["id"]
                 and entity.get("text")
             ):
-                text = text.replace(entity["text"], recipient["name"])
+                text = text.replace(entity["text"], "" if strip_bot_mention else recipient["name"])
     return _MENTION_TAG_RE.sub(r"@\1", text).strip()
 
 
