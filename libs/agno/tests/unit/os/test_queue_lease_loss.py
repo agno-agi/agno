@@ -166,6 +166,43 @@ class TestTakenTicketCancelsLocalExecution:
             await worker.stop()
 
 
+class SlowCleanupAgent(LongAgent):
+    """Cancellation cleanup that takes longer than a heartbeat interval, like a client disconnect."""
+
+    def __init__(self, seconds: float, cleanup_seconds: float) -> None:
+        super().__init__(seconds)
+        self.cleanup_seconds = cleanup_seconds
+        self.cancels = 0
+        self.cleanup_done = False
+
+    async def arun(self, **kwargs: Any) -> SimpleNamespace:
+        self.calls += 1
+        try:
+            await asyncio.sleep(self.seconds)
+        except asyncio.CancelledError:
+            self.cancels += 1
+            self.cancelled = True
+            await asyncio.sleep(self.cleanup_seconds)
+            self.cleanup_done = True
+            raise
+        return SimpleNamespace(status=RunStatus.completed, content="done")
+
+
+class TestLostLeaseCleanupIsNotInterrupted:
+    @pytest.mark.asyncio
+    async def test_lost_lease_execution_is_cancelled_once(self):
+        store, agent = InMemoryQueueStore(), SlowCleanupAgent(seconds=30, cleanup_seconds=3.5)
+        worker = make_worker(store, agent)
+        try:
+            await start_running(store, worker)
+            store._jobs["r1"].update(status="failed", error="swept by a peer", locked_by=None, locked_at=None)
+            await wait_for(lambda: "r1" not in worker._in_flight, timeout=10)
+            assert agent.cancels == 1
+            assert agent.cleanup_done
+        finally:
+            await worker.stop()
+
+
 class TestUnconfirmedLossCancelsNothing:
     @pytest.mark.asyncio
     async def test_heartbeat_that_renews_nothing_does_not_cancel_an_owned_run(self, monkeypatch):

@@ -617,6 +617,13 @@ def resolve_queue_store(config: QueueConfig, default_db: Any) -> Any:
     )
 
 
+def _lease_lost(job_id: str) -> bool:
+    from agno.run.concurrency import get_worker_ownership
+
+    ownership = get_worker_ownership(job_id)
+    return ownership is not None and ownership.cancellation_cause == "lease_lost"
+
+
 def _epoch_text(epoch: Any) -> str:
     if not isinstance(epoch, (int, float)):
         return "an unknown time"
@@ -857,7 +864,7 @@ class QueueWorker:
         # entry a harmless no-op.
         for _ in range(3):
             try:
-                return list(self._in_flight.keys())
+                return [job_id for job_id in list(self._in_flight.keys()) if not _lease_lost(job_id)]
             except RuntimeError:
                 continue
         return []
@@ -1052,7 +1059,14 @@ class QueueWorker:
         for job_id in job_ids:
             task = self._in_flight.get(job_id)
             ownership = get_worker_ownership(job_id)
-            if task is None or task.done() or ownership is None or ownership.worker_id != self.worker_id:
+            if (
+                task is None
+                or task.done()
+                or ownership is None
+                or ownership.worker_id != self.worker_id
+                or ownership.cancellation_cause == "lease_lost"
+            ):
+                # An execution already cancelled for a lost lease is left to finish its cleanup.
                 continue
             try:
                 ticket = await self.store.get_job(job_id)
@@ -1095,7 +1109,7 @@ class QueueWorker:
         After a host or VM pause the wall clock can jump past lock_grace before the heartbeat
         beats again, and the sweep or a reclaim would take runs still executing here.
         """
-        job_ids = [job_id for job_id, task in self._in_flight.items() if not task.done()]
+        job_ids = [job_id for job_id, task in self._in_flight.items() if not task.done() and not _lease_lost(job_id)]
         if not job_ids:
             return True
         last = self._last_renewal
@@ -1152,7 +1166,7 @@ class QueueWorker:
         while self._running or self._in_flight:
             try:
                 await asyncio.sleep(interval)
-                job_ids = list(self._in_flight.keys())
+                job_ids = [job_id for job_id in self._in_flight.keys() if not _lease_lost(job_id)]
                 if job_ids:
                     self._record_renewal(job_ids, await self.store.heartbeat_jobs(self.worker_id, job_ids))
             except asyncio.CancelledError:
