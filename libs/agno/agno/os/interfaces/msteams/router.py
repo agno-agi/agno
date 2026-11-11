@@ -90,6 +90,7 @@ def attach_routes(
     tenant_id: Optional[str] = None,
     request_timeout: int = 30,
     config: Optional[MSTeamsConfig] = None,
+    max_file_size: int = 1_073_741_824,
 ) -> APIRouter:
     if agent is None and team is None and workflow is None:
         raise ValueError("Either agent, team, or workflow must be provided.")
@@ -132,7 +133,7 @@ def attach_routes(
         try:
             activity = await request.json()
         except Exception as e:
-            log_warning(f"Malformed activity payload: {e}")
+            log_warning(f"Malformed activity payload: {str(e)}")
             raise HTTPException(status_code=400, detail="Invalid JSON body")
 
         if not isinstance(activity, dict):
@@ -219,7 +220,7 @@ def attach_routes(
                         bot_identity=bot_identity,
                     )
                 except Exception as e:
-                    log_warning(f"Failed to persist /new session: {e}")
+                    log_warning(f"Failed to persist /new session: {str(e)}")
                     await send_teams_message_async(
                         service_url,
                         conversation_id,
@@ -265,9 +266,11 @@ def attach_routes(
                         newest = max(candidates, key=lambda row: (row["created_at"], row["session_id"]))
                         session_id = newest["session_id"]
                 except Exception as e:
-                    log_warning(f"Session lookup failed, using default: {e}")
+                    log_warning(f"Session lookup failed, using default: {str(e)}")
 
-            media_kwargs, skipped_media = await download_attachments_async(parsed, config)
+            media_kwargs, skipped_media = await download_attachments_async(
+                parsed, config, service_url=service_url, max_file_size=max_file_size
+            )
             run_kwargs: dict = {
                 "user_id": user_id,
                 "session_id": session_id,
@@ -318,7 +321,7 @@ def attach_routes(
                         # asave_session narrows to its own type, which mypy cannot see.
                         await entity.asave_session(current)  # type: ignore[union-attr, arg-type]
                 except Exception as e:
-                    log_warning(f"Could not persist conversation reference (non-fatal): {e}")
+                    log_warning(f"Could not persist conversation reference (non-fatal): {str(e)}")
 
             if response.status == "ERROR":
                 await send_teams_message_async(
@@ -356,7 +359,7 @@ def attach_routes(
                 )
 
         except Exception as e:
-            log_error(f"Error processing Teams activity: {e}")
+            log_error(f"Error processing Teams activity: {str(e)}")
             try:
                 await send_teams_message_async(
                     service_url,
@@ -367,6 +370,6 @@ def attach_routes(
                     bot_identity=bot_identity,
                 )
             except Exception as send_error:
-                log_error(f"Error sending error message: {send_error}")
+                log_error(f"Error sending error message: {str(send_error)}")
 
     return router

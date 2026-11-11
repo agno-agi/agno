@@ -48,6 +48,7 @@ class MSTeams(BaseInterface):
         app_password: Optional[str] = None,
         tenant_id: Optional[str] = None,
         request_timeout: int = 30,
+        max_file_size: int = 1_073_741_824,
     ):
         self.agent = agent
         self.team = team
@@ -60,6 +61,7 @@ class MSTeams(BaseInterface):
         self.app_password = app_password
         self.tenant_id = tenant_id
         self.request_timeout = request_timeout
+        self.max_file_size = max_file_size
         # Built once and shared with the router: the cached bot access token
         # lives on it, so a per-call config would re-authenticate every time.
         self._config: Optional[MSTeamsConfig] = None
@@ -88,6 +90,7 @@ class MSTeams(BaseInterface):
             show_reasoning=self.show_reasoning,
             send_user_id_to_context=self.send_user_id_to_context,
             config=self._get_config(),
+            max_file_size=self.max_file_size,
         )
 
         return self.router

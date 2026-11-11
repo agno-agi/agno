@@ -457,7 +457,7 @@ async def test_download_attachments_returns_images_and_files():
     )
     cfg = _make_config()
 
-    async def fake_download(url, config, use_bot_token=True):
+    async def fake_download(url, config, use_bot_token=False, **kwargs):
         if url.endswith(".png"):
             return b"pngbytes", "image/png"
         return b"pdfbytes", "application/pdf"
@@ -485,7 +485,7 @@ async def test_download_attachments_image_keeps_the_activitys_declared_type():
     )
     cfg = _make_config()
 
-    async def fake_download(url, config, use_bot_token=True):
+    async def fake_download(url, config, use_bot_token=False, **kwargs):
         return b"pngbytes", "application/octet-stream"
 
     with patch("agno.os.interfaces.msteams.helpers._download_attachment", side_effect=fake_download):
@@ -504,7 +504,7 @@ async def test_download_attachments_records_failures():
     )
     cfg = _make_config()
 
-    async def fake_download(url, config, use_bot_token=True):
+    async def fake_download(url, config, use_bot_token=False, **kwargs):
         return None, None
 
     with patch("agno.os.interfaces.msteams.helpers._download_attachment", side_effect=fake_download):
@@ -549,7 +549,7 @@ async def test_download_attachments_unsupported_mime_is_skipped():
     )
     cfg = _make_config()
 
-    async def fake_download(url, config, use_bot_token=True):
+    async def fake_download(url, config, use_bot_token=False, **kwargs):
         # no content-type header at all, then a type outside the allowlist
         return (b"binbytes", None) if url.endswith("report") else (b"mp4bytes", "video/mp4")
 
@@ -618,7 +618,7 @@ async def test_download_attachments_image_sent_as_a_file_is_still_an_image():
     )
     cfg = _make_config()
 
-    async def fake_download(url, config, use_bot_token=True):
+    async def fake_download(url, config, use_bot_token=False, **kwargs):
         return b"pngbytes", "image/png"
 
     with patch("agno.os.interfaces.msteams.helpers._download_attachment", side_effect=fake_download):
@@ -642,7 +642,7 @@ async def test_download_attachments_resolves_supported_mime_from_filename():
     )
     cfg = _make_config()
 
-    async def fake_download(url, config, use_bot_token=True):
+    async def fake_download(url, config, use_bot_token=False, **kwargs):
         return b"pdfbytes", None
 
     with patch("agno.os.interfaces.msteams.helpers._download_attachment", side_effect=fake_download):
@@ -670,7 +670,7 @@ async def test_download_attachments_prefers_content_download_url():
     cfg = _make_config()
     requested = []
 
-    async def fake_download(url, config, use_bot_token=True):
+    async def fake_download(url, config, use_bot_token=False, **kwargs):
         requested.append(url)
         return b"pdfbytes", "application/pdf"
 
@@ -693,7 +693,7 @@ async def test_download_attachments_falls_back_to_content_url():
     cfg = _make_config()
     requested = []
 
-    async def fake_download(url, config, use_bot_token=True):
+    async def fake_download(url, config, use_bot_token=False, **kwargs):
         requested.append(url)
         return b"bytes", "application/pdf"
 
@@ -713,7 +713,7 @@ async def test_download_attachments_supported_mime_is_preserved():
     )
     cfg = _make_config()
 
-    async def fake_download(url, config, use_bot_token=True):
+    async def fake_download(url, config, use_bot_token=False, **kwargs):
         return b"pdfbytes", "application/pdf"
 
     with patch("agno.os.interfaces.msteams.helpers._download_attachment", side_effect=fake_download):
@@ -725,6 +725,130 @@ async def test_download_attachments_supported_mime_is_preserved():
 
 
 # === _clean_mention_text ===
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "url,download_url,authorized",
+    [
+        ("https://svc/file", None, True),
+        ("https://other/file", None, False),
+        ("https://svc/file", "https://svc/preauthorized", False),
+    ],
+)
+async def test_attachment_token_only_for_verified_host(url, download_url, authorized):
+    import httpx
+
+    cfg = _make_config()
+    seen = []
+
+    def handle(request):
+        seen.append(request)
+        return httpx.Response(200, content=b"pdf", headers={"Content-Type": "application/pdf"})
+
+    att = {"contentUrl": url, "name": "report.pdf"}
+    if download_url:
+        att["content"] = {"downloadUrl": download_url}
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    with (
+        patch("httpx.AsyncClient", return_value=client),
+        patch(
+            "agno.os.interfaces.msteams.helpers._get_bot_token", new_callable=AsyncMock, return_value="bot-token"
+        ) as token,
+    ):
+        kwargs, skipped = await download_attachments_async(
+            ActivityContent(text="hi", file_attachments=[att]), cfg, service_url="https://svc/"
+        )
+    assert not skipped
+    assert kwargs["files"][0].content == b"pdf"
+    assert (seen[0].headers.get("Authorization") == "Bearer bot-token") == authorized
+    assert token.await_count == int(authorized)
+    assert str(seen[0].url) == (download_url or url)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("with_length", [False, True])
+async def test_attachment_size_cap(with_length):
+    import httpx
+
+    chunks_read = []
+
+    class Body(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            for data in [b"123", b"456", b"789"]:
+                chunks_read.append(data)
+                yield data
+
+    headers = {"Content-Type": "application/pdf"}
+    if with_length:
+        headers["Content-Length"] = "9"
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, stream=Body(), headers=headers))
+    )
+    parsed = ActivityContent(text="still here", file_attachments=[{"name": "report.pdf", "contentUrl": "https://ex/f"}])
+    with patch("httpx.AsyncClient", return_value=client):
+        kwargs, skipped = await download_attachments_async(parsed, _make_config(), max_file_size=5)
+    assert kwargs == {}
+    assert skipped == ["report.pdf (too large)"]
+    assert parsed.text == "still here"
+    assert len(chunks_read) == (0 if with_length else 2)
+    assert client.is_closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mime,name,field",
+    [
+        ("application/octet-stream", "photo.png", "images"),
+        ("application/octet-stream", "report.pdf", "files"),
+        ("application/zip", "archive.zip", None),
+        ("application/x-zip-compressed", "archive.zip", None),
+        ("application/x-zip", "archive.zip", None),
+    ],
+)
+async def test_attachment_type_resolution(mime, name, field):
+    parsed = ActivityContent(text="keep text", file_attachments=[{"name": name, "contentUrl": "https://ex/file"}])
+    with patch(
+        "agno.os.interfaces.msteams.helpers._download_attachment",
+        new_callable=AsyncMock,
+        return_value=(b"content", mime),
+    ):
+        kwargs, skipped = await download_attachments_async(parsed, _make_config())
+    assert parsed.text == "keep text"
+    if field:
+        assert skipped == []
+        assert len(kwargs[field]) == 1
+        assert kwargs[field][0].mime_type != "application/octet-stream"
+    else:
+        assert kwargs == {}
+        assert skipped == [name]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [403, None])
+async def test_failed_download_logs_no_url_or_exception_text(status, caplog):
+    import httpx
+
+    url = "https://example.com/report.pdf?tempauth=SECRET123"
+
+    def handle(request):
+        if status:
+            return httpx.Response(status)
+        raise httpx.ReadError(f"Failed at {url}", request=request)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    with patch("httpx.AsyncClient", return_value=client):
+        kwargs, skipped = await download_attachments_async(
+            ActivityContent(text="hi", file_attachments=[{"name": "report.pdf", "contentUrl": url}]), _make_config()
+        )
+    assert kwargs == {}
+    assert skipped == ["report.pdf"]
+    assert "report.pdf" in caplog.text
+    assert "HTTPStatusError" in caplog.text if status else "ReadError" in caplog.text
+    if status:
+        assert "403" in caplog.text
+    assert url not in caplog.text
+    assert "SECRET123" not in caplog.text
 
 
 def test_clean_mention_returns_empty_for_empty_input():
