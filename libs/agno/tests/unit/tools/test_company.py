@@ -234,3 +234,36 @@ async def test_create_routine_enabled_option(tmp_path, use_async, enabled):
         assert db.get_schedule(row["id"])["enabled"] is (enabled is not False)
     finally:
         db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize(
+    "label", ["backlog", "Backlog", " BACKLOG ", "ready", "Ready", "In progress", "in-review", "Reviewing"]
+)
+async def test_task_status_filter_accepts_labels(tmp_path, use_async, label):
+    # "Backlog" used to match nothing, and the empty list read as "no Backlog Tasks".
+    db = SqliteDb(db_file=str(tmp_path / "status.db"))
+    manager = CompanyManager(db)
+    product = manager.create(name="SDK")
+    project = manager.create_project(product_id=product["id"], name="Release")
+    task = manager.create_task(product_id=product["id"], title="Publish wheels", project_id=project["id"])
+    tools = CompanyTools(db)
+    listed = await tools.alist_company_tasks(status=label) if use_async else tools.list_company_tasks(status=label)
+    titles = [row["title"] for row in json.loads(listed)["data"]]
+    assert titles == (["Publish wheels"] if "backlog" in label.lower() else []), listed
+    assert task["status"] == "backlog"
+    db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_task_status_filter_refuses_an_unknown_status(tmp_path, use_async):
+    db = SqliteDb(db_file=str(tmp_path / "status.db"))
+    tools = CompanyTools(db)
+    with pytest.raises(ValueError, match="Unknown Task status 'waiting'. Use one of: backlog, ready, in_progress"):
+        if use_async:
+            await tools.alist_company_tasks(status="waiting")
+        else:
+            tools.list_company_tasks(status="waiting")
+    db.close()

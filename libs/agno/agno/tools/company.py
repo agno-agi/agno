@@ -131,6 +131,23 @@ def _run_target(endpoint):
     return target.group(1), "run", target.group(2)
 
 
+def _task_status(status):
+    """The stored form of a Task status. A label such as "Backlog" or "In progress" is accepted.
+
+    An unknown status is an error: filtering by it would return an empty list that reads as "no Tasks".
+    """
+    from agno.db.schemas.tasks import TASK_TRANSITIONS
+
+    status = _empty_to_none(status)
+    if status is None:
+        return None
+    value = status.strip().lower().replace(" ", "_").replace("-", "_")
+    value = {"reviewing": "in_review"}.get(value, value)
+    if value not in TASK_TRANSITIONS:
+        raise ValueError(f"Unknown Task status {status!r}. Use one of: {', '.join(TASK_TRANSITIONS)}")
+    return value
+
+
 def _routine_declaration(name, executor_type, executor_id, template, instructions, cron_expr, timezone, enabled=True):
     return Routine.model_validate(
         dict(
@@ -696,12 +713,12 @@ class CompanyTools(Toolkit):
 
         Args:
             product_id: Product ID; null includes all Products.
-            status: Task status to filter by; null includes all statuses.
+            status: backlog, ready, in_progress, in_review, done or cancelled; null includes all statuses.
             limit: Maximum results per page; null uses 20.
             page: One-based page number; null uses 1.
         """
         product_id = _empty_to_none(product_id)
-        status = _empty_to_none(status)
+        status = _task_status(status)
         limit = _empty_to_none(limit)
         limit = 20 if limit is None else limit
         page = _empty_to_none(page)
@@ -987,12 +1004,12 @@ class CompanyTools(Toolkit):
 
         Args:
             product_id: Product ID; null includes all Products.
-            status: Task status to filter by; null includes all statuses.
+            status: backlog, ready, in_progress, in_review, done or cancelled; null includes all statuses.
             limit: Maximum results per page; null uses 20.
             page: One-based page number; null uses 1.
         """
         product_id = _empty_to_none(product_id)
-        status = _empty_to_none(status)
+        status = _task_status(status)
         limit = _empty_to_none(limit)
         limit = 20 if limit is None else limit
         page = _empty_to_none(page)
