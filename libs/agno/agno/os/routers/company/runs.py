@@ -52,7 +52,7 @@ class _StartCaller:
     require_accept: Callable[[str], Awaitable[None]]
     # The conversation that asked for the run, recorded on its Task attempt.
     requested_from: Optional[Dict[str, str]] = None
-    # A person's reply that the run continues from: message, sender and the attempt it answers.
+    # A users reply that the run continues from: message, sender and the attempt it answers.
     follow_up: Optional[Dict[str, Any]] = None
 
     @classmethod
