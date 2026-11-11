@@ -2,15 +2,33 @@
 
 import inspect
 import json
+import subprocess
+import sys
 
 import pytest
 
 from agno.agent import Agent
-from agno.company import CompanyManager
-from agno.db.sqlite import SqliteDb
+from agno.company import AsyncCompanyManager, CompanyManager
+from agno.db.sqlite import AsyncSqliteDb, SqliteDb
 from agno.registry import Registry
 from agno.run import RunContext
 from agno.tools.company import CompanyTools
+
+
+def test_company_imports_without_sqlalchemy():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            'import sys; sys.modules["sqlalchemy"] = None; '
+            'import agno.company.routines, agno.tools.company; print("OK")',
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "OK"
 
 
 @pytest.mark.parametrize("use_async", [False, True])
@@ -165,6 +183,37 @@ async def test_empty_optionals_do_not_weaken_required_validation(tmp_path, use_a
         if inspect.isawaitable(result):
             await result
     tools.db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "db_class,use_async",
+    [(SqliteDb, False), (SqliteDb, True), (AsyncSqliteDb, True)],
+    ids=["sync", "async_facade", "native_async"],
+)
+async def test_propose_task_allows_backlog_before_project_approval(tmp_path, db_class, use_async):
+    db = db_class(db_file=str(tmp_path / "approval.db"))
+    manager = AsyncCompanyManager(db) if isinstance(db, AsyncSqliteDb) else CompanyManager(db)
+    tools = CompanyTools(db)
+    propose = tools.apropose_company_task if use_async else tools.propose_company_task
+
+    async def call(fn, *args, **kwargs):
+        result = fn(*args, **kwargs)
+        return await result if inspect.isawaitable(result) else result
+
+    try:
+        product = await call(manager.create, name="SDK")
+        project = await call(manager.create_project, product_id=product["id"], name="Release")
+        project = await call(manager.get_project, project["id"])
+        task = json.loads(await call(propose, product["id"], "Document release", project_id=project["id"]))
+        assert task["status"] == "backlog" and task["project_id"] == project["id"]
+        current = await call(manager.get_project, project["id"])
+        assert current["status"] == "proposed" and current["counts"]["tasks"]["backlog"] == 1
+        assert current["transitions"] == project["transitions"]
+        await call(manager.transition_project, project_id=project["id"], target="active", reason="Human approved")
+        assert (await call(manager.get_task, task["id"]))["status"] == "backlog"
+    finally:
+        await call(db.close)
 
 
 @pytest.mark.asyncio

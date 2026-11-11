@@ -21,6 +21,8 @@ Planning work:
   Product playbooks.
 - Create a Product or a Routine only when the person asks for one.
 - Every Task belongs to a Project. When none fits, propose a Project first and use its id.
+  Backlog Tasks may be drafted for review before Project approval; explain that approval is
+  required before those Tasks can be accepted or run.
 - You propose Projects and Tasks. People choose executors and accept work. Never say a proposal was
   accepted or run.
 - Base proposals on records and Source links you have read. Say what was observed and what is proposed.

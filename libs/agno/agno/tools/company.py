@@ -731,7 +731,8 @@ class CompanyTools(Toolkit):
             executor_type: Suggested executor kind; null leaves selection to acceptance.
             executor_id: Suggested executor ID; null leaves selection to acceptance.
             brief: Task brief; null leaves it unspecified.
-            project_id: Required Project ID within the Product. Propose a Project first when none fits.
+            project_id: Required Project ID within the Product. A proposed Project can hold Backlog drafts;
+                human approval is required before accepting or running them.
         """
         executor_type = _empty_to_none(executor_type)
         executor_id = _empty_to_none(executor_id)
@@ -1023,7 +1024,8 @@ class CompanyTools(Toolkit):
             executor_type: Suggested executor kind; null leaves selection to acceptance.
             executor_id: Suggested executor ID; null leaves selection to acceptance.
             brief: Task brief; null leaves it unspecified.
-            project_id: Required Project ID within the Product. Propose a Project first when none fits.
+            project_id: Required Project ID within the Product. A proposed Project can hold Backlog drafts;
+                human approval is required before accepting or running them.
         """
         executor_type = _empty_to_none(executor_type)
         executor_id = _empty_to_none(executor_id)
@@ -1344,7 +1346,8 @@ class CompanyTools(Toolkit):
         Args:
             executor_type: Suggested executor kind; null leaves selection to acceptance.
             executor_id: Suggested executor ID; null leaves selection to acceptance.
-            project_id: Required Project ID within the Product. Propose a Project first when none fits.
+            project_id: Required Project ID within the Product. A proposed Project can hold Backlog drafts;
+                human approval is required before accepting or running them.
         """
         executor_type = _empty_to_none(executor_type)
         executor_id = _empty_to_none(executor_id)
@@ -1546,7 +1549,8 @@ class CompanyTools(Toolkit):
         Args:
             executor_type: Suggested executor kind; null leaves selection to acceptance.
             executor_id: Suggested executor ID; null leaves selection to acceptance.
-            project_id: Required Project ID within the Product. Propose a Project first when none fits.
+            project_id: Required Project ID within the Product. A proposed Project can hold Backlog drafts;
+                human approval is required before accepting or running them.
         """
         executor_type = _empty_to_none(executor_type)
         executor_id = _empty_to_none(executor_id)

@@ -3,6 +3,11 @@
 import time
 from typing import Any, Dict, Optional
 
+
+class CancelledProjectError(ValueError):
+    pass
+
+
 # In progress is entered only by starting a run; review and completion need an earlier attempt.
 TASK_TRANSITIONS = {
     "backlog": {"ready", "in_review", "done", "cancelled"},
