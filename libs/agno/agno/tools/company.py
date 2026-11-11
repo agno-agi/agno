@@ -765,7 +765,7 @@ class CompanyTools(Toolkit):
         # A listing that holds Backlog work is where a person looks for what needs a decision.
         if status in (None, "backlog"):
             for listed in dict.fromkeys(row["product_id"] for row in result[0]):
-                at_limit.extend(manager.auto_accept_status(listed)["auto_accept_at_limit"])
+                at_limit.extend(manager.auto_accept_status(listed, decisions=False)["auto_accept_at_limit"])
         # A Routine waiting to be turned on has proposed nothing, so it is listed whatever the page holds.
         decides = status in (None, "backlog") and self._authorization_on()
         waiting = manager.auto_accept_waiting(product_id) if decides else []
@@ -1090,7 +1090,7 @@ class CompanyTools(Toolkit):
         # A listing that holds Backlog work is where a person looks for what needs a decision.
         if status in (None, "backlog"):
             for listed in dict.fromkeys(row["product_id"] for row in result[0]):
-                at_limit.extend((await manager.auto_accept_status(listed))["auto_accept_at_limit"])
+                at_limit.extend((await manager.auto_accept_status(listed, decisions=False))["auto_accept_at_limit"])
         # A Routine waiting to be turned on has proposed nothing, so it is listed whatever the page holds.
         decides = status in (None, "backlog") and self._authorization_on()
         waiting = await manager.auto_accept_waiting(product_id) if decides else []

@@ -618,6 +618,61 @@ def test_the_bound_is_the_routines_open_tasks_and_a_person_makes_room(open_syste
     assert "auto_accept_at_limit" in json.loads(tools.get_company_product(product_id))
 
 
+def reads(system, monkeypatch, call):
+    """The Project and Task listings one call makes, as (table, status)."""
+    made = []
+    for table in ("projects", "tasks"):
+        listing = getattr(system.db, "get_" + table)
+
+        def spy(*args, _table=table, _listing=listing, **filters):
+            made.append((_table, filters.get("status"), filters.get("limit")))
+            return _listing(*args, **filters)
+
+        monkeypatch.setattr(system.db, "get_" + table, spy)
+    result = call()
+    monkeypatch.undo()
+    return made, result
+
+
+def test_auto_accept_is_reported_only_for_a_routine_that_has_it_on(open_system, monkeypatch):
+    tools = CompanyTools(open_system.db)
+    plain_product, _ = open_system.declare(auto_accept=False, product="Plain")
+    for n in range(3):
+        open_system.proposes(plain_product, None, title=f"Plain {n}")
+
+    # A Product whose Routines have no policy: nothing is read to report on auto-accept.
+    made, status = reads(open_system, monkeypatch, lambda: open_system.manager.auto_accept_status(plain_product))
+    assert made == [] and status == {"automatic_decisions": [], "auto_accept_at_limit": []}
+    made, _ = reads(open_system, monkeypatch, lambda: tools.list_company_tasks(product_id=plain_product))
+    assert made == [("tasks", None, 20)], made
+    made, shown = reads(open_system, monkeypatch, lambda: json.loads(tools.get_company_product(plain_product)))
+    assert made == [] and shown["automatic_decisions"] == []
+
+    # A Routine with auto-accept on and room left: its open Tasks are read, and no Backlog or history.
+    product_id, routine_id = open_system.declare(auto_accept=AutoAccept(max_open=2))
+    tasks = [open_system.proposes(product_id, routine_id, title=f"Task {n}")[1] for n in range(3)]
+    made, listed = reads(open_system, monkeypatch, lambda: json.loads(tools.list_company_tasks(product_id=product_id)))
+    assert made == [("tasks", None, 20), ("tasks", "ready", 100), ("tasks", "in_progress", 100), ("tasks", "in_review", 100)]
+    assert "auto_accept_at_limit" not in listed
+
+    # At its limit, the waiting proposals are counted too. The decisions come from one page of each record.
+    open_system.tick()
+    made, listed = reads(open_system, monkeypatch, lambda: json.loads(tools.list_company_tasks(product_id=product_id)))
+    assert made[1:] == [("tasks", status, 100) for status in ("ready", "in_progress", "in_review", "backlog")]
+    assert [(item["open_tasks"], item["proposals_waiting"]) for item in listed["auto_accept_at_limit"]] == [(2, 1)]
+    made, shown = reads(open_system, monkeypatch, lambda: json.loads(tools.get_company_product(product_id)))
+    assert made[-2:] == [("projects", None, 100), ("tasks", None, 100)] and len(made) == 6, made
+    assert shown["auto_accept_at_limit"] == listed["auto_accept_at_limit"]
+    assert sorted((item["record"], item["decision"]) for item in shown["automatic_decisions"]) == [
+        ("project", "approved"),
+        ("task", "accepted"),
+        ("task", "accepted"),
+    ]
+    asynchronous = json.loads(asyncio.run(tools.aget_company_product(product_id)))
+    assert asynchronous["automatic_decisions"] == shown["automatic_decisions"]
+    assert asynchronous["auto_accept_at_limit"] == shown["auto_accept_at_limit"]
+
+
 def test_a_policy_with_limits_keeps_its_lifetime_count_and_gets_no_open_bound(system):
     product_id = system.client.post("/company/products", json={"name": "SDK"}, headers=headers(SCOPES)).json()["id"]
     policy = {"max_open": 1, "limits": {"max_acceptances": 2, "expires_at": FUTURE}}
