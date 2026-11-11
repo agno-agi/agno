@@ -61,6 +61,24 @@ def test_company_manager_assembly_and_model_precedence(tmp_path, manager):
         CompanyConfig(cron_expr="")
 
 
+def test_company_tools_published_only_over_mcp_are_bound(tmp_path):
+    from agno.os import MCPConfig
+
+    db = SqliteDb(db_file=str(tmp_path / "mcp.db"))
+    registry = Registry(agents=[Agent(id="reader")])
+    exposed, explicit = CompanyTools(db), CompanyTools(db, registry=Registry())
+    AgentOS(
+        db=db,
+        registry=registry,
+        company=CompanyConfig(automation_history_retention_days=7),
+        mcp=MCPConfig(tools=[exposed, explicit]),
+        telemetry=False,
+    )
+    assert exposed.registry is registry and exposed._schedule_db is db
+    assert exposed._automation_history_retention_days == 7
+    assert explicit.registry is not registry
+
+
 def test_no_model_manual_api_and_disabled_company(tmp_path, caplog):
     db = SqliteDb(db_file=str(tmp_path / "no-model.db"))
     os = AgentOS(db=db, company=CompanyConfig(), telemetry=False)

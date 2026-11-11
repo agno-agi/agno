@@ -1810,6 +1810,8 @@ class AgentOS:
                     )
             return found
 
+        # Toolkits published only through MCPConfig(tools=...) are served without a component.
+        bind(getattr(self.mcp_config, "tools", None))
         for component in self._iter_component_carriers():
             found = bind(getattr(component, "tools", None))
             if found and hasattr(component, "post_hooks"):
