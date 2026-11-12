@@ -1,0 +1,75 @@
+osop: "1.0"
+metadata:
+  name: clinical-triage-workflow
+  description: >
+    Multi-agent clinical triage workflow that processes patient intake,
+    performs risk assessment, routes to appropriate care level, and
+    generates specialist referrals based on ESI scoring.
+  author: Muhammad Ali
+  version: "1.0.0"
+  tags:
+    - healthcare
+    - triage
+    - multi-agent
+    - clinical
+
+inputs:
+  patient_data:
+    type: object
+    description: Patient demographics, chief complaint, and vital signs
+    required: true
+
+outputs:
+  triage_result:
+    type: object
+    description: Complete triage decision with ESI level, routing, and referral
+
+steps:
+  - id: patient_intake
+    name: Patient Intake
+    description: >
+      Collect and structure patient information including demographics,
+      chief complaint, vital signs, and medical history.
+    agent: intake_agent
+    input: "{{inputs.patient_data}}"
+    output: structured_patient_record
+
+  - id: risk_assessment
+    name: Risk Assessment
+    description: >
+      Analyze patient vitals and symptoms using ML-based scoring
+      to determine Emergency Severity Index (ESI 1-5).
+    agent: risk_scoring_agent
+    input: "{{steps.patient_intake.output}}"
+    output: risk_score_result
+    tools:
+      - xgboost_risk_model
+
+  - id: care_routing
+    name: Care Level Routing
+    description: >
+      Route patient to appropriate department based on ESI level
+      and available hospital resources.
+    agent: router_agent
+    input: "{{steps.risk_assessment.output}}"
+    output: routing_decision
+    conditions:
+      - if: "{{steps.risk_assessment.output.esi_level}} <= 2"
+        route: emergency_immediate
+      - if: "{{steps.risk_assessment.output.esi_level}} == 3"
+        route: urgent_care
+      - if: "{{steps.risk_assessment.output.esi_level}} >= 4"
+        route: standard_care
+
+  - id: specialist_referral
+    name: Specialist Referral
+    description: >
+      Generate specialist referral documentation with clinical
+      justification based on triage assessment and routing decision.
+    agent: referral_agent
+    input:
+      patient: "{{steps.patient_intake.output}}"
+      risk: "{{steps.risk_assessment.output}}"
+      routing: "{{steps.care_routing.output}}"
+    output: "{{outputs.triage_result}}"
+    condition: "{{steps.risk_assessment.output.esi_level}} <= 3"
