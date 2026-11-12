@@ -85,3 +85,80 @@ Finding while writing these: the SDK's default system prompt does not tell the m
 **Result:** Live Claude SDK 0.2.110: streamed run ended with `error_max_turns`, preserved the result at message 3, and recovered successfully. No additional tools ran and the audit log contained exactly one invoice entry.
 
 ---
+
+## 2026-10-11 release acceptance
+
+Framework source: `9e1f77f52a9bb16ee5dde3ccff9fa2491e86db5f`. Python 3.12, Claude SDK 0.2.165, Codex SDK 0.162.1. Claude uses `claude-sonnet-5-5` with API-key authentication; Codex uses `gpt-5.6-luna`. Separate native homes and working directories per example. Cookbook configuration updates in this batch use typed options and remove incidental run limits; explicit limits remain in limit/recovery demonstrations.
+
+### 01_continue_finished_run.py
+
+**Status:** PASS
+
+**Description:** Executed the cookbook with real SDK calls and its assertions.
+
+**Result:** Exit 0 in 12.4 seconds.
+
+---
+### 02_fork_from_checkpoint.py
+
+**Status:** PASS
+
+**Description:** Executed the cookbook with real SDK calls and its assertions.
+
+**Result:** Exit 0 in 10.5 seconds.
+
+---
+### 03_replay_user_turn.py
+
+**Status:** PASS
+
+**Description:** Executed the cookbook with real SDK calls and its assertions.
+
+**Result:** Exit 0 in 12.8 seconds.
+
+---
+### 04_background_continue.py
+
+**Status:** PASS
+
+**Description:** Executed the cookbook with real SDK calls and its assertions.
+
+**Result:** Exit 0 in 10.5 seconds.
+
+---
+### 05_agentos_api.py --verify
+
+**Status:** PASS
+
+**Description:** Executed the cookbook with real SDK calls and its assertions.
+
+**Result:** Exit 0 in 13.8 seconds.
+
+---
+### 06_recover_failed_tool_run.py
+
+**Status:** PASS
+
+**Description:** Executed the cookbook with real SDK calls and its assertions.
+
+**Result:** Exit 0 in 8.2 seconds.
+
+---
+### 07_subagent_checkpoints.py
+
+**Status:** PASS
+
+**Description:** Executed the cookbook with real SDK calls and its assertions.
+
+**Result:** Exit 0 in 15.2 seconds.
+
+---
+### 06_recover_failed_tool_run.py --stream
+
+**Status:** PASS
+
+**Description:** Executed the cookbook with real SDK calls and its assertions.
+
+**Result:** Exit 0 in 7.7 seconds.
+
+---

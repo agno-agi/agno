@@ -21,8 +21,6 @@ agent = ClaudeAgent(
     name="claude-agent-sdk Background",
     db=SqliteDb(db_file="tmp/claude-agent-sdk-background.db"),
     allowed_tools=[],
-    max_turns=2,
-    max_budget_usd=0.5,
 )
 agent_os = AgentOS(agents=[agent])
 app = agent_os.get_app()

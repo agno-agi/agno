@@ -1,7 +1,12 @@
 # Test Log: 15_a2a
 
 Tested on 2026-07-24 against Agno source commit
-`a463d3be3563d30d11d32d4f0f9dc23ccefdb4d2`.
+`a463d3be3563d30d11d32d4f0f9dc23ccefdb4d2`. `basic.py`, `client.py`,
+`agent_card.py` and `team.py` were re-run on 2026-10-10 against the A2A v1.0
+interface (a2a-sdk 1.2.2). `external_agent.py` was added and run on 2026-10-10.
+`basic.py`, `client.py`, `agent_card.py`, `team.py`, `external_agent.py` and
+the three `multi_agent/` servers were re-run on 2026-10-30 against the working
+tree on top of `bff768e181` (a2a-sdk 1.2.2, openai-codex 0.163.0).
 
 ### basic.py
 
@@ -15,8 +20,8 @@ the first-party client tests.
 
 **Result:** `GET /health` returned `ok`; `GET /config` returned OS
 `a2a-basic-os`, Agent `a2a-assistant`, and interface route `/a2a`. The Agent
-card returned name `A2A Assistant`, version `1.0.0`, and stream endpoint
-`http://127.0.0.1:7779/a2a/agents/a2a-assistant/v1/message:stream`.
+card returned name `A2A Assistant`, version `1.0.0`, and A2A endpoint
+`http://127.0.0.1:7779/a2a/agents/a2a-assistant` for both A2A v1.0 and v0.3.
 
 ---
 
@@ -29,11 +34,11 @@ card returned name `A2A Assistant`, version `1.0.0`, and stream endpoint
 **Description:** Ran non-streaming, multi-turn, streaming, and unavailable
 server paths against the live `basic.py` server.
 
-**Result:** Initial task `b17568ab-ee9f-4ae3-bf59-1764310e3274` returned
-context `e9ed46f7-d205-478b-9c06-49f51751c84b`. The follow-up reused that exact
-context and returned `cedar-42`. Streaming produced `working`, `content`,
-`completed`, and final `task` events. A dynamically selected unused local port
-raised and was caught as `RemoteServerUnavailableError`.
+**Result:** Initial task `32b1e24d-1313-4b2a-a34f-d7f6cf786622` returned
+context `90ae17d6-1253-417e-9963-df2ef3d5f191`. The follow-up reused that exact
+context and returned `cedar-42`. Streaming produced `task`, `working`,
+`content`, `artifact`, and final `completed` events. A dynamically selected
+unused local port raised and was caught as `RemoteServerUnavailableError`.
 
 ---
 
@@ -47,8 +52,9 @@ raised and was caught as `RemoteServerUnavailableError`.
 `get_agent_card()` method and asynchronous `aget_agent_card()` method.
 
 **Result:** Both methods returned the same name `A2A Assistant`, description,
-version `1.0.0`, and entity-scoped stream endpoint. The synchronous method was
-called directly and only the asynchronous method was awaited.
+version `1.0.0`, entity-scoped A2A endpoint, protocol versions `['1.0', '0.3']`,
+and skills `['a2a-assistant']`. The synchronous method was called directly and
+only the asynchronous method was awaited.
 
 ---
 
@@ -62,9 +68,28 @@ called directly and only the asynchronous method was awaited.
 configuration, and discovery, then ran the checked-in `--demo` client.
 
 **Result:** `GET /config` returned OS `a2a-team-os`, Team `research-team`, and
-interface route `/a2a`. The Team card endpoint resolved under `/a2a/teams`.
-Task `021632de-761c-42e5-91cd-5d299482860a` completed and returned two concise
-reasons to keep API examples small.
+interface route `/a2a`. The Team card (version `1.0.0`) resolved under
+`/a2a/teams`. Task `31ff5e97-4e98-4f23-948f-121d252ae9b7` completed and
+returned two concise reasons to keep API examples small.
+
+---
+
+### external_agent.py
+
+**Status:** PASS
+
+**Test mode:** LIVE
+
+**Description:** Started the external Agent server on port 7779 with
+`sandbox_mode="read-only"`, inspected configuration, then ran the checked-in
+`--demo` client.
+
+**Result:** `GET /config` returned OS `a2a-external-os`, Agent
+`codex-assistant`, and interface route `/a2a`. The Agent card endpoint resolved
+under `/a2a/agents`. Task `ae45cb29-4db4-4c66-8326-c3f0f68f2275` completed and
+returned a one-sentence description of a list comprehension. `aget_task` read
+the stored task back with status `completed`. The server emitted no
+deprecation warning.
 
 ---
 
@@ -81,8 +106,8 @@ handling.
 
 **Result:** `GET /health` returned `ok`; `GET /config` returned OS
 `a2a-weather-os`, Agent `weather-agent`, and interface route `/a2a`. The card
-advertised the correct port-7782 entity endpoint. Task
-`39887879-5439-4492-851c-e3e456d1b501` completed and clearly reported the
+advertised the correct port-7782 entity endpoint. On 2026-10-30 the card
+returned version `1.0.0`, and the planner's call completed and reported the
 expected OpenWeather `401 Unauthorized`. A valid `OPENWEATHER_API_KEY` is
 required to validate real weather data.
 
@@ -97,10 +122,9 @@ required to validate real weather data.
 **Description:** Started AgentOS with the OpenBNB MCP subprocess, inspected
 health, configuration, and discovery, then called the Agent over A2A.
 
-**Result:** Node `v23.11.0` launched OpenBNB MCP server `0.1.4`; AgentOS
-registered `airbnb_search` and `airbnb_listing_details`. `GET /config` returned
-OS `a2a-airbnb-os`, Agent `airbnb-agent`, and interface route `/a2a`. Task
-`e4e57fd5-ecb3-47ff-afed-0f5669dede90` completed after invoking
+**Result:** On 2026-10-30, Node `v22.22.0` launched the OpenBNB MCP server.
+`GET /config` returned OS `a2a-airbnb-os` and Agent `airbnb-agent`; the card
+returned version `1.0.0`. The planner's call completed after invoking
 `airbnb_search`. The external MCP server reported that Airbnb's current page
 could not be parsed, and the Agent surfaced that limitation plus a direct
 search URL instead of inventing listings.
@@ -117,10 +141,11 @@ search URL instead of inventing listings.
 trip planner on 7779, then invoked the checked-in `--demo` over the planner's
 A2A route.
 
-**Result:** All three health, config, and Agent-card routes responded. Planner
-task `30073d75-269f-4a56-a4fe-9195a488c75b` called the weather Agent first and
-the Airbnb Agent second through the official async `A2AClient`, consumed each
-`TaskResult.content`, and returned a combined Paris itinerary. The final
+**Result:** All three health, config, and Agent-card routes responded; each
+card returned version `1.0.0`. Planner task
+`83aec3cc-ecee-42c1-9ce3-5e13d66719f2` called the weather Agent and the Airbnb
+Agent through the official async `A2AClient`, consumed each
+`TaskResult.content`, and returned a combined two-night Paris itinerary. The final
 response preserved the honest downstream limitations: invalid test weather
 credentials and the OpenBNB parser's current Airbnb-page failure.
 

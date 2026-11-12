@@ -33,9 +33,9 @@ Enable flags:
 Read-only:
     * No tool mutates platform state, and no tool writes. Schedule, approval and
       component management are deliberately not exposed. ``get_platform_metrics``
-      can still cause a metrics rollup write, but only because ``db.get_metrics()``
-      refreshes stale rollups for every caller -- the toolkit does not ask for it,
-      so it inherits whatever throttling the database applies.
+      reads the stored metrics; on a database whose ``db.get_metrics_by_date()``
+      still refreshes stale rollups for every caller, it inherits that write and
+      whatever throttling the database applies.
     * Span attributes payloads, approval tool arguments and schedule run
       input/output are never returned -- they can hold full conversation content.
     * Schedule run errors are redacted: an error carrying a non-2xx status code is
@@ -44,11 +44,10 @@ Read-only:
       that ended in an error state, a timeout, a transport failure -- accompany a
       2xx or no status code and are kept, capped at their first line, 200
       characters.
-    * The tools read the database directly, so AgentOS endpoint scopes do not
-      apply to them: anyone who can talk to the agent sees platform-wide
-      aggregates, and pending approvals include identifiers (user_id, tool_name,
-      session_id). Expose the agent carrying this toolkit to operators, and use
-      the enable flags to trim surfaces for wider audiences.
+    * These queries return platform-wide aggregates and identifiers. Within
+      an authorized run they require administrator authority. Trusted direct
+      Python use remains unrestricted; use enable flags to trim the surfaces.
+
 """
 
 from __future__ import annotations
@@ -57,7 +56,7 @@ import json
 from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union, cast
 
-from agno.db.utils import aggregate_metrics_by_date
+from agno.run.authorization import requires_permission
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import logger
 
@@ -181,6 +180,7 @@ class AgentOSTools(Toolkit):
     # Platform metrics
     # ------------------------------------------------------------------
 
+    @requires_permission("agent_os", "admin")
     def get_platform_metrics(self, days: int = 7) -> str:
         """Get daily platform usage metrics: runs, sessions, users, tokens and model mix.
 
@@ -195,12 +195,13 @@ class AgentOSTools(Toolkit):
         try:
             days = _window_days(days)
             start_date, end_date = _metrics_window(days)
-            rows, _ = self._sync_db().get_metrics(starting_date=start_date, ending_date=end_date)
+            rows, _ = self._sync_db().get_metrics_by_date(starting_date=start_date, ending_date=end_date)
             return _format_platform_metrics(rows, days, start_date, end_date)
         except Exception:
             logger.exception("Failed to get platform metrics")
             return _tool_error("Failed to get platform metrics")
 
+    @requires_permission("agent_os", "admin")
     async def aget_platform_metrics(self, days: int = 7) -> str:
         """Get daily platform usage metrics: runs, sessions, users, tokens and model mix.
 
@@ -215,7 +216,7 @@ class AgentOSTools(Toolkit):
         try:
             days = _window_days(days)
             start_date, end_date = _metrics_window(days)
-            rows, _ = await self._async_db().get_metrics(starting_date=start_date, ending_date=end_date)
+            rows, _ = await self._async_db().get_metrics_by_date(starting_date=start_date, ending_date=end_date)
             return _format_platform_metrics(rows, days, start_date, end_date)
         except Exception:
             logger.exception("Failed to get platform metrics")
@@ -225,6 +226,7 @@ class AgentOSTools(Toolkit):
     # Run activity (traces grouped by component)
     # ------------------------------------------------------------------
 
+    @requires_permission("agent_os", "admin")
     def get_run_activity(self, days: int = 7) -> str:
         """Get per-agent, per-team, per-workflow and endpoint-level run activity: run counts, latency and errors.
 
@@ -255,6 +257,7 @@ class AgentOSTools(Toolkit):
             logger.exception("Failed to get run activity")
             return _tool_error("Failed to get run activity")
 
+    @requires_permission("agent_os", "admin")
     async def aget_run_activity(self, days: int = 7) -> str:
         """Get per-agent, per-team, per-workflow and endpoint-level run activity: run counts, latency and errors.
 
@@ -289,6 +292,7 @@ class AgentOSTools(Toolkit):
     # Tool activity (span aggregates)
     # ------------------------------------------------------------------
 
+    @requires_permission("agent_os", "admin")
     def get_tool_activity(self, days: int = 7) -> str:
         """Get tool and model call statistics: most-used and slowest tools, model call latency.
 
@@ -323,6 +327,7 @@ class AgentOSTools(Toolkit):
             logger.exception("Failed to get tool activity")
             return _tool_error("Failed to get tool activity")
 
+    @requires_permission("agent_os", "admin")
     async def aget_tool_activity(self, days: int = 7) -> str:
         """Get tool and model call statistics: most-used and slowest tools, model call latency.
 
@@ -361,6 +366,7 @@ class AgentOSTools(Toolkit):
     # Eval history
     # ------------------------------------------------------------------
 
+    @requires_permission("agent_os", "admin")
     def get_eval_history(self, limit: int = 20) -> str:
         """Get recent eval runs normalized to PASS/FAIL, with the judge's reason on failures.
 
@@ -383,6 +389,7 @@ class AgentOSTools(Toolkit):
             logger.exception("Failed to get eval history")
             return _tool_error("Failed to get eval history")
 
+    @requires_permission("agent_os", "admin")
     async def aget_eval_history(self, limit: int = 20) -> str:
         """Get recent eval runs normalized to PASS/FAIL, with the judge's reason on failures.
 
@@ -409,6 +416,7 @@ class AgentOSTools(Toolkit):
     # Schedules
     # ------------------------------------------------------------------
 
+    @requires_permission("agent_os", "admin")
     def list_schedules(self, limit: int = 20) -> str:
         """List schedules with their cron expression, enabled state and last run outcome.
 
@@ -435,6 +443,7 @@ class AgentOSTools(Toolkit):
             logger.exception("Failed to list schedules")
             return _tool_error("Failed to list schedules")
 
+    @requires_permission("agent_os", "admin")
     async def alist_schedules(self, limit: int = 20) -> str:
         """List schedules with their cron expression, enabled state and last run outcome.
 
@@ -461,6 +470,7 @@ class AgentOSTools(Toolkit):
             logger.exception("Failed to list schedules")
             return _tool_error("Failed to list schedules")
 
+    @requires_permission("agent_os", "admin")
     def get_schedule_history(self, schedule_id: str, limit: int = 20) -> str:
         """Get the run history of one schedule: outcome trend, not just the last run.
 
@@ -486,6 +496,7 @@ class AgentOSTools(Toolkit):
             logger.exception("Failed to get schedule history")
             return _tool_error("Failed to get schedule history")
 
+    @requires_permission("agent_os", "admin")
     async def aget_schedule_history(self, schedule_id: str, limit: int = 20) -> str:
         """Get the run history of one schedule: outcome trend, not just the last run.
 
@@ -515,6 +526,7 @@ class AgentOSTools(Toolkit):
     # Components
     # ------------------------------------------------------------------
 
+    @requires_permission("agent_os", "admin")
     def list_platform_components(self, limit: int = 50) -> str:
         """List runtime-built components (agents, teams, workflows) persisted in the database.
 
@@ -536,6 +548,7 @@ class AgentOSTools(Toolkit):
             logger.exception("Failed to list platform components")
             return _tool_error("Failed to list platform components")
 
+    @requires_permission("agent_os", "admin")
     async def alist_platform_components(self, limit: int = 50) -> str:
         """List runtime-built components (agents, teams, workflows) persisted in the database.
 
@@ -554,6 +567,7 @@ class AgentOSTools(Toolkit):
     # Approvals
     # ------------------------------------------------------------------
 
+    @requires_permission("agent_os", "admin")
     def list_pending_approvals(self) -> str:
         """List human-in-the-loop approvals waiting on a human decision.
 
@@ -575,6 +589,7 @@ class AgentOSTools(Toolkit):
             logger.exception("Failed to list pending approvals")
             return _tool_error("Failed to list pending approvals")
 
+    @requires_permission("agent_os", "admin")
     async def alist_pending_approvals(self) -> str:
         """List human-in-the-loop approvals waiting on a human decision.
 
@@ -702,9 +717,6 @@ def _epoch_to_iso(value: Optional[int]) -> Optional[str]:
 
 
 def _format_platform_metrics(rows: List[Any], days: int, start_date: date, end_date: date) -> str:
-    # Stored metrics are one row per owner, and this reports a day: without collapsing them a
-    # day with three users arrives as three unlabelled entries carrying one user count each.
-    rows = aggregate_metrics_by_date(rows)
     daily = []
     totals = {
         "agent_runs": 0,

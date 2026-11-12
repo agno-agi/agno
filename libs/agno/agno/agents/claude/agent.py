@@ -1,11 +1,49 @@
 import copy
-from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Awaitable, Dict, Iterator, List, Literal, Optional, Tuple, Union, cast
+import warnings
+from dataclasses import field, fields
+from pathlib import Path
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    AsyncIterator,
+    Awaitable,
+    ClassVar,
+    Dict,
+    Iterator,
+    List,
+    Literal,
+    Optional,
+    Tuple,
+    Union,
+    cast,
+)
 from uuid import uuid4
 
-from agno.agents.base import BaseExternalAgent, ExternalContinuation, ExternalRunResult, ExternalRunWarningEvent
+from agno.agents._config import agent_dataclass
+from agno.agents._hitl import live_native_run
+from agno.agents._media import (
+    accept_media,
+    cleanup_run_media,
+    inline_blocks,
+    media_prompt_block,
+    remember_uploads_root,
+    remove_upload_folder,
+    stage_media,
+    stage_prior_media,
+    uploads_root,
+)
+from agno.agents.base import (
+    BaseExternalAgent,
+    ExternalContinuation,
+    ExternalRunMetricsEvent,
+    ExternalRunResult,
+    ExternalRunStructuredOutputEvent,
+    ExternalRunWarningEvent,
+    run_coroutine_sync,
+)
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.exceptions import RunNotContinuableError
+from agno.exceptions import ModelProviderError, RunNotContinuableError
+from agno.metrics import BaseMetrics, ModelMetrics, RunMetrics
 from agno.models.message import Message
 from agno.models.response import ToolExecution
 from agno.run.agent import (
@@ -19,6 +57,30 @@ from agno.run.base import RunStatus
 from agno.run.cancel import araise_if_cancelled
 from agno.utils.log import log_debug, log_warning
 
+if TYPE_CHECKING:
+    from claude_agent_sdk import ClaudeAgentOptions
+    from claude_agent_sdk.types import (
+        McpServerConfig,
+        PermissionMode,
+        SdkPluginConfig,
+        SettingSource,
+        SystemPromptCustom,
+        SystemPromptFile,
+        SystemPromptPreset,
+        ToolsPreset,
+    )
+
+
+def _copy_config(value: Any) -> Any:
+    """Copy configuration containers while preserving SDK callbacks and service objects."""
+    if isinstance(value, dict):
+        return {key: _copy_config(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_copy_config(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_copy_config(item) for item in value)
+    return value
+
 
 def _sdk() -> Any:
     """Lazy-import the claude_agent_sdk module."""
@@ -30,7 +92,67 @@ def _sdk() -> Any:
         raise ImportError("claude-agent-sdk is required: pip install claude-agent-sdk") from e
 
 
-@dataclass
+# Result subtypes for limits the user configured; a retry would grant a fresh allowance.
+_LIMIT_SUBTYPES = {"error_max_turns", "error_max_budget_usd", "error_max_structured_output_retries"}
+# AssistantMessage.error values that fail the same way on every attempt.
+_PERMANENT_ASSISTANT_ERRORS = {"authentication_failed", "billing_error", "invalid_request"}
+
+
+class ClaudeResultError(RuntimeError):
+    """An error result from Claude Code, with the fields the SDK's own ResultError carries."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        subtype: Optional[str] = None,
+        errors: Optional[List[str]] = None,
+        api_error_status: Optional[int] = None,
+        assistant_error: Optional[str] = None,
+    ) -> None:
+        super().__init__(message)
+        self.subtype = subtype
+        self.errors = errors
+        self.api_error_status = api_error_status
+        self.assistant_error = assistant_error
+
+
+async def _ask_user_question(sdk: Any, arguments: Dict[str, Any], native: Dict[str, Any]) -> Any:
+    """Pause for Claude's AskUserQuestion as user feedback and hand the selections back to Claude.
+
+    Claude reads the answers from the allowed tool input, keyed by question text; a multi-select answer
+    is comma-separated. When every question is skipped, Claude is told the user declined to answer.
+    """
+    from agno.agents._hitl import current_bridge
+
+    questions = arguments.get("questions")
+    if (
+        not isinstance(questions, list)
+        or not questions
+        or not all(isinstance(q, dict) and q.get("question") for q in questions)
+    ):
+        raise ValueError("AskUserQuestion has no questions to ask")
+    asked = [
+        {
+            "question": str(q["question"]),
+            "header": q.get("header"),
+            "options": [
+                {"label": str(o.get("label", "")), "description": o.get("description")}
+                for o in q.get("options") or []
+                if isinstance(o, dict)
+            ],
+            "multi_select": q.get("multiSelect") is True,
+        }
+        for q in questions
+    ]
+    selections = await current_bridge().ask("AskUserQuestion", arguments, native, asked)
+    answers = {q["question"]: ", ".join(selected) for q, selected in zip(asked, selections) if selected}
+    if not answers:
+        return sdk.PermissionResultDeny(message="The user declined to answer these questions")
+    return sdk.PermissionResultAllow(updated_input={**arguments, "answers": answers})
+
+
+@agent_dataclass
 class ClaudeAgent(BaseExternalAgent):
     """Adapter for the Claude Agent SDK (claude-agent-sdk).
 
@@ -38,21 +160,44 @@ class ClaudeAgent(BaseExternalAgent):
     endpoints or standalone via .run() / .print_response().
 
     The Claude Agent SDK runs Claude Code as a subprocess. Tool execution is handled
-    internally by the SDK — you configure tools via allowed_tools and MCP servers.
+    internally by the SDK. tools selects built-in tools; allowed_tools pre-approves calls.
 
     Args:
         name: Display name for this agent.
         id: Unique identifier (auto-generated from name if not set).
         system_prompt: Optional system prompt for the agent.
-        model: Model to use (e.g. "claude-sonnet-4-20250514"). Defaults to SDK default.
-        allowed_tools: List of tools the agent can use (e.g. ["Read", "Bash", "WebSearch"]).
+        model: Model to use. Defaults to claude-sonnet-4-6 unless set in options.
+        tools: Built-in tool names or the Claude Code tool preset. An empty list disables built-in tools.
+        allowed_tools: Tool calls to auto-approve; this does not limit the available tool set.
         disallowed_tools: List of tools to block.
-        permission_mode: Permission mode ("default", "acceptEdits", "plan", "bypassPermissions").
+        permission_mode: SDK permission mode, such as "default", "acceptEdits" or "dontAsk".
         max_turns: Maximum number of turns.
         max_budget_usd: Maximum cost budget in USD.
         cwd: Working directory for the agent.
+        keep_uploads: Keep files attached to a run under cwd/.agno/uploads/<run_id>/ after the run.
         mcp_servers: MCP server configurations for custom tools.
-        options_kwargs: Additional kwargs passed to ClaudeAgentOptions.
+        output_schema: Pydantic model or JSON Schema for the final answer. The run content is the
+            parsed model (a dict for a JSON Schema); the streamed text is Claude's reply around it.
+        setting_sources: Filesystem settings to load; [] disables user/project/local settings.
+        strict_mcp_config: Use only explicitly configured MCP servers when True.
+        skills: Available skill names, or "all". Include "Skill" when explicitly selecting tools.
+        plugins: Native SDK plugin configurations.
+        options: Native ClaudeAgentOptions for advanced configuration. Non-None constructor
+            fields override these options, including empty collections and False. Agno owns
+            native session selection and token streaming; configure them through run/arun.
+            Configuration containers are copied per run; callbacks and services retain identity.
+        options_kwargs: Deprecated dictionary alternative to options. Cannot be combined with
+            options. Retains legacy precedence over constructor fields; migrate to options
+            for explicit constructor precedence. Conflicting runtime settings are rejected.
+        retries: Number of times to retry a failed run. Cancelled runs, max_turns / max_budget_usd limits
+            and errors that would fail again (authentication, billing, invalid requests) are not retried.
+        delay_between_retries: Seconds to wait before each retry.
+        exponential_backoff: Double the delay after each failed attempt.
+        require_native_resume: Fail the run when the recorded native conversation cannot be resumed,
+            instead of starting a new one with the history pasted into the prompt.
+        strict_persistence: Fail the run when its row cannot be written, instead of logging the failure.
+        sandbox: Run the whole Claude Code process in a computer from this sandbox each turn,
+            such as DockerSandbox(image). Requires a PostgresDb on the agent or its AgentOS.
 
     Example:
         from agno.agents.claude import ClaudeAgent
@@ -72,24 +217,46 @@ class ClaudeAgent(BaseExternalAgent):
         AgentOS(agents=[agent])
     """
 
-    system_prompt: Optional[str] = None
+    # Model and instructions
     model: Optional[str] = None
+    system_prompt: Optional[Union[str, "SystemPromptPreset", "SystemPromptCustom", "SystemPromptFile"]] = None
+    # Workspace and settings
+    cwd: Optional[Union[str, Path]] = None
+    # Keep attachments staged under cwd/.agno/uploads/<run_id>/ after the run instead of deleting them.
+    keep_uploads: bool = False
+    project_key: Optional[str] = None
+    setting_sources: Optional[List["SettingSource"]] = None
+    # Tools and permissions
+    tools: Optional[Union[List[str], "ToolsPreset"]] = None
     allowed_tools: Optional[List[str]] = None
     disallowed_tools: Optional[List[str]] = None
-    permission_mode: Optional[str] = None
+    permission_mode: Optional["PermissionMode"] = None
+    mcp_servers: Optional[Union[Dict[str, "McpServerConfig"], str, Path]] = None
+    strict_mcp_config: Optional[bool] = None
+    # Extensions
+    skills: Optional[Union[List[str], Literal["all"]]] = None
+    plugins: Optional[List["SdkPluginConfig"]] = None
+    # Execution limits
     max_turns: Optional[int] = None
     max_budget_usd: Optional[float] = None
-    cwd: Optional[str] = None
-    project_key: Optional[str] = None
+    # Advanced native configuration
+    options: Optional["ClaudeAgentOptions"] = None
+    options_kwargs: Dict[str, Any] = field(default_factory=dict)
+
+    _sdk_name: ClassVar[str] = "claude-agent-sdk"
+    _sandbox_runtime: ClassVar[Optional[str]] = "claude"
+    _storable: ClassVar[bool] = True
+    _unstorable_fields: ClassVar[Dict[str, str]] = {
+        "options": "native ClaudeAgentOptions carry callbacks and services; use the named parameters instead",
+        "options_kwargs": "deprecated; use the named parameters instead",
+    }
+    # Key under which the SDK session id is stored in the Agno session.
+    _SESSION_KEY = "claude_sdk_session_id"
     _store_warning_logged: bool = field(default=False, init=False, repr=False)
     _warn_unstable_project_key: bool = field(default=False, init=False, repr=False)
     _store_skipped_logged: bool = field(default=False, init=False, repr=False)
-    mcp_servers: Optional[Dict[str, Any]] = None
-    options_kwargs: Dict[str, Any] = field(default_factory=dict)
-    framework: str = "claude-agent-sdk"
-
-    # Key under which the SDK session id is stored in the Agno session's session_data.
-    _SESSION_KEY = "claude_sdk_session_id"
+    _supports_output_schema: ClassVar[bool] = True
+    _STRUCTURED_OUTPUT_TOOL = "StructuredOutput"
     # Message.provider_data key holding the SDK session id and transcript uuid behind a message.
     _MESSAGE_REF_KEY = "claude_sdk"
     _CONTINUE_PROMPT = "Continue from where you left off."
@@ -97,12 +264,64 @@ class ClaudeAgent(BaseExternalAgent):
     # Fallback Agno session_id -> SDK session id map, used when no db is configured.
     _sdk_session_ids: Dict[str, str] = field(default_factory=dict, init=False, repr=False)
 
+    @property
+    def _uses_native_hitl(self) -> bool:
+        opts = self._option_values()
+        mode = self.permission_mode if self.permission_mode is not None else opts.get("permission_mode")
+        mode = self.options_kwargs.get("permission_mode", mode)
+        return (
+            self.db is not None
+            and mode not in ("bypassPermissions", "dontAsk")
+            and not opts.get("can_use_tool")
+            and not opts.get("permission_prompt_tool_name")
+        )
+
     def __post_init__(self) -> None:
+        if self.options is not None and self.options_kwargs:
+            raise ValueError("Use options or options_kwargs, not both.")
+        if self.options is not None and not isinstance(self.options, _sdk().ClaudeAgentOptions):
+            raise TypeError("options must be a claude_agent_sdk.ClaudeAgentOptions instance.")
+        if self.options_kwargs:
+            warnings.warn(
+                "options_kwargs is deprecated; use options=ClaudeAgentOptions(...) or named parameters. "
+                "Named parameters override options; options_kwargs retains legacy precedence.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        self._validate_runtime_options(self._option_values())
+        if self._effective_model() is None:
+            # Like a native model's default id: the default is what the SDK runs and the run records.
+            self.model = "claude-sonnet-4-6"
         # Without id or name, get_id() is random per process, so the default key cannot be shared across replicas.
         self._warn_unstable_project_key = self.project_key is None and self.id is None and self.name is None
         super().__post_init__()
         if self.project_key is None:
             self.project_key = self.get_id()
+
+    def _run_model(self) -> Tuple[Optional[str], Optional[str]]:
+        return self._effective_model(), "Anthropic"
+
+    def _effective_model(self) -> Optional[str]:
+        """The model the SDK is asked to run, in the precedence _build_options applies."""
+        return self.options_kwargs.get("model") or self.model or self._option_values().get("model")
+
+    def _option_values(self) -> Dict[str, Any]:
+        if self.options is not None:
+            return {item.name: getattr(self.options, item.name) for item in fields(self.options) if item.init}
+        return dict(self.options_kwargs)
+
+    @staticmethod
+    def _validate_runtime_options(opts: Dict[str, Any]) -> None:
+        for name in ("resume", "session_id", "continue_conversation", "fork_session"):
+            if opts.get(name):
+                raise ValueError(
+                    f"ClaudeAgent manages {name}; use run/arun(session_id=...) for conversation continuity."
+                )
+        # Raw CLI arguments must not bypass the same session/streaming contract.
+        reserved_flags = {"resume", "session-id", "continue", "fork-session", "include-partial-messages"}
+        for flag in opts.get("extra_args", {}):
+            if flag.lstrip("-") in reserved_flags:
+                raise ValueError(f"ClaudeAgent manages extra_args[{flag!r}]; use run/arun configuration instead.")
 
     def _transcript_store(self, agno_session_id: Optional[str]) -> Optional[Any]:
         """The transcript store for this run, or None when transcripts stay on local disk.
@@ -123,12 +342,13 @@ class ClaudeAgent(BaseExternalAgent):
                 )
                 self._store_warning_logged = True
             return None
-        if "session_store" in self.options_kwargs:
+        opts = self._option_values()
+        if opts.get("session_store") is not None or "session_store" in self.options_kwargs:
             if not self._store_skipped_logged:
-                log_debug("ClaudeAgent uses the session_store from options_kwargs; Agno transcript storage is off.")
+                log_debug("ClaudeAgent uses the configured session_store; Agno transcript storage is off.")
                 self._store_skipped_logged = True
             return None
-        if self.options_kwargs.get("enable_file_checkpointing"):
+        if opts.get("enable_file_checkpointing"):
             if not self._store_skipped_logged:
                 log_warning(
                     "ClaudeAgent cannot store transcripts in the database while enable_file_checkpointing is set; "
@@ -154,6 +374,7 @@ class ClaudeAgent(BaseExternalAgent):
         resume: Optional[str] = None,
         agno_session_id: Optional[str] = None,
         session_store: Optional[Any] = None,
+        output_schema: Optional[Any] = None,
     ) -> Any:
         """Build ClaudeAgentOptions from agent config.
 
@@ -162,40 +383,60 @@ class ClaudeAgent(BaseExternalAgent):
         """
         sdk = _sdk()
 
-        opts: Dict[str, Any] = {}
+        opts = self._option_values()
+        self._validate_runtime_options(opts)
+        for name in (
+            "system_prompt",
+            "model",
+            "tools",
+            "allowed_tools",
+            "disallowed_tools",
+            "permission_mode",
+            "max_turns",
+            "max_budget_usd",
+            "cwd",
+            "mcp_servers",
+            "setting_sources",
+            "strict_mcp_config",
+            "skills",
+            "plugins",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                opts[name] = value
+        if output_schema is not None:
+            opts["output_format"] = {
+                "type": "json_schema",
+                "schema": self._output_json_schema(output_schema, "anthropic"),
+            }
 
-        if self.system_prompt:
-            opts["system_prompt"] = self.system_prompt
-        if self.model:
-            opts["model"] = self.model
-        if self.allowed_tools:
-            opts["allowed_tools"] = self.allowed_tools
-        if self.disallowed_tools:
-            opts["disallowed_tools"] = self.disallowed_tools
-        if self.permission_mode:
-            opts["permission_mode"] = self.permission_mode
-        if self.max_turns is not None:
-            opts["max_turns"] = self.max_turns
-        if self.max_budget_usd is not None:
-            opts["max_budget_usd"] = self.max_budget_usd
-        if self.cwd:
-            opts["cwd"] = self.cwd
-        if self.mcp_servers:
-            opts["mcp_servers"] = self.mcp_servers
-
-        # Enable token-level streaming when streaming is requested
-        if streaming:
-            opts["include_partial_messages"] = True
-
-        if resume:
-            opts["resume"] = resume
-
+        # Keep the old dictionary's precedence during migration, without allowing it to
+        # override the native session selected by Agno or disable requested streaming.
         opts.update(self.options_kwargs)
+        partial = opts.get("include_partial_messages", False)
+        if (partial and not streaming) or ("include_partial_messages" in self.options_kwargs and partial != streaming):
+            raise ValueError("ClaudeAgent manages include_partial_messages; use run/arun(stream=...).")
+        opts["include_partial_messages"] = streaming
+        opts["resume"] = resume
+        opts = _copy_config(opts)
         # Echo the prompt with its transcript uuid so a run can later be continued from it.
-        opts["extra_args"] = {"replay-user-messages": None, **(self.options_kwargs.get("extra_args") or {})}
+        opts["extra_args"] = {"replay-user-messages": None, **(opts.get("extra_args") or {})}
         store = session_store if session_store is not None else self._transcript_store(agno_session_id)
         if store is not None:
             opts["session_store"] = store
+        if self._uses_native_hitl:
+            from agno.agents._hitl import current_bridge
+
+            async def can_use_tool(name: str, arguments: Dict[str, Any], context: Any) -> Any:
+                native = {"sdk": "claude", "tool_call_id": getattr(context, "tool_use_id", None)}
+                if name == "AskUserQuestion":
+                    return await _ask_user_question(sdk, arguments, native)
+                allowed = await current_bridge().request(name, arguments, native)
+                if allowed:
+                    return sdk.PermissionResultAllow(updated_input=arguments)
+                return sdk.PermissionResultDeny(message="The user rejected this action")
+
+            opts["can_use_tool"] = can_use_tool
         return sdk.ClaudeAgentOptions(**opts)
 
     # ---------------------------------------------------------------------------
@@ -228,7 +469,59 @@ class ClaudeAgent(BaseExternalAgent):
         if session_id:
             self._sdk_session_ids.pop(session_id, None)
 
+    def _media_workspace(self) -> Optional[Union[str, Path]]:
+        """Stage files in the workspace selected by the same precedence as SDK options."""
+        cwd = self.cwd if self.cwd is not None else self._option_values().get("cwd")
+        return self.options_kwargs.get("cwd", cwd)
+
+    def _media_kwargs(self, **media: Any) -> Dict[str, Any]:
+        """Images and files are written under cwd/.agno/uploads/<run_id>/ and named in the prompt.
+        Images and PDFs also travel inside the message as content blocks, so Claude Code sees them
+        without reading the file back through a tool; other files it opens with its Read tool.
+        Audio and video are rejected."""
+        return accept_media(media)
+
     async def _aquery(
+        self, input: Any, history: Optional[List[Dict[str, Any]]], *, streaming: bool, **kwargs: Any
+    ) -> AsyncIterator[Any]:
+        """Stage attachments for the run, query, then remove them unless keep_uploads is set."""
+        workspace = self._media_workspace()
+        media = kwargs.pop("media", None)
+        run_id = kwargs.get("run_id") or str(uuid4())
+        kwargs["run_id"] = run_id
+        staged: List[Any] = []
+        restaged: List[Path] = []
+        prepared = False
+        created_root = False
+        try:
+            if media:
+                created_root = not uploads_root(workspace, run_id).exists()
+                staged = stage_media(workspace, run_id, media)
+            if staged:
+                remember_uploads_root(kwargs.get("session"), workspace)
+            if staged and input is not None:
+                kwargs["inline_media"] = inline_blocks(staged)
+                input = f"{input}{media_prompt_block(staged)}"
+            # Restore earlier inputs in this workspace and describe any relocated paths.
+            continuation: Optional[ExternalContinuation] = kwargs.get("continuation")
+            restaged, moved_note = stage_prior_media(
+                workspace,
+                kwargs.get("session"),
+                exclude_run_id=run_id,
+                until_run_id=continuation.source_run_id if continuation is not None else None,
+            )
+            if moved_note and input is not None:
+                input = f"{input}{moved_note}"
+            prepared = True
+            async for message in self._aquery_sdk(input, history, streaming=streaming, **kwargs):
+                yield message
+        finally:
+            if not self.keep_uploads or not prepared:
+                cleanup_run_media(workspace, run_id, staged, created_root)
+                for folder in restaged:
+                    remove_upload_folder(folder)
+
+    async def _aquery_sdk(
         self, input: Any, history: Optional[List[Dict[str, Any]]], *, streaming: bool, **kwargs: Any
     ) -> AsyncIterator[Any]:
         """Run a client against the SDK session tied to this Agno session, recording its id.
@@ -248,27 +541,34 @@ class ClaudeAgent(BaseExternalAgent):
             resume = await self._afork_sdk_session(continuation.anchor, store)
         else:
             resume = self._get_sdk_session_id(session, session_id)
+        self._check_native_resume(resume, session)
 
         while True:
             if run_state is not None:
                 run_state.clear()
-            options = self._build_options(streaming=streaming, resume=resume, session_store=store)
+            options = self._build_options(
+                streaming=streaming, resume=resume, session_store=store, output_schema=kwargs.get("output_schema")
+            )
             prompt = self._build_prompt(input, history, resumed=resume is not None)
+            request = self._prompt_with_media(prompt, kwargs.get("inline_media"))
             received = False
+            assistant_error: Optional[str] = None
             run_id = kwargs.get("run_id") or str(uuid4())
             client = sdk.ClaudeSDKClient(options=options)
             try:
                 await client.connect()
                 await araise_if_cancelled(run_id)
-                await client.query(prompt)
+                await client.query(request)
                 self._set_run_handle(run_id, client)
                 async for message in client.receive_response():
                     self._record_message_ref(sdk, message, run_state)
                     if isinstance(message, sdk.UserMessage) and not self._tool_result_ids(sdk, message):
                         # The echoed prompt is bookkeeping only; adapters never see it.
                         continue
+                    if isinstance(message, sdk.AssistantMessage) and getattr(message, "error", None):
+                        assistant_error = message.error
                     if isinstance(message, sdk.ResultMessage):
-                        self._check_result_message(sdk, message)
+                        self._check_result_message(sdk, message, assistant_error)
                     if not isinstance(message, sdk.SystemMessage):
                         received = True
                     sdk_session_id = None
@@ -284,7 +584,13 @@ class ClaudeAgent(BaseExternalAgent):
                 return
             except Exception as e:
                 await araise_if_cancelled(run_id)
-                if resume is None or received or continuation is not None or not self._is_missing_session(sdk, e):
+                if (
+                    self.require_native_resume
+                    or resume is None
+                    or received
+                    or continuation is not None
+                    or not self._is_missing_session(sdk, e)
+                ):
                     raise
                 log_warning(
                     f"Claude SDK: could not resume session {resume} for session {session_id}: {e}. Starting a new one."
@@ -301,6 +607,19 @@ class ClaudeAgent(BaseExternalAgent):
     # ---------------------------------------------------------------------------
     # Continue from a message boundary
     # ---------------------------------------------------------------------------
+
+    @staticmethod
+    def _prompt_with_media(prompt: str, blocks: Optional[List[Dict[str, Any]]]) -> Any:
+        """The prompt as the SDK takes it: a string, or with attachments one user message whose
+        content is the text followed by the image and document blocks."""
+        if not blocks:
+            return prompt
+
+        async def stream() -> AsyncIterator[Dict[str, Any]]:
+            content: List[Dict[str, Any]] = [{"type": "text", "text": prompt}, *blocks]
+            yield {"type": "user", "message": {"role": "user", "content": content}}
+
+        return stream()
 
     @staticmethod
     def _tool_result_ids(sdk: Any, message: Any) -> List[str]:
@@ -457,14 +776,14 @@ class ClaudeAgent(BaseExternalAgent):
     async def _afork_sdk_session(self, anchor: Dict[str, Any], store: Any) -> Optional[str]:
         """Fork the stored SDK transcript at the anchor; None starts a fresh SDK session."""
         if store is None:
-            raise ValueError("Continuing a ClaudeAgent run requires a database with transcript storage")
+            raise RunNotContinuableError("Continuing a ClaudeAgent run requires a database with transcript storage")
         up_to: Optional[str] = anchor["uuid"]
         if anchor.get("before"):
             key = {"project_key": store.project_key, "session_id": anchor["session_id"]}
             entries = await store.load(key) or []
             entry = next((entry for entry in entries if entry.get("uuid") == up_to), None)
             if entry is None:
-                raise ValueError(f"Claude SDK transcript entry {up_to} was not found")
+                raise RunNotContinuableError(f"Claude SDK transcript entry {up_to} was not found")
             up_to = entry.get("parentUuid")
             if up_to is None:
                 return None
@@ -536,6 +855,10 @@ class ClaudeAgent(BaseExternalAgent):
             tools = [copy.deepcopy(tool) for tool in source.tools or [] if tool.tool_call_id in call_ids] or None
             record_input = input
             before = False
+        forked_from_message_index = source.forked_from_message_index
+        # A fork cut before the messages it copied keeps only copied ones, so the work continued here is its own
+        if forked_from_message_index is not None and forked_from_message_index > len(kept):
+            forked_from_message_index = len(kept)
         continuation = ExternalContinuation(
             messages=kept,
             tools=tools,
@@ -543,7 +866,8 @@ class ClaudeAgent(BaseExternalAgent):
             record_input=record_input,
             anchor={"session_id": ref["session_id"], "uuid": ref["uuid"], "before": before},
             forked_from_run_id=source.run_id if fork else source.forked_from_run_id,
-            forked_from_message_index=index if fork else source.forked_from_message_index,
+            forked_from_message_index=index if fork else forked_from_message_index,
+            source_run_id=source.run_id,
         )
         return prompt, str(uuid4()) if fork else str(source.run_id), continuation
 
@@ -577,13 +901,33 @@ class ClaudeAgent(BaseExternalAgent):
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         **kwargs: Any,
-    ) -> Union[RunOutput, Iterator[RunOutputEvent]]:
+    ) -> Union[RunOutput, Iterator[Union[RunOutputEvent, RunOutput]]]:
         """Continue a stored run from a message boundary by forking its SDK transcript there.
 
         continue_from accepts "end", "last_user" or a message index. With fork=True the replay is a new
         sibling run. A finished run is always continued as a new sibling run with fork lineage, as native
         agents do, whatever fork is set to. Files the agent changed are not rewound.
         """
+        source = run_response or self.get_run_output(run_id or "", session_id, user_id)
+        if live_native_run(source):
+            from agno.agents._hitl import continue_run, sync_events
+
+            continuation = continue_run(
+                self,
+                run_response,
+                run_id=run_id,
+                session_id=session_id,
+                user_id=user_id,
+                requirements=requirements,
+                updated_tools=updated_tools,
+                input=input,
+                fork=fork,
+                regenerate=regenerate,
+                continue_from=continue_from,
+                additional_instructions=additional_instructions,
+                stream=stream,
+            )
+            return sync_events(continuation) if stream else run_coroutine_sync(continuation)
         self._check_continue_args(requirements, updated_tools, regenerate, replace_original, additional_instructions)
         source = run_response or self.get_run_output(run_id or "", session_id, user_id)
         if source is None:
@@ -620,6 +964,62 @@ class ClaudeAgent(BaseExternalAgent):
         **kwargs: Any,
     ) -> Any:
         """Async continue_run: returns a coroutine, or an async iterator when stream=True."""
+        if regenerate:
+            raise ValueError("Claude continuation does not support regenerate")
+        resolved = kwargs.pop("_hitl_resolved", False)
+        if self._uses_native_hitl and run_response is None and not resolved:
+
+            async def dispatch():
+                source = await self.aget_run_output(run_id or "", session_id, user_id)
+                result = self.acontinue_run(
+                    source,
+                    run_id=run_id,
+                    session_id=session_id,
+                    user_id=user_id,
+                    requirements=requirements,
+                    updated_tools=updated_tools,
+                    input=input,
+                    continue_from=continue_from,
+                    fork=fork,
+                    regenerate=regenerate,
+                    replace_original=replace_original,
+                    additional_instructions=additional_instructions,
+                    stream=stream,
+                    _hitl_resolved=True,
+                    **kwargs,
+                )
+                if stream:
+                    async for event in result:
+                        yield event
+                else:
+                    yield await result
+
+            if stream:
+                return dispatch()
+
+            async def result():
+                async for item in dispatch():
+                    return item
+
+            return result()
+        if live_native_run(run_response):
+            from agno.agents._hitl import continue_run
+
+            return continue_run(
+                self,
+                run_response,
+                run_id=run_id,
+                session_id=session_id,
+                user_id=user_id,
+                requirements=requirements,
+                updated_tools=updated_tools,
+                stream=stream,
+                input=input,
+                fork=fork,
+                regenerate=regenerate,
+                continue_from=continue_from,
+                additional_instructions=additional_instructions,
+            )
         self._check_continue_args(requirements, updated_tools, regenerate, replace_original, additional_instructions)
         kwargs.pop("background_tasks", None)
         call = dict(
@@ -714,8 +1114,80 @@ class ClaudeAgent(BaseExternalAgent):
         log_warning(warning["message"])
         return warning
 
+    def _is_retryable_error(self, error: Exception) -> bool:
+        if not super()._is_retryable_error(error):
+            return False
+        # Read by attribute so the SDK's own ResultError classifies the same way.
+        if isinstance(error, RunNotContinuableError):
+            return False
+        if getattr(error, "subtype", None) in _LIMIT_SUBTYPES:
+            return False
+        if getattr(error, "api_error_status", None) in ModelProviderError.NON_RETRYABLE_STATUS_CODES:
+            return False
+        if getattr(error, "assistant_error", None) in _PERMANENT_ASSISTANT_ERRORS:
+            return False
+        cli_not_found = getattr(_sdk(), "CLINotFoundError", None)
+        return cli_not_found is None or not isinstance(error, cli_not_found)
+
+    def _metrics_from_result(self, message: Any) -> Optional[RunMetrics]:
+        """Map the ResultMessage's usage and cost to RunMetrics.
+
+        Like the native Anthropic model, input_tokens excludes the cached prefix, which is
+        reported in cache_read_tokens and cache_write_tokens. Per-model entries come from the
+        CLI's modelUsage map so subagents on other models are listed separately.
+        """
+        usage = getattr(message, "usage", None) or {}
+        cost = getattr(message, "total_cost_usd", None)
+        model_usage = getattr(message, "model_usage", None) or {}
+        if not usage and not model_usage and cost is None:
+            return None
+
+        def _int(source: Dict[str, Any], *keys: str) -> int:
+            for key in keys:
+                if source.get(key) is not None:
+                    return int(source[key])
+            return 0
+
+        details: List[ModelMetrics] = []
+        for model_id, entry in model_usage.items():
+            if not isinstance(entry, dict):
+                continue
+            entry_cost = entry.get("costUSD", entry.get("cost_usd"))
+            input_tokens = _int(entry, "inputTokens", "input_tokens")
+            output_tokens = _int(entry, "outputTokens", "output_tokens")
+            details.append(
+                ModelMetrics(
+                    id=str(model_id),
+                    provider="anthropic",
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    total_tokens=input_tokens + output_tokens,
+                    cache_read_tokens=_int(entry, "cacheReadInputTokens", "cache_read_input_tokens"),
+                    cache_write_tokens=_int(entry, "cacheCreationInputTokens", "cache_creation_input_tokens"),
+                    cost=float(entry_cost) if entry_cost is not None else None,
+                )
+            )
+        input_tokens = _int(usage, "input_tokens")
+        output_tokens = _int(usage, "output_tokens")
+        totals = BaseMetrics(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=input_tokens + output_tokens,
+            cache_read_tokens=_int(usage, "cache_read_input_tokens"),
+            cache_write_tokens=_int(usage, "cache_creation_input_tokens"),
+            cost=float(cost) if cost is not None else None,
+        )
+        if not details:
+            details.append(ModelMetrics(id=self._effective_model() or "", provider="anthropic", **totals.__dict__))
+        additional: Dict[str, Any] = {}
+        if getattr(message, "num_turns", None) is not None:
+            additional["num_turns"] = int(message.num_turns)
+        if getattr(message, "duration_api_ms", None) is not None:
+            additional["api_duration"] = int(message.duration_api_ms) / 1000
+        return self._build_metrics(totals, details, additional)
+
     @staticmethod
-    def _check_result_message(sdk: Any, message: Any) -> None:
+    def _check_result_message(sdk: Any, message: Any, assistant_error: Optional[str] = None) -> None:
         """Raise if the SDK reported an error result so the base class can surface it."""
         if not isinstance(message, sdk.ResultMessage):
             return
@@ -729,7 +1201,13 @@ class ClaudeAgent(BaseExternalAgent):
                 or getattr(message, "result", None)
                 or getattr(message, "stop_reason", None)
             )
-            raise RuntimeError(f"Claude SDK error (is_error={is_error}, subtype={subtype}): {detail}")
+            raise ClaudeResultError(
+                f"Claude SDK error (is_error={is_error}, subtype={subtype}): {detail}",
+                subtype=subtype,
+                errors=getattr(message, "errors", None),
+                api_error_status=getattr(message, "api_error_status", None),
+                assistant_error=assistant_error,
+            )
 
     async def _arun_adapter(
         self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
@@ -741,6 +1219,9 @@ class ClaudeAgent(BaseExternalAgent):
         assistant_text = ""
         final_result = ""
         tools: Dict[str, ToolExecution] = {}
+        metrics: Optional[RunMetrics] = None
+        structured_output: Any = None
+        hidden_tool_ids: set = set()
 
         async for message in self._aquery(input, history, streaming=False, **kwargs):
             # Share the live accumulator so the base class can persist work
@@ -756,14 +1237,28 @@ class ClaudeAgent(BaseExternalAgent):
                     if isinstance(block, sdk.TextBlock):
                         assistant_text += block.text
                     elif isinstance(block, sdk.ToolUseBlock):
+                        if block.name == self._STRUCTURED_OUTPUT_TOOL:
+                            hidden_tool_ids.add(block.id)
+                            continue
                         tools[block.id] = ToolExecution(
-                            tool_call_id=block.id, tool_name=block.name, tool_args=block.input
+                            tool_call_id=block.id,
+                            tool_name=block.name,
+                            tool_args=block.input,
+                            parent_tool_call_id=getattr(message, "parent_tool_use_id", None),
                         )
 
             elif isinstance(message, sdk.UserMessage) and isinstance(message.content, list):
                 for block in message.content:
                     if isinstance(block, sdk.ToolResultBlock):
-                        tool = tools.setdefault(block.tool_use_id, ToolExecution(tool_call_id=block.tool_use_id))
+                        if block.tool_use_id in hidden_tool_ids:
+                            continue
+                        tool = tools.setdefault(
+                            block.tool_use_id,
+                            ToolExecution(
+                                tool_call_id=block.tool_use_id,
+                                parent_tool_call_id=getattr(message, "parent_tool_use_id", None),
+                            ),
+                        )
                         result = block.content
                         tool.result = (
                             " ".join(getattr(item, "text", str(item)) for item in result)
@@ -775,9 +1270,17 @@ class ClaudeAgent(BaseExternalAgent):
             elif isinstance(message, sdk.ResultMessage):
                 if hasattr(message, "result") and message.result:
                     final_result = str(message.result)
+                metrics = self._metrics_from_result(message)
+                structured_output = getattr(message, "structured_output", None)
 
         # Prefer ResultMessage.result, fall back to accumulated assistant text
-        return ExternalRunResult(final_result or assistant_text, list(tools.values()) or None, warnings or None)
+        return ExternalRunResult(
+            final_result or assistant_text,
+            list(tools.values()) or None,
+            warnings or None,
+            metrics=metrics,
+            structured_output=structured_output,
+        )
 
     async def _arun_adapter_stream(
         self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
@@ -798,7 +1301,7 @@ class ClaudeAgent(BaseExternalAgent):
         got_stream_events = False
         # Track tool call IDs already emitted via AssistantMessage to avoid duplicates
         emitted_tool_ids: set = set()
-        # Map tool_use_id -> (tool_name, tool_args) for carrying forward to ToolCallCompleted
+        # Carry tool identity and delegation lineage forward to ToolCallCompleted.
         tool_info_map: Dict[str, Dict[str, Any]] = {}
 
         async for message in self._aquery(input, history, streaming=True, **kwargs):
@@ -825,6 +1328,16 @@ class ClaudeAgent(BaseExternalAgent):
                                 content=text,
                             )
 
+            elif isinstance(message, sdk.ResultMessage):
+                metrics = self._metrics_from_result(message)
+                if metrics is not None:
+                    yield ExternalRunMetricsEvent(run_id=run_id, agent_id=self.get_id(), metrics=metrics)
+                structured_output = getattr(message, "structured_output", None)
+                if structured_output is not None:
+                    yield ExternalRunStructuredOutputEvent(
+                        run_id=run_id, agent_id=self.get_id(), structured_output=structured_output
+                    )
+
             elif isinstance(message, sdk.AssistantMessage):
                 # Always extract tool calls from complete AssistantMessage
                 # (has full name + args). For text, only use if no StreamEvents.
@@ -841,10 +1354,18 @@ class ClaudeAgent(BaseExternalAgent):
                         tool_name = getattr(block, "name", "unknown")
                         tool_input = getattr(block, "input", {})
                         tool_id = getattr(block, "id", str(uuid4()))
+                        if tool_name == self._STRUCTURED_OUTPUT_TOOL:
+                            emitted_tool_ids.add(tool_id)
+                            continue
                         if tool_id not in emitted_tool_ids:
                             emitted_tool_ids.add(tool_id)
                             tool_args = tool_input if isinstance(tool_input, dict) else {"input": tool_input}
-                            tool_info_map[tool_id] = {"name": tool_name, "args": tool_args}
+                            parent_tool_call_id = getattr(message, "parent_tool_use_id", None)
+                            tool_info_map[tool_id] = {
+                                "name": tool_name,
+                                "args": tool_args,
+                                "parent_tool_call_id": parent_tool_call_id,
+                            }
                             yield ToolCallStartedEvent(
                                 run_id=run_id,
                                 agent_id=self.get_id(),
@@ -853,6 +1374,7 @@ class ClaudeAgent(BaseExternalAgent):
                                     tool_call_id=tool_id,
                                     tool_name=tool_name,
                                     tool_args=tool_args,
+                                    parent_tool_call_id=parent_tool_call_id,
                                 ),
                             )
 
@@ -863,6 +1385,8 @@ class ClaudeAgent(BaseExternalAgent):
                     for block in content:
                         if isinstance(block, sdk.ToolResultBlock):
                             tool_use_id = getattr(block, "tool_use_id", str(uuid4()))
+                            if tool_use_id in emitted_tool_ids and tool_use_id not in tool_info_map:
+                                continue  # the structured output tool's acknowledgement
                             result_content = getattr(block, "content", "")
                             if isinstance(result_content, list):
                                 result_str = " ".join(getattr(item, "text", str(item)) for item in result_content)
@@ -879,5 +1403,9 @@ class ClaudeAgent(BaseExternalAgent):
                                     tool_name=info.get("name", ""),
                                     tool_args=info.get("args"),
                                     result=result_str,
+                                    tool_call_error=bool(getattr(block, "is_error", False)),
+                                    parent_tool_call_id=info.get(
+                                        "parent_tool_call_id", getattr(message, "parent_tool_use_id", None)
+                                    ),
                                 ),
                             )

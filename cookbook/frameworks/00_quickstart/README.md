@@ -1,5 +1,10 @@
 # Frameworks Quickstart: Agno, Claude Code, Codex, LangGraph, DSPy
 
+For the current Claude/Codex starting point, follow
+[framework integration walkthrough](../README.md). This folder retains
+the mixed-framework launch examples; they have separate validation from the
+Claude/Codex starting examples.
+
 AgentOS supports agents built with **Agno**, the **Claude Agent SDK** (Claude Code), **OpenAI Codex**, **LangGraph**, and **DSPy** — served through one runtime, one API, and one UI.
 
 This quickstart shows each framework on its own and all together.

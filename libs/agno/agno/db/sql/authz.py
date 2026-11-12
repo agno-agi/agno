@@ -18,7 +18,7 @@ Two properties this layer must preserve, because the authorization model depends
 """
 
 import json
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, cast
 
 from sqlalchemy import case, delete, func, insert, or_, select
 from sqlalchemy.engine import Engine
@@ -83,6 +83,17 @@ def get_policies(engine: Engine, table: Any, roles: List[str]) -> List[Tuple[str
             )
             out.extend((r[0], r[1], r[2], r[3]) for r in rows)
     return out
+
+
+def get_policies_for_resources(engine: Engine, table: Any, resources: List[str]) -> List[Tuple[str, str, str, str]]:
+    """All (role, resource, action, effect) rows on ``resources``, whichever role holds them."""
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(table.c.role, table.c.resource, table.c.action, table.c.effect).where(
+                table.c.resource.in_(resources)
+            )
+        )
+        return [(r[0], r[1], r[2], r[3]) for r in rows]
 
 
 def get_role_policies(engine: Engine, table: Any, role: str) -> List[Tuple[str, str, str]]:
@@ -196,7 +207,7 @@ def get_direct_roles_many(engine: Engine, table: Any, subjects: List[str]) -> Di
     pairs: List[Tuple[str, str]] = []
     with engine.connect() as conn:
         for stmt in _direct_roles_many_stmts(table, subjects):
-            pairs.extend((subject, role) for subject, role in conn.execute(stmt))
+            pairs.extend((cast(str, subject), cast(str, role)) for subject, role in conn.execute(stmt))
     return _collect_direct_roles(subjects, pairs)
 
 
@@ -596,6 +607,18 @@ async def aget_policies(engine: "AsyncEngine", table: Any, roles: List[str]) -> 
     return out
 
 
+async def aget_policies_for_resources(
+    engine: "AsyncEngine", table: Any, resources: List[str]
+) -> List[Tuple[str, str, str, str]]:
+    async with engine.connect() as conn:
+        rows = await conn.execute(
+            select(table.c.role, table.c.resource, table.c.action, table.c.effect).where(
+                table.c.resource.in_(resources)
+            )
+        )
+        return [(r[0], r[1], r[2], r[3]) for r in rows]
+
+
 async def aget_role_policies(engine: "AsyncEngine", table: Any, role: str) -> List[Tuple[str, str, str]]:
     async with engine.connect() as conn:
         rows = await conn.execute(select(table.c.resource, table.c.action, table.c.effect).where(table.c.role == role))
@@ -658,7 +681,7 @@ async def aget_direct_roles_many(engine: "AsyncEngine", table: Any, subjects: Li
     async with engine.connect() as conn:
         for stmt in _direct_roles_many_stmts(table, subjects):
             result = await conn.execute(stmt)
-            pairs.extend((subject, role) for subject, role in result)
+            pairs.extend((cast(str, subject), cast(str, role)) for subject, role in result)
     return _collect_direct_roles(subjects, pairs)
 
 

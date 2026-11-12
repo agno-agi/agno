@@ -441,7 +441,7 @@ class DuckDbTools(Toolkit):
         search_text_statement = f"""SELECT {fts_schema}.match_bm25({unique_key}, '{self._escape_sql_string(search_text)}') AS score,*
                                         FROM {table}
                                         WHERE score IS NOT NULL
-                                        ORDER BY score;"""
+                                        ORDER BY score DESC;"""
 
         log_debug(f"Running {search_text_statement}")
         result = self.run_query(search_text_statement)
