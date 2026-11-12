@@ -391,7 +391,14 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
 
         tools.append(
             # The file tree tools below read and write the wiki and every Product's pages.
-            CompanyTools(company_db, summary_tools=False, refresh_tools=False, wiki_tools=False, agent_id=config.id)
+            CompanyTools(
+                company_db,
+                summary_tools=False,
+                refresh_tools=False,
+                wiki_tools=False,
+                decision_tools=False,
+                agent_id=config.id,
+            )
         )
         tools.append(CompanyTaskTools(agent_os))
         instructions.append(COMPANY_INSTRUCTIONS)

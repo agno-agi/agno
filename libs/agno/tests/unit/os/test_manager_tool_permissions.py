@@ -75,8 +75,6 @@ MOVED_TOOLS = {
         {"path": "products/{product}/research.md", "content": "Research", "expected_version": 0},
         "wiki:write",
     ),
-    "log_company_decision": ({"decision": "Drop the old API"}, "decisions:write"),
-    "search_company_decisions": ({}, "decisions:read"),
 }
 # Pauses for the person before it runs, so its refusal is asserted after the confirmation.
 CONFIRMED_TOOL = "confirm_company_details"

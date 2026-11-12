@@ -1067,3 +1067,76 @@ def test_a_search_within_the_bound_carries_no_note(system):
     ids, files = task_files(system)
     found = tree_call(files, "search_company_files", query="nothing matches this")
     assert found["matches"] == [] and "note" not in found
+
+
+# ----------------------------------------------------------------- Mini Agent's model and Super Agent's tools
+
+
+def deployment(tmp_path, **options):
+    from agno.db.sqlite import SqliteDb
+    from agno.os import AgentOS
+
+    db = SqliteDb(db_file=str(tmp_path / "models.db"))
+    return AgentOS(id="models", db=db, telemetry=False, **options), db
+
+
+def test_mini_agent_uses_super_agents_model_when_company_config_names_none(tmp_path):
+    from agno.os import CompanyConfig, OSManager
+    from agno.registry import Registry
+
+    super_model, registry_model = ScriptedModel(), ScriptedModel()
+    agent_os, db = deployment(tmp_path, manager=OSManager(model=super_model), company=CompanyConfig())
+    try:
+        assert agent_os._mini_agent is not None and agent_os._mini_agent.model is super_model
+    finally:
+        db.close()
+    # Super Agent's model comes before the registry's first model.
+    agent_os, db = deployment(
+        tmp_path / "second",
+        manager=OSManager(model=super_model),
+        company=CompanyConfig(),
+        registry=Registry(models=[registry_model]),
+    )
+    try:
+        assert agent_os._mini_agent.model is super_model
+    finally:
+        db.close()
+
+
+def test_company_config_still_names_mini_agents_model_and_the_registry_still_serves_without_super_agent(tmp_path):
+    from agno.os import CompanyConfig, OSManager
+    from agno.registry import Registry
+
+    super_model, company_model, registry_model = ScriptedModel(), ScriptedModel(), ScriptedModel()
+    agent_os, db = deployment(
+        tmp_path, manager=OSManager(model=super_model), company=CompanyConfig(model=company_model)
+    )
+    try:
+        assert agent_os._mini_agent.model is company_model
+    finally:
+        db.close()
+    agent_os, db = deployment(tmp_path / "second", company=CompanyConfig(), registry=Registry(models=[registry_model]))
+    try:
+        assert agent_os._mini_agent.model is registry_model
+    finally:
+        db.close()
+
+
+def super_agent_tools(agent_os):
+    names = []
+    for toolkit in agent_os.manager.tools:
+        functions = getattr(toolkit, "functions", None) or {}
+        names.extend(functions)
+    return names
+
+
+def test_super_agent_does_not_hold_the_decision_log_tools(system):
+    from agno.tools.company import CompanyTools
+
+    held = super_agent_tools(system.os)
+    assert "log_company_decision" not in held and "search_company_decisions" not in held
+    # The tools stay on CompanyTools for custom agents, and the API stays.
+    custom = CompanyTools(system.db).functions
+    assert {"log_company_decision", "search_company_decisions"} <= set(custom)
+    listed = system.client.get("/company/decisions", headers=headers([*SCOPES, "decisions:read"]))
+    assert listed.status_code == 200, listed.text

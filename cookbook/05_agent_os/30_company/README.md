@@ -40,8 +40,9 @@ Backlog Tasks, and updates status without accepting work. Mini Agent is a
 restricted agent for unattended work. In a Routine run it holds Company tools
 and the Routine skills only, no Platform Builder, no run or platform tools, and
 proposal-only authority. In a Task run it does the accepted work; see
-"Decisions from chat and Mini Agent Tasks" below. It works with or without `manager=OSManager(...)`, but
-needs `CompanyConfig(model=...)` or a registry model. The stored schedule, the
+"Decisions from chat and Mini Agent Tasks" below. It works with or without `manager=OSManager(...)`. Its
+model is `CompanyConfig(model=...)`, else Super Agent's model when `manager=OSManager(model=...)` is set,
+else the first registry model. The stored schedule, the
 Routine API and the run and session records all name it: endpoint
 `/agents/miniagent/runs`, `target_type` `agent`, `target_id` `miniagent`.
 Mini Agent is hidden from `GET /agents`, `GET /config`, MCP and A2A, and a
@@ -187,10 +188,10 @@ GET and POST `/company/decisions` use `decisions:read` and `decisions:write`.
 Decisions are learning log entries in the `company` namespace, never a file.
 Listings support text, agent, session and age filters plus standard paging.
 The server stamps human identity; agents get identity from injected run context.
-Super Agent logs and searches decisions when a person asks. Mini Agent holds no
-decision tools and has no decision log in its prompt, in a Routine run or a Task
-run: it reads Sources and briefs that nobody vetted, so it neither writes
-Company decisions nor recalls them. A Task run on any other executor that holds
+Super Agent holds no decision-log tools. Mini Agent holds none either and has no
+decision log in its prompt, in a Routine run or a Task run: it reads Sources and
+briefs that nobody vetted, so it neither writes Company decisions nor recalls
+them. The API above and `CompanyTools` on your own agents write and search the log. A Task run on any other executor that holds
 CompanyTools is refused a write to the log.
 An agent you give `LearningMachine(decision_log=CompanyDecisionLogStore(db))`
 recalls human and agent decisions across the company; explicit searches can
@@ -300,14 +301,15 @@ With `CompanyConfig`, Super Agent holds the Company tools itself. People do
 Company work by talking to Super Agent at `/teams/superagent`. It reads company
 details, Products, Projects, Tasks, Sources and the playbook, proposes Projects
 and Backlog Tasks, edits owned proposals, writes `status.md` with a version check,
-saves company details, creates Routines and logs decisions. It can add website
+saves company details and creates Routines. It can add website
 Sources with permission and Product ownership. When the person asks, it approves
 a Project, accepts a Task and reviews a finished one; see "Decisions from chat
 and Mini Agent Tasks". Ownership changes, local Source additions, Product
 maintenance and outbound summaries are
 not among its Company tools. Routines use the model from `CompanyConfig(model=...)`,
-otherwise the first registry model. If neither exists, diagnostics warns, a
-Routine on Mini Agent fails with that reason, and manual APIs still work.
+otherwise Super Agent's model, otherwise the first registry model. If none exists,
+diagnostics warns, a Routine on Mini Agent fails with that reason, and manual APIs
+still work.
 
 The examples make no provider calls; they do not demonstrate live model quality.
 The heartbeat examples below demonstrate Routines and Sources.
