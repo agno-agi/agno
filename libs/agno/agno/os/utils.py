@@ -12,7 +12,7 @@ from starlette.middleware.cors import CORSMiddleware
 from agno.agent import Agent, AgentFactory, RemoteAgent
 from agno.agent.protocol import AgentProtocol
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.exceptions import AgnoError, ComponentRehydrationError
+from agno.exceptions import AgnoError, ComponentRehydrationError, RunNotContinuableError
 from agno.factory import (
     FactoryContextRequired,
     FactoryError,
@@ -745,6 +745,51 @@ async def amark_continue_stream_running(
             # leave the stream alone; the continue itself proceeds.
             return
         await event_stream.set_run_status(run_id, RunStatus.running)
+
+
+async def adeliver_native_decisions(
+    agent: Any, run: Any, tools: List[Any], session_id: str, user_id: Optional[str] = None
+) -> Tuple[Any, Optional[int]]:
+    """Deliver a chat's decisions to the native execution waiting on ``run``; nothing new is executed.
+
+    Returns the run as submitted and the event index to tail the live stream from, or None when this
+    replica's event stream does not know the run and the caller follows the stored run instead. A
+    refused decision (already continued, expired, or not matching the request) raises
+    RunNotContinuableError for the caller to answer.
+    """
+    import contextlib
+
+    from agno.agents._hitl import awaiting_decision, read_run, submit_decisions
+    from agno.os.event_streams import get_event_stream
+    from agno.run.base import RunStatus
+
+    run_id = run.run_id
+    event_stream = get_event_stream()
+    # The live stream is shared only when this replica's event stream knows the run, which a
+    # Redis-backed stream always does; otherwise the continuation follows the stored run.
+    tracked = await event_stream.get_run_status(run_id) is not None
+    cursor = (await event_stream.get_event_count(run_id)) - 1 if tracked else -1
+    # Reopen only a stream that is paused on an unanswered request, before the decision lands, so the
+    # events it releases reach this client. A continuation that will be refused never touches it.
+    reopened = tracked and awaiting_decision(run)
+    if reopened:
+        await amark_continue_stream_running(run_id, component=agent, session_id=session_id, user_id=user_id)
+    try:
+        submitted = await submit_decisions(agent, run_id, session_id, user_id, tools)
+    except Exception as error:
+        if reopened:
+            # The stream follows whichever continuation won: park it again only if the run is still
+            # paused, which is also the safe reading when the run cannot be read.
+            current = None
+            with contextlib.suppress(Exception):
+                current = await read_run(agent, run_id, session_id, user_id)
+            if current is None or current.status == RunStatus.paused:
+                with contextlib.suppress(Exception):
+                    await event_stream.complete_run(run_id, RunStatus.paused)
+        if isinstance(error, (ValueError, TypeError, KeyError)):
+            raise RunNotContinuableError(str(error)) from error
+        raise
+    return submitted, cursor if tracked else None
 
 
 async def acomplete_continue_stream(

@@ -83,46 +83,53 @@ def external_result_block_id(requirement_id: str) -> str:
 
 # --- Button value encoders/decoders ---
 # Pipe-delimited because Slack button values are opaque strings, not JSON — simpler to parse
+# The trailing owner is the Slack id of the user who started the run, so a click after a restart can be checked
 
 
-def encode_row_button_value(req_id: str, run_id: str, awaiting_ts: Optional[str]) -> str:
-    return f"{req_id}|{run_id}|{awaiting_ts or ''}"
+def encode_row_button_value(req_id: str, run_id: str, awaiting_ts: Optional[str], owner: Optional[str] = None) -> str:
+    return f"{req_id}|{run_id}|{awaiting_ts or ''}|{owner or ''}"
 
 
-def decode_row_button_value(value: str) -> Tuple[str, str, Optional[str]]:
-    # Limit split to 2 so awaiting_ts (which may contain pipes in edge cases) stays intact
-    parts = value.split("|", 2)
-    if len(parts) == 2:
-        return parts[0], parts[1], None
-    if len(parts) == 3:
-        return parts[0], parts[1], parts[2] or None
-    return "", "", None
-
-
-def encode_submit_button_value(run_id: str, awaiting_ts: Optional[str]) -> str:
-    return f"{run_id}|{awaiting_ts or ''}"
-
-
-def decode_submit_button_value(value: str) -> Tuple[str, Optional[str]]:
-    # Limit split to 1 so awaiting_ts stays intact
-    parts = value.split("|", 1)
-    if len(parts) == 1:
-        return parts[0], None
-    return parts[0], parts[1] or None
-
-
-# --- Admin approval button value (4 fields: approval_id, req_id, run_id, awaiting_ts) ---
-
-
-def encode_admin_approval_button_value(approval_id: str, req_id: str, run_id: str, awaiting_ts: Optional[str]) -> str:
-    return f"{approval_id}|{req_id}|{run_id}|{awaiting_ts or ''}"
-
-
-def decode_admin_approval_button_value(value: str) -> Tuple[str, str, str, Optional[str]]:
-    # 4 fields: approval_id, req_id, run_id, awaiting_ts
+def decode_row_button_value(value: str) -> Tuple[str, str, Optional[str], Optional[str]]:
+    # Limit split to 3 so owner stays intact
     parts = value.split("|", 3)
+    if len(parts) == 2:
+        return parts[0], parts[1], None, None
+    if len(parts) == 3:
+        return parts[0], parts[1], parts[2] or None, None
+    if len(parts) == 4:
+        return parts[0], parts[1], parts[2] or None, parts[3] or None
+    return "", "", None, None
+
+
+def encode_submit_button_value(run_id: str, awaiting_ts: Optional[str], owner: Optional[str] = None) -> str:
+    return f"{run_id}|{awaiting_ts or ''}|{owner or ''}"
+
+
+def decode_submit_button_value(value: str) -> Tuple[str, Optional[str], Optional[str]]:
+    # Limit split to 2 so owner stays intact
+    parts = value.split("|", 2)
+    if len(parts) == 1:
+        return parts[0], None, None
+    if len(parts) == 2:
+        return parts[0], parts[1] or None, None
+    return parts[0], parts[1] or None, parts[2] or None
+
+
+# --- Admin approval button value (5 fields: approval_id, req_id, run_id, awaiting_ts, owner) ---
+
+
+def encode_admin_approval_button_value(
+    approval_id: str, req_id: str, run_id: str, awaiting_ts: Optional[str], owner: Optional[str] = None
+) -> str:
+    return f"{approval_id}|{req_id}|{run_id}|{awaiting_ts or ''}|{owner or ''}"
+
+
+def decode_admin_approval_button_value(value: str) -> Tuple[str, str, str, Optional[str], Optional[str]]:
+    parts = value.split("|", 4)
     if len(parts) < 3:
-        return "", "", "", None
+        return "", "", "", None, None
     approval_id, req_id, run_id = parts[0], parts[1], parts[2]
     awaiting_ts = parts[3] if len(parts) > 3 and parts[3] else None
-    return approval_id, req_id, run_id, awaiting_ts
+    owner = parts[4] if len(parts) > 4 and parts[4] else None
+    return approval_id, req_id, run_id, awaiting_ts, owner

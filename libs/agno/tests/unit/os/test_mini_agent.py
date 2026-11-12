@@ -17,7 +17,7 @@ from agno.models.base import Model
 from agno.models.message import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.os import AgentOS, CompanyConfig, OSManager
-from agno.registry._reserved import BUILDER_ID, MANAGER_TEAM_ID, RESERVED_MANAGER_IDS, MINI_AGENT_ID
+from agno.registry._reserved import BUILDER_ID, MANAGER_TEAM_ID, MINI_AGENT_ID, RESERVED_MANAGER_IDS
 from agno.run.authorization import AUTHORIZATION_HEADER, authorization_scope
 from agno.tools.agentos import AgentOSTools
 from agno.tools.company import CompanyTools

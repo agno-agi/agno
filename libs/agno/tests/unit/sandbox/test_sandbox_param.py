@@ -294,6 +294,9 @@ async def test_unsupported_run_options_are_rejected(coordinator, sandbox):
     agent = ClaudeAgent(id="coder", sandbox=sandbox)
     with pytest.raises(ValueError, match="Unsupported sandbox run options: dependencies"):
         await agent.arun("hello", session_id="s1", dependencies={"a": 1})
+    # The dependencies block is built for agents without a sandbox only; a sandbox still refuses the options.
+    with pytest.raises(ValueError, match="Unsupported sandbox run options: add_dependencies_to_context, dependencies"):
+        await agent.arun("hello", session_id="s1", dependencies={"a": 1}, add_dependencies_to_context=True)
 
 
 def test_codex_string_sandbox_is_a_deprecated_alias_for_sandbox_mode():

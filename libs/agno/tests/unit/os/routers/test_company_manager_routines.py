@@ -28,8 +28,8 @@ from agno.registry._reserved import (
     BUILDER_ID,
     LEGACY_PRODUCT_MANAGER_ID,
     MANAGER_TEAM_ID,
-    RESERVED_MANAGER_IDS,
     MINI_AGENT_ID,
+    RESERVED_MANAGER_IDS,
 )
 from agno.run import RunContext
 from agno.run.authorization import AUTHORIZATION_KEY, current_authorization

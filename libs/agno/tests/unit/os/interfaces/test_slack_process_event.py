@@ -137,24 +137,170 @@ class TestMemory:
 
 class TestTerminalEvents:
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("ev", [RunEvent.run_error.value, RunEvent.run_cancelled.value])
-    async def test_run_terminal_returns_true(self, ev):
+    @pytest.mark.parametrize(
+        "ev,expected", [(RunEvent.run_error.value, "error"), (RunEvent.run_cancelled.value, "cancelled")]
+    )
+    async def test_run_terminal_returns_true(self, ev, expected):
         state = StreamState()
         stream = _stream()
         chunk = _chunk(ev, content="something went wrong")
         result = await process_event(ev, chunk, state, stream)
         assert result is True
-        assert state.terminal_status == "error"
+        assert state.terminal_status == expected
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("ev", ["WorkflowError", "WorkflowCancelled"])
-    async def test_workflow_terminal_returns_true(self, ev):
+    @pytest.mark.parametrize("ev,expected", [("WorkflowError", "error"), ("WorkflowCancelled", "cancelled")])
+    async def test_workflow_terminal_returns_true(self, ev, expected):
         state = StreamState()
         stream = _stream()
         chunk = _chunk(ev, error="wf failed", content=None)
         result = await process_event(ev, chunk, state, stream)
         assert result is True
+        assert state.terminal_status == expected
+
+    @pytest.mark.asyncio
+    async def test_cancel_renders_stopped_not_error(self):
+        state = StreamState()
+        await process_event(RunEvent.run_cancelled.value, _chunk(RunEvent.run_cancelled.value), state, _stream())
+        assert "_Stopped._" in state.text_buffer
+        assert "Error" not in state.text_buffer
+
+
+class TestTeamMemberEvents:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ev", [RunEvent.run_error.value, RunEvent.run_cancelled.value])
+    async def test_member_error_or_cancel_is_not_terminal(self, ev):
+        state = StreamState(entity_type="team", entity_name="Team")
+        chunk = _chunk(ev, content="member failed", team_id=None, parent_run_id=None)
+        assert await process_event(ev, chunk, state, _stream()) is False
+        assert state.terminal_status is None
+        assert state.text_buffer == ""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ev", [TeamRunEvent.run_error.value, TeamRunEvent.run_cancelled.value])
+    async def test_nested_team_error_or_cancel_is_not_terminal(self, ev):
+        state = StreamState(entity_type="team", entity_name="Team")
+        chunk = _chunk(ev, content="sub-team failed", team_id="sub", parent_run_id="leader-run")
+        assert await process_event(ev, chunk, state, _stream()) is False
+        assert state.terminal_status is None
+
+    @pytest.mark.asyncio
+    async def test_member_cancel_then_team_cancel_only_leader_ends_reply(self):
+        state = StreamState(entity_type="team", entity_name="Team")
+        stream = _stream()
+        member = _chunk(RunEvent.run_cancelled.value, team_id=None, parent_run_id=None)
+        leader = _chunk(TeamRunEvent.run_cancelled.value, team_id="team-1", parent_run_id=None)
+        assert await process_event(RunEvent.run_cancelled.value, member, state, stream) is False
+        assert await process_event(TeamRunEvent.run_cancelled.value, leader, state, stream) is True
+        assert state.terminal_status == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_leader_error_is_terminal(self):
+        state = StreamState(entity_type="team", entity_name="Team")
+        chunk = _chunk(TeamRunEvent.run_error.value, content="boom", team_id="team-1", parent_run_id=None)
+        assert await process_event(TeamRunEvent.run_error.value, chunk, state, _stream()) is True
         assert state.terminal_status == "error"
+
+    @pytest.mark.asyncio
+    async def test_nested_team_pause_is_not_the_leaders(self):
+        state = StreamState(entity_type="team", entity_name="Team")
+        chunk = _chunk(TeamRunEvent.run_paused.value, team_id="sub", parent_run_id="leader-run")
+        await process_event(TeamRunEvent.run_paused.value, chunk, state, _stream())
+        assert state.paused_event is None
+
+    @pytest.mark.asyncio
+    async def test_leader_pause_reaches_the_pause_handler(self):
+        state = StreamState(entity_type="team", entity_name="Team")
+        chunk = _chunk(TeamRunEvent.run_paused.value, team_id="team-1", parent_run_id=None)
+        await process_event(TeamRunEvent.run_paused.value, chunk, state, _stream())
+        assert state.paused_event is chunk
+        assert state.terminal_status == "paused"
+
+
+class TestContentDedupe:
+    @pytest.mark.asyncio
+    async def test_output_model_draft_is_dropped(self):
+        state = StreamState()
+        stream = _stream()
+        draft = _chunk(RunEvent.run_intermediate_content.value, content="draft answer")
+        final = _chunk(RunEvent.run_content.value, content="final answer")
+        await process_event(RunEvent.run_intermediate_content.value, draft, state, stream)
+        await process_event(RunEvent.run_content.value, final, state, stream)
+        completed = _chunk(RunEvent.run_completed.value, content="final answer")
+        await process_event(RunEvent.run_completed.value, completed, state, stream)
+        assert state.text_buffer == "final answer"
+
+    @pytest.mark.asyncio
+    async def test_draft_shown_when_no_final_content(self):
+        state = StreamState()
+        stream = _stream()
+        draft = _chunk(RunEvent.run_intermediate_content.value, content="draft answer")
+        await process_event(RunEvent.run_intermediate_content.value, draft, state, stream)
+        await process_event(
+            RunEvent.run_completed.value, _chunk(RunEvent.run_completed.value, content=None), state, stream
+        )
+        assert state.text_buffer == "draft answer"
+
+    @pytest.mark.asyncio
+    async def test_run_completed_content_shown_only_when_nothing_streamed(self):
+        streamed = StreamState()
+        stream = _stream()
+        await process_event(
+            RunEvent.run_content.value, _chunk(RunEvent.run_content.value, content="hi"), streamed, stream
+        )
+        streamed.flush()
+        await process_event(
+            RunEvent.run_completed.value, _chunk(RunEvent.run_completed.value, content="hi"), streamed, stream
+        )
+        assert streamed.text_buffer == ""
+
+        silent = StreamState()
+        await process_event(
+            RunEvent.run_completed.value, _chunk(RunEvent.run_completed.value, content="hi"), silent, stream
+        )
+        assert silent.text_buffer == "hi"
+
+    @pytest.mark.asyncio
+    async def test_team_completed_content_shown_when_nothing_streamed(self):
+        state = StreamState(entity_type="team", entity_name="Team")
+        chunk = _chunk(TeamRunEvent.run_completed.value, content="team answer", team_id="team-1", parent_run_id=None)
+        await process_event(TeamRunEvent.run_completed.value, chunk, state, _stream())
+        assert state.text_buffer == "team answer"
+
+    @pytest.mark.asyncio
+    async def test_continuation_strips_paused_content(self):
+        state = StreamState(paused_content="Let me check.")
+        chunk = _chunk(RunEvent.run_completed.value, content="Let me check. Done.")
+        await process_event(RunEvent.run_completed.value, chunk, state, _stream())
+        assert state.text_buffer == "Done."
+
+
+class TestTaskOutput:
+    @pytest.mark.asyncio
+    async def test_task_output_is_plain_string(self):
+        state = StreamState()
+        stream = _stream()
+        chunk = _chunk(RunEvent.tool_call_error.value, tool=_tool_mock(), agent_name=None, error="x" * 300)
+        await process_event(RunEvent.tool_call_error.value, chunk, state, stream)
+        sent = stream.append.call_args.kwargs["chunks"][0]
+        assert sent["output"] == "x" * 200
+
+
+class TestWorkflowPause:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ev", ["WorkflowPaused", "StepPaused", "StepExecutorPaused"])
+    async def test_workflow_pause_notice(self, ev):
+        state = StreamState(entity_type="workflow")
+        await process_event(ev, _chunk(ev), state, _stream())
+        assert state.terminal_status == "workflow_paused"
+        assert "Run paused — please resolve it in AgentOS" in state.text_buffer
+
+    @pytest.mark.asyncio
+    async def test_notice_shown_once(self):
+        state = StreamState(entity_type="workflow")
+        await process_event("StepPaused", _chunk("StepPaused"), state, _stream())
+        await process_event("WorkflowPaused", _chunk("WorkflowPaused"), state, _stream())
+        assert state.text_buffer.count("Run paused — please resolve it in AgentOS") == 1
 
 
 class TestWorkflowSuppression:

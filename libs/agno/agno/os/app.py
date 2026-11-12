@@ -215,7 +215,10 @@ def _error_body(detail: str, exc: BaseException) -> Dict[str, Any]:
 
 @asynccontextmanager
 async def interface_lifespan(_, agent_os: "AgentOS"):
-    """Closes the interfaces that hold running work (e.g. A2A tasks) on shutdown."""
+    """Starts the interfaces' background work on startup and closes their running work (e.g. A2A tasks) on shutdown."""
+    for interface in agent_os.interfaces:
+        await interface.astart()
+
     yield
 
     for interface in agent_os.interfaces:
@@ -1156,6 +1159,17 @@ class AgentOS:
                 # Agent Cards declare how to authenticate when the OS requires a bearer token
                 if getattr(interface, "security_schemes", None) is None:
                     interface.security_schemes = self._get_a2a_security_schemes()  # type: ignore[attr-defined]
+            if interface.type == "slack" and interface.team is not None and interface.team is self.manager:
+                if self.authorization and getattr(interface, "users", None) is None:
+                    raise ValueError(
+                        "Slack serving Super Agent with AgentOS(authorization=...) requires Slack identity mapping: "
+                        "pass Slack(users={slack_user_id: principal_id})."
+                    )
+                # Slack serving the Manager team reaches Company through the AgentOS that owns it
+                if getattr(interface, "company", None) is None:
+                    from agno.os.interfaces.slack.company import CompanyBridge
+
+                    interface.company = CompanyBridge(self)  # type: ignore[attr-defined]
             interface_router = interface.get_router()
             if getattr(interface, "authenticates_own_requests", False):
                 self._public_interface_routes.extend(
@@ -2976,8 +2990,9 @@ class AgentOS:
                 self._register_db_with_validation(knowledge_dbs, knowledge_base.contents_db)
 
         for interface in self.interfaces or []:
-            if interface.agent and interface.agent.db:
-                self._register_db_with_validation(dbs, interface.agent.db)
+            agent_db = getattr(interface.agent, "db", None)
+            if agent_db:
+                self._register_db_with_validation(dbs, agent_db)
             elif interface.team and interface.team.db:
                 self._register_db_with_validation(dbs, interface.team.db)
 

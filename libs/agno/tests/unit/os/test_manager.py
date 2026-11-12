@@ -176,6 +176,31 @@ def test_manager_cannot_dispatch_for_a_caller_with_only_its_run_scope(db):
     assert all(getattr(session, "agent_id", None) != "restricted" for session in db.get_sessions())
 
 
+@pytest.mark.parametrize("subclass", [False, True])
+def test_slack_serving_the_manager_requires_identity_mapping_under_authorization(db, subclass):
+    pytest.importorskip("slack_bolt")
+    from agno.os import Authorization
+    from agno.os.interfaces.slack import Slack
+
+    class CustomSlack(Slack):
+        pass
+
+    interface_class = CustomSlack if subclass else Slack
+
+    secret = "manager-test-signing-key-at-least-32-characters"
+    os = AgentOS(
+        id="manager-test",
+        db=db,
+        telemetry=False,
+        authorization=Authorization(verification_keys=[secret], algorithm="HS256", audience="manager-test"),
+        manager=OSManager(model=OfflineModel()),
+    )
+    # Without users=, every member of the workspace would run Super Agent with no permission checks
+    os.interfaces.append(interface_class(team=os.manager, token="xoxb-test", signing_secret="slack-secret"))
+    with pytest.raises(ValueError, match="requires Slack identity mapping"):
+        os.get_app()
+
+
 @pytest.mark.parametrize("service_account", [False, True])
 @pytest.mark.parametrize("admin", [False, True])
 @pytest.mark.parametrize("path", ["/teams/superagent/runs", "/agents/platform-builder/runs"])
