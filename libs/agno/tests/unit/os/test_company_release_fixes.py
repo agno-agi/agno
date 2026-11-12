@@ -369,6 +369,31 @@ def test_a_task_run_on_mini_agent_reports_the_sandboxed_agent_as_a_refusal(syste
     assert "accept the Task on" in content and runs == [], content
 
 
+@pytest.mark.parametrize("use_async", [False, True])
+def test_an_agent_with_its_own_run_tools_does_not_run_a_sandboxed_agent_in_a_task_run(system, monkeypatch, use_async):
+    import json
+
+    from agno.run.authorization import authorization_scope
+    from agno.tools.studio_runner import StudioRunnerTools
+    from tests.unit.os.test_mini_agent_tasks import task_authority
+
+    runs = sandboxed(system, monkeypatch)
+    engineer = next(agent for agent in system.os.agents if agent.id == "engineer")
+    # The run tools a deployment gives its own agent, which is then a Task's executor.
+    tools = StudioRunnerTools(include_agents=[system.writer, engineer])
+    with authorization_scope(lambda: task_authority()):
+        if use_async:
+            reply = asyncio.run(tools.arun_agent("engineer", "Fix the bug"))
+            healthy = asyncio.run(tools.arun_agent("writer", "Write"))
+        else:
+            reply = tools.run_agent("engineer", "Fix the bug")
+            healthy = tools.run_agent("writer", "Write")
+    error = json.loads(reply)["error"]
+    assert "sandbox" in error and "accept the Task on" in error, error
+    assert runs == []
+    assert json.loads(healthy)["status"] == "COMPLETED"
+
+
 # ----------------------------------------------------------------- the auto-accept tools check before they tell
 
 
@@ -815,6 +840,50 @@ def test_a_named_executor_with_run_tools_needs_both_accepting_and_starting_permi
             ("writer", "COMPLETED" if allowed else "REFUSED")
         ]
         assert saved["accepted_by"] == "alice"
+    finally:
+        system.db.close()
+
+
+@pytest.mark.parametrize("authorization", [False, True])
+def test_a_task_a_policy_accepted_runs_no_other_component_on_a_named_executor(tmp_path, authorization):
+    # The executor is an agent with its own run tools. Nobody read the brief of a Task a policy accepted.
+    system = PolicySystem(tmp_path, authorization=authorization, pausing="agent")
+    try:
+        system.helper.model = ScriptedModel([("run_agent", {"agent_id": "writer", "message": "Write the notes"})])
+        product_id, routine_id = system.declare(auto_accept=AutoAccept(default_executor="helper"))
+        if authorization:
+            may_run = chat(scopes=[*SCOPES, "agents:helper:run", "agents:helper:read", "agents:writer:run"])
+            assert turn_on(system, routine_id, may_run).startswith("Auto-accept is on")
+        _, task = system.proposes(product_id, routine_id)
+        system.tick()
+        assert system.db.get_task(task["id"])["executor_id"] == "helper"
+
+        async def run():
+            job = await system.queue.store.claim_job(system.queue.worker_id, system.queue.config.lock_grace_seconds)
+            await system.queue._execute_claimed(job)
+
+        asyncio.run(run())
+        saved = system.db.get_task(task["id"])
+        assert system.writer.model.turns == 0, saved["result"]
+        assert [(entry["id"], entry["status"]) for entry in saved["result"]["invoked"]] == [("writer", "REFUSED")]
+    finally:
+        system.db.close()
+
+
+def test_a_task_a_person_accepted_still_runs_components_where_authorization_is_off(tmp_path):
+    system = PolicySystem(tmp_path, authorization=False, pausing="agent")
+    try:
+        system.helper.model = ScriptedModel([("run_agent", {"agent_id": "writer", "message": "Write the notes"})])
+        task = system.proposal()
+        accepted = system.client.post(
+            f"/company/tasks/{task['id']}/transitions",
+            json={"target": "ready", "reason": "Approved", "executor_type": "agent", "executor_id": "helper"},
+            headers=headers(),
+        )
+        assert accepted.status_code == 200, accepted.text
+        saved = system.execute(task["id"])
+        assert system.writer.model.turns == 1
+        assert [(entry["id"], entry["status"]) for entry in saved["result"]["invoked"]] == [("writer", "COMPLETED")]
     finally:
         system.db.close()
 

@@ -147,20 +147,6 @@ class _TaskRunTools(StudioRunnerTools):
             raise StudioRunnerError(refusal)
         return super()._inherited_dispatch_state(run_context)
 
-    def _agent_for_run(self, agent_id: str, actor: Optional[str] = None) -> Any:
-        from agno.company.sandbox import _is_sandboxed
-
-        agent = super()._agent_for_run(agent_id, actor=actor)
-        if agent is not None and _is_sandboxed(agent):
-            # Starting a Task on a sandboxed executor checks its repository and that no other sandboxed
-            # Task is live. A run from inside another Task passes neither check.
-            raise StudioRunnerError(
-                f"Agent '{agent.id}' runs in a sandbox, and a sandboxed agent runs only as a Task's own executor. "
-                f"Do not run it from this Task. Report that a person must accept the Task on agent '{agent.id}' "
-                "for it to do this work."
-            )
-        return agent
-
     def _list_payload(self, component_type: str, key: str, actor: Optional[str] = None) -> str:
         from agno.company.sandbox import _is_sandboxed
 
@@ -175,19 +161,6 @@ class _TaskRunTools(StudioRunnerTools):
         data["total"] = data.get("total", len(data[key])) - (len(data[key]) - len(listed))
         data[key], data["count"] = listed, len(listed)
         return json.dumps(data)
-
-    def _require_no_cycle(
-        self, running: List[str], inherited: List[str], component_type: str, component_id: str
-    ) -> str:
-        from agno.run.authorization import current_authorization
-
-        allowed = getattr(current_authorization(), "run_components", [])
-        if allowed is not None and (component_type, component_id) not in allowed:
-            raise StudioRunnerError(
-                f"The policy that accepted this Task does not allow running {component_type} '{component_id}'. "
-                "Do the work yourself, or report that a person must accept the Task for it to run components."
-            )
-        return super()._require_no_cycle(running, inherited, component_type, component_id)
 
     @staticmethod
     def _run_payload(id_key: str, component_id: str, run_output: Any) -> str:

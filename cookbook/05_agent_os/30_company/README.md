@@ -503,7 +503,10 @@ Agent only when you would run those components yourself.
 
 The accepting person's saved permissions bound component runs throughout
 delegation and continuation, on Mini Agent and on every other executor that
-holds run tools; the starter's permissions still apply. Task runs
+holds run tools; the starter's permissions still apply. A Task a policy
+accepted runs no other component, on any executor. No Task run starts a
+sandboxed agent through the run tools: a sandboxed agent runs only as a Task's
+own executor. Task runs
 can use `read_company_file` to read `products/<product-id>/status.md` and its
 version before writing it with `write_company_file`, and reread it after a
 version conflict to preserve concurrent edits.
@@ -1062,8 +1065,9 @@ Every field has a default:
   workflow) is read from the registry. Studio components cannot share an ID
   across kinds. Components defined in code can; a policy that names such an ID
   is refused, never guessed. Give each component its own ID.
-- **A Task on Mini Agent** that a policy accepted holds no run tools. Work that
-  needs a real worker names it as the executor, in the policy or on the proposal.
+- **A Task on Mini Agent** that a policy accepted holds no run tools, and on an
+  executor with its own run tools those tools refuse. Work that needs a real
+  worker names it as the executor, in the policy or on the proposal.
 - **A policy saved with `executor_type` and `executor_id`** keeps working. It
   allows that one executor and uses it by default, approves no Project, and keeps
   its version and its acceptance count. The API still reads those two fields, and

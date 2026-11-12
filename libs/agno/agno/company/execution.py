@@ -736,7 +736,7 @@ class _ExecutorAuthorization(RunAuthorization):
     """Attenuate the caller's authority for Company execution and its delegation.
 
     task_id names the accepted Task this run executes. The queue sets it from the claimed job.
-    run_components bounds what Mini Agent may run in that Task: None leaves it to the saved permissions
+    run_components bounds what the run tools may run in that Task: None leaves it to the saved permissions
     of the person who accepted and the starter's permissions, and a list admits only the (type, id) pairs in it.
     acceptance preserves the accepting person's component-run permissions through delegation and resume.
     product_id is the Product of that Task. The queue sets it, and Product-scoped writes and Source reads
