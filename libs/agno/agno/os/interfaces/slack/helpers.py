@@ -253,7 +253,7 @@ class LookupCache:
     """Remembers recent Slack lookups (channel names, user identities, session ids) so a message skips the call.
 
     Entries expire so a renamed channel or a changed email is picked up again; only successful
-    lookups are cached. Instantiated once per mounted Slack interface.
+    lookups are cached, except sender names. Instantiated once per mounted Slack interface.
     """
 
     LOOKUP_TTL_SECONDS: float = 600.0
@@ -305,6 +305,22 @@ class LookupCache:
         if name:
             self.set(key, (resolved_id, name))
         return resolved_id, name
+
+    async def sender_name(self, async_client: Any, user_id: str, bot_id: str) -> Optional[str]:
+        # A user-token post carries both ids; the human is the sender, as for the run's owner
+        sender = user_id or bot_id
+        if not sender:
+            return None
+        key = f"name:{sender}"
+        name = self.get(key)
+        if name is None:
+            if user_id:
+                _, name = await self.user_identity(async_client, user_id)
+            else:
+                _, name = await self.bot_identity(async_client, bot_id)
+            # An unknown name is kept too, so an app without users:read is not looked up on every message
+            self.set(key, name or "")
+        return name or None
 
 
 async def resolve_channel_name(async_client: Any, channel_id: str) -> Optional[str]:

@@ -120,6 +120,39 @@ async def test_handle_message_resolves_user_identity_with_cache():
 
 
 @pytest.mark.asyncio
+async def test_handle_message_names_sender_without_changing_user_id():
+    ctx = make_ctx()
+    client = make_async_client_mock()
+    with patch(f"{_EXECUTOR}.run_event", new_callable=AsyncMock) as run_event:
+        await handle_message(make_event_body(event_id="Ev1"), client, ctx)
+        await handle_message(make_event_body(event_id="Ev2", ts="1700000000.000200"), client, ctx)
+    event_context = run_event.call_args.args[0]
+    assert event_context.display_name == "Test User"
+    assert event_context.user_id == event_context.owner == "U123"
+    # The sender is looked up once; the other users.info call names the bot
+    assert [call.kwargs["user"] for call in client.users_info.await_args_list] == [BOT_USER_ID, "U123"]
+
+
+@pytest.mark.asyncio
+async def test_handle_message_unknown_sender_name_is_not_retried_each_message():
+    ctx = make_ctx()
+    client = make_async_client_mock()
+    names = client.users_info.return_value
+
+    async def users_info(user):
+        if user == "U123":
+            raise RuntimeError("missing_scope")
+        return names
+
+    client.users_info = AsyncMock(side_effect=users_info)
+    with patch(f"{_EXECUTOR}.run_event", new_callable=AsyncMock) as run_event:
+        await handle_message(make_event_body(event_id="Ev1"), client, ctx)
+        await handle_message(make_event_body(event_id="Ev2", ts="1700000000.000200"), client, ctx)
+    assert run_event.call_args.args[0].display_name is None
+    assert [call.kwargs["user"] for call in client.users_info.await_args_list].count("U123") == 1
+
+
+@pytest.mark.asyncio
 async def test_handle_message_legacy_session_probe_is_cached():
     agent = make_agent_mock()
     agent.aget_session = AsyncMock(return_value={"session_id": "agent-1:1699999999.000100"})
