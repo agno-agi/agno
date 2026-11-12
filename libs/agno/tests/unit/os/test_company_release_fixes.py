@@ -564,8 +564,8 @@ def test_the_schemas_accept_a_never_edited_record_and_refuse_what_is_not_a_task(
 
 def decide(system, tool, arguments):
     """One decision through Super Agent: the model calls the tool, the person confirms, the run continues."""
-    from tests.unit.os.test_company_decision_tools import ask, person
     from agno.run.authorization import authorization_scope
+    from tests.unit.os.test_company_decision_tools import ask, person
 
     paused = ask(system, tool, arguments)
     assert paused.is_paused and len(paused.requirements) == 1, paused.content

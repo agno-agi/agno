@@ -151,7 +151,7 @@ class _TaskRunTools(StudioRunnerTools):
         from agno.company.sandbox import _is_sandboxed
 
         agent = super()._agent_for_run(agent_id, actor=actor)
-        if _is_sandboxed(agent):
+        if agent is not None and _is_sandboxed(agent):
             # Starting a Task on a sandboxed executor checks its repository and that no other sandboxed
             # Task is live. A run from inside another Task passes neither check.
             raise StudioRunnerError(
