@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 from typing import Any, Dict, List, Optional
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -60,6 +61,7 @@ def _make_entity(run_output: Any = None) -> AsyncMock:
     entity.id = "agent-1"
     entity.name = "Test Agent"
     entity.db = None
+    entity._uses_native_hitl = False
     entity.aget_session = AsyncMock(return_value=None)
     entity.aget_run_output = AsyncMock(return_value=run_output)
     return entity
@@ -716,7 +718,9 @@ def _sse(event: Any) -> str:
 
 def _native_run(requirements: List[RunRequirement], native_state: Dict[str, Any]) -> Mock:
     run_output = _paused_run(requirements)
-    run_output.metadata = {"native_hitl": native_state}
+    # A live native request expires in the future
+    requests = {tool_call_id: {"expires_at": time.time() + 60} for tool_call_id in native_state.get("pending", [])}
+    run_output.metadata = {"native_hitl": {"requests": requests, **native_state}}
     run_output.events = []
     return run_output
 
@@ -833,7 +837,28 @@ class TestSandboxNativeApprovals:
         gate.assert_not_awaited()
         deliver.assert_not_awaited()
         entity.acontinue_run.assert_not_called()
-        client.chat_update.assert_not_awaited()
+        # The card is frozen with neutral text, so it is not clicked again
+        assert client.chat_update.call_args.kwargs["text"] == "This approval is no longer active."
+
+    @pytest.mark.asyncio
+    async def test_expired_native_request_cancels_the_run_and_freezes_the_card(self):
+        # Still paused, but its only request expired before anyone answered it
+        entity = _native_entity(
+            _native_run([_make_requirement()], {"pending": ["nr-1"], "requests": {"nr-1": {"expires_at": 1}}})
+        )
+        client, _ = _native_client()
+        deliver = AsyncMock()
+
+        with (
+            patch("agno.os.interfaces.slack.executor.adeliver_native_decisions", new=deliver),
+            patch("agno.os.interfaces.slack.executor.cancel_component_run", new=AsyncMock()) as cancel,
+        ):
+            await hitl.handle_submit(_submit_payload(_input_blocks()), client, make_ctx(agent=entity))
+
+        cancel.assert_awaited_once_with(entity, "run-1")
+        deliver.assert_not_awaited()
+        assert _ephemerals(client) == [hitl._NO_LONGER_ACTIVE_MESSAGE]
+        assert client.chat_update.call_args.kwargs["text"] == "This approval is no longer active."
 
     @pytest.mark.asyncio
     async def test_native_repause_posts_new_card(self):

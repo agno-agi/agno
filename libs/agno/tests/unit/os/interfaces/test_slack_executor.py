@@ -1,5 +1,6 @@
 import asyncio
 import json
+from types import SimpleNamespace
 from typing import Any, List, Optional
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -282,6 +283,44 @@ class TestStatus:
         await run_event(make_message_event_context(ctx), client, ctx)
         assert any("Still working on an earlier message" in text for text in posted(client))
         assert status_calls(client)[-1] == ""
+
+    @pytest.mark.asyncio
+    async def test_session_busy_on_an_expired_native_approval_cancels_it_and_runs_once_more(self):
+        from agno.exceptions import SessionBusyError
+
+        attempts = {"n": 0}
+
+        async def arun(*args, **kwargs):
+            attempts["n"] += 1
+            if attempts["n"] == 1:
+                raise SessionBusyError("busy", run_id="stale-run")
+            yield content("the answer " * 20, run_id=kwargs["run_id"])
+            yield RunCompletedEvent(run_id=kwargs["run_id"])
+
+        async def passthrough(events, *args, **kwargs):
+            async for event in events:
+                yield event
+
+        # Paused after a restart on a native request that expired unanswered
+        stale = Mock(
+            run_id="stale-run",
+            status=RunStatus.paused,
+            metadata={"native_hitl": {"pending": ["tc1"], "requests": {"tc1": {"expires_at": 1}}}},
+        )
+        entity = make_streaming_entity(_uses_native_hitl=True)
+        entity.arun = Mock(side_effect=arun)
+        entity.aget_run_output = AsyncMock(return_value=stale)
+        ctx = make_ctx(agent=entity, streaming=True)
+        client = make_client()
+        with (
+            patch.object(executor, "map_background_stream_to_run_events", side_effect=passthrough),
+            patch.object(executor, "cancel_component_run", AsyncMock()) as cancel,
+        ):
+            await run_event(make_message_event_context(ctx), client, ctx)
+        cancel.assert_awaited_once_with(entity, "stale-run")
+        assert attempts["n"] == 2
+        assert "the answer" in stream_text(client)
+        assert not any("Waiting for a decision" in text for text in posted(client))
 
 
 # -- Run kwargs --
@@ -1421,6 +1460,25 @@ class TestStoredOutcome:
             await run_event(make_message_event_context(ctx), client, ctx)
         assert any("Sorry, there was an error" in text for text in posted(client))
         assert entity.aget_run_output.await_count > 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("sandbox,answered", [(SimpleNamespace(execution_timeout=60), True), (None, False)])
+    async def test_run_its_queue_ticket_still_owns_is_read_for_the_sandbox_execution_timeout(self, sandbox, answered):
+        # hitl_timeout is 0.05 s; the work outlasts it while its queue ticket is still running, which only
+        # the sandbox's execution_timeout covers: without a sandbox the ticket gets hitl_timeout again
+        entity = self._entity([RunStatus.running] * 30 + [RunStatus.completed])
+        entity.sandbox = sandbox
+        ctx = make_ctx(agent=entity, streaming=True)
+        client = make_client()
+        with (
+            patch.object(executor, "map_background_stream_to_run_events", side_effect=self._expired),
+            patch.object(executor, "log_error"),
+            patch("agno.os.utils.run_ticket_active", AsyncMock(return_value=True)),
+            patch("agno.os.utils._STORED_RUN_TICKET_RECHECK_SECONDS", 0.0),
+        ):
+            await run_event(make_message_event_context(ctx), client, ctx)
+        assert ("the answer" in stream_text(client)) is answered
+        assert any("Sorry, there was an error" in text for text in posted(client)) is (not answered)
 
 
 # -- A decision that could not be recorded --

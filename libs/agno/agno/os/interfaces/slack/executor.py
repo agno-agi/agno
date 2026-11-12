@@ -4,12 +4,21 @@ import asyncio
 import contextlib
 import html
 import time
+from functools import partial
 from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional, Set
 
 from fastapi import HTTPException
 
 from agno.agent import Agent, RemoteAgent, RunEvent
-from agno.agents._hitl import db_call, hitl_state, live_native_run, read_run, tail_stored
+from agno.agents._hitl import (
+    awaiting_decision,
+    db_call,
+    hitl_state,
+    live_native_run,
+    pending_ids,
+    read_run,
+    tail_stored,
+)
 from agno.agents.base import BaseExternalAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.exceptions import InputCheckError, SessionBusyError
@@ -36,7 +45,12 @@ from agno.os.interfaces.slack.stream import SlackStream, StreamStopped
 from agno.os.interfaces.slack.types import tool_args, tool_name, truncate
 from agno.os.job_queue import araise_if_ticket_owns_continue, get_active_queue_worker
 from agno.os.services.runs import cancel_component_run
-from agno.os.utils import acomplete_continue_stream, adeliver_native_decisions, queued_run_tail_streamer
+from agno.os.utils import (
+    acomplete_continue_stream,
+    adeliver_native_decisions,
+    await_stored_run,
+    queued_run_tail_streamer,
+)
 from agno.run.authorization import authorization_scope
 from agno.run.background import (
     TERMINAL_RUN_EVENT_TYPES,
@@ -150,16 +164,15 @@ def _is_terminal(event: Any, run_id: str) -> bool:
 async def _stored_outcome(ctx: "SlackContext", event_context: "EventContext") -> Any:
     """The event for how a native run ended, read from its stored run once it completes, pauses or fails."""
     entity = ctx.entity
-    deadline = time.monotonic() + entity.hitl_timeout
-    while time.monotonic() < deadline:
-        run = await read_run(entity, event_context.run_id, event_context.session_id, event_context.user_id)
-        if run is None:
-            raise ValueError("Native run is no longer available")
-        event = terminal_run_event_from_run_output(run)
-        if event is not None:
-            return event
-        await asyncio.sleep(min(1.0, max(0.001, entity.hitl_timeout / 10)))
-    raise TimeoutError("Native run timed out; inspect the persisted run")
+    run = await await_stored_run(
+        partial(read_run, entity, event_context.run_id, event_context.session_id, event_context.user_id),
+        event_context.run_id,
+        entity.hitl_timeout,
+        getattr(entity.sandbox, "execution_timeout", None),
+    )
+    if run is None:
+        raise ValueError("Native run is no longer available")
+    return terminal_run_event_from_run_output(run)
 
 
 async def _follow_stored(events: Any, ctx: "SlackContext", event_context: "EventContext") -> AsyncIterator[Any]:
@@ -201,16 +214,42 @@ async def _reply(client: Any, ctx: "SlackContext", event_context: "EventContext"
     )
 
 
+async def _blocking_run(ctx: "SlackContext", event_context: "EventContext", error: SessionBusyError) -> Any:
+    """The stored run that keeps the session busy, or None when it cannot be read."""
+    if not error.run_id or not hasattr(ctx.entity, "aget_run_output"):
+        return None
+    try:
+        return await ctx.entity.aget_run_output(run_id=error.run_id, session_id=event_context.session_id)
+    except Exception:
+        return None
+
+
 async def _busy_message(ctx: "SlackContext", event_context: "EventContext", error: SessionBusyError) -> str:
     """Return the reply for a busy session; a run paused on an approval card says so."""
-    if error.run_id and hasattr(ctx.entity, "aget_run_output"):
-        try:
-            run = await ctx.entity.aget_run_output(run_id=error.run_id, session_id=event_context.session_id)
-        except Exception:
-            run = None
-        if getattr(run, "status", None) == RunStatus.paused:
-            return _AWAITING_DECISION_MESSAGE
+    if getattr(await _blocking_run(ctx, event_context, error), "status", None) == RunStatus.paused:
+        return _AWAITING_DECISION_MESSAGE
     return _BUSY_MESSAGE
+
+
+async def _cancel_expired_pause(ctx: "SlackContext", event_context: "EventContext", error: SessionBusyError) -> bool:
+    """Cancel the busy session's native run when every request it waits on expired, e.g. across a restart."""
+    if not getattr(ctx.entity, "_uses_native_hitl", False):
+        return False
+    return await cancel_expired_pause(ctx, await _blocking_run(ctx, event_context, error))
+
+
+async def cancel_expired_pause(ctx: "SlackContext", run: Any) -> bool:
+    """Cancel a native run paused on requests that all expired; True when it was cancelled."""
+    if not getattr(ctx.entity, "_uses_native_hitl", False) or not awaiting_decision(run):
+        return False
+    requests = hitl_state(run).get("requests") or {}
+    # An expired request can no longer be answered, so its run would keep the session busy forever
+    if not all(
+        (requests.get(tool_call_id) or {}).get("expires_at", 0) <= time.time() for tool_call_id in pending_ids(run)
+    ):
+        return False
+    await _cancel_run(ctx, run.run_id)
+    return True
 
 
 async def _cancel_run(ctx: "SlackContext", run_id: str) -> None:
@@ -416,7 +455,9 @@ async def _prepare(event_context: "EventContext", ctx: "SlackContext") -> tuple:
     return message_text, run_kwargs
 
 
-async def _run_streaming(event_context: "EventContext", client: Any, ctx: "SlackContext") -> bool:
+async def _run_streaming(
+    event_context: "EventContext", client: Any, ctx: "SlackContext", retried: bool = False
+) -> bool:
     state = StreamState(entity_type=ctx.entity_type, entity_name=ctx.entity_name)
     stream: Optional[SlackStream] = None
     await start_status(client, event_context.channel, event_context.thread_ts, ctx.loading_text, ctx.loading_messages)
@@ -433,6 +474,9 @@ async def _run_streaming(event_context: "EventContext", client: Any, ctx: "Slack
         await _render(events, event_context, client, ctx, state, stream, set_thread_title=True)
         return await _finish(event_context, client, ctx, state, stream)
     except SessionBusyError as e:
+        # A native approval that expired unanswered is cancelled, and the message runs once more
+        if not retried and await _cancel_expired_pause(ctx, event_context, e):
+            return await _run_streaming(event_context, client, ctx, retried=True)
         await clear_status(client, event_context.channel, event_context.thread_ts)
         await _reply(client, ctx, event_context, await _busy_message(ctx, event_context, e))
         return False
@@ -454,7 +498,9 @@ async def _run_streaming(event_context: "EventContext", client: Any, ctx: "Slack
             stream.close()
 
 
-async def _run_non_streaming(event_context: "EventContext", client: Any, ctx: "SlackContext") -> bool:
+async def _run_non_streaming(
+    event_context: "EventContext", client: Any, ctx: "SlackContext", retried: bool = False
+) -> bool:
     await start_status(client, event_context.channel, event_context.thread_ts, ctx.loading_text, ctx.loading_messages)
     status_cleared = False
     try:
@@ -486,6 +532,9 @@ async def _run_non_streaming(event_context: "EventContext", client: Any, ctx: "S
             return False
         return await _post_response(event_context, client, ctx, response)
     except SessionBusyError as e:
+        # A native approval that expired unanswered is cancelled, and the message runs once more
+        if not retried and await _cancel_expired_pause(ctx, event_context, e):
+            return await _run_non_streaming(event_context, client, ctx, retried=True)
         await _reply(client, ctx, event_context, await _busy_message(ctx, event_context, e))
         return False
     except Exception as e:
@@ -757,8 +806,18 @@ async def aclose_runs(ctx: "SlackContext") -> None:
     if getattr(ctx.entity, "_uses_native_hitl", False):
         client = ctx.web()
         for event_context in ctx.runs.parked():
-            card_ts, awaiting_ts = ctx.runs.parked_cards(event_context.run_id)
-            await _freeze_stopped_card(client, event_context, card_ts, awaiting_ts)
+            try:
+                run = await read_run(ctx.entity, event_context.run_id, event_context.session_id, event_context.user_id)
+            except Exception as e:
+                # Unreadable: the native run ends with this process either way, so the card is frozen
+                log_error(f"[HITL] aget_run_output failed for run={event_context.run_id}: {e}")
+                run = None
+            # A run decided elsewhere (the AgentOS continue route) or already ended keeps its card
+            if run is None or awaiting_decision(run):
+                # The run is cancelled with its card, so a new message does not find it waiting for a decision
+                await _cancel_run(ctx, event_context.run_id)
+                card_ts, awaiting_ts = ctx.runs.parked_cards(event_context.run_id)
+                await _freeze_stopped_card(client, event_context, card_ts, awaiting_ts)
             # FastAPI can run a router's shutdown handler twice, so a frozen card is not frozen again
             ctx.runs.unregister(event_context.run_id)
 

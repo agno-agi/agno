@@ -2,7 +2,7 @@ import json
 from datetime import date, datetime, time, timezone
 from functools import partial
 from os import getenv
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Type, Union
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Set, Tuple, Type, Union
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.routing import APIRoute, APIRouter
@@ -412,6 +412,8 @@ def format_sse_event_with_index(
 _TAIL_IDLE_RECHECK_SECONDS = 30.0
 # How often a replica-local stream checks whether another replica claimed its queued run.
 _TAIL_CLAIM_RECHECK_SECONDS = 1.0
+# How often a stored run is read once only its queue ticket keeps the wait open.
+_STORED_RUN_TICKET_RECHECK_SECONDS = 10.0
 
 
 def sse_error_frame(message: str) -> str:
@@ -460,6 +462,50 @@ async def run_stream_served_here(run_id: str) -> bool:
     except Exception:
         return True
     return job is None or _ticket_runs_here(job)
+
+
+async def run_ticket_active(run_id: str) -> bool:
+    """Whether the durable queue's run ticket for ``run_id`` is still queued or running."""
+    try:
+        job = await _run_ticket(run_id)
+    except Exception:
+        return False
+    return job is not None and job.get("status") in ("queued", "running")
+
+
+async def await_stored_run(
+    read: Callable[[], Awaitable[Any]], run_id: str, deadline_seconds: float, extension_seconds: Optional[float] = None
+) -> Optional[Any]:
+    """The stored run once it completes, pauses, fails or is cancelled; None when it is no longer stored.
+
+    ``deadline_seconds`` bounds the wait for the stored run; a queued or running ticket that still owns the run
+    extends it by ``extension_seconds`` (the entity's sandbox execution_timeout) and the queue's stale-lock grace,
+    else by ``deadline_seconds`` again.
+    """
+    import asyncio
+
+    from agno.os.job_queue import get_active_queue_worker
+
+    ended = (RunStatus.completed, RunStatus.paused, RunStatus.error, RunStatus.cancelled)
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + deadline_seconds
+    if extension_seconds is None:
+        ticket_deadline = deadline + deadline_seconds
+    else:
+        # A crashed worker's ticket is claimed again only after the queue's stale-lock grace
+        worker = get_active_queue_worker()
+        ticket_deadline = deadline + extension_seconds + (worker.config.lock_grace_seconds if worker is not None else 0)
+    interval = min(1.0, max(0.001, deadline_seconds / 10))
+    while loop.time() < deadline or (loop.time() < ticket_deadline and await run_ticket_active(run_id)):
+        run = await read()
+        if run is None or run.status in ended:
+            return run
+        await asyncio.sleep(interval if loop.time() < deadline else max(interval, _STORED_RUN_TICKET_RECHECK_SECONDS))
+    # A run that ended during the last sleep is not a timeout
+    run = await read()
+    if run is None or run.status in ended:
+        return run
+    raise TimeoutError("Background run timed out; inspect the persisted run")
 
 
 async def _tail_closing_frame(run_id: str, job: Optional[Dict[str, Any]], event_stream: Any) -> Optional[str]:

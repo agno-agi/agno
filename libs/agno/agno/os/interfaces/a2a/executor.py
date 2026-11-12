@@ -1,5 +1,4 @@
-import asyncio
-import time
+from functools import partial
 from typing import Any, AsyncIterator, List, Optional, Set, Union
 
 try:
@@ -26,7 +25,7 @@ from agno.os.interfaces.a2a.utils import (
     send_run_output_to_task,
 )
 from agno.os.middleware.user_scope import caller_is_admin
-from agno.os.utils import get_agent_by_id, get_team_by_id, get_workflow_by_id
+from agno.os.utils import await_stored_run, get_agent_by_id, get_team_by_id, get_workflow_by_id
 from agno.run.background import (
     TERMINAL_RUN_EVENT_TYPES,
     map_background_stream_to_run_events,
@@ -60,16 +59,15 @@ def _get_requirement_ids(data_parts: List[Any]) -> Set[str]:
 
 async def _stored_run_event(entity: Any, run_id: str, session_id: str) -> Any:
     """Get the event for how a background run ended, read from its stored run once it completes, pauses or fails."""
-    deadline = time.monotonic() + _STORED_RUN_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        run_output = await entity.aget_run_output(run_id=run_id, session_id=session_id)
-        if run_output is None:
-            raise ValueError("Background run is no longer available")
-        event = terminal_run_event_from_run_output(run_output)
-        if event is not None:
-            return event
-        await asyncio.sleep(1.0)
-    raise TimeoutError("Background run timed out; inspect the persisted run")
+    run_output = await await_stored_run(
+        partial(entity.aget_run_output, run_id=run_id, session_id=session_id),
+        run_id,
+        _STORED_RUN_TIMEOUT_SECONDS,
+        getattr(getattr(entity, "sandbox", None), "execution_timeout", None),
+    )
+    if run_output is None:
+        raise ValueError("Background run is no longer available")
+    return terminal_run_event_from_run_output(run_output)
 
 
 async def _end_with_stored_run(

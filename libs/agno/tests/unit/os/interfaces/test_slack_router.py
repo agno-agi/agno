@@ -15,6 +15,7 @@ from slack_bolt.async_app import AsyncApp
 from agno.os.interfaces.slack import Slack
 from agno.os.interfaces.slack.ids import ACTION_SUBMIT
 from agno.os.interfaces.slack.router import attach_routes
+from agno.run.base import RunStatus
 
 from .conftest import (
     BOT_ID,
@@ -433,6 +434,83 @@ class TestLifecycle:
         else:
             # An Agno agent's pause survives a restart and keeps its card
             assert not update.called and not delete.called
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [RunStatus.paused, RunStatus.completed])
+    async def test_aclose_freezes_a_native_card_only_while_its_run_awaits_a_decision(self, status):
+        from slack_sdk.web.async_client import AsyncWebClient
+
+        from agno.run.agent import RunOutput
+
+        from .conftest import make_event_context
+
+        agent = make_agent_mock()
+        agent._uses_native_hitl = True
+        slack = Slack(agent=agent, token=TOKEN, signing_secret=SIGNING_SECRET)
+        event_context = make_event_context()
+        slack.ctx.runs.register(event_context)
+        slack.ctx.runs.park_paused(event_context, card_ts="card.1", awaiting_ts="await.1")
+        # A completed run was decided through the AgentOS continue route; its answer is already in the thread
+        stored = RunOutput(run_id="run-1", status=status, metadata={"native_hitl": {"pending": ["nr-1"]}})
+        with (
+            patch("agno.os.interfaces.slack.executor.read_run", AsyncMock(return_value=stored)),
+            patch.object(AsyncWebClient, "chat_update", new_callable=AsyncMock) as update,
+            patch.object(AsyncWebClient, "chat_delete", new_callable=AsyncMock),
+        ):
+            await slack.aclose()
+        assert update.called is (status == RunStatus.paused)
+        assert slack.ctx.runs.parked() == []
+
+    @pytest.mark.asyncio
+    async def test_aclose_cancels_a_native_run_still_awaiting_a_decision(self, tmp_path):
+        import asyncio
+        from dataclasses import dataclass
+
+        from slack_sdk.web.async_client import AsyncWebClient
+
+        from agno.agents._hitl import current_bridge
+        from agno.agents.base import BaseExternalAgent
+        from agno.db.sqlite import SqliteDb
+        from agno.run.agent import RunContentEvent
+
+        from .conftest import make_event_context
+
+        @dataclass
+        class Harness(BaseExternalAgent):
+            @property
+            def _uses_native_hitl(self):
+                return True
+
+            async def _arun_adapter_stream(self, input, **kwargs):
+                await current_bridge().request("Bash", {"command": "ls"}, {"sdk": "fixture"})
+                yield RunContentEvent(content="done")
+
+        agent = Harness(id="agent-1", db=SqliteDb(db_file=str(tmp_path / "native.db")), hitl_timeout=5)
+        event_context = make_event_context()
+        task = asyncio.create_task(
+            agent.arun("work", session_id=event_context.session_id, run_id="run-1", user_id="U1")
+        )
+        try:
+            for _ in range(300):
+                stored = await agent.aget_run_output("run-1", session_id=event_context.session_id)
+                if stored is not None and stored.status == RunStatus.paused:
+                    break
+                await asyncio.sleep(0.01)
+            assert stored.status == RunStatus.paused
+            slack = Slack(agent=agent, token=TOKEN, signing_secret=SIGNING_SECRET)
+            slack.ctx.runs.register(event_context)
+            slack.ctx.runs.park_paused(event_context, card_ts="card.1", awaiting_ts="await.1")
+            with (
+                patch.object(AsyncWebClient, "chat_update", new_callable=AsyncMock),
+                patch.object(AsyncWebClient, "chat_delete", new_callable=AsyncMock),
+            ):
+                await slack.aclose()
+            # The card reads Stopped, so a new message must not find the run still waiting for a decision
+            stored = await agent.aget_run_output("run-1", session_id=event_context.session_id)
+            assert stored.status == RunStatus.cancelled
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
     def test_slack_delivery_flags_reach_the_context(self):
         slack = Slack(

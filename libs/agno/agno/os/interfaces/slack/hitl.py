@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from functools import partial
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from slack_sdk.web.async_client import AsyncWebClient
 from starlette.concurrency import run_in_threadpool
@@ -18,6 +18,7 @@ from agno.os.interfaces.slack.context import EventContext, SlackContext, event_c
 from agno.os.interfaces.slack.executor import (
     APPROVAL_NOT_RECORDED_MESSAGE,
     DecisionRefused,
+    cancel_expired_pause,
     continue_run,
     reply_error,
 )
@@ -78,18 +79,21 @@ async def _show_decision(
     await update_message(client, channel, msg_ts, text, blocks)
 
 
-async def _aget_paused_run(ctx: SlackContext, run_id: str, session_id: str) -> Optional[Any]:
-    """The stored run while it still waits on a decision, else None."""
+async def _aget_paused_run(ctx: SlackContext, run_id: str, session_id: str) -> Tuple[bool, Optional[Any]]:
+    """Whether the stored run was read, and the run while it still waits on a decision, else None."""
     try:
         run_output = await ctx.entity.aget_run_output(run_id=run_id, session_id=session_id)
     except Exception as exc:
         log_error(f"[HITL] aget_run_output failed for run={run_id}: {exc}")
-        return None
+        return False, None
     if run_output is None or getattr(run_output, "status", None) != RunStatus.paused:
-        return None
+        return True, None
     if not getattr(run_output, "active_requirements", None):
-        return None
-    return run_output
+        return True, None
+    # A native run whose every request expired can no longer be decided, so it ends and its card is frozen
+    if await cancel_expired_pause(ctx, run_output):
+        return True, None
+    return True, run_output
 
 
 async def _decider_context(
@@ -101,6 +105,9 @@ async def _decider_context(
     thread_ts: str,
     user: str,
     owner: Optional[str],
+    card_ts: str,
+    awaiting_ts: Optional[str],
+    card_blocks: List[Dict[str, Any]],
     team_id: Optional[str] = None,
 ) -> Optional[EventContext]:
     """The paused event context of run_id when user may decide on it; posts the ephemeral and returns None otherwise."""
@@ -112,8 +119,19 @@ async def _decider_context(
     event_context = ctx.runs.find_run(run_id)
     if event_context is None:
         session_id = await resolve_session_id(ctx.entity, ctx.entity_id, channel, thread_ts, ctx.lookup_cache)
-        run_output = await _aget_paused_run(ctx, run_id, session_id)
+        read, run_output = await _aget_paused_run(ctx, run_id, session_id)
         if run_output is None:
+            if read:
+                # A card whose run no longer waits, e.g. its request expired, is frozen so it is not clicked again
+                # Any clicker may freeze it before can_act: its run already ended, so nothing is decided
+                await _show_decision(
+                    client,
+                    channel,
+                    card_ts,
+                    awaiting_ts,
+                    _NO_LONGER_ACTIVE_MESSAGE,
+                    _update_card_to_no_longer_active(card_blocks),
+                )
             await post_ephemeral(client, channel, user, _NO_LONGER_ACTIVE_MESSAGE)
             return None
         event_context = await event_context_from_run(
@@ -141,7 +159,16 @@ async def _decidable_row(
     user = (payload.get("user") or {}).get("id") or ""
     thread_ts = (payload.get("message") or {}).get("thread_ts") or row.card_ts
     event_context = await _decider_context(
-        client, ctx, run_id=row.run_id, channel=row.channel, thread_ts=thread_ts, user=user, owner=row.owner
+        client,
+        ctx,
+        run_id=row.run_id,
+        channel=row.channel,
+        thread_ts=thread_ts,
+        user=user,
+        owner=row.owner,
+        card_ts=row.card_ts,
+        awaiting_ts=row.awaiting_ts,
+        card_blocks=(payload.get("message") or {}).get("blocks") or [],
     )
     if event_context is None:
         return None
@@ -241,6 +268,20 @@ def _update_card_to_approved(blocks: List[Dict[str, Any]]) -> List[Dict[str, Any
     return new_blocks
 
 
+def _update_card_to_no_longer_active(blocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Update approval card blocks to show the approval is no longer active."""
+    new_blocks = []
+    for block in blocks:
+        if block.get("type") == "actions":
+            continue
+        if block.get("type") == "card":
+            block = dict(block)
+            block["subtext"] = {"type": "mrkdwn", "text": _NO_LONGER_ACTIVE_MESSAGE}
+            block["actions"] = []
+        new_blocks.append(block)
+    return new_blocks
+
+
 def _replace_admin_card(blocks: List[Dict[str, Any]], card: Dict[str, Any]) -> List[Dict[str, Any]]:
     return [
         card if block.get("type") == "card" and "admin_approval" in block.get("block_id", "") else block
@@ -277,6 +318,7 @@ async def handle_submit(payload: Dict[str, Any], client: AsyncWebClient, ctx: Sl
     if sctx is None:
         return
     log_info(f"[HITL] submit received: run_id={sctx.run_id} channel={sctx.channel}")
+    original_blocks = list((payload.get("message") or {}).get("blocks") or [])
 
     event_context = await _decider_context(
         client,
@@ -286,6 +328,9 @@ async def handle_submit(payload: Dict[str, Any], client: AsyncWebClient, ctx: Sl
         thread_ts=sctx.thread_ts,
         user=sctx.user_id,
         owner=sctx.owner,
+        card_ts=sctx.msg_ts,
+        awaiting_ts=sctx.awaiting_ts,
+        card_blocks=original_blocks,
         team_id=sctx.team_id,
     )
     if event_context is None:
@@ -297,9 +342,17 @@ async def handle_submit(payload: Dict[str, Any], client: AsyncWebClient, ctx: Sl
         return
     try:
         # Re-read after the claim: an earlier submit may have continued the run since the first read
-        run_output = await _aget_paused_run(ctx, sctx.run_id, event_context.session_id)
+        read, run_output = await _aget_paused_run(ctx, sctx.run_id, event_context.session_id)
         if run_output is None:
-            await delete_awaiting_indicator(client, sctx.channel, sctx.awaiting_ts)
+            if read:
+                await _show_decision(
+                    client,
+                    sctx.channel,
+                    sctx.msg_ts,
+                    sctx.awaiting_ts,
+                    _NO_LONGER_ACTIVE_MESSAGE,
+                    _update_card_to_no_longer_active(original_blocks),
+                )
             await post_ephemeral(client, sctx.channel, sctx.user_id, _NO_LONGER_ACTIVE_MESSAGE)
             return
         requirements = list(run_output.active_requirements)
@@ -313,7 +366,6 @@ async def handle_submit(payload: Dict[str, Any], client: AsyncWebClient, ctx: Sl
             await post_ephemeral(client, sctx.channel, sctx.user_id, refusal)
             return
 
-        original_blocks = list((payload.get("message") or {}).get("blocks") or [])
         readonly_blocks = response_blocks(original_blocks, sctx.state_values, requirements)
 
         try:
@@ -371,6 +423,9 @@ async def handle_check_status(payload: Dict[str, Any], client: AsyncWebClient, c
         thread_ts=thread_ts,
         user=user,
         owner=owner,
+        card_ts=msg_ts,
+        awaiting_ts=awaiting_ts,
+        card_blocks=message.get("blocks", []),
         team_id=(payload.get("team") or {}).get("id"),
     )
     if event_context is None:
@@ -410,8 +465,17 @@ async def handle_check_status(payload: Dict[str, Any], client: AsyncWebClient, c
         await post_ephemeral(client, channel, user, _ALREADY_SUBMITTED_MESSAGE)
         return
     try:
-        run_output = await _aget_paused_run(ctx, run_id, event_context.session_id)
+        read, run_output = await _aget_paused_run(ctx, run_id, event_context.session_id)
         if run_output is None:
+            if read:
+                await _show_decision(
+                    client,
+                    channel,
+                    msg_ts,
+                    awaiting_ts,
+                    _NO_LONGER_ACTIVE_MESSAGE,
+                    _update_card_to_no_longer_active(blocks),
+                )
             await post_ephemeral(client, channel, user, _NO_LONGER_ACTIVE_MESSAGE)
             return
         requirements = list(run_output.active_requirements)
