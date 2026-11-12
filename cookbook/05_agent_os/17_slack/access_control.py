@@ -6,6 +6,7 @@ Map Slack users to AgentOS principals with users=, and name the Slack users who
 may approve or stop anyone's run with approvers=.
 
 Prerequisites: SLACK_TOKEN, SLACK_SIGNING_SECRET, OPENAI_API_KEY, JWT_VERIFICATION_KEY, SLACK_OPERATOR_ID, SLACK_APPROVER_ID
+SLACK_OPERATOR_ID and SLACK_APPROVER_ID are Slack member IDs (U...; profile > Copy member ID): the operator is mapped to an AgentOS principal, the approver may approve or stop anyone's run
 Run: .venvs/demo/bin/python cookbook/05_agent_os/17_slack/access_control.py
 Try in Slack: As the operator, ask "Cancel C-42 because pricing no longer fits."; approve as the approver, then try the same message from an unmapped account
 Slack scopes: app_mentions:read, assistant:write, chat:write, im:history

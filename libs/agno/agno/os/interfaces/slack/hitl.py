@@ -124,8 +124,8 @@ async def _decider_context(
         await post_ephemeral(client, channel, user, _NOT_ALLOWED_MESSAGE)
         return None
 
-    if ctx.users is not None and event_context.authority is None:
-        # A context rebuilt from the stored run (after a restart) needs its owner's platform authority again
+    if ctx.users is not None:
+        # The owner's authority is checked again on every decision: a disabled or revoked owner's run does not resume
         if not await authorize_run(ctx, event_context, event_context.user_id, client, user):
             return None
     return event_context
