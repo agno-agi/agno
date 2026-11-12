@@ -11,9 +11,9 @@ from fastapi.testclient import TestClient
 from slack_sdk.errors import SlackApiError
 
 from agno.agent import Agent
+from agno.db.json import JsonDb
 from agno.db.schemas.tasks import task_run_id
 from agno.db.sqlite import SqliteDb
-from agno.models.response import ToolExecution
 from agno.os import AgentOS, CompanyConfig
 from agno.os.authz import Authorization
 from agno.os.interfaces.slack import company as company_module
@@ -24,6 +24,8 @@ from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
 from agno.session.team import TeamSession
 from agno.team import Team
+
+from .conftest import slack_error
 
 SECRET = "slack-company-tests-secret-at-least-32-bytes"
 ENTITY_ID = "superagent"
@@ -122,26 +124,18 @@ def _complete_attempt(db: SqliteDb, task: Dict[str, Any]) -> None:
 
 def _save_turn(
     db: SqliteDb,
-    task_id: str,
     run_id: str,
     user_id: str,
     session_id: str = SESSION_ID,
     session_owner: Optional[str] = None,
-    tool_name: str = "start_company_task",
-    tool_call_error: bool = False,
     message_ts: Optional[str] = THREAD,
 ) -> None:
-    """The Super Agent turn as its session stores it: the run and its start_company_task call."""
-    receipt = f"Queued 'Investigate' (Task {task_id}, run {task_run_id(task_id, 1)}). It runs in its own session."
-    tool = ToolExecution(
-        tool_name=tool_name, tool_args={"task_id": task_id}, result=receipt, tool_call_error=tool_call_error
-    )
+    """The Super Agent turn as its session stores it: the run that started the Task from a Slack message."""
     run = TeamRunOutput(
         run_id=run_id,
         session_id=session_id,
         team_id=ENTITY_ID,
         user_id=user_id,
-        tools=[tool],
         status=RunStatus.completed,
         metadata={"slack_message_ts": message_ts} if message_ts else None,
     )
@@ -158,7 +152,7 @@ def company(tmp_path):
     db = SqliteDb(db_file=db_file)
     agent_os = _company_os(db)
     _finish_attempt(db, task, "slack-run", "U_ALICE")
-    _save_turn(db, task["id"], "slack-run", "U_ALICE")
+    _save_turn(db, "slack-run", "U_ALICE")
     yield db, agent_os, task
     db.close()
 
@@ -192,11 +186,35 @@ def _delivery(
         web=lambda: slack,
         lookup_cache=LookupCache(),
         runs=SimpleNamespace(spawn=asyncio.ensure_future),
+        failing=set(),
         markdown=True,
         unfurl_links=True,
         unfurl_media=True,
     )
     return TaskDelivery(ctx)
+
+
+def _paged_tasks(
+    db: SqliteDb,
+    monkeypatch: Any,
+    newer: int,
+    *older: Dict[str, Any],
+    delete_on_read: Optional[int] = None,
+) -> List[int]:
+    """Serve get_tasks from `newer` Tasks updated now, then `older`; returns the limit of each read."""
+    now = int(time.time())
+    rows = [{"id": f"newer-{i}", "updated_at": now, "transitions": []} for i in range(newer)]
+    rows.extend(older)
+    limits: List[int] = []
+
+    def get_tasks(limit: int, page: int, **kwargs: Any):
+        limits.append(limit)
+        if len(limits) == delete_on_read:
+            rows.pop(0)
+        return rows[(page - 1) * limit : page * limit], len(rows)
+
+    monkeypatch.setattr(db, "get_tasks", get_tasks)
+    return limits
 
 
 # ---------------------------------------------------------------------------
@@ -225,13 +243,11 @@ async def test_sweep_posts_result_once_to_thread(company):
 @pytest.mark.parametrize(
     "turn",
     [
-        {"tool_name": "get_company_task_status"},
-        {"tool_call_error": True},
         {"message_ts": None},
         {"session_id": f"other-agent:C123:{THREAD}"},
         {"session_id": f"{ENTITY_ID}:{THREAD}"},
     ],
-    ids=["no-start-call", "failed-start-call", "no-slack-message", "other-entity", "legacy-session"],
+    ids=["no-slack-message", "other-entity", "legacy-session"],
 )
 @pytest.mark.asyncio
 async def test_sweep_skips_task_not_started_here(tmp_path, turn):
@@ -240,7 +256,7 @@ async def test_sweep_skips_task_not_started_here(tmp_path, turn):
     db = SqliteDb(db_file=db_file)
     session_id = turn.pop("session_id", SESSION_ID)
     _finish_attempt(db, task, "slack-run", "U_ALICE", session_id=session_id)
-    _save_turn(db, task["id"], "slack-run", "U_ALICE", session_id=session_id, **turn)
+    _save_turn(db, "slack-run", "U_ALICE", session_id=session_id, **turn)
     slack = FakeSlack()
     await _delivery(_company_os(db), db, slack).sweep()
     assert slack.posted() == []
@@ -302,6 +318,55 @@ async def test_failed_history_read_is_retried_not_posted(company, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_permanent_slack_error_is_not_retried(company, monkeypatch):
+    db, agent_os, task = company
+    warnings: List[str] = []
+    monkeypatch.setattr(company_module, "log_warning", warnings.append)
+    slack = FakeSlack()
+    slack.chat_postMessage.side_effect = slack_error("not_in_channel")
+    delivery = _delivery(agent_os, db, slack)
+    await delivery.sweep()
+    await delivery.sweep()
+
+    assert slack.chat_postMessage.await_count == 1
+    assert len(warnings) == 1 and "not_in_channel" in warnings[0]
+    assert delivery._retry == {} and (task["id"], 1) in delivery._done
+
+
+@pytest.mark.asyncio
+async def test_post_failing_past_retry_limit_is_given_up(company, monkeypatch):
+    monkeypatch.setattr(company_module, "_RETRY_MIN", 0.0)
+    monkeypatch.setattr(company_module, "_RETRY_LIMIT", 2)
+    db, agent_os, task = company
+    warnings: List[str] = []
+    monkeypatch.setattr(company_module, "log_warning", warnings.append)
+    slack = FakeSlack()
+    slack.chat_postMessage.side_effect = slack_error("internal_error")
+    delivery = _delivery(agent_os, db, slack)
+    for _ in range(4):
+        await delivery.sweep()
+
+    assert slack.chat_postMessage.await_count == 3
+    assert "not retrying" in warnings[-1]
+    assert delivery._retry == {} and (task["id"], 1) in delivery._done
+
+
+@pytest.mark.asyncio
+async def test_rate_limited_post_is_not_given_up(company, monkeypatch):
+    monkeypatch.setattr(company_module, "_RETRY_MIN", 0.0)
+    monkeypatch.setattr(company_module, "_RETRY_LIMIT", 2)
+    db, agent_os, task = company
+    slack = FakeSlack()
+    slack.chat_postMessage.side_effect = slack_error("ratelimited")
+    delivery = _delivery(agent_os, db, slack)
+    for _ in range(4):
+        await delivery.sweep()
+
+    assert slack.chat_postMessage.await_count == 4
+    assert (task["id"], 1) in delivery._retry and (task["id"], 1) not in delivery._done
+
+
+@pytest.mark.asyncio
 async def test_restart_backfills_unposted_result(company):
     db, agent_os, task = company
     slack = FakeSlack()
@@ -323,7 +388,7 @@ async def test_session_save_after_post_does_not_repost(company):
 
     async def post_while_a_turn_saves(**kwargs: Any) -> Dict[str, Any]:
         # A concurrent turn rewrites the whole session row between the post and any later sweep.
-        _save_turn(db, task["id"], "slack-run", "U_ALICE")
+        _save_turn(db, "slack-run", "U_ALICE")
         return await slack._post(**kwargs)
 
     slack.chat_postMessage.side_effect = post_while_a_turn_saves
@@ -340,7 +405,7 @@ async def test_sweep_posts_result_committed_late(tmp_path, monkeypatch):
     task = _seed_task(db_file)
     db = SqliteDb(db_file=db_file)
     _start_attempt(db, task, "slack-run", "U_ALICE")
-    _save_turn(db, task["id"], "slack-run", "U_ALICE")
+    _save_turn(db, "slack-run", "U_ALICE")
     # The sweeps run a few seconds ahead of the database clock.
     ahead = time.time() + 5
     monkeypatch.setattr(company_module, "time", SimpleNamespace(time=lambda: ahead, monotonic=time.monotonic))
@@ -364,6 +429,30 @@ async def test_sweep_skips_tasks_before_mark(company):
     assert slack.conversations_replies.await_count == 0 and slack.posted() == []
 
 
+@pytest.mark.asyncio
+async def test_sweep_posts_result_shifted_onto_a_read_page(company, monkeypatch):
+    db, agent_os, task = company
+    # Newer Tasks fill the first page; the finished Task is older than the mark overlap, first on the second.
+    older = {**db.get_task(task["id"]), "updated_at": int(time.time()) - 2 * company_module._MARK_OVERLAP}
+    # Retention deletes a first-page Task between the reads, so every later row moves up one.
+    limits = _paged_tasks(db, monkeypatch, company_module._PAGE_SIZE, older, delete_on_read=2)
+    slack = FakeSlack()
+    await _delivery(agent_os, db, slack).sweep()
+    assert len(limits) == 2
+    [post] = slack.posted()
+    assert post["metadata"]["event_payload"] == {"task_id": task["id"], "attempt": 1}
+
+
+@pytest.mark.asyncio
+async def test_multi_page_sweep_doubles_each_read_from_the_top(company, monkeypatch):
+    db, agent_os, _ = company
+    page_size = company_module._PAGE_SIZE
+    limits = _paged_tasks(db, monkeypatch, 3 * page_size + page_size // 2)
+    await _delivery(agent_os, db, FakeSlack()).sweep()
+    # Each read starts from the top with twice the last limit.
+    assert limits == [page_size, 2 * page_size, 4 * page_size]
+
+
 # ---------------------------------------------------------------------------
 # Participants: the run's user wrote the Slack message that started the run, in that thread
 # ---------------------------------------------------------------------------
@@ -377,7 +466,7 @@ def _authorized_company(tmp_path, run_user: str, message_ts: str = THREAD, sessi
     db = SqliteDb(db_file=db_file)
     agent_os = _company_os(db, authorization=auth)
     _finish_attempt(db, task, "run-1", run_user)
-    _save_turn(db, task["id"], "run-1", run_user, message_ts=message_ts, session_owner=session_owner)
+    _save_turn(db, "run-1", run_user, message_ts=message_ts, session_owner=session_owner)
     return db, agent_os
 
 
@@ -409,6 +498,21 @@ async def test_authorization_posts_only_message_authors_task(tmp_path, run_user,
     assert bool(slack.posted()) is posted
 
 
+@pytest.mark.asyncio
+async def test_shutdown_mid_sweep_keeps_access_check(tmp_path):
+    db, agent_os = _authorized_company(tmp_path, "carol")
+    slack = FakeSlack(root_user="U_CAROL")
+
+    async def replies_during_shutdown(*args: Any, **kwargs: Any):
+        # AgentOS shutdown clears the Company app while the sweep reads the thread.
+        agent_os._company_app = None
+        return await slack._replies(*args, **kwargs)
+
+    slack.conversations_replies.side_effect = replies_during_shutdown
+    await _delivery(agent_os, db, slack, users=USERS).sweep()
+    assert slack.posted() == []
+
+
 # A user-token post carries both the human's user id and the app's bot id
 @pytest.mark.parametrize("bot_id", [None, "B_APP"], ids=["user-post", "user-token-post"])
 @pytest.mark.asyncio
@@ -417,7 +521,7 @@ async def test_email_identity_gets_result(tmp_path, bot_id):
     task = _seed_task(db_file)
     db = SqliteDb(db_file=db_file)
     _finish_attempt(db, task, "slack-run", "alice@example.com")
-    _save_turn(db, task["id"], "slack-run", "alice@example.com")
+    _save_turn(db, "slack-run", "alice@example.com")
     slack = FakeSlack(root_user="U_ALICE")
     slack.root["bot_id"] = bot_id
     slack.emails["U_ALICE"] = "alice@example.com"
@@ -443,7 +547,7 @@ async def test_failed_identity_lookup_is_retried(tmp_path, monkeypatch, run_user
     task = _seed_task(db_file)
     db = SqliteDb(db_file=db_file)
     _finish_attempt(db, task, "slack-run", run_user)
-    _save_turn(db, task["id"], "slack-run", run_user, message_ts=message_ts)
+    _save_turn(db, "slack-run", run_user, message_ts=message_ts)
     slack = FakeSlack(root_user="U_ALICE", replies=[{"bot_id": "B_HOOK", "ts": BOT_MESSAGE}])
     setattr(
         slack,
@@ -466,7 +570,7 @@ async def test_authorization_off_trusts_caller_user_id(tmp_path):
     task = _seed_task(db_file)
     db = SqliteDb(db_file=db_file)
     _finish_attempt(db, task, "rest-run", "alice")
-    _save_turn(db, task["id"], "rest-run", "alice")
+    _save_turn(db, "rest-run", "alice")
     slack = FakeSlack(root_user="U_ALICE")
     await _delivery(_company_os(db), db, slack, users=USERS).sweep()
     assert len(slack.posted()) == 1
@@ -494,3 +598,43 @@ async def test_start_spawns_and_loop_survives_failing_sweep(company, monkeypatch
     task_handle = delivery._task
     await delivery.stop()
     assert task_handle is not None and task_handle.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_failing_sweep_logs_once_until_a_sweep_succeeds(company, monkeypatch):
+    db, agent_os, task = company
+    monkeypatch.setattr(company_module, "_SWEEP_SECONDS", 0.01)
+    errors: List[str] = []
+    monkeypatch.setattr(company_module, "log_error", errors.append)
+    delivery = _delivery(agent_os, db, FakeSlack())
+    # Three failures, one success, then failures again.
+    outcomes = [False, False, False, True, False, False]
+    sweeps: List[int] = []
+
+    async def sweep() -> None:
+        sweeps.append(1)
+        if not outcomes[min(len(sweeps), len(outcomes)) - 1]:
+            raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(delivery, "sweep", sweep)
+    await delivery.start()
+    while len(sweeps) < len(outcomes):
+        await asyncio.sleep(0.01)
+    await delivery.stop()
+
+    assert len(errors) == 2 and all("database unavailable" in e for e in errors)
+
+
+@pytest.mark.asyncio
+async def test_loop_stops_when_db_has_no_task_support(company, tmp_path, monkeypatch):
+    db, agent_os, _ = company
+    monkeypatch.setattr(company_module, "_SWEEP_SECONDS", 0.01)
+    warnings: List[str] = []
+    monkeypatch.setattr(company_module, "log_warning", warnings.append)
+    agent_os._company_db = JsonDb(db_path=str(tmp_path / "json"))
+    delivery = _delivery(agent_os, db, FakeSlack())
+    await delivery.start()
+    assert delivery._task is not None
+    await asyncio.wait_for(delivery._task, timeout=1)
+
+    assert len(warnings) == 1 and "not supported" in warnings[0]

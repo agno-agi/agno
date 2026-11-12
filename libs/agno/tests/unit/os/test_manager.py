@@ -201,6 +201,37 @@ def test_slack_serving_the_manager_requires_identity_mapping_under_authorization
         os.get_app()
 
 
+@pytest.mark.asyncio
+async def test_slack_interfaces_sharing_a_bot_token_post_task_results_once(db):
+    pytest.importorskip("slack_bolt")
+    from agno.os.interfaces.slack import Slack
+    from agno.os.interfaces.slack.company import CompanyBridge
+
+    os = AgentOS(id="manager-test", db=db, telemetry=False, manager=OSManager(model=OfflineModel()))
+    first = Slack(team=os.manager, token="xoxb-test", signing_secret="slack-secret")
+    second = Slack(team=os.manager, token="xoxb-test", signing_secret="slack-secret", prefix="/slack2")
+    other_bot = Slack(team=os.manager, token="xoxb-other", signing_secret="slack-secret", prefix="/slack3")
+    os.interfaces.extend([first, second, other_bot])
+    os.get_app()
+    # Every interface keeps the Company bridge that authorizes Super Agent runs
+    assert all(isinstance(interface.company, CompanyBridge) for interface in (first, second, other_bot))
+    for interface in (first, second, other_bot):
+        await interface.astart()
+    try:
+        assert first._task_delivery is not None and other_bot._task_delivery is not None
+        assert second._task_delivery is None
+    finally:
+        for interface in (first, second, other_bot):
+            await interface.aclose()
+
+    # An interface added before get_app runs again joins a token that already delivers
+    late = Slack(team=os.manager, token="xoxb-test", signing_secret="slack-secret", prefix="/slack4")
+    os.interfaces.insert(0, late)
+    os.get_app()
+    assert isinstance(late.company, CompanyBridge) and not late.company.deliver
+    assert [interface.company.deliver for interface in (first, second, other_bot)] == [True, False, True]
+
+
 @pytest.mark.parametrize("service_account", [False, True])
 @pytest.mark.parametrize("admin", [False, True])
 @pytest.mark.parametrize("path", ["/teams/superagent/runs", "/agents/platform-builder/runs"])

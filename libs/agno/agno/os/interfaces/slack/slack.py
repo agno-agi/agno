@@ -123,7 +123,6 @@ class Slack(BaseInterface):
 
         self.ctx: SlackContext = self._build_context()
         self._task_delivery: Optional["TaskDelivery"] = None
-        self._closed = False
 
     @property
     def company(self) -> Any:
@@ -177,7 +176,7 @@ class Slack(BaseInterface):
         return self.router
 
     async def astart(self) -> None:
-        if self.ctx.company is None or self._task_delivery is not None:
+        if self.ctx.company is None or not self.ctx.company.deliver or self._task_delivery is not None:
             return
         from agno.os.interfaces.slack.company import TaskDelivery
 
@@ -185,10 +184,6 @@ class Slack(BaseInterface):
         await self._task_delivery.start()
 
     async def aclose(self) -> None:
-        # FastAPI runs the router's shutdown handler and AgentOS's interface lifespan both, so close once
-        if self._closed:
-            return
-        self._closed = True
         if self._task_delivery is not None:
             await self._task_delivery.stop()
             self._task_delivery = None

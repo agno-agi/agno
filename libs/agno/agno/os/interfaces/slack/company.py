@@ -5,9 +5,9 @@ import time
 from typing import Any, Dict, Optional, Tuple
 from weakref import ReferenceType, ref
 
-from agno.db.schemas.tasks import TASK_STATUS_MEANING, task_run_id
+from agno.db.schemas.tasks import TASK_STATUS_MEANING
 from agno.os.interfaces.slack.context import SlackContext
-from agno.os.interfaces.slack.helpers import slack_delivery_kwargs
+from agno.os.interfaces.slack.helpers import slack_delivery_kwargs, slack_error_code
 from agno.os.interfaces.slack.security import resolve_principal_authorization
 from agno.utils.log import log_debug, log_error, log_warning
 
@@ -17,6 +17,12 @@ _RESULT_STATUSES = ("in_review", "done", "cancelled")
 _SWEEP_SECONDS = 5.0
 _RETRY_MIN = 5.0
 _RETRY_MAX = 300.0
+# Failed posts retried per Task attempt before it is given up, so one Task never holds the mark for good
+_RETRY_LIMIT = 10
+# Slack error codes that fail the same way on every attempt: the thread is gone or closed to this app
+_PERMANENT_SLACK_ERRORS = frozenset({"channel_not_found", "is_archived", "not_in_channel", "thread_not_found"})
+# Slack error code for a rate limit, e.g. from the backfill after a restart, which clears by itself
+_RATE_LIMITED_ERROR = "ratelimited"
 # After a restart, results that finished this long ago are still delivered
 _BACKFILL_SECONDS = 24 * 60 * 60
 _PAGE_SIZE = 100
@@ -28,8 +34,10 @@ _RESULT_CHARS = 1500
 class CompanyBridge:
     """The Company of the AgentOS whose Super Agent this Slack interface serves."""
 
-    def __init__(self, agent_os: Any):
+    def __init__(self, agent_os: Any, deliver: bool = True):
         self._agent_os: ReferenceType[Any] = ref(agent_os)
+        # Whether this interface posts Task results; one interface per bot token does
+        self.deliver = deliver
 
     @property
     def agent_os(self) -> Any:
@@ -55,12 +63,11 @@ class CompanyBridge:
 class TaskDelivery:
     """Posts the result of each Task started from this Slack interface into its thread, once per attempt.
 
-    Every few seconds it pages Tasks updated since the last sweep. The high-water mark stays in
-    memory and moves only past Tasks with a final outcome here (posted, already marked in Slack, or
-    refused); a failed post or read is retried with backoff and holds the mark. After a restart the
-    mark starts a day back, which re-covers anything the lost retry set held.
-
-    Two workers sweeping one Task in the same window can both post it: delivery is at-least-once.
+    Every few seconds it reads Tasks updated since an in-memory high-water mark. A failed post or read
+    is retried with backoff up to a retry limit and holds the mark; a rate-limited post retries without
+    counting toward the limit, and permanent Slack errors (channel gone, bot removed) are given up at
+    once. After a restart the mark starts a day back, so held results and results refused for lack of
+    access are checked again. Delivery is at-least-once.
     """
 
     def __init__(self, ctx: SlackContext):
@@ -68,7 +75,7 @@ class TaskDelivery:
         self.company: CompanyBridge = ctx.company
         self._mark = int(time.time()) - _BACKFILL_SECONDS
         self._done: Dict[Tuple[str, int], int] = {}
-        self._retry: Dict[Tuple[str, int], Tuple[float, float]] = {}
+        self._retry: Dict[Tuple[str, int], Tuple[float, float, int]] = {}
         self._task: Optional["asyncio.Task[None]"] = None
 
     async def start(self) -> None:
@@ -88,24 +95,34 @@ class TaskDelivery:
         while True:
             try:
                 await self.sweep()
+                self.ctx.failing.discard("task_delivery")
             except asyncio.CancelledError:
                 break
+            except NotImplementedError as exc:
+                log_warning(f"Slack Task delivery stopped: {exc}")
+                break
             except Exception as exc:
-                log_error(f"Slack Task delivery sweep failed: {exc}")
+                # Logged once until a sweep succeeds again, not every few seconds
+                if "task_delivery" not in self.ctx.failing:
+                    log_error(f"Slack Task delivery sweep failed: {exc}")
+                self.ctx.failing.add("task_delivery")
             await asyncio.sleep(_SWEEP_SECONDS)
 
     async def sweep(self) -> None:
         """Deliver every Task result updated since the high-water mark."""
         from agno.company.execution import _call
 
-        if self.company.db is None or self.company.app is None:
+        app = self.company.app
+        if self.company.db is None or app is None:
             return
         started = int(time.time())
         held: Optional[int] = None
         page = 1
         while True:
+            # Each read starts from the top, so a row a mid-sweep delete shifts onto an earlier page is not skipped
+            limit = _PAGE_SIZE * 2 ** (page - 1)
             rows, _ = await _call(
-                self.company.db, "get_tasks", limit=_PAGE_SIZE, page=page, sort_by="updated_at", sort_order="desc"
+                self.company.db, "get_tasks", limit=limit, page=1, sort_by="updated_at", sort_order="desc"
             )
             below_mark = False
             for row in rows:
@@ -113,16 +130,16 @@ class TaskDelivery:
                 if updated < self._mark:
                     below_mark = True
                     break
-                if not await self._deliver(row, updated):
+                if not await self._deliver(app, row, updated):
                     held = updated if held is None else min(held, updated)
-            if below_mark or len(rows) < _PAGE_SIZE:
+            if below_mark or len(rows) < limit:
                 break
             page += 1
         # Rows seen again are skipped by the in-memory record or the Slack marker
         self._mark = (started if held is None else min(held, started)) - _MARK_OVERLAP
         self._done = {key: updated for key, updated in self._done.items() if updated >= self._mark}
 
-    async def _deliver(self, row: Dict[str, Any], updated: int) -> bool:
+    async def _deliver(self, app: Any, row: Dict[str, Any], updated: int) -> bool:
         """Post one Task's latest attempt if it is due. False while it waits for a retry."""
         attempts = [entry for entry in row.get("transitions") or [] if entry.get("attempt")]
         if not attempts or not _has_outcome(row):
@@ -135,7 +152,7 @@ class TaskDelivery:
         if retry is not None and retry[0] > time.monotonic():
             return False
         try:
-            accepted = await self._accept(row, latest)
+            accepted = await self._accept(latest)
             if accepted is None:
                 self._finish(key, updated)
                 return True
@@ -152,7 +169,7 @@ class TaskDelivery:
                 return True
             # Access is checked again before a delayed post: a revoked person sees nothing more
             try:
-                authority = await self.company.authorize(self.company.app, user_id, self.ctx.entity_id)
+                authority = await self.company.authorize(app, user_id, self.ctx.entity_id)
                 if authority is not None:
                     await authority.arequire("tasks", "read")
             except PermissionError as exc:
@@ -169,8 +186,17 @@ class TaskDelivery:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            code = slack_error_code(exc)
+            failures = retry[2] if retry is not None else 0
+            # A rate limit clears by itself, so it backs off without counting toward the retry limit
+            if code != _RATE_LIMITED_ERROR:
+                failures += 1
+            if code in _PERMANENT_SLACK_ERRORS or failures > _RETRY_LIMIT:
+                log_warning(f"Could not post Task {key[0]} attempt {key[1]} to Slack, not retrying: {exc}")
+                self._finish(key, updated)
+                return True
             delay = min(retry[1] * 2, _RETRY_MAX) if retry is not None else _RETRY_MIN
-            self._retry[key] = (time.monotonic() + delay, delay)
+            self._retry[key] = (time.monotonic() + delay, delay, failures)
             log_warning(f"Could not post Task {key[0]} attempt {key[1]} to Slack, retrying in {delay:.0f}s: {exc}")
             return False
         self._finish(key, updated)
@@ -180,8 +206,9 @@ class TaskDelivery:
         self._retry.pop(key, None)
         self._done[key] = updated
 
-    async def _accept(self, row: Dict[str, Any], attempt: Dict[str, Any]) -> Optional[Tuple[str, str, str, str]]:
+    async def _accept(self, attempt: Dict[str, Any]) -> Optional[Tuple[str, str, str, str]]:
         """The thread, principal and starting message of a Task attempt this Slack interface started, or None."""
+        # Only the Super Agent start tool records requested_from, on the attempt its own call queued
         requested = attempt.get("requested_from") or {}
         session_id, run_id = requested.get("session_id"), requested.get("run_id")
         if not isinstance(session_id, str) or not isinstance(run_id, str):
@@ -198,8 +225,6 @@ class TaskDelivery:
         # A run another interface started names no Slack message
         message_ts = (run.metadata or {}).get("slack_message_ts")
         if not isinstance(message_ts, str) or not message_ts:
-            return None
-        if not _started(run, row["id"], task_run_id(row["id"], attempt["attempt"])):
             return None
         return coordinates[0], coordinates[1], run.user_id, message_ts
 
@@ -286,15 +311,3 @@ def _has_outcome(row: Dict[str, Any]) -> bool:
         return True
     result = row.get("result") or {}
     return bool(result) and result.get("run_id") == row.get("job_id") and result.get("status") in ("ERROR", "CANCELLED")
-
-
-def _started(run: Any, task_id: str, attempt_run_id: str) -> bool:
-    """Whether the run holds a successful Task start call for this Task attempt."""
-    receipt = f"(Task {task_id}, run {attempt_run_id})"
-    for tool in getattr(run, "tools", None) or []:
-        if tool.tool_name != "start_company_task" or tool.tool_call_error:
-            continue
-        # A refused start is a successful call too; only the receipt text names the run it started
-        if (tool.tool_args or {}).get("task_id") == task_id and receipt in str(tool.result or ""):
-            return True
-    return False

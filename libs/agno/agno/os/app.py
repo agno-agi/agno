@@ -1152,6 +1152,13 @@ class AgentOS:
         # Add A2A interface if relevant
         has_a2a_interface = False
         self._public_interface_routes: List[tuple[str, str]] = []
+        # Interfaces sharing a bot token see the same Tasks, so only the first posts their results,
+        # also when get_app runs again
+        delivery_tokens: Set[str] = {
+            interface.ctx.token  # type: ignore[attr-defined]
+            for interface in self.interfaces
+            if getattr(getattr(interface, "company", None), "deliver", False)
+        }
         for interface in self.interfaces:
             if interface.__class__.__name__ == "A2A":
                 has_a2a_interface = True
@@ -1173,7 +1180,10 @@ class AgentOS:
                 if getattr(interface, "company", None) is None:
                     from agno.os.interfaces.slack.company import CompanyBridge
 
-                    interface.company = CompanyBridge(self)  # type: ignore[attr-defined]
+                    token = interface.ctx.token  # type: ignore[attr-defined]
+                    deliver = token not in delivery_tokens
+                    interface.company = CompanyBridge(self, deliver=deliver)  # type: ignore[attr-defined]
+                    delivery_tokens.add(token)
             interface_router = interface.get_router()
             if getattr(interface, "authenticates_own_requests", False):
                 self._public_interface_routes.extend(

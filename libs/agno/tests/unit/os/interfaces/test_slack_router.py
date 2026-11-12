@@ -2,6 +2,7 @@ import json
 import subprocess
 import sys
 import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -378,7 +379,7 @@ class TestLifecycle:
         calls = []
         delivery = AsyncMock()
         delivery.stop = AsyncMock(side_effect=lambda: calls.append("delivery"))
-        slack.company = object()
+        slack.company = SimpleNamespace(deliver=True)
         with (
             patch("agno.os.interfaces.slack.company.TaskDelivery", return_value=delivery) as task_delivery,
             patch.object(slack.ctx.runs, "aclose", AsyncMock(side_effect=lambda: calls.append("runs"))),
