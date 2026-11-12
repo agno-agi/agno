@@ -1,6 +1,9 @@
+import asyncio
 from unittest.mock import AsyncMock, Mock, patch
 
+import aiohttp
 import pytest
+from slack_sdk.errors import SlackApiError
 
 from agno.os.interfaces.slack.helpers import (
     BotNameResolver,
@@ -13,9 +16,16 @@ from agno.os.interfaces.slack.helpers import (
     should_respond,
     strip_bot_mention,
     task_id,
+    thread_root_mentions_bot,
     upload_response_media_async,
 )
 from agno.os.interfaces.slack.state import StreamState
+
+
+def _replies_client(messages: list) -> AsyncMock:
+    client = AsyncMock()
+    client.conversations_replies = AsyncMock(return_value={"ok": True, "messages": messages})
+    return client
 
 
 class TestTaskId:
@@ -59,6 +69,40 @@ class TestShouldRespond:
 
     def test_app_mention_dm_still_works(self):
         assert should_respond({"type": "app_mention", "channel_type": "im"}, reply_to_mentions_only=False) is True
+
+
+class TestThreadRootMentionsBot:
+    @pytest.mark.asyncio
+    async def test_true_when_root_mentions_bot(self):
+        client = _replies_client([{"text": "<@U_BOT> summarize this incident"}])
+        assert await thread_root_mentions_bot(client, "C1", "111.222", "U_BOT") is True
+        client.conversations_replies.assert_awaited_once_with(channel="C1", ts="111.222", limit=1)
+
+    @pytest.mark.asyncio
+    async def test_false_when_root_mentions_someone_else(self):
+        client = _replies_client([{"text": "<@U_OTHER> summarize this incident"}])
+        assert await thread_root_mentions_bot(client, "C1", "111.222", "U_BOT") is False
+
+    @pytest.mark.asyncio
+    async def test_false_when_no_messages_returned(self):
+        client = _replies_client([])
+        assert await thread_root_mentions_bot(client, "C1", "111.222", "U_BOT") is False
+
+    @pytest.mark.asyncio
+    async def test_false_when_history_scope_missing(self):
+        client = AsyncMock()
+        client.conversations_replies = AsyncMock(
+            side_effect=SlackApiError("missing_scope", Mock(data={"ok": False, "error": "missing_scope"}))
+        )
+        assert await thread_root_mentions_bot(client, "C1", "111.222", "U_BOT") is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("error", [aiohttp.ClientConnectionError("connection reset"), asyncio.TimeoutError()])
+    async def test_false_when_transport_fails(self, error):
+        # slack_sdk re-raises connection and timeout errors unwrapped, not as SlackApiError
+        client = AsyncMock()
+        client.conversations_replies = AsyncMock(side_effect=error)
+        assert await thread_root_mentions_bot(client, "C1", "111.222", "U_BOT") is False
 
 
 class TestExtractEventContext:
