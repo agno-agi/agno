@@ -17,6 +17,11 @@ def _validate_agent_source(type: str, executor_type: str, executor_id: Optional[
         raise ValueError("Adding a Source requires the calling agent or team and run identity")
 
 
+def _same_text(sent: Optional[str], stored: Optional[str]) -> bool:
+    """Whether two texts have the same words. No text and empty text are the same, and spacing is not compared."""
+    return (sent or "").split() == (stored or "").split()
+
+
 def _routine_provenance(endpoint: str) -> Dict[str, Any]:
     from agno.db.schemas.scheduler import _schedule_endpoint_targets
 
@@ -576,7 +581,7 @@ class CompanyManager:
             return None
         if existing["status"] != "backlog":
             # An accepted Task runs under its accepter's permissions, so its brief is part of what was accepted.
-            if "brief" in fields and fields["brief"] == existing.get("brief"):
+            if "brief" in fields and _same_text(fields["brief"], existing.get("brief")):
                 del fields["brief"]
             if set(fields) - {"title"}:
                 raise ValueError("Accepted task scope requires a return to Backlog")
@@ -1547,7 +1552,7 @@ class AsyncCompanyManager:
             return None
         if existing["status"] != "backlog":
             # An accepted Task runs under its accepter's permissions, so its brief is part of what was accepted.
-            if "brief" in fields and fields["brief"] == existing.get("brief"):
+            if "brief" in fields and _same_text(fields["brief"], existing.get("brief")):
                 del fields["brief"]
             if set(fields) - {"title"}:
                 raise ValueError("Accepted task scope requires a return to Backlog")

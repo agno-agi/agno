@@ -246,7 +246,10 @@ def test_a_brief_is_edited_in_backlog_and_again_after_a_return_to_backlog(system
     assert system.client.patch(path, json={"brief": "Changed"}, headers=headers()).json()["brief"] == "Changed"
 
 
-def test_a_brief_edit_that_loses_the_race_with_acceptance_is_not_written(system, monkeypatch):
+@pytest.mark.parametrize(
+    "edit", [{"brief": "Changed"}, {"executor_type": "agent", "executor_id": "writer"}], ids=["brief", "executor"]
+)
+def test_an_edit_that_loses_the_race_with_acceptance_is_not_written(system, monkeypatch, edit):
     proposal = system.proposal()
     task_id = proposal["id"]
     read = system.db.get_task
@@ -260,9 +263,10 @@ def test_a_brief_edit_that_loses_the_race_with_acceptance_is_not_written(system,
     monkeypatch.setattr(system.db, "get_task", accepted_after_the_read)
     from agno.company.manager import CompanyManager
 
-    assert CompanyManager(system.db, system.os.registry).update_task(task_id, brief="Changed") is None
+    assert CompanyManager(system.db, system.os.registry).update_task(task_id, **edit) is None
     stored = system.db.get_task(task_id)
     assert (stored["status"], stored["brief"]) == ("ready", "Write the release notes")
+    assert stored["executor_id"] != "writer"
 
 
 def test_the_chat_tool_edits_a_title_after_acceptance_and_refuses_a_new_brief(system):
@@ -275,6 +279,23 @@ def test_the_chat_tool_edits_a_title_after_acceptance_and_refuses_a_new_brief(sy
     tools.edit_company_task(task_id, "Release notes", "Write the release notes", _agno_run_context=chat())
     stored = system.db.get_task(task_id)
     assert (stored["title"], stored["brief"]) == ("Release notes", "Write the release notes")
+
+
+@pytest.mark.parametrize(
+    "stored,sent",
+    [(None, ""), ("", ""), ("Write the release notes", " Write the\nrelease notes \n")],
+    ids=["no-brief", "empty-brief", "retyped-with-other-spacing"],
+)
+def test_the_chat_tool_renames_an_accepted_task_when_the_brief_sent_is_the_stored_one(system, stored, sent):
+    from agno.tools.company import CompanyTools
+
+    task_id, _ = accepted_task(system, brief=stored)
+    before = system.db.get_task(task_id)["brief"]
+    tools = CompanyTools(system.db, registry=system.os.registry)
+    tools.edit_company_task(task_id, "Release notes", sent, _agno_run_context=chat())
+    after = system.db.get_task(task_id)
+    # The brief that was accepted is stored exactly as it was.
+    assert (after["title"], after["brief"]) == ("Release notes", before)
 
 
 # ----------------------------------------------------------------- a sandboxed executor runs only its own Task

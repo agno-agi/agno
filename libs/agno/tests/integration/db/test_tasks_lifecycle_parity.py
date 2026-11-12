@@ -440,8 +440,8 @@ async def test_title_edits_at_every_stage_and_the_manager_edits_a_brief_only_in_
             with pytest.raises(ValueError, match="^Accepted task scope requires a return to Backlog$"):
                 await call(m.update_task, task["id"], **fields)
         assert await call(m.get_task, task["id"]) == task
-        # The stored brief sent with a new title is not a brief edit.
-        edited = await call(m.update_task, task["id"], title="Retitled", brief="Body")
+        # The stored brief sent with a new title is not a brief edit, however it is spaced.
+        edited = await call(m.update_task, task["id"], title="Retitled", brief=" Body\n")
         assert (edited["title"], edited["brief"], edited["updated_at"]) == ("Retitled", "Body", 2_000_000_000)
     assert content_only(edited) == content_only(task)
     # The store writes what it is given; the manager decides what an accepted Task accepts.
