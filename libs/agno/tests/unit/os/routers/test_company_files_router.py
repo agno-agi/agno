@@ -209,6 +209,30 @@ def test_a_folder_with_more_than_one_page_of_files(make, folder):
         assert client.get(url, params=params).status_code == 422
 
 
+def test_a_page_past_the_end_is_empty_with_the_right_totals(make):
+    client, files = make()
+    task_id = new_task(client)
+    for name in ["a.md", "b.md", "c.md"]:
+        files.write(f"tasks/{task_id}/{name}", name)
+        files.write(f"notes/{name}", name)
+    for url in [f"/company/tasks/{task_id}/files", "/company/notes"]:
+        for limit, page, total_pages in [(20, 50, 1), (2, 3, 2), (1, 4, 3), (1000, 10**9, 1)]:
+            response = client.get(url, params={"limit": limit, "page": page})
+            assert response.status_code == 200, (url, limit, page, response.text)
+            assert response.json()["data"] == []
+            meta = response.json()["meta"]
+            assert (meta["page"], meta["limit"]) == (page, limit)
+            assert (meta["total_count"], meta["total_pages"]) == (3, total_pages)
+        # The last page that holds files is not empty.
+        assert [row["path"] for row in client.get(url, params={"limit": 2, "page": 2}).json()["data"]] == ["c.md"]
+    # An empty folder has no pages, and any page of it is empty.
+    empty = new_task(client)
+    response = client.get(f"/company/tasks/{empty}/files", params={"page": 50})
+    assert response.status_code == 200, response.text
+    assert response.json()["data"] == []
+    assert (response.json()["meta"]["total_count"], response.json()["meta"]["total_pages"]) == (0, 0)
+
+
 def test_a_caller_without_the_scope_is_refused(make):
     client, files = make(isolation=False)
     task_id = new_task(client, headers("alice"))
