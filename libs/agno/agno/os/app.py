@@ -4,7 +4,7 @@ import inspect
 from contextlib import asynccontextmanager
 from functools import partial
 from os import getenv
-from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Literal, Optional, Sequence, Set, Union
+from typing import TYPE_CHECKING, Any, Dict, FrozenSet, Iterator, List, Literal, Optional, Sequence, Set, Tuple, Union
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException
@@ -215,7 +215,10 @@ def _error_body(detail: str, exc: BaseException) -> Dict[str, Any]:
 
 @asynccontextmanager
 async def interface_lifespan(_, agent_os: "AgentOS"):
-    """Closes the interfaces that hold running work (e.g. A2A tasks) on shutdown."""
+    """Starts the interfaces' background work on startup and closes their running work (e.g. A2A tasks) on shutdown."""
+    for interface in agent_os.interfaces:
+        await interface.astart()
+
     yield
 
     for interface in agent_os.interfaces:
@@ -1149,6 +1152,22 @@ class AgentOS:
         # Add A2A interface if relevant
         has_a2a_interface = False
         self._public_interface_routes: List[tuple[str, str]] = []
+
+        # Interfaces sharing a bot token and the settings that decide whose Task it is deliver the same results,
+        # so only the first posts them, also when get_app runs again
+        def delivery_key(interface: BaseInterface) -> Tuple[str, Optional[FrozenSet[Tuple[str, str]]], bool]:
+            users = interface.ctx.users  # type: ignore[attr-defined]
+            return (
+                interface.ctx.token,  # type: ignore[attr-defined]
+                None if users is None else frozenset(users.items()),
+                interface.ctx.resolve_user_identity,  # type: ignore[attr-defined]
+            )
+
+        delivery_keys = {
+            delivery_key(interface)
+            for interface in self.interfaces
+            if getattr(getattr(interface, "company", None), "deliver", False)
+        }
         for interface in self.interfaces:
             if interface.__class__.__name__ == "A2A":
                 has_a2a_interface = True
@@ -1160,6 +1179,24 @@ class AgentOS:
                 # Agent Cards declare how to authenticate when the OS requires a bearer token
                 if getattr(interface, "security_schemes", None) is None:
                     interface.security_schemes = self._get_a2a_security_schemes()  # type: ignore[attr-defined]
+            if interface.type == "slack" and interface.team is not None and interface.team is self.manager:
+                from agno.os.auth import _has_authorization_middleware
+
+                # An authorization middleware on a base_app enforces roles just as AgentOS(authorization=...) does
+                if getattr(interface, "users", None) is None and (
+                    self.authorization or _has_authorization_middleware(app)
+                ):
+                    raise ValueError(
+                        "Slack serving Super Agent under authorization requires Slack identity mapping: "
+                        "pass Slack(users={slack_user_id: principal_id})."
+                    )
+                # Slack serving the Manager team reaches Company through the AgentOS that owns it
+                if getattr(interface, "company", None) is None:
+                    from agno.os.interfaces.slack.company import CompanyBridge
+
+                    key = delivery_key(interface)
+                    interface.company = CompanyBridge(self, deliver=key not in delivery_keys)  # type: ignore[attr-defined]
+                    delivery_keys.add(key)
             interface_router = interface.get_router()
             if getattr(interface, "authenticates_own_requests", False):
                 self._public_interface_routes.extend(
@@ -2384,6 +2421,10 @@ class AgentOS:
         # agno cannot amend. Fail fast (with the exact paths) rather than 401 connector
         # discovery. (Only agno's own AuthMiddleware is inspected; see the method docstring.)
         self._check_mcp_auth_middleware_composition(fastapi_app)
+        # Interfaces that verify their own requests (Slack) skip the auth middleware and read this flag
+        from agno.os.auth import _has_authorization_middleware
+
+        fastapi_app.state.authorization_enabled = bool(self.authorization) or _has_authorization_middleware(fastapi_app)
 
         from agno.os.authz.run_context import RunAuthorizationMiddleware
 
@@ -2984,8 +3025,9 @@ class AgentOS:
                 self._register_db_with_validation(knowledge_dbs, knowledge_base.contents_db)
 
         for interface in self.interfaces or []:
-            if interface.agent and interface.agent.db:
-                self._register_db_with_validation(dbs, interface.agent.db)
+            agent_db = getattr(interface.agent, "db", None)
+            if agent_db:
+                self._register_db_with_validation(dbs, agent_db)
             elif interface.team and interface.team.db:
                 self._register_db_with_validation(dbs, interface.team.db)
 
@@ -3405,14 +3447,10 @@ class AgentOS:
                         table_name
                         for db in dbs
                         for table_name in (
-                            (
-                                db.component_metrics_table_name,
-                                db.aggregate_metrics_table_name,
-                                db.metrics_refreshes_table_name,
-                            )
-                            # A remote database lists the tables its own AgentOS listed
+                            # One table per metrics store, the one every number is built from
+                            db.component_metrics_table_name
                             if has_metrics_lock_row(db) or isinstance(db, RemoteDb)
-                            else (db.metrics_table_name,)
+                            else db.metrics_table_name,
                         )
                         if table_name is not None
                     )
