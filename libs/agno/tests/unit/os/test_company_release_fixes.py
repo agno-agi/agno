@@ -433,11 +433,13 @@ def test_a_policy_whose_executor_type_does_not_match_the_component_is_refused(sy
     assert created.status_code == 422, created.text
 
 
-def test_a_declared_policy_whose_executor_type_does_not_match_is_refused(system):
+@pytest.mark.parametrize("typed", [False, True], ids=["dict", "AutoAccept-object"])
+def test_a_declared_policy_whose_executor_type_does_not_match_is_refused(system, typed):
     from agno.company import Product, Routine
     from agno.company.bootstrap import arehydrate_product
 
-    routine = Routine(name="intake", instructions="Read.", auto_accept=MISMATCHED[0])
+    policy = AutoAccept(**MISMATCHED[0]) if typed else MISMATCHED[0]
+    routine = Routine(name="intake", instructions="Read.", auto_accept=policy)
     declaration = Product(id="docs", name="Docs", routines=[routine])
     with pytest.raises(ValueError, match="executor_type"):
         asyncio.run(

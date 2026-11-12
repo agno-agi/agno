@@ -98,7 +98,9 @@ class AutoAccept(BaseModel):
                         "executors": [executor_id],
                     }
         policy = handler(data)
-        policy._sent_executor_type = sent
+        if not isinstance(data, AutoAccept):
+            # A policy passed as an object keeps the type it was built with.
+            policy._sent_executor_type = sent
         return policy
 
 
