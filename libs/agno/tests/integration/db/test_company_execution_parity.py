@@ -399,7 +399,7 @@ async def test_execution_duplicate_context_history_and_attention(system, kind, i
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("when", ["queued", "running"])
-async def test_brief_edit_keeps_captured_input_and_later_attempt_uses_it(system, monkeypatch, when):
+async def test_a_run_keeps_the_accepted_brief_and_a_title_edit_does_not_reach_it(system, monkeypatch, when):
     client, db, worker, _, components = system
     value = await accepted(client)
     path = f"/company/tasks/{value['id']}"
@@ -414,11 +414,14 @@ async def test_brief_edit_keeps_captured_input_and_later_attempt_uses_it(system,
 
     async def edit():
         current = (await client.get(path)).json()
-        response = await client.patch(path, json={"title": "Renamed", "brief": "Write a better draft"})
+        refused = await client.patch(path, json={"title": "Renamed", "brief": "Write a better draft"})
+        assert refused.status_code == 409, refused.text
+        assert (await client.get(path)).json() == current
+        response = await client.patch(path, json={"title": "Renamed"})
         assert response.status_code == 200, response.text
         edited = response.json()
-        assert (edited["title"], edited["brief"]) == ("Renamed", "Write a better draft")
-        changed = {"title", "brief", "updated_at"}
+        assert (edited["title"], edited["brief"]) == ("Renamed", "Write a draft")
+        changed = {"title", "updated_at"}
         assert {k: v for k, v in edited.items() if k not in changed} == {
             k: v for k, v in current.items() if k not in changed
         }
@@ -438,14 +441,14 @@ async def test_brief_edit_keeps_captured_input_and_later_attempt_uses_it(system,
     assert (await worker.store.get_job(first.json()["run_id"]))["payload"]["input"] == captured
     assert await worker.store.claim_job(worker.worker_id, worker.config.lock_grace_seconds) is None
     saved = (await client.get(path)).json()
-    assert (saved["title"], saved["brief"]) == ("Renamed", "Write a better draft")
+    assert (saved["title"], saved["brief"]) == ("Renamed", "Write a draft")
     assert saved["status"] == "in_review" and "draft" in saved["result"]["content"]
     assert len(saved["transitions"]) == len(before["transitions"]) + 1
     second = await client.post(path + "/runs", json={"attempt": 2})
     assert second.status_code == 202, second.text
     assert second.json()["run_id"] != first.json()["run_id"] and second.json()["session_id"] == before["session_id"]
     later = json.loads((await worker.store.get_job(second.json()["run_id"]))["payload"]["input"])
-    assert later["brief"] == "Write a better draft" and set(later) == keys
+    assert later["brief"] == "Write a draft" and set(later) == keys
     assert "Renamed" not in json.dumps(later)
     assert (await execute(worker))["status"] == "completed"
 
@@ -2641,6 +2644,65 @@ async def test_same_second_timestamp_keeps_status_guard(system, monkeypatch, aut
         len([entry for entry in (await _call(db, "get_task", task["id"]))["transitions"] if entry["target"] == "ready"])
         == 1
     )
+
+
+@pytest.mark.asyncio
+async def test_a_receipt_with_no_lifetime_limit_reads_no_acceptance_history(system, monkeypatch):
+    from agno.company.execution import _call
+
+    client, db, _, _, _ = system
+    product = (await client.post("/company/products", json={"name": "No lifetime limit"})).json()
+    proposed = (await client.post("/company/projects", json={"product_id": product["id"], "name": "Proposed"})).json()
+    tasks = [
+        (
+            await client.post(
+                "/company/tasks", json={"product_id": product["id"], "project_id": proposed["id"], "title": title}
+            )
+        ).json()
+        for title in ("First", "Second")
+    ]
+
+    def counted(*args, **kwargs):
+        raise AssertionError("read the acceptance history")
+
+    monkeypatch.setattr("agno.db.schemas.tasks._acceptance_count", counted)
+    # A policy with no limits has no lifetime count to compare, so nothing is read for it.
+    receipt = {"routine_id": "routine", "policy": "version"}
+    approved = await _call(
+        db,
+        "transition_project",
+        proposed["id"],
+        "active",
+        "Automatic approval",
+        expected_updated_at=proposed["updated_at"],
+        auto_accept=receipt,
+    )
+    assert approved["status"] == "active" and approved["transitions"][-1]["auto_accept"] == receipt
+    options = dict(executor_type="agent", executor_id="writer")
+    accepted = await _call(
+        db,
+        "transition_task",
+        tasks[0]["id"],
+        "ready",
+        "Automatic acceptance",
+        expected_updated_at=tasks[0]["updated_at"],
+        auto_accept=receipt,
+        **options,
+    )
+    assert accepted["status"] == "ready" and accepted["transitions"][-1]["auto_accept"] == receipt
+    # A policy with a lifetime count is still counted under the lock.
+    with pytest.raises(AssertionError, match="read the acceptance history"):
+        await _call(
+            db,
+            "transition_task",
+            tasks[1]["id"],
+            "ready",
+            "Automatic acceptance",
+            expected_updated_at=tasks[1]["updated_at"],
+            auto_accept={**receipt, "max_acceptances": 5},
+            **options,
+        )
+    assert (await _call(db, "get_task", tasks[1]["id"]))["status"] == "backlog"
 
 
 @pytest.mark.asyncio

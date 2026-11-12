@@ -252,7 +252,8 @@ def test_acceptance_freezes_scope_and_backlog_clears_it(client):
     assert ready["executor_type"] == "agent" and ready["executor_id"] == "writer"
     assert isinstance(ready["accepted_at"], int)
     assert client.patch(path, json={"executor_id": "other"}).status_code == 409
-    assert client.patch(path, json={"brief": "Changed"}).json()["executor_id"] == "writer"
+    assert client.patch(path, json={"brief": "Changed"}).status_code == 409
+    assert client.patch(path, json={"title": "Renamed"}).json()["executor_id"] == "writer"
     assert transition(client, path, "backlog").status_code == 200
     backlog = client.get(path).json()
     assert all(backlog[key] is None for key in ["executor_type", "executor_id", "accepted_by", "accepted_at"])
@@ -279,20 +280,28 @@ def walk_stages(client):
     yield "cancelled", path
 
 
-def test_title_and_brief_edit_at_every_stage_but_structure_stays_restricted(client):
+def test_title_edits_at_every_stage_and_the_brief_and_structure_only_in_backlog(client):
     for stage, path in walk_stages(client):
         before = client.get(path).json()
-        edited = client.patch(path, json={"title": "Renamed " + stage, "brief": "Rewritten " + stage})
-        assert edited.status_code == 200, (stage, edited.text)
-        after = edited.json()
-        assert (after["title"], after["brief"]) == ("Renamed " + stage, "Rewritten " + stage)
-        ignored = {"title", "brief", "updated_at"}
+        if stage == "backlog":
+            edited = client.patch(path, json={"title": "Renamed " + stage, "brief": "Rewritten " + stage})
+            assert edited.status_code == 200, (stage, edited.text)
+            assert client.patch(path, json={"brief": "Brief only"}).json()["title"] == "Renamed " + stage
+            assert client.patch(path, json={"brief": None}).json()["brief"] is None
+            before = client.patch(path, json={"brief": "Accepted " + stage}).json()
+        else:
+            # The brief is part of what was accepted. It changes after a return to Backlog.
+            for body in [{"brief": "Rewritten"}, {"brief": None}, {"title": "Mixed", "brief": "Rewritten"}]:
+                assert client.patch(path, json=body).status_code == 409, (stage, body)
+            assert client.get(path).json() == before
+            edited = client.patch(path, json={"title": "Renamed " + stage, "brief": before["brief"]})
+            assert edited.status_code == 200, (stage, edited.text)
+        after = client.patch(path, json={"title": "Title only"}).json()
+        assert after["title"] == "Title only"
+        ignored = {"title", "brief", "updated_at"} if stage == "backlog" else {"title", "updated_at"}
         assert {k: v for k, v in after.items() if k not in ignored} == {
             k: v for k, v in before.items() if k not in ignored
         }
-        assert client.patch(path, json={"title": "Title only"}).json()["brief"] == "Rewritten " + stage
-        assert client.patch(path, json={"brief": "Brief only"}).json()["title"] == "Title only"
-        assert client.patch(path, json={"brief": None}).json()["brief"] is None
         assert client.patch(path, json={"title": " "}).status_code == 422
         snapshot = client.get(path).json()
         if stage == "backlog":
@@ -330,7 +339,8 @@ def test_task_project_must_belong_to_same_product(client):
 @pytest.mark.parametrize(
     "body",
     [
-        {"target": "ready", "reason": "Accept"},
+        {"target": "ready", "reason": "Accept", "executor_type": "agent"},
+        {"target": "ready", "reason": "Accept", "executor_id": "a"},
         {"target": "ready", "reason": "Accept", "executor_type": "agent", "executor_id": " "},
         {"target": "cancelled", "reason": "Cancel", "executor_type": "agent", "executor_id": "a"},
         {"target": "ready", "reason": "Accept", "executor_type": "agent", "executor_id": "a", "accepted_by": "spoof"},
@@ -339,6 +349,14 @@ def test_task_project_must_belong_to_same_product(client):
 def test_invalid_acceptance(client, body):
     path = "/company/tasks/" + create(client)["id"]
     assert client.post(path + "/transitions", json=body).status_code == 422
+
+
+def test_acceptance_with_no_executor_names_mini_agent_and_needs_it(client):
+    # This deployment has no Company model, so Mini Agent does not exist.
+    path = "/company/tasks/" + create(client)["id"]
+    response = client.post(path + "/transitions", json={"target": "ready", "reason": "Accept"})
+    assert response.status_code == 409 and "Mini Agent is unavailable" in response.text
+    assert client.get(path).json()["status"] == "backlog"
 
 
 def test_project_approval_keeps_ready_validation_and_permissions(client):

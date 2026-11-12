@@ -82,7 +82,7 @@ async def test_manager_review_through_durable_queue(tmp_path, backend, mode):
         observed.append((_agno_run_context.user_id, authority.context.principal_id, authority.product_id))
         return "Restored authority observed"
 
-    os._mini_agent.tools.append(observe_queue_authority)
+    os._mini_agent.tools.routine.append(observe_queue_authority)
     try:
         product = await _call(manager, "create", name="Docs", user_id="alice")
         project = await _call(manager, "create_project", product_id=product["id"], name="Guides", user_id="alice")

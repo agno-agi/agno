@@ -33,20 +33,21 @@ def test_mini_agent_assembly_and_model_precedence(tmp_path, manager):
     )
     pm = os._mini_agent
     assert pm.id == MINI_AGENT_ID and pm.model is override
-    assert pm.learning.decision_log.db is db
+    # Mini Agent keeps no decision log: it neither writes Company decisions nor recalls them.
+    assert pm.learning is None
     assert pm not in registry.agents and not registry.tools
     assert sum(agent is pm for agent in os._agents) == 1
     if manager:
         # Super Agent holds its own CompanyTools and has no Mini Agent member.
         assert all(m.id != MINI_AGENT_ID for m in os.manager.members)
         leader_tools = [t for t in os.manager.tools if isinstance(t, CompanyTools)]
-        assert len(leader_tools) == 1 and leader_tools[0] is not pm.tools[0]
+        assert len(leader_tools) == 1 and leader_tools[0] is not pm.tools.routine[0]
         assert "summarize_company_product" not in leader_tools[0].functions
         assert "refresh_company_product" not in leader_tools[0].functions
         assert COMPANY_INSTRUCTIONS in os.manager.instructions.base
     os.resync(os.get_app())
     assert pm not in registry.agents and not registry.tools
-    tools = pm.tools[0]
+    tools = pm.tools.routine[0]
     assert {"create_company_product", "create_product_routine"} <= tools.functions.keys()
     assert tools.registry is registry
     assert not any("schedule" in name or "transition" in name for name in tools.functions)
@@ -55,10 +56,6 @@ def test_mini_agent_assembly_and_model_precedence(tmp_path, manager):
     assert "summarize_company_product" in tools.functions
     assert "refresh_company_product" in tools.functions
     assert "summarize_company_product" in CompanyTools(db, summary_tools=True).functions
-    assert {fn.__name__ for fn in pm.learning.decision_log.get_tools()} == {
-        "log_company_decision",
-        "search_company_decisions",
-    }
     inherited = AgentOS(db=db, registry=Registry(models=[first, override]), company=CompanyConfig(), telemetry=False)
     assert inherited._mini_agent.model is first
     with pytest.raises(ValueError, match="cron_expr"):
@@ -135,8 +132,13 @@ async def test_tools_identity_fence_and_learning(tmp_path, use_async):
         executor_id="writer",
         accepted_by="alice",
     )
-    accepted_edit = json.loads(await invoke("edit_company_task", task["id"], "changed", "yes", _agno_run_context=alice))
-    assert accepted_edit["title"] == "changed" and accepted_edit["brief"] == "yes"
+    # After acceptance the brief is part of what was accepted. The title still changes.
+    with pytest.raises(ValueError, match="Accepted task scope requires a return to Backlog"):
+        await invoke("edit_company_task", task["id"], "changed", "yes", _agno_run_context=alice)
+    accepted_edit = json.loads(
+        await invoke("edit_company_task", task["id"], "changed", "better", _agno_run_context=alice)
+    )
+    assert accepted_edit["title"] == "changed" and accepted_edit["brief"] == "better"
     assert accepted_edit["status"] == "ready" and accepted_edit["executor_id"] == "writer"
     await invoke("update_product_status", product["id"], "draft ready", 1, _agno_run_context=alice)
     entry = json.loads(
@@ -196,8 +198,14 @@ async def test_automated_callers_edit_task_content_only_in_backlog(tmp_path, use
         await _edit_task(tools, use_async, context, task["id"])
     assert manager.get_task(task["id"]) == task
     context.authorization = None
-    edited = json.loads(await _edit_task(tools, use_async, context, task["id"]))
-    assert (edited["title"], edited["brief"], edited["status"]) == ("Rewritten", "Rewritten brief", stage)
+    # A person changes the title at any stage, and the brief only in Backlog.
+    with pytest.raises(ValueError, match="Accepted task scope requires a return to Backlog"):
+        await _edit_task(tools, use_async, context, task["id"])
+    assert manager.get_task(task["id"]) == task
+    retitle = tools.aedit_company_task if use_async else tools.edit_company_task
+    result = retitle(task["id"], "Rewritten", "Original", _agno_run_context=context)
+    edited = json.loads(await result if use_async else result)
+    assert (edited["title"], edited["brief"], edited["status"]) == ("Rewritten", "Original", stage)
     assert edited["executor_id"] == task["executor_id"] and edited["accepted_at"] == task["accepted_at"]
     db.close()
 
@@ -315,10 +323,13 @@ async def test_super_agent_runs_company_tools_with_injected_identity(tmp_path, m
                         },
                     ),
                     (
-                        "update_product_status",
-                        {"product_id": product["id"], "content": "Draft proposed", "expected_version": 1},
+                        "write_company_file",
+                        {
+                            "path": f"products/{product['id']}/status.md",
+                            "content": "Draft proposed",
+                            "expected_version": 1,
+                        },
                     ),
-                    ("log_company_decision", {"decision": "Review first", "reasoning": "Approval required"}),
                 ]
                 return ModelResponse(
                     role="assistant",
@@ -389,80 +400,12 @@ async def test_super_agent_runs_company_tools_with_injected_identity(tmp_path, m
     tasks, total = m.list_tasks()
     assert total == 1 and tasks[0]["user_id"] == "alice" and tasks[0]["status"] == "backlog"
     assert m.read_wiki(product["id"], "status.md").content == "Draft proposed"
+    # Super Agent holds no decision-log tools. The log holds what the API wrote.
+    held = {name for toolkit in os.manager.tools for name in (getattr(toolkit, "functions", None) or {})}
+    assert not {"log_company_decision", "search_company_decisions"} & held
     decisions, total = m.list_decisions()
-    assert total == 2
-    own = next(decision for decision in decisions if decision.decision == "Review first")
-    # Decisions logged in chat carry Super Agent's id, not Mini Agent's.
-    assert own.user_id == "alice" and own.session_id == "planning" and own.agent_id == MANAGER_TEAM_ID
+    assert total == 1 and decisions[0].decision == "Human review decision"
     assert m.list_decisions(agent_id=MINI_AGENT_ID)[1] == 0
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("use_async", [False, True])
-async def test_mini_agent_recalls_company_decisions_only_in_routines(tmp_path, use_async):
-    from agno.models.base import Model
-    from agno.models.message import MessageMetrics
-    from agno.models.response import ModelResponse
-    from agno.os.authz.run_context import restore_authorization
-    from agno.run.authorization import authorization_scope
-
-    prompts = []
-
-    class RecallModel(Model):
-        def __init__(self):
-            super().__init__(id="offline-recall", provider="test")
-
-        def invoke(self, messages, *args, **kwargs):
-            prompts.append("\n".join(m.content for m in messages if m.role == "system" and isinstance(m.content, str)))
-            return ModelResponse(role="assistant", content="Quiet check", response_usage=MessageMetrics())
-
-        async def ainvoke(self, *args, **kwargs):
-            return self.invoke(*args, **kwargs)
-
-        def invoke_stream(self, *args, **kwargs):
-            yield self.invoke(*args, **kwargs)
-
-        async def ainvoke_stream(self, *args, **kwargs):
-            yield self.invoke(*args, **kwargs)
-
-        def parse_args(self, *args, **kwargs):
-            return {}
-
-        def _parse_provider_response(self, response, **kwargs):
-            return response
-
-        def _parse_provider_response_delta(self, response):
-            return response
-
-    db = SqliteDb(db_file=str(tmp_path / "recall.db"))
-    product = CompanyManager(db).create(name="SDK", user_id="alice")
-    os = AgentOS(db=db, company=CompanyConfig(model=RecallModel()), user_isolation=True, telemetry=False)
-    with TestClient(os.get_app()) as client:
-        assert client.post("/company/decisions", json={"decision": "Human review decision"}).status_code == 201
-
-    async def run():
-        runner = os._mini_agent
-        if use_async:
-            return await runner.arun("Run the Routine", user_id="alice", session_id="routine")
-        return runner.run("Run the Routine", user_id="alice", session_id="routine")
-
-    refused = await run()
-    assert refused.content == "This agent runs Company Routines only" and prompts == []
-    routine = {
-        "context": {"principal_id": "alice", "scopes": ["decisions:read"]},
-        "service_account": True,
-        "enforce_tools": True,
-        "company_routine": True,
-        "company_routine_id": "refresh",
-        "company_product_id": product["id"],
-    }
-    with authorization_scope(lambda: restore_authorization(None, routine)):
-        assert (await run()).content == "Quiet check"
-    prompt = prompts[-1]
-    assert "Human review decision" in prompt
-    assert "`log_company_decision`" in prompt and "`search_company_decisions`" in prompt
-    assert not any(name in prompt for name in ("`log_decision`", "`search_decisions`", "`record_outcome`"))
-    assert "append-only" in prompt
 
 
 @pytest.mark.asyncio

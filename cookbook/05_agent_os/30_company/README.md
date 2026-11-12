@@ -37,14 +37,17 @@ whoever created the Product. User isolation does not restrict Company records.
 it runs on Mini Agent. Naming `executor_type="agent"`, `executor_id="miniagent"` does
 the same. It reads Sources and existing work, proposes only evidence-backed
 Backlog Tasks, and updates status without accepting work. Mini Agent is a
-restricted agent for unattended work: Company tools
+restricted agent for unattended work. In a Routine run it holds Company tools
 and the Routine skills only, no Platform Builder, no run or platform tools, and
-proposal-only authority. It works with or without `manager=OSManager(...)`, but
-needs `CompanyConfig(model=...)` or a registry model. The stored schedule, the
+proposal-only authority. In a Task run it does the accepted work; see
+"Decisions from chat and Mini Agent Tasks" below. It works with or without `manager=OSManager(...)`. Its
+model is `CompanyConfig(model=...)`, else Super Agent's model when `manager=OSManager(model=...)` is set,
+else the first registry model. The stored schedule, the
 Routine API and the run and session records all name it: endpoint
 `/agents/miniagent/runs`, `target_type` `agent`, `target_id` `miniagent`.
 Mini Agent is hidden from `GET /agents`, `GET /config`, MCP and A2A, and a
-person cannot chat with it. Super Agent refuses a run with Routine authority,
+person cannot chat with it: it refuses every run that is not a Company Routine
+or a Company Task. Super Agent refuses a run with Routine authority,
 and a Routine that names Super Agent or any other framework ID is refused.
 
 Check both configurations without model calls or an active scheduler:
@@ -75,7 +78,7 @@ The caller needs Routine/schedule configuration permissions and the target's
 agent/team run permission; scheduled result polling also needs the target's read
 permission. For a Routine on Mini Agent these are `agents:miniagent:run` and
 `agents:miniagent:read`. A grant on Super Agent is not a grant on Mini Agent. Grant only the Company tools the review uses: Sources and existing
-work reads, proposal writes, wiki reads/writes and decision recall. Delegation
+work reads, proposal writes and wiki reads/writes. Delegation
 retains those grants and Routine restrictions. Company-wide collaborative reads
 keep their existing visibility; Source contents and mutations retain Product
 checks, and private sessions retain the deployment's ownership isolation.
@@ -89,8 +92,9 @@ permission for the run to be recorded as successful. The saved Routine creator
 and authorization remain unchanged for scheduled runs; only edits to the
 executor, instructions or acceptance policy save the editor's authorization. A
 Routine with automatic acceptance accepts proposals with the saved grant of the
-user who authorized it, so under user isolation only that user can trigger it
-manually.
+user who authorized it, so only that user or an admin can trigger it manually. A
+policy declared in code has no author: where authorization is off, whoever may
+run the Routine can trigger it.
 
 ## Work records
 
@@ -149,10 +153,11 @@ read scope, matching Products. Edits and transitions are collaborative: callers 
 scope can update or transition another creator's work, even with user isolation
 enabled. This includes cancellation and returning Tasks to Backlog. The creator
 stays unchanged, and transition history records the acting caller. Ready still
-requires the caller's executor run permission; accepted Tasks keep their Project,
-evidence and executor until returned to Backlog, while title and brief stay
-editable at any stage (Company tools run by Routines and executors edit Backlog
-Tasks only). Delete and restore need the delete scope, not ownership.
+requires the caller's executor run permission; accepted Tasks keep their brief,
+Project, evidence and executor until returned to Backlog, because an accepted
+Task runs under its accepter's permissions. The title stays editable at any
+stage (Company tools run by Routines and executors edit Backlog Tasks only).
+Delete and restore need the delete scope, not ownership.
 New work can use another owner's Product or Project, with the Task and
 Project still required to belong to the same Product. Manager and storage
 methods retain explicit owner filters for direct callers.
@@ -164,6 +169,7 @@ methods retain explicit owner filters for direct callers.
 | --- | --- |
 | `04_manage_playbook.py` | Sync/async wiki namespaces, atomic page creation, version conflicts and the learning decision log without a model. |
 | `05_super_agent_company.py` | Company work through Super Agent's Company tools: company details, a Product with a Routine on Mini Agent, a proposal, status and a decision, without a model call. |
+| `16_company_file_tree.py` | The file tree through Super Agent's tools, without a model call: a confirmed company page and Product brief, a Product page, a Task file, a note, and what a Task's input loads. |
 
 Each Product has a durable wiki namespace with `brief.md` (human direction) and
 `status.md` (current work). A second namespace holds company context. Default
@@ -182,22 +188,132 @@ GET and POST `/company/decisions` use `decisions:read` and `decisions:write`.
 Decisions are learning log entries in the `company` namespace, never a file.
 Listings support text, agent, session and age filters plus standard paging.
 The server stamps human identity; agents get identity from injected run context.
-Automatic learning recall includes human and agent decisions across the company;
-explicit searches can still filter by agent. The learning machine binds the agent
-ID when supplying decision tools. Standalone CompanyTools
-leave agent attribution unset. The log is append-only: later outcomes are new
-entries that reference the original decision.
+Super Agent holds no decision-log tools. Mini Agent holds none either and has no
+decision log in its prompt, in a Routine run or a Task run: it reads Sources and
+briefs that nobody vetted, so it neither writes Company decisions nor recalls
+them. The API above and `CompanyTools` on your own agents write and search the log. A Task run on any other executor that holds
+CompanyTools is refused a write to the log.
+An agent you give `LearningMachine(decision_log=CompanyDecisionLogStore(db))`
+recalls human and agent decisions across the company; explicit searches can
+still filter by agent. The learning machine binds the agent ID when supplying
+decision tools. Standalone CompanyTools leave agent attribution unset. The log
+is append-only: later outcomes are new entries that reference the original
+decision.
+
+### One file tree
+
+Super Agent and Mini Agent see the wiki, each Product's pages, each Task's files
+and Super Agent's notes as one tree, addressed by path:
+
+```
+wiki/                   agreed direction: brief.md and status.md by default
+products/<product-id>/  brief.md and status.md by default, and what agents found
+tasks/<task-id>/        what one Task was given and what it produced
+notes/                  Super Agent's own notes
+```
+
+`priorities.md`, `people.md` and `how-we-work.md` are the names Super Agent uses
+in `wiki/`. Each is created when there is something to put in it. A Product is
+addressed by ID, and listing `products/` shows each name beside its ID. Pages in
+`wiki/` and `products/` are Markdown; `tasks/` and `notes/` take any text file.
+
+**Where it is stored.** `wiki/`, `products/` and `tasks/` are in the Company
+database. `notes/` is in the AgentOS database, so it exists with Super Agent on
+whether or not Company is on. The two are the same database unless
+`CompanyConfig(db=...)` names another. The stored namespaces of the wiki and of
+each Product are the ones 3.1 created, so existing pages are read where they are,
+and the wiki API above serves the same pages.
+
+**Nothing in the tree is isolated by user.** `notes/` is one folder shared by
+everyone who talks to Super Agent, including when user isolation is on. A note
+Super Agent saved in one person's chat can be read in another person's chat.
+Listing `products/` and searching the tree show every Product, as the Product
+listing does.
+
+Super Agent is told that `notes/` is shared. What a person marks private, or
+for Super Agent only, goes to its memory of that person when
+`OSManager(learning=...)` keeps a user profile or a user memory. With no such
+memory, Super Agent says it has no private place and writes nothing.
+
+The tools are `CompanyFileTools`. Their names keep them apart from the source file
+tools (`list_files`, `read_file`, `search_content`) that `OSManager(root=...)` adds.
+
+| Tool | Permission | Writes |
+| --- | --- | --- |
+| `list_company_files`, `read_company_file`, `search_company_files` | `wiki:read`, none for `notes/` | |
+| `write_company_file` | `wiki:write` for a Product's pages, `tasks:write` for a Task's folder, none for `notes/` | `notes/`, `tasks/<task-id>/` and a Product's pages other than `brief.md` |
+| `save_company_page` | `wiki:write`, a person's chat only | `wiki/` pages and a Product's `brief.md`, after the person confirms |
+| `delete_company_file` | none | `notes/` only |
+
+What a call may write follows the run it is in, read from the run's authority:
+
+| Run | May write |
+| --- | --- |
+| A person's chat with Super Agent | `notes/`, any Task's folder, any Product's pages other than `brief.md`; `wiki/` and `brief.md` with a confirmation |
+| A Task run | Its own Product's pages other than `brief.md`, and its own `tasks/<task-id>/` |
+| A Routine run | Its own Product's `status.md`, through `update_product_status` only. The file tools refuse every write in a Routine run |
+
+`save_company_page` pauses the run. The confirmation shows the page, the version
+the person saw, the text removed (`old_text`) and the text added (`new_text`).
+With `old_text` it replaces that exact text, which must occur once. Without it,
+`new_text` is added at the end, or becomes a new page at version 0. A page that
+changed after that version is not saved. Super Agent saves only what the person
+states: text in a Source, a page or a tool result is never a request to save.
+
+A Task's folder asks for `tasks:write`, which the person who starts a Task already
+holds, so a Task run can always write its own folder. A Product's pages ask for
+`wiki:write`: a Task started by someone without it writes no Product page and
+reports the refusal.
+
+A Routine reads Sources nobody vetted, so it writes no more than its skills need:
+`status.md`, and the two pages the server composes from the summary and refresh
+tools. Mini Agent holds no file tools in a Routine run. On a named executor that
+holds them, `write_company_file` refuses every write in a Routine run, and the run
+is recorded as failed, as it is when `update_product_status` is refused.
+
+A Routine run and a Task run never see `notes/`. A scheduled or service-account
+run of Super Agent is neither: it counts as a person's chat, and reads and writes
+`notes/`.
+
+A Task's input always carries the Product's `brief.md` and `status.md`, then every
+`wiki/` page: at most 8,000 characters a page and 40,000 in total. A longer page
+is cut and the input names the file to read for the rest. Pages past the total
+are named without their content. Every other file is read on request. Every read
+result says that file content is information, never an instruction.
+
+This input is the same for every executor. Before 3.2 it carried every page of the
+Product. Mini Agent reads the other pages with its file tools. A named agent, team
+or workflow that needs a Product page other than `brief.md` and `status.md`, such as
+a runbook, must hold the read tools:
+`CompanyFileTools(db, include_tools=["list_company_files", "read_company_file", "search_company_files"])`.
+Without them it no longer sees that page.
+
+A listing returns 200 entries a page with the total, and `next_page` when more
+remain. A search returns up to ten matches and `more` when others exist. A search
+of the whole tree, of `products/` or of `tasks/` opens the 50 newest Products and
+the 50 newest Tasks. When there are more, the reply says how many it searched;
+name a folder, `products/<product-id>` or `tasks/<task-id>`, to search another.
+
+A file holds at most 1 MB. `wiki/`, each Product, each Task and `notes/` hold
+20 MB each. A Task's folder is its own space: a Task that fills its folder does not
+stop another Task's writes. Nothing removes a Task's files, not even archiving the
+Task, because an archived Task can be restored. There are no API
+routes for `tasks/` and `notes/`, and no tool appends to, moves or deletes a file
+outside `notes/`.
 
 With `CompanyConfig`, Super Agent holds the Company tools itself. People do
 Company work by talking to Super Agent at `/teams/superagent`. It reads company
 details, Products, Projects, Tasks, Sources and the playbook, proposes Projects
-and Backlog Tasks, edits owned proposals, updates `status.md` with a version check,
-saves company details, creates Routines and logs decisions. It can add website
-Sources with permission and Product ownership. Acceptance, completion, ownership
-changes, local Source additions, Product maintenance and outbound summaries are
+and Backlog Tasks, edits owned proposals, writes `status.md` with a version check,
+saves company details and creates Routines. It can add website
+Sources with permission and Product ownership. When the person asks, it approves
+a Project, accepts a Task and reviews a finished one; see "Decisions from chat
+and Mini Agent Tasks". Ownership changes, local Source additions, Product
+maintenance and outbound summaries are
 not among its Company tools. Routines use the model from `CompanyConfig(model=...)`,
-otherwise the first registry model. If neither exists, diagnostics warns, a
-Routine on Mini Agent fails with that reason, and manual APIs still work.
+otherwise Super Agent's model, otherwise the first registry model. If none exists,
+diagnostics warns, a Routine on Mini Agent fails with that reason, and manual APIs
+still work.
 
 The examples make no provider calls; they do not demonstrate live model quality.
 The heartbeat examples below demonstrate Routines and Sources.
@@ -220,6 +336,9 @@ retaining a known old ID explicitly is necessary for those references.
 | `06_execute_tasks.py` | Durable execution, duplicate starts, ordinary run history and attention with no model call. |
 | `12_task_board.py` | Direct start from Backlog, `last_run`, `allowed_transitions` and a board read by status with no model call. |
 | `13_start_tasks_from_chat.py` | Super Agent starts a human-accepted Task, ends its turn with the receipt, and answers status and unrelated questions while the Task runs. Add `--serve` to try it from the AgentOS UI on `localhost:7777` with a seeded, accepted Task. Live model; PostgreSQL. |
+| `14_work_to_done_in_chat.py` | A person takes work from a proposal to Done in a Super Agent chat: approve the Project, accept the Task on Mini Agent, start it, read the result and complete it. Each decision pauses for the person's confirmation. Mini Agent runs another agent to do the work, and the Task records it. Live model; PostgreSQL. |
+| `15_policy_source_to_done.py` | One line in a Routine declaration, `auto_accept=True`. The Routine reads a Source and proposes work, the automation tick approves the Routine's Project and accepts its Task, Mini Agent does the Task, and the result waits In review. Every automatic step is on the record. Live model; PostgreSQL; serves on a free local port. |
+| `17_continue_tasks_from_chat.py` | A worker stops at a decision; what it ran is read from its run. The person's answer from chat sends the Task back after they confirm, and Super Agent starts it again on the same worker session. `--serve` adds the UI demo. Live model; PostgreSQL. |
 
 `06_execute_tasks.py` starts an accepted workflow Task through its ordinary run
 route and the durable queue, waits for In review, reads paged history and checks
@@ -296,8 +415,9 @@ session to the Task owner only after matching its original reservation and run. 
 including Super Agent and Platform Builder, cannot be accepted or started as
 Task executors.
 
-Executor input contains only the Task brief, its evidence and the current
-company and Product wiki pages. Queue retries and restart recovery use the
+Executor input contains only the Task brief, its evidence, every company wiki
+page and the Product's `brief.md` and `status.md`; see "One file tree" for the
+size limit. Queue retries and restart recovery use the
 existing queue policy. Results are saved on the Task; success moves it to
 `in_review`. Retryable failures remain outside failed attention while the queue
 has attempts left. An exhausted, permanent or cancelled run leaves the Task
@@ -313,6 +433,101 @@ clears it from failed attention while preserving the result as history. Starting
 a new attempt clears the previous result. `failed=false`
 includes all other Tasks, including those with no result. The Task table is
 created with its execution, evidence and result columns in the initial schema.
+
+### Decisions from chat and Mini Agent Tasks
+
+Three Super Agent tools record a person's decision. Each uses `requires_confirmation`,
+the same mechanism as `confirm_company_details`: the run pauses, shows the record's
+name, its ID and what will change, and the tool runs only after the chatting person
+confirms. No decision is recorded without a confirmation. A scheduled run on
+`/teams/superagent/runs` that calls one of these tools pauses, its schedule run is
+recorded as paused, and nothing is decided. `start_company_task` and
+`get_company_task_status` do not pause.
+
+After the confirmation, each tool runs under the confirming person's permissions and
+writes that person on the transition. Routine runs, Task runs, the automation tick,
+service accounts, the scheduler identity and, under user isolation, anonymous callers
+are refused. Where authorization is on, a run that carries no permissions is refused
+too, by these tools, by `start_company_task` and by the two auto-accept tools: there
+is nobody to check. The name in the confirmation must be the record's name, so the
+person decides on the record they were shown.
+
+| Tool | Confirmation shows | Change | The person needs |
+| --- | --- | --- | --- |
+| `approve_company_project` | Project name and ID | Project: proposed to active | `projects:write` |
+| `accept_company_task` | each Task's title, ID and version (`updated_at`), and the executor | Tasks: Backlog to Ready | `tasks:write` and run permission on the executor |
+| `review_company_task` with `complete` | Task title and ID, the outcome, the reason | Task: In review to Done | `tasks:write` |
+| `review_company_task` with `send_back` | Task title and ID, the outcome, the reason | Task: In review to Ready, same executor | `tasks:write` and run permission on the executor |
+
+`accept_company_task` takes a list of Tasks, so one confirmation covers several.
+Nothing is accepted unless every listed Task is a proposal with the title shown.
+Each Task names the `updated_at` the person saw. A Task edited after that is not
+accepted: read it again and request a new confirmation.
+
+A run that pauses and is never answered stays paused. It does not expire and it
+decides nothing. The person can answer it later, or send a new message, which starts
+a new run and leaves the paused one as it is.
+
+A Task sent back keeps its executor. The person's reason is saved on the
+transition and given to the executor's next attempt as `review_feedback` in its
+input. Starting stays a separate step, with `start_company_task`.
+
+Review confirmations include `reviewed_run_id` from `get_company_task_status`.
+If another attempt runs while a confirmation is pending, that confirmation is
+refused. Read the new result and request a new confirmation before deciding it.
+
+A Task that names no executor, and is accepted with none, names agent `miniagent`.
+This holds for `POST /company/tasks/{id}/transitions` and for `POST /company/tasks`
+with status Ready: give `executor_type` and `executor_id` together, or leave both
+out. A move to Ready with no executor keeps the executor the Task already names, so
+a Task sent back from review stays with its executor and a proposal that suggests
+an executor is accepted on it. In chat, Super Agent passes the executor to
+`accept_company_task` so the confirmation shows it: the one the person named, else
+the one the proposal suggests, else agent `miniagent`. A call that names no
+executor is refused. The stored Task, the API response, the permission check (for
+Mini Agent, `agents:miniagent:run`) and the run all name that executor. Super Agent
+and Platform Builder are refused as executors.
+
+What Mini Agent may do follows the kind of run:
+
+| | Routine run | Task a person accepted | Task a policy accepted |
+| --- | --- | --- | --- |
+| Company tools | read, propose, intake, status, refresh, summary | read the Product, its Projects, Tasks and Sources; update `status.md`. A Source read or a status update for another Product is refused | the same as a person-accepted Task |
+| Run tools (`list_*`, `run_*`) | none | yes, for components both the accepting person and the starter may run | none |
+| Instructions | read Sources and propose | do the work in the brief | do the work in the brief |
+
+Mini Agent never runs Super Agent, Platform Builder or itself, holds no Studio,
+scheduler, shell, file or web tools, and stops after 30 tool calls in a run. The
+run tools check the run themselves: called in a Routine run they return an error.
+A component Mini Agent runs acts with its own tools, so accept a Task on Mini
+Agent only when you would run those components yourself.
+
+The accepting person's saved permissions bound component runs throughout
+delegation and continuation, on Mini Agent and on every other executor that
+holds run tools; the starter's permissions still apply. A Task a policy
+accepted runs no other component, on any executor. No Task run starts a
+sandboxed agent through the run tools: a sandboxed agent runs only as a Task's
+own executor. Task runs
+can use `read_company_file` to read `products/<product-id>/status.md` and its
+version before writing it with `write_company_file`, and reread it after a
+version conflict to preserve concurrent edits.
+
+When a Task run finishes, the components it started through the run tools are
+saved on the Task as `result.invoked`: type, id, run id and status, with
+`REFUSED` for a run that was not allowed and `FAILED` for any other error.
+
+A component that pauses for a confirmation inside a Task run cannot continue: the
+Task's result names it as the blocker, and continuing that run through the
+component's own continue route is refused. Send the Task back, or run the
+component yourself.
+
+A run that executes a Task, on any executor, cannot move a Project or Task
+between stages through the Company manager. People decide in the Company pages,
+the API or chat.
+
+```bash
+.venvs/demo/bin/python cookbook/05_agent_os/30_company/14_work_to_done_in_chat.py
+```
 
 ## Cascading archive
 
@@ -660,8 +875,8 @@ the IDs below with real records and PATCH this body:
 ```json
 {
   "auto_accept": {
-    "executor_type": "agent",
-    "executor_id": "writer",
+    "default_executor": "writer",
+    "executors": ["writer"],
     "source_ids": ["release-notes"],
     "work_scope": {
       "product_ids": ["documentation"],
@@ -673,9 +888,12 @@ the IDs below with real records and PATCH this body:
 }
 ```
 
-Every authorization names an exact executor type and ID. A proposal with no
-executor receives that authorized executor at acceptance. A proposal that names
-an executor must name the same one. It must belong to the Routine's Product and
+A policy's executor is a default, and it is agent `miniagent` when left out. A
+proposal with no executor runs on the policy's executor. A proposal that names an
+executor runs on that one, when it is registered and passes the executor checks;
+otherwise it waits for a person. A policy saved before `approve_projects` existed
+keeps its earlier rule: its executor is fixed, and a proposal that names another
+waits for a person. A proposal must belong to the Routine's Product and
 carry the framework's Routine origin. `propose_company_task` and
 `intake_product_source` can create Backlog drafts in a proposed Project and name a
 proposed executor; neither can accept work. Source IDs and work scope are optional bounds. Omitted Source/scope
@@ -684,8 +902,8 @@ bounds impose no additional restriction; an empty allowed-ID list permits no mat
 check names fail closed. A Source bound requires verified reader evidence.
 Omitting `required_checks` defaults to `["executor_registered"]`; an explicit
 empty check list is rejected. Every policy therefore runs at least one server-side
-check. `limits.expires_at` is required on every policy creation or replacement,
-including PATCH, and must be a UTC epoch-second timestamp in the future.
+check. `limits` is optional. When it is given, `limits.expires_at` is required and
+must be a UTC epoch-second timestamp in the future.
 Automatic executors must be local and have a database for durable run storage.
 
 | Built-in required check | Server-side fact checked |
@@ -735,8 +953,9 @@ payload writes strip acceptance grants; only the human API can issue them after
 checking the caller's authority.
 
 In a local deployment with authentication disabled, API callers are trusted
-operators, as for the existing scheduler. Code/YAML declarations remain
-proposal-only: write an automatic authorization through the human API.
+operators, as for the existing scheduler. A Routine declared in the deployment's
+own code or YAML may carry `auto_accept`; see "auto_accept: one switch" below.
+`POST /company/setup` and the chat tools that create Products cannot.
 Executors and Mini Agent hold no `schedules:write` or SchedulerTools.
 Private authorization is removed from public payloads and executor input;
 Routine metadata is data, never a source of broader executor authority.
@@ -795,6 +1014,139 @@ from its connection details. Reuse those details (or an explicit stable `id`)
 after restart and across replicas so saved run database references resolve.
 This does not rewrite references saved with older randomly generated IDs;
 retaining a known old ID explicitly is necessary for those references.
+
+### auto_accept: one switch
+
+```python
+Routine(name="maintenance", instructions=MAINTENANCE, auto_accept=True)
+
+# With a named worker
+Routine(..., auto_accept=AutoAccept(default_executor="codex-engineer"))
+
+# With a named worker, and a list of the executors a proposal may suggest
+Routine(..., auto_accept=AutoAccept(default_executor="codex-engineer", executors=["writer"]))
+```
+
+`auto_accept=True` means: a Project this Routine proposed is approved, its Tasks
+are accepted and run, and finished work waits In review for a person. Nothing
+completes a Task but a person. Every step runs in the automation tick; no run
+approves or accepts anything.
+
+`auto_accept` takes `True`, `False` or an `AutoAccept`. `True` is `AutoAccept()`.
+Every field has a default:
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `default_executor` | `miniagent` | ID of the agent, team or workflow that runs a Task whose proposal suggests no executor. |
+| `executors` | none | IDs of the executors a proposal may suggest. Left out, any registered executor is accepted. Set, a proposal that names another waits for a person. Mini Agent and `default_executor` are always allowed and need not be listed. |
+| `approve_projects` | `true` | Approve a Project this Routine proposed, when one of its Tasks is accepted. With `false`, a person approves each Project and the policy accepts and runs its Tasks. |
+| `max_open` | `5` | At most this many of the Routine's Tasks are Ready, In progress or In review at once. Applies when `limits` is not set. |
+| `limits` | none | Optional lifetime count and expiry, as before. A policy without it has no expiry: you turn it off. |
+| `source_ids`, `work_scope`, `required_checks`, `complete_projects` | as before | Unchanged. |
+
+- **The bound.** The review queue is the brake. When five of the Routine's Tasks
+  are open, the next proposal waits in Backlog until a person completes or
+  cancels one. A Task whose run failed stays In progress, so it still counts
+  until a person retries it, returns it to Backlog or cancels it.
+  `get_company_product` and a Backlog or unfiltered listing from `list_company_tasks` return
+  `auto_accept_at_limit` for a Routine that is waiting this way.
+- **Projects.** A Routine's Project takes its ID from the Product, the Routine
+  and the name. Only such a Project is approved, and only at the moment one of
+  its Tasks is accepted. A Project a person or another Routine proposed, or one
+  renamed since, waits for a person.
+- **Executors.** A Task runs on the executor its proposal suggests, or on
+  `default_executor` when it suggests none. The Task's acceptance records which:
+  `executor_chosen_by` is `proposal` or `default`. With no `executors` list, any
+  registered component a proposal names can be chosen, so a Source that a
+  Routine reads can influence where its Tasks run; set `executors` to limit
+  that. Every executor a policy names must be registered and pass the executor
+  checks, and the person who sets the policy must be allowed to run each one.
+  Super Agent and Platform Builder are refused.
+- **IDs only.** A policy names executors by ID, and the kind (agent, team or
+  workflow) is read from the registry. Studio components cannot share an ID
+  across kinds. Components defined in code can; a policy that names such an ID
+  is refused, never guessed. Give each component its own ID.
+- **A Task on Mini Agent** that a policy accepted holds no run tools, and on an
+  executor with its own run tools those tools refuse. Work that needs a real
+  worker names it as the executor, in the policy or on the proposal.
+- **A policy saved with `executor_type` and `executor_id`** keeps working. It
+  allows that one executor and uses it by default, approves no Project, and keeps
+  its version and its acceptance count. The API still reads those two fields, and
+  a policy sent in that shape means the same: `default_executor`, a list of that
+  one ID, and `approve_projects` false unless the request says otherwise. A
+  stored policy read from the API and sent back unchanged is not rewritten.
+- **Where it is set.** In a Routine declaration in code or YAML, through
+  `POST` or `PATCH /company/routines` (`"auto_accept": true` or an object), from
+  the UI, or from chat. A declaration applies when the Routine is first
+  created. After that the stored Routine is the record: removing `auto_accept`
+  from the code does not turn it off on a Routine that already exists, and
+  adding it does not turn it on.
+
+**What a declared policy runs as.** A policy a person sets through the API, the
+UI or chat runs under that person's saved permissions, as before. A policy
+declared in code has no person behind it, so the two kinds of deployment differ:
+
+| | Authorization off | Authorization on |
+| --- | --- | --- |
+| What you write | `Routine(..., auto_accept=True)` | The same |
+| At startup | The Routine runs on its schedule and its policy acts | The Routine and its policy wait. Code cannot give a Routine a person's grant, so its runs are refused and the tick accepts nothing |
+| What a person does | Nothing | One action, once: turn auto-accept on for the Routine. In chat that is "turn on auto-accept for the feedback-intake Routine" and one confirmation. Through the API it is `PATCH /company/routines/{id}` with `auto_accept` |
+| After that | | The Routine runs on its schedule and its declared policy acts, both under that person's saved permissions |
+| While it waits | | `get_company_product` and a Backlog or unfiltered listing from `list_company_tasks` return `auto_accept_waiting_for_a_person` with the Routine, so Super Agent says it is waiting when asked for the Product's status or for what needs a decision |
+| Who each decision is recorded as | The Routine and the policy version, with `declared` | The Routine, the policy version and that person |
+
+- **Turning it on from chat keeps the Routine's policy.** A Routine that has a
+  policy keeps it: one its code declares, or one a person set. Naming an
+  executor in the request changes its `default_executor` only, and a policy that
+  did not change keeps its version. The defaults are for a Routine with no
+  policy. Through the API, `"auto_accept": true` writes the default policy, so
+  send the fields to keep them.
+- **With authorization off**, every caller is a trusted operator. The tick
+  checks that the Routine is enabled and its policy unchanged, that the proposal
+  is this Routine's own and in its Product, that the executor is registered and
+  passes the executor checks, the bound, and the policy's server checks. The
+  Task run has no person's permissions to check against. It still cannot change
+  schedules, approve, accept, review or complete work, turn auto-accept on,
+  create Products or Routines, or edit company details. A Task run on any
+  executor is bound to its Task's Product for Company writes. On Mini Agent it
+  holds the Company read tools and can update the status page of its own
+  Product. With a named executor, that executor's other tools are its own.
+- **The declared marker** is written only when the deployment's own declaration
+  first creates the Routine, in the same write as the Routine. A Routine that
+  already exists under the name keeps its grant. The Routine API and the chat
+  tools write the person's grant instead, so a person who changes a declared
+  Routine's instructions, executor or policy makes it theirs. The generic schedule routes
+  refuse a Company Routine and drop the key from any other schedule, the
+  ScheduleManager drops it from every write, and Platform Builder's schedule
+  tools take no payload.
+
+**From chat.** `turn_on_routine_auto_accept` pauses and shows the Routine's name,
+its Product's name and the default executor when the person named one; it
+refuses when a name is not the stored one. For a Routine that already has a
+policy a person set, the confirmation also shows that policy on one line in
+`kept_policy`. A call without it changes nothing and replies with the line, so
+Super Agent asks again with the policy shown. `turn_off_routine_auto_accept` does
+not pause. Both go through the Routine API's PATCH handler as the chatting
+person, so they need what PATCH needs: `routines:write`, `schedules:write`,
+`tasks:write`, `wiki:read`, `projects:write` and run permission on the Routine's
+executor and on each executor the policy names.
+
+**The Routine API response.** A policy is returned with every field and the
+value in force, including for a policy stored in the earlier shape. For one
+release it also carries `executor_type` and `executor_id`,
+set from `default_executor` and marked deprecated in the schema, so a client
+that reads them keeps working.
+
+**On the record.** Each automatic approval and acceptance carries `auto_accept`
+with the Routine ID and the policy version, `declared` for a declared policy,
+and on an acceptance whether the executor came from the proposal or the default.
+`get_company_product` returns the latest 20 as `automatic_decisions`, read from
+the Product's 100 most recently changed Projects and Tasks. It reads them only
+for a Product that has a Routine with a policy.
+
+```bash
+.venvs/demo/bin/python cookbook/05_agent_os/30_company/15_policy_source_to_done.py
+```
 
 ### Bounded Project completion
 
