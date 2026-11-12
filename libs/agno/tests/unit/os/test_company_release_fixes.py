@@ -851,11 +851,12 @@ def test_routine_instructions_name_the_tools_a_routine_proposes_with(system):
     from agno.company.mini_agent import ROUTINE_INSTRUCTIONS
     from agno.company.routines import _RoutineAuthorization
     from agno.run.authorization import authorization_scope
+    from agno.tools.company import CompanyTools
 
     for name in ("propose_company_project", "intake_product_source", "evidence_links", "evidence_hashes"):
         assert name in ROUTINE_INSTRUCTIONS, name
-    assert "propose_company_task is refused" in ROUTINE_INSTRUCTIONS
-    # Both tools are held in a Routine run, and the plain Task proposal is the one that is refused there.
+    # Mini Agent holds the two tools a Routine proposes with, and not the plain Task proposal.
+    assert "propose_company_task" not in ROUTINE_INSTRUCTIONS
     product = system.client.post("/company/products", json={"name": "Clinics"}, headers=headers()).json()
     authority = _RoutineAuthorization(None, routine_id="routine", product_id=product["id"])
     with authorization_scope(lambda: authority):
@@ -863,12 +864,21 @@ def test_routine_instructions_name_the_tools_a_routine_proposes_with(system):
             name: function for toolkit in system.mini.tools(None) for name, function in toolkit.get_functions().items()
         }
         assert {"propose_company_project", "intake_product_source", "read_product_source"} <= set(tools)
+        assert "propose_company_task" not in tools
         project = json.loads(tools["propose_company_project"].entrypoint(product_id=product["id"], name="Updates"))
         assert project["status"] == "proposed"
+        # A Routine that runs on a named agent with CompanyTools still holds the tool, and it is refused.
         with pytest.raises(PermissionError, match="intake_product_source"):
-            tools["propose_company_task"].entrypoint(
+            CompanyTools(system.db).propose_company_task(
                 product_id=product["id"], title="Draft the update", project_id=project["id"]
             )
+
+
+def test_a_routine_run_on_mini_agent_is_not_offered_the_plain_task_proposal(open_system):
+    routine_run(open_system, 1)
+    offered = open_system.mini.model.offered
+    assert {"propose_company_project", "intake_product_source", "list_company_tasks"} <= offered
+    assert "propose_company_task" not in offered
 
 
 # ----------------------------------------------------------------- a Routine with no Source says so

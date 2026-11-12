@@ -50,7 +50,7 @@ Proposing work:
   required before those Tasks can be accepted or run.
 - Propose a Project with propose_company_project. Propose a Task with intake_product_source: read the
   Source, then pass the links you read as evidence_links, each link's content_hash in evidence_hashes, and
-  a proposal_key that stays the same for the same issue on every run. propose_company_task is refused here.
+  a proposal_key that stays the same for the same issue on every run.
 - You propose Projects and Tasks. A person or the Routine's policy accepts them. Never say a proposal was
   accepted or run.
 - Base proposals on records and Source links you have read. Say what was observed and what is proposed.
@@ -304,7 +304,16 @@ def _build_mini_agent(agent_os: Any, model: Any) -> Optional[Agent]:
         agent_os.registry = Registry()
     catalog = agent_os.db if isinstance(agent_os.db, BaseDb) and not isinstance(agent_os.db, AsyncBaseDb) else None
     tools = _KindTools(
-        routine=[CompanyTools(db, user_isolation=isolation, decision_tools=False, interfaces=agent_os.interfaces)],
+        routine=[
+            CompanyTools(
+                db,
+                user_isolation=isolation,
+                decision_tools=False,
+                interfaces=agent_os.interfaces,
+                # A Routine proposes a Task with intake_product_source.
+                exclude_tools=["propose_company_task"],
+            )
+        ],
         task=[
             CompanyTools(
                 db,

@@ -242,6 +242,7 @@ class CompanyTools(Toolkit):
         interfaces: Any = None,
         registry: Any = None,
         include_tools: Optional[List[str]] = None,
+        exclude_tools: Optional[List[str]] = None,
     ):
         self._interfaces_explicit = interfaces is not None
         self.interfaces = interfaces if interfaces is not None else []
@@ -285,6 +286,7 @@ class CompanyTools(Toolkit):
             async_tools=[(getattr(self, "a" + name), name) for name in names],
             requires_confirmation_tools=["confirm_company_details"],
             include_tools=include_tools,
+            exclude_tools=exclude_tools,
         )
 
     def _scoped_user(self, run_context):
