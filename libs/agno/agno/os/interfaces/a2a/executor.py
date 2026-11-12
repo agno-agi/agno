@@ -16,7 +16,7 @@ from agno.agent.protocol import AgentProtocol
 from agno.agents.base import BaseExternalAgent
 from agno.exceptions import RunNotFoundError
 from agno.os.interfaces.a2a.auth import resolve_a2a_user_id
-from agno.os.interfaces.a2a.streaming import map_background_stream_to_run_events, stream_run_events_to_task
+from agno.os.interfaces.a2a.streaming import stream_run_events_to_task
 from agno.os.interfaces.a2a.task_store import A2ATaskStore
 from agno.os.interfaces.a2a.utils import (
     map_a2a_message_to_run_input,
@@ -25,6 +25,7 @@ from agno.os.interfaces.a2a.utils import (
 )
 from agno.os.middleware.user_scope import caller_is_admin
 from agno.os.utils import get_agent_by_id, get_team_by_id, get_workflow_by_id
+from agno.run.background import map_background_stream_to_run_events
 from agno.team import RemoteTeam, Team
 from agno.utils.common import restore_integers
 from agno.utils.log import log_error

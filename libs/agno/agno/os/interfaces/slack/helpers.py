@@ -1,11 +1,16 @@
 import time
 from collections import OrderedDict
+from ssl import SSLContext
 from typing import Any, Dict, List, Optional, Tuple
+from uuid import NAMESPACE_URL, uuid5
 
 import httpx
 
+from agno.exceptions import InputCheckError, UnsupportedMediaError
 from agno.media import Audio, File, Image, Video
 from agno.utils.log import log_error, log_warning
+
+DEFAULT_SUGGESTED_PROMPTS: List[Dict[str, str]] = [{"title": "Get started", "message": "What can you help me with?"}]
 
 
 def slack_error_code(exc: BaseException) -> Optional[str]:
@@ -19,18 +24,41 @@ def slack_error_code(exc: BaseException) -> Optional[str]:
     return None
 
 
-async def resolve_session_id(entity: Any, entity_id: str, channel_id: str, thread_ts: str) -> str:
+def run_error_reply(exc: BaseException, fallback: str, unsupported_files: str) -> str:
+    # A media refusal names the adapter class, so it gets a plain line; other input checks say what to change
+    if isinstance(exc, UnsupportedMediaError):
+        return unsupported_files
+    if isinstance(exc, InputCheckError):
+        return str(exc)
+    return fallback
+
+
+async def resolve_session_id(
+    entity: Any, entity_id: str, channel_id: str, thread_ts: str, cache: Optional["LookupCache"] = None
+) -> str:
+    # New format includes channel_id to prevent cross-channel collisions
+    session_id = f"{entity_id}:{channel_id}:{thread_ts}"
+    # Remote entities keep no local sessions, so there is no legacy session to find
+    if not hasattr(entity, "aget_session"):
+        return session_id
+    key = f"session:{entity_id}:{channel_id}:{thread_ts}"
+    if cache is not None:
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
     # Sessions created before channel-scoped keys used "{entity_id}:{thread_ts}".
     # Probe for existing legacy session so an upgrade doesn't orphan history.
     legacy_id = f"{entity_id}:{thread_ts}"
     try:
         session = await entity.aget_session(session_id=legacy_id)
-        if session is not None:
-            return legacy_id
     except Exception:
-        pass
-    # New format includes channel_id to prevent cross-channel collisions
-    return f"{entity_id}:{channel_id}:{thread_ts}"
+        # A failed probe is not cached, so the next message probes again
+        return session_id
+    if session is not None:
+        session_id = legacy_id
+    if cache is not None:
+        cache.set(key, session_id)
+    return session_id
 
 
 def task_id(agent_name: Optional[str], base_id: str) -> str:
@@ -78,6 +106,8 @@ def build_run_metadata(
         metadata["user_id"] = resolved_user_id
     if ctx.get("action_token"):
         metadata["action_token"] = ctx["action_token"]
+    if ctx.get("message_ts"):
+        metadata["slack_message_ts"] = ctx["message_ts"]
     return metadata or None
 
 
@@ -92,7 +122,7 @@ def extract_event_context(event: dict) -> Dict[str, Any]:
         # Prefer existing thread; fall back to message ts for new conversations
         "thread_id": event.get("thread_ts") or event.get("ts", ""),
         # User-scoped token for assistant.search.context workspace search
-        "action_token": event.get("assistant_thread", {}).get("action_token"),
+        "action_token": (event.get("assistant_thread") or {}).get("action_token") or event.get("action_token"),
     }
 
 
@@ -219,6 +249,64 @@ class EventDeduplicator:
         return False
 
 
+class LookupCache:
+    """Remembers recent Slack lookups (channel names, user identities, session ids) so a message skips the call.
+
+    Entries expire so a renamed channel or a changed email is picked up again; only successful
+    lookups are cached. Instantiated once per mounted Slack interface.
+    """
+
+    LOOKUP_TTL_SECONDS: float = 600.0
+    LOOKUP_MAX_ENTRIES: int = 4096
+
+    def __init__(self) -> None:
+        self._entries: "OrderedDict[str, Tuple[float, Any]]" = OrderedDict()
+
+    def get(self, key: str) -> Optional[Any]:
+        now = time.monotonic()
+        expired = [k for k, (ts, _) in self._entries.items() if now - ts > self.LOOKUP_TTL_SECONDS]
+        for k in expired:
+            del self._entries[k]
+        entry = self._entries.get(key)
+        return entry[1] if entry is not None else None
+
+    def set(self, key: str, value: Any) -> None:
+        self._entries[key] = (time.monotonic(), value)
+        self._entries.move_to_end(key)
+        while len(self._entries) > self.LOOKUP_MAX_ENTRIES:
+            self._entries.popitem(last=False)
+
+    async def channel_name(self, async_client: Any, channel_id: str) -> Optional[str]:
+        key = f"channel:{channel_id}"
+        name = self.get(key)
+        if name is None:
+            name = await resolve_channel_name(async_client, channel_id)
+            if name is not None:
+                self.set(key, name)
+        return name
+
+    async def user_identity(self, async_client: Any, slack_user_id: str) -> Tuple[str, Optional[str]]:
+        key = f"user:{slack_user_id}"
+        cached = self.get(key)
+        if cached is not None:
+            return cached
+        resolved_user_id, display_name = await resolve_slack_user(async_client, slack_user_id)
+        # resolve_slack_user falls back to the raw id on failure; only real lookups are kept
+        if resolved_user_id != slack_user_id or display_name:
+            self.set(key, (resolved_user_id, display_name))
+        return resolved_user_id, display_name
+
+    async def bot_identity(self, async_client: Any, bot_id: str) -> Tuple[str, Optional[str]]:
+        key = f"bot:{bot_id}"
+        cached = self.get(key)
+        if cached is not None:
+            return cached
+        resolved_id, name = await resolve_slack_bot(async_client, bot_id)
+        if name:
+            self.set(key, (resolved_id, name))
+        return resolved_id, name
+
+
 async def resolve_channel_name(async_client: Any, channel_id: str) -> Optional[str]:
     """Resolve a Slack channel ID to its human-readable name."""
     try:
@@ -232,7 +320,7 @@ async def resolve_channel_name(async_client: Any, channel_id: str) -> Optional[s
 
 
 async def download_event_files_async(
-    token: str, event: dict, max_file_size: int
+    token: str, event: dict, max_file_size: int, ssl: Optional[SSLContext] = None
 ) -> Tuple[List[File], List[Image], List[Video], List[Audio], List[str]]:
     files: List[File] = []
     images: List[Image] = []
@@ -245,12 +333,13 @@ async def download_event_files_async(
 
     headers = {"Authorization": f"Bearer {token}"}
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(verify=ssl if ssl is not None else True) as client:
         for file_info in event["files"]:
             file_id = file_info.get("id")
             filename = file_info.get("name", "file")
             mimetype = file_info.get("mimetype", "application/octet-stream")
-            file_size = file_info.get("size", 0)
+            # Slack sends "size": null for some files
+            file_size = file_info.get("size") or 0
 
             if file_size > max_file_size:
                 limit_mb = max_file_size / (1024 * 1024)
@@ -258,12 +347,13 @@ async def download_event_files_async(
                 skipped.append(f"{filename} ({actual_mb:.1f}MB — exceeds {limit_mb:.0f}MB limit)")
                 continue
 
-            url_private = file_info.get("url_private")
-            if not url_private:
+            # Slack redirects url_private for some files (e.g. PDFs); url_private_download serves the bytes
+            download_url = file_info.get("url_private_download") or file_info.get("url_private")
+            if not download_url:
                 continue
 
             try:
-                resp = await client.get(url_private, headers=headers, timeout=30)
+                resp = await client.get(download_url, headers=headers, timeout=30)
                 resp.raise_for_status()
                 file_content = resp.content
 
@@ -296,36 +386,45 @@ async def upload_response_media_async(async_client: Any, response: Any, channel_
         if not items:
             continue
         for item in items:
-            content_bytes = item.get_content_bytes()
-            if content_bytes:
-                try:
+            # Fetching a URL-backed item can fail; the answer is already posted, so log and go on
+            try:
+                content_bytes = item.get_content_bytes()
+                if content_bytes:
                     await async_client.files_upload_v2(
                         channel=channel_id,
                         content=content_bytes,
                         filename=getattr(item, "filename", None) or default_name,
                         thread_ts=thread_ts,
                     )
-                except Exception as e:
-                    log_error(f"Failed to upload {attr.rstrip('s')}: {str(e)}")
+            except Exception as e:
+                log_error(f"Failed to upload {attr.rstrip('s')}: {str(e)}")
 
 
-async def open_chat_stream(
-    client: Any,
-    channel: str,
-    thread_ts: str,
-    recipient_user_id: str,
-    recipient_team_id: Optional[str],
-    task_display_mode: str,
-    buffer_size: int,
-) -> Any:
-    return await client.chat_stream(
-        channel=channel,
-        thread_ts=thread_ts,
-        recipient_team_id=recipient_team_id,
-        recipient_user_id=recipient_user_id,
-        task_display_mode=task_display_mode,
-        buffer_size=buffer_size,
-    )
+async def post_ephemeral(client: Any, channel: str, user: str, text: str, thread_ts: Optional[str] = None) -> None:
+    try:
+        await client.chat_postEphemeral(channel=channel, user=user, text=text, thread_ts=thread_ts)
+    except Exception as exc:
+        log_error(f"[HITL] chat_postEphemeral failed: {exc}")
+
+
+async def update_message(client: Any, channel: str, ts: str, text: str, blocks: List[Dict[str, Any]]) -> bool:
+    try:
+        await client.chat_update(channel=channel, ts=ts, text=text, blocks=blocks)
+        return True
+    except Exception as exc:
+        log_error(f"[HITL] chat_update failed for ts={ts}: {exc}")
+        return False
+
+
+async def delete_awaiting_indicator(client: Any, channel: str, awaiting_ts: Optional[str]) -> None:
+    # The thread root is never a fallback: deleting it would remove the user's message
+    if not awaiting_ts:
+        return
+    try:
+        await client.chat_delete(channel=channel, ts=awaiting_ts)
+    except Exception as exc:
+        if "message_not_found" not in str(exc):
+            log_error(f"[HITL] chat_delete (awaiting indicator) failed for ts={awaiting_ts}: {exc}")
 
 
 def slack_delivery_kwargs(unfurl_links: bool, unfurl_media: bool, mrkdwn: bool) -> Dict[str, Any]:
@@ -374,3 +473,49 @@ async def send_slack_message_async(
         await async_client.chat_postMessage(
             channel=channel, text=_format(batch_message), thread_ts=thread_ts, **delivery
         )
+
+
+def slack_run_id(team_id: str, entity_id: str, channel_id: str, message_ts: str) -> str:
+    # One run per Slack message and entity: a redelivery or paired app_mention reuses it, two bots keep their own
+    return str(uuid5(NAMESPACE_URL, f"agno:slack:{team_id}:{entity_id}:{channel_id}:{message_ts}"))
+
+
+async def start_status(
+    async_client: Any, channel: str, thread_ts: str, loading_text: str, loading_messages: Optional[List[str]] = None
+) -> None:
+    status_kwargs: Dict[str, Any] = {"channel_id": channel, "thread_ts": thread_ts, "status": loading_text}
+    if loading_messages:
+        status_kwargs["loading_messages"] = loading_messages
+    try:
+        await async_client.assistant_threads_setStatus(**status_kwargs)
+    except Exception:
+        pass
+
+
+async def clear_status(async_client: Any, channel: str, thread_ts: str) -> None:
+    # For paths where no stopStream ends the status
+    try:
+        await async_client.assistant_threads_setStatus(channel_id=channel, thread_ts=thread_ts, status="")
+    except Exception:
+        pass
+
+
+async def set_title(async_client: Any, channel: str, thread_ts: str, text: str) -> None:
+    title = text[:50].strip() or "New conversation"
+    try:
+        await async_client.assistant_threads_setTitle(channel_id=channel, thread_ts=thread_ts, title=title)
+    except Exception:
+        pass
+
+
+async def set_suggested_prompts(
+    async_client: Any, channel: str, thread_ts: Optional[str] = None, prompts: Optional[List[Dict[str, str]]] = None
+) -> None:
+    # Without thread_ts the prompts apply to the agent view's Messages tab
+    prompt_kwargs: Dict[str, Any] = {"channel_id": channel, "prompts": prompts or DEFAULT_SUGGESTED_PROMPTS}
+    if thread_ts:
+        prompt_kwargs["thread_ts"] = thread_ts
+    try:
+        await async_client.assistant_threads_setSuggestedPrompts(**prompt_kwargs)
+    except Exception as e:
+        log_error(f"Failed to set suggested prompts: {str(e)}")

@@ -1,13 +1,19 @@
 from ssl import SSLContext
-from typing import Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from fastapi.routing import APIRouter
 
 from agno.agent import Agent, RemoteAgent
+from agno.agent.protocol import AgentProtocol
 from agno.os.interfaces.base import BaseInterface
+from agno.os.interfaces.slack.context import SlackContext, build_context
+from agno.os.interfaces.slack.executor import aclose_runs
 from agno.os.interfaces.slack.router import attach_routes
 from agno.team import RemoteTeam, Team
 from agno.workflow import RemoteWorkflow, Workflow
+
+if TYPE_CHECKING:
+    from agno.os.interfaces.slack.company import TaskDelivery
 
 
 class Slack(BaseInterface):
@@ -21,7 +27,7 @@ class Slack(BaseInterface):
 
     def __init__(
         self,
-        agent: Optional[Union[Agent, RemoteAgent]] = None,
+        agent: Optional[Union[Agent, RemoteAgent, AgentProtocol]] = None,
         team: Optional[Union[Team, RemoteTeam]] = None,
         workflow: Optional[Union[Workflow, RemoteWorkflow]] = None,
         prefix: str = "/slack",
@@ -42,6 +48,8 @@ class Slack(BaseInterface):
         markdown: bool = True,
         unfurl_links: bool = True,
         unfurl_media: bool = True,
+        approvers: Optional[List[str]] = None,
+        users: Optional[Dict[str, str]] = None,
     ):
         self.agent = agent
         self.team = team
@@ -64,32 +72,70 @@ class Slack(BaseInterface):
         self.markdown = markdown
         self.unfurl_links = unfurl_links
         self.unfurl_media = unfurl_media
+        self.approvers = approvers
+        self.users = users
 
         if not (self.agent or self.team or self.workflow):
             raise ValueError("Slack requires an agent, team, or workflow")
 
-    def get_router(self) -> APIRouter:
+        self.ctx: SlackContext = build_context(
+            agent=agent,
+            team=team,
+            workflow=workflow,
+            token=token,
+            signing_secret=signing_secret,
+            reply_to_mentions_only=reply_to_mentions_only,
+            streaming=streaming,
+            loading_messages=loading_messages,
+            task_display_mode=task_display_mode,
+            loading_text=loading_text,
+            suggested_prompts=suggested_prompts,
+            ssl=ssl,
+            buffer_size=buffer_size,
+            max_file_size=max_file_size,
+            resolve_user_identity=resolve_user_identity,
+            respond_to_other_apps=respond_to_other_apps,
+            markdown=markdown,
+            unfurl_links=unfurl_links,
+            unfurl_media=unfurl_media,
+            approvers=approvers,
+            users=users,
+        )
+        self._task_delivery: Optional["TaskDelivery"] = None
+        self._closed = False
+
+    @property
+    def company(self) -> Any:
+        return self.ctx.company
+
+    @company.setter
+    def company(self, company: Any) -> None:
+        self.ctx.company = company
+
+    def get_router(self, use_async: bool = True, **kwargs) -> APIRouter:
         self.router = attach_routes(
             router=APIRouter(prefix=self.prefix, tags=self.tags),  # type: ignore
-            agent=self.agent,
-            team=self.team,
-            workflow=self.workflow,
-            reply_to_mentions_only=self.reply_to_mentions_only,
-            token=self.token,
-            signing_secret=self.signing_secret,
-            streaming=self.streaming,
-            loading_messages=self.loading_messages,
-            task_display_mode=self.task_display_mode,
-            loading_text=self.loading_text,
-            suggested_prompts=self.suggested_prompts,
-            ssl=self.ssl,
-            buffer_size=self.buffer_size,
-            max_file_size=self.max_file_size,
-            resolve_user_identity=self.resolve_user_identity,
-            respond_to_other_apps=self.respond_to_other_apps,
-            markdown=self.markdown,
-            unfurl_links=self.unfurl_links,
-            unfurl_media=self.unfurl_media,
+            context=self.ctx,
         )
+        # Without AgentOS nothing else closes the interface
+        self.router.add_event_handler("shutdown", self.aclose)
 
         return self.router
+
+    async def astart(self) -> None:
+        if self.ctx.company is None or self._task_delivery is not None:
+            return
+        from agno.os.interfaces.slack.company import TaskDelivery
+
+        self._task_delivery = TaskDelivery(self.ctx)
+        await self._task_delivery.start()
+
+    async def aclose(self) -> None:
+        # FastAPI runs the router's shutdown handler and AgentOS's interface lifespan both, so close once
+        if self._closed:
+            return
+        self._closed = True
+        if self._task_delivery is not None:
+            await self._task_delivery.stop()
+            self._task_delivery = None
+        await aclose_runs(self.ctx)

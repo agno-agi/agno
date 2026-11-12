@@ -1,13 +1,20 @@
 """Shared detached run execution and resumable SSE transport."""
 
 import asyncio
+import json
 from contextlib import suppress
-from typing import Any, AsyncGenerator, Awaitable, Callable, Optional
+from typing import Any, AsyncGenerator, AsyncIterator, Awaitable, Callable, Optional
 
 from agno.exceptions import RunCancelledException
+from agno.run.agent import RunCancelledEvent, RunCompletedEvent, RunErrorEvent, RunEvent, RunOutput, RunPausedEvent
 from agno.run.base import CancellationStage, RunStatus
 from agno.run.cancel import acleanup_run, araise_if_cancelled
 from agno.run.concurrency import SSE_KEEPALIVE_INTERVAL_SECONDS, background_run_slot, is_worker_managed
+from agno.run.team import RunCancelledEvent as TeamRunCancelledEvent
+from agno.run.team import RunCompletedEvent as TeamRunCompletedEvent
+from agno.run.team import RunErrorEvent as TeamRunErrorEvent
+from agno.run.team import RunPausedEvent as TeamRunPausedEvent
+from agno.run.team import TeamRunEvent, TeamRunOutput, team_run_output_event_from_dict
 from agno.utils.log import log_error, log_warning
 
 _background_tasks: set[asyncio.Task[None]] = set()
@@ -151,3 +158,74 @@ class _BackgroundStream:
             self.attached = False
             while not self.queue.empty():
                 self.queue.get_nowait()
+
+
+async def map_background_stream_to_run_events(
+    event_stream: AsyncIterator[Any],
+    entity: Any,
+    run_id: str,
+    session_id: str,
+) -> AsyncIterator[Any]:
+    """Map the stream of a background run back to Agno events.
+
+    A background run streams its events as SSE strings, the form they are buffered in for
+    clients that reconnect. A run that ends without a final event (one cancelled before it
+    started) is given the one its stored run calls for. A transport frame that carries no
+    run event (stream_expired, error) ends the stream.
+
+    Args:
+        event_stream: The async iterator from agent/team.arun(stream=True, background=True)
+        entity: The Agno Agent or Team being run
+        run_id: The id of the run
+        session_id: The id of the session the run belongs to
+
+    Yields:
+        The Agno events of the run
+    """
+    is_finished = False
+    async for event in event_stream:
+        if isinstance(event, str):
+            # Keepalive comments carry no event
+            data_line = next((line for line in event.splitlines() if line.startswith("data: ")), None)
+            if data_line is None:
+                continue
+            data = json.loads(data_line[len("data: ") :])
+            # Transport frames (stream_expired, error) carry no run event
+            event_type = data.get("event", "")
+            if event_type not in {e.value for e in RunEvent} and event_type not in {e.value for e in TeamRunEvent}:
+                break
+            event = team_run_output_event_from_dict(data)
+        elif isinstance(event, (RunOutput, TeamRunOutput)):
+            # Terminal RunOutput is not an SSE event; skip it like the background producer does
+            continue
+        if getattr(event, "run_id", None) == run_id and isinstance(
+            event,
+            (
+                RunCompletedEvent,
+                RunCancelledEvent,
+                RunErrorEvent,
+                RunPausedEvent,
+                TeamRunCompletedEvent,
+                TeamRunCancelledEvent,
+                TeamRunErrorEvent,
+                TeamRunPausedEvent,
+            ),
+        ):
+            is_finished = True
+        yield event
+
+    if is_finished:
+        return
+    run_output = await entity.aget_run_output(run_id=run_id, session_id=session_id)
+    if run_output is not None and run_output.status == RunStatus.cancelled:
+        if isinstance(run_output, TeamRunOutput):
+            yield TeamRunCancelledEvent(run_id=run_id, session_id=session_id)
+        else:
+            yield RunCancelledEvent(run_id=run_id, session_id=session_id)
+    elif run_output is not None and run_output.status == RunStatus.error:
+        if isinstance(run_output, TeamRunOutput):
+            yield TeamRunErrorEvent(
+                run_id=run_id, session_id=session_id, content=str(run_output.content or "Run failed")
+            )
+        else:
+            yield RunErrorEvent(run_id=run_id, session_id=session_id, content=str(run_output.content or "Run failed"))
