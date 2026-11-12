@@ -836,6 +836,8 @@ def test_processed_company_tools_preserve_gemini_nullability(tmp_path, use_async
                     if argument in ("limit", "page", "days", "offset", "content_offset", "max_chars")
                     else "ARRAY"
                     if argument in ("sources", "routines")
+                    else "BOOLEAN"
+                    if argument == "enabled"
                     else "STRING"
                 )
                 assert schema.type == ("OBJECT" if argument == "config" else expected_type), (name, argument)

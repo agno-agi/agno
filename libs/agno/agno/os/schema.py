@@ -750,6 +750,7 @@ CANCELLATION_STAGE_DESCRIPTION = (
 
 class RunSchema(BaseModel):
     run_id: str = Field(..., description="Unique identifier for the run")
+    run_index: Optional[int] = Field(None, description="0-based position of the run in its session")
     parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
     agent_id: Optional[str] = Field(None, description="Agent ID that executed this run")
     user_id: Optional[str] = Field(None, description="User ID associated with the run")
@@ -786,10 +787,12 @@ class RunSchema(BaseModel):
         None, description="If this run was forked from another run, the source run's ID"
     )
     forked_from_message_index: Optional[int] = Field(
-        None, description="If this run was forked, the message index at which the source was truncated"
+        None,
+        description="If this run was forked, the message index at which the source was truncated; for a run copied by a session branch and continued, the index where the continued work starts",
     )
     forked_from_session_id: Optional[str] = Field(
-        None, description="If this run was created via session branch, the source session's ID"
+        None,
+        description="If this run was created via session branch, the source session's ID; cleared once the copied run is continued in this session",
     )
     regenerated_from: Optional[str] = Field(
         None, description="If this run was produced via regenerate=true, the source run's ID"
@@ -858,6 +861,7 @@ class SessionRunPreviewSchema(BaseModel):
     and the single-run endpoint. Previews are truncated to 280 characters."""
 
     run_id: str = Field(..., description="Unique identifier for the run")
+    run_index: Optional[int] = Field(None, description="0-based position of the run in its session")
     parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
     agent_id: Optional[str] = Field(None, description="Agent ID, when this is an agent run")
     team_id: Optional[str] = Field(None, description="Team ID, when this is a team run")
@@ -882,6 +886,7 @@ class SessionRunPreviewSchema(BaseModel):
     def from_run(cls, run: Any) -> "SessionRunPreviewSchema":
         return cls(
             run_id=run.run_id,
+            run_index=getattr(run, "run_index", None),
             parent_run_id=getattr(run, "parent_run_id", None),
             agent_id=getattr(run, "agent_id", None),
             team_id=getattr(run, "team_id", None),
@@ -896,6 +901,7 @@ class SessionRunPreviewSchema(BaseModel):
 
 class TeamRunSchema(BaseModel):
     run_id: str = Field(..., description="Unique identifier for the team run")
+    run_index: Optional[int] = Field(None, description="0-based position of the run in its session")
     parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
     team_id: Optional[str] = Field(None, description="Team ID that executed this run")
     user_id: Optional[str] = Field(None, description="User ID associated with the run")
@@ -931,10 +937,12 @@ class TeamRunSchema(BaseModel):
         None, description="If this team run was forked from another run, the source run's ID"
     )
     forked_from_message_index: Optional[int] = Field(
-        None, description="If this team run was forked, the message index at which the source was truncated"
+        None,
+        description="If this team run was forked, the message index at which the source was truncated; for a run copied by a session branch and continued, the index where the continued work starts",
     )
     forked_from_session_id: Optional[str] = Field(
-        None, description="If this team run was created via session branch, the source session's ID"
+        None,
+        description="If this team run was created via session branch, the source session's ID; cleared once the copied run is continued in this session",
     )
     regenerated_from: Optional[str] = Field(
         None, description="If this team run was produced via regenerate=true, the source run's ID"
@@ -985,6 +993,7 @@ class TeamRunSchema(BaseModel):
 
 class WorkflowRunSchema(BaseModel):
     run_id: str = Field(..., description="Unique identifier for the workflow run")
+    run_index: Optional[int] = Field(None, description="0-based position of the run in its session")
     run_input: Optional[str] = Field(None, description="Input provided to the workflow")
     events: Optional[List[dict]] = Field(None, description="Events generated during the workflow")
     workflow_id: Optional[str] = Field(None, description="Workflow ID that was executed")
@@ -1071,6 +1080,25 @@ class PaginatedResponse(BaseModel, Generic[T]):
 
     data: List[T] = Field(..., description="List of items for the current page")
     meta: PaginationInfo = Field(..., description="Pagination metadata")
+
+
+class RunsPageInfo(BaseModel):
+    limit: int = Field(..., description="Maximum number of items in this page", ge=1)
+    total_count: int = Field(..., description="Total count of items matching the filters", ge=0)
+    has_more: bool = Field(..., description="Whether more items exist beyond this page in the paging direction")
+    oldest_run_index: Optional[int] = Field(
+        None, description="Oldest top-level run_index on this page; pass it as before_run_index for the older page"
+    )
+    newest_run_index: Optional[int] = Field(
+        None, description="Newest top-level run_index on this page; pass it as after_run_index for the newer page"
+    )
+
+
+class RunsPage(BaseModel, Generic[T]):
+    """Wrapper for cursor-paginated responses; callers page with a boundary taken from ``data``."""
+
+    data: List[T] = Field(..., description="List of items for the current page")
+    meta: RunsPageInfo = Field(..., description="Pagination metadata")
 
 
 class ComponentType(str, Enum):
@@ -1206,6 +1234,7 @@ class RegistryResourceType(str, Enum):
     MEMORY_MANAGER = "memory_manager"
     SESSION_SUMMARY_MANAGER = "session_summary_manager"
     LEARNING = "learning"
+    SANDBOX = "sandbox"
 
 
 class CallableMetadata(BaseModel):

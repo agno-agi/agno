@@ -566,23 +566,17 @@ class TestLazyMetricsRefresh:
         assert len(rows) == 2
         assert sum(row["agent_sessions_count"] for row in rows) == 2
 
-    def test_explicit_calculate_stamps_the_throttle(self, db):
-        self._seed_session(db)
-
-        db.calculate_metrics()
-
-        assert db._metrics_refreshed_at > 0.0
-
     def test_metrics_tool_does_not_bypass_the_throttle(self, db, toolkit):
         self._seed_session(db)
         calls = []
-        original = type(db).calculate_metrics
-        type(db).calculate_metrics = lambda self, *a, **k: (calls.append(1), original(self, *a, **k))[1]
+        # A read refreshes through calculate_metrics_dates, never through calculate_metrics
+        original = type(db).calculate_metrics_dates
+        type(db).calculate_metrics_dates = lambda self, *a, **k: (calls.append(1), original(self, *a, **k))[1]
         try:
             for _ in range(3):
                 toolkit.get_platform_metrics(days=1)
         finally:
-            type(db).calculate_metrics = original
+            type(db).calculate_metrics_dates = original
 
         # The tool must not refresh on its own; the db throttle governs
         assert len(calls) == 1

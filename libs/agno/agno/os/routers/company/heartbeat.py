@@ -2,13 +2,14 @@
 
 import asyncio
 import inspect
+import json
 import time
 from typing import Any, Dict, List, Literal, Optional, Union
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from agno.company.declarations import AutoAccept, Product, Routine, Source
 from agno.company.manager import AsyncCompanyManager, CompanyManager
@@ -41,7 +42,36 @@ class RoutineLastRun(BaseModel):
     error: Optional[str] = None
 
 
+class RoutineAutoAccept(BaseModel):
+    """A Routine's auto_accept policy as the API returns it. The policy's other fields are returned as stored."""
+
+    model_config = ConfigDict(extra="allow")
+    default_executor: str
+    executors: Optional[List[str]] = None
+    executor_type: Optional[str] = Field(
+        default=None,
+        description="Deprecated, removed in the next release: the kind of default_executor.",
+        json_schema_extra={"deprecated": True},
+    )
+    executor_id: Optional[str] = Field(
+        default=None,
+        description="Deprecated, removed in the next release: read default_executor.",
+        json_schema_extra={"deprecated": True},
+    )
+
+
+class RoutineMetadata(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    auto_accept: Union[Literal[False], RoutineAutoAccept] = False
+
+
+class RoutinePayload(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    metadata: RoutineMetadata
+
+
 class RoutineResponse(ScheduleResponse):
+    payload: RoutinePayload  # type: ignore[assignment]
     schedule_type: Literal["scheduled", "on_demand"]
     last_run: Optional[RoutineLastRun] = None
     deleted_at: Optional[int] = None
@@ -56,6 +86,12 @@ class RoutineUpdate(BaseModel):
     cron_expr: Optional[str] = None
     timezone: Optional[str] = None
     auto_accept: Optional[Union[Literal[False], AutoAccept]] = None
+
+    @field_validator("auto_accept", mode="before")
+    @classmethod
+    def default_policy(cls, value: Any) -> Any:
+        """true is the default policy, as in a Routine declaration."""
+        return AutoAccept() if value is True else value
 
 
 class Setup(Product):
@@ -120,24 +156,85 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             raise HTTPException(404, "Routine not found")
         return row
 
-    async def running_runs(routine_id):
+    def outlived(run, row, request):
+        from agno.scheduler.executor import run_deadline
+
+        # The scheduler stops waiting for a run at its timeout, so past the deadline no process is left to settle it.
+        executor = getattr(request.app.state, "scheduler_executor", None)
+        timeout = row.get("timeout_seconds") or (executor.timeout if executor is not None else None)
+        return timeout is not None and run_deadline(run["triggered_at"], timeout) < time.time()
+
+    async def running_runs(row, request, include_outlived=False):
         # An older run can still be running after a newer one finished, so read every run. A paused
         # row is not counted: the scheduler stops polling at the pause and never updates it after approval.
         runs: List[Dict[str, Any]] = []
         page = 1
         while True:
-            rows, total = await call(schedule_db.get_schedule_runs, routine_id, limit=100, page=page)
-            runs.extend(run for run in rows if run["status"] == "running")
+            rows, total = await call(schedule_db.get_schedule_runs, row["id"], limit=100, page=page)
+            runs.extend(
+                run
+                for run in rows
+                if run["status"] == "running" and (include_outlived or not outlived(run, row, request))
+            )
             if page * 100 >= total:
                 return runs
             page += 1
 
+    def schedule_type(row):
+        return "on_demand" if is_on_demand(row["cron_expr"]) else "scheduled"
+
+    def sort_routines(rows, sort_by, sort_order):
+        reverse = sort_order == "desc"
+        if sort_by == "next_run_at":
+            # A paused or on-demand Routine has no next run, whatever timestamp is stored; those go last either way.
+            upcoming: List[Dict[str, Any]] = []
+            rest: List[Dict[str, Any]] = []
+            for row in rows:
+                has_next = row["enabled"] and schedule_type(row) == "scheduled" and row.get("next_run_at") is not None
+                (upcoming if has_next else rest).append(row)
+            upcoming.sort(key=lambda row: (row["next_run_at"], row.get("created_at") or 0, row["id"]), reverse=reverse)
+            rest.sort(key=lambda row: (row.get("created_at") or 0, row["id"]), reverse=reverse)
+            return upcoming + rest
+        if sort_by == "schedule_type":
+            # "on_demand" sorts before "scheduled".
+            return sorted(
+                rows, key=lambda row: (schedule_type(row), row.get("created_at") or 0, row["id"]), reverse=reverse
+            )
+        if sort_by == "enabled":
+            return sorted(
+                rows, key=lambda row: (bool(row["enabled"]), row.get("created_at") or 0, row["id"]), reverse=reverse
+            )
+        # One reverse flag orders equal timestamps by id in the same direction as the timestamp.
+        return sorted(rows, key=lambda row: (get_sort_value(row, sort_by), row["id"]), reverse=reverse)
+
+    async def returned_policy(raw):
+        """The stored policy, with the two executor fields it had before default_executor."""
+        from agno.company.routines import _executor_kind, _stored_policy
+
+        if not raw:
+            return False
+        policy, legacy = _stored_policy(raw)
+        kind = raw["executor_type"] if legacy else None
+        if kind is None:
+            try:
+                kind = await asyncio.to_thread(_executor_kind, agent_os.registry, policy.default_executor)
+            except ValueError:
+                # The executor is gone or its ID is shared; the policy is returned without a kind.
+                pass
+        # Every field with the value in force, so a policy stored in the earlier shape states what it does.
+        return {**policy.model_dump(), "executor_type": kind, "executor_id": policy.default_executor}
+
     async def routine_responses(rows):
         latest = await call(schedule_db.get_latest_schedule_runs, [row["id"] for row in rows])
+        policies = [await returned_policy(row["payload"]["metadata"].get("auto_accept")) for row in rows]
+        rows = [
+            {**row, "payload": {**row["payload"], "metadata": {**row["payload"]["metadata"], "auto_accept": policy}}}
+            for row, policy in zip(rows, policies)
+        ]
         return [
             {
                 **row,
-                "schedule_type": "scheduled" if row["cron_expr"] else "on_demand",
+                "schedule_type": schedule_type(row),
                 "last_run": latest.get(row["id"]),
                 "deleted_at": (row.get("payload") or {}).get("metadata", {}).get("deleted_at"),
             }
@@ -198,7 +295,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         limit: int = Query(20, ge=1, le=1000),
         page: int = Query(1, ge=1),
         include_deleted: bool = False,
-        sort_by: Literal["created_at", "updated_at"] = Query("created_at"),
+        sort_by: Literal["created_at", "updated_at", "next_run_at", "schedule_type", "enabled"] = Query("created_at"),
         sort_order: Literal["asc", "desc"] = Query("desc"),
         _: bool = Depends(auth),
     ):
@@ -214,8 +311,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             and (product_id is None or (row.payload or {}).get("metadata", {}).get("product_id") == product_id)
             and (include_deleted or (row.payload or {}).get("metadata", {}).get("deleted_at") is None)
         ]
-        # One reverse flag orders equal timestamps by id in the same direction as the timestamp.
-        selected.sort(key=lambda row: (get_sort_value(row, sort_by), row["id"]), reverse=sort_order == "desc")
+        selected = sort_routines(selected, sort_by, sort_order)
         rows = await routine_responses(selected[(page - 1) * limit : page * limit])
         return page_response(rows, len(selected), limit, page)
 
@@ -228,8 +324,14 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         row = await routine(routine_id, request)
         # Automatic acceptance runs on the saved grant, so only the user who granted it may start it
         # manually, whether or not user isolation is on. The grant records the raw caller, so compare that.
-        if row["payload"]["metadata"].get("auto_accept") and not caller_is_admin(request):
-            grantor = (row["payload"].get("_agno_company_acceptance") or {}).get("user_id")
+        from agno.company.routines import _DECLARED
+
+        grant = row["payload"].get("_agno_company_acceptance") or {}
+        # A policy declared in code has no author. It acts only where authorization is off, and there
+        # whoever may run the Routine may trigger it.
+        unauthored = grant == _DECLARED and not agent_os.authorization
+        if row["payload"]["metadata"].get("auto_accept") and not unauthored and not caller_is_admin(request):
+            grantor = grant.get("user_id")
             if getattr(request.state, "user_id", None) != grantor:
                 raise HTTPException(403, "Only the user who authorized automatic acceptance may run this Routine")
         await product(row["payload"]["metadata"]["product_id"])
@@ -242,15 +344,24 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         await product(body.product_id)
         fields = await call(_schedule_fields, body.product_id, body, agent_os.registry, agent_os=agent_os)
         if body.auto_accept:
-            from agno.company.routines import _authorize_auto_accept
+            from agno.company.routines import _authorize_auto_accept, _require_sent_executor_type
 
+            await call(_require_sent_executor_type, agent_os.registry, body.auto_accept)
             policy = body.auto_accept.model_dump()
             await _authorize_auto_accept(request, policy, agent_os)
             fields["payload"]["metadata"]["auto_accept"] = policy
+        if not body.enabled:
+            # Retry matching must distinguish disabled creation from a request to enable it.
+            fields["payload"]["metadata"]["initial_enabled"] = False
         schedule = await call(ScheduleCreate, **fields)
         row = await call(handlers["create_schedule"], schedule, request)
         await call(db.add_product_routine, body.product_id, row["id"])
-        return await routine_response(await call(handlers["enable_schedule"], row["id"], request))
+        if body.enabled:
+            row = await call(handlers["enable_schedule"], row["id"], request)
+        else:
+            # Finish creation without activation so duplicate requests cannot recover this as pending.
+            row = await call(handlers["disable_schedule"], row["id"], request)
+        return await routine_response(row)
 
     @router.patch("/routines/{routine_id}", response_model=RoutineResponse)
     async def update_routine(routine_id: str, body: RoutineUpdate, request: Request, _: bool = Depends(auth)):
@@ -264,19 +375,43 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
                 raise HTTPException(422, "Invalid cron expression")
             if updates["cron_expr"] is None:
                 updates["cron_expr"] = ""
-        from agno.company.routines import _authorize_auto_accept
+        from agno.company.routines import (
+            _DECLARED,
+            _authorize_auto_accept,
+            _require_sent_executor_type,
+            _stored_policy,
+        )
 
+        # A declared policy acts for no one where authorization is on. An edit that does not set
+        # auto_accept leaves it so: the payload below carries the stored marker and policy unchanged.
+        waiting = (
+            "auto_accept" not in updates
+            and bool(agent_os.authorization)
+            and row["payload"].get("_agno_company_acceptance") == _DECLARED
+        )
         if "auto_accept" in updates:
-            policy = updates.pop("auto_accept")
+            updates.pop("auto_accept")
+            # Save every field with its value, so the stored policy states all it grants.
+            policy = body.auto_accept.model_dump() if body.auto_accept else False
+            if body.auto_accept:
+                await call(_require_sent_executor_type, agent_os.registry, body.auto_accept)
+            stored = row["payload"]["metadata"].get("auto_accept")
+            if policy and stored and _stored_policy(stored)[0].model_dump() == policy:
+                # The stored policy sent back is not a new one: it keeps its form, its version and its count.
+                policy = stored
             await _authorize_auto_accept(request, policy, agent_os)
-            updates["payload"] = {**row["payload"], "metadata": {**row["payload"]["metadata"], "auto_accept": policy}}
+            # The request sets auto_accept, so the stored grant is not carried into the new payload.
+            kept = {key: value for key, value in row["payload"].items() if key != "_agno_company_acceptance"}
+            updates["payload"] = {**kept, "metadata": {**row["payload"]["metadata"], "auto_accept": policy}}
         product_id = row["payload"]["metadata"]["product_id"]
         if "name" in updates:
             updates["name"] = product_id + "." + updates["name"]
         if "executor_type" in updates or "executor_id" in updates:
             # Cancel reaches a live run through the Routine's executor, so the executor stays until it ends.
-            if await running_runs(routine_id):
-                raise HTTPException(409, f"Cancel the run with POST /company/routines/{routine_id}/cancel first")
+            if await running_runs(row, request):
+                raise HTTPException(
+                    409, f"Wait for the run to stop, or cancel it with POST /company/routines/{routine_id}/cancel"
+                )
             executor_type = updates.pop("executor_type", row["target_type"])
             executor_id = updates.pop("executor_id", row["target_id"])
             updates["endpoint"] = await call(
@@ -285,8 +420,9 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             payload = updates.get("payload", row["payload"])
             policy = payload["metadata"].get("auto_accept")
             if policy:
-                await _authorize_auto_accept(request, policy, agent_os)
-                # Scheduler payload validation re-stamps the grant for this editor.
+                if not waiting:
+                    await _authorize_auto_accept(request, policy, agent_os)
+                # Scheduler payload validation re-stamps the grant for this editor, or keeps a waiting one.
                 updates["payload"] = payload
 
         if "instructions" in updates:
@@ -298,6 +434,10 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             }
         update = await call(ScheduleUpdate, **updates)
         return await routine_response(await call(handlers["update_schedule"], routine_id, update, request))
+
+    # Super Agent's chat tools read and change a Routine through these, as the chatting person.
+    agent_os._routine_api_read = routine
+    agent_os._routine_api_update = update_routine
 
     @router.post("/routines/{routine_id}/pause", response_model=RoutineResponse)
     async def pause_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
@@ -328,32 +468,44 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
     async def cancel_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
         row = await routine(routine_id, request)
         await product(row["payload"]["metadata"]["product_id"], include_deleted=True)
-        runs = [run for run in await running_runs(routine_id) if run.get("run_id")]
+        runs = [run for run in await running_runs(row, request, include_outlived=True) if run.get("run_id")]
         if not runs:
             raise HTTPException(409, "Routine has no running run")
         from agno.os.routers.company.runs import _run_route
         from agno.os.routers.run_permissions import _require_endpoint_permission
+        from agno.scheduler.executor import terminal_run_status
 
         # Cancelling enters the executor route under the internal service token, so re-check the caller's own permission.
         await _require_endpoint_permission(request, row["endpoint"], "POST")
         responses = []
         for run in runs:
-            response = await _run_route(
-                request,
-                row["endpoint"] + "/" + quote(run["run_id"], safe="") + "/cancel",
-                "POST",
-                owner=run.get("user_id"),
-                session_id=run.get("session_id"),
-            )
+            path = row["endpoint"] + "/" + quote(run["run_id"], safe="")
+            owner, session_id = run.get("user_id"), run.get("session_id")
+            response = await _run_route(request, path + "/cancel", "POST", owner=owner, session_id=session_id)
             if response.status_code < 300:
-                # A row left by a process that stopped mid-run is never settled by its executor, so record the cancel.
-                await call(
-                    schedule_db.update_schedule_run,
-                    run["id"],
-                    status="cancelled",
-                    error="Run was cancelled",
-                    completed_at=int(time.time()),
-                )
+                status: Optional[str] = None
+                error: Optional[str] = "Run was cancelled"
+                if outlived(run, row, request):
+                    status = "cancelled"
+                else:
+                    # A live run stops at its next checkpoint and its executor records the result, so only
+                    # a finished or missing run is recorded here.
+                    current = await _run_route(request, path, "GET", owner=owner, session_id=session_id)
+                    if current.status_code == 404:
+                        # The run no longer exists, so no executor is left to settle the row.
+                        status = "cancelled"
+                    elif current.status_code < 300:
+                        settled = terminal_run_status(json.loads(bytes(current.body)), company_routine=True)
+                        if settled is not None:
+                            status, error = settled
+                if status is not None:
+                    await call(
+                        schedule_db.update_schedule_run,
+                        run["id"],
+                        status=status,
+                        error=error,
+                        completed_at=int(time.time()),
+                    )
             responses.append(response)
         # A failed cancel is reported even when a later one succeeded.
         return next((response for response in responses if response.status_code >= 300), responses[-1])
@@ -362,8 +514,10 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
     async def archive_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
         row = await routine(routine_id, request)
         await product(row["payload"]["metadata"]["product_id"], include_deleted=True)
-        if await running_runs(routine_id):
-            raise HTTPException(409, f"Cancel the run with POST /company/routines/{routine_id}/cancel first")
+        if await running_runs(row, request):
+            raise HTTPException(
+                409, f"Wait for the run to stop, or cancel it with POST /company/routines/{routine_id}/cancel"
+            )
         await call(handlers["disable_schedule"], routine_id, request)
         metadata = {**row["payload"]["metadata"], "deleted_at": int(time.time())}
         await call(schedule_db.update_schedule, routine_id, payload={**row["payload"], "metadata": metadata})
@@ -376,8 +530,10 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         row = await routine(routine_id, request, include_deleted=True)
         product_id = row["payload"]["metadata"]["product_id"]
         await product(product_id, include_deleted=True)
-        if await running_runs(routine_id):
-            raise HTTPException(409, f"Cancel the run with POST /company/routines/{routine_id}/cancel first")
+        if await running_runs(row, request):
+            raise HTTPException(
+                409, f"Wait for the run to stop, or cancel it with POST /company/routines/{routine_id}/cancel"
+            )
         # Deleting the schedule also deletes its run history.
         await call(handlers["delete_schedule"], routine_id, request)
         await call(manager._unlink_routine, product_id, routine_id)

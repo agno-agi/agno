@@ -114,7 +114,13 @@ from agno.db.schemas.scheduler import (
 from agno.exceptions import ComponentPinError, ComponentRehydrationError
 from agno.registry._reserved import RESERVED_MANAGER_IDS, RESERVED_MEMBER_IDS
 from agno.run import RunContext
-from agno.run.authorization import arequire_permission, authorization_for, require_permission, requires_permission
+from agno.run.authorization import (
+    arequire_permission,
+    authorization_for,
+    current_authorization,
+    require_permission,
+    requires_permission,
+)
 from agno.run.cancel import aregister_member_run, register_member_run
 from agno.run.utils import run_status_string, serialized_paused_requirements
 from agno.tools.toolkit import Toolkit
@@ -143,6 +149,16 @@ def _slugify(name: str) -> str:
     while "--" in slug:
         slug = slug.replace("--", "-")
     return slug.strip("-") or "component"
+
+
+def _company_task_authority() -> Any:
+    """The authority of a run that executes an accepted Company Task, or None for every other run.
+
+    Its run_components bounds what the Task may run: None leaves it to the permissions of the people who
+    accepted and started the Task, and a list admits only the (type, id) pairs in it.
+    """
+    authority: Any = current_authorization()
+    return authority if getattr(authority, "task_id", None) else None
 
 
 class StudioRunnerError(Exception):
@@ -286,6 +302,14 @@ def _component_references(component_type: str, config: Dict[str, Any]) -> List[t
 
 
 class StudioRunnerTools(Toolkit):
+    """Discover and run admitted components.
+
+    ``description_fallback`` optionally resolves a component id to discovery
+    text when its description is absent or blank. It never changes the
+    component or its stored configuration. OS Manager uses this to read its
+    current manifest without copying UI text into component system prompts.
+    """
+
     def __init__(
         self,
         registry: Optional["Registry"] = None,
@@ -301,6 +325,7 @@ class StudioRunnerTools(Toolkit):
         self_dispatch: Literal["never", "once"] = "never",
         list_limit: int = 100,
         name: str = "studio_runners",
+        description_fallback: Optional[Callable[[str], Optional[str]]] = None,
         **kwargs: Any,
     ):
         # 0 disables dispatch outright and is a valid posture; "unlimited" is
@@ -328,6 +353,8 @@ class StudioRunnerTools(Toolkit):
         self.include_agents = include_agents
         self.include_teams = include_teams
         self.include_workflows = include_workflows
+        # Discovery metadata only: never copy these descriptions into component prompts.
+        self.description_fallback = description_fallback
         # Each run_* flag exposes that kind's whole surface, list tool
         # included: the list reports exactly what dispatch admits, so a kind
         # that cannot run has nothing to list either.
@@ -944,6 +971,20 @@ class StudioRunnerTools(Toolkit):
             "the component in the database."
         )
 
+    @staticmethod
+    def _refuse_sandboxed_agent_in_task_run(component: Any) -> None:
+        """Refuse a sandboxed agent inside a Company Task run, at any version.
+
+        Starting a Task on a sandboxed executor checks its repository and that no other sandboxed Task is
+        live. A run from inside another Task passes neither check.
+        """
+        if isinstance(component, BaseExternalAgent) and component.sandbox is not None and _company_task_authority():
+            raise StudioRunnerError(
+                f"Agent '{component.id}' runs in a sandbox, and a sandboxed agent runs only as a Task's own "
+                f"executor. Do not run it from this Task. Report that a person must accept the Task on agent "
+                f"'{component.id}' for it to do this work."
+            )
+
     def _agent_for_run(self, agent_id: str, actor: Optional[str] = None) -> Optional[Union["Agent", BaseExternalAgent]]:
         agent = self._find_agent(agent_id, for_dispatch=True, actor=actor)
         if agent is None:
@@ -955,6 +996,7 @@ class StudioRunnerTools(Toolkit):
         # workflows in the first place.
         self._require_inspectable_depth(agent, "agent", agent_id)
         self._warn_if_unverifiable_factory(agent, "agent", agent_id)
+        self._refuse_sandboxed_agent_in_task_run(agent)
         if isinstance(agent, BaseExternalAgent):
             # External adapters keep run state per call and own a shared session-admission
             # guard. Reuse the registered adapter, as the HTTP routes do.
@@ -2007,10 +2049,12 @@ class StudioRunnerTools(Toolkit):
 
     def _load_agent_from_db(
         self, agent_id: str, version: Optional[int] = None, for_dispatch: bool = False, actor: Optional[str] = None
-    ) -> Optional["Agent"]:
+    ) -> Optional[Union["Agent", BaseExternalAgent]]:
         """Load an agent from DB via config + from_dict.
 
-        Registry-backed references resolve at their current published version."""
+        Registry-backed references resolve at their current published version.
+        A stored external adapter follows the code-registered ones: dispatchable,
+        but not in the build palette, so a non-dispatch lookup does not see it."""
         from agno.db.base import ComponentType
 
         loaded = self._load_config_row_from_db(
@@ -2021,6 +2065,29 @@ class StudioRunnerTools(Toolkit):
         config, resolved_version = loaded
         self._require_registry_for("agent", agent_id, config, version=resolved_version)
         from agno.agent.agent import Agent
+        from agno.agents._storage import (
+            external_agent_from_config,
+            is_external_agent_config,
+            require_host_execution_allowed,
+        )
+
+        if is_external_agent_config(config):
+            if not for_dispatch or self.db is None:
+                return None
+            try:
+                adapter = external_agent_from_config(
+                    config, id=agent_id, db=self.db, registry=self.registry, strict=True
+                )
+            except ComponentRehydrationError as rehydration_error:
+                raise ComponentNeedsRegistryError(str(rehydration_error)) from rehydration_error
+            # The remaining dispatch guards inspect an Agent's graph and model roles, which an
+            # adapter does not have; its db routing and host execution are held to the same rules.
+            self._require_matching_db(config, adapter, "agent", agent_id)
+            try:
+                require_host_execution_allowed(adapter, self.registry)
+            except ComponentRehydrationError as refusal:
+                raise ComponentNotDispatchableError(str(refusal)) from refusal
+            return adapter
 
         try:
             agent = Agent.from_dict(config, registry=self.registry, strict=for_dispatch)
@@ -2267,7 +2334,7 @@ class StudioRunnerTools(Toolkit):
             entry: Dict[str, Any] = {
                 "id": r.get("component_id"),
                 "name": r.get("name"),
-                "description": r.get("description"),
+                "description": self._listing_description(r["component_id"], r.get("description")),
             }
             # A caller following list-then-run needs the stage hint here, or
             # the refusal it hits is its first sign the row was a draft.
@@ -2431,6 +2498,17 @@ class StudioRunnerTools(Toolkit):
                 logger.warning("Failed to count %s for list disclosure", plural, exc_info=True)
         return {"other_components": counts} if counts else {}
 
+    def _listing_description(self, component_id: str, description: Optional[str]) -> Optional[str]:
+        """Keep component descriptions; consult the fallback only when one is absent or blank."""
+        if (description and description.strip()) or self.description_fallback is None:
+            return description
+        try:
+            return self.description_fallback(component_id)
+        except Exception:
+            # Missing discovery metadata must not fail the whole listing.
+            logger.warning("Description fallback failed for %s", component_id, exc_info=True)
+            return description
+
     def _admitted_code_components(self, component_type: str) -> List[Dict[str, Any]]:
         """The code-defined components this runner will dispatch, as list rows.
 
@@ -2455,7 +2533,7 @@ class StudioRunnerTools(Toolkit):
                 {
                     "id": component_id,
                     "name": getattr(component, "name", None),
-                    "description": getattr(component, "description", None),
+                    "description": self._listing_description(component_id, getattr(component, "description", None)),
                 }
             )
         return rows
@@ -2551,6 +2629,13 @@ class StudioRunnerTools(Toolkit):
         run -- but they still ride the outgoing lineage, so the nested run
         inherits the caller and can never re-enter it, and A -> B -> A stays
         closed in both modes."""
+        authority = _company_task_authority()
+        allowed = getattr(authority, "run_components", None)
+        if authority is not None and allowed is not None and (component_type, component_id) not in allowed:
+            raise StudioRunnerError(
+                f"The policy that accepted this Task does not allow running {component_type} '{component_id}'. "
+                "Do the work yourself, or report that a person must accept the Task for it to run components."
+            )
         target = f"{component_type}:{component_id}"
         blocked = inherited if self.self_dispatch == "once" else running
         if target in blocked:

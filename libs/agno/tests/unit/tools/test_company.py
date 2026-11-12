@@ -2,13 +2,33 @@
 
 import inspect
 import json
+import subprocess
+import sys
 
 import pytest
 
-from agno.company import CompanyManager
-from agno.db.sqlite import SqliteDb
+from agno.agent import Agent
+from agno.company import AsyncCompanyManager, CompanyManager
+from agno.db.sqlite import AsyncSqliteDb, SqliteDb
+from agno.registry import Registry
 from agno.run import RunContext
 from agno.tools.company import CompanyTools
+
+
+def test_company_imports_without_sqlalchemy():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            'import sys; sys.modules["sqlalchemy"] = None; '
+            'import agno.company.routines, agno.tools.company; print("OK")',
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "OK"
 
 
 @pytest.mark.parametrize("use_async", [False, True])
@@ -166,6 +186,37 @@ async def test_empty_optionals_do_not_weaken_required_validation(tmp_path, use_a
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "db_class,use_async",
+    [(SqliteDb, False), (SqliteDb, True), (AsyncSqliteDb, True)],
+    ids=["sync", "async_facade", "native_async"],
+)
+async def test_propose_task_allows_backlog_before_project_approval(tmp_path, db_class, use_async):
+    db = db_class(db_file=str(tmp_path / "approval.db"))
+    manager = AsyncCompanyManager(db) if isinstance(db, AsyncSqliteDb) else CompanyManager(db)
+    tools = CompanyTools(db)
+    propose = tools.apropose_company_task if use_async else tools.propose_company_task
+
+    async def call(fn, *args, **kwargs):
+        result = fn(*args, **kwargs)
+        return await result if inspect.isawaitable(result) else result
+
+    try:
+        product = await call(manager.create, name="SDK")
+        project = await call(manager.create_project, product_id=product["id"], name="Release")
+        project = await call(manager.get_project, project["id"])
+        task = json.loads(await call(propose, product["id"], "Document release", project_id=project["id"]))
+        assert task["status"] == "backlog" and task["project_id"] == project["id"]
+        current = await call(manager.get_project, project["id"])
+        assert current["status"] == "proposed" and current["counts"]["tasks"]["backlog"] == 1
+        assert current["transitions"] == project["transitions"]
+        await call(manager.transition_project, project_id=project["id"], target="active", reason="Human approved")
+        assert (await call(manager.get_task, task["id"]))["status"] == "backlog"
+    finally:
+        await call(db.close)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("use_async", [False, True])
 @pytest.mark.parametrize("processed", [False, True])
 @pytest.mark.parametrize("name", ["list_product_sources", "read_product_source"])
@@ -204,4 +255,64 @@ async def test_source_optionals_equal_omission(tmp_path, use_async, processed, n
     if name == "read_product_source":
         selected = await invoke({"path": path.name, "max_chars": None, "content_offset": ""})
         assert selected["content"] == "Observed content"
+    db.close()
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("enabled", [True, False, None, ""])
+async def test_create_routine_enabled_option(tmp_path, use_async, enabled):
+    db = SqliteDb(db_file=str(tmp_path / "routine.db"))
+    product = CompanyManager(db).create(name="SDK", user_id="alice")
+    reviewer = Agent(id="reviewer", telemetry=False)
+    tools = CompanyTools(db, registry=Registry(agents=[reviewer]))
+    function = (tools.get_async_functions() if use_async else tools.functions)["create_product_routine"]
+    function.process_entrypoint(strict=True)
+    try:
+        result = function.entrypoint(
+            product_id=product["id"],
+            name="review",
+            executor_type="agent",
+            executor_id="reviewer",
+            instructions="Review existing work.",
+            cron_expr="0 9 * * *",
+            enabled=enabled,
+            _agno_run_context=RunContext(run_id="human", session_id="session", user_id="alice"),
+        )
+        row = json.loads(await result if inspect.isawaitable(result) else result)
+        assert row["enabled"] is (enabled is not False)
+        assert db.get_schedule(row["id"])["enabled"] is (enabled is not False)
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize(
+    "label", ["backlog", "Backlog", " BACKLOG ", "ready", "Ready", "In progress", "in-review", "Reviewing"]
+)
+async def test_task_status_filter_accepts_labels(tmp_path, use_async, label):
+    # "Backlog" used to match nothing, and the empty list read as "no Backlog Tasks".
+    db = SqliteDb(db_file=str(tmp_path / "status.db"))
+    manager = CompanyManager(db)
+    product = manager.create(name="SDK")
+    project = manager.create_project(product_id=product["id"], name="Release")
+    task = manager.create_task(product_id=product["id"], title="Publish wheels", project_id=project["id"])
+    tools = CompanyTools(db)
+    listed = await tools.alist_company_tasks(status=label) if use_async else tools.list_company_tasks(status=label)
+    titles = [row["title"] for row in json.loads(listed)["data"]]
+    assert titles == (["Publish wheels"] if "backlog" in label.lower() else []), listed
+    assert task["status"] == "backlog"
+    db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_task_status_filter_refuses_an_unknown_status(tmp_path, use_async):
+    db = SqliteDb(db_file=str(tmp_path / "status.db"))
+    tools = CompanyTools(db)
+    with pytest.raises(ValueError, match="Unknown Task status 'waiting'. Use one of: backlog, ready, in_progress"):
+        if use_async:
+            await tools.alist_company_tasks(status="waiting")
+        else:
+            tools.list_company_tasks(status="waiting")
     db.close()

@@ -1,32 +1,41 @@
-from __future__ import annotations
-
-import json
+import re
+from functools import partial
 from ssl import SSLContext
-from typing import Dict, List, Literal, Optional, Union
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Union
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RemoteAgent
+from agno.agent.protocol import AgentProtocol
 
 try:
-    from agno.os.interfaces.slack.event_handler import SlackEventHandler
-    from agno.os.interfaces.slack.helpers import BotNameResolver, EventDeduplicator
-    from agno.os.interfaces.slack.hitl import HITLHandler
+    from slack_bolt.adapter.starlette.async_handler import AsyncSlackRequestHandler
+    from slack_bolt.async_app import AsyncApp
+    from slack_bolt.authorization import AuthorizeResult
+    from slack_bolt.request.internals import parse_body
+    from slack_bolt.response import BoltResponse
+    from slack_sdk.signature import SignatureVerifier
+    from slack_sdk.web.async_client import AsyncWebClient
 except ImportError as e:
     raise ImportError("Slack dependencies not installed. Please install using `pip install 'agno[slack]'`") from e
 
-from agno.os.interfaces.slack.ids import (
-    ACTION_CHECK_STATUS,
-    ACTION_ROW_APPROVE,
-    ACTION_ROW_REJECT,
-    ACTION_SUBMIT,
+from agno.os.interfaces.slack import hitl
+from agno.os.interfaces.slack.context import SlackContext, build_context
+from agno.os.interfaces.slack.executor import aclose_runs
+from agno.os.interfaces.slack.handlers import (
+    handle_app_home_opened,
+    handle_assistant_thread_started,
+    handle_message,
+    handle_session_stopped,
 )
-from agno.os.interfaces.slack.security import verify_slack_signature
+from agno.os.interfaces.slack.ids import ACTION_CHECK_STATUS, ACTION_ROW_APPROVE, ACTION_ROW_REJECT, ACTION_SUBMIT
 from agno.team import RemoteTeam, Team
-from agno.tools.slack import SlackTools
-from agno.utils.log import log_warning
+from agno.utils.log import log_error, log_warning
 from agno.workflow import RemoteWorkflow, Workflow
+
+_Handler = Callable[[Dict[str, Any], Any, SlackContext], Awaitable[None]]
 
 
 class SlackEventResponse(BaseModel):
@@ -37,14 +46,103 @@ class SlackChallengeResponse(BaseModel):
     challenge: str = Field(description="Challenge string to echo back to Slack")
 
 
+_ACK = {"status": "ok"}
+
+
+def _build_bolt_app(ctx: SlackContext) -> AsyncApp:
+    """The Bolt app of one Slack interface: it verifies, authorizes, acks and hands each request to a handler."""
+
+    async def _authorize(enterprise_id: Optional[str] = None, team_id: Optional[str] = None) -> AuthorizeResult:
+        # Single workspace: the bot ids come from one auth.test, cached only once it succeeds
+        if ctx.bot_user_id is None:
+            try:
+                auth = await ctx.web().auth_test()
+            except Exception as e:
+                # A failure must not drop the event: it runs without the ids, and the next request retries
+                if "auth_test" not in ctx.failing:
+                    log_error(f"Slack auth.test failed: {type(e).__name__}: {e}")
+                ctx.failing.add("auth_test")
+                return AuthorizeResult(enterprise_id=enterprise_id, team_id=team_id, bot_token=ctx.token)
+            ctx.failing.discard("auth_test")
+            ctx.bot_id = auth.get("bot_id")
+            ctx.bot_user_id = auth.get("user_id")
+        return AuthorizeResult(
+            enterprise_id=enterprise_id,
+            team_id=team_id,
+            bot_token=ctx.token,
+            bot_id=ctx.bot_id,
+            bot_user_id=ctx.bot_user_id,
+        )
+
+    app = AsyncApp(
+        signing_secret=ctx.signing_secret,
+        # Explicit authorize: with SLACK_CLIENT_ID/SECRET in the env, Bolt would otherwise switch to OAuth
+        authorize=_authorize,
+        # Token-less: each listener gets a client with the token from _authorize
+        client=AsyncWebClient(token=None, ssl=ctx.ssl),
+        process_before_response=False,
+        ignoring_self_events_enabled=True,
+        raise_error_for_unhandled_request=False,
+        attaching_conversation_kwargs_enabled=False,
+    )
+
+    async def _dedupe_events(body: Dict[str, Any], request: Any, next: Callable[[], Awaitable[Any]]) -> Any:
+        # A retry is a duplicate only if the original delivery reached us, so dedupe on event_id
+        # rather than dropping every retry. Without an event_id, drop the retry.
+        event_id = body.get("event_id")
+        if isinstance(event_id, str) and event_id:
+            if ctx.dedupe.is_duplicate(event_id):
+                return BoltResponse(status=200, body=_ACK)
+        elif request.headers.get("x-slack-retry-num"):
+            return BoltResponse(status=200, body=_ACK)
+        return await next()
+
+    app.use(_dedupe_events)
+
+    def _listener(handler: _Handler) -> Callable[..., Awaitable[None]]:
+        async def listener(ack: Any, body: Dict[str, Any], client: Any, context: Any) -> None:
+            await ack()
+            ctx.runs.spawn(handler(body, client, ctx.bind(context.get("app"))))
+
+        return listener
+
+    app.event("message")(_listener(handle_message))
+    app.event("app_mention")(_listener(handle_message))
+    app.event("app_home_opened")(_listener(handle_app_home_opened))
+    app.event("assistant_thread_started")(_listener(handle_assistant_thread_started))
+    app.event("agent_session_stopped")(_listener(handle_session_stopped))
+
+    async def _ack_only(ack: Any) -> None:
+        await ack()
+
+    # Registered last so the listeners above win; any other subscribed event is acked without Bolt's unhandled warning
+    app.event(re.compile(".*"))(_ack_only)
+
+    app.action(ACTION_ROW_APPROVE)(_listener(hitl.handle_row_approve))
+    app.action(ACTION_ROW_REJECT)(_listener(hitl.handle_row_reject))
+    app.action(ACTION_CHECK_STATUS)(_listener(hitl.handle_check_status))
+    app.action(ACTION_SUBMIT)(_listener(hitl.handle_submit))
+
+    return app
+
+
+def _dispatchable(parsed: Any) -> bool:
+    if not isinstance(parsed, dict):
+        return False
+    # Bolt reads view["type"] unguarded for every view payload
+    view = parsed.get("view")
+    if isinstance(view, dict) and "type" not in view:
+        return False
+    return bool(parsed.get("type") or parsed.get("ssl_check"))
+
+
 def attach_routes(
     router: APIRouter,
-    agent: Optional[Union[Agent, RemoteAgent]] = None,
+    agent: Optional[Union[Agent, RemoteAgent, AgentProtocol]] = None,
     team: Optional[Union[Team, RemoteTeam]] = None,
     workflow: Optional[Union[Workflow, RemoteWorkflow]] = None,
     reply_to_mentions_only: bool = True,
     token: Optional[str] = None,
-    user_token: Optional[str] = None,
     signing_secret: Optional[str] = None,
     streaming: bool = True,
     loading_messages: Optional[List[str]] = None,
@@ -59,75 +157,85 @@ def attach_routes(
     markdown: bool = True,
     unfurl_links: bool = True,
     unfurl_media: bool = True,
+    approvers: Optional[List[str]] = None,
+    users: Optional[Dict[str, str]] = None,
+    context: Optional[SlackContext] = None,
 ) -> APIRouter:
-    # Inner functions capture config via closure to keep each instance isolated
-    entity = agent or team or workflow
-    # entity_type drives event dispatch (agent vs team vs workflow events)
-    entity_type: Literal["agent", "team", "workflow"] = "agent" if agent else "team" if team else "workflow"
-    # Member HITL needs member runs embedded on Team run (member_responses).
-    # Without this, continue_run cannot reliably reload member tool state from DB.
-    if team is not None and not isinstance(team, RemoteTeam):
-        team.store_member_responses = True
-    raw_name = getattr(entity, "name", None)
-    # entity_name labels task cards; entity_id namespaces session IDs
-    entity_name = raw_name if isinstance(raw_name, str) else entity_type
+    """
+    Mount the Slack event and interaction routes on the router.
+
+    The other arguments are the Slack(...) arguments of the same name; see Slack.__init__.
+
+    Args:
+        router: The router the Slack routes are added to
+        agent: The agent to expose via Slack
+        team: The team to expose via Slack
+        workflow: The workflow to expose via Slack
+        context: A SlackContext to reuse; built from the other arguments when None
+    """
+    # The context holds the runs, caches and Bolt app, so routes built again reuse them
+    if context is None:
+        context = build_context(
+            agent=agent,
+            team=team,
+            workflow=workflow,
+            token=token,
+            signing_secret=signing_secret,
+            reply_to_mentions_only=reply_to_mentions_only,
+            streaming=streaming,
+            loading_messages=loading_messages,
+            task_display_mode=task_display_mode,
+            loading_text=loading_text,
+            suggested_prompts=suggested_prompts,
+            ssl=ssl,
+            buffer_size=buffer_size,
+            max_file_size=max_file_size,
+            resolve_user_identity=resolve_user_identity,
+            respond_to_other_apps=respond_to_other_apps,
+            markdown=markdown,
+            unfurl_links=unfurl_links,
+            unfurl_media=unfurl_media,
+            approvers=approvers,
+            users=users,
+        )
+        # Without AgentOS nothing else closes the runs
+        router.add_event_handler("shutdown", partial(aclose_runs, context))
+    if context.bolt_app is None:
+        context.bolt_app = _build_bolt_app(context)
+    handler = AsyncSlackRequestHandler(context.bolt_app)
+    verifier = SignatureVerifier(context.signing_secret)
     # Multiple Slack instances can be mounted on one FastAPI app (e.g. /research
     # and /analyst). op_suffix makes each operation_id unique to avoid collisions.
-    op_suffix = entity_name.lower().replace(" ", "_")
-    entity_id = getattr(entity, "id", None) or entity_name
+    op_suffix = context.entity_name.lower().replace(" ", "_")
 
-    slack_tools = SlackTools(token=token, user_token=user_token, ssl=ssl, max_file_size=max_file_size)
-
-    # Bot identity for filtering own messages (avoids echo loops)
-    own_bot_id: Optional[str] = None
-    own_bot_user_id: Optional[str] = None
-    try:
-        auth_result = slack_tools.client.auth_test()
-        own_bot_id = auth_result.get("bot_id")
-        own_bot_user_id = auth_result.get("user_id")
-    except Exception:
-        pass
-
-    bot_name_resolver = BotNameResolver()
-    # Per-process seen-set for Slack retries; see EventDeduplicator for the multi-replica caveat.
-    event_dedupe = EventDeduplicator()
-    if entity is None:
-        raise ValueError("attach_routes requires agent, team, or workflow")
-    hitl = HITLHandler(
-        slack_tools=slack_tools,
-        ssl=ssl,
-        entity=entity,
-        entity_id=entity_id,
-        entity_name=entity_name,
-        entity_type=entity_type,
-        task_display_mode=task_display_mode,
-        buffer_size=buffer_size,
-        unfurl_links=unfurl_links,
-        unfurl_media=unfurl_media,
-        markdown=markdown,
-    )
-    event_handler = SlackEventHandler(
-        slack_tools=slack_tools,
-        ssl=ssl,
-        entity=entity,
-        entity_id=entity_id,
-        entity_name=entity_name,
-        entity_type=entity_type,
-        bot_name_resolver=bot_name_resolver,
-        reply_to_mentions_only=reply_to_mentions_only,
-        resolve_user_identity=resolve_user_identity,
-        respond_to_other_apps=respond_to_other_apps,
-        own_bot_id=own_bot_id,
-        own_bot_user_id=own_bot_user_id,
-        loading_text=loading_text,
-        loading_messages=loading_messages,
-        task_display_mode=task_display_mode,
-        buffer_size=buffer_size,
-        suggested_prompts=suggested_prompts,
-        unfurl_links=unfurl_links,
-        unfurl_media=unfurl_media,
-        markdown=markdown,
-    )
+    async def _handle(request: Request) -> Response:
+        # Slack retries any non-2xx, so a signed body Bolt cannot dispatch is acked and ignored
+        body = await request.body()
+        try:
+            parsed = parse_body(body.decode("utf-8"), request.headers.get("content-type"))
+        except Exception:
+            parsed = None
+        if not _dispatchable(parsed):
+            try:
+                valid = verifier.is_valid_request(body, dict(request.headers))
+            except UnicodeDecodeError:
+                valid = False
+            if not valid:
+                return JSONResponse(status_code=403, content={"detail": "Invalid signature"})
+            log_warning("Ignoring Slack event with a non-JSON body")
+            return JSONResponse(content=_ACK)
+        # The FastAPI app reaches the handlers, for the platform authority of mapped users
+        response = await handler.handle(request, addition_context_properties={"app": request.app})
+        # Bolt answers a signed request no listener serves with 404; Slack would retry it or report failures
+        if response.status_code == 404:
+            return JSONResponse(content=_ACK)
+        # Bolt answers a bad signature with 401; the interface answers 403 as the other webhook interfaces do
+        if response.status_code == 401:
+            return JSONResponse(status_code=403, content={"detail": "Invalid signature"})
+        # Bolt acks a listener with an empty body; the routes declare the JSON ack
+        if response.status_code == 200 and not response.body:
+            return JSONResponse(content=_ACK)
+        return response
 
     @router.post(
         "/events",
@@ -138,60 +246,11 @@ def attach_routes(
         response_model_exclude_none=True,
         responses={
             200: {"description": "Event processed successfully"},
-            400: {"description": "Missing Slack headers"},
             403: {"description": "Invalid Slack signature"},
         },
     )
-    async def slack_events(request: Request, background_tasks: BackgroundTasks):
-        # ACK immediately, process in background. Slack retries after ~3s if it
-        # doesn't get a 200, so long-running agent calls must not block the response.
-        body = await request.body()
-        timestamp = request.headers.get("X-Slack-Request-Timestamp")
-        slack_signature = request.headers.get("X-Slack-Signature", "")
-
-        if not timestamp or not slack_signature:
-            raise HTTPException(status_code=400, detail="Missing Slack headers")
-
-        if not verify_slack_signature(body, timestamp, slack_signature, signing_secret=signing_secret):
-            raise HTTPException(status_code=403, detail="Invalid signature")
-
-        try:
-            data = await request.json()
-        except json.JSONDecodeError as e:
-            # Slack treats any non-2xx as a failed delivery and retries it, so an unparseable
-            # body is acked and ignored. Before this guard, first deliveries 500ed here too.
-            log_warning(f"Ignoring Slack event with a non-JSON body: {str(e)}")
-            return SlackEventResponse(status="ok")
-
-        # A retry is a duplicate only if the original delivery reached us, so dedupe on
-        # event_id rather than dropping every retry. Marked on receipt, before dispatch:
-        # a run that dies mid-flight forfeits its retry, as it did under the blanket drop.
-        # Nested on purpose: collapsing the inner check into the outer condition would send a
-        # retry with an unseen event_id into the elif and drop it, the loss this dedupe exists to fix.
-        event_id = data.get("event_id")
-        if isinstance(event_id, str) and event_id:
-            if event_dedupe.is_duplicate(event_id):
-                return SlackEventResponse(status="ok")
-        elif request.headers.get("X-Slack-Retry-Num"):
-            # No usable event_id to dedupe on: keep dropping the retry.
-            return SlackEventResponse(status="ok")
-
-        if data.get("type") == "url_verification":
-            return SlackChallengeResponse(challenge=data.get("challenge"))
-
-        if "event" in data:
-            event = data["event"]
-            event_type = event.get("type")
-
-            if event_type == "assistant_thread_started" and streaming:
-                background_tasks.add_task(event_handler.handle_thread_started, event)
-            elif event_handler.should_process(event):
-                if streaming:
-                    background_tasks.add_task(event_handler.handle_streaming, data)
-                else:
-                    background_tasks.add_task(event_handler.handle_non_streaming, data)
-
-        return SlackEventResponse(status="ok")
+    async def slack_events(request: Request):
+        return await _handle(request)
 
     @router.post(
         "/interactions",
@@ -202,54 +261,10 @@ def attach_routes(
         response_model_exclude_none=True,
         responses={
             200: {"description": "Interaction accepted"},
-            400: {"description": "Malformed interaction payload"},
             403: {"description": "Invalid Slack signature"},
         },
     )
-    async def slack_interactions(request: Request, background_tasks: BackgroundTasks):
-        body = await request.body()
-        timestamp = request.headers.get("X-Slack-Request-Timestamp")
-        slack_signature = request.headers.get("X-Slack-Signature", "")
-        if not timestamp or not slack_signature:
-            raise HTTPException(status_code=400, detail="Missing Slack headers")
-        if not verify_slack_signature(body, timestamp, slack_signature, signing_secret=signing_secret):
-            raise HTTPException(status_code=403, detail="Invalid signature")
-
-        # Pre-ack retry drop — Slack retries after ~3s if we don't ack. We ACK
-        # below; any retry arriving before that gets the same 200 response.
-        if request.headers.get("X-Slack-Retry-Num"):
-            return SlackEventResponse(status="ok")
-
-        # Slack sends interactive payloads as application/x-www-form-urlencoded
-        # with a single form field `payload=<URL-encoded JSON>`.
-        form = await request.form()
-        payload_raw = form.get("payload")
-        if not isinstance(payload_raw, str) or not payload_raw:
-            raise HTTPException(status_code=400, detail="Missing payload")
-        try:
-            payload = json.loads(payload_raw)
-        except Exception:
-            raise HTTPException(status_code=400, detail="Malformed payload JSON")
-
-        # Dispatch by action_id — only block_actions payloads carry HITL clicks.
-        if payload.get("type") != "block_actions":
-            return SlackEventResponse(status="ok")
-        actions = payload.get("actions") or []
-        if not actions:
-            return SlackEventResponse(status="ok")
-        action_id = actions[0].get("action_id", "")
-
-        if action_id == ACTION_ROW_APPROVE:
-            background_tasks.add_task(hitl.handle_row_approve, payload)
-        elif action_id == ACTION_ROW_REJECT:
-            background_tasks.add_task(hitl.handle_row_reject, payload)
-        elif action_id == ACTION_CHECK_STATUS:
-            background_tasks.add_task(hitl.handle_check_status, payload)
-        elif action_id == ACTION_SUBMIT:
-            background_tasks.add_task(hitl.handle_submit, payload)
-        # Silently ignore unknown action_ids — a non-HITL Slack app sharing
-        # the same endpoint might also post interactions here.
-
-        return SlackEventResponse(status="ok")
+    async def slack_interactions(request: Request):
+        return await _handle(request)
 
     return router

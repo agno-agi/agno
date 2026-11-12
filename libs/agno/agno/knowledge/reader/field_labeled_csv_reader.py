@@ -34,6 +34,11 @@ class FieldLabeledCSVReader(Reader):
         self.format_headers = format_headers
         self.skip_empty_fields = skip_empty_fields
 
+    @staticmethod
+    def _get_stream_name(file: IO[Any]) -> str:
+        stream_name = getattr(file, "name", None)
+        return stream_name.split(".")[0] if isinstance(stream_name, str) else "csv_file"
+
     @classmethod
     def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
         """Chunking is not supported - each row is already a logical document unit."""
@@ -105,7 +110,7 @@ class FieldLabeledCSVReader(Reader):
                 )
             else:
                 log_debug(f"Reading retrieved file: {getattr(file, 'name', 'BytesIO')}")
-                csv_name = name or getattr(file, "name", "csv_file").split(".")[0]
+                csv_name = name or self._get_stream_name(file)
                 file.seek(0)
                 content = file.read()
                 if isinstance(content, bytes):
@@ -195,7 +200,7 @@ class FieldLabeledCSVReader(Reader):
                 csv_name = name or file.stem
             else:
                 log_debug(f"Reading retrieved file async: {getattr(file, 'name', 'BytesIO')}")
-                csv_name = name or getattr(file, "name", "csv_file").split(".")[0]
+                csv_name = name or self._get_stream_name(file)
                 file.seek(0)
                 content = file.read()
                 if isinstance(content, bytes):

@@ -1,5 +1,42 @@
 # Test log
 
+## PR #11394 review, 2026-10-30
+
+### manager_discovery.py
+
+**Status:** PASS
+
+**Description:** Re-ran `cookbook/05_agent_os/29_manager/manager_discovery.py`
+at commit `285aacbb5` using `.venvs/demo/bin/python`.
+
+**Result:** Sync and async listings matched the manifest description, and the
+agent description remained unset. No model calls or hosted deployment tests.
+The manager/runner unit suites returned 655 passed and one warning-capture
+failure in `test_the_ignored_child_version_pin_is_said_out_loud`. The same
+failure reproduced alone on both the PR and base commit `9153aacd83` using
+the same environment. Ruff lint and formatting checks passed for changed Python files.
+
+---
+
+## Manifest discovery descriptions, 2026-10-30
+
+### manager_discovery.py
+
+**Status:** PASS
+
+**Description:** Ran `cookbook/05_agent_os/29_manager/manager_discovery.py`
+with `.venv/bin/python`, a temporary SQLite database, and no model calls.
+The agent has only a manifest description. Both sync and async manager
+discovery return that description without changing the agent's description.
+
+**Result:** Both listings matched and contained the configured description.
+The cookbook also passed in an isolated development environment, alongside
+656 manager/runner tests and the full format/validation scripts. The shared
+`.venv` validation reported nine existing typing errors in unchanged Google/AWS
+model files. No API key, hosted deployment, or live-model routing was exercised.
+
+---
+
 ## Focused documentation lookup, 2026-10-19
 
 ### manager_source.py
@@ -758,5 +795,60 @@ environment. Full format/validation passed there with SQLAlchemy 2.0.55; the
 shared demo environment reports unrelated Google/AWS provider typing errors.
 The README example was not run against live models or harness processes; no
 provider calls were made.
+
+---
+
+### Manager identity compatibility — 2026-11-06
+
+**Status:** PASS
+
+**Description:** Canonical IDs and legacy URL/grant compatibility; persisted legacy permissions, history, pagination and paused specialist continuation; private specialists and explicit catalog collisions.
+
+**Result:** 355 manager/scope/idempotency tests and 126 run authorization tests passed. PostgreSQL sync/async legacy session pagination and managed-grant revocation passed against a dedicated local database. `manager_discovery.py` passed without model calls. Repository format and validation passed in an isolated current development environment. The preexisting shared environment failed baseline mypy with 189 dependency/type errors; it was not modified. Live model/provider calls were not exercised.
+
+### Internal manager ID separator (2026-11-09)
+
+**Status:** PASS
+
+**Description:** Built-ins now use `super--agent`, `company--manager`, `platform--builder`, and `platform--manager`. Single-hyphen names remain available to user components; original `*-internal` aliases still resolve to the built-ins.
+
+**Result:** 436 manager/run-authorization cases and 14 focused ownership/grant/deny regressions passed. User-owned IDs coexist with the built-ins, preserve their own session history, and neither grant nor deny access to internal managers. Full formatting and validation passed. No model calls were made.
+
+### Manager alias review fixes (2026-11-09)
+
+**Status:** PASS
+
+**Description:** The built-in FGA provider and PublicSurface treat former manager IDs as the current ones, new Routines and policy writes store current IDs, schedule endpoint checks accept either spelling, and each database is checked once for catalog collisions.
+
+**Result:** `manager_discovery.py` and `check_manager_permissions.py` passed without model calls. Manager, authorization, FGA, public config and Routine tests passed, and new Postgres alias tests passed against local pgvector. No model calls were made.
+
+### Former manager IDs removed (2026-11-09)
+
+**Status:** PASS
+
+**Description:** The `*-internal` IDs no longer resolve and stay reserved. Requests that use them get an error naming the new ID, and startup refuses managed-role policies that still use them. Upgrade checked on PostgreSQL by writing with the previous code and reading with this one.
+
+**Result:** `manager_discovery.py` and `check_manager_permissions.py` passed without model calls. Old URLs return 422 with the new ID, new URLs work, an old session can still be continued by its session ID, and old sessions drop out of lists filtered by the new ID. No model calls were made.
+
+---
+
+
+### Public manager IDs and final review — 2026-11-10
+
+**Status:** PASS
+
+**Description:** Canonical IDs are now `superagent`, `company-manager`, `platform-builder` and `platform-manager`. The final combined manager, run-authorization, Company API/Routine, former-ID migration and company-details integration suite passed 636 tests with no skips. It includes synchronous/asynchronous SQLite and disposable PostgreSQL, exact grants and denies, catalog collisions, and IDs generated from component names. Full format and validation scripts passed. Tests used deterministic models; no paid model calls or deployment.
+
+**Result:** Public IDs route correctly; private specialists remain private; former IDs are rejected, and old managed-role policies block startup. Unrelated user IDs retain separate permissions/history. The earlier double-hyphen decision and alias behavior recorded above are superseded.
+
+---
+
+### Super Agent direct tools: offline checks (2026-11-10)
+
+**Status:** PASS
+
+**Description:** Super Agent does the work itself with direct tools and has one member, Platform Builder. Ran `manager_diagnostics.py`, `manager_discovery.py` and `check_manager_permissions.py` with a placeholder `OPENAI_API_KEY`. Loaded `basic_manager.py`, `manager_source.py`, `manager_with_resources.py`, `manager_builds_agents.py` and `manager_user_access.py` with `runpy` to build each AgentOS without serving it. Each Super Agent has members `['platform-builder']`, `tool_call_limit` 24 and `num_history_runs` 5. `manager_source.py` has `list_files`, `read_file` and `search_content` on Super Agent.
+
+**Result:** Diagnostics returned overall WARN: 5 checks PASS, 2 SKIP, and authorization disabled WARN. Discovery listed the components. All seven permission checks passed. `manager_with_resources.py` had duplicate `list_files`, `read_file` and `search_content` tools from the notebook and `root`; Super Agent keeps the first, so source reads went to the notebook. The example now sets no `root`, and the construction check found no duplicate tool names. Conversations in the serving examples need a live model and were not run. No model calls were made.
 
 ---

@@ -156,6 +156,12 @@ class TestLegacyStringInput:
         merged = merge_runs_table_with_legacy_blob([_run("r0")], "not valid json {")
         assert [r["run_id"] for r in merged] == ["r0"]
 
+    def test_json_string_of_a_non_list_falls_back_to_table_only(self):
+        merged = merge_runs_table_with_legacy_blob([_run("r0")], "5")
+        assert [r["run_id"] for r in merged] == ["r0"]
+        merged = merge_runs_table_with_legacy_blob([_run("r0")], 5)
+        assert [r["run_id"] for r in merged] == ["r0"]
+
 
 class TestDefensiveInputs:
     def test_non_dict_entries_in_legacy_are_skipped(self):

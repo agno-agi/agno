@@ -12,7 +12,7 @@ from agno.company.manager import CompanyManager
 from agno.company.routines import _RoutineAuthorization, load_routine_skills
 from agno.db.schemas.scheduler import Schedule
 from agno.db.sqlite import SqliteDb
-from agno.os import AgentOS, CompanyConfig
+from agno.os import AgentOS, CompanyConfig, OSManager
 from agno.os.authz.run_context import restore_authorization
 from agno.run.authorization import AUTHORIZATION_HEADER, authorization_scope
 from agno.scheduler.executor import ScheduleExecutor
@@ -126,6 +126,8 @@ def test_routine_delete_requires_admin(tmp_path):
 
 
 def test_routine_cancel_stops_the_running_run(system):
+    import time
+
     from agno.run.cancel import is_cancelled
 
     client, _, db = system
@@ -141,21 +143,97 @@ def test_routine_cancel_stops_the_running_run(system):
             "id": "schedule-run",
             "schedule_id": routine_id,
             "attempt": 1,
-            "triggered_at": 1,
+            "triggered_at": int(time.time()),
             "status": "running",
             "run_id": "routine-run",
             "session_id": "routine-session",
-            "created_at": 1,
+            "created_at": int(time.time()),
         }
     )
+    assert client.post(path + "/archive").status_code == 409
     response = client.post(path + "/cancel")
     assert response.status_code == 200, response.text
     assert is_cancelled("routine-run")
-    # No executor is left to settle this row, so the cancel records it.
+    # The run no longer exists, so no executor is left to settle this row and the cancel records it.
     assert db.get_schedule_run("schedule-run")["status"] == "cancelled"
     response = client.post(path + "/cancel")
     assert response.status_code == 409
     assert response.json()["detail"] == "Routine has no running run"
+    assert client.post(path + "/archive").status_code == 200
+
+
+def test_routine_run_past_its_deadline_stops_blocking(system):
+    client, _, db = system
+    product = client.post("/company/products", json={"name": "Docs"}).json()
+    body = dict(
+        product_id=product["id"], name="review", executor_type="agent", executor_id="reader", instructions="Review"
+    )
+    routine_id = client.post("/company/routines", json=body).json()["id"]
+    path = "/company/routines/" + routine_id
+    db.create_schedule_run(
+        {
+            "id": "stale-schedule-run",
+            "schedule_id": routine_id,
+            "attempt": 1,
+            "triggered_at": 1,
+            "status": "running",
+            "run_id": "stale-routine-run",
+            "session_id": "routine-session",
+            "created_at": 1,
+        }
+    )
+    # The scheduler stopped waiting for this run long ago, so it blocks nothing even without a cancel.
+    assert client.patch(path, json={"executor_id": "reader"}).status_code == 200
+    assert client.post(path + "/archive").status_code == 200
+    assert client.post(path + "/restore").status_code == 200
+    assert client.post(path + "/cancel").status_code == 200
+    assert db.get_schedule_run("stale-schedule-run")["status"] == "cancelled"
+
+
+def test_routine_cancel_leaves_a_live_run_to_its_executor(system):
+    import time
+
+    from agno.run.agent import RunOutput
+    from agno.run.base import RunStatus
+    from agno.run.cancel import is_cancelled
+    from agno.session import AgentSession
+
+    client, _, db = system
+    product = client.post("/company/products", json={"name": "Docs"}).json()
+    body = dict(
+        product_id=product["id"], name="review", executor_type="agent", executor_id="reader", instructions="Review"
+    )
+    routine_id = client.post("/company/routines", json=body).json()["id"]
+    path = "/company/routines/" + routine_id
+    now = int(time.time())
+    run = RunOutput(
+        run_id="live-routine-run", agent_id="reader", session_id="routine-session", status=RunStatus.running
+    )
+    db.upsert_session(AgentSession(session_id="routine-session", agent_id="reader"))
+    db.upsert_run(run, session_id="routine-session")
+    db.create_schedule_run(
+        {
+            "id": "live-schedule-run",
+            "schedule_id": routine_id,
+            "attempt": 1,
+            "triggered_at": now,
+            "status": "running",
+            "run_id": "live-routine-run",
+            "session_id": "routine-session",
+            "created_at": now,
+        }
+    )
+    response = client.post(path + "/cancel")
+    assert response.status_code == 200, response.text
+    assert is_cancelled("live-routine-run")
+    # The run is still executing, so the row stays running until its executor stops and records the result.
+    assert db.get_schedule_run("live-schedule-run")["status"] == "running"
+    assert client.post(path + "/archive").status_code == 409
+    run.status = RunStatus.cancelled
+    db.upsert_run(run, session_id="routine-session")
+    # Once the run has stopped, a repeated cancel records its final status.
+    assert client.post(path + "/cancel").status_code == 200
+    assert db.get_schedule_run("live-schedule-run")["status"] == "cancelled"
     assert client.post(path + "/archive").status_code == 200
 
 
@@ -919,10 +997,14 @@ def test_custom_company_tools_resolve_os_interfaces_and_human_origin(tmp_path, m
         agents=[executor],
         interfaces=[interface],
         company=CompanyConfig(model=OpenAIResponses(id="offline")),
+        manager=OSManager(model=OpenAIResponses(id="offline"), access_docs=False),
         telemetry=False,
     )
     assert toolkit.interfaces is os.interfaces
-    assert "summarize_company_product" not in os.company_manager.tools[0].functions
+    # Summary Routines run on Mini Agent; Super Agent's chat tools do not deliver summaries.
+    assert "summarize_company_product" in os._mini_agent.tools.routine[0].functions
+    leader_tools = [tool for tool in os.manager.tools if isinstance(tool, CompanyTools)]
+    assert len(leader_tools) == 1 and "summarize_company_product" not in leader_tools[0].functions
     delivery = AsyncMock()
     monkeypatch.setattr("agno.company.summary.adeliver_summary", delivery)
     with TestClient(os.get_app()) as client:
@@ -1128,7 +1210,8 @@ async def test_refresh_requires_routine_and_saved_delete_authority(tmp_path, asy
 
 @pytest.mark.parametrize("failure", ["link", "enable"])
 @pytest.mark.parametrize("pause_pending", [False, True])
-def test_routine_create_recovers_disabled_pending_schedule(system, monkeypatch, failure, pause_pending):
+@pytest.mark.parametrize("enabled", [True, False])
+def test_routine_create_recovers_disabled_pending_schedule(system, monkeypatch, failure, pause_pending, enabled):
     client, _, db = system
     product = client.post("/company/products", json={"name": "Docs"}).json()
     body = dict(
@@ -1138,6 +1221,7 @@ def test_routine_create_recovers_disabled_pending_schedule(system, monkeypatch, 
         executor_type="agent",
         executor_id="reader",
         cron_expr="0 * * * *",
+        enabled=enabled,
     )
     method = "add_product_routine" if failure == "link" else "update_schedule"
     original = getattr(db, method)
@@ -1157,6 +1241,8 @@ def test_routine_create_recovers_disabled_pending_schedule(system, monkeypatch, 
     monkeypatch.setattr(db, method, original)
     # A changed request must not repurpose an interrupted creation.
     assert client.post("/company/routines", json={**body, "cron_expr": "30 * * * *"}).status_code == 409
+    assert client.post("/company/routines", json={**body, "enabled": not enabled}).status_code == 409
+    assert db.get_schedule(pending["id"])["enabled"] is False
     if pause_pending:
         assert client.post("/company/routines/" + pending["id"] + "/pause").status_code == 200
         assert client.post("/company/routines", json=body).status_code == 409
@@ -1166,7 +1252,7 @@ def test_routine_create_recovers_disabled_pending_schedule(system, monkeypatch, 
         return
     result = client.post("/company/routines", json=body)
     assert result.status_code == 201, result.text
-    assert result.json()["id"] == pending["id"] and result.json()["enabled"] is True
+    assert result.json()["id"] == pending["id"] and result.json()["enabled"] is enabled
     assert "_agno_pending_creation" not in result.json()["payload"]
     assert db.get_product(product["id"])["metadata"]["routine_ids"] == [pending["id"]]
     assert db.get_schedules()[1] == 1

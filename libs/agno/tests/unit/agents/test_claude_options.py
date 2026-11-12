@@ -34,6 +34,7 @@ class Options:
     continue_conversation: bool = False
     fork_session: bool = False
     include_partial_messages: bool = False
+    can_use_tool: Any = None
     session_store: Any = None
     enable_file_checkpointing: bool = False
 

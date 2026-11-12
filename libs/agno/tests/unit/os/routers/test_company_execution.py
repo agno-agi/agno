@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from agno.agent import Agent
 from agno.company import CompanyManager
 from agno.company.execution import _ExecutorAuthorization
+from agno.db.base import ComponentType
 from agno.db.sqlite import SqliteDb
 from agno.job_queue import QueueConfig
 from agno.job_queue.store import InMemoryQueueStore
@@ -113,6 +114,79 @@ def test_missing_executor_at_acceptance_and_registry_only_mount(system):
     )
     assert denied.status_code == 409
     assert client.get(f"/company/tasks/{other['id']}", headers=headers()).json()["status"] == "backlog"
+
+
+def test_published_studio_components_execute_tasks(system):
+    client, db, os, queue = system
+    for agent_id, stage in (("studio-writer", "published"), ("studio-draft", "draft")):
+        db.create_component_with_config(
+            component_id=agent_id,
+            component_type=ComponentType.AGENT,
+            name=agent_id,
+            config={"name": agent_id},
+            stage=stage,
+        )
+    _, task = accepted(client)
+
+    def accept(executor_id):
+        created = client.post(
+            "/company/tasks",
+            json={"product_id": task["product_id"], "project_id": task["project_id"], "title": executor_id},
+            headers=headers(),
+        ).json()
+        path = f"/company/tasks/{created['id']}"
+        response = client.post(
+            path + "/transitions",
+            json={"target": "ready", "reason": "Approved", "executor_type": "agent", "executor_id": executor_id},
+            headers=headers(scopes=[*SCOPES, f"agents:{executor_id}:run"]),
+        )
+        return path, response
+
+    path, response = accept("studio-writer")
+    assert response.status_code == 200, response.text
+    started = client.post(path + "/runs", headers=headers(scopes=[*SCOPES, "agents:studio-writer:run"]))
+    assert started.status_code == 202, started.text
+
+    # A draft-only Studio agent isn't runnable anywhere, so it can't take work either.
+    _, response = accept("studio-draft")
+    assert response.status_code == 409
+    assert "missing from the registry" in response.text
+
+
+@pytest.mark.parametrize("store", ["table_override", "unregistered"])
+def test_studio_executor_with_unserved_database_is_refused_at_start(system, tmp_path, store):
+    client, db, os, queue = system
+    if store == "table_override":
+        db_config = {**db.to_dict(), "runs_table": "studio_runs"}
+    else:
+        db_config = SqliteDb(db_file=str(tmp_path / "private.db"), id="private-db").to_dict()
+    db.create_component_with_config(
+        component_id="studio-private",
+        component_type=ComponentType.AGENT,
+        name="studio-private",
+        config={"name": "studio-private", "db": db_config},
+        stage="published",
+    )
+    _, task = accepted(client)
+    created = client.post(
+        "/company/tasks",
+        json={"product_id": task["product_id"], "project_id": task["project_id"], "title": "Private"},
+        headers=headers(),
+    ).json()
+    path = f"/company/tasks/{created['id']}"
+    scopes = [*SCOPES, "agents:studio-private:run"]
+    accepted_response = client.post(
+        path + "/transitions",
+        json={"target": "ready", "reason": "Approved", "executor_type": "agent", "executor_id": "studio-private"},
+        headers=headers(scopes=scopes),
+    )
+    assert accepted_response.status_code == 200, accepted_response.text
+
+    # Company reads runs back through the db AgentOS serves, so a run stored elsewhere would be lost.
+    started = client.post(path + "/runs", headers=headers(scopes=scopes))
+    assert started.status_code == 409, started.text
+    assert "database AgentOS serves" in started.text
+    assert client.get(path, headers=headers()).json().get("job_id") is None
 
 
 @pytest.mark.parametrize("revision", [False, True])
@@ -221,6 +295,7 @@ def test_missing_product_context_does_not_reserve_execution(system, monkeypatch)
 @pytest.mark.parametrize(
     "resource,executor_id",
     [
+        ("agents", "miniagent"),
         ("agents", "company-manager-internal"),
         ("agents", "product-manager-internal"),
         ("teams", "os-manager-internal"),
@@ -342,7 +417,7 @@ def test_auto_accept_human_scope_and_executor_fence(system):
     # The generic schedule surface cannot mutate a Company Routine. The Company
     # surface validates the executor before stamping the human's authority.
     raw = db.get_schedule(routine["id"])["payload"]
-    raw["metadata"]["auto_accept"]["executor_id"] = "another-agent"
+    raw["metadata"]["auto_accept"].update(default_executor="another-agent", executors=["another-agent"])
     assert (
         client.patch(f"/schedules/{routine['id']}", json={"payload": raw}, headers=headers(scopes=scopes)).status_code
         == 409
@@ -571,8 +646,8 @@ async def test_policy_defaults_expiry_and_content_fingerprint(system):
         db.get_schedule(routine["id"])["payload"]["_agno_company_acceptance"]
         != raw["payload"]["_agno_company_acceptance"]
     )
+    # limits is optional. When it is given, it needs an expiry.
     for invalid in (
-        {"executor_type": "agent", "executor_id": "writer"},
         {**policy, "limits": {"max_acceptances": 2}},
         {**policy, "required_checks": []},
     ):
@@ -581,7 +656,8 @@ async def test_policy_defaults_expiry_and_content_fingerprint(system):
         payload["metadata"]["auto_accept"] = invalid
         assert client.patch("/schedules/" + routine["id"], json={"payload": payload}, headers=fresh).status_code == 409
     for key, value in (
-        ("executor_id", "different"),
+        ("default_executor", "different"),
+        ("executors", None),
         ("complete_projects", True),
         ("source_ids", ["source"]),
         ("work_scope", {"project_ids": ["project"]}),
@@ -732,6 +808,72 @@ async def test_completion_rechecks_managed_human_permission(managed_system, duri
     with pytest.raises(PermissionError, match="projects:write"):
         await executor._accept(proposal, completing=True)
     assert db.get_project(project["id"])["status"] == "active"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("revoked", ["no", "before", "during_checks"])
+async def test_project_approval_rechecks_managed_human_permission(managed_system, revoked):
+    from agno.company.routines import _CompanyScheduleExecutor, _RoutineAuthorization
+    from agno.run.authorization import authorization_scope
+
+    client, db, os, queue, authz = managed_system
+    scopes = SCOPES + [
+        "projects:read",
+        "projects:write",
+        "routines:read",
+        "routines:write",
+        "schedules:read",
+        "schedules:write",
+    ]
+    authz.define_role("approver", scopes)
+    authz.define_role("without_approval", [scope for scope in scopes if scope != "projects:write"])
+    authz.set_role("alice", "approver")
+    product = client.post("/company/products", json={"name": "Docs"}, headers=headers()).json()
+
+    async def revoke(proposal, check_manager):
+        authz.set_role("alice", "without_approval")
+        return True
+
+    os.company.acceptance_checks["revoke_approval"] = revoke
+    policy = {"default_executor": "writer"}
+    if revoked == "during_checks":
+        policy["required_checks"] = ["executor_registered", "revoke_approval"]
+    response = client.post(
+        "/company/routines",
+        json=dict(
+            product_id=product["id"],
+            name="intake",
+            instructions="Read the Sources and propose work.",
+            executor_type="agent",
+            executor_id="writer",
+            cron_expr="0 * * * *",
+            auto_accept=policy,
+        ),
+        headers=headers(),
+    )
+    assert response.status_code == 201, response.text
+    routine_id = response.json()["id"]
+    manager = CompanyManager(db, os.registry)
+    # The Routine proposes a Project and a Task in it.
+    with authorization_scope(lambda: _RoutineAuthorization(None, routine_id=routine_id, product_id=product["id"])):
+        project = manager.create_project(product_id=product["id"], name="Fixes")
+    task = manager.create_task(
+        product_id=product["id"], project_id=project["id"], title="Fix", origin="routine", routine_id=routine_id
+    )
+    if revoked == "before":
+        authz.set_role("alice", "without_approval")
+    executor = _CompanyScheduleExecutor(
+        os, client.app, base_url="http://test", internal_service_token="company-internal"
+    )
+    if revoked == "no":
+        accepted = await executor._accept(task)
+        assert accepted["status"] == "ready" and db.get_project(project["id"])["status"] == "active"
+        return
+    with pytest.raises(PermissionError, match="projects:write"):
+        await executor._accept(task)
+    # The approval needs the permission when it is written, not only when the checks began.
+    assert db.get_project(project["id"])["status"] == "proposed"
+    assert db.get_task(task["id"])["status"] == "backlog"
 
 
 def test_pending_routine_retry_rechecks_and_refreshes_human_grant(system, monkeypatch):
