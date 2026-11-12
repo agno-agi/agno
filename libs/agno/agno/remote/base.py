@@ -73,6 +73,30 @@ if TYPE_CHECKING:
     from agno.tools.component import ComponentTool
 
 
+def take_local_run_options(
+    kwargs: Dict[str, Any],
+    *,
+    dependencies: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    knowledge_filters: Optional[Any] = None,
+) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Any]]:
+    """Remove the run options that only exist in this process from kwargs bound for a remote AgentOS.
+
+    A RunContext cannot cross the wire, so its dependencies, metadata and knowledge filters fill
+    the ones the caller left unset, as they would for a local run. Returns those three values.
+    """
+    kwargs.pop("background_tasks", None)
+    kwargs.pop("debug_mode", None)
+    run_context = kwargs.pop("run_context", None)
+    if run_context is None:
+        return dependencies, metadata, knowledge_filters
+    return (
+        dependencies if dependencies is not None else run_context.dependencies,
+        metadata if metadata is not None else run_context.metadata,
+        knowledge_filters if knowledge_filters is not None else run_context.knowledge_filters,
+    )
+
+
 @dataclass
 class RemoteDb:
     id: str

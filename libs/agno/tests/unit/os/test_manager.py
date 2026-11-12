@@ -397,7 +397,27 @@ def test_builder_and_lead_carry_the_framework_toolkits(db, workspace, company_en
         assert "create_company_product" in company.functions
         assert not {"summarize_company_product", "refresh_company_product"} & set(company.functions)
         task_runs = rest.pop(0)
-        assert set(task_runs.functions) == {"start_company_task", "continue_company_task", "get_company_task_status"}
+        assert set(task_runs.functions) == {
+            "start_company_task",
+            "continue_company_task",
+            "get_company_task_status",
+            "approve_company_project",
+            "accept_company_task",
+            "review_company_task",
+            "turn_on_routine_auto_accept",
+            "turn_off_routine_auto_accept",
+        }
+        assert not {"list_company_wiki", "read_company_wiki", "update_product_status"} & set(company.functions)
+    # notes/ comes with Super Agent. The wiki, Products and Tasks join the tree with Company.
+    files = rest.pop(0)
+    assert files.name == "company_files"
+    assert set(files.functions) == {
+        "list_company_files",
+        "read_company_file",
+        "search_company_files",
+        "write_company_file",
+        "delete_company_file",
+    } | ({"save_company_page"} if company_enabled else set())
     assert rest == []
 
     names = set()
@@ -2228,14 +2248,14 @@ def test_mini_agent_keeps_its_own_execution_policy(db, with_manager):
         manager=OSManager(model=OfflineModel(), member_tool_call_limit=7) if with_manager else None,
         telemetry=False,
     )
-    # Routines run on the served runner, which the manager's member limits do not bound.
-    assert os._mini_agent.tool_call_limit is None
+    # Mini Agent keeps its own limit; the manager's member limits do not bound it.
+    assert os._mini_agent.tool_call_limit == 30
     assert FOCUSED_EXECUTION_INSTRUCTIONS not in os._mini_agent.instructions()
     if with_manager:
         assert manager_member(os, MINI_AGENT_ID) is None
         assert manager_member(os, BUILDER_ID).tool_call_limit == 7
         os.resync(os.get_app())
-        assert os._mini_agent.tool_call_limit is None
+        assert os._mini_agent.tool_call_limit == 30
         assert FOCUSED_EXECUTION_INSTRUCTIONS not in os._mini_agent.instructions()
 
 
@@ -2436,6 +2456,8 @@ def test_former_manager_ids_no_longer_resolve_and_name_the_new_id(db, family, fo
     assert response.status_code == 422 and f"replaced by '{current}'" in response.text
     response = client.post(f"/{family}/{former}/runs", data={"message": "hello", "stream": "false"})
     assert response.status_code == 422 and f"replaced by '{current}'" in response.text
+    # Routines ran on the former Company manager as well, and Mini Agent runs them now.
+    assert (f"or '{MINI_AGENT_ID}' for a Routine executor" in response.text) == (former == "company-manager-internal")
     assert client.get(f"/{current_family}/{current}").status_code == 200
 
 

@@ -188,6 +188,9 @@ def get_schedule_router(
             from agno.company.routines import _stamp_auto_accept
 
             payload = await _stamp_auto_accept(request, payload, agent_os)
+        elif payload:
+            # Only the Routine API and the deployment's own declarations write a Company grant.
+            payload = {key: value for key, value in payload.items() if key != "_agno_company_acceptance"}
 
         # Deferred retries address the creator's name bucket even when reads are unscoped.
         existing = await _db_call(
@@ -380,6 +383,8 @@ def get_schedule_router(
             from agno.company.routines import _stamp_auto_accept
 
             updates["payload"] = await _stamp_auto_accept(request, updates["payload"], agent_os)
+        elif updates.get("payload"):
+            updates["payload"] = {k: v for k, v in updates["payload"].items() if k != "_agno_company_acceptance"}
 
         # Timing and descriptive edits must not replace the saved execution identity.
         # Only changes checked against the target above acquire the editor's authority.

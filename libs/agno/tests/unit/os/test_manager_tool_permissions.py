@@ -68,17 +68,32 @@ MOVED_TOOLS = {
         },
         "sources:read",
     ),
-    "list_company_wiki": ({}, "wiki:read"),
-    "read_company_wiki": ({"path": "brief.md", "product_id": "{product}"}, "wiki:read"),
-    "update_product_status": ({"product_id": "{product}", "content": "Status", "expected_version": 0}, "wiki:write"),
+    "list_company_files": ({"folder": "wiki"}, "wiki:read"),
+    "read_company_file": ({"path": "products/{product}/brief.md"}, "wiki:read"),
+    "search_company_files": ({"query": "Company"}, "wiki:read"),
+    "write_company_file": (
+        {"path": "products/{product}/research.md", "content": "Research", "expected_version": 0},
+        "wiki:write",
+    ),
     "log_company_decision": ({"decision": "Drop the old API"}, "decisions:write"),
     "search_company_decisions": ({}, "decisions:read"),
 }
 # Pauses for the person before it runs, so its refusal is asserted after the confirmation.
 CONFIRMED_TOOL = "confirm_company_details"
-# Async only, and checked with the Task start route's grants in test_company_task_tools.py and
-# test_company_task_continuation.py.
-TASK_RUN_TOOLS = {"start_company_task", "continue_company_task", "get_company_task_status"}
+# test_company_file_tree.py checks the confirmed page save, and notes/, which asks for no Company permission.
+FILE_TREE_TOOLS = {"save_company_page", "delete_company_file"}
+# Async only. test_company_task_tools.py and test_company_task_continuation.py check the three run tools
+# with the Task start route's grants, and test_company_decision_tools.py checks the three decision tools.
+TASK_RUN_TOOLS = {
+    "start_company_task",
+    "continue_company_task",
+    "get_company_task_status",
+    "approve_company_project",
+    "accept_company_task",
+    "review_company_task",
+    "turn_on_routine_auto_accept",
+    "turn_off_routine_auto_accept",
+}
 
 
 class OneToolModel(Model):
@@ -162,7 +177,7 @@ def held_tools(os):
 
 def run_tool(os, ids, tool, arguments, scopes, use_async):
     filled = {
-        key: value.format(**ids) if isinstance(value, str) and value.startswith("{") else value
+        key: value.format(**ids) if isinstance(value, str) and "{" in value else value
         for key, value in arguments.items()
     }
     os.manager.model = OneToolModel(tool, filled)
@@ -186,7 +201,7 @@ def company_records(os):
 
 def test_matrix_covers_every_tool_super_agent_holds(platform):
     os, _ = platform
-    assert held_tools(os) == set(MOVED_TOOLS) | {CONFIRMED_TOOL} | TASK_RUN_TOOLS
+    assert held_tools(os) == set(MOVED_TOOLS) | {CONFIRMED_TOOL} | TASK_RUN_TOOLS | FILE_TREE_TOOLS
     assert [member.id for member in os.manager.members] == [BUILDER_ID]
     # The platform read tools left off Super Agent stay in the toolkit.
     left_off = set(AgentOSTools(db=os.db).functions) - held_tools(os)

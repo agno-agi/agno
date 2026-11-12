@@ -248,7 +248,7 @@ def _assert_managers_answer(client):
     assert run.status_code == 200 and run.json()["content"] == "local answer"
     # Mini Agent is still served, and still refuses a person's run.
     run = client.post(f"/agents/{MINI_AGENT_ID}/runs", data={"message": "hello", "stream": "false"})
-    assert run.status_code == 200 and run.json()["content"] == "This agent runs Company Routines only"
+    assert run.status_code == 200 and run.json()["content"] == "Mini Agent runs Company Routines and Tasks only"
 
 
 def test_startup_applies_configuration_without_products(tmp_path):

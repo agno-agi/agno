@@ -122,6 +122,9 @@ def drop_media_references(media_dicts: Any) -> Any:
     return media_dicts
 
 
+INTERNAL_RUN_OPTIONS = frozenset({"run_context", "debug_mode", "yield_run_output", "background_tasks", "websocket"})
+
+
 def _check_object_json_schema(schema: Dict[str, Any]) -> None:
     """Raise HTTP 422 unless schema is a structurally valid JSON Schema with an explicit object root."""
     if schema.get("type") != "object":
@@ -163,6 +166,11 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
     sig = inspect.signature(endpoint_func)
     known_fields = set(sig.parameters.keys())
     kwargs: Dict[str, Any] = {key: value for key, value in form_data.items() if key not in known_fields}
+
+    # Run options that only code in this process can supply, never a caller's form field
+    for name in INTERNAL_RUN_OPTIONS.intersection(kwargs):
+        kwargs.pop(name)
+        log_warning(f"Ignoring form field '{name}': it is not a request parameter")
 
     # Handle JSON parameters. They are passed as strings and need to be deserialized.
     if session_state := kwargs.get("session_state"):

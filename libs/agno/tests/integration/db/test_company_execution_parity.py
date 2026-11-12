@@ -2644,6 +2644,65 @@ async def test_same_second_timestamp_keeps_status_guard(system, monkeypatch, aut
 
 
 @pytest.mark.asyncio
+async def test_a_receipt_with_no_lifetime_limit_reads_no_acceptance_history(system, monkeypatch):
+    from agno.company.execution import _call
+
+    client, db, _, _, _ = system
+    product = (await client.post("/company/products", json={"name": "No lifetime limit"})).json()
+    proposed = (await client.post("/company/projects", json={"product_id": product["id"], "name": "Proposed"})).json()
+    tasks = [
+        (
+            await client.post(
+                "/company/tasks", json={"product_id": product["id"], "project_id": proposed["id"], "title": title}
+            )
+        ).json()
+        for title in ("First", "Second")
+    ]
+
+    def counted(*args, **kwargs):
+        raise AssertionError("read the acceptance history")
+
+    monkeypatch.setattr("agno.db.schemas.tasks._acceptance_count", counted)
+    # A policy with no limits has no lifetime count to compare, so nothing is read for it.
+    receipt = {"routine_id": "routine", "policy": "version"}
+    approved = await _call(
+        db,
+        "transition_project",
+        proposed["id"],
+        "active",
+        "Automatic approval",
+        expected_updated_at=proposed["updated_at"],
+        auto_accept=receipt,
+    )
+    assert approved["status"] == "active" and approved["transitions"][-1]["auto_accept"] == receipt
+    options = dict(executor_type="agent", executor_id="writer")
+    accepted = await _call(
+        db,
+        "transition_task",
+        tasks[0]["id"],
+        "ready",
+        "Automatic acceptance",
+        expected_updated_at=tasks[0]["updated_at"],
+        auto_accept=receipt,
+        **options,
+    )
+    assert accepted["status"] == "ready" and accepted["transitions"][-1]["auto_accept"] == receipt
+    # A policy with a lifetime count is still counted under the lock.
+    with pytest.raises(AssertionError, match="read the acceptance history"):
+        await _call(
+            db,
+            "transition_task",
+            tasks[1]["id"],
+            "ready",
+            "Automatic acceptance",
+            expected_updated_at=tasks[1]["updated_at"],
+            auto_accept={**receipt, "max_acceptances": 5},
+            **options,
+        )
+    assert (await _call(db, "get_task", tasks[1]["id"]))["status"] == "backlog"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("changed", ["title", "brief", "project_id", "evidence", "executor_id"])
 async def test_automatic_task_timestamp_refuses_later_edit(system, monkeypatch, changed):
     from agno.company.execution import _call
