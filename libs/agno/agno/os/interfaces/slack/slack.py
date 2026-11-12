@@ -51,6 +51,34 @@ class Slack(BaseInterface):
         approvers: Optional[List[str]] = None,
         users: Optional[Dict[str, str]] = None,
     ):
+        """
+        Initialize the Slack interface.
+
+        Args:
+            agent: The agent to expose via Slack (may also be a Claude Code or Codex agent)
+            team: The team to expose via Slack
+            workflow: The workflow to expose via Slack
+            prefix: Custom prefix for the router (e.g., "/slack/v1", defaults to "/slack")
+            tags: Custom tags for the router (e.g., ["Slack", "Chat"], defaults to ["Slack"])
+            reply_to_mentions_only: In channels, answer only messages that mention the bot; DMs are always answered
+            token: The Slack bot token (defaults to SLACK_TOKEN)
+            signing_secret: The Slack signing secret (defaults to SLACK_SIGNING_SECRET)
+            streaming: Stream the reply as it is generated
+            loading_messages: Rotating status texts shown while the run works
+            task_display_mode: How tool calls show in a streamed reply, "plan" or "timeline"
+            loading_text: Status text shown while the run starts, in the assistant view
+            suggested_prompts: Prompts for new threads and the Messages tab (defaults to one "Get started" prompt)
+            ssl: SSL context for Slack API calls and file downloads
+            buffer_size: Characters buffered before a streamed update is flushed
+            max_file_size: Largest attached file downloaded, in bytes
+            resolve_user_identity: Use the sender's Slack email as the run's user_id
+            respond_to_other_apps: Answer messages posted by other bots
+            markdown: Format replies as Slack mrkdwn
+            unfurl_links: Let Slack expand link previews in replies
+            unfurl_media: Let Slack expand media previews in replies
+            approvers: Slack member IDs (e.g., "U0123ABC") who may decide on or stop anyone's run; the owner always can
+            users: Slack member ID to AgentOS principal; unmapped users are refused, and runs use the principal's access
+        """
         self.agent = agent
         self.team = team
         self.workflow = workflow

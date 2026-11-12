@@ -161,6 +161,18 @@ def attach_routes(
     users: Optional[Dict[str, str]] = None,
     context: Optional[SlackContext] = None,
 ) -> APIRouter:
+    """
+    Mount the Slack event and interaction routes on the router.
+
+    The other arguments are the Slack(...) arguments of the same name; see Slack.__init__.
+
+    Args:
+        router: The router the Slack routes are added to
+        agent: The agent to expose via Slack
+        team: The team to expose via Slack
+        workflow: The workflow to expose via Slack
+        context: A SlackContext to reuse; built from the other arguments when None
+    """
     # The context holds the runs, caches and Bolt app, so routes built again reuse them
     if context is None:
         context = build_context(
