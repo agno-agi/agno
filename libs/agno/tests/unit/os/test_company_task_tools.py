@@ -201,6 +201,17 @@ def test_automated_and_anonymous_callers_are_refused(system):
     assert asyncio.run(queue.store.get_job(task_run_id(accepted["id"], 1))) is None
 
 
+def test_a_run_without_permissions_is_refused_under_a_jwt_middleware(system):
+    client, db, agent_os, queue = system
+    accepted = task(client)
+    # Only the JWT middleware checks permissions here, as when it is added on a base_app or after get_app().
+    agent_os.authorization = None
+    agent_os._company_app.state.authorization_enabled = False
+    unsigned = RunContext(run_id="r", session_id="s", user_id="alice", authorization=None)
+    assert "signed-in person" in start(agent_os, accepted["id"], unsigned)
+    assert asyncio.run(queue.store.get_job(task_run_id(accepted["id"], 1))) is None
+
+
 def test_start_ends_the_coordinator_turn_with_its_receipt(tmp_path):
     from agno.models.openai import OpenAIResponses
     from agno.os import OSManager

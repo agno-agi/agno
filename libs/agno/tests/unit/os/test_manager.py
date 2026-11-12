@@ -201,6 +201,23 @@ def test_slack_serving_the_manager_requires_identity_mapping_under_authorization
         os.get_app()
 
 
+def test_slack_serving_the_manager_requires_identity_mapping_under_a_base_app_jwt_middleware(db):
+    pytest.importorskip("slack_bolt")
+    from fastapi import FastAPI
+
+    from agno.os.interfaces.slack import Slack
+    from agno.os.middleware.jwt import JWTMiddleware
+
+    secret = "manager-test-signing-key-at-least-32-characters"
+    base_app = FastAPI()
+    base_app.add_middleware(JWTMiddleware, verification_keys=[secret], algorithm="HS256", authorization=True)
+    os = AgentOS(id="manager-test", db=db, telemetry=False, base_app=base_app, manager=OSManager(model=OfflineModel()))
+    # The middleware on the base_app checks roles though AgentOS(authorization=...) is unset
+    os.interfaces.append(Slack(team=os.manager, token="xoxb-test", signing_secret="slack-secret"))
+    with pytest.raises(ValueError, match="requires Slack identity mapping"):
+        os.get_app()
+
+
 @pytest.mark.asyncio
 async def test_slack_interfaces_sharing_a_bot_token_post_task_results_once_per_identity_setup(db):
     pytest.importorskip("slack_bolt")

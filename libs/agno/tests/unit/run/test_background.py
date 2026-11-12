@@ -64,6 +64,28 @@ async def test_map_background_stream_to_run_events_parses_sse_and_stops_at_pause
 
 
 @pytest.mark.asyncio
+async def test_map_background_stream_to_run_events_reads_an_iterator_without_aclose():
+    class Stream:
+        # An AsyncIterator that is not a generator has no aclose
+        def __init__(self):
+            self.frames = iter(
+                [format_sse_event_with_index(RunPausedEvent(run_id="r1", session_id="s1"), event_index=0)]
+            )
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self.frames)
+            except StopIteration:
+                raise StopAsyncIteration
+
+    events = [event async for event in map_background_stream_to_run_events(Stream(), object(), "r1", "s1")]
+    assert [type(event) for event in events] == [RunPausedEvent]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "frame",
     [

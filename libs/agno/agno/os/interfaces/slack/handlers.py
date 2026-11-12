@@ -56,9 +56,12 @@ def should_process(event: Dict[str, Any], ctx: SlackContext) -> bool:
 
 async def _authorize_event(event_context: EventContext, client: Any, ctx: SlackContext) -> bool:
     """Run a mapped user's message under their platform authority; an unmapped or refused user gets an ephemeral."""
-    if ctx.users is None:
+    from agno.os.auth import _authorization_enforced
+
+    # Super Agent under authorization needs a mapped user; the middleware may be added after get_app()
+    if ctx.users is None and (ctx.company is None or not _authorization_enforced(ctx.app)):
         return True
-    principal = ctx.users.get(event_context.owner)
+    principal = ctx.users.get(event_context.owner) if ctx.users is not None else None
     if principal is None:
         await post_ephemeral(
             client, event_context.channel, event_context.owner, _NOT_LINKED_MESSAGE, event_context.thread_ts

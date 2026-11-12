@@ -568,6 +568,13 @@ def _has_authorization_middleware(app: Any) -> bool:
     return False
 
 
+def _authorization_enforced(app: Any) -> bool:
+    """Whether the app enforces authorization, by the AgentOS flag or by an auth middleware added after get_app()."""
+    return bool(getattr(getattr(app, "state", None), "authorization_enabled", False)) or _has_authorization_middleware(
+        app
+    )
+
+
 def get_effective_auth_mode(
     settings: Optional[AgnoAPISettings],
     authorization: bool = False,

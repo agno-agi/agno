@@ -29,6 +29,7 @@ from .conftest import (
 )
 
 _EXECUTOR = "agno.os.interfaces.slack.handlers.executor"
+JWT_KEY = "slack-handlers-jwt-verification-key-at-least-32-chars"
 
 
 # -- should_process --
@@ -279,6 +280,24 @@ async def test_handle_message_super_agent_authorizes_through_company():
     company.authorize.assert_awaited_once_with(None, "alice", "agent-1")
     # With AgentOS authorization off there is no authority, and the message still runs as the principal
     assert run_event.call_args.args[0].user_id == "alice"
+
+
+@pytest.mark.asyncio
+async def test_handle_message_super_agent_without_users_is_refused_under_a_jwt_middleware():
+    from agno.agent import Agent
+    from agno.os import AgentOS
+    from agno.os.middleware.jwt import JWTMiddleware
+
+    app = AgentOS(id="slack-handlers", agents=[Agent(id="agent-1")], telemetry=False).get_app()
+    # The documented pattern adds the middleware after get_app(), so the app flag is unset
+    app.add_middleware(JWTMiddleware, verification_keys=[JWT_KEY], algorithm="HS256", authorization=True)
+    ctx = make_ctx().bind(app)
+    ctx.company = AsyncMock()
+    client = make_async_client_mock()
+    with patch(f"{_EXECUTOR}.run_event", new_callable=AsyncMock) as run_event:
+        await handle_message(make_event_body(), client, ctx)
+    assert not run_event.called
+    assert client.chat_postEphemeral.call_args.kwargs["text"] == _NOT_LINKED_MESSAGE
 
 
 @pytest.mark.asyncio

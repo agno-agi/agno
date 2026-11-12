@@ -384,9 +384,10 @@ app = agent_os.get_app()
   when the run's user wrote the Slack message that started it (read back from
   Slack). Anyone who asks in a thread gets their own Task's result there.
 
-With `AgentOS(authorization=...)`, pass `users=`; `get_app()` refuses to serve
-Super Agent under authorization without it. Each message then runs with the
-mapped principal's roles.
+With `AgentOS(authorization=...)` or a `JWTMiddleware(authorization=True)` you
+add yourself, pass `users=`; `get_app()` refuses to serve Super Agent under
+authorization without it, and a middleware added after `get_app()` refuses each
+message instead. Each message then runs with the mapped principal's roles.
 
 ## Limits
 

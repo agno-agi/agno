@@ -263,7 +263,9 @@ async def map_background_stream_to_run_events(
             yield event
     finally:
         # Close the background stream when the caller stops reading it early
-        await event_stream.aclose()  # type: ignore[attr-defined]
+        aclose_fn = getattr(event_stream, "aclose", None)
+        if aclose_fn is not None:
+            await aclose_fn()
 
     if is_finished:
         return
