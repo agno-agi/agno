@@ -202,7 +202,7 @@ def test_slack_serving_the_manager_requires_identity_mapping_under_authorization
 
 
 @pytest.mark.asyncio
-async def test_slack_interfaces_sharing_a_bot_token_post_task_results_once(db):
+async def test_slack_interfaces_sharing_a_bot_token_post_task_results_once_per_identity_setup(db):
     pytest.importorskip("slack_bolt")
     from agno.os.interfaces.slack import Slack
     from agno.os.interfaces.slack.company import CompanyBridge
@@ -230,6 +230,26 @@ async def test_slack_interfaces_sharing_a_bot_token_post_task_results_once(db):
     os.get_app()
     assert isinstance(late.company, CompanyBridge) and not late.company.deliver
     assert [interface.company.deliver for interface in (first, second, other_bot)] == [True, False, True]
+
+    # Interfaces sharing a token with different users= maps own different Tasks, so each posts its own
+    mapped = Slack(
+        team=os.manager, token="xoxb-test", signing_secret="slack-secret", prefix="/slack5", users={"U1": "a"}
+    )
+    remapped = Slack(
+        team=os.manager, token="xoxb-test", signing_secret="slack-secret", prefix="/slack6", users={"U1": "b"}
+    )
+    # The same users= map with resolve_user_identity on also owns different Tasks
+    resolved = Slack(
+        team=os.manager,
+        token="xoxb-test",
+        signing_secret="slack-secret",
+        prefix="/slack7",
+        users={"U1": "a"},
+        resolve_user_identity=True,
+    )
+    os.interfaces.extend([mapped, remapped, resolved])
+    os.get_app()
+    assert mapped.company.deliver and remapped.company.deliver and resolved.company.deliver
 
 
 @pytest.mark.parametrize("service_account", [False, True])

@@ -504,7 +504,7 @@ async def test_shutdown_mid_sweep_keeps_access_check(tmp_path):
     slack = FakeSlack(root_user="U_CAROL")
 
     async def replies_during_shutdown(*args: Any, **kwargs: Any):
-        # AgentOS shutdown clears the Company app while the sweep reads the thread.
+        # The Company app is cleared while a sweep reads the thread; the sweep keeps the app it started with.
         agent_os._company_app = None
         return await slack._replies(*args, **kwargs)
 

@@ -4,7 +4,7 @@ import inspect
 from contextlib import asynccontextmanager
 from functools import partial
 from os import getenv
-from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Literal, Optional, Sequence, Set, Union
+from typing import TYPE_CHECKING, Any, Dict, FrozenSet, Iterator, List, Literal, Optional, Sequence, Set, Tuple, Union
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException
@@ -1152,10 +1152,19 @@ class AgentOS:
         # Add A2A interface if relevant
         has_a2a_interface = False
         self._public_interface_routes: List[tuple[str, str]] = []
-        # Interfaces sharing a bot token see the same Tasks, so only the first posts their results,
-        # also when get_app runs again
-        delivery_tokens: Set[str] = {
-            interface.ctx.token  # type: ignore[attr-defined]
+
+        # Interfaces sharing a bot token and the settings that decide whose Task it is deliver the same results,
+        # so only the first posts them, also when get_app runs again
+        def delivery_key(interface: BaseInterface) -> Tuple[str, Optional[FrozenSet[Tuple[str, str]]], bool]:
+            users = interface.ctx.users  # type: ignore[attr-defined]
+            return (
+                interface.ctx.token,  # type: ignore[attr-defined]
+                None if users is None else frozenset(users.items()),
+                interface.ctx.resolve_user_identity,  # type: ignore[attr-defined]
+            )
+
+        delivery_keys = {
+            delivery_key(interface)
             for interface in self.interfaces
             if getattr(getattr(interface, "company", None), "deliver", False)
         }
@@ -1180,10 +1189,9 @@ class AgentOS:
                 if getattr(interface, "company", None) is None:
                     from agno.os.interfaces.slack.company import CompanyBridge
 
-                    token = interface.ctx.token  # type: ignore[attr-defined]
-                    deliver = token not in delivery_tokens
-                    interface.company = CompanyBridge(self, deliver=deliver)  # type: ignore[attr-defined]
-                    delivery_tokens.add(token)
+                    key = delivery_key(interface)
+                    interface.company = CompanyBridge(self, deliver=key not in delivery_keys)  # type: ignore[attr-defined]
+                    delivery_keys.add(key)
             interface_router = interface.get_router()
             if getattr(interface, "authenticates_own_requests", False):
                 self._public_interface_routes.extend(

@@ -400,6 +400,9 @@ mapped principal's roles.
   is posted only into a thread holding a real Slack message by that user, but
   the user id itself is not checked. For shared workspaces, turn on
   `authorization=` with `users=`.
+- **A Task result can be posted twice.** Slack interfaces that share a bot token
+  but differ in `users=` or `resolve_user_identity` each post Task results, so a
+  Task both accept can be posted twice.
 - **An approval decided outside Slack does not post into the thread.** When a
   Claude Code or Codex approval is decided through the AgentOS API or UI, the run
   finishes, but nothing is posted into the Slack thread; the next click on the

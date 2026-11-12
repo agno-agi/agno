@@ -36,7 +36,7 @@ class CompanyBridge:
 
     def __init__(self, agent_os: Any, deliver: bool = True):
         self._agent_os: ReferenceType[Any] = ref(agent_os)
-        # Whether this interface posts Task results; one interface per bot token does
+        # Whether this interface posts Task results; one per bot token and users=/resolve_user_identity setting does
         self.deliver = deliver
 
     @property
