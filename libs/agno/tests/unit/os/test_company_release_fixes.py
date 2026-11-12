@@ -460,3 +460,216 @@ def test_a_policy_whose_executor_type_matches_is_accepted_in_both_shapes(system)
         AutoAccept.model_validate(MISMATCHED[0]).model_dump()
         == AutoAccept(default_executor="writer", executors=["writer"], approve_projects=False).model_dump()
     )
+
+
+# ----------------------------------------------------------------- schemas a strict provider can satisfy
+
+
+def chat_tool_schemas(agent_os):
+    """The parameter schema of each Company Task tool, as it is sent to the model."""
+    from agno.os.manager.company_tasks import CompanyTaskTools
+
+    schemas = {}
+    for name, function in CompanyTaskTools(agent_os).get_async_functions().items():
+        function.process_entrypoint()
+        schemas[name] = function.parameters
+    return schemas
+
+
+def shape(schema):
+    """A schema without its descriptions."""
+    if isinstance(schema, dict):
+        return {key: shape(value) for key, value in schema.items() if key != "description"}
+    return [shape(item) for item in schema] if isinstance(schema, list) else schema
+
+
+def accepts_null(schema):
+    return schema.get("type") == "null" or any(accepts_null(option) for option in schema.get("anyOf", []))
+
+
+def test_every_optional_argument_of_the_chat_tools_is_nullable_in_the_schema(system):
+    import inspect
+    from typing import get_args, get_type_hints
+
+    from agno.os.manager.company_tasks import CompanyTaskTools
+
+    schemas = chat_tool_schemas(system.os)
+    tools = CompanyTaskTools(system.os)
+    optional = {}
+    for name in schemas:
+        for method in (getattr(tools, name), getattr(tools, "a" + name)):
+            hints = get_type_hints(method)
+            for parameter in inspect.signature(method).parameters:
+                if parameter.startswith("_agno") or parameter == "self":
+                    continue
+                if type(None) in get_args(hints[parameter]):
+                    optional.setdefault(name, set()).add(parameter)
+    assert optional == {
+        "approve_company_project": {"updated_at"},
+        "accept_company_task": {"executor_type", "executor_id"},
+        "review_company_task": {"executor_type", "executor_id"},
+        "turn_on_routine_auto_accept": {"default_executor", "kept_policy"},
+    }
+    for name, parameters in optional.items():
+        for parameter in parameters:
+            assert accepts_null(schemas[name]["properties"][parameter]), (name, parameter, schemas[name])
+    # The sync tools are sent with the same types. Their descriptions are shorter.
+    for name, function in tools.get_functions().items():
+        function.process_entrypoint()
+        assert shape(function.parameters) == shape(schemas[name]), name
+
+
+def test_the_schemas_accept_a_never_edited_record_and_refuse_what_is_not_a_task(system):
+    import jsonschema
+
+    schemas = chat_tool_schemas(system.os)
+    task = schemas["accept_company_task"]["properties"]["tasks"]["items"]
+    assert set(task["properties"]) == {"title", "task_id", "updated_at"} and task["additionalProperties"] is False
+    assert set(task["required"]) == {"title", "task_id", "updated_at"}
+    assert accepts_null(task["properties"]["updated_at"])
+
+    never_edited = {
+        "approve_company_project": {"project_name": "Cut subscription churn", "project_id": "p1", "updated_at": None},
+        "accept_company_task": {
+            "tasks": [{"title": "Write a win-back email", "task_id": "t1", "updated_at": None}],
+            "executor_type": None,
+            "executor_id": None,
+        },
+        "review_company_task": {
+            "task_title": "Write reminder copy",
+            "outcome": "send_back",
+            "reason": "Six templates",
+            "task_id": "t1",
+            "reviewed_run_id": "r1",
+            "executor_type": None,
+            "executor_id": None,
+        },
+        "turn_on_routine_auto_accept": {
+            "routine_name": "intake",
+            "product_name": "Docs",
+            "default_executor": None,
+            "kept_policy": None,
+            "routine_id": "r1",
+        },
+    }
+    for name, arguments in never_edited.items():
+        jsonschema.validate(arguments, schemas[name])
+    for not_a_task in ({}, {"title": "Draft"}, {"title": "Draft", "task_id": "t1", "updated_at": None, "extra": 1}):
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(
+                {**never_edited["accept_company_task"], "tasks": [not_a_task]}, schemas["accept_company_task"]
+            )
+
+
+def decide(system, tool, arguments):
+    """One decision through Super Agent: the model calls the tool, the person confirms, the run continues."""
+    from tests.unit.os.test_company_decision_tools import ask, person
+    from agno.run.authorization import authorization_scope
+
+    paused = ask(system, tool, arguments)
+    assert paused.is_paused and len(paused.requirements) == 1, paused.content
+    assert paused.requirements[0].tool_execution.tool_args == arguments
+    paused.requirements[0].confirm()
+    with authorization_scope(person):
+        result = asyncio.run(system.os.manager.acontinue_run(run_response=paused, user_id="alice"))
+    assert not result.is_paused, result.content
+    return str(result.content)
+
+
+@pytest.mark.parametrize("version", [0, None], ids=["zero-as-in-F1", "null"])
+def test_one_confirmation_approves_a_never_edited_project(system, version):
+    # F1: the Project was never edited, and the model sent updated_at 0.
+    task = system.proposal()
+    project = system.client.post(
+        "/company/projects",
+        json={"product_id": task["product_id"], "name": "Cut subscription churn"},
+        headers=headers(),
+    ).json()
+    assert project["updated_at"] is None and project["status"] == "proposed"
+    arguments = {"project_name": "Cut subscription churn", "project_id": project["id"], "updated_at": version}
+    reply = decide(system, "approve_company_project", arguments)
+    assert "Approved Project 'Cut subscription churn'" in reply, reply
+    assert system.db.get_project(project["id"])["status"] == "active"
+
+
+def test_a_version_of_zero_does_not_match_a_project_that_was_edited(system):
+    task = system.proposal()
+    project = system.client.post(
+        "/company/projects", json={"product_id": task["product_id"], "name": "Churn"}, headers=headers()
+    ).json()
+    edited = system.client.patch(f"/company/projects/{project['id']}", json={"outcome": "Less"}, headers=headers())
+    assert edited.status_code == 200 and edited.json()["updated_at"] is not None
+    reply = decide(
+        system, "approve_company_project", {"project_name": "Churn", "project_id": project["id"], "updated_at": 0}
+    )
+    assert "changed since the person saw it" in reply
+    assert system.db.get_project(project["id"])["status"] == "proposed"
+
+
+def test_one_confirmation_accepts_a_never_edited_task(system):
+    task = system.proposal()
+    assert task["updated_at"] is None
+    arguments = {
+        "tasks": [{"title": task["title"], "task_id": task["id"], "updated_at": None}],
+        "executor_type": "agent",
+        "executor_id": "writer",
+    }
+    reply = decide(system, "accept_company_task", arguments)
+    assert "Accepted 'Notes'" in reply, reply
+    stored = system.db.get_task(task["id"])
+    assert (stored["status"], stored["executor_id"], stored["accepted_by"]) == ("ready", "writer", "alice")
+
+
+@pytest.mark.parametrize("sent", [",", "", None], ids=["comma-as-in-F2", "empty", "null"])
+def test_one_confirmation_sends_a_task_back_when_the_model_names_no_executor(system, sent):
+    # F2: the Task has an executor, and the model sent "," for executor_type and executor_id.
+    task = system.proposal()
+    accepted = system.client.post(
+        f"/company/tasks/{task['id']}/transitions",
+        json={"target": "ready", "reason": "Approved", "executor_type": "agent", "executor_id": "writer"},
+        headers=headers(),
+    )
+    assert accepted.status_code == 200, accepted.text
+    system.writer.model.script = []
+    started = system.client.post(f"/company/tasks/{task['id']}/runs", headers=headers())
+    assert started.status_code == 202, started.text
+
+    async def run():
+        job = await system.queue.store.claim_job(system.queue.worker_id, system.queue.config.lock_grace_seconds)
+        await system.queue._execute_claimed(job)
+
+    asyncio.run(run())
+    review = system.db.get_task(task["id"])
+    assert review["status"] == "in_review"
+    arguments = {
+        "task_title": "Notes",
+        "outcome": "send_back",
+        "reason": "I want six reusable templates, not one message.",
+        "task_id": task["id"],
+        "reviewed_run_id": review["job_id"],
+        "executor_type": sent,
+        "executor_id": sent,
+    }
+    reply = decide(system, "review_company_task", arguments)
+    assert "back to Ready for agent writer" in reply, reply
+    stored = system.db.get_task(task["id"])
+    assert (stored["status"], stored["executor_type"], stored["executor_id"]) == ("ready", "agent", "writer")
+
+
+def test_send_back_still_refuses_an_executor_that_is_not_the_tasks_own(system):
+    task = system.proposal()
+    system.accept(task["id"])
+    system.execute(task["id"])
+    review = system.db.get_task(task["id"])
+    arguments = {
+        "task_title": "Notes",
+        "outcome": "send_back",
+        "reason": "Redo",
+        "task_id": task["id"],
+        "reviewed_run_id": review["job_id"],
+        "executor_type": "agent",
+        "executor_id": "writer",
+    }
+    reply = decide(system, "review_company_task", arguments)
+    assert "returns 'Notes' to its executor, agent miniagent" in reply, reply
+    assert system.db.get_task(task["id"])["status"] == "in_review"
