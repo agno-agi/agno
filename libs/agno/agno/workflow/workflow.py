@@ -6879,12 +6879,15 @@ class Workflow:
         run_response.status = RunStatus.running
         run_response.error_requirements = None
 
-        # Create run context
+        # Create run context. The steps see the metadata the run started with, which is stored on the
+        # paused run. It carries the dispatch lineage: without it a continue would reset the dispatch guard.
+        # The context shares the stored dict, as on a fresh run, so a step's write is stored with the run.
         run_context = RunContext(
             run_id=run_response.run_id or str(uuid4()),
             session_id=session_id,
             user_id=run_response.user_id,
             session_state=session.session_data.get("session_state", {}) if session.session_data else {},
+            metadata=run_response.metadata,
         )
 
         # Media comes off the paused run; WorkflowRunOutput.input carries none of its own.
@@ -8914,12 +8917,15 @@ class Workflow:
         session.upsert_run(run=run_response)
         await self._apersist_session_and_run(session=session, run=run_response)
 
-        # Create run context
+        # Create run context. The steps see the metadata the run started with, which is stored on the
+        # paused run. It carries the dispatch lineage: without it a continue would reset the dispatch guard.
+        # The context shares the stored dict, as on a fresh run, so a step's write is stored with the run.
         run_context = RunContext(
             run_id=run_response.run_id or str(uuid4()),
             session_id=session_id,
             user_id=run_response.user_id,
             session_state=session.session_data.get("session_state", {}) if session.session_data else {},
+            metadata=run_response.metadata,
         )
 
         # Media comes off the paused run; WorkflowRunOutput.input carries none of its own.

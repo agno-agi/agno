@@ -744,6 +744,8 @@ class AgentOS:
         self._manager_catalog_checked: Set[int] = set()
         self._mini_agent: Optional[Agent] = None
         self._mini_agent_unavailable_reason: Optional[str] = None
+        # The Routine API's PATCH handler, set when the Company routes are built.
+        self._routine_api_update: Any = None
         if self.company is not None:
             from agno.company.execution import _mount_executors
             from agno.company.mini_agent import _build_mini_agent
@@ -773,15 +775,12 @@ class AgentOS:
             self.teams = [*(self.teams or []), self._manager.team]
 
         if self._mini_agent is not None:
-            from agno.company.details import _company_instructions
-            from agno.company.mini_agent import INSTRUCTIONS
-
             if self.registry is None:
                 self.registry = Registry()
             self.registry.exclude_components([self._mini_agent])
-            # Served so the scheduler can reach it; listings leave it out.
+            self.registry._mini_agent = self._mini_agent
+            # Served so the scheduler and the Task queue can reach it; listings leave it out.
             self.agents = [*(self.agents or []), self._mini_agent]
-            self._mini_agent.instructions = _company_instructions(self._company_db, [INSTRUCTIONS])
         self._apply_manager_manifest()
 
         self._initialize_agents()
@@ -1724,6 +1723,7 @@ class AgentOS:
 
         from agno.company.routines import _RoutineResultGuardrail
         from agno.tools.company import CompanyTools
+        from agno.tools.company_files import CompanyFileTools
 
         company = self.company
 
@@ -1731,6 +1731,9 @@ class AgentOS:
             found = False
             for entry in entries or []:
                 toolkit = getattr(entry, "source_toolkit", None) or entry
+                if isinstance(toolkit, CompanyFileTools):
+                    # Its refused writes fail a Routine run through the same result check.
+                    found = True
                 if isinstance(toolkit, CompanyTools):
                     found = True
                     if not toolkit._interfaces_explicit:

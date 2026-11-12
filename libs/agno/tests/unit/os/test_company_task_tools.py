@@ -195,9 +195,9 @@ def test_automated_and_anonymous_callers_are_refused(system):
     automated = context()
     automated.authorization = _ExecutorAuthorization(automated.authorization)
     assert "started by people" in start(agent_os, accepted["id"], automated)
-    if agent_os.user_isolation:
-        anonymous = RunContext(run_id="r", session_id="s", user_id=None, authorization=None)
-        assert "signed-in person" in start(agent_os, accepted["id"], anonymous)
+    # This deployment checks permissions, so a run that carries none is refused with or without isolation.
+    anonymous = RunContext(run_id="r", session_id="s", user_id=None, authorization=None)
+    assert "signed-in person" in start(agent_os, accepted["id"], anonymous)
     assert asyncio.run(queue.store.get_job(task_run_id(accepted["id"], 1))) is None
 
 

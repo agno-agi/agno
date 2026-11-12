@@ -20,6 +20,15 @@ FORMER_MANAGER_IDS = {
     "platform-manager-internal": MANAGER_TEAM_ID,
     "company-manager-internal": MANAGER_TEAM_ID,
 }
+# Routines ran on this former manager as well. Mini Agent runs them now, not Super Agent.
+FORMER_ROUTINE_EXECUTOR_ID = "company-manager-internal"
+# The policy resource of each built-in component. Super Agent is served as a team, the others as
+# agents: a policy that names the wrong family matches nothing.
+MANAGER_RESOURCES = {
+    MANAGER_TEAM_ID: f"teams/{MANAGER_TEAM_ID}",
+    BUILDER_ID: f"agents/{BUILDER_ID}",
+    MINI_AGENT_ID: f"agents/{MINI_AGENT_ID}",
+}
 RESERVED_MEMBER_IDS = frozenset({BUILDER_ID, "platform-builder-internal", "platform-manager-internal"})
 RESERVED_MANAGER_IDS = RESERVED_MEMBER_IDS | {
     MANAGER_TEAM_ID,
@@ -45,7 +54,8 @@ def is_framework_owned(component: Any) -> bool:
 def _reserved_manager_id_message(component_id: str) -> str:
     current = FORMER_MANAGER_IDS.get(component_id)
     if current is not None:
-        return f"Manager ID '{component_id}' was replaced by '{current}' in Agno 3.2. Use the new ID."
+        also = f", or '{MINI_AGENT_ID}' for a Routine executor" if component_id == FORMER_ROUTINE_EXECUTOR_ID else ""
+        return f"Manager ID '{component_id}' was replaced by '{current}' in Agno 3.2. Use the new ID{also}."
     return f"Component ID '{component_id}' is reserved. Please choose a different ID for your component."
 
 
