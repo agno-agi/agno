@@ -95,7 +95,10 @@ def build_context(
     approvers: Optional[List[str]] = None,
     users: Optional[Dict[str, str]] = None,
 ) -> SlackContext:
-    """The context of one Slack interface; raises when the token or the signing secret is missing."""
+    """Build the SlackContext from the Slack(...) arguments; see Slack.__init__ for each one.
+
+    Raises when no agent, team or workflow is given, or the token or the signing secret is missing.
+    """
     entity = agent or team or workflow
     if entity is None:
         raise ValueError("Slack requires an agent, team, or workflow")
