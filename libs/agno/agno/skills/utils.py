@@ -11,6 +11,7 @@ from typing import List, Optional
 
 from agno.exceptions import PathSecurityError
 from agno.utils.path_safety import safe_join_relative_path
+from agno.utils.shell import decode_subprocess_output
 
 
 def is_safe_path(base_dir: Path, requested_path: str) -> bool:
@@ -165,14 +166,13 @@ def run_script(
     result = subprocess.run(
         cmd,
         capture_output=True,
-        text=True,
         timeout=timeout,
         cwd=cwd,
     )
 
     return ScriptResult(
-        stdout=result.stdout,
-        stderr=result.stderr,
+        stdout=decode_subprocess_output(result.stdout),
+        stderr=decode_subprocess_output(result.stderr),
         returncode=result.returncode,
     )
 

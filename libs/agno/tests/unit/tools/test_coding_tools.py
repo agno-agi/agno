@@ -1,3 +1,4 @@
+import sys
 import tempfile
 from pathlib import Path
 
@@ -301,6 +302,18 @@ def test_run_shell_stderr():
         assert "err" in result
 
 
+def test_run_shell_non_utf8_bytes_do_not_error():
+    """Undecodable stdout must not fail the call (#11580)."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir, restrict_to_base_dir=False)
+
+        result = tools.run_shell(f"{sys.executable} -c \"import sys; sys.stdout.buffer.write(b'caf' + bytes([0xE9]))\"")
+        assert "Exit code: 0" in result
+        assert "caf\ufffd" in result
+        assert "Error running shell command" not in result
+
+
 # --- grep tests ---
 
 
@@ -364,6 +377,29 @@ def test_grep_path_escape():
         result = tools.grep("pattern", path="../../etc")
         assert "Error" in result
         assert "outside" in result
+
+
+def test_grep_non_utf8_bytes_do_not_error():
+    """A filename with undecodable bytes must not break grep output decoding (#11580).
+
+    grep prints the matching file's name, so a non-UTF-8 byte in the name
+    lands in grep's stdout. Pre-fix this raised inside subprocess.run
+    (text=True) and surfaced as "Error running grep: ...decode...".
+    """
+    import os
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir, enable_grep=True)
+
+        raw_name = b"caf\xe9.txt"
+        fd = os.open(os.path.join(os.fsencode(tmp_dir), raw_name), os.O_CREAT | os.O_WRONLY)
+        os.write(fd, b"target\n")
+        os.close(fd)
+
+        result = tools.grep("target")
+        assert "target" in result
+        assert "Error running grep" not in result
 
 
 # --- find tests ---

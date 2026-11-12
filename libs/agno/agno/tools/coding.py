@@ -8,6 +8,7 @@ from typing import Any, List, Optional, Union
 
 from agno.tools import Toolkit
 from agno.utils.log import log_error, log_info, logger
+from agno.utils.shell import decode_subprocess_output
 
 
 @functools.lru_cache(maxsize=None)
@@ -521,15 +522,14 @@ class CodingTools(Toolkit):
                 command,
                 shell=True,
                 capture_output=True,
-                text=True,
                 timeout=effective_timeout,
                 cwd=str(self.base_dir),
             )
 
             # Combine stdout and stderr
-            output = result.stdout
+            output = decode_subprocess_output(result.stdout)
             if result.stderr:
-                output += result.stderr
+                output += decode_subprocess_output(result.stderr)
 
             header = f"Exit code: {result.returncode}\n"
 
@@ -610,17 +610,16 @@ class CodingTools(Toolkit):
             result = subprocess.run(
                 cmd,
                 capture_output=True,
-                text=True,
                 timeout=30,
                 cwd=str(self.base_dir),
             )
 
-            output = result.stdout
+            output = decode_subprocess_output(result.stdout)
             if not output:
                 if result.returncode == 1:
                     return f"No matches found for pattern: {pattern}"
                 if result.stderr:
-                    return f"Error: {result.stderr.strip()}"
+                    return f"Error: {decode_subprocess_output(result.stderr).strip()}"
                 return f"No matches found for pattern: {pattern}"
 
             # Make paths relative to base_dir

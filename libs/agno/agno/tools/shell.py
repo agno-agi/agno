@@ -3,6 +3,7 @@ from typing import List, Optional, Union
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info, log_warning
+from agno.utils.shell import decode_subprocess_output
 
 
 class ShellTools(Toolkit):
@@ -40,14 +41,15 @@ class ShellTools(Toolkit):
             result = subprocess.run(
                 args,
                 capture_output=True,
-                text=True,
                 cwd=str(self.base_dir) if self.base_dir else None,
             )
             log_debug(f"Result: {result}")
             log_debug(f"Return code: {result.returncode}")
+            stdout = decode_subprocess_output(result.stdout)
+            stderr = decode_subprocess_output(result.stderr)
             if result.returncode != 0:
-                return f"Error: {result.stderr}"
-            return "\n".join(result.stdout.split("\n")[-tail:])
+                return f"Error: {stderr}"
+            return "\n".join(stdout.split("\n")[-tail:])
         except Exception as e:
             log_warning(f"Failed to run shell command: {str(e)}")
             return f"Error: {e}"

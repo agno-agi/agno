@@ -32,6 +32,7 @@ from typing import Dict, List, Optional, Set, Tuple, Union
 from agno.tools import Toolkit
 from agno.tools._local_file_utils import DEFAULT_EXCLUDE_PATTERNS, path_matches_exclude
 from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.shell import decode_subprocess_output
 
 TEXT_EXTENSIONS = {
     # Markup and data
@@ -789,14 +790,15 @@ class Workspace(Toolkit):
             result = subprocess.run(
                 args,
                 capture_output=True,
-                text=True,
                 cwd=str(self.root),
                 timeout=timeout,
             )
+            stdout = decode_subprocess_output(result.stdout)
+            stderr = decode_subprocess_output(result.stderr)
             if result.returncode != 0:
-                err = "\n".join(_strip_ansi(result.stderr).splitlines()[-tail:])
+                err = "\n".join(_strip_ansi(stderr).splitlines()[-tail:])
                 return f"Error (exit {result.returncode}): {err}"
-            return "\n".join(_strip_ansi(result.stdout).splitlines()[-tail:])
+            return "\n".join(_strip_ansi(stdout).splitlines()[-tail:])
         except subprocess.TimeoutExpired:
             log_warning(f"run_command timed out after {timeout}s: {args}")
             return f"Error: command timed out after {timeout} seconds"
@@ -872,8 +874,8 @@ class Workspace(Toolkit):
                 await proc.wait()
                 log_warning(f"arun_command timed out after {timeout}s: {args}")
                 return f"Error: command timed out after {timeout} seconds"
-            stdout = stdout_b.decode("utf-8", errors="replace") if stdout_b else ""
-            stderr = stderr_b.decode("utf-8", errors="replace") if stderr_b else ""
+            stdout = decode_subprocess_output(stdout_b)
+            stderr = decode_subprocess_output(stderr_b)
             if proc.returncode != 0:
                 err = "\n".join(_strip_ansi(stderr).splitlines()[-tail:])
                 return f"Error (exit {proc.returncode}): {err}"

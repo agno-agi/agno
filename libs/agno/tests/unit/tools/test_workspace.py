@@ -1,5 +1,6 @@
 import asyncio
 import json
+import sys
 import tempfile
 from pathlib import Path
 
@@ -775,6 +776,44 @@ def test_async_run_command():
         (Path(tmp_dir) / "marker.txt").write_text("x")
         out = asyncio.run(ws.arun_command(["ls"]))
         assert "marker.txt" in out
+
+
+def test_run_command_non_utf8_bytes_do_not_error():
+    """Output bytes that are not valid UTF-8 must not fail the tool call (#11580).
+
+    run_command used subprocess.run(text=True), so it raised on undecodable
+    bytes while arun_command decoded with errors="replace". Both must now
+    return the same text.
+    """
+    utf8_cmd = [
+        sys.executable,
+        "-c",
+        "import sys; sys.stdout.buffer.write('He said \\u201chi\\u201d'.encode('utf-8'))",
+    ]
+    latin1_cmd = [
+        sys.executable,
+        "-c",
+        "import sys; sys.stdout.buffer.write(b'caf' + bytes([0xE9]))",
+    ]
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        assert ws.run_command(utf8_cmd) == "He said \u201chi\u201d"
+        assert asyncio.run(ws.arun_command(utf8_cmd)) == "He said \u201chi\u201d"
+        assert ws.run_command(latin1_cmd) == "caf\ufffd"
+        assert asyncio.run(ws.arun_command(latin1_cmd)) == "caf\ufffd"
+
+
+def test_run_command_non_utf8_stderr_does_not_error():
+    """Undecodable bytes on stderr must surface as an error message, not a decode failure."""
+    latin1_err_cmd = [
+        sys.executable,
+        "-c",
+        "import sys; sys.stderr.buffer.write(b'caf' + bytes([0xE9])); sys.exit(1)",
+    ]
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        out = ws.run_command(latin1_err_cmd)
+        assert out == "Error (exit 1): caf\ufffd"
 
 
 def test_async_move_file():
