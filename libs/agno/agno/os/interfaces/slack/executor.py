@@ -400,7 +400,9 @@ async def _fail(
         except Exception:
             pass
         if stream.ended:
-            await _reply(client, ctx, event_context, run_error_reply(error, _ERROR_MESSAGE, _UNSUPPORTED_FILES_MESSAGE))
+            # A terminal error event already shows in the stream, e.g. a workflow that raises after its error event
+            if state.terminal_status != "error":
+                await _reply(client, ctx, event_context, run_error_reply(error, _ERROR_MESSAGE, _UNSUPPORTED_FILES_MESSAGE))
             return
     await reply_error(error, event_context, client, ctx)
 

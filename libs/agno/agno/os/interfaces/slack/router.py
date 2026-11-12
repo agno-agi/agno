@@ -232,6 +232,9 @@ def attach_routes(
         # Bolt answers a bad signature with 401; the interface answers 403 as the other webhook interfaces do
         if response.status_code == 401:
             return JSONResponse(status_code=403, content={"detail": "Invalid signature"})
+        # Bolt acks a listener with an empty body; the routes declare the JSON ack
+        if response.status_code == 200 and not response.body:
+            return JSONResponse(content=_ACK)
         return response
 
     @router.post(

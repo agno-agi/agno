@@ -195,6 +195,18 @@ class TestTeamMemberEvents:
         assert state.terminal_status == "cancelled"
 
     @pytest.mark.asyncio
+    async def test_nested_team_content_is_not_glued_to_the_leaders(self):
+        state = StreamState(entity_type="team", entity_name="Team")
+        stream = _stream()
+        nested = _chunk(
+            TeamRunEvent.run_content.value, content="inner answer", team_id="sub", parent_run_id="leader-run"
+        )
+        leader = _chunk(TeamRunEvent.run_content.value, content="outer answer", team_id="team-1", parent_run_id=None)
+        await process_event(TeamRunEvent.run_content.value, nested, state, stream)
+        await process_event(TeamRunEvent.run_content.value, leader, state, stream)
+        assert state.text_buffer == "outer answer"
+
+    @pytest.mark.asyncio
     async def test_leader_error_is_terminal(self):
         state = StreamState(entity_type="team", entity_name="Team")
         chunk = _chunk(TeamRunEvent.run_error.value, content="boom", team_id="team-1", parent_run_id=None)

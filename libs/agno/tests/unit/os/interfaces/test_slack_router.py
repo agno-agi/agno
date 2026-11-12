@@ -91,6 +91,12 @@ class TestSignatureAndBody:
         assert signed.status_code == 200
         assert signed_array.status_code == 200
 
+    def test_handled_event_is_acked_with_json(self, handlers):
+        with TestClient(build_app(make_agent_mock())) as client:
+            response = make_signed_request(client, make_event_body())
+        assert response.status_code == 200
+        assert response.json() == {"status": "ok"}
+
     def test_url_verification_echoes_the_challenge(self):
         with TestClient(build_app(make_agent_mock())) as client:
             response = make_signed_request(client, {"type": "url_verification", "challenge": "abc123"})

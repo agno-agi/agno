@@ -36,6 +36,9 @@ from agno.run.requirement import RunRequirement
 from agno.run.workflow import WorkflowPausedEvent
 from agno.team import Team
 from agno.tools import tool
+from agno.workflow import Workflow
+from agno.workflow.step import Step
+from agno.workflow.types import HumanReview
 
 from .conftest import BOT_USER_ID, make_client, make_ctx, make_event_body, make_message_event_context, slack_error
 
@@ -258,6 +261,21 @@ class TestStatus:
         await run_event(make_message_event_context(ctx), client, ctx)
         assert final_cards(client) == [("search", "error")]
         assert any("Sorry, there was an error" in text for text in posted(client))
+
+    @pytest.mark.asyncio
+    async def test_workflow_that_raises_after_its_error_event_replies_once(self):
+        def boom(step_input):
+            raise RuntimeError("step blew up")
+
+        # A failing step with on_error="fail" ends the stream with WorkflowError, then raises
+        workflow = Workflow(
+            name="wf", steps=[Step(name="s1", executor=boom, human_review=HumanReview(on_error="fail"))]
+        )
+        ctx = make_ctx(agent=None, workflow=workflow, streaming=True)
+        client = make_client()
+        await run_event(make_message_event_context(ctx), client, ctx)
+        assert "_Error: step blew up_" in stream_text(client)
+        assert not any("Sorry, there was an error" in text for text in posted(client))
 
     @pytest.mark.asyncio
     async def test_reply_error_that_cannot_post_logs_instead_of_raising(self):
