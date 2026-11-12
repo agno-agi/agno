@@ -46,14 +46,17 @@ class TaskToAccept(BaseModel):
     updated_at: _OptionalInt = Field(description="The Task's updated_at as the person saw it; null when it has none.")
 
 
-def _same_version(given: Any, stored: Any) -> bool:
+def _same_version(given: Any, record: Dict[str, Any]) -> bool:
     """Whether the updated_at the person confirmed is the record's.
 
-    A record never edited has none, and no record has the version 0: null, an empty value and 0 all
-    name a record that was never edited.
+    A record never edited has none, and no record has the version 0. Null, an empty value, 0 and the
+    record's own created_at all name a record that was never edited: an edit gives it an updated_at.
     """
+    stored = record.get("updated_at")
     given = None if given in (None, "", "null", 0, "0") else str(given)
-    return given == (None if stored is None else str(stored))
+    if stored is None:
+        return given is None or given == str(record.get("created_at"))
+    return given == str(stored)
 
 
 def _named(value: Any) -> Optional[str]:
@@ -451,7 +454,7 @@ class CompanyTaskTools(Toolkit):
                 return f"Not done: Project {project_id} is named '{project['name']}'. Call again with that name."
             if project["status"] != "proposed":
                 return f"'{project['name']}' is {project['status']}; only a proposed Project can be approved."
-            if not _same_version(updated_at, project["updated_at"]):
+            if not _same_version(updated_at, project):
                 return (
                     f"Not done: '{project['name']}' (Project {project_id}) changed since the person saw it. "
                     "Show it to them again, then call with its updated_at."
@@ -545,7 +548,7 @@ class CompanyTaskTools(Toolkit):
                 if value["status"] != "backlog":
                     words = _STATUS_WORDS.get(value["status"], value["status"])
                     return f"Not done: '{title}' is {words}; only a proposal can be accepted."
-                if not _same_version(item.updated_at, value["updated_at"]):
+                if not _same_version(item.updated_at, value):
                     return (
                         f"Not done: '{title}' (Task {value['id']}) changed since the person saw it. "
                         "Show it to them again, then call with its updated_at."

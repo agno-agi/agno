@@ -562,12 +562,12 @@ def test_the_schemas_accept_a_never_edited_record_and_refuse_what_is_not_a_task(
             )
 
 
-def decide(system, tool, arguments):
+def decide(system, tool, arguments, session="chat"):
     """One decision through Super Agent: the model calls the tool, the person confirms, the run continues."""
     from agno.run.authorization import authorization_scope
     from tests.unit.os.test_company_decision_tools import ask, person
 
-    paused = ask(system, tool, arguments)
+    paused = ask(system, tool, arguments, session=session)
     assert paused.is_paused and len(paused.requirements) == 1, paused.content
     assert paused.requirements[0].tool_execution.tool_args == arguments
     paused.requirements[0].confirm()
@@ -1339,3 +1339,51 @@ def test_a_task_that_is_running_or_finished_is_still_not_started_from_chat(syste
     # Its attempt is queued: starting again joins that attempt and queues nothing new.
     running = start_from_chat(system, task["id"])
     assert "run " + started.json()["run_id"] in running, running
+
+
+# ----------------------------------------------------------------- created_at as the version of a never-edited record
+
+
+def test_one_confirmation_accepts_a_never_edited_task_named_by_its_created_at(system):
+    # F8: on another model the call carries the Task's created_at as updated_at, for a Task never edited.
+    task = system.proposal()
+    assert task["updated_at"] is None and task["created_at"]
+    arguments = {
+        "tasks": [{"title": task["title"], "task_id": task["id"], "updated_at": task["created_at"]}],
+        "executor_type": "agent",
+        "executor_id": "miniagent",
+    }
+    reply = decide(system, "accept_company_task", arguments)
+    assert "Accepted 'Notes'" in reply, reply
+    assert system.db.get_task(task["id"])["status"] == "ready"
+
+    project = system.client.post(
+        "/company/projects", json={"product_id": task["product_id"], "name": "Sign-ups"}, headers=headers()
+    ).json()
+    approved = decide(
+        system,
+        "approve_company_project",
+        {"project_name": "Sign-ups", "project_id": project["id"], "updated_at": project["created_at"]},
+        session="second-chat",
+    )
+    assert "Approved Project 'Sign-ups'" in approved, approved
+
+
+def test_created_at_does_not_name_a_record_that_was_edited_later(system, monkeypatch):
+    task = system.proposal()
+    # The Task is edited a minute after it was created, so its version is no longer its created_at.
+    import time
+
+    later = task["created_at"] + 60
+    with monkeypatch.context() as patch:
+        patch.setattr(time, "time", lambda: later)
+        edited = system.db.update_task(task["id"], brief="Rewritten after the person saw it")
+    assert edited["updated_at"] == later
+    arguments = {
+        "tasks": [{"title": task["title"], "task_id": task["id"], "updated_at": task["created_at"]}],
+        "executor_type": "agent",
+        "executor_id": "miniagent",
+    }
+    reply = decide(system, "accept_company_task", arguments)
+    assert "changed since the person saw it" in reply, reply
+    assert system.db.get_task(task["id"])["status"] == "backlog"
