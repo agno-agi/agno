@@ -294,9 +294,19 @@ async def test_unsupported_run_options_are_rejected(coordinator, sandbox):
     agent = ClaudeAgent(id="coder", sandbox=sandbox)
     with pytest.raises(ValueError, match="Unsupported sandbox run options: dependencies"):
         await agent.arun("hello", session_id="s1", dependencies={"a": 1})
-    # The dependencies block is built for agents without a sandbox only; a sandbox still refuses the options.
-    with pytest.raises(ValueError, match="Unsupported sandbox run options: add_dependencies_to_context, dependencies"):
-        await agent.arun("hello", session_id="s1", dependencies={"a": 1}, add_dependencies_to_context=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_dependencies_reach_the_sandbox_as_the_block_an_agent_adds(coordinator, sandbox, stream):
+    agent = ClaudeAgent(id="coder", sandbox=sandbox)
+    options = dict(session_id="s1", dependencies={"channel": "#general"}, add_dependencies_to_context=True)
+    if stream:
+        [event async for event in agent.arun("hello", stream=True, **options)]
+    else:
+        await agent.arun("hello", **options)
+    _, execution = coordinator.calls[0]
+    assert execution["input"] == 'hello\n\n<additional context>\n{\n  "channel": "#general"\n}\n</additional context>'
 
 
 def test_codex_string_sandbox_is_a_deprecated_alias_for_sandbox_mode():

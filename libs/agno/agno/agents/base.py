@@ -1416,7 +1416,7 @@ class BaseExternalAgent:
     async def _adependencies_context(
         self, input: Any, kwargs: Dict[str, Any], run_id: str, session_id: str, user_id: Optional[str]
     ) -> str:
-        """The block an Agent adds to a text input for ``add_dependencies_to_context``, else an empty string."""
+        """Run dependencies a caller such as an interface passes, as the block an Agent adds, else an empty string."""
         if not isinstance(input, str) or not kwargs.get("add_dependencies_to_context"):
             return ""
         if kwargs.get("dependencies") is None:
@@ -1425,6 +1425,7 @@ class BaseExternalAgent:
         from agno.agent._utils import convert_dependencies_to_string
         from agno.run.base import RunContext
 
+        # Popped, so a later path that reads these options does not add the block a second time.
         kwargs.pop("add_dependencies_to_context")
         dependencies = kwargs.pop("dependencies")
         run_context = RunContext(
@@ -1439,6 +1440,13 @@ class BaseExternalAgent:
             + convert_dependencies_to_string(self, run_context.dependencies)  # type: ignore[arg-type]
             + "\n</additional context>"
         )
+
+    async def _asandbox_input(
+        self, input: Any, kwargs: Dict[str, Any], run_id: str, session_id: str, user_id: Optional[str]
+    ) -> Any:
+        """The input with run dependencies added as the block an Agent adds, for a sandbox that takes none."""
+        context = await self._adependencies_context(input, kwargs, run_id, session_id, user_id)
+        return input + context if context else input
 
     @staticmethod
     def _output_json_schema(output_schema: Union[Type[BaseModel], Dict[str, Any]], provider: str) -> Dict[str, Any]:
@@ -2197,12 +2205,16 @@ class BaseExternalAgent:
         team_id, workflow_id = self._pop_run_parent(kwargs)
         parent_id = self._parent_id(team_id, workflow_id)
         if self.sandbox is not None:
+            run_id = kwargs.get("run_id") or str(uuid4())
+            session_id = kwargs.get("session_id") or str(uuid4())
+            kwargs.update(run_id=run_id, session_id=session_id)
+            input = await self._asandbox_input(input, kwargs, run_id, session_id, kwargs.get("user_id"))
             if parent_id is None:
                 return await _sandbox_harness().arun(self, input, **kwargs)
             from agno.run.cancel import acleanup_member_runs, aregister_member_run
 
-            team_session_id = kwargs.get("session_id") or str(uuid4())
-            member_run_id = kwargs.get("run_id") or str(uuid4())
+            team_session_id = kwargs["session_id"]
+            member_run_id = kwargs["run_id"]
             text = self._input_text(input)
             try:
                 forwarded = self._sandboxed_member_kwargs(kwargs, team_session_id, member_run_id, team_id, workflow_id)
@@ -2344,6 +2356,10 @@ class BaseExternalAgent:
         team_id, workflow_id = self._pop_run_parent(kwargs)
         parent_id = self._parent_id(team_id, workflow_id)
         if self.sandbox is not None:
+            run_id = kwargs.get("run_id") or str(uuid4())
+            session_id = kwargs.get("session_id") or str(uuid4())
+            kwargs.update(run_id=run_id, session_id=session_id)
+            input = await self._asandbox_input(input, kwargs, run_id, session_id, kwargs.get("user_id"))
             if parent_id is None:
                 events = _sandbox_harness().astream(self, input, **kwargs)
                 try:
@@ -2354,8 +2370,8 @@ class BaseExternalAgent:
                 return
             from agno.run.cancel import acleanup_member_runs, aregister_member_run
 
-            team_session_id = kwargs.get("session_id") or str(uuid4())
-            member_run_id = kwargs.get("run_id") or str(uuid4())
+            team_session_id = kwargs["session_id"]
+            member_run_id = kwargs["run_id"]
             text = self._input_text(input)
             failure: Optional[Exception] = None
             try:

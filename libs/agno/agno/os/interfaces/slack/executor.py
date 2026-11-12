@@ -412,10 +412,6 @@ async def _prepare(event_context: "EventContext", ctx: "SlackContext") -> tuple:
             encode_media(images=images, files=files)
         except ValueError as error:
             raise InputCheckError(_SANDBOX_FILES_MESSAGE.format(error=error)) from error
-        # A sandbox refuses dependencies, so they go into the input as the block an Agent adds to its context
-        message_text += await entity._adependencies_context(
-            message_text, run_kwargs, event_context.run_id, event_context.session_id, event_context.user_id
-        )
     return message_text, run_kwargs
 
 

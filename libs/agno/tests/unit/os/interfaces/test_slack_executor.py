@@ -345,22 +345,17 @@ class TestRunKwargs:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("sandboxed", [False, True])
-    async def test_only_a_sandboxed_external_agent_gets_dependencies_in_its_input(self, sandboxed):
+    async def test_external_agent_gets_dependencies_kwargs_with_or_without_a_sandbox(self, sandboxed):
         from agno.agents.base import BaseExternalAgent
 
         entity = make_streaming_entity([content("ok")], sandbox=object() if sandboxed else None)
         entity.__class__ = type("FakeExternal", (BaseExternalAgent,), {})
-        # The core builder of the block, as a sandboxed agent runs it
-        entity._adependencies_context = BaseExternalAgent._adependencies_context.__get__(entity)
         ctx = make_ctx(agent=entity, streaming=True)
         event_context = make_message_event_context(ctx, text="fix it")
         await run_event(event_context, make_client(), ctx)
         args, kwargs = entity.calls[0]
-        if sandboxed:
-            assert "dependencies" not in kwargs and "add_dependencies_to_context" not in kwargs
-            assert "<additional context>" in args[0] and '"Slack channel_id": "C123"' in args[0]
-        else:
-            assert args[0] == "fix it"
+        assert args[0] == "fix it"
+        assert kwargs["add_dependencies_to_context"] is True and kwargs["dependencies"]["Slack channel_id"] == "C123"
 
     @pytest.mark.asyncio
     async def test_sandboxed_external_agent_gets_no_action_token(self):
@@ -368,7 +363,6 @@ class TestRunKwargs:
 
         entity = make_streaming_entity([content("ok")], sandbox=object())
         entity.__class__ = type("FakeExternal", (BaseExternalAgent,), {})
-        entity._adependencies_context = AsyncMock(return_value="")
         ctx = make_ctx(agent=entity, streaming=True)
         event_context = make_message_event_context(ctx, assistant_thread={"action_token": "tok-1"})
         await run_event(event_context, make_client(), ctx)
