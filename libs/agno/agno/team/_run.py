@@ -34,6 +34,7 @@ from agno.exceptions import (
     RunCancelledException,
     RunNotContinuableError,
     RunNotFoundError,
+    SessionNotSavedError,
 )
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
@@ -548,6 +549,8 @@ def _run_tasks(
             log_warning(f"Failed to persist cancelled run: {store_err}")
         return run_response
 
+    except SessionNotSavedError:
+        raise
     except Exception as e:
         run_response.status = RunStatus.error
         flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
@@ -1056,6 +1059,8 @@ def _run_tasks_stream(
         if yield_run_output:
             yield run_response
 
+    except SessionNotSavedError:
+        raise
     except Exception as e:
         run_response.status = RunStatus.error
         flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
@@ -1397,6 +1402,9 @@ def _run(
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
                 return run_response
+            except SessionNotSavedError:
+                # Retrying the run would repeat work that already completed.
+                raise
             except Exception as e:
                 if attempt < num_attempts - 1:
                     # Calculate delay with exponential backoff if enabled
@@ -1861,6 +1869,9 @@ def _run_stream(
                 if yield_run_output:
                     yield run_response
                 break
+            except SessionNotSavedError:
+                # Retrying the run would repeat work that already completed.
+                raise
             except Exception as e:
                 if attempt < num_attempts - 1:
                     # Calculate delay with exponential backoff if enabled
@@ -2461,6 +2472,8 @@ async def _arun_tasks(
             raise
         return run_response
 
+    except SessionNotSavedError:
+        raise
     except Exception as e:
         run_response.status = RunStatus.error
         flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
@@ -3010,6 +3023,8 @@ async def _arun_tasks_stream(
         if yield_run_output:
             yield run_response
 
+    except SessionNotSavedError:
+        raise
     except Exception as e:
         run_response.status = RunStatus.error
         flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
@@ -3400,6 +3415,9 @@ async def _arun(
                     raise
                 return run_response
 
+            except SessionNotSavedError:
+                # Retrying the run would repeat work that already completed.
+                raise
             except Exception as e:
                 if attempt < num_attempts - 1:
                     # Calculate delay with exponential backoff if enabled
@@ -3597,6 +3615,10 @@ async def _arun_background_stream(
         storage_run = await abuild_full_run_storage_copy(team, run_response, session_id) if full_run else run_response
         await apersist_run_transition(team, "team", session_id, storage_run, user_id=user_id, full_run=full_run)
 
+    async def report_error(error: Exception) -> None:
+        if isinstance(error, SessionNotSavedError):
+            await transport.publish(create_team_run_error_event(run_response, error=str(error), error_type=error_type_of(error)))
+
     _spawn_background(
         _execute_background(
             run_response,
@@ -3604,6 +3626,7 @@ async def _arun_background_stream(
             transition,
             on_running=transport.running,
             on_terminal=transport.complete,
+            on_error=report_error,
             slot_factory=background_run_slot,
         )
     )
@@ -4081,6 +4104,9 @@ async def _arun_stream(
                     yield run_response
                 break
 
+            except SessionNotSavedError:
+                # Retrying the run would repeat work that already completed.
+                raise
             except Exception as e:
                 if attempt < num_attempts - 1:
                     # Calculate delay with exponential backoff if enabled
@@ -8432,6 +8458,9 @@ def _continue_run(
                     log_warning(f"Failed to persist cancelled run: {store_err}")
                 return run_response
 
+            except SessionNotSavedError:
+                # Retrying the run would repeat work that already completed.
+                raise
             except Exception as e:
                 if attempt < num_attempts - 1:
                     import time as _time
@@ -8718,6 +8747,9 @@ def _continue_run_stream(
                     yield run_response
                 break
 
+            except SessionNotSavedError:
+                # Retrying the run would repeat work that already completed.
+                raise
             except Exception as e:
                 if attempt < num_attempts - 1:
                     import time as _time
@@ -9875,6 +9907,9 @@ async def _acontinue_run(
                 # Validation errors (e.g. cancelled run, unknown run id, missing
                 # args) propagate to the caller
                 raise
+            except SessionNotSavedError:
+                # Retrying the run would repeat work that already completed.
+                raise
             except Exception as e:
                 run_response = cast(TeamRunOutput, run_response)
                 if attempt < num_attempts - 1:
@@ -10592,6 +10627,9 @@ async def _acontinue_run_stream(
                 # args) propagate to the caller. RunNotFoundError must NOT fall
                 # through to the generic handler below: that one stamps a terminal
                 # ERROR run row over the target run.
+                raise
+            except SessionNotSavedError:
+                # Retrying the run would repeat work that already completed.
                 raise
             except Exception as e:
                 if run_response is None:

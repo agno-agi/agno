@@ -41,6 +41,7 @@ async def _execute_background(
     on_terminal: Optional[Callable[[], Awaitable[None]]] = None,
     on_running: Optional[Callable[[], Awaitable[None]]] = None,
     on_failure: Optional[Callable[[], Awaitable[None]]] = None,
+    on_error: Optional[Callable[[Exception], Awaitable[None]]] = None,
     slot_factory: Any = background_run_slot,
 ) -> None:
     """Acquire a slot, persist RUNNING, execute, and settle exceptional exits."""
@@ -77,7 +78,11 @@ async def _execute_background(
                 await on_failure()
         except Exception:
             log_error(f"Failed to persist error for background run {run.run_id}", exc_info=True)
-        await acleanup_run(run.run_id)
+        try:
+            if on_error is not None:
+                await on_error(error)
+        finally:
+            await acleanup_run(run.run_id)
     finally:
         if on_terminal is not None:
             await on_terminal()

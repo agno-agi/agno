@@ -39,6 +39,7 @@ from agno.exceptions import (
     RunCancelledException,
     RunNotContinuableError,
     RunNotFoundError,
+    SessionNotSavedError,
 )
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
@@ -725,6 +726,9 @@ def _run(
                     log_warning(f"Failed to persist cancelled run: {store_err}")
                 return run_response
 
+            except SessionNotSavedError:
+                # Retrying the run would repeat work that already completed.
+                raise
             except Exception as e:
                 if attempt < num_attempts - 1:
                     # Calculate delay with exponential backoff if enabled
@@ -1268,6 +1272,9 @@ def _run_stream(
                 if yield_run_output:
                     yield run_response
                 break
+            except SessionNotSavedError:
+                # Retrying the run would repeat work that already completed.
+                raise
             except Exception as e:
                 if attempt < num_attempts - 1:
                     # Calculate delay with exponential backoff if enabled
@@ -1896,6 +1903,9 @@ async def _arun(
                 if isinstance(cancel_exc, asyncio.CancelledError):
                     raise
                 return run_response
+            except SessionNotSavedError:
+                # Retrying the run would repeat work that already completed.
+                raise
             except Exception as e:
                 # Check if this is the last attempt
                 if attempt < num_attempts - 1:
@@ -2103,6 +2113,10 @@ async def _arun_background_stream(
         storage_run = await abuild_full_run_storage_copy(agent, run_response, session_id) if full_run else run_response
         await apersist_run_transition(agent, "agent", session_id, storage_run, user_id=user_id, full_run=full_run)
 
+    async def report_error(error: Exception) -> None:
+        if isinstance(error, SessionNotSavedError):
+            await transport.publish(create_run_error_event(run_response, error=str(error), error_type=error_type_of(error)))
+
     _spawn_background(
         _execute_background(
             run_response,
@@ -2110,6 +2124,7 @@ async def _arun_background_stream(
             transition,
             on_running=transport.running,
             on_terminal=transport.complete,
+            on_error=report_error,
             slot_factory=background_run_slot,
         )
     )
@@ -2646,6 +2661,9 @@ async def _arun_stream(
                 if yield_run_output:
                     yield run_response
                 break
+            except SessionNotSavedError:
+                # Retrying the run would repeat work that already completed.
+                raise
             except Exception as e:
                 # Check if this is the last attempt
                 if attempt < num_attempts - 1:
@@ -3863,6 +3881,9 @@ def _continue_run(
                     log_warning(f"Failed to persist cancelled run: {store_err}")
                 return run_response
 
+            except SessionNotSavedError:
+                # Retrying the run would repeat work that already completed.
+                raise
             except Exception as e:
                 run_response = cast(RunOutput, run_response)
                 # Check if this is the last attempt
@@ -4177,6 +4198,9 @@ def _continue_run_stream(
                     yield run_response
                 break
 
+            except SessionNotSavedError:
+                # Retrying the run would repeat work that already completed.
+                raise
             except Exception as e:
                 run_response = cast(RunOutput, run_response)
                 # Check if this is the last attempt
@@ -4624,9 +4648,13 @@ async def _acontinue_run_background_stream(
                     f"Failed to persist cancelled state for background continue-run stream {_run_id}", exc_info=True
                 )
             await acleanup_run(_run_id)
-        except Exception:
+        except Exception as e:
             log_error(f"Background continue-run stream {_run_id} failed", exc_info=True)
             producer_terminal = RunStatus.error
+            if isinstance(e, SessionNotSavedError):
+                error_source = run_response or RunOutput(run_id=_run_id, session_id=session_id, agent_id=agent.id)
+                error_event = create_run_error_event(error_source, error=str(e), error_type=error_type_of(e))
+                await sse_queue.put(format_sse_event_with_index(error_event, event_index=None, run_id=_run_id))
             # Persist ERROR status (loading from session when run_response is None)
             try:
                 errored_run = run_response
@@ -5167,6 +5195,9 @@ async def _acontinue_run(
                 # through to the generic handler below: that one stamps a terminal
                 # ERROR run row, which for an unresolvable run_id overwrites the
                 # target run (owner, status and content) or fabricates a junk row.
+                raise
+            except SessionNotSavedError:
+                # Retrying the run would repeat work that already completed.
                 raise
             except Exception as e:
                 run_response = cast(RunOutput, run_response)
@@ -5806,6 +5837,9 @@ async def _acontinue_run_stream(
                 # through to the generic handler below: that one stamps a terminal
                 # ERROR run row, which for an unresolvable run_id overwrites the
                 # target run (owner, status and content) or fabricates a junk row.
+                raise
+            except SessionNotSavedError:
+                # Retrying the run would repeat work that already completed.
                 raise
             except Exception as e:
                 if run_response is None:
