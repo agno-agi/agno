@@ -200,6 +200,8 @@ once.
 By default the run's `user_id` is the Slack member ID. With
 `resolve_user_identity=True`, the interface uses the member's email when Slack
 returns it and adds the display name to run metadata.
+Sessions are stored under the run's `user_id`; map a member with `users=` to
+see the thread under their principal.
 
 Claude Code and Codex take one turn per session at a time: a message that
 arrives while one is working gets a short "still working" reply. An Agent or
@@ -212,7 +214,9 @@ Streaming is on by default. `streaming_ux.py` shows the controls:
 - `loading_messages` rotate in the status line while the run works. The agent
   view shows its own "is working" in place of `loading_text`; Slack documents
   `loading_text` as the status line of assistant-view apps.
-- `suggested_prompts` show on the Messages tab and on new threads.
+- `suggested_prompts` show on the agent view's Messages tab and, in the
+  assistant view, on new threads. The default is one prompt, "Get started" /
+  "What can you help me with?".
 - `task_display_mode="plan"` shows tool calls as plan cards.
 
 A reply longer than one Slack message, or a run longer than nine minutes,
@@ -419,6 +423,9 @@ mapped principal's roles.
 - **Approvals inside a Team member or a Workflow step.** A Claude Code or Codex
   member, or a workflow step, that asks for permission fails before the action
   runs; see [`frameworks/human_in_the_loop`](../../frameworks/human_in_the_loop/README.md).
+- **An expired native approval card stays clickable after a crash.** After a
+  crash, a native approval card whose request expired stays clickable until
+  someone clicks it; the click freezes it and ends the run.
 
 ## Test Scope
 

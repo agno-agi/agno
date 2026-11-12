@@ -219,7 +219,7 @@ unmapped Slack user.
 **Status:** PASS
 
 **Description:** A plain question; "Run python shipping.py and tell me what it
-prints."; a decision made through AgentOS's continue route.
+prints."; a decision made through the AgentOS API or UI.
 
 **Result:**
 - The plain question was answered, in both views.
@@ -228,10 +228,8 @@ prints."; a decision made through AgentOS's continue route.
   read-only commands.
 - Live: Approve on the `python shipping.py` card ran it and Claude Code
   reported its output, in both views.
-- FAIL for a decision made through AgentOS's continue route: the run completed
-  for the API client, but nothing was posted into the Slack thread and the card
-  stayed live. A later message in the thread saw the result. README Limits
-  describes this.
+- Known limitation (see README Limits): an approval decided through the
+  AgentOS API or UI completes the run but does not post into the Slack thread.
 
 ---
 
@@ -246,8 +244,8 @@ prints."; a decision made through AgentOS's continue route.
   command paused on the Approve / Deny card, in both views.
 - Live: Approve ran the command and Codex reported the result, in both views.
 - With a ChatGPT login that was out of usage, Slack showed the Codex error.
-- A decision made through AgentOS's continue route did not reach the Slack
-  thread, as for `claude_harness.py`.
+- Known limitation (see README Limits): an approval decided through the
+  AgentOS API or UI completes the run but does not post into the Slack thread.
 
 ---
 
@@ -257,15 +255,15 @@ prints."; a decision made through AgentOS's continue route.
 
 **Description:** The sandboxed Codex reviewer in `agno-sandbox:local` with
 `approval_policy="untrusted"` on the durable queue; a decision made through
-AgentOS's continue route.
+the AgentOS API or UI.
 
 **Result:**
 - A command paused and Slack showed the Approve / Deny card, in both views.
 - Live: two cards approved in a row ran their commands in the container, and
   the review finished. A card whose arguments exceed Slack's 200-character card
   body lists the argument names, and the full values follow once below it.
-- FAIL for a decision made through AgentOS's continue route: the run completed,
-  but nothing was posted into the Slack thread, as for `claude_harness.py`.
+- Known limitation (see README Limits): an approval decided through the
+  AgentOS API or UI completes the run but does not post into the Slack thread.
 
 ---
 
@@ -298,7 +296,7 @@ killed mid-Task; a reply under another user's root message; two Tasks at once
   entity is missing.
 - With `OS_SECURITY_KEY` set, Slack still answered. AgentOS routes answered 401
   without the key and 200 with it; unsigned `/slack/events` and
-  `/slack/interactions` requests answered 401, also with the key as bearer.
+  `/slack/interactions` requests answered 403, also with the key as bearer.
 - A message sent while the server was down was redelivered by Slack and
   answered once.
 - `slack_bolt` 1.29.0, the floor of the `slack` extra, answered real messages.
