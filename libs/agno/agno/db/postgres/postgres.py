@@ -2226,6 +2226,7 @@ class PostgresDb(BaseDb):
             Optional[Union[Session, Dict[str, Any]]]:
                 - When deserialize=True: Session object
                 - When deserialize=False: Session dictionary
+                - None when no session row was saved
 
         Raises:
             Exception: If an error occurs during upsert.
@@ -2315,6 +2316,10 @@ class PostgresDb(BaseDb):
                 result = sess.execute(stmt)
                 row = result.fetchone()
                 if row is None:
+                    log_warning(
+                        f"Session upsert returned no row for session_id '{session_dict.get('session_id')}'; "
+                        "check that user_id matches the existing session owner"
+                    )
                     return None
                 session_dict = dict(row._mapping)
                 if session_dict["session_id"] in reopen_session_ids:
