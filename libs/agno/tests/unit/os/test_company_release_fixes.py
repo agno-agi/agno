@@ -1442,3 +1442,32 @@ def test_the_file_tools_say_that_every_file_is_shared():
     for name in ("list_company_files", "alist_company_files"):
         described = " ".join(getattr(CompanyFileTools, name).__doc__.split())
         assert "own notes" not in described and "shared with everyone" in described, described
+
+
+# ----------------------------------------------------------------- what Super Agent says about Company work
+
+
+@pytest.mark.parametrize(
+    "told",
+    [
+        # Recorded work and a list of waiting work both say how a person accepts it.
+        "say a person accepts it by asking here or in the Company pages",
+        # A fact or a decision said in passing is not a page to save.
+        "Save a page only when asked to",
+        "said in passing is not a request",
+        # A Ready Task is not blocked by who runs it.
+        "A Ready Task is not blocked by its executor",
+        # A Routine runs on Mini Agent or a named component, and never on Super Agent.
+        "run by Mini Agent or a named component, never by you",
+    ],
+)
+def test_super_agent_is_told_how_to_speak_about_company_work(tmp_path, told):
+    assert told in super_agent_prompt(tmp_path)
+
+
+def test_the_page_save_tool_is_for_a_page_the_person_asked_to_save():
+    from agno.tools.company_files import CompanyFileTools
+
+    for name in ("save_company_page", "asave_company_page"):
+        described = " ".join(getattr(CompanyFileTools, name).__doc__.split())
+        assert "only when the person asked" in described and "said in passing" in described, described

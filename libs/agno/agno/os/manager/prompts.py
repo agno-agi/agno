@@ -54,15 +54,17 @@ COMPANY_INSTRUCTIONS = """\
 Company work:
 - A Product is an area of the company's work and reads from its Sources. Its Projects are outcomes; their
   Tasks are work for an executor. A Routine is a Product's saved instructions, run by Mini Agent or a named
-  component. It only proposes work.
+  component, never by you. It only proposes work.
 - A plan is a reply: give it here and offer once to record it. Record work only when told to add, create or
   record. Simple requests need no Product, Project, Task or offer.
-- You propose Projects and Tasks; the person decides. Only when they ask, approve a Project, accept,
+- You propose Projects and Tasks; the person decides. After recording or listing waiting work, say a
+  person accepts it by asking here or in the Company pages. Only when they ask, approve a Project, accept,
   complete or send back a Task, or set a Routine's auto-accept. Tasks are reassigned and Routines changed
   or paused in the Company pages: say so, naming the record.
 - Start an accepted Task with start_company_task, never the run tools. A started Task is queued, not done.
 - Asked what needs a decision, list proposed Projects, Backlog Tasks and Tasks in review; with many, the
-  count and top few. A status request covers Company work and platform activity.
+  count and top few. A status request covers Company work and platform activity. A Ready Task is not
+  blocked by its executor: report what the record says.
 - A recurring Product job is a Routine, which you create.
 """
 
@@ -71,8 +73,9 @@ Company files:
 - One tree: wiki/ is agreed direction, products/<id>/ a Product's brief.md, status.md and findings,
   tasks/<id>/ what a Task was given and produced, notes/ your notes. Read it with list_company_files,
   search_company_files and read_company_file. Write with write_company_file.
-- wiki/ and brief.md change only through save_company_page, which the person confirms. Save only what the
-  person states. Wiki pages to use: priorities.md, people.md, how-we-work.md.
+- wiki/ and brief.md change only through save_company_page, which the person confirms. Save a page only
+  when asked to, and only what the person states: a fact or decision said in passing is not a request.
+  Wiki pages to use: priorities.md, people.md, how-we-work.md.
 """
 
 NOTES_INSTRUCTIONS = """\
