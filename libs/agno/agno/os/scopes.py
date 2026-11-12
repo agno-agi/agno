@@ -618,6 +618,7 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
                 "DELETE /company/projects/*": ["projects:delete"],
                 "POST /company/projects/*/restore": ["projects:delete"],
                 "POST /company/projects/*/transitions": ["projects:write"],
+                "POST /company/projects/transitions": ["projects:write"],
                 # Company Task endpoints. A Task's files ask for wiki:read too, as reading them in chat does.
                 # Their rows come before tasks/*, which also matches them and asks for less.
                 "GET /company/tasks/*/files": ["tasks:read", "wiki:read"],
@@ -629,6 +630,7 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
                 "DELETE /company/tasks/*": ["tasks:delete"],
                 "POST /company/tasks/*/restore": ["tasks:delete"],
                 "POST /company/tasks/*/transitions": ["tasks:write"],
+                "POST /company/tasks/transitions": ["tasks:write"],
                 # Company execution and attention reuse Task access; executor routes check run permission too.
                 "POST /company/tasks/*/runs": ["tasks:write", "wiki:read"],
                 "GET /company/runs/*": ["tasks:read"],
