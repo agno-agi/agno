@@ -12,9 +12,10 @@ the AgentOS database and is shared by everyone who talks to Super Agent, includi
 when user isolation is on.
 
 This script makes the tool calls Super Agent would make in a chat: it saves a company
-page, writes a Product page, a note and a Task file, and then prints what a Task's
-input loads. In a chat, save_company_page pauses until the person confirms the page
-and the change; here the script is that person.
+page, writes a Product page, a note and a Task file, reads the Task file and the note
+back through the API, and then prints what a Task's input loads. In a chat,
+save_company_page pauses until the person confirms the page and the change; here the
+script is that person.
 
 Prerequisites: Install agno, sqlalchemy, openai and fastapi.
 Run: .venvs/demo/bin/python cookbook/05_agent_os/30_company/16_company_file_tree.py
@@ -31,6 +32,7 @@ from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, CompanyConfig, OSManager
 from agno.run import RunContext
+from fastapi.testclient import TestClient
 
 if __name__ == "__main__":
     with TemporaryDirectory() as directory:
@@ -140,6 +142,19 @@ if __name__ == "__main__":
             print(folder + ":", [row["path"].split("/")[-1] for row in listed])
         found = call("search_company_files", query="install page")["matches"]
         assert [match["path"] for match in found] == [product_folder + "/research.md"]
+
+        # A person reads a Task's files and the notes through the API, as the Company
+        # pages do. With authorization on, a Task's files ask for tasks:read and the
+        # notes for wiki:read. Each path is inside its folder.
+        client = TestClient(agent_os.get_app())
+        task_files = client.get("/company/tasks/" + task["id"] + "/files").json()
+        print("Task files over the API:", [row["path"] for row in task_files["data"]])
+        page = client.get("/company/tasks/" + task["id"] + "/files/changes.md").json()
+        assert page["content"].startswith("- Sessions load faster")
+        notes = client.get("/company/notes").json()
+        print("Notes over the API:", [row["path"] for row in notes["data"]])
+        note = client.get("/company/notes/follow-ups.md").json()
+        assert note["content"] == "Ask about the docs search next week.\n"
 
         # A Task's input carries the Product's brief and status and the company wiki.
         # The queue builds it when the Task starts. Everything else is read on request.

@@ -1052,6 +1052,7 @@ class AgentOS:
         ]
         if self.company is not None:
             from agno.os.routers.company.details import get_company_details_router
+            from agno.os.routers.company.files import get_company_files_router
             from agno.os.routers.company.heartbeat import get_heartbeat_router
             from agno.os.routers.company.playbook import get_playbook_router
             from agno.os.routers.company.products import get_products_router
@@ -1068,6 +1069,7 @@ class AgentOS:
             )
             updated_routers.append(get_playbook_router(db=self._company_db, settings=self.settings))
             updated_routers.append(get_company_runs_router(self))
+            updated_routers.append(get_company_files_router(self))
         # Routes that require a database
         if self.db is not None:
             if isinstance(self.db, BaseDb):
@@ -2136,6 +2138,7 @@ class AgentOS:
         ]
         if self.company is not None:
             from agno.os.routers.company.details import get_company_details_router
+            from agno.os.routers.company.files import get_company_files_router
             from agno.os.routers.company.heartbeat import get_heartbeat_router
             from agno.os.routers.company.playbook import get_playbook_router
             from agno.os.routers.company.products import get_products_router
@@ -2150,6 +2153,7 @@ class AgentOS:
             routers.append(get_tasks_router(db=self._company_db, settings=self.settings, registry=self.registry))
             routers.append(get_playbook_router(db=self._company_db, settings=self.settings))
             routers.append(get_company_runs_router(self))
+            routers.append(get_company_files_router(self))
         # Routes that require a database
         if self.db is not None:
             if isinstance(self.db, BaseDb):

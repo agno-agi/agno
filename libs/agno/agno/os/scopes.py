@@ -580,6 +580,9 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
                 "GET /company/wiki": ["wiki:read"],
                 "GET /company/wiki/*": ["wiki:read"],
                 "PUT /company/wiki/*": ["wiki:write"],
+                # The shared notes of the Company file tree, read beside the wiki.
+                "GET /company/notes": ["wiki:read"],
+                "GET /company/notes/*": ["wiki:read"],
                 "GET /company/decisions": ["decisions:read"],
                 "POST /company/decisions": ["decisions:write"],
                 # Company Product endpoints
@@ -615,7 +618,9 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
                 "DELETE /company/projects/*": ["projects:delete"],
                 "POST /company/projects/*/restore": ["projects:delete"],
                 "POST /company/projects/*/transitions": ["projects:write"],
-                # Company Task endpoints
+                # Company Task endpoints. A Task's files come before tasks/*, which also matches them.
+                "GET /company/tasks/*/files": ["tasks:read"],
+                "GET /company/tasks/*/files/*": ["tasks:read"],
                 "GET /company/tasks": ["tasks:read"],
                 "GET /company/tasks/*": ["tasks:read"],
                 "POST /company/tasks": ["tasks:write"],
