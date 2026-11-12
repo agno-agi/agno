@@ -971,6 +971,20 @@ class StudioRunnerTools(Toolkit):
             "the component in the database."
         )
 
+    @staticmethod
+    def _refuse_sandboxed_agent_in_task_run(component: Any) -> None:
+        """Refuse a sandboxed agent inside a Company Task run, at any version.
+
+        Starting a Task on a sandboxed executor checks its repository and that no other sandboxed Task is
+        live. A run from inside another Task passes neither check.
+        """
+        if isinstance(component, BaseExternalAgent) and component.sandbox is not None and _company_task_authority():
+            raise StudioRunnerError(
+                f"Agent '{component.id}' runs in a sandbox, and a sandboxed agent runs only as a Task's own "
+                f"executor. Do not run it from this Task. Report that a person must accept the Task on agent "
+                f"'{component.id}' for it to do this work."
+            )
+
     def _agent_for_run(self, agent_id: str, actor: Optional[str] = None) -> Optional[Union["Agent", BaseExternalAgent]]:
         agent = self._find_agent(agent_id, for_dispatch=True, actor=actor)
         if agent is None:
@@ -982,14 +996,7 @@ class StudioRunnerTools(Toolkit):
         # workflows in the first place.
         self._require_inspectable_depth(agent, "agent", agent_id)
         self._warn_if_unverifiable_factory(agent, "agent", agent_id)
-        if isinstance(agent, BaseExternalAgent) and agent.sandbox is not None and _company_task_authority():
-            # Starting a Task on a sandboxed executor checks its repository and that no other sandboxed
-            # Task is live. A run from inside another Task passes neither check.
-            raise StudioRunnerError(
-                f"Agent '{agent.id}' runs in a sandbox, and a sandboxed agent runs only as a Task's own executor. "
-                f"Do not run it from this Task. Report that a person must accept the Task on agent '{agent.id}' "
-                "for it to do this work."
-            )
+        self._refuse_sandboxed_agent_in_task_run(agent)
         if isinstance(agent, BaseExternalAgent):
             # External adapters keep run state per call and own a shared session-admission
             # guard. Reuse the registered adapter, as the HTTP routes do.

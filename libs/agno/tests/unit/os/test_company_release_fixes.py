@@ -394,6 +394,66 @@ def test_an_agent_with_its_own_run_tools_does_not_run_a_sandboxed_agent_in_a_tas
     assert json.loads(healthy)["status"] == "COMPLETED"
 
 
+def stored_sandboxed(system, monkeypatch):
+    """Store a sandboxed agent, and return Studio tools that can run it with every run it is given."""
+    from agno.agents.claude import ClaudeAgent
+    from agno.registry import Registry
+    from agno.sandbox import _harness
+    from agno.sandbox.docker import DockerSandbox
+    from agno.tools.studio import StudioTools
+
+    sandbox = DockerSandbox("unused", id="docker-local")
+    ClaudeAgent(id="stored-engineer", name="Stored Engineer", sandbox=sandbox).save(db=system.db)
+    runs = []
+
+    def run(self, *args, **kwargs):
+        runs.append(self.id)
+        raise RuntimeError("the sandboxed agent was started")
+
+    async def arun(self, *args, **kwargs):
+        run(self)
+
+    monkeypatch.setattr(ClaudeAgent, "run", run)
+    monkeypatch.setattr(ClaudeAgent, "arun", arun)
+    # A sandboxed agent needs PostgreSQL, which a unit test does not have.
+    monkeypatch.setattr(_harness, "_check_db", lambda agent: None)
+    return StudioTools(registry=Registry(dbs=[system.db], sandboxes=[sandbox]), db=system.db), runs
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("version", [None, 1])
+@pytest.mark.parametrize("held_by", ["the worker", "the run context"])
+def test_a_stored_sandboxed_agent_does_not_run_in_a_task_run_at_any_version(
+    system, monkeypatch, use_async, version, held_by
+):
+    from agno.run import RunContext
+    from agno.run.authorization import authorization_scope, current_authorization
+    from tests.unit.os.test_mini_agent_tasks import task_authority
+
+    tools, runs = stored_sandboxed(system, monkeypatch)
+
+    def call(run_context=None):
+        arguments = {"version": version, "_agno_run_context": run_context}
+        if use_async:
+            return asyncio.run(tools.arun_agent("stored-engineer", "Fix the bug", **arguments))
+        return tools.run_agent("stored-engineer", "Fix the bug", **arguments)
+
+    if held_by == "the worker":
+        with authorization_scope(lambda: task_authority()):
+            refused = call()
+    else:
+        # The Task's authority is on the run context only, with no scope around the call.
+        run_context = RunContext(run_id="run", session_id="session")
+        run_context.authorization = task_authority()
+        assert current_authorization() is None
+        refused = call(run_context)
+    assert runs == [], refused
+    assert "sandbox" in refused and "accept the Task on" in refused, refused
+    # Outside a Task run the same call reaches the agent.
+    call()
+    assert runs == ["stored-engineer"]
+
+
 # ----------------------------------------------------------------- the auto-accept tools check before they tell
 
 
