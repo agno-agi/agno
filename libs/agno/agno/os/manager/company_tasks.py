@@ -1,7 +1,6 @@
-"""Super Agent tools for Company Tasks: start or continue accepted work, read its state, and record a
-person's decisions.
+"""Super Agent tools for Company Tasks: start accepted work, read its state, and record a person's decisions.
 
-Starting and continuing reuse the Company routes' checks, duplicate handling and queue path, under
+Starting reuses the Company start route's checks, duplicate handling and queue path, under
 the calling user's own authority. The decision tools approve a Project, accept Tasks and
 review a finished one. Each decision pauses the run until the chatting person confirms it,
 runs under that person's permissions, and records that person on the transition. Two more
@@ -84,7 +83,7 @@ def _refusal(authority: Any) -> Optional[str]:
     from agno.company.routines import _RoutineAuthorization
 
     if isinstance(authority, (_RoutineAuthorization, _ExecutorAuthorization)) or _automatic_task.get() is not None:
-        return "Task runs are started by people. Automated runs cannot start or continue Tasks."
+        return "Task runs are started by people. Automated runs cannot start Tasks."
     return None
 
 
@@ -98,13 +97,12 @@ def _requested_from(run_context: Any) -> Dict[str, str]:
 
 
 class CompanyTaskTools(Toolkit):
-    """Start or continue an accepted Task in the background, check on it, and record a person's decisions."""
+    """Start an accepted Task in the background, check on it later, and record a person's decisions."""
 
     def __init__(self, agent_os: Any):
         self._agent_os: ReferenceType[Any] = ref(agent_os)
         names = [
             "start_company_task",
-            "continue_company_task",
             "get_company_task_status",
             "approve_company_project",
             "accept_company_task",
@@ -125,8 +123,8 @@ class CompanyTaskTools(Toolkit):
                 "turn_on_routine_auto_accept",
             ],
             # The receipt is the reply: the coordinator turn ends once the run is queued.
-            stop_after_tool_call_tools=["start_company_task", "continue_company_task"],
-            show_result_tools=["start_company_task", "continue_company_task"],
+            stop_after_tool_call_tools=["start_company_task"],
+            show_result_tools=["start_company_task"],
         )
 
     def _caller_context(self, run_context: Any) -> Tuple[Any, Any, Any, Optional[str], Optional[str]]:
@@ -173,10 +171,7 @@ class CompanyTaskTools(Toolkit):
             if value["status"] == "backlog":
                 return f"'{title}' is still a proposal. A person must accept it with an executor before it can start."
             if value["status"] == "in_review":
-                return (
-                    f"'{title}' is waiting for review. Continue it with the person's reply, "
-                    "or the person completes it or sends it back."
-                )
+                return f"'{title}' is waiting for review. The person completes it or sends it back."
             if value["status"] != "ready" and _pending_task_attempt(value) is None:
                 meaning = TASK_STATUS_MEANING.get(value["status"], value["status"])
                 return f"'{title}' is {meaning}; only accepted work can start."
@@ -194,52 +189,6 @@ class CompanyTaskTools(Toolkit):
             return f"Not started: {exc}"
         return _receipt("Queued", title, task_id, response)
 
-    def continue_company_task(self, task_id: str, message: str, _agno_run_context: Optional[Any] = None) -> str:
-        """Continue a Company Task from a person's reply to its latest attempt.
-
-        Args:
-            task_id: The Task to continue.
-            message: The person's reply in their own words: an answer, a decision or a revised instruction.
-        """
-        return "Continuing a Task needs an asynchronous run. Reply from AgentOS instead."
-
-    async def acontinue_company_task(self, task_id: str, message: str, _agno_run_context: Optional[Any] = None) -> str:
-        """Continue a Company Task from a person's reply to its latest attempt.
-
-        Use this when a person answers a Task's question, decides between its options or revises
-        its instruction after it finished. The next attempt runs on the same worker session with
-        the reply and the previous result. Pass the person's words; do not answer for them. Call
-        this tool on its own, then tell the person the Task continues.
-
-        Args:
-            task_id: The Task to continue.
-            message: The person's reply in their own words: an answer, a decision or a revised instruction.
-        """
-        from fastapi import HTTPException
-
-        from agno.company.execution import _TaskRunConflict, _TaskRunUnavailable
-        from agno.os.routers.company.runs import _StartCaller, _TaskStarter
-
-        agent_os, app, authority, user_id, refusal = self._caller_context(_agno_run_context)
-        if refusal is not None:
-            return refusal
-        starter = _TaskStarter(agent_os)
-        try:
-            value = await starter.task(task_id)
-            title = value.get("title") or task_id
-            if authority is not None:
-                await authority.arequire("tasks", "write")
-                await authority.arequire("wiki", "read")
-            caller = _StartCaller.for_authority(app, authority, user_id, _requested_from(_agno_run_context))
-            response = await starter.continue_task(task_id, caller, message)
-        except PermissionError as exc:
-            return f"Not continued: {exc}"
-        except HTTPException as exc:
-            return f"Not continued: {exc.detail}"
-        except (_TaskRunConflict, _TaskRunUnavailable) as exc:
-            return f"Not continued: {exc}"
-        return _receipt("Continued", title, task_id, response)
-
     def get_company_task_status(self, task_id: str, _agno_run_context: Optional[Any] = None) -> str:
         """Read a Company Task's saved state, latest run and recorded evidence without waiting for it.
 
@@ -251,9 +200,9 @@ class CompanyTaskTools(Toolkit):
     async def aget_company_task_status(self, task_id: str, _agno_run_context: Optional[Any] = None) -> str:
         """Read a Company Task's saved state, latest run and recorded evidence without waiting for it.
 
-        Reports what is recorded: the Task status, the latest attempt and its run, the reply it
-        continues from, the saved result, and the commands and tools the worker actually ran, read
-        from the run. Report that evidence, and say when there is none. A finished run is not proof
+        Reports what is recorded: the Task status, the latest attempt and its run, the reviewer's
+        feedback when it was sent back, the saved result, and the commands and tools the worker
+        actually ran, read from the run. Report that evidence, and say when there is none. A finished run is not proof
         the outcome was achieved.
 
         Args:

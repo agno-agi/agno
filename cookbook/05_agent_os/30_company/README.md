@@ -326,7 +326,7 @@ retaining a known old ID explicitly is necessary for those references.
 | `13_start_tasks_from_chat.py` | Super Agent starts a human-accepted Task, ends its turn with the receipt, and answers status and unrelated questions while the Task runs. Add `--serve` to try it from the AgentOS UI on `localhost:7777` with a seeded, accepted Task. Live model; PostgreSQL. |
 | `14_work_to_done_in_chat.py` | A person takes work from a proposal to Done in a Super Agent chat: approve the Project, accept the Task on Mini Agent, start it, read the result and complete it. Each decision pauses for the person's confirmation. Mini Agent runs another agent to do the work, and the Task records it. Live model; PostgreSQL. |
 | `15_policy_source_to_done.py` | One line in a Routine declaration, `auto_accept=True`. The Routine reads a Source and proposes work, the automation tick approves the Routine's Project and accepts its Task, Mini Agent does the Task, and the result waits In review. Every automatic step is on the record. Live model; PostgreSQL; serves on a free local port. |
-| `17_continue_tasks_from_chat.py` | A worker stops at a decision; what it ran is read from its run. The person's answer from chat continues the same Task and worker session. `--serve` adds the UI demo. Live model; PostgreSQL. |
+| `17_continue_tasks_from_chat.py` | A worker stops at a decision; what it ran is read from its run. The person's answer from chat sends the Task back after they confirm, and Super Agent starts it again on the same worker session. `--serve` adds the UI demo. Live model; PostgreSQL. |
 
 `06_execute_tasks.py` starts an accepted workflow Task through its ordinary run
 route and the durable queue, waits for In review, reads paged history and checks

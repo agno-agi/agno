@@ -3,14 +3,15 @@
 A worker investigates and stops at a decision: it reports what it found, what it checked
 and the one question a person must answer. Its run records the commands and tools it
 actually ran; Super Agent and the Task page read them from the run. The person's answer
-is recorded on the Task and continues it on the same worker session, so the worker builds
-on its earlier turn instead of starting over.
-Super Agent never answers for the person and never accepts or completes the Task.
+sends the Task back with their words as the reason, after they confirm it, and Super Agent
+starts it again on the same worker session, so the worker builds on its earlier turn
+instead of starting over. Super Agent never answers for the person.
 
 Prerequisites: PostgreSQL (./cookbook/scripts/run_pgvector.sh) and OPENAI_API_KEY.
 
 Scripted run (no UI): start the Task from chat, wait for its result, ask Super Agent for
-an update, answer the worker's question, and wait for the continued result.
+an update, answer the worker's question (confirming the send-back), and wait for the
+next result.
 
     .venvs/demo/bin/python cookbook/05_agent_os/30_company/17_continue_tasks_from_chat.py
 
@@ -25,13 +26,14 @@ The seeded Task id is printed once the server is up.
        curl "http://localhost:7777/company/tasks/<seeded id>"
     4. When it is waiting for review, ask Super Agent what it found. The reply includes what
        the worker ran, read from its run, and its question.
-    5. Answer in chat, for example "Go with option A". The Task continues on the same session,
-       and its new attempt records your reply.
+    5. Answer in chat, for example "Go with option A". Confirm the send-back when Super Agent
+       asks; the Task starts again on the same session with your reply as its review feedback.
 
 The server has no authorization, so keep it local. AgentOS.serve prefers AGENT_OS_PORT
 over the port below; unset it, or connect to the port it names.
 """
 
+import json
 import os
 import sys
 import threading
@@ -50,6 +52,8 @@ from fastapi.testclient import TestClient
 
 SERVE = "--serve" in sys.argv
 PORT = 7777
+# The person chatting with Super Agent; decisions are recorded under this id.
+PERSON = "alex"
 
 
 # ---------------------------------------------------------------------------
@@ -90,7 +94,7 @@ investigator = Agent(
         "Investigate with your tools before concluding, and say which checks you ran.",
         "Change nothing until a person decides. When a fix needs a decision, give two options, recommend one and"
         " ask which to apply.",
-        "When the input has a follow_up, it is the person's answer to your previous result: act on it.",
+        "When the input has review_feedback, it is the person's answer to previous_result: act on it.",
     ],
     telemetry=False,
 )
@@ -150,11 +154,39 @@ def chat(client: TestClient, message: str, session_id: str) -> str:
     started = time.monotonic()
     response = client.post(
         "/teams/superagent/runs",
-        data={"message": message, "session_id": session_id, "stream": "false"},
+        data={
+            "message": message,
+            "session_id": session_id,
+            "user_id": PERSON,
+            "stream": "false",
+        },
     )
     response.raise_for_status()
-    content = response.json().get("content") or ""
-    print(f"\n> {message}\n({time.monotonic() - started:.1f}s) {content}")
+    body = response.json()
+    print(f"\n> {message}")
+    while body.get("status") == "PAUSED":
+        # A decision, such as sending the Task back, waits here until the person confirms it.
+        requirements = body["requirements"]
+        for requirement in requirements:
+            execution = requirement["tool_execution"]
+            print(
+                f"  Confirm {execution['tool_name']}: {json.dumps(execution['tool_args'])}"
+            )
+            requirement["confirmation"] = True
+            execution["confirmed"] = True
+        response = client.post(
+            f"/teams/superagent/runs/{body['run_id']}/continue",
+            data={
+                "requirements": json.dumps(requirements),
+                "session_id": session_id,
+                "user_id": PERSON,
+                "stream": "false",
+            },
+        )
+        response.raise_for_status()
+        body = response.json()
+    content = body.get("content") or ""
+    print(f"({time.monotonic() - started:.1f}s) {content}")
     return content
 
 
@@ -194,8 +226,10 @@ def scripted() -> None:
 
         second = wait_for_review(client, task["id"], 2)
         show(client, second)
-        entry = [entry for entry in second["transitions"] if entry.get("attempt")][-1]
-        print(f"\nAttempt 2 continued from: {entry['follow_up']}")
+        sent_back = [
+            entry for entry in second["transitions"] if entry.get("from") == "in_review"
+        ][-1]
+        print(f"\nSent back by {sent_back.get('user_id')}: {sent_back['reason']}")
         print(
             f"Same worker session across attempts: {second['session_id'] == first['session_id']}"
         )
