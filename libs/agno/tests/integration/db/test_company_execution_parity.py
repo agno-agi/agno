@@ -399,7 +399,7 @@ async def test_execution_duplicate_context_history_and_attention(system, kind, i
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("when", ["queued", "running"])
-async def test_brief_edit_keeps_captured_input_and_later_attempt_uses_it(system, monkeypatch, when):
+async def test_a_run_keeps_the_accepted_brief_and_a_title_edit_does_not_reach_it(system, monkeypatch, when):
     client, db, worker, _, components = system
     value = await accepted(client)
     path = f"/company/tasks/{value['id']}"
@@ -414,11 +414,14 @@ async def test_brief_edit_keeps_captured_input_and_later_attempt_uses_it(system,
 
     async def edit():
         current = (await client.get(path)).json()
-        response = await client.patch(path, json={"title": "Renamed", "brief": "Write a better draft"})
+        refused = await client.patch(path, json={"title": "Renamed", "brief": "Write a better draft"})
+        assert refused.status_code == 409, refused.text
+        assert (await client.get(path)).json() == current
+        response = await client.patch(path, json={"title": "Renamed"})
         assert response.status_code == 200, response.text
         edited = response.json()
-        assert (edited["title"], edited["brief"]) == ("Renamed", "Write a better draft")
-        changed = {"title", "brief", "updated_at"}
+        assert (edited["title"], edited["brief"]) == ("Renamed", "Write a draft")
+        changed = {"title", "updated_at"}
         assert {k: v for k, v in edited.items() if k not in changed} == {
             k: v for k, v in current.items() if k not in changed
         }
@@ -438,14 +441,14 @@ async def test_brief_edit_keeps_captured_input_and_later_attempt_uses_it(system,
     assert (await worker.store.get_job(first.json()["run_id"]))["payload"]["input"] == captured
     assert await worker.store.claim_job(worker.worker_id, worker.config.lock_grace_seconds) is None
     saved = (await client.get(path)).json()
-    assert (saved["title"], saved["brief"]) == ("Renamed", "Write a better draft")
+    assert (saved["title"], saved["brief"]) == ("Renamed", "Write a draft")
     assert saved["status"] == "in_review" and "draft" in saved["result"]["content"]
     assert len(saved["transitions"]) == len(before["transitions"]) + 1
     second = await client.post(path + "/runs", json={"attempt": 2})
     assert second.status_code == 202, second.text
     assert second.json()["run_id"] != first.json()["run_id"] and second.json()["session_id"] == before["session_id"]
     later = json.loads((await worker.store.get_job(second.json()["run_id"]))["payload"]["input"])
-    assert later["brief"] == "Write a better draft" and set(later) == keys
+    assert later["brief"] == "Write a draft" and set(later) == keys
     assert "Renamed" not in json.dumps(later)
     assert (await execute(worker))["status"] == "completed"
 

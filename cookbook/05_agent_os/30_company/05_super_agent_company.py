@@ -1,7 +1,7 @@
 """Do Company work through Super Agent and exercise its Company tools without a model call.
 
 With CompanyConfig set, Super Agent holds the Company tools itself: company details,
-Products, Projects, Tasks, Sources, playbook, Routines and decisions. A Routine with no
+Products, Projects, Tasks, Sources, playbook and Routines. A Routine with no
 executor runs on Mini Agent, a restricted agent that can only propose work.
 
 Prerequisites: Install agno, sqlalchemy, openai, fastapi and httpx.
@@ -37,6 +37,8 @@ if __name__ == "__main__":
         assert "update_company_details" in tools.functions
         assert "create_product_routine" in tools.functions
         assert "refresh_company_product" not in tools.functions
+        # The decision log is written through /company/decisions or CompanyTools on your own agents.
+        assert "log_company_decision" not in tools.functions
         assert "summarize_company_product" not in tools.functions
         assert not any(
             "transition" in name or "schedule" in name for name in tools.functions
@@ -93,11 +95,6 @@ if __name__ == "__main__":
                 path="products/" + product["id"] + "/status.md",
                 content="# Status\n\nRelease notes proposed.\n",
                 expected_version=1,
-                _agno_run_context=context,
-            )
-            tools.log_company_decision(
-                "Review release notes before publishing",
-                reasoning="Human approval required",
                 _agno_run_context=context,
             )
 

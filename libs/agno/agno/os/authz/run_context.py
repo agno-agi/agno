@@ -23,6 +23,7 @@ def restore_authorization(app: Any, snapshot: Optional[Dict[str, Any]]) -> Optio
         AuthorizationContext(**snapshot["context"]),
         bool(snapshot.get("service_account")),
         enforce_tools=snapshot.get("enforce_tools", True),
+        scheduled=bool(snapshot.get("scheduled")),
     )
 
     if snapshot.get("company_routine"):

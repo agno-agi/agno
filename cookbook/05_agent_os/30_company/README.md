@@ -40,8 +40,9 @@ Backlog Tasks, and updates status without accepting work. Mini Agent is a
 restricted agent for unattended work. In a Routine run it holds Company tools
 and the Routine skills only, no Platform Builder, no run or platform tools, and
 proposal-only authority. In a Task run it does the accepted work; see
-"Decisions from chat and Mini Agent Tasks" below. It works with or without `manager=OSManager(...)`, but
-needs `CompanyConfig(model=...)` or a registry model. The stored schedule, the
+"Decisions from chat and Mini Agent Tasks" below. It works with or without `manager=OSManager(...)`. Its
+model is `CompanyConfig(model=...)`, else Super Agent's model when `manager=OSManager(model=...)` is set,
+else the first registry model. The stored schedule, the
 Routine API and the run and session records all name it: endpoint
 `/agents/miniagent/runs`, `target_type` `agent`, `target_id` `miniagent`.
 Mini Agent is hidden from `GET /agents`, `GET /config`, MCP and A2A, and a
@@ -152,10 +153,11 @@ read scope, matching Products. Edits and transitions are collaborative: callers 
 scope can update or transition another creator's work, even with user isolation
 enabled. This includes cancellation and returning Tasks to Backlog. The creator
 stays unchanged, and transition history records the acting caller. Ready still
-requires the caller's executor run permission; accepted Tasks keep their Project,
-evidence and executor until returned to Backlog, while title and brief stay
-editable at any stage (Company tools run by Routines and executors edit Backlog
-Tasks only). Delete and restore need the delete scope, not ownership.
+requires the caller's executor run permission; accepted Tasks keep their brief,
+Project, evidence and executor until returned to Backlog, because an accepted
+Task runs under its accepter's permissions. The title stays editable at any
+stage (Company tools run by Routines and executors edit Backlog Tasks only).
+Delete and restore need the delete scope, not ownership.
 New work can use another owner's Product or Project, with the Task and
 Project still required to belong to the same Product. Manager and storage
 methods retain explicit owner filters for direct callers.
@@ -186,10 +188,10 @@ GET and POST `/company/decisions` use `decisions:read` and `decisions:write`.
 Decisions are learning log entries in the `company` namespace, never a file.
 Listings support text, agent, session and age filters plus standard paging.
 The server stamps human identity; agents get identity from injected run context.
-Super Agent logs and searches decisions when a person asks. Mini Agent holds no
-decision tools and has no decision log in its prompt, in a Routine run or a Task
-run: it reads Sources and briefs that nobody vetted, so it neither writes
-Company decisions nor recalls them. A Task run on any other executor that holds
+Super Agent holds no decision-log tools. Mini Agent holds none either and has no
+decision log in its prompt, in a Routine run or a Task run: it reads Sources and
+briefs that nobody vetted, so it neither writes Company decisions nor recalls
+them. The API above and `CompanyTools` on your own agents write and search the log. A Task run on any other executor that holds
 CompanyTools is refused a write to the log.
 An agent you give `LearningMachine(decision_log=CompanyDecisionLogStore(db))`
 recalls human and agent decisions across the company; explicit searches can
@@ -227,6 +229,11 @@ everyone who talks to Super Agent, including when user isolation is on. A note
 Super Agent saved in one person's chat can be read in another person's chat.
 Listing `products/` and searching the tree show every Product, as the Product
 listing does.
+
+Super Agent is told that `notes/` is shared. What a person marks private, or
+for Super Agent only, goes to its memory of that person when
+`OSManager(learning=...)` keeps a user profile or a user memory. With no such
+memory, Super Agent says it has no private place and writes nothing.
 
 The tools are `CompanyFileTools`. Their names keep them apart from the source file
 tools (`list_files`, `read_file`, `search_content`) that `OSManager(root=...)` adds.
@@ -282,26 +289,31 @@ a runbook, must hold the read tools:
 Without them it no longer sees that page.
 
 A listing returns 200 entries a page with the total, and `next_page` when more
-remain. A search returns up to ten matches and `more` when others exist.
+remain. A search returns up to ten matches and `more` when others exist. A search
+of the whole tree, of `products/` or of `tasks/` opens the 50 newest Products and
+the 50 newest Tasks. When there are more, the reply says how many it searched;
+name a folder, `products/<product-id>` or `tasks/<task-id>`, to search another.
 
-A file holds at most 1 MB. `wiki/`, each Product and `notes/` hold 20 MB each, and
-`tasks/` holds 200 MB in total, shared by every Task. Nothing removes a Task's
-files, not even archiving the Task, so a full `tasks/` refuses every Task's writes
-until files are replaced with smaller ones. There are no API routes for `tasks/`
-and `notes/`, and no tool appends to, moves or deletes a file outside `notes/`.
+A file holds at most 1 MB. `wiki/`, each Product, each Task and `notes/` hold
+20 MB each. A Task's folder is its own space: a Task that fills its folder does not
+stop another Task's writes. Nothing removes a Task's files, not even archiving the
+Task, because an archived Task can be restored. There are no API
+routes for `tasks/` and `notes/`, and no tool appends to, moves or deletes a file
+outside `notes/`.
 
 With `CompanyConfig`, Super Agent holds the Company tools itself. People do
 Company work by talking to Super Agent at `/teams/superagent`. It reads company
 details, Products, Projects, Tasks, Sources and the playbook, proposes Projects
 and Backlog Tasks, edits owned proposals, writes `status.md` with a version check,
-saves company details, creates Routines and logs decisions. It can add website
+saves company details and creates Routines. It can add website
 Sources with permission and Product ownership. When the person asks, it approves
 a Project, accepts a Task and reviews a finished one; see "Decisions from chat
 and Mini Agent Tasks". Ownership changes, local Source additions, Product
 maintenance and outbound summaries are
 not among its Company tools. Routines use the model from `CompanyConfig(model=...)`,
-otherwise the first registry model. If neither exists, diagnostics warns, a
-Routine on Mini Agent fails with that reason, and manual APIs still work.
+otherwise Super Agent's model, otherwise the first registry model. If none exists,
+diagnostics warns, a Routine on Mini Agent fails with that reason, and manual APIs
+still work.
 
 The examples make no provider calls; they do not demonstrate live model quality.
 The heartbeat examples below demonstrate Routines and Sources.
@@ -326,6 +338,7 @@ retaining a known old ID explicitly is necessary for those references.
 | `13_start_tasks_from_chat.py` | Super Agent starts a human-accepted Task, ends its turn with the receipt, and answers status and unrelated questions while the Task runs. Add `--serve` to try it from the AgentOS UI on `localhost:7777` with a seeded, accepted Task. Live model; PostgreSQL. |
 | `14_work_to_done_in_chat.py` | A person takes work from a proposal to Done in a Super Agent chat: approve the Project, accept the Task on Mini Agent, start it, read the result and complete it. Each decision pauses for the person's confirmation. Mini Agent runs another agent to do the work, and the Task records it. Live model; PostgreSQL. |
 | `15_policy_source_to_done.py` | One line in a Routine declaration, `auto_accept=True`. The Routine reads a Source and proposes work, the automation tick approves the Routine's Project and accepts its Task, Mini Agent does the Task, and the result waits In review. Every automatic step is on the record. Live model; PostgreSQL; serves on a free local port. |
+| `17_continue_tasks_from_chat.py` | A worker stops at a decision; what it ran is read from its run. The person's answer from chat sends the Task back after they confirm, and Super Agent starts it again on the same worker session. `--serve` adds the UI demo. Live model; PostgreSQL. |
 
 `06_execute_tasks.py` starts an accepted workflow Task through its ordinary run
 route and the durable queue, waits for In review, reads paged history and checks
@@ -490,7 +503,11 @@ A component Mini Agent runs acts with its own tools, so accept a Task on Mini
 Agent only when you would run those components yourself.
 
 The accepting person's saved permissions bound component runs throughout
-delegation and continuation; the starter's permissions still apply. Task runs
+delegation and continuation, on Mini Agent and on every other executor that
+holds run tools; the starter's permissions still apply. A Task a policy
+accepted runs no other component, on any executor. No Task run starts a
+sandboxed agent through the run tools: a sandboxed agent runs only as a Task's
+own executor. Task runs
 can use `read_company_file` to read `products/<product-id>/status.md` and its
 version before writing it with `write_company_file`, and reread it after a
 version conflict to preserve concurrent edits.
@@ -1049,8 +1066,9 @@ Every field has a default:
   workflow) is read from the registry. Studio components cannot share an ID
   across kinds. Components defined in code can; a policy that names such an ID
   is refused, never guessed. Give each component its own ID.
-- **A Task on Mini Agent** that a policy accepted holds no run tools. Work that
-  needs a real worker names it as the executor, in the policy or on the proposal.
+- **A Task on Mini Agent** that a policy accepted holds no run tools, and on an
+  executor with its own run tools those tools refuse. Work that needs a real
+  worker names it as the executor, in the policy or on the proposal.
 - **A policy saved with `executor_type` and `executor_id`** keeps working. It
   allows that one executor and uses it by default, approves no Project, and keeps
   its version and its acceptance count. The API still reads those two fields, and

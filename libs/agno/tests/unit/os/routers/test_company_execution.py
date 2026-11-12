@@ -810,6 +810,72 @@ async def test_completion_rechecks_managed_human_permission(managed_system, duri
     assert db.get_project(project["id"])["status"] == "active"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("revoked", ["no", "before", "during_checks"])
+async def test_project_approval_rechecks_managed_human_permission(managed_system, revoked):
+    from agno.company.routines import _CompanyScheduleExecutor, _RoutineAuthorization
+    from agno.run.authorization import authorization_scope
+
+    client, db, os, queue, authz = managed_system
+    scopes = SCOPES + [
+        "projects:read",
+        "projects:write",
+        "routines:read",
+        "routines:write",
+        "schedules:read",
+        "schedules:write",
+    ]
+    authz.define_role("approver", scopes)
+    authz.define_role("without_approval", [scope for scope in scopes if scope != "projects:write"])
+    authz.set_role("alice", "approver")
+    product = client.post("/company/products", json={"name": "Docs"}, headers=headers()).json()
+
+    async def revoke(proposal, check_manager):
+        authz.set_role("alice", "without_approval")
+        return True
+
+    os.company.acceptance_checks["revoke_approval"] = revoke
+    policy = {"default_executor": "writer"}
+    if revoked == "during_checks":
+        policy["required_checks"] = ["executor_registered", "revoke_approval"]
+    response = client.post(
+        "/company/routines",
+        json=dict(
+            product_id=product["id"],
+            name="intake",
+            instructions="Read the Sources and propose work.",
+            executor_type="agent",
+            executor_id="writer",
+            cron_expr="0 * * * *",
+            auto_accept=policy,
+        ),
+        headers=headers(),
+    )
+    assert response.status_code == 201, response.text
+    routine_id = response.json()["id"]
+    manager = CompanyManager(db, os.registry)
+    # The Routine proposes a Project and a Task in it.
+    with authorization_scope(lambda: _RoutineAuthorization(None, routine_id=routine_id, product_id=product["id"])):
+        project = manager.create_project(product_id=product["id"], name="Fixes")
+    task = manager.create_task(
+        product_id=product["id"], project_id=project["id"], title="Fix", origin="routine", routine_id=routine_id
+    )
+    if revoked == "before":
+        authz.set_role("alice", "without_approval")
+    executor = _CompanyScheduleExecutor(
+        os, client.app, base_url="http://test", internal_service_token="company-internal"
+    )
+    if revoked == "no":
+        accepted = await executor._accept(task)
+        assert accepted["status"] == "ready" and db.get_project(project["id"])["status"] == "active"
+        return
+    with pytest.raises(PermissionError, match="projects:write"):
+        await executor._accept(task)
+    # The approval needs the permission when it is written, not only when the checks began.
+    assert db.get_project(project["id"])["status"] == "proposed"
+    assert db.get_task(task["id"])["status"] == "backlog"
+
+
 def test_pending_routine_retry_rechecks_and_refreshes_human_grant(system, monkeypatch):
     from agno.company.routines import _policy_fingerprint
     from agno.run.authorization import AUTHORIZATION_KEY

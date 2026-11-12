@@ -244,7 +244,9 @@ class TestSlackContinueDoorSyncsStream:
     @pytest.mark.asyncio
     async def test_stream_synced_after_continuation(self, stream):
         pytest.importorskip("slack_sdk", reason="slack_sdk not installed")
-        from agno.os.interfaces.slack.hitl import HITLHandler
+        from agno.os.interfaces.slack.context import EventContext, SlackContext
+        from agno.os.interfaces.slack.executor import continue_run
+        from agno.os.interfaces.slack.runs import SlackRuns
 
         await _park_paused(stream, "r-slack")
 
@@ -263,19 +265,27 @@ class TestSlackContinueDoorSyncsStream:
             async def aget_session(self, session_id: Optional[str] = None):
                 return _Session([final_run])
 
-        handler = HITLHandler.__new__(HITLHandler)
-        handler.entity = FakeEntity()
-        handler.entity_name = "Slack Agent"
-        handler.entity_type = "agent"
-
-        ctx = SimpleNamespace(run_id="r-slack", channel="C1", thread_ts=None, msg_ts=None)
-
-        async def _append(**kwargs):
-            return None
-
-        await handler.stream_resumed_run(
-            ctx, SimpleNamespace(append=_append), requirements=[], session_id="s-slack", user_id=None
+        ctx = SlackContext(
+            entity=FakeEntity(),
+            entity_id="slack-agent",
+            entity_name="Slack Agent",
+            entity_type="agent",
+            token="xoxb-test",
+            signing_secret="test-secret",
+            runs=SlackRuns(),
         )
+        event_context = EventContext(
+            run_id="r-slack",
+            session_id="s-slack",
+            channel="C1",
+            thread_ts="1.0",
+            message_ts="1.0",
+            owner="U1",
+            user_id="U1",
+            entity_id="slack-agent",
+        )
+
+        await continue_run(event_context, AsyncMock(), ctx, requirements=[])
 
         assert await stream.get_run_status("r-slack") == RunStatus.completed, (
             "the Slack continue door must sync a tracked stream off PAUSED"

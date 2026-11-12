@@ -173,7 +173,7 @@ def test_one_line_takes_a_routines_work_to_in_review_with_no_person(open_system)
     version = _policy_fingerprint(open_system.db.get_schedule(routine_id))
     receipt = {"routine_id": routine_id, "policy": version, "declared": True}
     assert receipts(open_system.db.get_project(project["id"])) == [("active", None, receipt)]
-    assert receipts(review) == [("ready", None, {**receipt, "executor_chosen_by": "default"})]
+    assert receipts(review) == [("ready", None, {**receipt, "executor_chosen_by": "default", "max_open": 5})]
     decisions = open_system.manager.auto_accept_status(product_id)["automatic_decisions"]
     assert sorted((item["record"], item["decision"]) for item in decisions) == [
         ("project", "approved"),

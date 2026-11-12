@@ -17,6 +17,11 @@ def _validate_agent_source(type: str, executor_type: str, executor_id: Optional[
         raise ValueError("Adding a Source requires the calling agent or team and run identity")
 
 
+def _same_text(sent: Optional[str], stored: Optional[str]) -> bool:
+    """Whether two texts have the same words. No text and empty text are the same, and spacing is not compared."""
+    return (sent or "").split() == (stored or "").split()
+
+
 def _routine_provenance(endpoint: str) -> Dict[str, Any]:
     from agno.db.schemas.scheduler import _schedule_endpoint_targets
 
@@ -567,15 +572,24 @@ class CompanyManager:
     def update_task(
         self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
     ) -> Optional[Dict[str, Any]]:
-        """Update a Task; outside Backlog only title and brief change, the rest requires a return to Backlog."""
+        """Update a Task; outside Backlog only the title changes, the rest requires a return to Backlog."""
         from agno.db.schemas.tasks import validate_task_fields
 
         validate_task_fields(fields)
         existing = self.db.get_task(task_id, user_id=user_id)
         if existing is None:
             return None
-        if existing["status"] != "backlog" and set(fields) - {"title", "brief"}:
-            raise ValueError("Accepted task scope requires a return to Backlog")
+        if existing["status"] != "backlog":
+            # An accepted Task runs under its accepter's permissions, so its brief is part of what was accepted.
+            if "brief" in fields and _same_text(fields["brief"], existing.get("brief")):
+                del fields["brief"]
+            if set(fields) - {"title"}:
+                raise ValueError("Accepted task scope requires a return to Backlog")
+            if not fields:
+                return existing
+        elif "brief" in fields and expected_status is None:
+            # The write itself checks the stage, so an acceptance that lands first is not overwritten.
+            expected_status = "backlog"
         if "project_id" in fields and not fields["project_id"]:
             raise ValueError("A Task requires a Project")
         if fields.get("project_id") is not None:
@@ -1529,15 +1543,24 @@ class AsyncCompanyManager:
     async def update_task(
         self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
     ) -> Optional[Dict[str, Any]]:
-        """Update a Task; outside Backlog only title and brief change, the rest requires a return to Backlog."""
+        """Update a Task; outside Backlog only the title changes, the rest requires a return to Backlog."""
         from agno.db.schemas.tasks import validate_task_fields
 
         validate_task_fields(fields)
         existing = await self.db.get_task(task_id, user_id=user_id)
         if existing is None:
             return None
-        if existing["status"] != "backlog" and set(fields) - {"title", "brief"}:
-            raise ValueError("Accepted task scope requires a return to Backlog")
+        if existing["status"] != "backlog":
+            # An accepted Task runs under its accepter's permissions, so its brief is part of what was accepted.
+            if "brief" in fields and _same_text(fields["brief"], existing.get("brief")):
+                del fields["brief"]
+            if set(fields) - {"title"}:
+                raise ValueError("Accepted task scope requires a return to Backlog")
+            if not fields:
+                return existing
+        elif "brief" in fields and expected_status is None:
+            # The write itself checks the stage, so an acceptance that lands first is not overwritten.
+            expected_status = "backlog"
         if "project_id" in fields and not fields["project_id"]:
             raise ValueError("A Task requires a Project")
         if fields.get("project_id") is not None:

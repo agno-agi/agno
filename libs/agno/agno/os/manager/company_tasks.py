@@ -8,19 +8,14 @@ tools turn a Routine's auto-accept on, with the same confirmation, or off.
 """
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from weakref import ReferenceType, ref
 
-from agno.tools import Toolkit
+from pydantic import BaseModel, ConfigDict, Field
 
-_STATUS_WORDS = {
-    "backlog": "proposed, not accepted",
-    "ready": "accepted, not started",
-    "in_progress": "started",
-    "in_review": "finished, waiting for review",
-    "done": "done",
-    "cancelled": "cancelled",
-}
+from agno.db.schemas.tasks import TASK_STATUS_MEANING
+from agno.tools import Toolkit
+from agno.tools.company import _OptionalInt, _OptionalString
 
 
 def _run_context_identity(run_context: Any):
@@ -34,10 +29,38 @@ def _same_name(given: Any, stored: Any) -> bool:
     return " ".join(str(given or "").split()).casefold() == " ".join(str(stored or "").split()).casefold()
 
 
-def _same_version(given: Any, stored: Any) -> bool:
-    """Whether the updated_at the person confirmed is the record's. A Task never edited has none."""
-    given = None if given in (None, "", "null") else str(given)
-    return given == (None if stored is None else str(stored))
+class TaskToAccept(BaseModel):
+    """One Task on an accept_company_task call, as the person confirms it."""
+
+    model_config = ConfigDict(extra="forbid")
+    title: str = Field(description="The Task's title, as stored.")
+    task_id: str = Field(description="The Task's ID.")
+    updated_at: _OptionalInt = Field(description="The Task's updated_at as the person saw it; null when it has none.")
+
+
+def _same_version(given: Any, record: Dict[str, Any]) -> bool:
+    """Whether the updated_at the person confirmed is the record's.
+
+    A record never edited has none, and no record has the version 0. Null, an empty value, 0 and the
+    record's own created_at all name a record that was never edited: an edit gives it an updated_at.
+    """
+    stored = record.get("updated_at")
+    given = None if given in (None, "", "null", 0, "0") else str(given)
+    if stored is None:
+        return given is None or given == str(record.get("created_at"))
+    return given == str(stored)
+
+
+# What a model writes in an optional argument it means to leave empty, without its punctuation.
+_NOTHING = {"", "none", "null", "omitplaceholder"}
+
+
+def _named(value: Any) -> Optional[str]:
+    """An optional name as the model gave it. A value with no letter or digit, such as "" or ",", names
+    nothing, and neither does a placeholder such as "__NONE__" or "[null]"."""
+    if not isinstance(value, str):
+        return None
+    return None if "".join(character for character in value if character.isalnum()).lower() in _NOTHING else value
 
 
 def _user_isolation(agent_os: Any) -> bool:
@@ -52,9 +75,12 @@ def _user_isolation(agent_os: Any) -> bool:
 def _unsigned(agent_os: Any, authority: Any, user_id: Any) -> bool:
     """Whether nobody stands behind this run: it carries no permissions where the deployment checks
     them, or names no person where the deployment isolates users."""
-    return (authority is None and bool(getattr(agent_os, "authorization", None))) or (
-        _user_isolation(agent_os) and not user_id
-    )
+    from agno.os.auth import _authorization_enforced
+
+    # An authorization middleware on the app checks permissions just as AgentOS(authorization=...) does
+    app = getattr(agent_os, "_company_app", None)
+    authorization = bool(getattr(agent_os, "authorization", None)) or (app is not None and _authorization_enforced(app))
+    return (authority is None and authorization) or (_user_isolation(agent_os) and not user_id)
 
 
 def _policy_line(policy: Any) -> str:
@@ -90,9 +116,19 @@ def _refusal(authority: Any) -> Optional[str]:
     from agno.company.execution import _automatic_task, _ExecutorAuthorization
     from agno.company.routines import _RoutineAuthorization
 
-    if isinstance(authority, (_RoutineAuthorization, _ExecutorAuthorization)) or _automatic_task.get() is not None:
+    automated = isinstance(authority, (_RoutineAuthorization, _ExecutorAuthorization))
+    if automated or _automatic_task.get() is not None or getattr(authority, "scheduled", False):
         return "Task runs are started by people. Automated runs cannot start Tasks."
     return None
+
+
+def _requested_from(run_context: Any) -> Dict[str, str]:
+    conversation = {
+        "session_id": getattr(run_context, "session_id", None),
+        "run_id": getattr(run_context, "run_id", None),
+        "team_id": "superagent",
+    }
+    return {key: item for key, item in conversation.items() if isinstance(item, str)}
 
 
 class CompanyTaskTools(Toolkit):
@@ -126,6 +162,18 @@ class CompanyTaskTools(Toolkit):
             show_result_tools=["start_company_task"],
         )
 
+    def _caller_context(self, run_context: Any) -> Tuple[Any, Any, Any, Optional[str], Optional[str]]:
+        """The OS, its app, the caller's authority and identity, and a refusal when they cannot act."""
+        agent_os = self._agent_os()
+        app = getattr(agent_os, "_company_app", None)
+        authority, user_id = _run_context_identity(run_context)
+        if agent_os is None or app is None:
+            return agent_os, app, authority, user_id, "Company execution is not running here. Use AgentOS instead."
+        refusal = _refusal(authority)
+        if refusal is None and _unsigned(agent_os, authority, user_id):
+            refusal = "A signed-in person is required."
+        return agent_os, app, authority, user_id, refusal
+
     def start_company_task(self, task_id: str, _agno_run_context: Optional[Any] = None) -> str:
         """Start an accepted Company Task in the background and return its run.
 
@@ -139,26 +187,19 @@ class CompanyTaskTools(Toolkit):
 
         The Task runs in its own session; this conversation continues. Call this tool on its
         own, then tell the person the run is queued. Use get_company_task_status for progress.
+        A Task whose last run failed or was cancelled is started again the same way.
 
         Args:
-            task_id: The accepted (Ready) Task to start.
+            task_id: The accepted (Ready) Task to start, or the Task to retry after a failed run.
         """
         from fastapi import HTTPException
 
         from agno.company.execution import _pending_task_attempt, _TaskRunConflict, _TaskRunUnavailable
         from agno.os.routers.company.runs import _StartCaller, _TaskStarter
 
-        agent_os = self._agent_os()
-        app = getattr(agent_os, "_company_app", None)
-        if agent_os is None or app is None:
-            return "Company execution is not running here. Start the Task from AgentOS."
-        authority, user_id = _run_context_identity(_agno_run_context)
-        refusal = _refusal(authority)
+        agent_os, app, authority, user_id, refusal = self._caller_context(_agno_run_context)
         if refusal is not None:
             return refusal
-        if _unsigned(agent_os, authority, user_id):
-            return "A signed-in person is required to start a Task."
-
         starter = _TaskStarter(agent_os)
         try:
             value = await starter.task(task_id)
@@ -167,21 +208,20 @@ class CompanyTaskTools(Toolkit):
                 return f"'{title}' is still a proposal. A person must accept it with an executor before it can start."
             if value["status"] == "in_review":
                 return f"'{title}' is waiting for review. The person completes it or sends it back."
-            if value["status"] != "ready" and _pending_task_attempt(value) is None:
-                return (
-                    f"'{title}' is {_STATUS_WORDS.get(value['status'], value['status'])}; only accepted work can start."
-                )
+            # A Task whose last attempt failed or was cancelled stays In progress. Starting it is a retry,
+            # and the start route decides whether the earlier run has ended.
+            ended = value["status"] == "in_progress" and (value.get("result") or {}).get("status") in (
+                "ERROR",
+                "CANCELLED",
+            )
+            if value["status"] != "ready" and _pending_task_attempt(value) is None and not ended:
+                meaning = TASK_STATUS_MEANING.get(value["status"], value["status"])
+                return f"'{title}' is {meaning}; only accepted work can start."
             if authority is not None:
                 # The start route's own requirements, beyond running the executor.
                 await authority.arequire("tasks", "write")
                 await authority.arequire("wiki", "read")
-            conversation = {
-                "session_id": getattr(_agno_run_context, "session_id", None),
-                "run_id": getattr(_agno_run_context, "run_id", None),
-                "team_id": "superagent",
-            }
-            requested_from = {key: item for key, item in conversation.items() if isinstance(item, str)}
-            caller = _StartCaller.for_authority(app, authority, user_id, requested_from)
+            caller = _StartCaller.for_authority(app, authority, user_id, _requested_from(_agno_run_context))
             response = await starter.submit(task_id, caller, None, value, None)
         except PermissionError as exc:
             return f"Not started: {exc}"
@@ -189,20 +229,10 @@ class CompanyTaskTools(Toolkit):
             return f"Not started: {exc.detail}"
         except (_TaskRunConflict, _TaskRunUnavailable) as exc:
             return f"Not started: {exc}"
-
-        body = json.loads(bytes(response.body)) if response.body else {}
-        if response.status_code != 202:
-            return f"Not started: {body.get('detail') or 'the run was refused'}"
-        status = body.get("status")
-        run = f"(Task {task_id}, run {body.get('run_id')})"
-        if status in ("PENDING", "QUEUED", None):
-            return f"Queued '{title}' {run}. It runs in its own session; ask for its status at any time."
-        if status == "RUNNING":
-            return f"'{title}' is already running {run}."
-        return f"'{title}' already has this attempt, now {status} {run}."
+        return _receipt("Queued", title, task_id, response)
 
     def get_company_task_status(self, task_id: str, _agno_run_context: Optional[Any] = None) -> str:
-        """Read a Company Task's saved state and latest run without waiting for it.
+        """Read a Company Task's saved state, latest run and recorded evidence without waiting for it.
 
         Args:
             task_id: The Task to inspect.
@@ -210,18 +240,19 @@ class CompanyTaskTools(Toolkit):
         return "Reading Task status needs an asynchronous run. Open the Task in AgentOS instead."
 
     async def aget_company_task_status(self, task_id: str, _agno_run_context: Optional[Any] = None) -> str:
-        """Read a Company Task's saved state and latest run without waiting for it.
+        """Read a Company Task's saved state, latest run and recorded evidence without waiting for it.
 
-        Reports what is recorded: the Task status, the latest attempt and its run, and the
-        saved result once there is one. A finished run is not proof the outcome was achieved.
+        Reports what is recorded: the Task status, the latest attempt and its run, the reviewer's
+        feedback when it was sent back, the saved result, and the commands and tools the worker
+        actually ran, read from the run. Report that evidence, and say when there is none. A finished run is not proof
+        the outcome was achieved.
 
         Args:
             task_id: The Task to inspect.
         """
         from fastapi import HTTPException
 
-        from agno.os.job_queue import ticket_status_to_api
-        from agno.os.routers.company.runs import _TaskStarter
+        from agno.os.routers.company.runs import _task_state, _TaskStarter
 
         agent_os = self._agent_os()
         if agent_os is None:
@@ -230,38 +261,15 @@ class CompanyTaskTools(Toolkit):
         try:
             if authority is not None:
                 await authority.arequire("tasks", "read")
-            value = await _TaskStarter(agent_os).task(task_id)
+            starter = _TaskStarter(agent_os)
+            value = await starter.task(task_id)
         except PermissionError as exc:
             return f"Cannot read the Task: {exc}"
         except HTTPException as exc:
             return f"Cannot read the Task: {exc.detail}"
-
-        attempts = [entry for entry in value.get("transitions") or [] if entry.get("attempt")]
-        latest: Dict[str, Any] = attempts[-1] if attempts else {}
-        state: Dict[str, Any] = {
-            "task_id": value["id"],
-            "title": value.get("title"),
-            "status": value["status"],
-            "meaning": _STATUS_WORDS.get(value["status"], value["status"]),
-            "executor": value.get("executor_id"),
-            "attempt": latest.get("attempt"),
-            "run_id": value.get("job_id"),
-            "started_by": latest.get("started_by"),
-            "requested_from": latest.get("requested_from"),
-        }
         app = getattr(agent_os, "_company_app", None)
-        queue = getattr(getattr(app, "state", None), "queue_worker", None)
-        if value.get("job_id") and queue is not None:
-            job = await queue.store.get_job(value["job_id"])
-            if job is not None:
-                state["run_status"] = ticket_status_to_api(job["status"])
-        result = value.get("result") or {}
-        if result.get("run_id") == value.get("job_id") and result:
-            state["run_status"] = result.get("status") or state.get("run_status")
-            content = result.get("content")
-            state["result"] = content[:1500] if isinstance(content, str) else content
-            if result.get("invoked"):
-                state["invoked"] = result["invoked"]
+        state = await starter.state(value, app) if app is not None else _task_state(value)
+        state.update(await starter.run_evidence(value))
         return json.dumps(state, ensure_ascii=False, default=str)
 
     def _person(self, agent_os: Any, run_context: Any, operation: str = "decide Company work") -> Any:
@@ -274,17 +282,61 @@ class CompanyTaskTools(Toolkit):
             raise PermissionError(f"A signed-in person is required to {operation}")
         return authority, user_id
 
-    async def _named_routine(self, agent_os: Any, routine_id: str, routine_name: str, product_name: Any) -> Any:
+    def _routine_request(self, agent_os: Any, authority: Any, user_id: Any, method: str, routine_id: str) -> Any:
+        """A Routine API request from the chatting person, as the API's middleware would describe it."""
+        from starlette.requests import Request
+
+        app = getattr(agent_os, "_company_app", None)
+        if app is None or getattr(agent_os, "_routine_api_update", None) is None:
+            raise LookupError("The Routine API is not running here. Change the Routine from AgentOS.")
+        context = authority.context if authority is not None else None
+        state = {
+            "user_id": user_id,
+            "authenticated": authority is not None,
+            "authorization_enabled": authority is not None,
+            "scopes": list(context.scopes or []) if context is not None else [],
+            "claims": dict(context.claims or {}) if context is not None else {},
+            "admin_scope": context.admin_scope if context is not None else None,
+            "user_isolation_enabled": bool(getattr(app.state, "user_isolation_enabled", False)),
+            "is_internal_service": False,
+        }
+        return Request(
+            {
+                "type": "http",
+                "method": method,
+                "path": f"/company/routines/{routine_id}",
+                "headers": [],
+                "query_string": b"",
+                "app": app,
+                "state": state,
+            }
+        )
+
+    async def _named_routine(
+        self, agent_os: Any, authority: Any, user_id: Any, routine_id: str, routine_name: str, product_name: Any
+    ) -> Any:
         """Check that the names the person confirmed are the stored Routine's and its Product's.
 
+        The person's permissions are checked before anything is read, and the Routine is read as the
+        Routine API reads it, so a refusal names nothing the API would not show this person.
         Returns the Routine's name and its stored payload.
         """
+        from fastapi import HTTPException
+
         from agno.company.execution import _call
 
-        row = await _call(agent_os.db, "get_schedule", routine_id) if agent_os.db is not None else None
-        metadata = ((row or {}).get("payload") or {}).get("metadata") or {}
-        if row is None or row.get("managed_by") != "company" or not metadata.get("product_id"):
-            raise LookupError("Routine not found")
+        request = self._routine_request(agent_os, authority, user_id, "GET", routine_id)
+        if authority is not None:
+            await authority.arequire("routines", "write")
+            if product_name is not None:
+                await authority.arequire("products", "read")
+        try:
+            row = await agent_os._routine_api_read(routine_id, request)
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                raise LookupError("Routine not found") from exc
+            raise
+        metadata = row["payload"]["metadata"]
         stored = row["name"].removeprefix(metadata["product_id"] + ".")
         # Its schedule is stored under the Product's ID and this name; a listing may show either.
         if not (_same_name(routine_name, stored) or _same_name(routine_name, row["name"])):
@@ -305,44 +357,16 @@ class CompanyTaskTools(Toolkit):
         """Change a Routine's auto_accept through the Routine API's own PATCH handler, as the chatting person."""
         from dataclasses import replace
 
-        from starlette.requests import Request
-
         from agno.os.routers.company.heartbeat import RoutineUpdate
         from agno.run.authorization import authorization_scope
 
-        app = getattr(agent_os, "_company_app", None)
-        handler = getattr(agent_os, "_routine_api_update", None)
-        if handler is None or app is None:
-            raise LookupError("The Routine API is not running here. Change the Routine from AgentOS.")
+        request = self._routine_request(agent_os, authority, user_id, "PATCH", routine_id)
         if authority is not None:
             # The route's own scope, checked by the API before its handler runs.
             await authority.arequire("routines", "write")
-        context = authority.context if authority is not None else None
-        # What the API's middleware records for a caller: identity, scopes and the deployment's isolation.
-        state = {
-            "user_id": user_id,
-            "authenticated": authority is not None,
-            "authorization_enabled": authority is not None,
-            "scopes": list(context.scopes or []) if context is not None else [],
-            "claims": dict(context.claims or {}) if context is not None else {},
-            "admin_scope": context.admin_scope if context is not None else None,
-            "user_isolation_enabled": bool(getattr(app.state, "user_isolation_enabled", False)),
-            "is_internal_service": False,
-        }
-        request = Request(
-            {
-                "type": "http",
-                "method": "PATCH",
-                "path": f"/company/routines/{routine_id}",
-                "headers": [],
-                "query_string": b"",
-                "app": app,
-                "state": state,
-            }
-        )
         saved = replace(authority, enforce_tools=False) if authority is not None else None
         with authorization_scope(lambda: saved):
-            return await handler(routine_id, RoutineUpdate(auto_accept=auto_accept), request)
+            return await agent_os._routine_api_update(routine_id, RoutineUpdate(auto_accept=auto_accept), request)
 
     async def _decide(self, call: Any) -> str:
         """Run one decision, returning each refusal as text and leaving the record as it was."""
@@ -361,19 +385,19 @@ class CompanyTaskTools(Toolkit):
             return "Not done: the configured database does not support Company work."
 
     def approve_company_project(
-        self, project_name: str, project_id: str, updated_at: Optional[int], _agno_run_context: Optional[Any] = None
+        self, project_name: str, project_id: str, updated_at: _OptionalInt, _agno_run_context: Optional[Any] = None
     ) -> str:
         """Approve a proposed Company Project. The run pauses for the person to confirm.
 
         Args:
             project_name: The Project's name, as stored.
             project_id: The proposed Project to approve.
-            updated_at: The Project's updated_at as the person saw it.
+            updated_at: The Project's updated_at as the person saw it; null when it has none.
         """
         return "Approving a Project needs an asynchronous run. Approve it from AgentOS instead."
 
     async def aapprove_company_project(
-        self, project_name: str, project_id: str, updated_at: Optional[int], _agno_run_context: Optional[Any] = None
+        self, project_name: str, project_id: str, updated_at: _OptionalInt, _agno_run_context: Optional[Any] = None
     ) -> str:
         """Approve a proposed Company Project. It becomes active. The run pauses for the person to
         confirm the Project by name, ID and version.
@@ -385,8 +409,8 @@ class CompanyTaskTools(Toolkit):
         Args:
             project_name: The Project's name, as stored. The person confirms this name.
             project_id: The proposed Project to approve.
-            updated_at: The Project's updated_at as the person saw it. A Project edited after that is
-                not approved: show it again first.
+            updated_at: The Project's updated_at as the person saw it; null when it has none. A Project
+                edited after that is not approved: show it again first.
         """
         from dataclasses import replace
 
@@ -406,7 +430,7 @@ class CompanyTaskTools(Toolkit):
                 return f"Not done: Project {project_id} is named '{project['name']}'. Call again with that name."
             if project["status"] != "proposed":
                 return f"'{project['name']}' is {project['status']}; only a proposed Project can be approved."
-            if not _same_version(updated_at, project["updated_at"]):
+            if not _same_version(updated_at, project):
                 return (
                     f"Not done: '{project['name']}' (Project {project_id}) changed since the person saw it. "
                     "Show it to them again, then call with its updated_at."
@@ -430,16 +454,16 @@ class CompanyTaskTools(Toolkit):
 
     def accept_company_task(
         self,
-        tasks: List[Dict[str, Any]],
-        executor_type: Optional[str],
-        executor_id: Optional[str],
+        tasks: List[TaskToAccept],
+        executor_type: _OptionalString,
+        executor_id: _OptionalString,
         _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Accept Backlog Company Tasks with one executor. The run pauses for the person to confirm.
 
         Args:
             tasks: The Tasks to accept, each as {"title": the stored title, "task_id": the id,
-                "updated_at": the Task's updated_at as the person saw it}.
+                "updated_at": the Task's updated_at as the person saw it, null when it has none}.
             executor_type: agent, team or workflow.
             executor_id: ID of that component.
         """
@@ -447,9 +471,9 @@ class CompanyTaskTools(Toolkit):
 
     async def aaccept_company_task(
         self,
-        tasks: List[Dict[str, Any]],
-        executor_type: Optional[str],
-        executor_id: Optional[str],
+        tasks: List[TaskToAccept],
+        executor_type: _OptionalString,
+        executor_id: _OptionalString,
         _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Accept Backlog Company Tasks with one executor. They become Ready. The run pauses for the
@@ -465,8 +489,8 @@ class CompanyTaskTools(Toolkit):
 
         Args:
             tasks: The Tasks to accept, each as {"title": the stored title, "task_id": the id,
-                "updated_at": the Task's updated_at as the person saw it}. A Task edited after that is
-                not accepted: show it again first.
+                "updated_at": the Task's updated_at as the person saw it, null when it has none}. A Task
+                edited after that is not accepted: show it again first.
             executor_type: agent, team or workflow.
             executor_id: ID of that component.
         """
@@ -481,25 +505,26 @@ class CompanyTaskTools(Toolkit):
             from fastapi import HTTPException
 
             authority, user_id = self._person(agent_os, _agno_run_context)
-            kind, name = executor_type or None, executor_id or None
+            kind, name = _named(executor_type), _named(executor_id)
             if kind is not None and kind not in ("agent", "team", "workflow"):
                 return "Not done: executor_type is agent, team or workflow."
             if not tasks:
                 return "Not done: name at least one Task."
+            named = [item if isinstance(item, TaskToAccept) else TaskToAccept.model_validate(item) for item in tasks]
             if authority is not None:
                 await authority.arequire("tasks", "write")
             starter = _TaskStarter(agent_os)
             # Nothing is accepted unless every Task is the version the person confirmed, and still a proposal.
             values = []
-            for item in tasks:
-                value = await starter.task(str(item.get("task_id") or ""))
+            for item in named:
+                value = await starter.task(item.task_id)
                 title = value.get("title") or value["id"]
-                if not _same_name(item.get("title"), title):
+                if not _same_name(item.title, title):
                     return f"Not done: Task {value['id']} is titled '{title}'. Call again with that title."
                 if value["status"] != "backlog":
-                    words = _STATUS_WORDS.get(value["status"], value["status"])
+                    words = TASK_STATUS_MEANING.get(value["status"], value["status"])
                     return f"Not done: '{title}' is {words}; only a proposal can be accepted."
-                if not _same_version(item.get("updated_at"), value["updated_at"]):
+                if not _same_version(item.updated_at, value):
                     return (
                         f"Not done: '{title}' (Task {value['id']}) changed since the person saw it. "
                         "Show it to them again, then call with its updated_at."
@@ -559,8 +584,8 @@ class CompanyTaskTools(Toolkit):
         reason: str,
         task_id: str,
         reviewed_run_id: str,
-        executor_type: Optional[str] = None,
-        executor_id: Optional[str] = None,
+        executor_type: _OptionalString = None,
+        executor_id: _OptionalString = None,
         _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Complete a Company Task in review, or send it back. The run pauses for the person to confirm.
@@ -571,8 +596,8 @@ class CompanyTaskTools(Toolkit):
             reason: The person's reason, in their words.
             task_id: The Task in review.
             reviewed_run_id: The run_id returned by get_company_task_status for the result being reviewed.
-            executor_type: agent, when a Task sent back names no executor.
-            executor_id: miniagent, when a Task sent back names no executor.
+            executor_type: Null. Pass agent only to send back a Task that names no executor.
+            executor_id: Null. Pass miniagent only to send back a Task that names no executor.
         """
         return "Reviewing a Task needs an asynchronous run. Review it from AgentOS instead."
 
@@ -583,8 +608,8 @@ class CompanyTaskTools(Toolkit):
         reason: str,
         task_id: str,
         reviewed_run_id: str,
-        executor_type: Optional[str] = None,
-        executor_id: Optional[str] = None,
+        executor_type: _OptionalString = None,
+        executor_id: _OptionalString = None,
         _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Complete a Company Task in review, or send it back. The run pauses for the person to confirm
@@ -602,8 +627,8 @@ class CompanyTaskTools(Toolkit):
             reason: The person's reason, in their words. Required to send a Task back.
             task_id: The Task in review.
             reviewed_run_id: The run_id returned by get_company_task_status for the result being reviewed.
-            executor_type: Leave null. Pass agent only to send back a Task that names no executor.
-            executor_id: Leave null. Pass miniagent only to send back a Task that names no executor.
+            executor_type: Null. Pass agent only to send back a Task that names no executor.
+            executor_id: Null. Pass miniagent only to send back a Task that names no executor.
         """
         from dataclasses import replace
 
@@ -626,7 +651,7 @@ class CompanyTaskTools(Toolkit):
             if not _same_name(task_title, title):
                 return f"Not done: Task {task_id} is titled '{title}'. Call again with that title."
             if value["status"] != "in_review":
-                words = _STATUS_WORDS.get(value["status"], value["status"])
+                words = TASK_STATUS_MEANING.get(value["status"], value["status"])
                 return f"'{title}' is {words}; only a Task in review can be completed or sent back."
             if not reviewed_run_id or value.get("job_id") != reviewed_run_id:
                 return "Not done: the Task's attempt changed. Read its latest result and request a new confirmation."
@@ -635,7 +660,7 @@ class CompanyTaskTools(Toolkit):
                 # A return to Ready is a fresh acceptance of the same executor, or of Mini Agent when the
                 # Task names none. The person confirms the executor, so the call names Mini Agent.
                 kept = (value.get("executor_type"), value.get("executor_id"))
-                named = (executor_type or None, executor_id or None)
+                named = (_named(executor_type), _named(executor_id))
                 if kept[1] is None:
                     kept = ("agent", MINI_AGENT_ID)
                     if named != kept:
@@ -681,8 +706,8 @@ class CompanyTaskTools(Toolkit):
         self,
         routine_name: str,
         product_name: str,
-        default_executor: Optional[str],
-        kept_policy: Optional[str],
+        default_executor: _OptionalString,
+        kept_policy: _OptionalString,
         routine_id: str,
         _agno_run_context: Optional[Any] = None,
     ) -> str:
@@ -701,8 +726,8 @@ class CompanyTaskTools(Toolkit):
         self,
         routine_name: str,
         product_name: str,
-        default_executor: Optional[str],
-        kept_policy: Optional[str],
+        default_executor: _OptionalString,
+        kept_policy: _OptionalString,
         routine_id: str,
         _agno_run_context: Optional[Any] = None,
     ) -> str:
@@ -733,7 +758,9 @@ class CompanyTaskTools(Toolkit):
 
         async def call(agent_os: Any) -> str:
             authority, user_id = self._person(agent_os, _agno_run_context, "turn a Routine's auto-accept on")
-            stored, payload = await self._named_routine(agent_os, routine_id, routine_name, product_name)
+            stored, payload = await self._named_routine(
+                agent_os, authority, user_id, routine_id, routine_name, product_name
+            )
             # A Routine that has a policy keeps it. The defaults are for a Routine with none.
             raw = payload["metadata"].get("auto_accept")
             kept = _stored_policy(raw)[0] if raw else None
@@ -741,7 +768,7 @@ class CompanyTaskTools(Toolkit):
             line = _policy_line(kept) if kept is not None else None
             # A policy a person set is shown on the confirmation before it is kept under this person's
             # name. What the confirmation shows is always the stored policy.
-            shown = (kept_policy or "").strip() or None
+            shown = (_named(kept_policy) or "").strip() or None
             if not (_same_name(shown, line) if shown is not None else line is None or declared):
                 if line is None:
                     return f"Not done: Routine '{stored}' has no policy to keep. Call again with kept_policy null."
@@ -752,7 +779,7 @@ class CompanyTaskTools(Toolkit):
             policy = AutoAccept.model_validate(
                 {
                     **(kept.model_dump() if kept else {}),
-                    **({"default_executor": default_executor} if default_executor else {}),
+                    **({"default_executor": default_executor} if _named(default_executor) else {}),
                 }
             )
             await self._patch_routine(agent_os, authority, user_id, routine_id, policy)
@@ -808,8 +835,21 @@ class CompanyTaskTools(Toolkit):
 
         async def call(agent_os: Any) -> str:
             authority, user_id = self._person(agent_os, _agno_run_context, "turn a Routine's auto-accept off")
-            stored, _ = await self._named_routine(agent_os, routine_id, routine_name, None)
+            stored, _ = await self._named_routine(agent_os, authority, user_id, routine_id, routine_name, None)
             await self._patch_routine(agent_os, authority, user_id, routine_id, False)
             return f"Auto-accept is off for Routine '{stored}' ({routine_id}). Its proposals now wait for a person."
 
         return await self._decide(call)
+
+
+def _receipt(verb: str, title: str, task_id: str, response: Any) -> str:
+    body = json.loads(bytes(response.body)) if response.body else {}
+    if response.status_code != 202:
+        return f"Not {verb.lower()}: {body.get('detail') or 'the run was refused'}"
+    status = body.get("status")
+    run = f"(Task {task_id}, run {body.get('run_id')})"
+    if status in ("PENDING", "QUEUED", None):
+        return f"{verb} '{title}' {run}. It runs in its own session; ask for its status at any time."
+    if status == "RUNNING":
+        return f"'{title}' is already running {run}."
+    return f"'{title}' already has this attempt, now {status} {run}."

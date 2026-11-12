@@ -3373,10 +3373,9 @@ class AsyncPostgresDb(AsyncBaseDb):
         )
 
         if not calculated_dates:
-            log_debug("Metrics already calculated for all relevant dates.")
+            log_debug("Metrics already calculated for all relevant dates.", log_level=2)
             return []
 
-        log_debug("Updated metrics calculations")
         return calculated_dates
 
     def stop_metrics_refresh_on_read(self) -> None:
@@ -8446,7 +8445,7 @@ class AsyncPostgresDb(AsyncBaseDb):
     ) -> Optional[Dict[str, Any]]:
         """Apply a lifecycle transition only if the observed state still matches."""
         from agno.db.schemas.tasks import _acceptance_count, task_transition_fields
-        from agno.db.sql.company import lock_child, lock_product, require_project
+        from agno.db.sql.company import lock_child, lock_product, require_open_room, require_project
 
         table = await self._get_table(table_type="tasks")
         if table is None:
@@ -8461,6 +8460,8 @@ class AsyncPostgresDb(AsyncBaseDb):
                 await sess.run_sync(lock_child, products, projects, table, task_id)
                 if expected_updated_at is _UNSET_UPDATED_AT or products is None:
                     raise ValueError("Automatic acceptance requires expected_updated_at and a Product")
+                if target == "ready":
+                    await sess.run_sync(require_open_room, table, task_id, auto_accept)
                 # A policy with no lifetime count has nothing to compare, so no history is read for it.
                 if "max_acceptances" in auto_accept:
                     prior: Sequence[Optional[List[Dict[str, Any]]]] = (

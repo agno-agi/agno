@@ -176,6 +176,99 @@ def test_manager_cannot_dispatch_for_a_caller_with_only_its_run_scope(db):
     assert all(getattr(session, "agent_id", None) != "restricted" for session in db.get_sessions())
 
 
+@pytest.mark.parametrize("subclass", [False, True])
+def test_slack_serving_the_manager_requires_identity_mapping_under_authorization(db, subclass):
+    pytest.importorskip("slack_bolt")
+    from agno.os import Authorization
+    from agno.os.interfaces.slack import Slack
+
+    class CustomSlack(Slack):
+        pass
+
+    interface_class = CustomSlack if subclass else Slack
+
+    secret = "manager-test-signing-key-at-least-32-characters"
+    os = AgentOS(
+        id="manager-test",
+        db=db,
+        telemetry=False,
+        authorization=Authorization(verification_keys=[secret], algorithm="HS256", audience="manager-test"),
+        manager=OSManager(model=OfflineModel()),
+    )
+    # Without users=, every member of the workspace would run Super Agent with no permission checks
+    os.interfaces.append(interface_class(team=os.manager, token="xoxb-test", signing_secret="slack-secret"))
+    with pytest.raises(ValueError, match="requires Slack identity mapping"):
+        os.get_app()
+
+
+def test_slack_serving_the_manager_requires_identity_mapping_under_a_base_app_jwt_middleware(db):
+    pytest.importorskip("slack_bolt")
+    from fastapi import FastAPI
+
+    from agno.os.interfaces.slack import Slack
+    from agno.os.middleware.jwt import JWTMiddleware
+
+    secret = "manager-test-signing-key-at-least-32-characters"
+    base_app = FastAPI()
+    base_app.add_middleware(JWTMiddleware, verification_keys=[secret], algorithm="HS256", authorization=True)
+    os = AgentOS(id="manager-test", db=db, telemetry=False, base_app=base_app, manager=OSManager(model=OfflineModel()))
+    # The middleware on the base_app checks roles though AgentOS(authorization=...) is unset
+    os.interfaces.append(Slack(team=os.manager, token="xoxb-test", signing_secret="slack-secret"))
+    with pytest.raises(ValueError, match="requires Slack identity mapping"):
+        os.get_app()
+
+
+@pytest.mark.asyncio
+async def test_slack_interfaces_sharing_a_bot_token_post_task_results_once_per_identity_setup(db):
+    pytest.importorskip("slack_bolt")
+    from agno.os.interfaces.slack import Slack
+    from agno.os.interfaces.slack.company import CompanyBridge
+
+    os = AgentOS(id="manager-test", db=db, telemetry=False, manager=OSManager(model=OfflineModel()))
+    first = Slack(team=os.manager, token="xoxb-test", signing_secret="slack-secret")
+    second = Slack(team=os.manager, token="xoxb-test", signing_secret="slack-secret", prefix="/slack2")
+    other_bot = Slack(team=os.manager, token="xoxb-other", signing_secret="slack-secret", prefix="/slack3")
+    os.interfaces.extend([first, second, other_bot])
+    os.get_app()
+    # Every interface keeps the Company bridge that authorizes Super Agent runs
+    assert all(isinstance(interface.company, CompanyBridge) for interface in (first, second, other_bot))
+    for interface in (first, second, other_bot):
+        await interface.astart()
+    try:
+        assert first._task_delivery is not None and other_bot._task_delivery is not None
+        assert second._task_delivery is None
+    finally:
+        for interface in (first, second, other_bot):
+            await interface.aclose()
+
+    # An interface added before get_app runs again joins a token that already delivers
+    late = Slack(team=os.manager, token="xoxb-test", signing_secret="slack-secret", prefix="/slack4")
+    os.interfaces.insert(0, late)
+    os.get_app()
+    assert isinstance(late.company, CompanyBridge) and not late.company.deliver
+    assert [interface.company.deliver for interface in (first, second, other_bot)] == [True, False, True]
+
+    # Interfaces sharing a token with different users= maps own different Tasks, so each posts its own
+    mapped = Slack(
+        team=os.manager, token="xoxb-test", signing_secret="slack-secret", prefix="/slack5", users={"U1": "a"}
+    )
+    remapped = Slack(
+        team=os.manager, token="xoxb-test", signing_secret="slack-secret", prefix="/slack6", users={"U1": "b"}
+    )
+    # The same users= map with resolve_user_identity on also owns different Tasks
+    resolved = Slack(
+        team=os.manager,
+        token="xoxb-test",
+        signing_secret="slack-secret",
+        prefix="/slack7",
+        users={"U1": "a"},
+        resolve_user_identity=True,
+    )
+    os.interfaces.extend([mapped, remapped, resolved])
+    os.get_app()
+    assert mapped.company.deliver and remapped.company.deliver and resolved.company.deliver
+
+
 @pytest.mark.parametrize("service_account", [False, True])
 @pytest.mark.parametrize("admin", [False, True])
 @pytest.mark.parametrize("path", ["/teams/superagent/runs", "/agents/platform-builder/runs"])

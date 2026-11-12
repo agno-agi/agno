@@ -390,6 +390,30 @@ async def _reconcile_task_run(
     return updated is not None
 
 
+async def _another_executor_ran(run_db: Any, task: Dict[str, Any]) -> bool:
+    """Whether the Task's session holds an attempt by a component other than its current executor.
+
+    Every attempt of a Task runs in the Task's one session, and an agent or team reads the session's
+    earlier runs as its own conversation. After a change of executor those runs are another
+    component's answers.
+    """
+    kind, key = task["executor_type"], task["executor_type"] + "_id"
+    page = 1
+    while True:
+        rows, total = await _call(
+            run_db, "get_runs", session_id=task["session_id"], limit=100, page=page, deserialize=False
+        )
+        for row in rows:
+            # A run with a parent belongs to the attempt that started it.
+            if row.get("parent_run_id") is None and (
+                row.get("run_type") != kind or row.get(key) != task["executor_id"]
+            ):
+                return True
+        if page * 100 >= total:
+            return False
+        page += 1
+
+
 async def _enqueue_ticket(worker: Any, job: Dict[str, Any]) -> Dict[str, Any]:
     submission = _task_submission.get()
     if submission is None:
@@ -398,10 +422,16 @@ async def _enqueue_ticket(worker: Any, job: Dict[str, Any]) -> Dict[str, Any]:
     history = task["transitions"]
     if _pending_task_attempt(task) is not None:
         raise ValueError("An existing Task reservation cannot enqueue new work")
+    kwargs = dict(job["payload"].get("kwargs") or {})
+    if submission.get("without_history"):
+        # The new executor starts from the brief. With no earlier messages it also has no stored
+        # provider response of the other component to continue from.
+        kwargs["add_history_to_context"] = False
     job = {
         **job,
         "payload": {
             **job["payload"],
+            **({"kwargs": kwargs} if kwargs else {}),
             "company_task_id": task["id"],
             "company_task_transitions": history,
             "company_task_attempt": submission["attempt"],
@@ -481,10 +511,7 @@ async def _check_task(worker: Any, job: Dict[str, Any]) -> None:
             )
         except PermissionError as exc:
             raise _TaskRunRefused(str(exc)) from exc
-    if isinstance(authority, _ExecutorAuthorization) and (job["component_type"], job["component_id"]) == (
-        "agent",
-        MINI_AGENT_ID,
-    ):
+    if isinstance(authority, _ExecutorAuthorization):
         from agno.os.authz.run_context import restore_authorization
 
         # Starting work must not expand the components its acceptance authorized.
@@ -613,6 +640,14 @@ async def _task_input(manager: Any, task: Dict[str, Any], *, accepted_execution:
     feedback = _review_feedback(task)
     if feedback:
         payload["review_feedback"] = feedback
+        # The result the person answered. The session holds the earlier turns; the result is repeated
+        # so executors without session history still see what the feedback is about.
+        previous = task.get("result") or {}
+        content = previous.get("content")
+        payload["previous_result"] = {
+            "status": previous.get("status"),
+            "content": content[:4000] if isinstance(content, str) else content,
+        }
     # Only the authorized execution route supplies this flag; a Task dictionary
     # or its brief alone does not establish acceptance.
     if accepted_execution:
@@ -624,7 +659,14 @@ async def _task_input(manager: Any, task: Dict[str, Any], *, accepted_execution:
                 "This is execution, not a request to acknowledge or propose the Task. "
                 "Preserve the brief's scope and restrictions; acceptance grants no additional permissions. "
                 "If instructions conflict or the work cannot be completed within those bounds, "
-                "report the precise blocker and what remains undone."
+                "report the precise blocker and what remains undone. "
+                "State what you checked and how. If a person must decide before you can continue, "
+                "end with your recommendation and the one question they need to answer."
+                + (
+                    " This continues the same Task: act on review_feedback, a person's reply to previous_result."
+                    if feedback
+                    else ""
+                )
             ),
         }
     return json.dumps(payload, ensure_ascii=False)
@@ -709,7 +751,7 @@ class _ExecutorAuthorization(RunAuthorization):
     """Attenuate the caller's authority for Company execution and its delegation.
 
     task_id names the accepted Task this run executes. The queue sets it from the claimed job.
-    run_components bounds what Mini Agent may run in that Task: None leaves it to the saved permissions
+    run_components bounds what the run tools may run in that Task: None leaves it to the saved permissions
     of the person who accepted and the starter's permissions, and a list admits only the (type, id) pairs in it.
     acceptance preserves the accepting person's component-run permissions through delegation and resume.
     product_id is the Product of that Task. The queue sets it, and Product-scoped writes and Source reads

@@ -428,13 +428,23 @@ def content_only(row):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stage", STAGES)
-async def test_title_and_brief_edit_at_every_stage_through_manager_and_storage(db, stage, monkeypatch):
+async def test_title_edits_at_every_stage_and_the_manager_edits_a_brief_only_in_backlog(db, stage, monkeypatch):
     m = manager(db)
     task, _ = await task_at(m, stage)
     monkeypatch.setattr(time, "time", lambda: 2_000_000_000)
-    edited = await call(m.update_task, task["id"], title="Retitled", brief="Rewritten")
-    assert (edited["title"], edited["brief"], edited["updated_at"]) == ("Retitled", "Rewritten", 2_000_000_000)
+    if stage == "backlog":
+        edited = await call(m.update_task, task["id"], title="Retitled", brief="Rewritten")
+        assert (edited["title"], edited["brief"], edited["updated_at"]) == ("Retitled", "Rewritten", 2_000_000_000)
+    else:
+        for fields in [{"brief": "Rewritten"}, {"brief": None}, {"title": "Retitled", "brief": "Rewritten"}]:
+            with pytest.raises(ValueError, match="^Accepted task scope requires a return to Backlog$"):
+                await call(m.update_task, task["id"], **fields)
+        assert await call(m.get_task, task["id"]) == task
+        # The stored brief sent with a new title is not a brief edit, however it is spaced.
+        edited = await call(m.update_task, task["id"], title="Retitled", brief=" Body\n")
+        assert (edited["title"], edited["brief"], edited["updated_at"]) == ("Retitled", "Body", 2_000_000_000)
     assert content_only(edited) == content_only(task)
+    # The store writes what it is given; the manager decides what an accepted Task accepts.
     for fields in [{"title": "Storage title"}, {"brief": "Storage brief"}, {"brief": None}]:
         direct = await call(db.update_task, task["id"], **fields)
         assert direct is not None and content_only(direct) == content_only(task)
@@ -454,13 +464,20 @@ async def test_expected_status_makes_the_content_write_conditional(db, stage):
     m = manager(db)
     task, _ = await task_at(m, stage)
     stale = "ready" if stage == "backlog" else "backlog"
-    for write in (m.update_task, db.update_task):
-        assert await call(write, task["id"], expected_status=stale, title="Stale", brief="Stale") is None
-        assert await call(m.get_task, task["id"]) == task
+    assert await call(db.update_task, task["id"], expected_status=stale, title="Stale", brief="Stale") is None
+    assert await call(m.update_task, task["id"], expected_status=stale, title="Stale") is None
+    if stage == "backlog":
+        assert await call(m.update_task, task["id"], expected_status=stale, title="Stale", brief="Stale") is None
+    else:
+        # The manager refuses a brief outside Backlog before the store compares the stage.
+        with pytest.raises(ValueError, match="^Accepted task scope requires a return to Backlog$"):
+            await call(m.update_task, task["id"], expected_status=stale, title="Stale", brief="Stale")
+    assert await call(m.get_task, task["id"]) == task
     assert await call(m.update_task, task["id"], expected_status=stage, title="Fresh") is not None
     assert (await call(m.get_task, task["id"]))["title"] == "Fresh"
     assert (await call(db.update_task, task["id"], expected_status=stage, brief="Direct"))["brief"] == "Direct"
-    assert (await call(m.update_task, task["id"], brief="Human"))["brief"] == "Human"
+    if stage == "backlog":
+        assert (await call(m.update_task, task["id"], brief="Human"))["brief"] == "Human"
 
 
 @pytest.mark.asyncio
@@ -796,3 +813,51 @@ async def test_http_collaborative_work_and_shared_deletion(db, resource, isolati
         assert restored.status_code == 200, restored.text
         assert restored.json()["user_id"] == "alice"
         assert (await client.patch(root + "/missing", json={field: "No"}, headers=headers("bob"))).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_the_store_refuses_an_automatic_acceptance_past_the_routines_open_limit(db):
+    from agno.db.schemas.tasks import OpenTaskLimitError
+
+    m = manager(db)
+    product = await call(m.create, name="SDK")
+    project = await call(m.create_project, product_id=product["id"], name="Release")
+    await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
+    tasks = [
+        await call(
+            m.create_task,
+            product_id=product["id"],
+            title=f"Task {n}",
+            project_id=project["id"],
+            origin="routine",
+            routine_id="routine" if n < 3 else "other-routine",
+        )
+        for n in range(4)
+    ]
+    receipt = {"routine_id": "routine", "policy": "version", "max_open": 1}
+
+    async def accept(task, auto_accept):
+        return await call(
+            db.transition_task,
+            task["id"],
+            "ready",
+            "Authorized Routine proposal",
+            executor_type="agent",
+            executor_id="writer",
+            expected_updated_at=task["updated_at"],
+            auto_accept=auto_accept,
+        )
+
+    first = await accept(tasks[0], receipt)
+    assert first["status"] == "ready" and first["transitions"][-1]["auto_accept"] == receipt
+    with pytest.raises(OpenTaskLimitError, match="^Routine has 1 Tasks open, its limit"):
+        await accept(tasks[1], receipt)
+    assert (await call(db.get_task, tasks[1]["id"]))["status"] == "backlog"
+    # Another Routine's Tasks do not count, and a receipt with no bound is not counted at all.
+    assert (await accept(tasks[3], {**receipt, "routine_id": "other-routine"}))["status"] == "ready"
+    assert (await accept(tasks[2], {"routine_id": "routine", "policy": "version"}))["status"] == "ready"
+    # A finished Task makes room.
+    for target in ("cancelled",):
+        await call(db.transition_task, first["id"], target, "Not needed")
+        await call(db.transition_task, tasks[2]["id"], target, "Not needed")
+    assert (await accept(tasks[1], receipt))["status"] == "ready"

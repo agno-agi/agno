@@ -48,6 +48,9 @@ Proposing work:
 - Every Task belongs to a Project. When none fits, propose a Project first and use its id.
   Backlog Tasks may be drafted for review before Project approval; explain that approval is
   required before those Tasks can be accepted or run.
+- Propose a Project with propose_company_project. Propose a Task with intake_product_source: read the
+  Source, then pass the links you read as evidence_links, each link's content_hash in evidence_hashes, and
+  a proposal_key that stays the same for the same issue on every run.
 - You propose Projects and Tasks. A person or the Routine's policy accepts them. Never say a proposal was
   accepted or run.
 - Base proposals on records and Source links you have read. Say what was observed and what is proposed.
@@ -144,18 +147,20 @@ class _TaskRunTools(StudioRunnerTools):
             raise StudioRunnerError(refusal)
         return super()._inherited_dispatch_state(run_context)
 
-    def _require_no_cycle(
-        self, running: List[str], inherited: List[str], component_type: str, component_id: str
-    ) -> str:
-        from agno.run.authorization import current_authorization
+    def _list_payload(self, component_type: str, key: str, actor: Optional[str] = None) -> str:
+        from agno.company.sandbox import _is_sandboxed
 
-        allowed = getattr(current_authorization(), "run_components", [])
-        if allowed is not None and (component_type, component_id) not in allowed:
-            raise StudioRunnerError(
-                f"The policy that accepted this Task does not allow running {component_type} '{component_id}'. "
-                "Do the work yourself, or report that a person must accept the Task for it to run components."
-            )
-        return super()._require_no_cycle(running, inherited, component_type, component_id)
+        payload = super()._list_payload(component_type, key, actor=actor)
+        if component_type != "agent":
+            return payload
+        sandboxed = {agent.id for agent in self._iter_agents(for_dispatch=True) if _is_sandboxed(agent)}
+        data = json.loads(payload)
+        if not sandboxed or key not in data:
+            return payload
+        listed = [row for row in data[key] if row.get("id") not in sandboxed]
+        data["total"] = data.get("total", len(data[key])) - (len(data[key]) - len(listed))
+        data[key], data["count"] = listed, len(listed)
+        return json.dumps(data)
 
     @staticmethod
     def _run_payload(id_key: str, component_id: str, run_output: Any) -> str:
@@ -233,7 +238,10 @@ class _KindInstructions:
 
 
 def _runnable(agent_os: Any, kind: str) -> Any:
-    """The served components of one kind that Mini Agent may run: never a framework component."""
+    """The served components of one kind that Mini Agent resolves: never a framework component.
+
+    A sandboxed agent is among them so that its ID and name resolve to a refusal that says how to run it.
+    """
     from agno.agents.base import BaseExternalAgent
     from agno.utils.live_sequence import LiveSequence
 
@@ -269,7 +277,16 @@ def _build_mini_agent(agent_os: Any, model: Any) -> Optional[Agent]:
         agent_os.registry = Registry()
     catalog = agent_os.db if isinstance(agent_os.db, BaseDb) and not isinstance(agent_os.db, AsyncBaseDb) else None
     tools = _KindTools(
-        routine=[CompanyTools(db, user_isolation=isolation, decision_tools=False, interfaces=agent_os.interfaces)],
+        routine=[
+            CompanyTools(
+                db,
+                user_isolation=isolation,
+                decision_tools=False,
+                interfaces=agent_os.interfaces,
+                # A Routine proposes a Task with intake_product_source.
+                exclude_tools=["propose_company_task"],
+            )
+        ],
         task=[
             CompanyTools(
                 db,
