@@ -895,6 +895,23 @@ class TestStop:
         client.chat_postEphemeral.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_thread_stop_continues_past_a_stream_that_fails_to_stop(self):
+        ctx = make_ctx(agent=make_streaming_entity(), streaming=True)
+        first = make_message_event_context(ctx, ts="100.1")
+        second = make_message_event_context(ctx, ts="100.2", thread_ts="100.1")
+        for event_context in (first, second):
+            ctx.runs.register(event_context)
+            ctx.runs.mark_started(event_context.run_id)
+        ctx.runs.set_stream(first.run_id, Mock(ended=True, stop=AsyncMock(side_effect=slack_error("ratelimited"))))
+        with (
+            patch.object(executor, "cancel_component_run", AsyncMock()) as cancel,
+            patch.object(executor, "log_error"),
+        ):
+            await stop_runs(ctx, make_client(), "U123", "C123", "100.1", [])
+        assert first.stopped and second.stopped
+        assert [c.args[1] for c in cancel.call_args_list] == [first.run_id, second.run_id]
+
+    @pytest.mark.asyncio
     async def test_paused_run_with_a_decision_in_flight_is_stopped_live(self):
         entity = make_streaming_entity()
         ctx = make_ctx(agent=entity, streaming=True)

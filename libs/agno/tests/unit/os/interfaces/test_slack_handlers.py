@@ -54,6 +54,15 @@ def test_should_process(event, expected):
     assert should_process(event, ctx) is expected
 
 
+def test_should_process_logs_why_an_event_is_skipped():
+    ctx = make_ctx()
+    ctx.bot_id, ctx.bot_user_id = BOT_ID, BOT_USER_ID
+    with patch("agno.os.interfaces.slack.handlers.log_debug") as debug:
+        assert should_process({"type": "message", "bot_id": "B_OTHER", "text": "other app"}, ctx) is False
+    debug.assert_called_once()
+    assert debug.call_args.args[0].startswith("Slack event skipped: another app's message")
+
+
 def test_should_process_other_apps_when_opted_in():
     ctx = make_ctx(respond_to_other_apps=True)
     ctx.bot_id, ctx.bot_user_id = BOT_ID, BOT_USER_ID
@@ -221,6 +230,15 @@ async def test_handle_message_unmapped_user_gets_one_ephemeral_for_the_mention_a
         await asyncio.gather(handle_message(mention, client, ctx), handle_message(message, client, ctx))
     assert not run_event.called
     assert client.chat_postEphemeral.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_handle_message_stopped_before_the_other_delivery_does_not_run():
+    ctx = make_ctx()
+    ctx.runs.record_stop(new_event_context(make_event_body(event_type="app_mention", event_id="Ev1"), ctx).run_id)
+    with patch(f"{_EXECUTOR}.run_event", new_callable=AsyncMock) as run_event:
+        await handle_message(make_event_body(event_type="message", event_id="Ev2"), make_async_client_mock(), ctx)
+    assert not run_event.called
 
 
 @pytest.mark.asyncio

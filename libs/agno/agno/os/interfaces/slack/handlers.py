@@ -10,7 +10,7 @@ from agno.os.interfaces.slack.helpers import (
     should_respond,
 )
 from agno.os.interfaces.slack.security import authorize_run
-from agno.utils.log import log_warning
+from agno.utils.log import log_debug, log_warning
 
 _NOT_LINKED_MESSAGE = "Your Slack account is not linked to an account on this AgentOS."
 
@@ -35,16 +35,20 @@ def should_process(event: Dict[str, Any], ctx: SlackContext) -> bool:
     is_bot = raw["bot_id"] or subtype == "bot_message"
 
     if subtype in _IGNORED_SUBTYPES:
+        log_debug(f"Slack event skipped: ignored subtype {subtype}")
         return False
 
     # Skip own messages (bot_id for bot posts, user for as_user posts)
     if ctx.bot_id and raw["bot_id"] == ctx.bot_id:
+        log_debug("Slack event skipped: own message")
         return False
     if ctx.bot_user_id and raw["user"] == ctx.bot_user_id:
+        log_debug("Slack event skipped: own message")
         return False
 
     # Skip bot messages unless opted in; without the bot's own ids its replies look like another app's
     if is_bot and (not ctx.respond_to_other_apps or not (ctx.bot_id or ctx.bot_user_id)):
+        log_debug("Slack event skipped: another app's message")
         return False
 
     return True
@@ -71,8 +75,9 @@ async def handle_message(payload: Dict[str, Any], client: Any, ctx: SlackContext
     if not should_process(event, ctx) or not should_respond(event, ctx.reply_to_mentions_only):
         return
     event_context = new_event_context(payload, ctx)
-    if ctx.runs.find_run(event_context.run_id) is not None:
-        # The same message is already being answered (app_mention + message, or a redelivery)
+    # The same message is already being answered (app_mention + message, or a redelivery),
+    # or was stopped before its other delivery arrived
+    if ctx.runs.find_run(event_context.run_id) is not None or ctx.runs.was_stopped(event_context.run_id):
         return
     # Registered before the first await, so an early Stop finds the run
     ctx.runs.register(event_context)

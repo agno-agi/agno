@@ -891,6 +891,10 @@ async def _stop_live(event_context: "EventContext", client: Any, ctx: "SlackCont
     stream = ctx.runs.stream_for(event_context.run_id)
     # A run without a stream ends its own status: the executor clears it before or after the entity run
     if stream is not None:
-        await stream.stop(markdown_text=None if own_message else f"\n{STOPPED_TEXT}")
+        try:
+            await stream.stop(markdown_text=None if own_message else f"\n{STOPPED_TEXT}")
+        except Exception as e:
+            # The message is ended either way; the other runs of a thread-wide Stop still stop
+            log_error(f"Failed to stop Slack stream for run {event_context.run_id}: {str(e)}")
         if not stream.ended:
             await clear_status(client, event_context.channel, event_context.thread_ts)
