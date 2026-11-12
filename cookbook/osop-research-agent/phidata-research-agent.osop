@@ -1,0 +1,61 @@
+# Phidata Agent Workflow in OSOP Format
+osop_version: "1.0"
+id: phidata-research-agent
+name: Phidata Research Agent Workflow
+description: A multi-step research agent with web search, analysis, and report generation.
+tags: [phidata, agent, research, web-search]
+
+nodes:
+  - id: user-request
+    type: human
+    name: User Request
+    description: User provides a research topic or question.
+
+  - id: web-search
+    type: agent
+    name: Web Search Agent
+    description: Search the web for relevant information on the topic.
+    runtime:
+      provider: openai
+      model: gpt-4
+      config:
+        tools: [duckduckgo_search, newspaper_reader]
+
+  - id: analyze
+    type: agent
+    name: Analysis Agent
+    description: Analyze search results and extract key insights.
+    runtime:
+      provider: openai
+      model: gpt-4
+      config:
+        temperature: 0.2
+
+  - id: generate-report
+    type: agent
+    name: Report Generator
+    description: Compile findings into a structured research report.
+    runtime:
+      provider: openai
+      model: gpt-4
+      config:
+        temperature: 0.5
+
+  - id: deliver
+    type: api
+    name: Deliver Report
+    description: Save and deliver the final report.
+
+edges:
+  - from: user-request
+    to: web-search
+    mode: sequential
+  - from: web-search
+    to: analyze
+    mode: sequential
+  - from: analyze
+    to: generate-report
+    mode: sequential
+  - from: generate-report
+    to: deliver
+    mode: sequential
