@@ -77,6 +77,8 @@ backend and namespace, it is one entry with that agent in `agents`.
   `filesystem:read`, also when an agent holds the same backend and namespace.
 - The namespace may be literal or use `{user_id}`. AgentOS refuses `{agent_id}` and
   `{team_id}` at startup: the OS has no agent or team to fill them from.
+- AgentOS also refuses at startup two filesystems passed to it with the same
+  namespace on different backends: a request by namespace could not choose one.
 - `user_scoped` follows the same rule as on an agent: unset, it takes the
   `user_isolation` setting of the OS, and each caller browses their own partition.
 - With no `agent_id`, a namespace the OS holds is the OS's filesystem, also when an

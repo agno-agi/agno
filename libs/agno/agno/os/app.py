@@ -1307,13 +1307,24 @@ class AgentOS:
 
         Raises:
             TypeError: If an entry is not a FileSystem.
-            ValueError: If a namespace uses a placeholder the OS cannot bind.
+            ValueError: If a namespace uses a placeholder the OS cannot bind, or two entries
+                use one namespace on different backends.
         """
         from agno.fs import FileSystem
+        from agno.os.routers.filesystem.utils import _filesystem_backend_key
 
+        backends: Dict[str, tuple] = {}
         for filesystem in self.filesystems or []:
             if not isinstance(filesystem, FileSystem):
                 raise TypeError(f"AgentOS.filesystems takes FileSystem instances, got {type(filesystem).__name__}")
+            # The routes address a file system the OS holds by namespace alone.
+            backend = _filesystem_backend_key(filesystem)
+            if backends.setdefault(filesystem.namespace, backend) != backend:
+                raise ValueError(
+                    f"AgentOS holds two file systems with namespace {filesystem.namespace!r} on different "
+                    "backends, and a request by namespace cannot choose between them. "
+                    "Give each file system passed to AgentOS(filesystems=[...]) its own namespace."
+                )
             unbindable = [name for name in filesystem._placeholders if name != "user_id"]
             if unbindable:
                 placeholder = "{" + unbindable[0] + "}"

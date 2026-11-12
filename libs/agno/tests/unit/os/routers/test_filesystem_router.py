@@ -1050,6 +1050,22 @@ def test_os_refuses_at_startup_a_namespace_it_cannot_bind(db, namespace, placeho
     assert "AgentOS(filesystems=[...])" in message
 
 
+def test_os_refuses_at_startup_one_namespace_on_two_backends(tmp_path, db):
+    from agno.fs.local import LocalFileSystem
+
+    in_db = FileSystem(db, namespace="Shared-Notes")
+    on_disk = FileSystem(backend=LocalFileSystem(root=str(tmp_path / "files")), namespace="shared-notes")
+
+    with pytest.raises(ValueError, match="two file systems with namespace 'shared-notes' on different backends"):
+        AgentOS(id=OS_ID, db=db, filesystems=[in_db, on_disk])
+
+    # One store named twice, and two namespaces on two backends, are both served.
+    again = FileSystem(db, namespace="shared-notes", read_only=True)
+    other = FileSystem(backend=LocalFileSystem(root=str(tmp_path / "files")), namespace="other-notes")
+    accepted = AgentOS(id=OS_ID, db=db, filesystems=[in_db, again, other])
+    assert len(accepted.filesystems or []) == 3
+
+
 def test_os_accepts_literal_and_user_namespaces_and_refuses_other_objects(db):
     accepted = AgentOS(
         id=OS_ID,
