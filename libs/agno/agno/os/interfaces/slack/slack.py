@@ -1,3 +1,5 @@
+import asyncio
+from os import getenv
 from ssl import SSLContext
 from typing import Dict, List, Optional, Union
 
@@ -5,7 +7,7 @@ from fastapi.routing import APIRouter
 
 from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.base import BaseInterface
-from agno.os.interfaces.slack.router import attach_routes
+from agno.os.interfaces.slack.router import attach_routes, build_handlers
 from agno.team import RemoteTeam, Team
 from agno.workflow import RemoteWorkflow, Workflow
 
@@ -93,3 +95,66 @@ class Slack(BaseInterface):
         )
 
         return self.router
+
+    async def astart_socket_mode(self, app_token: Optional[str] = None) -> None:
+        """Run this interface over Slack Socket Mode until cancelled.
+
+        The app-level token (xapp-...) comes from ``app_token``, then ``SLACK_APP_TOKEN``; the bot
+        token and every other setting are the ones this interface already holds.
+        """
+        app_token = app_token or getenv("SLACK_APP_TOKEN")
+        if not app_token:
+            raise ValueError(
+                "Slack Socket Mode requires an app-level token: pass app_token='xapp-...' or set SLACK_APP_TOKEN"
+            )
+
+        try:
+            from agno.os.interfaces.slack.socket_mode import run_socket_mode
+        except ImportError as e:
+            raise ImportError(
+                "Slack dependencies not installed. Please install using `pip install 'agno[slack]'`"
+            ) from e
+
+        # build_handlers calls auth.test synchronously (the HTTP path pays that at mount time,
+        # before any loop exists); off the loop here so an embedding loop is not stalled.
+        event_handler, hitl, event_dedupe = await asyncio.to_thread(
+            build_handlers,
+            agent=self.agent,
+            team=self.team,
+            workflow=self.workflow,
+            reply_to_mentions_only=self.reply_to_mentions_only,
+            token=self.token,
+            loading_messages=self.loading_messages,
+            task_display_mode=self.task_display_mode,
+            loading_text=self.loading_text,
+            suggested_prompts=self.suggested_prompts,
+            ssl=self.ssl,
+            buffer_size=self.buffer_size,
+            max_file_size=self.max_file_size,
+            resolve_user_identity=self.resolve_user_identity,
+            respond_to_other_apps=self.respond_to_other_apps,
+            markdown=self.markdown,
+            unfurl_links=self.unfurl_links,
+            unfurl_media=self.unfurl_media,
+        )
+        await run_socket_mode(
+            app_token,
+            event_handler=event_handler,
+            hitl=hitl,
+            event_dedupe=event_dedupe,
+            streaming=self.streaming,
+            ssl=self.ssl,
+        )
+
+    def start_socket_mode(self, app_token: Optional[str] = None) -> None:
+        """Blocking twin of ``astart_socket_mode`` for scripts that have no event loop."""
+        # Checked before the coroutine is created so a rejected call leaves nothing unawaited.
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError(
+                "start_socket_mode() cannot be called from a running event loop; await astart_socket_mode() instead"
+            )
+        asyncio.run(self.astart_socket_mode(app_token))
