@@ -317,6 +317,27 @@ class TestInstances:
             crossed = make_signed_request(client, make_event_body(event_id="Ev3"), "secret-one", path="/two/events")
         assert (ok_one.status_code, ok_two.status_code, crossed.status_code) == (200, 200, 403)
 
+    def test_access_settings_set_after_construction_reach_the_handlers(self):
+        slack = Slack(agent=make_agent_mock(), token=TOKEN, signing_secret=SIGNING_SECRET)
+        runs = slack.ctx.runs
+        # AgentOS checks slack.users at startup, so the handlers must see the same map
+        slack.users = {"U123": "alice"}
+        slack.approvers = ["U456"]
+        slack.markdown = False
+        slack.get_router()
+        assert (slack.ctx.users, slack.ctx.approvers, slack.ctx.markdown) == ({"U123": "alice"}, ["U456"], False)
+        assert slack.ctx.runs is runs
+        # A new signing secret rebuilds Bolt and re-reads the bot ids; a new agent serves the next events
+        bolt_app = slack.ctx.bolt_app
+        slack.ctx.bot_id, slack.ctx.bot_user_id = "B123", "U999"
+        slack.signing_secret = "rotated-secret"
+        slack.agent = make_agent_mock()
+        slack.get_router()
+        assert slack.ctx.bolt_app is not bolt_app
+        assert (slack.ctx.bot_id, slack.ctx.bot_user_id) == (None, None)
+        assert slack.ctx.entity is slack.agent
+        assert slack.ctx.runs is runs
+
     def test_get_router_twice_reuses_one_bolt_app(self, handlers):
         slack = Slack(agent=make_agent_mock(), token=TOKEN, signing_secret=SIGNING_SECRET)
         slack.get_router()

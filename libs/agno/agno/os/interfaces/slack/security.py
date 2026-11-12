@@ -43,8 +43,8 @@ async def can_act(ctx: "SlackContext", user: str, event_context: "EventContext",
 
 
 async def resolve_principal_authorization(app: Any, principal_id: str, resource: str, resource_id: str) -> Any:
-    """The platform authority of a mapped Slack user, refused when disabled or not allowed to run the entity."""
-    from agno.os.auth import resolve_authorization_provider
+    """A mapped Slack user's authority, None with authorization off. Raises PermissionError if disabled or denied."""
+    from agno.os.auth import _has_authorization_middleware, resolve_authorization_provider
     from agno.os.authz.provider import AuthorizationContext
     from agno.run.authorization import RunAuthorization
 
@@ -62,6 +62,10 @@ async def resolve_principal_authorization(app: Any, principal_id: str, resource:
             disabled = fail_closed
         if disabled:
             raise PermissionError("User is disabled")
+    # The user directory applies on its own, as over HTTP; roles only under AgentOS authorization.
+    # The middleware is checked here too: one added after get_app() is not in the flag
+    if not (getattr(state, "authorization_enabled", False) or _has_authorization_middleware(app)):
+        return None
     # Roles are resolved fresh on every check, so a revoked grant applies to the next message
     authority = RunAuthorization(
         resolve_authorization_provider(app),

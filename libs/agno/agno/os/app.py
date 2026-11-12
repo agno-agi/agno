@@ -2398,6 +2398,10 @@ class AgentOS:
         # agno cannot amend. Fail fast (with the exact paths) rather than 401 connector
         # discovery. (Only agno's own AuthMiddleware is inspected; see the method docstring.)
         self._check_mcp_auth_middleware_composition(fastapi_app)
+        # Interfaces that verify their own requests (Slack) skip the auth middleware and read this flag
+        from agno.os.auth import _has_authorization_middleware
+
+        fastapi_app.state.authorization_enabled = bool(self.authorization) or _has_authorization_middleware(fastapi_app)
 
         from agno.os.authz.run_context import RunAuthorizationMiddleware
 

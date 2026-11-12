@@ -1,3 +1,4 @@
+from dataclasses import fields
 from ssl import SSLContext
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
@@ -14,6 +15,20 @@ from agno.workflow import RemoteWorkflow, Workflow
 
 if TYPE_CHECKING:
     from agno.os.interfaces.slack.company import TaskDelivery
+
+# SlackContext fields that hold the interface's state rather than a Slack(...) setting
+_RUNTIME_FIELDS = {
+    "runs",
+    "company",
+    "lookup_cache",
+    "bot_names",
+    "dedupe",
+    "failing",
+    "bot_id",
+    "bot_user_id",
+    "bolt_app",
+    "app",
+}
 
 
 class Slack(BaseInterface):
@@ -106,29 +121,7 @@ class Slack(BaseInterface):
         if not (self.agent or self.team or self.workflow):
             raise ValueError("Slack requires an agent, team, or workflow")
 
-        self.ctx: SlackContext = build_context(
-            agent=agent,
-            team=team,
-            workflow=workflow,
-            token=token,
-            signing_secret=signing_secret,
-            reply_to_mentions_only=reply_to_mentions_only,
-            streaming=streaming,
-            loading_messages=loading_messages,
-            task_display_mode=task_display_mode,
-            loading_text=loading_text,
-            suggested_prompts=suggested_prompts,
-            ssl=ssl,
-            buffer_size=buffer_size,
-            max_file_size=max_file_size,
-            resolve_user_identity=resolve_user_identity,
-            respond_to_other_apps=respond_to_other_apps,
-            markdown=markdown,
-            unfurl_links=unfurl_links,
-            unfurl_media=unfurl_media,
-            approvers=approvers,
-            users=users,
-        )
+        self.ctx: SlackContext = self._build_context()
         self._task_delivery: Optional["TaskDelivery"] = None
         self._closed = False
 
@@ -140,7 +133,40 @@ class Slack(BaseInterface):
     def company(self, company: Any) -> None:
         self.ctx.company = company
 
+    def _build_context(self) -> SlackContext:
+        return build_context(
+            agent=self.agent,
+            team=self.team,
+            workflow=self.workflow,
+            token=self.token,
+            signing_secret=self.signing_secret,
+            reply_to_mentions_only=self.reply_to_mentions_only,
+            streaming=self.streaming,
+            loading_messages=self.loading_messages,
+            task_display_mode=self.task_display_mode,
+            loading_text=self.loading_text,
+            suggested_prompts=self.suggested_prompts,
+            ssl=self.ssl,
+            buffer_size=self.buffer_size,
+            max_file_size=self.max_file_size,
+            resolve_user_identity=self.resolve_user_identity,
+            respond_to_other_apps=self.respond_to_other_apps,
+            markdown=self.markdown,
+            unfurl_links=self.unfurl_links,
+            unfurl_media=self.unfurl_media,
+            approvers=self.approvers,
+            users=self.users,
+        )
+
     def get_router(self, use_async: bool = True, **kwargs) -> APIRouter:
+        # Settings are read when the router is built; the runs, caches and Bolt app are kept
+        settings = self._build_context()
+        # Bolt and the bot ids were built from the old credentials, so attach_routes rebuilds them
+        if any(getattr(settings, name) != getattr(self.ctx, name) for name in ("token", "signing_secret", "ssl")):
+            self.ctx.bolt_app = self.ctx.bot_id = self.ctx.bot_user_id = None
+        for setting in fields(SlackContext):
+            if setting.name not in _RUNTIME_FIELDS:
+                setattr(self.ctx, setting.name, getattr(settings, setting.name))
         self.router = attach_routes(
             router=APIRouter(prefix=self.prefix, tags=self.tags),  # type: ignore
             context=self.ctx,

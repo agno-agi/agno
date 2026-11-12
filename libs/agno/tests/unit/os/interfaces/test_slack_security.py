@@ -6,12 +6,33 @@ import pytest
 
 pytest.importorskip("slack_bolt", reason="slack_bolt not installed")
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from agno.agent import Agent
+from agno.os import AgentOS
+from agno.os.authz import Authorization
 from agno.os.interfaces.slack import Slack
-from agno.os.interfaces.slack.security import can_act, resolve_signing_secret, resolve_token
+from agno.os.interfaces.slack.security import (
+    can_act,
+    resolve_principal_authorization,
+    resolve_signing_secret,
+    resolve_token,
+)
+from agno.os.middleware.jwt import JWTMiddleware
 
-from .conftest import TOKEN, build_app, make_agent_mock, make_ctx, make_event_body, make_event_context, sign
+from .conftest import (
+    SIGNING_SECRET,
+    TOKEN,
+    build_app,
+    make_agent_mock,
+    make_ctx,
+    make_event_body,
+    make_event_context,
+    sign,
+)
+
+JWT_KEY = "slack-security-jwt-verification-key-at-least-32-chars"
 
 
 class TestCredentials:
@@ -103,3 +124,63 @@ class TestCanAct:
             return_value={"user": {"id": "U9", "profile": {"email": "someone@example.com"}}}
         )
         assert await can_act(ctx, "U9", event_context, client=async_client_mock) is False
+
+
+class TestResolvePrincipalAuthorization:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("authorization", [False, True])
+    async def test_mapped_user_is_authorized_only_under_agentos_authorization(self, authorization):
+        agent_os = AgentOS(
+            id="slack-security",
+            agents=[Agent(id="agent-1")],
+            telemetry=False,
+            authorization=Authorization(verification_keys=[JWT_KEY], algorithm="HS256") if authorization else None,
+        )
+        app = agent_os.get_app()
+        if authorization:
+            # Slack requests carry no token, so a principal without a role is refused
+            with pytest.raises(PermissionError):
+                await resolve_principal_authorization(app, "alice", "agents", "agent-1")
+        else:
+            assert await resolve_principal_authorization(app, "alice", "agents", "agent-1") is None
+
+    @pytest.mark.asyncio
+    async def test_mapped_user_is_authorized_under_base_app_jwt_middleware(self):
+        base_app = FastAPI()
+        base_app.add_middleware(JWTMiddleware, verification_keys=[JWT_KEY], algorithm="HS256", authorization=True)
+        agent = Agent(id="agent-1")
+        agent_os = AgentOS(
+            id="slack-security",
+            agents=[agent],
+            telemetry=False,
+            base_app=base_app,
+            interfaces=[Slack(agent=agent, token=TOKEN, signing_secret=SIGNING_SECRET, users={"U1": "alice"})],
+        )
+        app = agent_os.get_app()
+        # A principal without a role is refused, as the middleware refuses it over HTTP
+        with pytest.raises(PermissionError):
+            await resolve_principal_authorization(app, "alice", "agents", "agent-1")
+
+    @pytest.mark.asyncio
+    async def test_mapped_user_is_authorized_under_jwt_middleware_added_after_get_app(self):
+        agent = Agent(id="agent-1")
+        agent_os = AgentOS(
+            id="slack-security",
+            agents=[agent],
+            telemetry=False,
+            interfaces=[Slack(agent=agent, token=TOKEN, signing_secret=SIGNING_SECRET, users={"U1": "alice"})],
+        )
+        app = agent_os.get_app()
+        # The documented pattern adds the middleware after get_app(), so the app flag is unset
+        app.add_middleware(JWTMiddleware, verification_keys=[JWT_KEY], algorithm="HS256", authorization=True)
+        with pytest.raises(PermissionError):
+            await resolve_principal_authorization(app, "alice", "agents", "agent-1")
+
+    @pytest.mark.asyncio
+    async def test_disabled_user_is_refused_with_authorization_off(self):
+        app = FastAPI()
+        # The user directory applies without authorization, as the HTTP middleware applies it
+        app.state.user_store = AsyncMock()
+        app.state.user_store.ais_disabled = AsyncMock(return_value=True)
+        with pytest.raises(PermissionError, match="User is disabled"):
+            await resolve_principal_authorization(app, "alice", "agents", "agent-1")

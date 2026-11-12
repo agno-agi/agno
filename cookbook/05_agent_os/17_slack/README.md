@@ -257,7 +257,11 @@ export SLACK_APPROVER_ID="U..."
   not linked, and a disabled principal is refused. Slack requests carry no
   AgentOS token, so grants come from managed roles
   (`Authorization.define_role` and `assign`) or a provider that decides by
-  principal; JWT scopes alone grant a mapped user nothing.
+  principal; JWT scopes alone grant a mapped user nothing. Without
+  `authorization=True`, the map sets each run's `user_id` and refuses only
+  disabled users. A `JWTMiddleware` you add yourself, on a `base_app` or after
+  `get_app()`, must list `/slack/events` and `/slack/interactions` in its
+  `excluded_route_paths`.
 
 ## Workspace Search Action
 
