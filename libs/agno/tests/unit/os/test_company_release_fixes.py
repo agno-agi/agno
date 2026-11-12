@@ -954,39 +954,40 @@ def test_one_task_filling_its_folder_does_not_refuse_another_tasks_write(system,
 
 
 @pytest.mark.parametrize("use_async", [False, True])
-def test_task_files_stored_before_each_task_had_its_own_folder_stay_readable(system, use_async):
+def test_a_task_file_is_not_overwritten_by_a_writer_who_read_an_older_version(system, use_async):
+    from agno.fs.errors import VersionConflictError
+
+    ids, files = task_files(system)
+    path = f"tasks/{ids['task']}/report.md"
+    assert tree_call(files, "write_company_file", None, use_async, path=path, content="First")["version"] == 1
+    # Two runs read version 1. The first to write wins, and the second is told the file changed.
+    second = tree_call(files, "write_company_file", None, use_async, path=path, content="Second", expected_version=1)
+    assert second["version"] == 2
+    with pytest.raises(VersionConflictError):
+        tree_call(files, "write_company_file", None, use_async, path=path, content="Stale", expected_version=1)
+    # A create-only write does not replace a file that exists.
+    with pytest.raises(VersionConflictError):
+        tree_call(files, "write_company_file", None, use_async, path=path, content="New", expected_version=0)
+    assert tree_call(files, "read_company_file", None, use_async, path=path)["content"] == "Second"
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_a_tasks_folder_holds_only_the_files_in_its_own_namespace(system, use_async):
     from agno.fs import FileSystem
 
     ids, files = task_files(system)
     folder = f"tasks/{ids['task']}"
-    # A file as it was stored when every Task shared one namespace.
-    shared = FileSystem(system.db, namespace="company/tasks", user_scoped=False)
-    shared.write(f"{ids['task']}/given.md", "Material from the older layout")
-    shared.write(f"{ids['task']}/data/rows.csv", "a,b")
-
-    read = tree_call(files, "read_company_file", None, use_async, path=f"{folder}/given.md")
-    assert read["content"] == "Material from the older layout" and read["version"] == 1
-    listed = tree_call(files, "list_company_files", None, use_async, folder=folder)
-    assert sorted(row["path"] for row in listed["files"]) == [f"{folder}/data/rows.csv", f"{folder}/given.md"]
+    # One namespace for every Task never shipped, so nothing is read from it.
+    FileSystem(system.db, namespace="company/tasks", user_scoped=False).write(f"{ids['task']}/given.md", "Stray text")
+    assert tree_call(files, "read_company_file", None, use_async, path=f"{folder}/given.md")["exists"] is False
+    assert tree_call(files, "list_company_files", None, use_async, folder=folder)["files"] == []
     for searched in (folder, "tasks", None):
-        found = tree_call(files, "search_company_files", None, use_async, query="older layout", folder=searched)
-        assert [match["path"] for match in found["matches"]] == [f"{folder}/given.md"], searched
-
-    # A new file sits next to it, and the older file is replaced at the version that was read.
-    tree_call(files, "write_company_file", None, use_async, path=f"{folder}/report.md", content="The report")
-    replaced = tree_call(
-        files, "write_company_file", None, use_async, path=f"{folder}/given.md", content="Revised", expected_version=1
+        found = tree_call(files, "search_company_files", None, use_async, query="Stray text", folder=searched)
+        assert found["matches"] == [], searched
+    created = tree_call(
+        files, "write_company_file", None, use_async, path=f"{folder}/given.md", content="Given", expected_version=0
     )
-    assert replaced["path"] == f"{folder}/given.md"
-    assert tree_call(files, "read_company_file", None, use_async, path=f"{folder}/given.md")["content"] == "Revised"
-    listed = tree_call(files, "list_company_files", None, use_async, folder=folder)
-    assert sorted(row["path"] for row in listed["files"]) == [
-        f"{folder}/data/rows.csv",
-        f"{folder}/given.md",
-        f"{folder}/report.md",
-    ]
-    # The older file itself is not removed or rewritten.
-    assert shared.read(f"{ids['task']}/given.md") == "Material from the older layout"
+    assert created["version"] == 1
 
 
 @pytest.mark.parametrize("use_async", [False, True])
@@ -996,7 +997,8 @@ def test_listing_tasks_names_each_tasks_folder(system, use_async):
     listed = tree_call(files, "list_company_files", None, use_async, folder="tasks")
     folders = {row["folder"]: row for row in listed["folders"]}
     assert {f"tasks/{ids['task']}/", f"tasks/{ids['stray']}/"} <= set(folders) and listed["total"] == len(folders)
-    assert folders[f"tasks/{ids['task']}/"]["title"] == "Notes"
+    # The listing gives the folder of every Task, and no Task's title.
+    assert all(set(row) == {"folder"} for row in listed["folders"])
     again = tree_call(files, "list_company_files", None, use_async, folder=f"tasks/{ids['task']}/")
     assert [row["path"] for row in again["files"]] == [f"tasks/{ids['task']}/report.md"]
 

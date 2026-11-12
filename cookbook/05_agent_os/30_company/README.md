@@ -297,8 +297,7 @@ name a folder, `products/<product-id>` or `tasks/<task-id>`, to search another.
 A file holds at most 1 MB. `wiki/`, each Product, each Task and `notes/` hold
 20 MB each. A Task's folder is its own space: a Task that fills its folder does not
 stop another Task's writes. Nothing removes a Task's files, not even archiving the
-Task, because an archived Task can be restored. Task files written before each
-Task had its own folder are still read, listed and searched. There are no API
+Task, because an archived Task can be restored. There are no API
 routes for `tasks/` and `notes/`, and no tool appends to, moves or deletes a file
 outside `notes/`.
 
