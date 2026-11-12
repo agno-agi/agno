@@ -1,7 +1,6 @@
 import asyncio
-import time
 from typing import Any, Dict, Optional
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from slack_sdk.errors import SlackApiError
@@ -116,6 +115,30 @@ class TestCharBudget:
         # Each cut falls on a space, so no message ends inside a cluster
         assert all(t[len(_CONTINUED_PREFIX) :].startswith(" ") for t in fake.texts()[1:])
 
+    @pytest.mark.asyncio
+    async def test_code_block_cut_by_the_budget_keeps_its_fence(self):
+        fake = FakeSlack()
+        code = "\n".join(f"# step {i}\nvalue = {i}" for i in range(800))
+        text = f"Here is the script:\n```python\n{code}\n```\nDone."
+        await deliver(fake, text)
+        texts = fake.texts()
+        assert len(texts) == 2
+        assert texts[0].endswith("\n```")
+        assert texts[1].startswith(_CONTINUED_PREFIX + "```\n")
+        assert all(len(t) <= _STREAM_CHAR_BUDGET for t in texts)
+        assert texts[0][: -len("\n```")] + texts[1][len(_CONTINUED_PREFIX + "```\n") :] == text
+
+    @pytest.mark.asyncio
+    async def test_text_without_fences_is_cut_unchanged(self):
+        fake = FakeSlack()
+        text = "\n".join(f"# step {i}\nvalue = {i}" for i in range(800))
+        await deliver(fake, text)
+        texts = fake.texts()
+        assert len(texts) == 2
+        assert not texts[0].endswith("```")
+        assert texts[1].startswith(_CONTINUED_PREFIX + "\n")
+        assert fake.joined() == text
+
 
 class TestCards:
     @pytest.mark.asyncio
@@ -131,6 +154,29 @@ class TestCards:
         assert fake.msgs["900.1"]["cards"]["open"] == ("long tool: continued below", "complete")
         assert fake.msgs["900.1"]["status"] == "processing"
         assert fake.msgs["900.2"]["cards"]["open"] == ("long tool", "complete")
+
+    @pytest.mark.asyncio
+    async def test_card_updates_past_the_limit_do_not_rotate_again(self):
+        fake = FakeSlack()
+        stream = make_stream(fake)
+        for i in range(46):
+            await stream.append(chunks=[card(f"c{i}", "in_progress")])
+        for i in range(46):
+            await stream.append(chunks=[card(f"c{i}", "complete")])
+        await stream.stop()
+        assert len(fake.msgs) == 2
+        assert all(status == "complete" for _, status in fake.msgs["900.2"]["cards"].values())
+
+    @pytest.mark.asyncio
+    async def test_parallel_cards_past_the_limit_rotate_once(self):
+        fake = FakeSlack()
+        stream = make_stream(fake)
+        for i in range(52):
+            await stream.append(chunks=[card(f"c{i}", "in_progress")])
+        for i in range(52):
+            await stream.append(chunks=[card(f"c{i}", "complete")])
+        await stream.stop()
+        assert len(fake.msgs) == 2
 
     @pytest.mark.asyncio
     async def test_card_closed_by_the_run_before_rotation_still_closes_in_the_old_message(self):
@@ -282,42 +328,30 @@ class TestStopSignals:
         assert stream.ended is False
 
     @pytest.mark.asyncio
-    async def test_not_in_streaming_state_is_a_stop_when_young(self):
-        fake = FakeSlack()
-        stream = make_stream(fake)
-        await stream.append(markdown_text="x" * 200)
-        fake.msgs["900.1"]["stopped"] = True
-        with pytest.raises(StreamStopped):
-            await stream.append(markdown_text="y" * 200)
-
-    @pytest.mark.asyncio
-    async def test_not_in_streaming_state_is_a_stop_when_recorded(self):
-        fake = FakeSlack()
-        stream = make_stream(fake)
-        await stream.append(markdown_text="x" * 200)
-        stream._opened_at = time.monotonic() - 700
-        stream._ctx.runs.record_stop("run-1")
-        fake.msgs["900.1"]["stopped"] = True
-        with pytest.raises(StreamStopped):
-            await stream.append(markdown_text="y" * 200)
-
-    @pytest.mark.asyncio
-    async def test_expired_stream_reopens_and_resends(self):
+    async def test_not_in_streaming_state_reopens_when_not_stopped(self):
         fake = FakeSlack()
         stream = make_stream(fake)
         await stream.append(markdown_text="a" * 200)
-        stream._opened_at = time.monotonic() - 700
         fake.msgs["900.1"]["stopped"] = True
         await stream.append(markdown_text="b" * 200)
         await stream.stop()
         assert fake.joined() == "a" * 200 + "b" * 200
 
     @pytest.mark.asyncio
-    async def test_expired_stream_takes_the_final_text(self):
+    async def test_not_in_streaming_state_is_a_stop_when_recorded(self):
+        fake = FakeSlack()
+        stream = make_stream(fake)
+        await stream.append(markdown_text="x" * 200)
+        stream._ctx.runs.record_stop("run-1")
+        fake.msgs["900.1"]["stopped"] = True
+        with pytest.raises(StreamStopped):
+            await stream.append(markdown_text="y" * 200)
+
+    @pytest.mark.asyncio
+    async def test_ended_stream_takes_the_final_text(self):
         fake = FakeSlack()
         stream = make_stream(fake)
         await stream.append(markdown_text="a" * 200)
-        stream._opened_at = time.monotonic() - 700
         fake.msgs["900.1"]["stopped"] = True
         await stream.stop(markdown_text="tail")
         assert fake.joined() == "a" * 200 + "tail"
@@ -361,3 +395,25 @@ class TestStopSignals:
         starts = [c[1] for c in fake.calls if c[0] == "start"]
         assert [s["recipient_user_id"] for s in starts] == ["U1", "U_CLICKER"]
         assert starts[0]["recipient_team_id"] == "T1"
+
+    @pytest.mark.asyncio
+    async def test_recipient_that_cannot_stream_gets_plain_messages(self):
+        fake = FakeSlack()
+        fake.fail_next = {"start": ["channel_type_not_supported"]}
+        fake.chat_postMessage = AsyncMock()
+        stream = make_stream(fake)
+        text = "line\n" * 2_500
+        await stream.append(chunks=[card("c1", "in_progress")])
+        for i in range(0, len(text), 97):
+            await stream.append(markdown_text=text[i : i + 97])
+        await stream.stop(chunks=[card("c1", "complete")])
+        posted = [c.kwargs for c in fake.chat_postMessage.call_args_list]
+        # Past the char budget the text goes out as it fills, and the rest on stop, without loss
+        assert len(posted) == 2
+        assert "".join(p["text"] for p in posted) == text
+        assert all((p["channel"], p["thread_ts"]) == ("C1", "100.1") for p in posted)
+        # Only the refused startStream reached the stream methods; its cards are dropped
+        assert [c[0] for c in fake.calls] == ["start"]
+        assert stream.opened is True
+        # No stopStream ended the status, so the caller clears it
+        assert stream.ended is False

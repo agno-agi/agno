@@ -242,7 +242,7 @@ def _cards_of(chunks: Any) -> List[Dict[str, Any]]:
 
 
 class FakeSlack:
-    """Slack's stream methods with their limits: 12,000 chars and 50 cards per message, nothing after a stop.
+    """Slack's stream methods with their limits: 12,000 chars, the first 50 cards per message, nothing after a stop.
 
     chat_stream returns slack_sdk's own ChatStream, which keeps refused text in its buffer, so a
     stream built on it would show the duplicates these tests guard against.
@@ -269,13 +269,12 @@ class FakeSlack:
         text = _text_of(chunks)
         if msg["size"] + self._size(text) > SLACK_LIMIT:
             raise slack_error("msg_too_long")
-        cards = _cards_of(chunks)
-        if len(set(msg["cards"]) | {c["id"] for c in cards}) > 50:
-            raise slack_error("too_many_tasks")
         msg["text"] += text
         msg["size"] += self._size(text)
-        for card in cards:
-            msg["cards"][card["id"]] = (card.get("title"), card.get("status"))
+        for card in _cards_of(chunks):
+            # Slack keeps the first 50 cards of a message and drops the rest without an error
+            if card["id"] in msg["cards"] or len(msg["cards"]) < 50:
+                msg["cards"][card["id"]] = (card.get("title"), card.get("status"))
 
     async def chat_stream(self, **kwargs: Any):
         from slack_sdk.web.async_chat_stream import AsyncChatStream

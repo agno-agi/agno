@@ -429,6 +429,9 @@ mapped principal's roles.
 - **An expired native approval card stays clickable after a crash.** After a
   crash, a native approval card whose request expired stays clickable until
   someone clicks it; the click freezes it and ends the run.
+- **Task cards past 50 tool calls.** With more than 50 tool calls running at the
+  same time, task cards past 50 are not shown; every tool still runs and the
+  answer is complete.
 
 ## Test Scope
 
