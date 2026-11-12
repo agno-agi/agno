@@ -2214,12 +2214,16 @@ class BaseDb(ABC):
         executor_id: Optional[str] = None,
         expected_updated_at: Optional[int] = _UNSET_UPDATED_AT,
         auto_accept: Optional[Dict[str, Any]] = None,
+        expected_status: Optional[str] = None,
+        expected_job_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Transition a visible Task and record the caller and reason.
 
         Automatic acceptance requires expected_updated_at. Explicit None matches
         SQL NULL; omission leaves manual transitions without a timestamp guard.
         Timestamps are epoch seconds, so same-second writes are indistinguishable.
+        expected_status and expected_job_id name the stage and run the caller observed:
+        the transition applies only while the Task still holds them.
         """
         raise NotImplementedError("Company tasks not supported by the configured database")
 
@@ -4372,12 +4376,16 @@ class AsyncBaseDb(ABC):
         executor_id: Optional[str] = None,
         expected_updated_at: Optional[int] = _UNSET_UPDATED_AT,
         auto_accept: Optional[Dict[str, Any]] = None,
+        expected_status: Optional[str] = None,
+        expected_job_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Transition a visible Task and record the caller and reason.
 
         Automatic acceptance requires expected_updated_at. Explicit None matches
         SQL NULL; omission leaves manual transitions without a timestamp guard.
         Timestamps are epoch seconds, so same-second writes are indistinguishable.
+        expected_status and expected_job_id name the stage and run the caller observed:
+        the transition applies only while the Task still holds them.
         """
         raise NotImplementedError("Company tasks not supported by the configured database")
 

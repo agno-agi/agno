@@ -1002,7 +1002,7 @@ def test_custom_company_tools_resolve_os_interfaces_and_human_origin(tmp_path, m
     )
     assert toolkit.interfaces is os.interfaces
     # Summary Routines run on Mini Agent; Super Agent's chat tools do not deliver summaries.
-    assert "summarize_company_product" in os._mini_agent.tools[0].functions
+    assert "summarize_company_product" in os._mini_agent.tools.routine[0].functions
     leader_tools = [tool for tool in os.manager.tools if isinstance(tool, CompanyTools)]
     assert len(leader_tools) == 1 and "summarize_company_product" not in leader_tools[0].functions
     delivery = AsyncMock()

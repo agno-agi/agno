@@ -12,12 +12,12 @@ Prerequisites: PostgreSQL (./cookbook/scripts/run_pgvector.sh) and OPENAI_API_KE
 Scripted run (no UI): start the Task from chat, wait for its result, ask Super Agent for
 an update, answer the worker's question, and wait for the continued result.
 
-    .venvs/demo/bin/python cookbook/05_agent_os/30_company/14_continue_tasks_from_chat.py
+    .venvs/demo/bin/python cookbook/05_agent_os/30_company/17_continue_tasks_from_chat.py
 
 Try it in the AgentOS UI: serve on http://localhost:7777 with one accepted Task seeded.
 The seeded Task id is printed once the server is up.
 
-    .venvs/demo/bin/python cookbook/05_agent_os/30_company/14_continue_tasks_from_chat.py --serve
+    .venvs/demo/bin/python cookbook/05_agent_os/30_company/17_continue_tasks_from_chat.py --serve
 
     1. Connect the AgentOS UI (os.agno.com or a local agno-os) to http://localhost:7777.
     2. In Super Agent chat, ask "Start the task <seeded id>".

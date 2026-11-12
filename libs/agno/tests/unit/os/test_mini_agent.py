@@ -17,7 +17,7 @@ from agno.models.base import Model
 from agno.models.message import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.os import AgentOS, CompanyConfig, OSManager
-from agno.registry._reserved import BUILDER_ID, MANAGER_TEAM_ID, RESERVED_MANAGER_IDS, MINI_AGENT_ID
+from agno.registry._reserved import BUILDER_ID, MANAGER_TEAM_ID, MINI_AGENT_ID, RESERVED_MANAGER_IDS
 from agno.run.authorization import AUTHORIZATION_HEADER, authorization_scope
 from agno.tools.agentos import AgentOSTools
 from agno.tools.company import CompanyTools
@@ -142,11 +142,11 @@ def test_runner_holds_company_tools_and_routine_skills_only(tmp_path):
     os = build(tmp_path)
     runner = os._mini_agent
     assert runner.id == MINI_AGENT_ID and runner.name == "Mini Agent"
-    assert [type(tool) for tool in runner.tools] == [CompanyTools]
-    assert not any(isinstance(tool, (StudioTools, StudioRunnerTools, AgentOSTools)) for tool in runner.tools)
+    assert [type(tool) for tool in runner.tools.routine] == [CompanyTools]
+    assert not any(isinstance(tool, (StudioTools, AgentOSTools)) for tool in runner.tools)
     assert not getattr(runner, "members", None)
     assert {"refresh_company_product", "summarize_company_product", "intake_product_source"} <= set(
-        runner.tools[0].functions
+        runner.tools.routine[0].functions
     )
     assert sorted(skill.name for skill in runner.skills.get_all_skills()) == ["intake", "refresh", "summary"]
     # Super Agent holds the platform, so it keeps the two Routine tools off.
@@ -157,7 +157,7 @@ def test_runner_holds_company_tools_and_routine_skills_only(tmp_path):
 @pytest.mark.parametrize("skill", ["intake", "refresh", "summary"])
 def test_every_tool_a_packaged_skill_names_is_on_the_runner(tmp_path, skill):
     os = build(tmp_path)
-    functions = set(os._mini_agent.tools[0].functions)
+    functions = set(os._mini_agent.tools.routine[0].functions)
     text = load_routine_skills().get_skill(skill).instructions
     named = set(re.findall(r"\b[a-z]+(?:_[a-z]+)*_(?:company|product)_[a-z_]+\b", text))
     assert named, text
@@ -227,7 +227,7 @@ def test_runner_refuses_a_run_without_routine_authority(tmp_path, use_async):
     os = build(tmp_path)
     runner = os._mini_agent
     result = run(runner, use_async)
-    assert "This agent runs Company Routines only" in str(result.content)
+    assert "Mini Agent runs Company Routines and Tasks only" in str(result.content)
     assert runner.model.calls == 0
 
 
@@ -236,7 +236,9 @@ def test_runner_prompt_opens_by_saying_what_it_is(tmp_path, use_async):
     os = build(tmp_path)
     with authorization_scope(routine_authority):
         run(os._mini_agent, use_async)
-    assert os._mini_agent.model.system.startswith("You are Mini Agent, running a Routine for a Product.")
+    system = os._mini_agent.model.system
+    assert system.startswith("You are Mini Agent. You work unattended for a Product.")
+    assert "This run is a Routine." in system and "This run is a Task." not in system
 
 
 @pytest.mark.parametrize("use_async", [False, True])
@@ -252,11 +254,11 @@ def test_a_person_cannot_chat_with_the_runner_over_http(tmp_path):
     os = build(tmp_path)
     client = TestClient(os.get_app())
     response = client.post(RUNNER_ENDPOINT, data={"message": "hello", "stream": "false"})
-    assert "This agent runs Company Routines only" in response.text
+    assert "Mini Agent runs Company Routines and Tasks only" in response.text
     assert os._mini_agent.model.calls == 0
     # The scheduler's own identity without a Routine is refused as well.
     response = client.post(RUNNER_ENDPOINT, headers=internal_headers(os), data={"message": "hello", "stream": "false"})
-    assert "This agent runs Company Routines only" in response.text
+    assert "Mini Agent runs Company Routines and Tasks only" in response.text
     assert os._mini_agent.model.calls == 0
 
 

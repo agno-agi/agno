@@ -151,10 +151,32 @@ def requires_permission(resource: Optional[str] = None, action: Optional[str] = 
     return decorate
 
 
+def require_task_authority(metadata: Any, authority: Optional[RunAuthorization]) -> None:
+    """Refuse to go on with a run that a Company Task started, once it has left the Task's authority.
+
+    Mini Agent runs components only inside a Task, under the Task's limits. The dispatch lineage stored
+    on such a run names Mini Agent. A continuation holds the caller's own authority, not the Task's.
+    """
+    from agno.db.schemas.scheduler import DISPATCH_CHAIN_METADATA_KEY
+    from agno.registry._reserved import MINI_AGENT_ID
+
+    chain = metadata.get(DISPATCH_CHAIN_METADATA_KEY) if isinstance(metadata, dict) else None
+    if not isinstance(chain, list) or f"agent:{MINI_AGENT_ID}" not in chain:
+        return
+    from agno.company.execution import _ExecutorAuthorization
+
+    if not isinstance(authority, _ExecutorAuthorization):
+        raise PermissionError(
+            "This run was started by a Company Task and cannot continue outside it. "
+            "Send the Task back, or run the component yourself."
+        )
+
+
 @contextmanager
 def _tool_authorization(function: Any) -> Iterator[Optional[RunAuthorization]]:
     """Activate operation checks for manager tools and preserve them through delegation."""
     authority = _caller_authorization(function._run_context)
+    require_task_authority(getattr(function._run_context, "metadata", None), authority)
     if authority is not None and not authority.enforce_tools:
         from agno.registry._reserved import RESERVED_MANAGER_IDS
 
