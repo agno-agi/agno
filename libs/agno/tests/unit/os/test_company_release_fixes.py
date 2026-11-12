@@ -621,9 +621,14 @@ def test_one_confirmation_accepts_a_never_edited_task(system):
     assert (stored["status"], stored["executor_id"], stored["accepted_by"]) == ("ready", "writer", "alice")
 
 
-@pytest.mark.parametrize("sent", [",", "", None], ids=["comma-as-in-F2", "empty", "null"])
+@pytest.mark.parametrize(
+    "sent",
+    [",", "", None, "__NONE__", "^null^"],
+    ids=["comma-as-in-F2", "empty", "null", "none-placeholder", "null-placeholder"],
+)
 def test_one_confirmation_sends_a_task_back_when_the_model_names_no_executor(system, sent):
     # F2: the Task has an executor, and the model sent "," for executor_type and executor_id.
+    # Two validation runs sent "__NONE__" and "^null^" for the same two arguments.
     task = system.proposal()
     accepted = system.client.post(
         f"/company/tasks/{task['id']}/transitions",
@@ -1386,6 +1391,64 @@ def test_created_at_does_not_name_a_record_that_was_edited_later(system, monkeyp
     }
     reply = decide(system, "accept_company_task", arguments)
     assert "changed since the person saw it" in reply, reply
+    assert system.db.get_task(task["id"])["status"] == "backlog"
+
+
+# ----------------------------------------------------------------- a placeholder for nothing names nothing
+
+
+@pytest.mark.parametrize(
+    "name,executor,kept,runs_on",
+    [
+        ("docs.intake", ";", ";", "miniagent"),
+        ("intake", "[null]", "[null]", "miniagent"),
+        ("intake", "__omit_placeholder__", "__omit_placeholder__", "miniagent"),
+        ("intake", "writer", ".", "writer"),
+    ],
+    ids=["semicolon", "null-in-brackets", "omit-placeholder", "full-stop"],
+)
+def test_one_confirmation_turns_auto_accept_on_when_the_model_fills_an_empty_argument(
+    system, name, executor, kept, runs_on
+):
+    # The arguments of four validation runs. The Routine has no policy, so there is none to keep.
+    _, routine_id = system.declare(auto_accept=False)
+    arguments = {
+        "routine_name": name,
+        "product_name": "Docs",
+        "default_executor": executor,
+        "kept_policy": kept,
+        "routine_id": routine_id,
+    }
+    reply = decide(system, "turn_on_routine_auto_accept", arguments)
+    assert "Auto-accept is on for Routine 'intake'" in reply and f"run on {runs_on}," in reply, reply
+    assert system.stored(routine_id)["metadata"]["auto_accept"]["default_executor"] == runs_on
+
+
+def test_text_that_is_not_the_stored_policy_is_still_not_confirmed_as_kept(system):
+    # One validation run sent this for a Routine with no policy. The person would confirm a policy that
+    # does not exist, so nothing is turned on.
+    _, routine_id = system.declare(auto_accept=False)
+    arguments = {
+        "routine_name": "intake",
+        "product_name": "Docs",
+        "default_executor": "writer",
+        "kept_policy": "); DROP TABLE company_tasks; --",
+        "routine_id": routine_id,
+    }
+    reply = decide(system, "turn_on_routine_auto_accept", arguments)
+    assert "has no policy to keep" in reply, reply
+    assert system.stored(routine_id)["metadata"]["auto_accept"] is False
+
+
+def test_a_placeholder_is_not_an_executor_a_person_accepts_a_task_on(system):
+    task = system.proposal()
+    arguments = {
+        "tasks": [{"title": task["title"], "task_id": task["id"], "updated_at": None}],
+        "executor_type": "__NONE__",
+        "executor_id": "__NONE__",
+    }
+    reply = decide(system, "accept_company_task", arguments)
+    assert "names no executor" in reply, reply
     assert system.db.get_task(task["id"])["status"] == "backlog"
 
 

@@ -59,9 +59,16 @@ def _same_version(given: Any, record: Dict[str, Any]) -> bool:
     return given == str(stored)
 
 
+# What a model writes in an optional argument it means to leave empty, without its punctuation.
+_NOTHING = {"", "none", "null", "omitplaceholder"}
+
+
 def _named(value: Any) -> Optional[str]:
-    """An optional name as the model gave it. A value with no letter or digit, such as "" or ",", names nothing."""
-    return value if isinstance(value, str) and any(character.isalnum() for character in value) else None
+    """An optional name as the model gave it. A value with no letter or digit, such as "" or ",", names
+    nothing, and neither does a placeholder such as "__NONE__" or "[null]"."""
+    if not isinstance(value, str):
+        return None
+    return None if "".join(character for character in value if character.isalnum()).lower() in _NOTHING else value
 
 
 def _user_isolation(agent_os: Any) -> bool:
@@ -792,7 +799,7 @@ class CompanyTaskTools(Toolkit):
             line = _policy_line(kept) if kept is not None else None
             # A policy a person set is shown on the confirmation before it is kept under this person's
             # name. What the confirmation shows is always the stored policy.
-            shown = (kept_policy or "").strip() or None
+            shown = (_named(kept_policy) or "").strip() or None
             if not (_same_name(shown, line) if shown is not None else line is None or declared):
                 if line is None:
                     return f"Not done: Routine '{stored}' has no policy to keep. Call again with kept_policy null."
