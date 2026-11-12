@@ -211,6 +211,9 @@ async def resolve_context(
             event_context.user_id, event_context.display_name = await ctx.lookup_cache.user_identity(
                 client, sender_user
             )
+    else:
+        # Only the name, for the agent's context: the run's user_id stays the Slack id or mapped principal
+        event_context.display_name = await ctx.lookup_cache.sender_name(client, sender_user, sender_bot_id)
 
     # Direct messages have no channel name
     if event.get("channel_type") not in ("im", "mpim"):

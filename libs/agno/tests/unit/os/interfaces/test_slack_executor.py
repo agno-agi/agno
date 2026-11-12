@@ -411,6 +411,18 @@ class TestRunKwargs:
         assert kwargs["add_dependencies_to_context"] is True and kwargs["dependencies"]["Slack channel_id"] == "C123"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("display_name", ["Yash", None])
+    async def test_dependencies_name_the_sender(self, display_name):
+        entity = make_streaming_entity([content("ok")])
+        ctx = make_ctx(agent=entity, streaming=True)
+        event_context = make_message_event_context(ctx)
+        event_context.display_name = display_name
+        await run_event(event_context, make_client(), ctx)
+        dependencies = entity.calls[0][1]["dependencies"]
+        assert dependencies["Slack user_id"] == "U123"
+        assert dependencies.get("Slack user") == display_name
+
+    @pytest.mark.asyncio
     async def test_remote_run_id_rekeyed_from_first_event(self):
         from agno.agent import RemoteAgent
 

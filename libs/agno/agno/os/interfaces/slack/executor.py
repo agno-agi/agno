@@ -79,6 +79,20 @@ class DecisionRefused(Exception):
     pass
 
 
+def _slack_dependencies(event_context: "EventContext") -> Dict[str, Any]:
+    dependencies: Dict[str, Any] = {
+        "Slack channel": f"#{event_context.channel_name}" if event_context.channel_name else event_context.channel,
+        "Slack channel_id": event_context.channel,
+        "Slack thread_ts": event_context.thread_ts,
+    }
+    # The sender's id lets the agent mention them (<@id>); the name is their own profile text, not proof of identity
+    if event_context.display_name:
+        dependencies["Slack user"] = event_context.display_name
+    if event_context.owner:
+        dependencies["Slack user_id"] = event_context.owner
+    return dependencies
+
+
 def _run_kwargs(event_context: "EventContext", ctx: "SlackContext", media: tuple) -> Dict[str, Any]:
     files, images, videos, audio = media
     sandboxed = isinstance(ctx.entity, BaseExternalAgent) and ctx.entity.sandbox is not None
@@ -98,11 +112,7 @@ def _run_kwargs(event_context: "EventContext", ctx: "SlackContext", media: tuple
                 "message_ts": event_context.message_ts,
             },
         ),
-        "dependencies": {
-            "Slack channel": f"#{event_context.channel_name}" if event_context.channel_name else event_context.channel,
-            "Slack channel_id": event_context.channel,
-            "Slack thread_ts": event_context.thread_ts,
-        },
+        "dependencies": _slack_dependencies(event_context),
         "add_dependencies_to_context": True,
         "files": files or None,
         "images": images or None,
