@@ -107,8 +107,6 @@ class RemoteDb:
     learnings_table_name: Optional[str] = None
     metrics_table_name: Optional[str] = None
     component_metrics_table_name: Optional[str] = None
-    aggregate_metrics_table_name: Optional[str] = None
-    metrics_refreshes_table_name: Optional[str] = None
     eval_table_name: Optional[str] = None
     traces_table_name: Optional[str] = None
     spans_table_name: Optional[str] = None
@@ -136,8 +134,6 @@ class RemoteDb:
         memory_table_name = None
         learnings_table_name = None
         component_metrics_table_name = None
-        aggregate_metrics_table_name = None
-        metrics_refreshes_table_name = None
         eval_table_name = None
         traces_table_name = None
 
@@ -159,11 +155,7 @@ class RemoteDb:
 
         if config and config.metrics and config.metrics.dbs is not None:
             metrics_dbs = [db for db in config.metrics.dbs if db.db_id == db_id]
-            metrics_tables = metrics_dbs[0].tables if metrics_dbs and metrics_dbs[0].tables else []
-            # In the order AgentOS lists them
-            component_metrics_table_name = metrics_tables[0] if metrics_tables else None
-            aggregate_metrics_table_name = metrics_tables[1] if len(metrics_tables) > 1 else None
-            metrics_refreshes_table_name = metrics_tables[2] if len(metrics_tables) > 2 else None
+            component_metrics_table_name = metrics_dbs[0].tables[0] if metrics_dbs and metrics_dbs[0].tables else None
 
         if config and config.evals and config.evals.dbs is not None:
             eval_dbs = [db for db in config.evals.dbs if db.db_id == db_id]
@@ -181,8 +173,6 @@ class RemoteDb:
             memory_table_name=memory_table_name,
             learnings_table_name=learnings_table_name,
             component_metrics_table_name=component_metrics_table_name,
-            aggregate_metrics_table_name=aggregate_metrics_table_name,
-            metrics_refreshes_table_name=metrics_refreshes_table_name,
             eval_table_name=eval_table_name,
             traces_table_name=traces_table_name,
         )
