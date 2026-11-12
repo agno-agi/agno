@@ -1,10 +1,10 @@
 """LocalFileSystem: the disk-based backend for FileSystem."""
 
 import os
-from urllib.parse import unquote
 import tempfile
 from pathlib import Path
 from typing import List, Optional, Union
+from urllib.parse import unquote
 
 from agno.exceptions import PathSecurityError
 from agno.fs._paths import build_chunk, path_in_directory
@@ -12,7 +12,6 @@ from agno.fs.base import BaseFS
 from agno.fs.errors import InvalidPathError, QuotaExceededError, UnsupportedOperationError
 from agno.fs.types import FileData, FileMeta
 from agno.utils.path_safety import safe_join_relative_path
-
 
 # Characters a user id keeps literally in its directory name; see _encode_user_id.
 _USER_ID_SAFE = frozenset("abcdefghijklmnopqrstuvwxyz0123456789-_")
@@ -174,7 +173,13 @@ class LocalFileSystem(BaseFS):
                     continue
         return metas
 
-    def delete(self, namespace: str, path: str, *, user_id: str = "") -> bool:
+    def delete(self, namespace: str, path: str, *, user_id: str = "", expected_version: Optional[int] = None) -> bool:
+        if expected_version is not None:
+            raise UnsupportedOperationError(
+                "LocalFileSystem does not support version-guarded deletion",
+                operation="delete",
+                backend="LocalFileSystem",
+            )
         target = self._target(namespace, path, user_id)
         if not target.is_file():
             return False

@@ -30,7 +30,7 @@ export GOOGLE_CLOUD_LOCATION="your-location"
 ### 3. Install libraries
 
 ```shell
-uv pip install -U google-generativeai ddgs yfinance agno
+uv pip install -U google-genai ddgs yfinance agno
 ```
 
 ### 4. Run basic Agent
@@ -138,4 +138,19 @@ to produce a source-backed competitive brief.
 
 ```shell
 python cookbook/90_models/google/gemini/gemini_3_8_flash_market_brief.py
+```
+
+### 20. Run a basic agent on Gemini 4 Argon
+
+```shell
+python cookbook/90_models/google/gemini/gemini_4_argon.py
+```
+
+### 21. Run a technology evaluation agent on Gemini 4 Argon
+
+Combines Google Search grounding, URL context, and structured output to compare
+pgvector and Qdrant. Returns a recommendation with tradeoffs, risks, and sources.
+
+```shell
+python cookbook/90_models/google/gemini/gemini_4_argon_tech_evaluation.py
 ```

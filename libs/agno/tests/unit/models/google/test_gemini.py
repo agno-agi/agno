@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 pytest.importorskip("google.genai")
+from google.genai.types import HttpOptions
 
 from agno.exceptions import ModelProviderError
 from agno.media import File, Image, Video
@@ -40,6 +41,7 @@ def test_gemini_get_client_without_credentials_vertexai():
         _, kwargs = mock_client_cls.call_args
         assert "credentials" not in kwargs
         assert kwargs["vertexai"] is True
+        assert "api_version" not in kwargs["http_options"]
 
 
 def test_gemini_get_client_ai_studio_mode():
@@ -56,6 +58,50 @@ def test_gemini_get_client_ai_studio_mode():
         assert "credentials" not in kwargs
         assert "api_key" in kwargs
         assert kwargs.get("vertexai") is not True
+
+
+@pytest.mark.parametrize(
+    ("client_params", "expected_version"),
+    [
+        (None, "v1beta"),
+        ({"http_options": {"headers": {"custom-header": "value"}}}, "v1beta"),
+        ({"http_options": {"api_version": None}}, "v1beta"),
+        ({"http_options": HttpOptions(headers={"custom-header": "value"})}, "v1beta"),
+        ({"http_options": {"api_version": "v1"}}, "v1"),
+        ({"http_options": HttpOptions(api_version="v1")}, "v1"),
+    ],
+)
+def test_gemini_developer_api_version(client_params, expected_version):
+    model = Gemini(api_key="test-key", client_params=client_params)
+
+    with patch("agno.models.google.gemini.genai.Client") as mock_client_cls:
+        model.get_client()
+
+    options = mock_client_cls.call_args.kwargs["http_options"]
+    assert (options["api_version"] if isinstance(options, dict) else options.api_version) == expected_version
+
+
+def test_gemini_developer_api_respects_environment_version(monkeypatch):
+    monkeypatch.setenv("GOOGLE_GENAI_API_VERSION", "v1")
+    model = Gemini(api_key="test-key")
+
+    with patch("agno.models.google.gemini.genai.Client") as mock_client_cls:
+        model.get_client()
+
+    assert "api_version" not in mock_client_cls.call_args.kwargs["http_options"]
+
+
+def test_gemini_developer_version_does_not_change_shared_vertex_options():
+    options = {"headers": {"custom-header": "value"}}
+
+    with patch("agno.models.google.gemini.genai.Client") as mock_client_cls:
+        Gemini(api_key="test-key", client_params={"http_options": options}).get_client()
+        Gemini(
+            vertexai=True, project_id="test-project", location="test-location", client_params={"http_options": options}
+        ).get_client()
+
+    assert "api_version" not in options
+    assert "api_version" not in mock_client_cls.call_args.kwargs["http_options"]
 
 
 def test_gemini_formats_unexpected_error_message_with_type_when_message_empty():
@@ -877,3 +923,45 @@ class TestFileSearchToolWiring:
             return  # No tools at all, which is the expected case
         file_search_tools = [t for t in config.tools if getattr(t, "file_search", None) is not None]
         assert len(file_search_tools) == 0
+
+
+def test_generation_config_dict_reaches_request_and_is_not_modified():
+    generation_config = {"temperature": 0.1, "top_k": 5, "max_output_tokens": 256, "seed": 7}
+    model = Gemini(api_key="test-key", generation_config=generation_config)
+
+    config = model.get_request_params()["config"]
+
+    assert config.temperature == 0.1
+    assert config.top_k == 5
+    assert config.max_output_tokens == 256
+    assert config.seed == 7
+    assert generation_config == {"temperature": 0.1, "top_k": 5, "max_output_tokens": 256, "seed": 7}
+
+
+def test_generation_config_object_reaches_request():
+    from google.genai.types import GenerateContentConfig
+
+    model = Gemini(api_key="test-key", generation_config=GenerateContentConfig(temperature=0.3, top_p=0.8))
+
+    config = model.get_request_params()["config"]
+
+    assert config.temperature == 0.3
+    assert config.top_p == 0.8
+
+
+def test_generative_model_kwargs_reach_request():
+    model = Gemini(api_key="test-key", generative_model_kwargs={"temperature": 0.2, "stop_sequences": ["END"]})
+
+    config = model.get_request_params()["config"]
+
+    assert config.temperature == 0.2
+    assert config.stop_sequences == ["END"]
+
+
+def test_explicit_field_still_overrides_generation_config():
+    model = Gemini(api_key="test-key", temperature=0.9, generation_config={"temperature": 0.1, "top_k": 5})
+
+    config = model.get_request_params()["config"]
+
+    assert config.temperature == 0.9
+    assert config.top_k == 5

@@ -74,12 +74,13 @@ async def _invoke(model, mode, messages):
 @pytest.mark.parametrize("mode", ["sync", "async", "sync_stream", "async_stream"])
 @pytest.mark.parametrize("store", [None, True, False])
 @pytest.mark.parametrize("disable_chaining", [False, True])
-async def test_storage_and_chaining_on_wire(response_client, mode, store, disable_chaining):
+@pytest.mark.parametrize("model_id", ["gpt-5.6-luna", "gpt-6-sol", "gpt-6.1-sol"])
+async def test_storage_and_chaining_on_wire(response_client, mode, store, disable_chaining, model_id):
     requests, transport = response_client
     options = {"use_previous_response_id": False} if disable_chaining else {}
     with OpenAI(api_key="test", http_client=httpx.Client(transport=transport)) as client:
         async with AsyncOpenAI(api_key="test", http_client=httpx.AsyncClient(transport=transport)) as async_client:
-            model = OpenAIResponses(id="gpt-5.6-luna", store=store, client=client, async_client=async_client, **options)
+            model = OpenAIResponses(id=model_id, store=store, client=client, async_client=async_client, **options)
             messages = [
                 Message(role="system", content="Fresh documentation for this turn"),
                 Message(role="user", content="Recent question", from_history=True),
@@ -106,12 +107,13 @@ async def test_storage_and_chaining_on_wire(response_client, mode, store, disabl
 
 
 @pytest.mark.parametrize("mode", ["sync", "async", "sync_stream", "async_stream"])
-async def test_stored_response_replays_reasoning_and_tool_calls(response_client, mode):
+@pytest.mark.parametrize("model_id", ["gpt-5.6-luna", "gpt-6-sol", "gpt-6.1-sol"])
+async def test_stored_response_replays_reasoning_and_tool_calls(response_client, mode, model_id):
     requests, transport = response_client
     with OpenAI(api_key="test", http_client=httpx.Client(transport=transport)) as client:
         async with AsyncOpenAI(api_key="test", http_client=httpx.AsyncClient(transport=transport)) as async_client:
             model = OpenAIResponses(
-                id="gpt-5.6-luna",
+                id=model_id,
                 store=True,
                 use_previous_response_id=False,
                 include=["message.output_text.logprobs"],
@@ -289,3 +291,34 @@ async def test_missing_previous_response_is_not_retried_without_a_chain(stale_ch
             await _invoke(model, "sync", [Message(role="user", content="hi")])
 
     assert len(requests) == 1
+
+
+@pytest.mark.parametrize("mode", ["sync", "async"])
+async def test_count_tokens_counts_the_whole_history_despite_stored_response_ids(mode):
+    """A count call carries no previous_response_id, so it must not drop what a chained request
+    would leave to the server - otherwise the input is empty and the API rejects it."""
+    requests = []
+
+    def handle(request):
+        requests.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 123})
+
+    transport = httpx.MockTransport(handle)
+    messages = [
+        Message(role="user", content="first question"),
+        Message(role="assistant", content="first answer", provider_data={"response_id": "resp_1"}),
+        Message(role="user", content="second question"),
+    ]
+    with OpenAI(api_key="test", http_client=httpx.Client(transport=transport)) as client:
+        async with AsyncOpenAI(api_key="test", http_client=httpx.AsyncClient(transport=transport)) as async_client:
+            model = OpenAIResponses(id="gpt-5.6-luna", client=client, async_client=async_client)
+            if mode == "sync":
+                counted = model.count_tokens(messages)
+            else:
+                counted = await model.acount_tokens(messages)
+
+    assert counted == 123
+    path, payload = requests[0]
+    assert path.endswith("/responses/input_tokens")
+    assert "previous_response_id" not in payload
+    assert [item["content"] for item in payload["input"]] == ["first question", "first answer", "second question"]

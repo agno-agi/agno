@@ -18,8 +18,7 @@ Attach the tools, and compose its instructions into your own:
     )
 """
 
-import asyncio
-from typing import TYPE_CHECKING, Any, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, List, Optional, Sequence, Tuple, Union
 
 from agno.fs._paths import (
     build_chunk,
@@ -37,7 +36,7 @@ from agno.fs.errors import InvalidPathError, QuotaExceededError
 from agno.fs.types import ContainsResult, FileData, FileMeta, NamespaceUsage, SearchMatch
 
 if TYPE_CHECKING:
-    from agno.db.base import BaseDb
+    from agno.db.base import AsyncBaseDb, BaseDb
     from agno.fs.toolkit import FileSystemTools
 
 DEFAULT_NAMESPACE = "default"
@@ -99,9 +98,10 @@ def _as_backend(source: Any) -> BaseFS:
     # database as its sessions and memory. Detected by its engine, so recognising
     # it costs no import - and holding one means agno.db is already loaded.
     if hasattr(source, "db_engine"):
-        from agno.fs.db import DbFileSystem
+        from agno.db.base import AsyncBaseDb
+        from agno.fs.db import AsyncDbFileSystem, DbFileSystem
 
-        return DbFileSystem(db=source)
+        return AsyncDbFileSystem(db=source) if isinstance(source, AsyncBaseDb) else DbFileSystem(db=source)
     raise TypeError(
         f"FileSystem needs a backend or a storage handle it recognises, got {type(source).__name__}. "
         "Pass a SqliteDb/PostgresDb to store files in that database, or a backend "
@@ -154,7 +154,7 @@ class FileSystem:
         backend: Any = None,
         namespace: str = DEFAULT_NAMESPACE,
         *,
-        db: Optional["BaseDb"] = None,
+        db: Optional["Union[BaseDb, AsyncBaseDb]"] = None,
         max_file_bytes: int = 1_000_000,
         max_namespace_bytes: int = 20_000_000,
         user_scoped: Optional[bool] = None,
@@ -168,9 +168,10 @@ class FileSystem:
         if read_only and allow_delete:
             raise ValueError("allow_delete=True contradicts read_only=True; pick one.")
         if db is not None:
-            from agno.fs.db import DbFileSystem
+            from agno.db.base import AsyncBaseDb
+            from agno.fs.db import AsyncDbFileSystem, DbFileSystem
 
-            backend = DbFileSystem(db=db)
+            backend = AsyncDbFileSystem(db) if isinstance(db, AsyncBaseDb) else DbFileSystem(db=db)
         self.backend: BaseFS = _as_backend(backend)
         self._raw_namespace = namespace
         self._namespace_is_normalized = False
@@ -341,9 +342,11 @@ class FileSystem:
             db_id = backend_config.get("db_id")
             if db_id is not None and getattr(db, "id", None) != db_id:
                 raise ValueError(f"filesystem requires database {db_id!r}, got {getattr(db, 'id', None)!r}")
-            from agno.fs.db import DbFileSystem
+            from agno.db.base import AsyncBaseDb
+            from agno.fs.db import AsyncDbFileSystem, DbFileSystem
 
-            backend: BaseFS = DbFileSystem(
+            backend_class = AsyncDbFileSystem if isinstance(db, AsyncBaseDb) else DbFileSystem
+            backend: BaseFS = backend_class(
                 db=db,
                 table_name=backend_config.get("table_name", "agno_fs"),
                 db_schema=backend_config.get("db_schema", "fs"),
@@ -634,10 +637,13 @@ class FileSystem:
             namespace, normalize_path(src), normalize_path(dst), overwrite=overwrite, **self._pk(self.backend.move)
         )
 
-    def delete(self, path: str) -> bool:
+    def delete(self, path: str, *, expected_version: Optional[int] = None) -> bool:
         """Delete a file. Returns ``True`` if it existed."""
         namespace = self._require_resolved()
-        return self.backend.delete(namespace, normalize_path(path), **self._pk(self.backend.delete))
+        kwargs = self._pk(self.backend.delete)
+        if expected_version is not None:
+            kwargs["expected_version"] = expected_version
+        return self.backend.delete(namespace, normalize_path(path), **kwargs)
 
     def list(self, directory: str = "") -> List[FileMeta]:
         """List files under ``directory`` (``""`` or ``"."`` = namespace root), sorted by path segments."""
@@ -685,14 +691,15 @@ class FileSystem:
     # ------------------------------------------------------------------
 
     async def aread(self, path: str) -> Optional[str]:
-        """Async variant of ``read``."""
-        return await asyncio.to_thread(self.read, path)
+        """Return the file's content, or ``None`` if it does not exist."""
+        namespace = self._require_resolved()
+        return await self.backend.aread(namespace, normalize_path(path), **self._pk(self.backend.read))
 
     async def aread_with_meta(self, path: str) -> Optional[FileData]:
-        """Async variant of ``read_with_meta``."""
+        """Return content and metadata from one consistent backend read."""
         namespace = self._require_resolved()
         return await self.backend.aread_with_meta(
-            namespace, normalize_path(path), **self._pk(self.backend.aread_with_meta)
+            namespace, normalize_path(path), **self._pk(self.backend.read_with_meta)
         )
 
     async def awrite(
@@ -703,42 +710,187 @@ class FileSystem:
         overwrite: bool = True,
         expected_version: Optional[int] = None,
     ) -> FileMeta:
-        """Async variant of ``write``."""
-        return await asyncio.to_thread(
-            self.write, path, content, overwrite=overwrite, expected_version=expected_version
+        """Create or replace a file. Last-writer-wins unless ``expected_version`` is passed.
+
+        ``overwrite=False`` raises the builtin ``FileExistsError`` if the file
+        exists (checked above the backend; racy under concurrency, in the same
+        class as the last-writer-wins semantics).
+        """
+        namespace = self._require_resolved()
+        normalized = normalize_path(path)
+        size_bytes = len(content.encode("utf-8"))
+        if size_bytes > self.max_file_bytes:
+            raise QuotaExceededError(
+                f"{normalized} would be {size_bytes} bytes (limit {self.max_file_bytes} per file)",
+                scope="file",
+                current=size_bytes,
+                limit=self.max_file_bytes,
+            )
+        # Read one file rather than scanning its parent directory.
+        snapshot = await self.backend.aread_with_meta(namespace, normalized, **self._pk(self.backend.aread_with_meta))
+        existing = snapshot.metadata if snapshot is not None else None
+        if existing is not None and not overwrite:
+            raise FileExistsError(f"file exists: {normalized}")
+        delta = size_bytes - (existing.size_bytes if existing is not None else 0)
+        if delta > 0:
+            current_usage = await self.backend.ausage(namespace, **self._pk(self.backend.usage))
+            if current_usage.total_bytes + delta > self.max_namespace_bytes:
+                raise QuotaExceededError(
+                    f"storage is full ({current_usage.total_bytes} of {self.max_namespace_bytes} bytes)",
+                    scope="namespace",
+                    current=current_usage.total_bytes,
+                    limit=self.max_namespace_bytes,
+                )
+        return await self.backend.awrite(
+            namespace,
+            normalized,
+            content,
+            expected_version=expected_version,
+            **self._pk(self.backend.write),
         )
 
     async def aappend(self, path: str, content: str, *, unique: bool = False) -> FileMeta:
-        """Async variant of ``append``."""
-        return await asyncio.to_thread(self.append, path, content, unique=unique)
+        """Append line-oriented content, creating the file if missing.
+
+        Content that is empty (or only line terminators) is a no-op: no write,
+        no version bump, and the file is not created if missing.
+
+        ``unique=True`` drops lines the file already holds, so a record log cannot
+        gain a duplicate. It folds check-and-append into one call, which closes the
+        window between two separate tool calls, but it is not atomic against a
+        concurrent writer on any backend: two workers can still both read the file
+        before either appends.
+        """
+        namespace = self._require_resolved()
+        normalized = normalize_path(path)
+        chunk = build_chunk(content)
+        if chunk and unique:
+            chunk = await self._adrop_present_lines(namespace, normalized, chunk)
+        if not chunk:
+            existing = await self.backend.aread_with_meta(
+                namespace, normalized, **self._pk(self.backend.aread_with_meta)
+            )
+            if existing is not None:
+                return existing.metadata
+            return FileMeta(path=normalized, size_bytes=0, version=None, updated_at=None)
+        chunk_bytes = len(chunk.encode("utf-8"))
+        current_usage = await self.backend.ausage(namespace, **self._pk(self.backend.usage))
+        # The separator is unknown client-side, so estimate it at 1 byte: over, never under.
+        if current_usage.total_bytes + chunk_bytes + 1 > self.max_namespace_bytes:
+            raise QuotaExceededError(
+                f"storage is full ({current_usage.total_bytes} of {self.max_namespace_bytes} bytes)",
+                scope="namespace",
+                current=current_usage.total_bytes,
+                limit=self.max_namespace_bytes,
+            )
+        return await self.backend.aappend(
+            namespace,
+            normalized,
+            chunk,
+            max_file_bytes=self.max_file_bytes,
+            **self._pk(self.backend.append),
+        )
+
+    async def _adrop_present_lines(self, namespace: str, normalized: str, chunk: str) -> str:
+        """Return ``chunk`` without lines the file already holds, and without
+        lines repeated inside the chunk itself. Order is preserved."""
+        existing = await self.backend.aread(namespace, normalized, **self._pk(self.backend.read)) or ""
+        seen = set(existing.split("\n"))
+        kept: List[str] = []
+        for line in chunk.split("\n"):
+            if not line or line in seen:
+                continue
+            seen.add(line)
+            kept.append(line)
+        return build_chunk("\n".join(kept)) if kept else ""
 
     async def areplace_lines(self, path: str, start_line: int, end_line: int, content: str = "") -> FileMeta:
-        """Async variant of ``replace_lines``."""
-        return await asyncio.to_thread(self.replace_lines, path, start_line, end_line, content)
+        """Replace lines ``start_line`` through ``end_line`` (1-indexed, inclusive) with ``content``.
+
+        Empty ``content`` deletes the range. The file's trailing newline is
+        preserved. Raises ``FileNotFoundError`` if the file is missing and
+        ``ValueError`` for a range that does not start inside the file.
+        """
+        namespace = self._require_resolved()
+        normalized = normalize_path(path)
+        existing = await self.backend.aread(namespace, normalized, **self._pk(self.backend.read))
+        if existing is None:
+            raise FileNotFoundError(f"file not found: {normalized}")
+        if start_line < 1:
+            raise ValueError("start_line must be 1 or greater")
+        if end_line < start_line:
+            raise ValueError("end_line must be greater than or equal to start_line")
+        lines = existing.split("\n")
+        trailing_newline = bool(lines) and lines[-1] == ""
+        if trailing_newline:
+            lines = lines[:-1]
+        if start_line > len(lines):
+            raise ValueError(f"start_line {start_line} is past the end of {normalized} ({len(lines)} lines)")
+        replacement = content.split("\n") if content else []
+        if replacement and replacement[-1] == "":
+            replacement = replacement[:-1]
+        new_lines = lines[: start_line - 1] + replacement + lines[min(end_line, len(lines)) :]
+        new_content = "\n".join(new_lines)
+        if new_content and trailing_newline:
+            new_content += "\n"
+        return await self.awrite(normalized, new_content)
 
     async def amove(self, src: str, dst: str, *, overwrite: bool = False) -> FileMeta:
-        """Async variant of ``move``."""
-        return await asyncio.to_thread(self.move, src, dst, overwrite=overwrite)
+        """Move or rename a file. Raises ``FileNotFoundError`` if ``src`` is missing,
+        ``FileExistsError`` if ``dst`` exists and ``overwrite`` is False."""
+        namespace = self._require_resolved()
+        return await self.backend.amove(
+            namespace, normalize_path(src), normalize_path(dst), overwrite=overwrite, **self._pk(self.backend.move)
+        )
 
-    async def adelete(self, path: str) -> bool:
-        """Async variant of ``delete``."""
-        return await asyncio.to_thread(self.delete, path)
+    async def adelete(self, path: str, *, expected_version: Optional[int] = None) -> bool:
+        """Delete a file. Returns ``True`` if it existed."""
+        namespace = self._require_resolved()
+        kwargs = self._pk(self.backend.delete)
+        if expected_version is not None:
+            kwargs["expected_version"] = expected_version
+        return await self.backend.adelete(namespace, normalize_path(path), **kwargs)
 
     async def alist(self, directory: str = "") -> List[FileMeta]:
-        """Async variant of ``list``."""
-        return await asyncio.to_thread(self.list, directory)
+        """List files under ``directory`` (``""`` or ``"."`` = namespace root), sorted by path segments."""
+        namespace = self._require_resolved()
+        metas = await self.backend.alist(namespace, normalize_directory(directory), **self._pk(self.backend.list))
+        return sorted(metas, key=lambda m: path_sort_key(m.path))
 
     async def asearch(self, query: str, directory: str = "", limit: int = 10) -> List[SearchMatch]:
-        """Async variant of ``search``."""
-        return await asyncio.to_thread(self.search, query, directory, limit)
+        """Case-insensitive substring search. Returns at most ``limit`` matches."""
+        namespace = self._require_resolved()
+        if not query or not query.strip():
+            return []
+        return await self.backend.asearch(
+            namespace, query, normalize_directory(directory), limit, **self._pk(self.backend.search)
+        )
 
     async def acontains(self, lines: Sequence[str], directory: str = "") -> ContainsResult:
-        """Async variant of ``contains``."""
-        return await asyncio.to_thread(self.contains, lines, directory)
+        """Batch exact-line membership check, input order preserved.
+
+        Lines are normalized with the same transform ``append`` applies, so a
+        record stored through ``append`` is always found in the form it was
+        stored. An input that is empty after normalization short-circuits with
+        no backend call.
+        """
+        namespace = self._require_resolved()
+        normalized_directory = normalize_directory(directory)
+        normalized_lines = normalize_check_lines(lines)
+        if not normalized_lines:
+            return ContainsResult(found=[], missing=[])
+        found_set = await self.backend.acontains(
+            namespace, normalized_lines, normalized_directory, **self._pk(self.backend.contains)
+        )
+        return ContainsResult(
+            found=[line for line in normalized_lines if line in found_set],
+            missing=[line for line in normalized_lines if line not in found_set],
+        )
 
     async def ausage(self) -> NamespaceUsage:
-        """Async variant of ``usage``."""
-        return await asyncio.to_thread(self.usage)
+        """Aggregate file count and total bytes for this namespace."""
+        namespace = self._require_resolved()
+        return await self.backend.ausage(namespace, **self._pk(self.backend.usage))
 
     # ------------------------------------------------------------------
     # Agent surface

@@ -59,7 +59,9 @@ from agno.session import TeamSession
 from agno.team._default_tools import (
     _acascading_cancel_run,
     _cascading_cancel_run,
+    _member_run_kwargs,
 )
+from agno.team._members import member_knowledge_filters, member_storage
 from agno.team.task import TaskList, TaskStatus, save_task_list
 from agno.tools.function import Function
 from agno.utils.events import (
@@ -77,6 +79,7 @@ from agno.utils.response import check_if_run_cancelled
 from agno.utils.team import (
     add_interaction_to_team_run_context,
     format_member_agent_task,
+    get_member_session_id,
 )
 
 # Terminal events emitted by a member (Agent or sub-Team); forwarded even when draining after cancel.
@@ -318,7 +321,7 @@ def _get_task_management_tools(
     def _setup_member_for_task(member_agent: Union[Agent, "Team"], task_description: str):
         """Initialize member and prepare task input. Returns (member_agent_task, history)."""
         _initialize_member(team, member_agent)
-        if not team.send_media_to_model:
+        if not team.send_media_to_model and hasattr(member_agent, "send_media_to_model"):
             member_agent.send_media_to_model = False
 
         team_member_interactions_str = _determine_team_member_interactions(
@@ -388,15 +391,11 @@ def _get_task_management_tools(
             run_response.add_member_run(member_run_response)
 
         if member_run_response:
-            if (
-                not member_agent.store_media
-                or not member_agent.store_tool_messages
-                or not member_agent.store_history_messages
-            ):
+            if not member_storage(member_agent).keeps_all:
                 from agno.agent._run import scrub_run_output_for_storage
 
                 # Recorded before the scrub: by here the ids exist nowhere else.
-                if not member_agent.store_media:
+                if not member_storage(member_agent).media:
                     _record_opted_out_media(run_response, member_run_response)
                 scrub_run_output_for_storage(member_agent, run_response=member_run_response)  # type: ignore[arg-type]
             from agno.team._run import _member_run_for_storage
@@ -455,15 +454,11 @@ def _get_task_management_tools(
             run_response.add_member_run(member_run_response)
 
         if member_run_response:
-            if (
-                not member_agent.store_media
-                or not member_agent.store_tool_messages
-                or not member_agent.store_history_messages
-            ):
+            if not member_storage(member_agent).keeps_all:
                 from agno.agent._run import scrub_run_output_for_storage
 
                 # Recorded before the scrub: by here the ids exist nowhere else.
-                if not member_agent.store_media:
+                if not member_storage(member_agent).media:
                     _record_opted_out_media(run_response, member_run_response)
                 scrub_run_output_for_storage(member_agent, run_response=member_run_response)  # type: ignore[arg-type]
             from agno.team._run import _amember_run_for_storage
@@ -528,7 +523,7 @@ def _get_task_management_tools(
                 member_stream = member_agent.run(
                     input=member_agent_task if not history else history,
                     user_id=user_id,
-                    session_id=session.session_id,
+                    session_id=get_member_session_id(member_agent, session.session_id),
                     session_state=member_session_state_copy,
                     images=_images,
                     videos=_videos,
@@ -541,11 +536,10 @@ def _get_task_management_tools(
                     add_dependencies_to_context=add_dependencies_to_context,
                     metadata=run_context.metadata,
                     add_session_state_to_context=add_session_state_to_context,
-                    knowledge_filters=run_context.knowledge_filters
-                    if not member_agent.knowledge_filters and member_agent.knowledge
-                    else None,
+                    knowledge_filters=member_knowledge_filters(member_agent, run_context),
                     run_id=member_run_id,
                     yield_run_output=True,
+                    **_member_run_kwargs(team, member_agent),
                 )
                 draining_after_cancel = False
                 for event in member_stream:
@@ -580,7 +574,7 @@ def _get_task_management_tools(
                 member_run_response = member_agent.run(
                     input=member_agent_task if not history else history,
                     user_id=user_id,
-                    session_id=session.session_id,
+                    session_id=get_member_session_id(member_agent, session.session_id),
                     session_state=member_session_state_copy,
                     images=_images,
                     videos=_videos,
@@ -592,10 +586,9 @@ def _get_task_management_tools(
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
                     metadata=run_context.metadata,
-                    knowledge_filters=run_context.knowledge_filters
-                    if not member_agent.knowledge_filters and member_agent.knowledge
-                    else None,
+                    knowledge_filters=member_knowledge_filters(member_agent, run_context),
                     run_id=member_run_id,
+                    **_member_run_kwargs(team, member_agent),
                 )
                 check_if_run_cancelled(member_run_response)
                 if run_response.run_id is not None:
@@ -711,7 +704,7 @@ def _get_task_management_tools(
                 member_stream = member_agent.arun(
                     input=member_agent_task if not history else history,
                     user_id=user_id,
-                    session_id=session.session_id,
+                    session_id=get_member_session_id(member_agent, session.session_id),
                     session_state=member_session_state_copy,
                     images=_images,
                     videos=_videos,
@@ -724,11 +717,10 @@ def _get_task_management_tools(
                     add_dependencies_to_context=add_dependencies_to_context,
                     metadata=run_context.metadata,
                     add_session_state_to_context=add_session_state_to_context,
-                    knowledge_filters=run_context.knowledge_filters
-                    if not member_agent.knowledge_filters and member_agent.knowledge
-                    else None,
+                    knowledge_filters=member_knowledge_filters(member_agent, run_context),
                     run_id=member_run_id,
                     yield_run_output=True,
+                    **_member_run_kwargs(team, member_agent),
                 )
                 draining_after_cancel = False
                 async for event in member_stream:
@@ -763,7 +755,7 @@ def _get_task_management_tools(
                 member_run_response = await member_agent.arun(  # type: ignore[misc]
                     input=member_agent_task if not history else history,
                     user_id=user_id,
-                    session_id=session.session_id,
+                    session_id=get_member_session_id(member_agent, session.session_id),
                     session_state=member_session_state_copy,
                     images=_images,
                     videos=_videos,
@@ -775,10 +767,9 @@ def _get_task_management_tools(
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
                     metadata=run_context.metadata,
-                    knowledge_filters=run_context.knowledge_filters
-                    if not member_agent.knowledge_filters and member_agent.knowledge
-                    else None,
+                    knowledge_filters=member_knowledge_filters(member_agent, run_context),
                     run_id=member_run_id,
+                    **_member_run_kwargs(team, member_agent),
                 )
                 check_if_run_cancelled(member_run_response)
                 if run_response.run_id is not None:
@@ -862,6 +853,7 @@ def _get_task_management_tools(
             str: Aggregated results from all task executions.
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
+        from contextvars import copy_context
 
         # Validate all tasks
         tasks_to_run = []
@@ -915,7 +907,7 @@ def _get_task_management_tools(
                 member_run_response = member_agent.run(
                     input=member_agent_task if not history else history,
                     user_id=user_id,
-                    session_id=session.session_id,
+                    session_id=get_member_session_id(member_agent, session.session_id),
                     session_state=member_session_state_copy,
                     images=thread_images,
                     videos=thread_videos,
@@ -927,10 +919,9 @@ def _get_task_management_tools(
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
                     metadata=run_context.metadata,
-                    knowledge_filters=run_context.knowledge_filters
-                    if not member_agent.knowledge_filters and member_agent.knowledge
-                    else None,
+                    knowledge_filters=member_knowledge_filters(member_agent, run_context),
                     run_id=member_run_id,
+                    **_member_run_kwargs(team, member_agent),
                 )
                 return (task_obj.id, member_run_response, member_session_state_copy, member_task_description, None)
             except RunCancelledException:
@@ -944,7 +935,7 @@ def _get_task_management_tools(
 
         with ThreadPoolExecutor(max_workers=len(tasks_to_run)) as executor:
             futures = {
-                executor.submit(_run_single_task, task_obj, member_agent): (task_obj, member_agent)
+                executor.submit(copy_context().run, _run_single_task, task_obj, member_agent): (task_obj, member_agent)
                 for task_obj, member_agent in tasks_to_run
             }
             for future in as_completed(futures):
@@ -1120,7 +1111,7 @@ def _get_task_management_tools(
                 member_run_response = await member_agent.arun(
                     input=member_agent_task if not history else history,
                     user_id=user_id,
-                    session_id=session.session_id,
+                    session_id=get_member_session_id(member_agent, session.session_id),
                     session_state=member_session_state_copy,
                     images=task_images,
                     videos=task_videos,
@@ -1132,10 +1123,9 @@ def _get_task_management_tools(
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
                     metadata=run_context.metadata,
-                    knowledge_filters=run_context.knowledge_filters
-                    if not member_agent.knowledge_filters and member_agent.knowledge
-                    else None,
+                    knowledge_filters=member_knowledge_filters(member_agent, run_context),
                     run_id=member_run_id,
+                    **_member_run_kwargs(team, member_agent),
                 )
                 return (task_obj.id, member_run_response, member_session_state_copy, member_task_description, None)
             except RunCancelledException:

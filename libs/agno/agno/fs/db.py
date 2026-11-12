@@ -3,8 +3,10 @@
 import asyncio
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Set, Tuple
+from weakref import WeakKeyDictionary
 
 from agno.fs._paths import build_chunk, path_sort_key
 from agno.fs.base import BaseFS, _build_match
@@ -159,6 +161,20 @@ class DbFileSystem(BaseFS):
     # Helpers
     # ------------------------------------------------------------------
 
+    @property
+    def _bind(self) -> Any:
+        return getattr(self, "_bound_connection", None) or self.db_engine
+
+    @contextmanager
+    def _connection(self):
+        connection = getattr(self, "_bound_connection", None)
+        if connection is not None:
+            with connection.begin_nested():
+                yield connection
+        else:
+            with self.db_engine.begin() as connection:
+                yield connection
+
     def _ensure_table(self) -> None:
         if self._table_ready:
             return
@@ -176,15 +192,16 @@ class DbFileSystem(BaseFS):
                 # CREATE would fail here with "permission denied for database", which
                 # points at the wrong thing. Warn and let create_all decide, which is
                 # what PostgresDb does (db/postgres/utils.py:71-75).
-                if self.db_schema is not None and not sa_inspect(self.db_engine).has_schema(self.db_schema):
+                if self.db_schema is not None and not sa_inspect(self._bind).has_schema(self.db_schema):
                     try:
-                        with self.db_engine.begin() as conn:
+                        with self._connection() as conn:
                             conn.execute(sql_text(f'CREATE SCHEMA IF NOT EXISTS "{self.db_schema}"'))
                     except Exception as e:
                         log_warning(f"Could not create schema {self.db_schema}: {e}")
-                self.metadata.create_all(self.db_engine, tables=[self.table], checkfirst=True)
+                with self._connection() as conn:
+                    self.metadata.create_all(conn, tables=[self.table], checkfirst=True)
             except (IntegrityError, ProgrammingError, OperationalError):
-                if not sa_inspect(self.db_engine).has_table(self.table_name, schema=self.db_schema):
+                if not sa_inspect(self._bind).has_table(self.table_name, schema=self.db_schema):
                     raise
             self._require_current_schema()
             log_debug(f"DbFileSystem table ready: {self.table.fullname}")
@@ -202,7 +219,7 @@ class DbFileSystem(BaseFS):
 
     def _schema_state(self) -> Tuple[Dict[str, Any], Tuple[str, ...]]:
         """The table's columns and key as they are in the database."""
-        inspector = sa_inspect(self.db_engine)
+        inspector = sa_inspect(self._bind)
         columns = {column["name"]: column for column in inspector.get_columns(self.table_name, schema=self.db_schema)}
         key = tuple(
             inspector.get_pk_constraint(self.table_name, schema=self.db_schema).get("constrained_columns") or ()
@@ -241,7 +258,7 @@ class DbFileSystem(BaseFS):
         Idempotent: run it again and it finds the table current.
         """
         with self._table_lock:
-            if not sa_inspect(self.db_engine).has_table(self.table_name, schema=self.db_schema):
+            if not sa_inspect(self._bind).has_table(self.table_name, schema=self.db_schema):
                 return False
             columns, key = self._schema_state()
             if self._is_current(columns, key):
@@ -249,7 +266,7 @@ class DbFileSystem(BaseFS):
             if self.dialect == "sqlite":
                 self._rebuild_sqlite_table("user_id" in columns)
             else:
-                with self.db_engine.begin() as conn:
+                with self._connection() as conn:
                     if "user_id" not in columns:
                         conn.execute(
                             sql_text(
@@ -266,9 +283,7 @@ class DbFileSystem(BaseFS):
                         )
                     if set(key) != set(self._KEY_COLUMNS):
                         old_name = (
-                            sa_inspect(self.db_engine)
-                            .get_pk_constraint(self.table_name, schema=self.db_schema)
-                            .get("name")
+                            sa_inspect(self._bind).get_pk_constraint(self.table_name, schema=self.db_schema).get("name")
                         )
                         if old_name:
                             conn.execute(sql_text(f'ALTER TABLE {self._qualified_name()} DROP CONSTRAINT "{old_name}"'))
@@ -291,7 +306,7 @@ class DbFileSystem(BaseFS):
         replacement = self.table.to_metadata(MetaData(), name=new_name)
         columns = "namespace, path, content, size_bytes, version, created_at, updated_at"
         source_user = "COALESCE(user_id, '')" if has_user_id else "''"
-        with self.db_engine.begin() as conn:
+        with self._connection() as conn:
             conn.execute(sql_text(f'DROP TABLE IF EXISTS "{new_name}"'))
             conn.execute(CreateTable(replacement))
             conn.execute(
@@ -371,7 +386,7 @@ class DbFileSystem(BaseFS):
     def read(self, namespace: str, path: str, *, user_id: str = "") -> Optional[str]:
         self._ensure_table()
         t = self.table
-        with self.db_engine.begin() as conn:
+        with self._connection() as conn:
             row = conn.execute(select(t.c.content).where(and_(self._key(namespace, user_id), t.c.path == path))).first()
         return None if row is None else row[0]
 
@@ -388,6 +403,29 @@ class DbFileSystem(BaseFS):
         t = self.table
         now = int(time.time())
         size_bytes = len(content.encode("utf-8"))
+        if expected_version == 0:
+            stmt = (
+                self._insert()(t)
+                .values(
+                    namespace=namespace,
+                    user_id=user_id,
+                    path=path,
+                    content=content,
+                    size_bytes=size_bytes,
+                    version=1,
+                    created_at=now,
+                    updated_at=now,
+                )
+                .on_conflict_do_nothing(index_elements=["namespace", "user_id", "path"])
+                .returning(t.c.version)
+            )
+            with self._connection() as conn:
+                if conn.execute(stmt).first() is None:
+                    actual = conn.execute(
+                        select(t.c.version).where(and_(self._key(namespace, user_id), t.c.path == path))
+                    ).scalar()
+                    raise VersionConflictError(f"file already exists: {path}", expected=0, actual=actual)
+            return FileMeta(path=path, size_bytes=size_bytes, version=1, updated_at=now, user_id=user_id or None)
         if expected_version is not None:
             stmt = (
                 update(t)
@@ -395,7 +433,7 @@ class DbFileSystem(BaseFS):
                 .values(content=content, size_bytes=size_bytes, version=t.c.version + 1, updated_at=now)
                 .returning(t.c.version, t.c.size_bytes)
             )
-            with self.db_engine.begin() as conn:
+            with self._connection() as conn:
                 row = conn.execute(stmt).first()
                 if row is None:
                     actual = conn.execute(
@@ -407,7 +445,7 @@ class DbFileSystem(BaseFS):
                         actual=actual,
                     )
             return FileMeta(path=path, size_bytes=row[1], version=row[0], updated_at=now, user_id=user_id or None)
-        with self.db_engine.begin() as conn:
+        with self._connection() as conn:
             return self._write_on(conn, namespace, path, content, user_id=user_id)
 
     def list(self, namespace: str, directory: str = "", *, user_id: str = "") -> List[FileMeta]:
@@ -416,17 +454,20 @@ class DbFileSystem(BaseFS):
         stmt = select(t.c.path, t.c.size_bytes, t.c.version, t.c.updated_at).where(
             and_(self._key(namespace, user_id), self._directory_predicate(directory))
         )
-        with self.db_engine.begin() as conn:
+        with self._connection() as conn:
             rows = conn.execute(stmt).all()
         return [
             FileMeta(path=r[0], size_bytes=r[1], version=r[2], updated_at=r[3], user_id=user_id or None) for r in rows
         ]
 
-    def delete(self, namespace: str, path: str, *, user_id: str = "") -> bool:
+    def delete(self, namespace: str, path: str, *, user_id: str = "", expected_version: Optional[int] = None) -> bool:
         self._ensure_table()
         t = self.table
-        with self.db_engine.begin() as conn:
-            result = conn.execute(delete(t).where(and_(self._key(namespace, user_id), t.c.path == path)))
+        with self._connection() as conn:
+            condition = and_(self._key(namespace, user_id), t.c.path == path)
+            if expected_version is not None:
+                condition = and_(condition, t.c.version == expected_version)
+            result = conn.execute(delete(t).where(condition))
         return result.rowcount > 0
 
     # ------------------------------------------------------------------
@@ -436,7 +477,7 @@ class DbFileSystem(BaseFS):
     def read_with_meta(self, namespace: str, path: str, *, user_id: str = "") -> Optional[FileData]:
         self._ensure_table()
         t = self.table
-        with self.db_engine.begin() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 select(t.c.content, t.c.size_bytes, t.c.version, t.c.updated_at).where(
                     and_(self._key(namespace, user_id), t.c.path == path)
@@ -452,7 +493,7 @@ class DbFileSystem(BaseFS):
     def _stat(self, namespace: str, path: str, *, user_id: str = "") -> Optional[FileMeta]:
         self._ensure_table()
         t = self.table
-        with self.db_engine.begin() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 select(t.c.size_bytes, t.c.version, t.c.updated_at).where(
                     and_(self._key(namespace, user_id), t.c.path == path)
@@ -535,7 +576,7 @@ class DbFileSystem(BaseFS):
             stmt = stmt.on_conflict_do_update(index_elements=key_columns, set_=set_)
         stmt = stmt.returning(t.c.version, t.c.size_bytes)
 
-        with self.db_engine.begin() as conn:
+        with self._connection() as conn:
             row = conn.execute(stmt).first()
             if row is None:
                 # Guard blocked the update. Fetch the current tail to report the
@@ -569,7 +610,7 @@ class DbFileSystem(BaseFS):
             .values(path=dst, version=t.c.version + 1, updated_at=now)
             .returning(t.c.version, t.c.size_bytes)
         )
-        with self.db_engine.begin() as conn:
+        with self._connection() as conn:
             try:
                 # Both statements inside the one SAVEPOINT: the DELETE+UPDATE
                 # pair is a single rollback unit on the overwrite path.
@@ -609,7 +650,7 @@ class DbFileSystem(BaseFS):
         stmt = select(t.c.content).where(
             and_(self._key(namespace, user_id), self._directory_predicate(directory), or_(*line_predicates))
         )
-        with self.db_engine.begin() as conn:
+        with self._connection() as conn:
             rows = conn.execute(stmt)
             for row in rows:
                 hit = remaining & set(row[0].split("\n"))
@@ -639,7 +680,7 @@ class DbFileSystem(BaseFS):
         elif query.isascii():
             conditions.append(t.c.content.icontains(query, autoescape=True))
         stmt = select(t.c.path, t.c.size_bytes, t.c.content).where(and_(*conditions))
-        with self.db_engine.begin() as conn:
+        with self._connection() as conn:
             rows = conn.execute(stmt).all()
         matches: List[SearchMatch] = []
         for row in sorted(rows, key=lambda r: path_sort_key(r[0])):
@@ -654,15 +695,155 @@ class DbFileSystem(BaseFS):
         self._ensure_table()
         t = self.table
         stmt = select(t.c.user_id).distinct().where(and_(t.c.namespace == namespace, t.c.user_id != ""))
-        with self.db_engine.begin() as conn:
+        with self._connection() as conn:
             return [str(row[0]) for row in conn.execute(stmt).all()]
 
     def usage(self, namespace: str, *, user_id: str = "") -> NamespaceUsage:
         self._ensure_table()
         t = self.table
         stmt = select(func.count(), func.coalesce(func.sum(t.c.size_bytes), 0)).where(self._key(namespace, user_id))
-        with self.db_engine.begin() as conn:
+        with self._connection() as conn:
             row = conn.execute(stmt).one()
         # Postgres sum(bigint) returns Decimal; coerce so callers (and json.dumps in
         # list_files) always see plain ints, matching SQLite.
         return NamespaceUsage(file_count=int(row[0]), total_bytes=int(row[1]))
+
+
+class AsyncDbFileSystem(DbFileSystem):
+    """The same filesystem SQL and version checks on an asynchronous database.
+
+    SQLAlchemy's run_sync adapts the synchronous SQL operations to the async
+    driver on one connection. It does not create a second engine or pool.
+    Use the a-prefixed methods; synchronous I/O is deliberately refused.
+    """
+
+    _pool_locks: Any = WeakKeyDictionary()
+
+    def __init__(self, db: Any, *, table_name: str = "agno_fs", db_schema: Optional[str] = DEFAULT_DB_SCHEMA):
+        from sqlalchemy.ext.asyncio import AsyncEngine
+
+        engine = getattr(db, "db_engine", None)
+        if not isinstance(engine, AsyncEngine):
+            raise ValueError("AsyncDbFileSystem requires an asynchronous SQL database")
+        super().__init__(db_engine=engine.sync_engine, table_name=table_name, db_schema=db_schema)
+        self.db = db
+        self._bound_connection: Any = None
+        self._async_engine = engine
+        self._async_lock = asyncio.Lock()
+
+    def _ensure_table(self) -> None:
+        if getattr(self, "_bound_connection", None) is None:
+            raise TypeError("Use asynchronous FileSystem methods with an asynchronous database")
+        super()._ensure_table()
+
+    async def _run(self, method: str, *args: Any, **kwargs: Any) -> Any:
+        from copy import copy
+
+        from sqlalchemy.pool import StaticPool
+
+        lock = self._async_lock
+        if isinstance(self._async_engine.pool, StaticPool):
+            # In-memory SQLite shares one connection across backend instances.
+            # Keep its transactions separate, with locks bound to the current loop.
+            per_loop = self._pool_locks.setdefault(self._async_engine.pool, WeakKeyDictionary())
+            lock = per_loop.setdefault(asyncio.get_running_loop(), asyncio.Lock())
+        async with lock:
+            bound = copy(self)
+            async with self._async_engine.begin() as connection:
+                if self.dialect == "sqlite":
+                    # SQLite's legacy transaction mode does not BEGIN before a
+                    # SAVEPOINT. Releasing that savepoint would commit the write
+                    # before the outer async transaction can roll it back.
+                    raw = await connection.get_raw_connection()
+                    driver = raw.driver_connection
+                    if driver is None:
+                        raise RuntimeError("SQLite driver connection is unavailable")
+                    if not driver.in_transaction:
+                        # Reserve the writer before cold schema inspection; two
+                        # deferred readers cannot both upgrade to create a table.
+                        # Respect engines that already BEGIN via a caller's hook
+                        # or non-legacy driver transaction configuration.
+                        statement = (
+                            "BEGIN IMMEDIATE" if not self._table_ready or method == "upgrade_schema" else "BEGIN"
+                        )
+                        await connection.exec_driver_sql(statement)
+
+                def operation(sync_connection):
+                    bound._bound_connection = sync_connection
+                    return getattr(DbFileSystem, method)(bound, *args, **kwargs)
+
+                result = await connection.run_sync(operation)
+            self._table_ready = bound._table_ready
+            return result
+
+    async def aupgrade_schema(self) -> bool:
+        """Upgrade the existing filesystem table using the async connection."""
+        return await self._run("upgrade_schema")
+
+    async def aread(self, namespace: str, path: str, *, user_id: str = "") -> Optional[str]:
+        """Async variant of read."""
+        return await self._run("read", namespace, path, user_id=user_id)
+
+    async def awrite(
+        self,
+        namespace: str,
+        path: str,
+        content: str,
+        *,
+        expected_version: Optional[int] = None,
+        user_id: str = "",
+    ) -> FileMeta:
+        """Async variant of write."""
+        return await self._run("write", namespace, path, content, expected_version=expected_version, user_id=user_id)
+
+    async def alist(self, namespace: str, directory: str = "", *, user_id: str = "") -> List[FileMeta]:
+        """Async variant of list."""
+        return await self._run("list", namespace, directory, user_id=user_id)
+
+    async def adelete(
+        self, namespace: str, path: str, *, user_id: str = "", expected_version: Optional[int] = None
+    ) -> bool:
+        """Async variant of delete."""
+        return await self._run("delete", namespace, path, user_id=user_id, expected_version=expected_version)
+
+    async def aread_with_meta(self, namespace: str, path: str, *, user_id: str = "") -> Optional[FileData]:
+        """Async variant of read_with_meta."""
+        return await self._run("read_with_meta", namespace, path, user_id=user_id)
+
+    async def aappend(
+        self,
+        namespace: str,
+        path: str,
+        content: str,
+        *,
+        max_file_bytes: Optional[int] = None,
+        user_id: str = "",
+    ) -> FileMeta:
+        """Async variant of append."""
+        return await self._run("append", namespace, path, content, max_file_bytes=max_file_bytes, user_id=user_id)
+
+    async def amove(
+        self, namespace: str, src: str, dst: str, *, overwrite: bool = False, user_id: str = ""
+    ) -> FileMeta:
+        """Async variant of move."""
+        return await self._run("move", namespace, src, dst, overwrite=overwrite, user_id=user_id)
+
+    async def acontains(
+        self, namespace: str, lines: Sequence[str], directory: str = "", *, user_id: str = ""
+    ) -> Set[str]:
+        """Async variant of contains."""
+        return await self._run("contains", namespace, lines, directory, user_id=user_id)
+
+    async def asearch(
+        self, namespace: str, query: str, directory: str = "", limit: int = 10, *, user_id: str = ""
+    ) -> List[SearchMatch]:
+        """Async variant of search."""
+        return await self._run("search", namespace, query, directory, limit, user_id=user_id)
+
+    async def apartitions(self, namespace: str) -> List[str]:
+        """Async variant of partitions."""
+        return await self._run("partitions", namespace)
+
+    async def ausage(self, namespace: str, *, user_id: str = "") -> NamespaceUsage:
+        """Async variant of usage."""
+        return await self._run("usage", namespace, user_id=user_id)

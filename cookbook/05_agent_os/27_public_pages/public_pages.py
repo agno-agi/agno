@@ -7,20 +7,23 @@ import argparse
 import asyncio
 from contextlib import asynccontextmanager
 from os import getenv
+from typing import AsyncIterator, Union
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.fs import FileSystem
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
-from agno.knowledge.page import PageError, tool_error
+from agno.knowledge.page import PageError, SyncReport, tool_error
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, MCPConfig, QueueConfig
 from agno.os.public import PublicSurface
+from agno.run.workflow import WorkflowRunEvent
 from agno.tools.mcp import MCPTools
 from agno.vectordb.pgvector import PgVector
 from agno.vectordb.pgvector.index import HNSW
 from agno.workflow import Step, StepInput, StepOutput, Workflow
+from agno.workflow.types import StepProgress
 from pydantic import BaseModel, Field
 
 # Separate demo database; do not point this example at production tables.
@@ -117,10 +120,33 @@ class SyncRequest(BaseModel):
     reindex: bool = False
 
 
-async def sync_source(step_input: StepInput) -> StepOutput:
+async def sync_source(
+    step_input: StepInput,
+) -> AsyncIterator[Union[StepProgress, StepOutput]]:
     request = SyncRequest.model_validate(step_input.input or {})
-    result = await knowledge.async_sync_pages(url=index_url, reindex=request.reindex)
-    return StepOutput(content=result.model_dump(), success=result.status != "partial")
+    # One readable line per snapshot; the full counts travel beside it in data.
+    # "Processed", not "indexed": a processed page may have failed or been unchanged.
+    messages = {
+        "waiting": "Waiting to synchronize pages",
+        "discovered": "Discovered {discovered} pages",
+        "publishing": "Processed {processed} of {discovered} pages ({updated} updated, {failed} failed)",
+        "pruning": "Pruned {deleted} stale pages",
+    }
+    updates = knowledge.astream_sync_pages(url=index_url, reindex=request.reindex)
+    try:
+        async for update in updates:
+            if isinstance(update, SyncReport):
+                yield StepOutput(
+                    content=update.model_dump(), success=update.status != "partial"
+                )
+            else:
+                counts = update.model_dump()
+                yield StepProgress(
+                    content=messages[update.stage].format(**counts), data=counts
+                )
+    finally:
+        # Closing the stream cancels the sync worker when this step is stopped early.
+        await updates.aclose()
 
 
 sync = Workflow(
@@ -129,6 +155,8 @@ sync = Workflow(
     db=db,
     input_schema=SyncRequest,
     steps=[Step(name="reconcile", executor=sync_source)],
+    # AgentOS stores run events. Progress is one event per page, so it is streamed but not saved.
+    events_to_skip=[WorkflowRunEvent.step_progress],
 )
 
 

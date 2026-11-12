@@ -1,13 +1,61 @@
 from types import MethodType
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple
 
 import pytest
 
+from agno.agent.agent import Agent
 from agno.db.base import AsyncBaseDb
+from agno.db.sqlite import SqliteDb
 from agno.memory import MemoryManager, UserMemory
+from agno.metrics import RunMetrics
+from agno.models.base import Model
+from agno.models.message import Message, MessageMetrics
+from agno.models.response import ModelResponse
 
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
+
+
+class ScriptedModel(Model):
+    """Minimal offline model: answers each call with the next of the given responses."""
+
+    def __init__(self, responses: List[ModelResponse]):
+        super().__init__(id="test-model", name="test-model", provider="test")
+        self.instructions = None
+        self._responses = responses
+
+    def get_instructions_for_model(self, *args, **kwargs):
+        return None
+
+    def get_system_message_for_model(self, *args, **kwargs):
+        return None
+
+    async def aget_instructions_for_model(self, *args, **kwargs):
+        return None
+
+    async def aget_system_message_for_model(self, *args, **kwargs):
+        return None
+
+    def parse_args(self, *args, **kwargs):
+        return {}
+
+    def invoke(self, *args, **kwargs) -> ModelResponse:
+        return self._responses.pop(0)
+
+    async def ainvoke(self, *args, **kwargs) -> ModelResponse:
+        return self._responses.pop(0)
+
+    def invoke_stream(self, *args, **kwargs) -> Iterator[ModelResponse]:
+        yield self._responses.pop(0)
+
+    async def ainvoke_stream(self, *args, **kwargs) -> AsyncIterator[ModelResponse]:
+        yield self._responses.pop(0)
+
+    def _parse_provider_response(self, response: Any, **kwargs) -> ModelResponse:
+        return response
+
+    def _parse_provider_response_delta(self, response: Any) -> ModelResponse:
+        return response
 
 
 class DummyAsyncMemoryDb(AsyncBaseDb):
@@ -240,6 +288,7 @@ async def test_aupdate_memory_task_refreshes_async_db():
         update_memories,
         add_memories,
         clear_memories,
+        run_metrics,
     ):
         await db.upsert_user_memory(
             UserMemory(
@@ -260,3 +309,67 @@ async def test_aupdate_memory_task_refreshes_async_db():
     saved_memories = await manager.aget_user_memories(user_id="user-2")
     assert len(saved_memories) == 1
     assert saved_memories[0].memory == "Task: Sync state"
+
+
+def test_memory_model_tool_loop_counts_every_call(tmp_path):
+    """Every call of the memory model's tool loop is counted, not only the last one."""
+
+    usage = MessageMetrics(input_tokens=6, output_tokens=4, total_tokens=10)
+    add_memory_call = ModelResponse(
+        role="assistant",
+        tool_calls=[
+            {"id": "call-1", "type": "function", "function": {"name": "add_memory", "arguments": '{"memory": "tea"}'}}
+        ],
+        response_usage=usage,
+    )
+    answer = ModelResponse(role="assistant", content="done", response_usage=usage)
+    memory_manager = MemoryManager(model=ScriptedModel([add_memory_call, answer]))
+    run_metrics = RunMetrics()
+
+    memory_manager.create_or_update_memories(
+        messages=[Message(role="user", content="I like tea")],
+        existing_memories=[],
+        user_id="user-1",
+        db=SqliteDb(db_file=str(tmp_path / "memory.db")),
+        run_metrics=run_metrics,
+    )
+
+    assert run_metrics.total_tokens == 20
+
+
+def test_agentic_memory_tool_counts_every_memory_model_call(tmp_path):
+    """The memory model calls behind the update_user_memory tool are counted on the run that called the tool."""
+
+    usage = MessageMetrics(input_tokens=6, output_tokens=4, total_tokens=10)
+
+    def call(name: str, arguments: str) -> ModelResponse:
+        return ModelResponse(
+            role="assistant",
+            tool_calls=[{"id": f"call-{name}", "type": "function", "function": {"name": name, "arguments": arguments}}],
+            response_usage=usage,
+        )
+
+    agent = Agent(
+        model=ScriptedModel(
+            [
+                call("update_user_memory", '{"task": "Remember that I like tea"}'),
+                ModelResponse(role="assistant", content="noted", response_usage=usage),
+            ]
+        ),
+        memory_manager=MemoryManager(
+            model=ScriptedModel(
+                [
+                    call("add_memory", '{"memory": "tea"}'),
+                    ModelResponse(role="assistant", content="done", response_usage=usage),
+                ]
+            )
+        ),
+        enable_agentic_memory=True,
+        db=SqliteDb(db_file=str(tmp_path / "agent.db")),
+        telemetry=False,
+    )
+
+    run_output = agent.run("I like tea", user_id="user-1")
+
+    assert run_output.metrics.total_tokens == 40
+    assert run_output.metrics.details["memory_model"][0].total_tokens == 20
