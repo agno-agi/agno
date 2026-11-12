@@ -3447,14 +3447,10 @@ class AgentOS:
                         table_name
                         for db in dbs
                         for table_name in (
-                            (
-                                db.component_metrics_table_name,
-                                db.aggregate_metrics_table_name,
-                                db.metrics_refreshes_table_name,
-                            )
-                            # A remote database lists the tables its own AgentOS listed
+                            # One table per metrics store, the one every number is built from
+                            db.component_metrics_table_name
                             if has_metrics_lock_row(db) or isinstance(db, RemoteDb)
-                            else (db.metrics_table_name,)
+                            else db.metrics_table_name,
                         )
                         if table_name is not None
                     )
