@@ -1,7 +1,7 @@
 import asyncio
 from io import BytesIO
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -149,12 +149,12 @@ async def test_docx_reader_async_with_chunking():
     ):
         reader = DocxReader()
         reader.chunk = True
-        # Mock the chunk_document method to return our predefined chunks
-        reader.chunk_document = Mock(return_value=chunked_docs)
+        # Mock the achunk_document method to return our predefined chunks
+        reader.achunk_document = AsyncMock(return_value=chunked_docs)
 
         documents = await reader.async_read(Path("test.docx"))
 
-        reader.chunk_document.assert_called_once()
+        reader.achunk_document.assert_awaited_once()
         assert len(documents) == 2
         assert documents[0].content == "Chunk 1"
         assert documents[1].content == "Chunk 2"
