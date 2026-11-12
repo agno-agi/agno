@@ -124,6 +124,8 @@ def _require_human_creation(run_context, operation="create Company Products and 
         raise PermissionError(f"Only a calling human may {operation} from chat; automated runs are refused{hint}")
     if (authority is not None and authority.service_account) or _identity(run_context) == INTERNAL_SCHEDULER_USER_ID:
         raise PermissionError(f"Only a calling human may {operation} from chat")
+    if getattr(authority, "scheduled", False):
+        raise PermissionError(f"Only a calling human may {operation} from chat; a scheduled run has no person present")
 
 
 def _automated_edit_stage(row, run_context):

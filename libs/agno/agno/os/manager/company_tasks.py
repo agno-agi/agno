@@ -111,7 +111,8 @@ def _refusal(authority: Any) -> Optional[str]:
     from agno.company.execution import _automatic_task, _ExecutorAuthorization
     from agno.company.routines import _RoutineAuthorization
 
-    if isinstance(authority, (_RoutineAuthorization, _ExecutorAuthorization)) or _automatic_task.get() is not None:
+    automated = isinstance(authority, (_RoutineAuthorization, _ExecutorAuthorization))
+    if automated or _automatic_task.get() is not None or getattr(authority, "scheduled", False):
         return "Task runs are started by people. Automated runs cannot start Tasks."
     return None
 

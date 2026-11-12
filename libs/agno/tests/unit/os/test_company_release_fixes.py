@@ -1174,3 +1174,105 @@ def test_a_routine_that_stays_within_the_tool_call_limit_is_a_success(open_syste
     limit = open_system.mini.tool_call_limit
     output, recorded = routine_run(open_system, limit)
     assert recorded == ("success", None), (output.status, recorded)
+
+
+# ----------------------------------------------------------------- a scheduled run is not a person
+
+
+def fire_owned_schedule(system, calls, message="Do the morning work"):
+    """Create an ordinary schedule on Super Agent as alice, through the API, and fire it with the real executor."""
+    import httpx
+
+    from agno.db.schemas.scheduler import Schedule
+    from agno.registry._reserved import MANAGER_TEAM_ID
+    from agno.scheduler.executor import ScheduleExecutor
+
+    scopes = [*SCOPES, f"teams:{MANAGER_TEAM_ID}:run", f"teams:{MANAGER_TEAM_ID}:read", "schedules:read"]
+    created = system.client.post(
+        "/schedules",
+        json={
+            "name": "morning",
+            "cron_expr": "0 9 * * 1",
+            "endpoint": f"/teams/{MANAGER_TEAM_ID}/runs",
+            "payload": {"message": message},
+        },
+        headers=headers(scopes),
+    )
+    assert created.status_code in (200, 201), created.text
+    row = system.db.get_schedule(created.json()["id"])
+    assert row["user_id"] == "alice" and row["payload"][AUTHORIZATION_KEY]["context"]["principal_id"] == "alice"
+    system.os.manager.model = ScriptedModel(calls)
+
+    async def fire():
+        executor = ScheduleExecutor(
+            base_url="http://test",
+            internal_service_token=system.os._internal_service_token,
+            poll_interval=0.01,
+            timeout=30,
+        )
+        executor._client = httpx.AsyncClient(transport=httpx.ASGITransport(app=system.app), base_url="http://test")
+        try:
+            call = asyncio.create_task(executor._call_endpoint(Schedule.from_dict(row)))
+            # The schedule submits a background run. Run it as the queue worker does.
+            job = None
+            for _ in range(500):
+                job = await system.queue.store.claim_job(system.queue.worker_id, system.queue.config.lock_grace_seconds)
+                if job is not None or call.done():
+                    break
+                await asyncio.sleep(0.01)
+            if job is not None:
+                await system.queue._execute_claimed(job)
+            return await asyncio.wait_for(call, 30)
+        finally:
+            await executor.close()
+
+    return asyncio.run(fire())
+
+
+def test_a_scheduled_run_on_super_agent_cannot_create_products_or_routines(system):
+    before = system.db.get_products(limit=100)[1]
+    result = fire_owned_schedule(
+        system,
+        [
+            ("create_company_product", {"name": "Made with nobody present"}),
+            ("update_company_details", {"name": "Renamed with nobody present"}),
+        ],
+    )
+    assert result["status"] in ("success", "failed"), result
+    content = json.dumps(result.get("output"))
+    assert content.count("scheduled run") >= 2, result
+    assert system.db.get_products(limit=100)[1] == before
+    details = system.client.get("/company/details", headers=headers([*SCOPES, "company:read"]))
+    assert details.status_code == 200 and details.json()["name"] != "Renamed with nobody present", details.text
+
+
+def test_a_scheduled_run_on_super_agent_still_reads_and_proposes(system):
+    task = system.proposal()
+    result = fire_owned_schedule(
+        system,
+        [
+            ("list_company_products", {}),
+            (
+                "propose_company_task",
+                {"product_id": task["product_id"], "title": "Follow up", "project_id": task["project_id"]},
+            ),
+        ],
+    )
+    assert result["status"] == "success", result
+    assert system.db.get_tasks(product_id=task["product_id"], limit=100)[1] == 2
+
+
+def test_the_mark_of_a_scheduled_run_survives_a_snapshot_and_a_person_carries_none(system):
+    from agno.os.authz.run_context import restore_authorization
+    from agno.tools.company import _require_human_creation
+
+    person = chat()
+    _require_human_creation(person)
+    assert "scheduled" not in person.authorization.snapshot()
+    restored = restore_authorization(system.app, {**person.authorization.snapshot(), "scheduled": True})
+    again = restore_authorization(system.app, restored.snapshot())
+    for authority in (restored, again):
+        context = chat()
+        context.authorization = authority
+        with pytest.raises(PermissionError, match="scheduled run"):
+            _require_human_creation(context)
