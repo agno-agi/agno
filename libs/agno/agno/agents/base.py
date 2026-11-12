@@ -1413,6 +1413,41 @@ class BaseExternalAgent:
             kwargs["output_schema"] = output_schema
         return output_schema
 
+    async def _adependencies_context(
+        self, input: Any, kwargs: Dict[str, Any], run_id: str, session_id: str, user_id: Optional[str]
+    ) -> str:
+        """Run dependencies a caller such as an interface passes, as the block an Agent adds, else an empty string."""
+        if not isinstance(input, str) or not kwargs.get("add_dependencies_to_context"):
+            return ""
+        if kwargs.get("dependencies") is None:
+            return ""
+        from agno.agent._run import aresolve_run_dependencies
+        from agno.agent._utils import convert_dependencies_to_string
+        from agno.run.base import RunContext
+
+        # Popped, so a later path that reads these options does not add the block a second time.
+        kwargs.pop("add_dependencies_to_context")
+        dependencies = kwargs.pop("dependencies")
+        run_context = RunContext(
+            run_id=run_id,
+            session_id=session_id,
+            user_id=user_id,
+            dependencies=dict(dependencies) if isinstance(dependencies, dict) else dependencies,
+        )
+        await aresolve_run_dependencies(self, run_context)  # type: ignore[arg-type]
+        return (
+            "\n\n<additional context>\n"
+            + convert_dependencies_to_string(self, run_context.dependencies)  # type: ignore[arg-type]
+            + "\n</additional context>"
+        )
+
+    async def _asandbox_input(
+        self, input: Any, kwargs: Dict[str, Any], run_id: str, session_id: str, user_id: Optional[str]
+    ) -> Any:
+        """The input with run dependencies added as the block an Agent adds, for a sandbox that takes none."""
+        context = await self._adependencies_context(input, kwargs, run_id, session_id, user_id)
+        return input + context if context else input
+
     @staticmethod
     def _output_json_schema(output_schema: Union[Type[BaseModel], Dict[str, Any]], provider: str) -> Dict[str, Any]:
         """JSON Schema for the framework: a dict is passed as given, a model is normalized for the provider."""
@@ -2170,12 +2205,16 @@ class BaseExternalAgent:
         team_id, workflow_id = self._pop_run_parent(kwargs)
         parent_id = self._parent_id(team_id, workflow_id)
         if self.sandbox is not None:
+            run_id = kwargs.get("run_id") or str(uuid4())
+            session_id = kwargs.get("session_id") or str(uuid4())
+            kwargs.update(run_id=run_id, session_id=session_id)
+            input = await self._asandbox_input(input, kwargs, run_id, session_id, kwargs.get("user_id"))
             if parent_id is None:
                 return await _sandbox_harness().arun(self, input, **kwargs)
             from agno.run.cancel import acleanup_member_runs, aregister_member_run
 
-            team_session_id = kwargs.get("session_id") or str(uuid4())
-            member_run_id = kwargs.get("run_id") or str(uuid4())
+            team_session_id = kwargs["session_id"]
+            member_run_id = kwargs["run_id"]
             text = self._input_text(input)
             try:
                 forwarded = self._sandboxed_member_kwargs(kwargs, team_session_id, member_run_id, team_id, workflow_id)
@@ -2198,6 +2237,8 @@ class BaseExternalAgent:
         # and nothing between the claim and the try below can leave the session claimed.
         input = self._input_text(input)
         record_input = input if continuation is None else continuation.record_input
+        context = await self._adependencies_context(input, kwargs, run_id, session_id, user_id)
+        prompt = input + context if context else input
         output_schema = self._resolve_output_schema(kwargs)
         run_state: Dict[str, Any] = {}
         state_session_id = self._state_session_id(session_id, parent_id)
@@ -2221,7 +2262,7 @@ class BaseExternalAgent:
                         attempts_made = attempt + 1
                         try:
                             content = await self._arun_adapter(
-                                input, history=history, run_id=run_id, session=session, run_state=run_state, **kwargs
+                                prompt, history=history, run_id=run_id, session=session, run_state=run_state, **kwargs
                             )
                             break
                         except RunCancelledException:
@@ -2315,6 +2356,10 @@ class BaseExternalAgent:
         team_id, workflow_id = self._pop_run_parent(kwargs)
         parent_id = self._parent_id(team_id, workflow_id)
         if self.sandbox is not None:
+            run_id = kwargs.get("run_id") or str(uuid4())
+            session_id = kwargs.get("session_id") or str(uuid4())
+            kwargs.update(run_id=run_id, session_id=session_id)
+            input = await self._asandbox_input(input, kwargs, run_id, session_id, kwargs.get("user_id"))
             if parent_id is None:
                 events = _sandbox_harness().astream(self, input, **kwargs)
                 try:
@@ -2325,8 +2370,8 @@ class BaseExternalAgent:
                 return
             from agno.run.cancel import acleanup_member_runs, aregister_member_run
 
-            team_session_id = kwargs.get("session_id") or str(uuid4())
-            member_run_id = kwargs.get("run_id") or str(uuid4())
+            team_session_id = kwargs["session_id"]
+            member_run_id = kwargs["run_id"]
             text = self._input_text(input)
             failure: Optional[Exception] = None
             try:
@@ -2361,6 +2406,8 @@ class BaseExternalAgent:
         continuation: Optional[ExternalContinuation] = kwargs.get("continuation")
         # Convert before claiming the session, as in the non-streaming path.
         input = self._input_text(input)
+        context = await self._adependencies_context(input, kwargs, run_id, session_id, user_id)
+        prompt = input + context if context else input
         output_schema = self._resolve_output_schema(kwargs)
         run_state: Dict[str, Any] = {}
         state_session_id = self._state_session_id(session_id, parent_id)
@@ -2417,7 +2464,7 @@ class BaseExternalAgent:
                             if native_non_stream and type(self)._arun_adapter is not BaseExternalAgent._arun_adapter:
                                 adapter = self._native_non_stream_events
                             source = adapter(
-                                input, history=history, run_id=run_id, session=session, run_state=run_state, **kwargs
+                                prompt, history=history, run_id=run_id, session=session, run_state=run_state, **kwargs
                             )
                             if bridge is not None:
                                 if bridge.closed:

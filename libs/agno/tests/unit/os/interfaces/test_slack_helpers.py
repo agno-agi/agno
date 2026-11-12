@@ -4,11 +4,15 @@ import pytest
 
 from agno.os.interfaces.slack.helpers import (
     BotNameResolver,
+    EventDeduplicator,
+    LookupCache,
+    build_run_metadata,
     download_event_files_async,
     extract_event_context,
     member_name,
     resolve_session_id,
     resolve_slack_user,
+    run_error_reply,
     send_slack_message_async,
     should_respond,
     strip_bot_mention,
@@ -90,6 +94,30 @@ class TestDownloadEventFilesAsync:
         assert len(videos) == 1
         assert len(files) == 0 and len(images) == 0
         assert len(skipped) == 0
+
+    @pytest.mark.asyncio
+    async def test_prefers_url_private_download(self):
+        mock_response = Mock(content=b"%PDF-data", status_code=200)
+        mock_response.raise_for_status = Mock()
+        event = {
+            "files": [
+                {
+                    "id": "F1",
+                    "name": "apples.pdf",
+                    "mimetype": "application/pdf",
+                    "url_private": "https://files.slack.com/F1",
+                    "url_private_download": "https://files.slack.com/F1/download",
+                }
+            ]
+        }
+        with patch("agno.os.interfaces.slack.helpers.httpx.AsyncClient") as mock_httpx:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_httpx.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_httpx.return_value.__aexit__ = AsyncMock(return_value=False)
+            files, images, videos, audio, skipped = await download_event_files_async("xoxb-token", event, 1_073_741_824)
+        assert mock_client.get.call_args.args[0] == "https://files.slack.com/F1/download"
+        assert len(files) == 1
 
     @pytest.mark.asyncio
     async def test_file_over_max_size_skipped(self):
@@ -480,3 +508,150 @@ async def test_resolve_session_id_returns_new_key_when_no_db_access():
 
     key = await resolve_session_id(entity, "agent-1", "C123", "111.222")
     assert key == "agent-1:C123:111.222"
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_id_caches_the_probe_per_thread():
+    entity = Mock()
+    entity.aget_session = AsyncMock(return_value=None)
+    cache = LookupCache()
+
+    first = await resolve_session_id(entity, "agent-1", "C123", "111.222", cache)
+    second = await resolve_session_id(entity, "agent-1", "C123", "111.222", cache)
+    assert first == second == "agent-1:C123:111.222"
+    entity.aget_session.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_id_does_not_cache_a_failed_probe():
+    entity = Mock()
+    entity.aget_session = AsyncMock(side_effect=[Exception("DB error"), {"session_id": "agent-1:111.222"}])
+    cache = LookupCache()
+
+    assert await resolve_session_id(entity, "agent-1", "C123", "111.222", cache) == "agent-1:C123:111.222"
+    assert await resolve_session_id(entity, "agent-1", "C123", "111.222", cache) == "agent-1:111.222"
+
+
+# -- LookupCache --
+
+
+class TestLookupCache:
+    @pytest.mark.asyncio
+    async def test_channel_name_cached_until_ttl(self):
+        from agno.os.interfaces.slack import helpers
+
+        client = AsyncMock()
+        client.conversations_info = AsyncMock(return_value={"channel": {"name": "general"}})
+        fake_time = Mock()
+        fake_time.monotonic.return_value = 1000.0
+        with patch.object(helpers, "time", fake_time):
+            cache = LookupCache()
+            assert await cache.channel_name(client, "C1") == "general"
+            assert await cache.channel_name(client, "C1") == "general"
+            assert client.conversations_info.await_count == 1
+            fake_time.monotonic.return_value = 1000.0 + LookupCache.LOOKUP_TTL_SECONDS + 1
+            await cache.channel_name(client, "C1")
+            assert client.conversations_info.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_failed_user_lookup_not_cached(self):
+        client = AsyncMock()
+        client.users_info = AsyncMock(side_effect=[Exception("ratelimited"), {"user": {"profile": {"email": "a@b.c"}}}])
+        cache = LookupCache()
+        with patch("agno.os.interfaces.slack.helpers.log_warning"):
+            assert await cache.user_identity(client, "U1") == ("U1", None)
+        assert await cache.user_identity(client, "U1") == ("a@b.c", None)
+        assert await cache.user_identity(client, "U1") == ("a@b.c", None)
+        assert client.users_info.await_count == 2
+
+
+# -- EventDeduplicator --
+
+
+class TestEventDeduplicator:
+    def test_seen_set_is_bounded(self):
+        with patch.object(EventDeduplicator, "DEDUP_MAX_ENTRIES", 3):
+            dedupe = EventDeduplicator()
+            assert [dedupe.is_duplicate(i) for i in ("a", "b", "c")] == [False, False, False]
+            # Past the cap: the oldest id is evicted without error
+            assert dedupe.is_duplicate("d") is False
+            # Recent ids still dedupe
+            assert dedupe.is_duplicate("d") is True
+            assert dedupe.is_duplicate("b") is True
+            # The evicted id is forgotten early: a late retry of it would run again (documented trade-off)
+            assert dedupe.is_duplicate("a") is False
+
+    def test_seen_ids_expire_after_ttl(self):
+        from agno.os.interfaces.slack import helpers
+
+        fake_time = Mock()
+        fake_time.monotonic.return_value = 1000.0
+        with patch.object(helpers, "time", fake_time):
+            dedupe = EventDeduplicator()
+            # Slack's last retry is at +5 min; the window must outlive it
+            assert dedupe.DEDUP_TTL_SECONDS >= 5 * 60
+            assert dedupe.is_duplicate("e") is False
+            fake_time.monotonic.return_value = 1000.0 + 5 * 60
+            assert dedupe.is_duplicate("e") is True
+            fake_time.monotonic.return_value = 1000.0 + dedupe.DEDUP_TTL_SECONDS + 1
+            assert dedupe.is_duplicate("e") is False
+
+
+# -- Downloads and uploads --
+
+
+def _httpx_client_mock(response):
+    client = AsyncMock()
+    client.get = AsyncMock(return_value=response)
+    return client
+
+
+@pytest.mark.asyncio
+async def test_download_uses_ssl_context_and_tolerates_null_size():
+    import ssl as ssl_module
+
+    ssl_context = ssl_module.create_default_context()
+    response = Mock(content=b"data")
+    response.raise_for_status = Mock()
+    event = {
+        "files": [
+            {
+                "id": "F1",
+                "name": "a.txt",
+                "mimetype": "text/plain",
+                "size": None,
+                "url_private": "https://files.slack.com/F1",
+            }
+        ]
+    }
+    with patch("agno.os.interfaces.slack.helpers.httpx.AsyncClient") as mock_httpx:
+        mock_httpx.return_value.__aenter__ = AsyncMock(return_value=_httpx_client_mock(response))
+        mock_httpx.return_value.__aexit__ = AsyncMock(return_value=False)
+        files, _, _, _, skipped = await download_event_files_async("xoxb", event, 1024, ssl_context)
+    assert mock_httpx.call_args.kwargs["verify"] is ssl_context
+    assert len(files) == 1 and skipped == []
+
+
+@pytest.mark.asyncio
+async def test_media_fetch_failure_skips_only_that_item():
+    client = AsyncMock()
+    broken = Mock(get_content_bytes=Mock(side_effect=RuntimeError("fetch failed")), filename="a.png")
+    good = Mock(get_content_bytes=Mock(return_value=b"img"), filename="b.png")
+    response = Mock(images=[broken, good], files=None, videos=None, audio=None)
+    with patch("agno.os.interfaces.slack.helpers.log_error"):
+        await upload_response_media_async(client, response, "C1", "ts1")
+    client.files_upload_v2.assert_awaited_once()
+    assert client.files_upload_v2.call_args.kwargs["filename"] == "b.png"
+
+
+def test_build_run_metadata_keeps_action_token():
+    metadata = build_run_metadata("Ann", "ann@x.io", {"action_token": "tok"})
+    assert metadata == {"user_name": "Ann", "user_id": "ann@x.io", "action_token": "tok"}
+
+
+def test_run_error_reply_maps_input_errors():
+    from agno.exceptions import InputCheckError, UnsupportedMediaError
+
+    assert run_error_reply(UnsupportedMediaError("x"), "fallback", "files") == "files"
+    assert run_error_reply(InputCheckError("say less"), "fallback", "files") == "say less"
+    assert run_error_reply(RuntimeError("boom"), "fallback", "files") == "fallback"

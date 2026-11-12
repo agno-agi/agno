@@ -165,6 +165,87 @@ def test_media_capable_adapter_receives_inputs(use_async):
     assert agent.calls[0]["images"] == [image]
 
 
+@dataclass
+class ContextAgent(ExampleAgent):
+    """Records the input its adapter receives; native mode routes non-streaming runs through the native path."""
+
+    native: bool = False
+    prompts: list = field(default_factory=list)
+
+    @property
+    def _uses_native_hitl(self) -> bool:
+        return self.native
+
+    async def _arun_adapter(self, input: Any, **kwargs: Any):
+        self.prompts.append(input)
+        return await super()._arun_adapter(input, **kwargs)
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_without_add_dependencies_to_context_the_adapter_gets_the_user_text_and_its_options(use_async):
+    agent = ContextAgent()
+
+    def invoke(**kwargs):
+        if use_async:
+            return asyncio.run(agent.arun("question", **kwargs))
+        return agent.run("question", **kwargs)
+
+    invoke()
+    invoke(dependencies={"Slack channel": "#general"})
+    invoke(dependencies={"Slack channel": "#general"}, add_dependencies_to_context=False)
+    assert agent.prompts == ["question", "question", "question"]
+    assert "dependencies" not in agent.calls[0]
+    assert agent.calls[1]["dependencies"] == {"Slack channel": "#general"}
+    assert agent.calls[2]["add_dependencies_to_context"] is False
+
+
+@pytest.mark.parametrize("mode", ["non_stream", "stream", "native_non_stream"])
+@pytest.mark.parametrize("use_async", [False, True])
+def test_dependencies_reach_the_adapter_once_and_the_stored_run_keeps_the_user_text(mode, use_async, tmp_path):
+    agent = ContextAgent(db=SqliteDb(db_file=str(tmp_path / "runs.db")), native=mode == "native_non_stream")
+    # A callable dependency resolves to its value, as for an Agent, and receives the run's context.
+    dependencies = {
+        "Slack channel": lambda: "#general",
+        "Slack user": lambda run_context: f"{run_context.user_id} in {run_context.session_id}",
+    }
+
+    async def consume(input, options):
+        return [event async for event in agent.arun(input, stream=True, **options)]
+
+    for input in ["question", "again"]:
+        options = dict(session_id="s1", user_id="u1", dependencies=dependencies, add_dependencies_to_context=True)
+        if use_async and mode == "stream":
+            asyncio.run(consume(input, options))
+        elif use_async:
+            asyncio.run(agent.arun(input, **options))
+        elif mode == "stream":
+            list(agent.run(input, stream=True, **options))
+        else:
+            agent.run(input, **options)
+
+    block = '\n\n<additional context>\n{\n  "Slack channel": "#general",\n  "Slack user": "u1 in s1"\n}\n</additional context>'
+    assert agent.prompts == ["question" + block, "again" + block]
+    assert not any({"dependencies", "add_dependencies_to_context"} & set(call) for call in agent.calls)
+    session = agent.get_session("s1", user_id="u1")
+    assert session is not None
+    assert [run.input.input_content for run in session.runs] == ["question", "again"]
+    assert [m.content for m in session.runs[0].messages if m.role == "user"] == ["question"]
+    history = agent.calls[-1]["history"]
+    assert {"role": "user", "content": "question"} in history
+    assert "<additional context>" not in str(history)
+
+
+def test_async_callable_dependency_is_awaited_under_arun():
+    async def channel() -> str:
+        return "#general"
+
+    agent = ContextAgent()
+    asyncio.run(agent.arun("question", dependencies={"Slack channel": channel}, add_dependencies_to_context=True))
+    assert agent.prompts == [
+        'question\n\n<additional context>\n{\n  "Slack channel": "#general"\n}\n</additional context>'
+    ]
+
+
 def test_empty_media_is_accepted():
     agent = ExampleAgent()
     assert agent.run("question", images=[], files=[]).status == RunStatus.completed

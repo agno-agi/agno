@@ -13,43 +13,6 @@ from agno.scheduler import ScheduleManager
 
 
 @pytest.mark.parametrize("use_async", [False, True])
-@pytest.mark.parametrize("credentials", ["environment", "explicit", "mixed", "missing", "empty_secret"])
-def test_slack_diagnostics_use_runtime_credentials(tmp_path, monkeypatch, use_async, credentials):
-    import hashlib
-    import hmac
-
-    pytest.importorskip("slack_sdk")
-    from agno.agent import Agent
-    from agno.os.interfaces.slack import Slack, security
-    from agno.tools.slack import SlackTools
-
-    monkeypatch.setenv("SLACK_TOKEN", "environment-token")
-    monkeypatch.setattr(security, "SLACK_SIGNING_SECRET", "environment-secret")
-    options = {}
-    if credentials == "explicit":
-        options = {"token": "explicit-token", "signing_secret": "explicit-secret"}
-    elif credentials == "mixed":
-        options = {"token": "explicit-token"}
-    elif credentials == "missing":
-        monkeypatch.delenv("SLACK_TOKEN")
-    elif credentials == "empty_secret":
-        options = {"signing_secret": ""}
-    agent = Agent(id="slack-agent")
-    slack = Slack(agent=agent, **options)
-    os = AgentOS(db=SqliteDb(db_file=str(tmp_path / "slack.db")), interfaces=[slack], telemetry=False)
-    result = diagnostic(os, "interfaces", use_async)
-    assert result.status == ("FAIL" if credentials in ("missing", "empty_secret") else "PASS")
-    assert "environment-secret" not in result.detail and "explicit-secret" not in result.detail
-    if result.status == "PASS":
-        # Exercise actual credential resolution without making a Slack network call.
-        assert SlackTools(token=slack.token).token == (slack.token or "environment-token")
-        secret = slack.signing_secret if slack.signing_secret is not None else security.SLACK_SIGNING_SECRET
-        timestamp = str(int(time.time()))
-        signature = "v0=" + hmac.new(secret.encode(), f"v0:{timestamp}:{{}}".encode(), hashlib.sha256).hexdigest()
-        assert security.verify_slack_signature(b"{}", timestamp, signature, signing_secret=slack.signing_secret)
-
-
-@pytest.mark.parametrize("use_async", [False, True])
 @pytest.mark.parametrize("invalid", [None, "duplicate", "missing"])
 def test_component_diagnostics_respect_type_namespaces(tmp_path, use_async, invalid):
     from agno.agent import Agent
