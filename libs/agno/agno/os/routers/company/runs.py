@@ -402,6 +402,12 @@ class _TaskStarter:
                 task_run_fields(value, attempt, started_by, run_db.id)
         except ValueError as exc:
             raise HTTPException(409, str(exc))
+        from agno.agent import Agent
+        from agno.company.execution import _another_executor_ran
+        from agno.team import Team
+
+        # Agents and teams take the history switch per run. A workflow and an external agent do not.
+        without_history = isinstance(component, (Agent, Team)) and await _another_executor_ran(run_db, value)
         token = _task_submission.set(
             {
                 "db": self.db,
@@ -410,6 +416,7 @@ class _TaskStarter:
                 "run_db_id": run_db.id,
                 "started_by": started_by,
                 "requested_from": caller.requested_from,
+                "without_history": without_history,
             }
         )
         try:

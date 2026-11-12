@@ -390,6 +390,30 @@ async def _reconcile_task_run(
     return updated is not None
 
 
+async def _another_executor_ran(run_db: Any, task: Dict[str, Any]) -> bool:
+    """Whether the Task's session holds an attempt by a component other than its current executor.
+
+    Every attempt of a Task runs in the Task's one session, and an agent or team reads the session's
+    earlier runs as its own conversation. After a change of executor those runs are another
+    component's answers.
+    """
+    kind, key = task["executor_type"], task["executor_type"] + "_id"
+    page = 1
+    while True:
+        rows, total = await _call(
+            run_db, "get_runs", session_id=task["session_id"], limit=100, page=page, deserialize=False
+        )
+        for row in rows:
+            # A run with a parent belongs to the attempt that started it.
+            if row.get("parent_run_id") is None and (
+                row.get("run_type") != kind or row.get(key) != task["executor_id"]
+            ):
+                return True
+        if page * 100 >= total:
+            return False
+        page += 1
+
+
 async def _enqueue_ticket(worker: Any, job: Dict[str, Any]) -> Dict[str, Any]:
     submission = _task_submission.get()
     if submission is None:
@@ -398,10 +422,16 @@ async def _enqueue_ticket(worker: Any, job: Dict[str, Any]) -> Dict[str, Any]:
     history = task["transitions"]
     if _pending_task_attempt(task) is not None:
         raise ValueError("An existing Task reservation cannot enqueue new work")
+    kwargs = dict(job["payload"].get("kwargs") or {})
+    if submission.get("without_history"):
+        # The new executor starts from the brief. With no earlier messages it also has no stored
+        # provider response of the other component to continue from.
+        kwargs["add_history_to_context"] = False
     job = {
         **job,
         "payload": {
             **job["payload"],
+            **({"kwargs": kwargs} if kwargs else {}),
             "company_task_id": task["id"],
             "company_task_transitions": history,
             "company_task_attempt": submission["attempt"],

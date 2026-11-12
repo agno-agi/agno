@@ -15,7 +15,7 @@ from tests.unit.os.test_company_policy_path import (
     turn_on,
     waiting,
 )
-from tests.unit.os.test_mini_agent_tasks import headers
+from tests.unit.os.test_mini_agent_tasks import ScriptedModel, headers
 
 pytestmark = pytest.mark.usefixtures("unavailable_manager_docs")
 
@@ -673,3 +673,87 @@ def test_send_back_still_refuses_an_executor_that_is_not_the_tasks_own(system):
     reply = decide(system, "review_company_task", arguments)
     assert "returns 'Notes' to its executor, agent miniagent" in reply, reply
     assert system.db.get_task(task["id"])["status"] == "in_review"
+
+
+# ----------------------------------------------------------------- a new executor starts from the brief
+
+
+class ChainingModel(ScriptedModel):
+    """A model whose replies carry a provider response id, and which records what each call was sent."""
+
+    def __init__(self, response_id, calls=()):
+        super().__init__(calls)
+        self.response_id = response_id
+        self.seen = []
+
+    def invoke(self, messages, tools=None, **kwargs):
+        self.seen = [
+            (message.role, bool(message.from_history), (message.provider_data or {}).get("response_id"))
+            for message in messages
+        ]
+        self.messages = list(messages)
+        response = super().invoke(messages, tools=tools, **kwargs)
+        response.content = f"Answer from {self.response_id}"
+        response.provider_data = {"response_id": self.response_id}
+        return response
+
+
+def move(system, task_id, target, **executor):
+    response = system.client.post(
+        f"/company/tasks/{task_id}/transitions",
+        json={"target": target, "reason": "Decided", **executor},
+        headers=headers(),
+    )
+    assert response.status_code == 200, response.text
+
+
+def chained_from(messages):
+    """The previous_response_id OpenAIResponses would send for these messages."""
+    from agno.models.openai import OpenAIResponses
+
+    model = OpenAIResponses(id="gpt-5.6-luna", api_key="test")
+    return model.get_request_params(messages=messages).get("previous_response_id")
+
+
+def test_a_task_given_to_a_second_executor_does_not_carry_the_first_executors_attempts(system):
+    # F3: two attempts on a built agent, then the Task is returned to Backlog and accepted for Mini Agent.
+    task = system.proposal("Write six reminder templates")
+    task_id = task["id"]
+    system.writer.add_history_to_context = True
+    move(system, task_id, "ready", executor_type="agent", executor_id="writer")
+    system.writer.model = ChainingModel("resp_writer_1")
+    assert system.execute(task_id)["result"]["content"] == "Answer from resp_writer_1"
+    move(system, task_id, "ready", executor_type="agent", executor_id="writer")
+    system.writer.model = ChainingModel("resp_writer_2")
+    assert system.execute(task_id)["result"]["content"] == "Answer from resp_writer_2"
+    # The same executor keeps its own earlier attempt, and its own chain.
+    assert ("assistant", True, "resp_writer_1") in system.writer.model.seen
+    assert chained_from(system.writer.model.messages) == "resp_writer_1"
+
+    move(system, task_id, "backlog")
+    system.accept(task_id)
+    mini = ChainingModel("resp_mini_1")
+    saved = system.execute(task_id, model=mini)
+    assert (saved["executor_id"], saved["session_id"]) == ("miniagent", task["session_id"])
+    assert saved["result"]["content"] == "Answer from resp_mini_1"
+    # Mini Agent is sent its own instructions and this attempt's brief, and nothing the writer said.
+    assert [(role, history) for role, history, _ in mini.seen] == [("system", False), ("user", False)], mini.seen
+    assert chained_from(mini.messages) is None
+
+    # Sent back to Mini Agent, the next attempt still carries nothing of the writer's.
+    move(system, task_id, "ready", executor_type="agent", executor_id="miniagent")
+    again = ChainingModel("resp_mini_2")
+    system.execute(task_id, model=again)
+    assert not [seen for seen in again.seen if seen[2] and seen[2].startswith("resp_writer")], again.seen
+    assert chained_from(again.messages) in (None, "resp_mini_1")
+
+
+def test_a_task_that_stays_on_one_executor_keeps_its_earlier_attempts_as_history(system):
+    task = system.proposal()
+    system.accept(task["id"])
+    system.execute(task["id"], model=ChainingModel("resp_mini_1"))
+    move(system, task["id"], "ready", executor_type="agent", executor_id="miniagent")
+    second = ChainingModel("resp_mini_2")
+    system.execute(task["id"], model=second)
+    assert ("assistant", True, "resp_mini_1") in second.seen, second.seen
+    assert chained_from(second.messages) == "resp_mini_1"
