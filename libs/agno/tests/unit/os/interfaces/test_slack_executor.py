@@ -417,6 +417,15 @@ class TestRunKwargs:
         assert dependencies.get("Slack user") == display_name
 
     @pytest.mark.asyncio
+    async def test_dependencies_leave_out_a_bot_senders_id(self):
+        entity = make_streaming_entity([content("ok")])
+        ctx = make_ctx(agent=entity, streaming=True)
+        # A bot's id cannot be mentioned
+        event_context = make_message_event_context(ctx, user="", bot_id="B123")
+        await run_event(event_context, make_client(), ctx)
+        assert "Slack user_id" not in entity.calls[0][1]["dependencies"]
+
+    @pytest.mark.asyncio
     async def test_remote_run_id_rekeyed_from_first_event(self):
         from agno.agent import RemoteAgent
 

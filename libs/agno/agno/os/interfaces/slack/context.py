@@ -203,13 +203,14 @@ async def resolve_context(
     sender_user = event.get("user") or ""
     sender_bot_id = event.get("bot_id") or ""
     if ctx.resolve_user_identity:
-        if sender_bot_id:
-            event_context.user_id, event_context.display_name = await ctx.lookup_cache.bot_identity(
-                client, sender_bot_id
-            )
-        elif sender_user:
+        # A user-token post carries both ids; the human is the sender, as for the run's owner
+        if sender_user:
             event_context.user_id, event_context.display_name = await ctx.lookup_cache.user_identity(
                 client, sender_user
+            )
+        elif sender_bot_id:
+            event_context.user_id, event_context.display_name = await ctx.lookup_cache.bot_identity(
+                client, sender_bot_id
             )
     else:
         # Only the name, for the agent's context: the run's user_id stays the Slack id or mapped principal

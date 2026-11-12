@@ -409,14 +409,17 @@ async def test_authorization_posts_only_message_authors_task(tmp_path, run_user,
     assert bool(slack.posted()) is posted
 
 
+# A user-token post carries both the human's user id and the app's bot id
+@pytest.mark.parametrize("bot_id", [None, "B_APP"], ids=["user-post", "user-token-post"])
 @pytest.mark.asyncio
-async def test_email_identity_gets_result(tmp_path):
+async def test_email_identity_gets_result(tmp_path, bot_id):
     db_file = str(tmp_path / "company.db")
     task = _seed_task(db_file)
     db = SqliteDb(db_file=db_file)
     _finish_attempt(db, task, "slack-run", "alice@example.com")
     _save_turn(db, task["id"], "slack-run", "alice@example.com")
     slack = FakeSlack(root_user="U_ALICE")
+    slack.root["bot_id"] = bot_id
     slack.emails["U_ALICE"] = "alice@example.com"
     await _delivery(_company_os(db), db, slack, resolve_user_identity=True).sweep()
     assert len(slack.posted()) == 1

@@ -25,6 +25,7 @@ from .conftest import (
     make_ctx,
     make_event_body,
     make_stop_body,
+    slack_error,
 )
 
 _EXECUTOR = "agno.os.interfaces.slack.handlers.executor"
@@ -134,22 +135,39 @@ async def test_handle_message_names_sender_without_changing_user_id():
 
 
 @pytest.mark.asyncio
-async def test_handle_message_unknown_sender_name_is_not_retried_each_message():
+async def test_handle_message_user_token_post_resolves_the_human():
+    # A user-token post carries both the human's user id and the app's bot id
+    ctx = make_ctx(resolve_user_identity=True, respond_to_other_apps=True)
+    ctx.bot_id, ctx.bot_user_id = BOT_ID, BOT_USER_ID
+    client = make_async_client_mock()
+    with patch(f"{_EXECUTOR}.run_event", new_callable=AsyncMock) as run_event:
+        await handle_message(make_event_body(bot_id="B_OTHER"), client, ctx)
+    event_context = run_event.call_args.args[0]
+    assert (event_context.user_id, event_context.display_name) == ("test@example.com", "Test User")
+    assert event_context.owner == "U123"
+    client.bots_info.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code,name,calls", [("missing_scope", None, 1), ("ratelimited", "Test User", 2)])
+async def test_handle_message_unknown_sender_name_is_retried_only_after_a_transient_error(code, name, calls):
     ctx = make_ctx()
     client = make_async_client_mock()
     names = client.users_info.return_value
+    failures = [slack_error(code)]
 
     async def users_info(user):
-        if user == "U123":
-            raise RuntimeError("missing_scope")
+        if user == "U123" and failures:
+            raise failures.pop()
         return names
 
     client.users_info = AsyncMock(side_effect=users_info)
     with patch(f"{_EXECUTOR}.run_event", new_callable=AsyncMock) as run_event:
         await handle_message(make_event_body(event_id="Ev1"), client, ctx)
         await handle_message(make_event_body(event_id="Ev2", ts="1700000000.000200"), client, ctx)
-    assert run_event.call_args.args[0].display_name is None
-    assert [call.kwargs["user"] for call in client.users_info.await_args_list].count("U123") == 1
+    # A missing scope is kept for the TTL; a rate limit is looked up again on the next message
+    assert run_event.call_args.args[0].display_name == name
+    assert [call.kwargs["user"] for call in client.users_info.await_args_list].count("U123") == calls
 
 
 @pytest.mark.asyncio

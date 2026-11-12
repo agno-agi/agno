@@ -1,7 +1,7 @@
 import time
 from collections import OrderedDict
 from ssl import SSLContext
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import NAMESPACE_URL, uuid5
 
 import httpx
@@ -11,6 +11,9 @@ from agno.media import Audio, File, Image, Video
 from agno.utils.log import log_error, log_warning
 
 DEFAULT_SUGGESTED_PROMPTS: List[Dict[str, str]] = [{"title": "Get started", "message": "What can you help me with?"}]
+# Slack error codes a users.info or bots.info lookup fails with on every attempt: no users:read scope,
+# no such user, no such bot, or a token whose own user or workspace is deactivated
+_PERMANENT_LOOKUP_ERRORS = frozenset({"missing_scope", "user_not_found", "bot_not_found", "account_inactive"})
 
 
 def slack_error_code(exc: BaseException) -> Optional[str]:
@@ -146,7 +149,9 @@ def strip_bot_mention(text: str, bot_user_id: Optional[str], bot_name: Optional[
     return re.sub(rf"\s*<@{re.escape(bot_user_id)}>\s*", replacement, text).strip()
 
 
-async def resolve_slack_user(async_client: Any, slack_user_id: str) -> Tuple[str, Optional[str]]:
+async def resolve_slack_user(
+    async_client: Any, slack_user_id: str, errors: Optional[Set[str]] = None
+) -> Tuple[str, Optional[str]]:
     """Resolve a Slack user ID to (canonical_user_id, display_name).
 
     Returns the user's email as canonical_user_id if available, otherwise
@@ -167,16 +172,23 @@ async def resolve_slack_user(async_client: Any, slack_user_id: str) -> Tuple[str
         return (resolved_id, display_name)
     except Exception as e:
         log_warning(f"Failed to resolve Slack user {slack_user_id}: {str(e)}")
+        # The Slack error code ("" for a network error), so a caller can tell a permanent failure apart
+        if errors is not None:
+            errors.add(slack_error_code(e) or "")
         return (slack_user_id, None)
 
 
-async def resolve_slack_bot(async_client: Any, bot_id: str) -> Tuple[str, Optional[str]]:
+async def resolve_slack_bot(
+    async_client: Any, bot_id: str, errors: Optional[Set[str]] = None
+) -> Tuple[str, Optional[str]]:
     try:
         resp = await async_client.bots_info(bot=bot_id)
         bot = resp.get("bot", {}) if resp else {}
         return (bot_id, bot.get("name") or None)
     except Exception as e:
         log_warning(f"Failed to resolve Slack bot {bot_id}: {str(e)}")
+        if errors is not None:
+            errors.add(slack_error_code(e) or "")
         return (bot_id, None)
 
 
@@ -253,7 +265,8 @@ class LookupCache:
     """Remembers recent Slack lookups (channel names, user identities, session ids) so a message skips the call.
 
     Entries expire so a renamed channel or a changed email is picked up again; only successful
-    lookups are cached, except sender names. Instantiated once per mounted Slack interface.
+    lookups are cached, except a sender name that can never be looked up (no users:read scope,
+    no such user or bot). Instantiated once per mounted Slack interface.
     """
 
     LOOKUP_TTL_SECONDS: float = 600.0
@@ -285,23 +298,27 @@ class LookupCache:
                 self.set(key, name)
         return name
 
-    async def user_identity(self, async_client: Any, slack_user_id: str) -> Tuple[str, Optional[str]]:
+    async def user_identity(
+        self, async_client: Any, slack_user_id: str, errors: Optional[Set[str]] = None
+    ) -> Tuple[str, Optional[str]]:
         key = f"user:{slack_user_id}"
         cached = self.get(key)
         if cached is not None:
             return cached
-        resolved_user_id, display_name = await resolve_slack_user(async_client, slack_user_id)
+        resolved_user_id, display_name = await resolve_slack_user(async_client, slack_user_id, errors)
         # resolve_slack_user falls back to the raw id on failure; only real lookups are kept
         if resolved_user_id != slack_user_id or display_name:
             self.set(key, (resolved_user_id, display_name))
         return resolved_user_id, display_name
 
-    async def bot_identity(self, async_client: Any, bot_id: str) -> Tuple[str, Optional[str]]:
+    async def bot_identity(
+        self, async_client: Any, bot_id: str, errors: Optional[Set[str]] = None
+    ) -> Tuple[str, Optional[str]]:
         key = f"bot:{bot_id}"
         cached = self.get(key)
         if cached is not None:
             return cached
-        resolved_id, name = await resolve_slack_bot(async_client, bot_id)
+        resolved_id, name = await resolve_slack_bot(async_client, bot_id, errors)
         if name:
             self.set(key, (resolved_id, name))
         return resolved_id, name
@@ -314,12 +331,15 @@ class LookupCache:
         key = f"name:{sender}"
         name = self.get(key)
         if name is None:
+            errors: Set[str] = set()
             if user_id:
-                _, name = await self.user_identity(async_client, user_id)
+                _, name = await self.user_identity(async_client, user_id, errors)
             else:
-                _, name = await self.bot_identity(async_client, bot_id)
-            # An unknown name is kept too, so an app without users:read is not looked up on every message
-            self.set(key, name or "")
+                _, name = await self.bot_identity(async_client, bot_id, errors)
+            # An unknown name is kept only after a permanent failure, so an app without users:read is not
+            # looked up on every message while a rate limit or network error is retried on the next one
+            if errors <= _PERMANENT_LOOKUP_ERRORS:
+                self.set(key, name or "")
         return name or None
 
 

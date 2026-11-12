@@ -88,7 +88,8 @@ def _slack_dependencies(event_context: "EventContext") -> Dict[str, Any]:
     # The sender's id lets the agent mention them (<@id>); the name is their own profile text, not proof of identity
     if event_context.display_name:
         dependencies["Slack user"] = event_context.display_name
-    if event_context.owner:
+    # Only a human sender can be mentioned; a bot sender's id is left out
+    if event_context.event.get("user"):
         dependencies["Slack user_id"] = event_context.owner
     return dependencies
 

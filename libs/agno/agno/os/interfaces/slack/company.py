@@ -220,11 +220,12 @@ class TaskDelivery:
         if self.ctx.users is not None:
             return self.ctx.users.get(user or bot_id)
         if self.ctx.resolve_user_identity:
-            sender_id = bot_id or user
-            if bot_id:
-                resolved_id, display_name = await self.ctx.lookup_cache.bot_identity(client, bot_id)
-            else:
+            sender_id = user or bot_id
+            # A user-token post carries both ids; the human is the sender, as for the event context
+            if user:
                 resolved_id, display_name = await self.ctx.lookup_cache.user_identity(client, user)
+            else:
+                resolved_id, display_name = await self.ctx.lookup_cache.bot_identity(client, bot_id)
             # A failed users.info or bots.info falls back to the raw id: retry rather than refuse the Task
             if resolved_id == sender_id and display_name is None:
                 raise RuntimeError(f"Could not resolve Slack sender {sender_id}")
