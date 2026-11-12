@@ -621,3 +621,13 @@ Three controls, two runs each:
 **Result:** Start returned a receipt in 4.4s, and attempt 1's run showed `list_iam_roles` and `read_export_logs`. "Any update?" was answered in 5.3s. "Go with your recommended option" paused on `review_company_task` with the Task title, `send_back` and the person's words as the reason; after confirming, Super Agent started attempt 2 (7.4s in all). Attempt 2 ran on the same worker session and its run showed `set_export_role {"role": "billing-export-new"}`. The Task history records the send-back by `alex` with the reason.
 
 ---
+
+### 04_manage_playbook.py, 05_super_agent_company.py, 10_weekly_product_review.py, 16_company_file_tree.py (2026-11-12, Company fixes before 3.2)
+
+**Status:** PASS
+
+**Description:** Rerun after the Company fixes before 3.2. `05_super_agent_company.py` no longer logs a decision through Super Agent: Super Agent holds no decision-log tools, and the script now asserts that. `16_company_file_tree.py` writes a Task's files into the Task's own folder, `company/tasks/<task-id>`. No model call in any of the four.
+
+**Result:** Each script exited 0 and all assertions passed. The cookbooks that call a model (`13`, `14`, `15`) were not rerun.
+
+---

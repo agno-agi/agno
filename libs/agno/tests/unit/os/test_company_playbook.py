@@ -132,8 +132,13 @@ async def test_tools_identity_fence_and_learning(tmp_path, use_async):
         executor_id="writer",
         accepted_by="alice",
     )
-    accepted_edit = json.loads(await invoke("edit_company_task", task["id"], "changed", "yes", _agno_run_context=alice))
-    assert accepted_edit["title"] == "changed" and accepted_edit["brief"] == "yes"
+    # After acceptance the brief is part of what was accepted. The title still changes.
+    with pytest.raises(ValueError, match="Accepted task scope requires a return to Backlog"):
+        await invoke("edit_company_task", task["id"], "changed", "yes", _agno_run_context=alice)
+    accepted_edit = json.loads(
+        await invoke("edit_company_task", task["id"], "changed", "better", _agno_run_context=alice)
+    )
+    assert accepted_edit["title"] == "changed" and accepted_edit["brief"] == "better"
     assert accepted_edit["status"] == "ready" and accepted_edit["executor_id"] == "writer"
     await invoke("update_product_status", product["id"], "draft ready", 1, _agno_run_context=alice)
     entry = json.loads(
@@ -193,8 +198,14 @@ async def test_automated_callers_edit_task_content_only_in_backlog(tmp_path, use
         await _edit_task(tools, use_async, context, task["id"])
     assert manager.get_task(task["id"]) == task
     context.authorization = None
-    edited = json.loads(await _edit_task(tools, use_async, context, task["id"]))
-    assert (edited["title"], edited["brief"], edited["status"]) == ("Rewritten", "Rewritten brief", stage)
+    # A person changes the title at any stage, and the brief only in Backlog.
+    with pytest.raises(ValueError, match="Accepted task scope requires a return to Backlog"):
+        await _edit_task(tools, use_async, context, task["id"])
+    assert manager.get_task(task["id"]) == task
+    retitle = tools.aedit_company_task if use_async else tools.edit_company_task
+    result = retitle(task["id"], "Rewritten", "Original", _agno_run_context=context)
+    edited = json.loads(await result if use_async else result)
+    assert (edited["title"], edited["brief"], edited["status"]) == ("Rewritten", "Original", stage)
     assert edited["executor_id"] == task["executor_id"] and edited["accepted_at"] == task["accepted_at"]
     db.close()
 
@@ -319,7 +330,6 @@ async def test_super_agent_runs_company_tools_with_injected_identity(tmp_path, m
                             "expected_version": 1,
                         },
                     ),
-                    ("log_company_decision", {"decision": "Review first", "reasoning": "Approval required"}),
                 ]
                 return ModelResponse(
                     role="assistant",
@@ -390,11 +400,11 @@ async def test_super_agent_runs_company_tools_with_injected_identity(tmp_path, m
     tasks, total = m.list_tasks()
     assert total == 1 and tasks[0]["user_id"] == "alice" and tasks[0]["status"] == "backlog"
     assert m.read_wiki(product["id"], "status.md").content == "Draft proposed"
+    # Super Agent holds no decision-log tools. The log holds what the API wrote.
+    held = {name for toolkit in os.manager.tools for name in (getattr(toolkit, "functions", None) or {})}
+    assert not {"log_company_decision", "search_company_decisions"} & held
     decisions, total = m.list_decisions()
-    assert total == 2
-    own = next(decision for decision in decisions if decision.decision == "Review first")
-    # Decisions logged in chat carry Super Agent's id, not Mini Agent's.
-    assert own.user_id == "alice" and own.session_id == "planning" and own.agent_id == MANAGER_TEAM_ID
+    assert total == 1 and decisions[0].decision == "Human review decision"
     assert m.list_decisions(agent_id=MINI_AGENT_ID)[1] == 0
 
 

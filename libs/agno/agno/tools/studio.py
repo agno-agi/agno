@@ -3938,6 +3938,10 @@ class StudioTools(Toolkit):
             return self._error_from_exception(e, f"Failed to load {component_type} '{identifier}' v{version}")
         if component is None:
             return error_result("version_not_found", f"Version not found: {resolved_id} v{version}")
+        try:
+            self._runner_tools._refuse_sandboxed_agent_in_task_run(component)
+        except StudioRunnerError as e:
+            return error_result("dispatch_refused", str(e))
         sub_run_id = self._runner_tools._registered_sub_run_id(run_context)
         try:
             response = component.run(
@@ -4019,6 +4023,10 @@ class StudioTools(Toolkit):
             return self._error_from_exception(e, f"Failed to load {component_type} '{identifier}' v{version}")
         if component is None:
             return error_result("version_not_found", f"Version not found: {resolved_id} v{version}")
+        try:
+            self._runner_tools._refuse_sandboxed_agent_in_task_run(component)
+        except StudioRunnerError as e:
+            return error_result("dispatch_refused", str(e))
         sub_run_id = await self._runner_tools._aregistered_sub_run_id(run_context)
         try:
             response = await component.arun(

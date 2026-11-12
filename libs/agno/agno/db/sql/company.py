@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import func, literal, or_, select, union_all
 
 from agno.db.schemas.company import validate_company_details
-from agno.db.schemas.tasks import CancelledProjectError
+from agno.db.schemas.tasks import OPEN_TASK_STATUSES, CancelledProjectError, OpenTaskLimitError
 
 
 def active_parents(stmt: Any, table: Any, products: Any, projects: Any = None) -> Any:
@@ -42,6 +42,31 @@ def lock_product(sess: Any, products: Any, product_id: str) -> None:
     row = sess.execute(stmt.values(updated_at=products.c.updated_at).returning(products.c.id)).first()
     if row is None:
         raise ValueError("Product is missing or archived")
+
+
+def require_open_room(sess: Any, tasks: Any, task_id: str, auto_accept: Dict[str, Any]) -> None:
+    """Refuse an automatic acceptance when its Routine already has max_open Tasks open.
+
+    The caller holds the Product lock, so two acceptances cannot both count a free place.
+    A receipt with no max_open is not counted.
+    """
+    limit = auto_accept.get("max_open")
+    if limit is None:
+        return
+    open_now = sess.execute(
+        select(func.count())
+        .select_from(tasks)
+        .where(
+            tasks.c.routine_id == auto_accept["routine_id"],
+            tasks.c.id != task_id,
+            tasks.c.status.in_(OPEN_TASK_STATUSES),
+            tasks.c.deleted_at.is_(None),
+        )
+    ).scalar()
+    if (open_now or 0) >= limit:
+        raise OpenTaskLimitError(
+            f"Routine has {open_now} Tasks open, its limit. Complete or cancel one for it to accept more"
+        )
 
 
 def require_project(

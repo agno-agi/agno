@@ -9,7 +9,7 @@ from agno.company.declarations import Routine
 from agno.company.execution import _call, _ExecutorAuthorization, _registered_component, _validate_executor_tools
 from agno.company.scheduler import CompanyScheduleExecutor
 from agno.db.schemas.scheduler import COMPANY_AUTOMATION_SCHEDULE_ID, RUN_ENDPOINT_RE
-from agno.db.schemas.tasks import CancelledProjectError
+from agno.db.schemas.tasks import OPEN_TASK_STATUSES, CancelledProjectError, OpenTaskLimitError
 from agno.guardrails.base import BaseGuardrail
 from agno.skills import LocalSkills, Skills
 
@@ -116,6 +116,21 @@ def _routine_failure(output: Any) -> Optional[str]:
                     )
                 ):
                     return str(tool["tool_name"]) + " failed: " + str(result or "Routine delegation failed")
+        # A call past the run's tool call limit is answered with an error and never run, and the run
+        # still completes. A Routine that was cut off did not finish its work.
+        skipped = [
+            str(message.get("tool_name"))
+            for message in output.get("messages") or []
+            if message.get("role") == "tool"
+            and message.get("tool_call_error")
+            and not message.get("from_history")
+            and str(message.get("content") or "").startswith("Tool call limit reached.")
+        ]
+        if skipped:
+            return (
+                f"Routine incomplete: it stopped at its limit of {len(tools)} tool calls before it finished. "
+                f"Not run: {', '.join(dict.fromkeys(skipped))}. What it did before the limit is saved."
+            )
         if output.get("success") is False:
             return str(output.get("error") or "Routine step failed")
         for key in ("member_responses", "step_results", "steps"):
@@ -305,6 +320,18 @@ def _executor_kind(registry: Any, executor_id: str) -> str:
     return kinds[0]
 
 
+def _require_sent_executor_type(registry: Any, policy: Any) -> None:
+    """Refuse a policy sent with an executor_type that is not the kind of its default executor."""
+    sent = policy._sent_executor_type
+    if sent is None:
+        return
+    if sent not in ("agent", "team", "workflow"):
+        raise ValueError("executor_type is agent, team or workflow")
+    kind = _executor_kind(registry, policy.default_executor)
+    if kind != sent:
+        raise ValueError(f"executor_type '{sent}' does not match {kind} '{policy.default_executor}'")
+
+
 def _may_suggest(registry: Any, policy: Any, suggested: Any) -> bool:
     """Whether a proposal may name this executor: any, unless the policy lists executors."""
     from agno.registry._reserved import MINI_AGENT_ID
@@ -343,6 +370,7 @@ def _declared_schedule_fields(
     fields = _schedule_fields(product_id, routine, registry, agent_os=agent_os)
     if routine.auto_accept:
         policy = routine.auto_accept
+        _require_sent_executor_type(registry, policy)
         _policy_executors(registry, policy)
         if agent_os is not None and any(name not in _acceptance_checks(agent_os) for name in policy.required_checks):
             raise ValueError("Unknown automatic acceptance check")
@@ -414,22 +442,48 @@ async def _authorize_auto_accept(request, policy, agent_os=None):
             await _require_endpoint_permission(request, endpoint, "POST", action="accept")
 
 
-async def _stamp_auto_accept(request, payload, agent_os=None):
+def _only_turns_auto_accept_off(stored, payload):
+    """Whether a Routine payload differs from the stored one only by having no auto_accept policy."""
+
+    def rest(value):
+        value = {key: item for key, item in (value or {}).items() if key != "_agno_company_acceptance"}
+        metadata = value.get("metadata") or {}
+        return {**value, "metadata": {key: item for key, item in metadata.items() if key != "auto_accept"}}
+
+    return not ((payload or {}).get("metadata") or {}).get("auto_accept") and rest(stored) == rest(payload)
+
+
+async def _stamp_auto_accept(request, payload, agent_os=None, stored=None):
+    """Give a Routine payload the grant its auto_accept policy runs under.
+
+    stored is the Routine's payload before this edit. A payload that carries the stored declared
+    marker and the stored policy comes from an edit that does not set auto_accept. Where
+    authorization is on, that policy has no person behind it, and it stays that way.
+    """
     from agno.run.authorization import AUTHORIZATION_KEY, authorization_snapshot
 
     payload = dict(payload or {})
     metadata = dict(payload.get("metadata") or {})
-    payload.pop("_agno_company_acceptance", None)
+    carried = payload.pop("_agno_company_acceptance", None)
     policy = metadata.get("auto_accept")
     if policy:
-        await _authorize_auto_accept(request, policy, agent_os)
-        # Even in an unauthenticated local deployment this marker is generated
-        # here, never copied from a supplied payload. Executor snapshots cannot
-        # pass the human boundary above.
-        payload["_agno_company_acceptance"] = {
-            AUTHORIZATION_KEY: authorization_snapshot(),
-            "user_id": getattr(request.state, "user_id", None),
-        }
+        stored = stored or {}
+        if (
+            getattr(agent_os, "authorization", None)
+            and carried == _DECLARED
+            and stored.get("_agno_company_acceptance") == _DECLARED
+            and policy == (stored.get("metadata") or {}).get("auto_accept")
+        ):
+            payload["_agno_company_acceptance"] = dict(_DECLARED)
+        else:
+            await _authorize_auto_accept(request, policy, agent_os)
+            # Even in an unauthenticated local deployment this grant is generated
+            # here, never copied from a supplied payload. Executor snapshots cannot
+            # pass the human boundary above.
+            payload["_agno_company_acceptance"] = {
+                AUTHORIZATION_KEY: authorization_snapshot(),
+                "user_id": getattr(request.state, "user_id", None),
+            }
     payload["metadata"] = metadata
     return payload
 
@@ -464,7 +518,7 @@ def _policy_fingerprint(schedule):
     return hashlib.sha256(json.dumps(content, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
-_OPEN_STATUSES = ("ready", "in_progress", "in_review")
+_OPEN_STATUSES = OPEN_TASK_STATUSES
 
 
 def _open_tasks(tasks, routine_id):
@@ -1088,6 +1142,8 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
             if authority is not None:
                 await authority.arequire("schedules", "write")
                 await authority.arequire(acceptance_resource, "write")
+                if approving is not None:
+                    await authority.arequire("projects", "write")
                 await authority.arequire("wiki", "read")
                 await authority.arequire(executor[0] + "s", "run", executor[1])
             # Re-read after all checks and proposal IO. Product/template bindings
@@ -1110,6 +1166,11 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
                 receipt["max_acceptances"] = policy.limits.max_acceptances
             if declared:
                 receipt["declared"] = True
+            # The record says whether the executor came from the Routine's proposal or the default.
+            task_receipt = {**receipt, "executor_chosen_by": chosen_by}
+            if policy.limits is None:
+                # The store enforces each bound in the acceptance's own transaction, under the Product lock.
+                task_receipt["max_open"] = policy.max_open
             _check_automation_deadline()
             if completing:
                 accepted = await _manager_call(
@@ -1136,19 +1197,21 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
                     )
                     if approved is None:
                         raise _AutomationSkip("Project changed during automatic approval")
-                accepted = await _manager_call(
-                    manager,
-                    "transition_task",
-                    task_id=task["id"],
-                    target="ready",
-                    reason="Authorized Routine proposal",
-                    accepted_by=grant.get("user_id"),
-                    executor_type=executor[0],
-                    executor_id=executor[1],
-                    expected_updated_at=task["updated_at"],
-                    # The record says whether the executor came from the Routine's proposal or the default.
-                    auto_accept={**receipt, "executor_chosen_by": chosen_by},
-                )
+                try:
+                    accepted = await _manager_call(
+                        manager,
+                        "transition_task",
+                        task_id=task["id"],
+                        target="ready",
+                        reason="Authorized Routine proposal",
+                        accepted_by=grant.get("user_id"),
+                        executor_type=executor[0],
+                        executor_id=executor[1],
+                        expected_updated_at=task["updated_at"],
+                        auto_accept=task_receipt,
+                    )
+                except OpenTaskLimitError as exc:
+                    raise _AutomationSkip(str(exc)) from exc
         if accepted is None:
             raise _AutomationSkip("Proposal changed during automatic acceptance")
         return accepted

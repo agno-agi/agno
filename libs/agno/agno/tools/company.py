@@ -124,6 +124,8 @@ def _require_human_creation(run_context, operation="create Company Products and 
         raise PermissionError(f"Only a calling human may {operation} from chat; automated runs are refused{hint}")
     if (authority is not None and authority.service_account) or _identity(run_context) == INTERNAL_SCHEDULER_USER_ID:
         raise PermissionError(f"Only a calling human may {operation} from chat")
+    if getattr(authority, "scheduled", False):
+        raise PermissionError(f"Only a calling human may {operation} from chat; a scheduled run has no person present")
 
 
 def _automated_edit_stage(row, run_context):
@@ -192,6 +194,19 @@ def _routine_declaration(name, executor_type, executor_id, template, instruction
     )
 
 
+_NO_SOURCE_NOTE = (
+    "This Product has no Source. A Routine proposes a Task only from a Source it has read, so this Routine "
+    "can propose no Task yet. Tell the person to add a Source to the Product."
+)
+
+
+def _with_source_note(row, routine, sources):
+    """A created Routine, with a note when it proposes Tasks from Sources and its Product has none."""
+    if routine.template in (None, "intake") and sources == 0:
+        return {**row, "note": _NO_SOURCE_NOTE}
+    return row
+
+
 def _page(result, limit, page, **notes):
     rows, total = result
     from agno.db.schemas.tasks import public_task
@@ -227,6 +242,7 @@ class CompanyTools(Toolkit):
         interfaces: Any = None,
         registry: Any = None,
         include_tools: Optional[List[str]] = None,
+        exclude_tools: Optional[List[str]] = None,
     ):
         self._interfaces_explicit = interfaces is not None
         self.interfaces = interfaces if interfaces is not None else []
@@ -270,6 +286,7 @@ class CompanyTools(Toolkit):
             async_tools=[(getattr(self, "a" + name), name) for name in names],
             requires_confirmation_tools=["confirm_company_details"],
             include_tools=include_tools,
+            exclude_tools=exclude_tools,
         )
 
     def _scoped_user(self, run_context):
@@ -551,7 +568,8 @@ class CompanyTools(Toolkit):
         routine = _routine_declaration(
             name, executor_type, executor_id, template, instructions, cron_expr, timezone, enabled
         )
-        row = self._sync().create_routine(
+        manager = self._sync()
+        row = manager.create_routine(
             product_id=product_id,
             routine=routine,
             user_id=_identity(_agno_run_context),
@@ -559,7 +577,8 @@ class CompanyTools(Toolkit):
             check=self._routine_check(routine, _agno_run_context),
             agent_os=self._agent_os_ref() if self._agent_os_ref else None,
         )
-        return _public_json(row)
+        _, sources = manager.list_sources(product_id=product_id, limit=1)
+        return _public_json(_with_source_note(row, routine, sources))
 
     @requires_permission()
     async def acreate_company_product(
@@ -662,7 +681,8 @@ class CompanyTools(Toolkit):
             if isinstance(self.db, AsyncBaseDb)
             else self._routine_check(routine, _agno_run_context)
         )
-        row = await self._async().create_routine(
+        manager = self._async()
+        row = await manager.create_routine(
             product_id=product_id,
             routine=routine,
             user_id=_identity(_agno_run_context),
@@ -670,7 +690,8 @@ class CompanyTools(Toolkit):
             check=check,
             agent_os=self._agent_os_ref() if self._agent_os_ref else None,
         )
-        return _public_json(row)
+        _, sources = await manager.list_sources(product_id=product_id, limit=1)
+        return _public_json(_with_source_note(row, routine, sources))
 
     @requires_permission()
     def list_company_products(
@@ -860,7 +881,10 @@ class CompanyTools(Toolkit):
 
     @requires_permission()
     def edit_company_task(self, task_id: str, title: str, brief: str, _agno_run_context: Optional[Any] = None) -> str:
-        """Edit a Task's title and brief; automated runs only in Backlog. Never changes lifecycle, executor or ownership."""
+        """Edit a Task's title and brief. After acceptance only the title changes: pass the brief as stored.
+
+        Automated runs edit only in Backlog. Never changes lifecycle, executor or ownership.
+        """
         _permission("tasks", "write", _agno_run_context)
         manager = self._sync()
         row = manager.get_task(task_id)
@@ -1189,7 +1213,10 @@ class CompanyTools(Toolkit):
     async def aedit_company_task(
         self, task_id: str, title: str, brief: str, _agno_run_context: Optional[Any] = None
     ) -> str:
-        """Edit a Task's title and brief; automated runs only in Backlog. Never changes lifecycle, executor or ownership."""
+        """Edit a Task's title and brief. After acceptance only the title changes: pass the brief as stored.
+
+        Automated runs edit only in Backlog. Never changes lifecycle, executor or ownership.
+        """
         await _apermission("tasks", "write", _agno_run_context)
         manager = self._async()
         row = await manager.get_task(task_id)

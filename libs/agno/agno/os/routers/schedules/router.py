@@ -319,6 +319,11 @@ def get_schedule_router(
         # Re-check when the target changes, so a schedule can't be repointed at a component
         # the caller may not run.
         execution_changed = any(key in updates for key in ("endpoint", "method", "payload"))
+        if managed_by == "company" and "payload" in updates and not {"endpoint", "method"}.intersection(updates):
+            from agno.company.routines import _only_turns_auto_accept_off
+
+            # Turning auto_accept off grants nothing, so the Routine keeps the run authority it had.
+            execution_changed = not _only_turns_auto_accept_off(existing.get("payload"), updates["payload"])
         if execution_changed:
             await _require_endpoint_permission(
                 request,
@@ -382,7 +387,9 @@ def get_schedule_router(
         if existing.get("managed_by") == "company" and "payload" in updates:
             from agno.company.routines import _stamp_auto_accept
 
-            updates["payload"] = await _stamp_auto_accept(request, updates["payload"], agent_os)
+            updates["payload"] = await _stamp_auto_accept(
+                request, updates["payload"], agent_os, stored=existing.get("payload")
+            )
         elif updates.get("payload"):
             updates["payload"] = {k: v for k, v in updates["payload"].items() if k != "_agno_company_acceptance"}
 
