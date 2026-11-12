@@ -12,7 +12,7 @@ from agno.agent import Agent, RemoteAgent, RunEvent
 from agno.agents._hitl import db_call, hitl_state, live_native_run, read_run, tail_stored
 from agno.agents.base import BaseExternalAgent
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.exceptions import SessionBusyError
+from agno.exceptions import InputCheckError, SessionBusyError
 from agno.os.interfaces.slack.events import STOPPED_TEXT, WORKFLOW_PAUSED_TEXT, _normalize_event, process_event
 from agno.os.interfaces.slack.helpers import (
     build_run_metadata,
@@ -53,6 +53,7 @@ if TYPE_CHECKING:
 _ERROR_MESSAGE = "Sorry, there was an error processing your message."
 _BUSY_MESSAGE = "Still working on an earlier message in this thread. Send yours again when I reply."
 _UNSUPPORTED_FILES_MESSAGE = "This agent can't read that kind of file, such as audio or video; send the text instead."
+_SANDBOX_FILES_MESSAGE = "This agent can't take these files ({error}); send fewer or smaller files or the text instead."
 _AWAITING_DECISION_MESSAGE = "Waiting for a decision on the approval above. Approve or deny it, then send yours again."
 _CANNOT_STOP_MESSAGE = "This agent cannot be stopped."
 _NOT_OWNER_STOP_MESSAGE = "Only <@{owner}> can stop this."
@@ -87,6 +88,7 @@ class DecisionRefused(Exception):
 
 def _run_kwargs(event_context: "EventContext", ctx: "SlackContext", media: tuple) -> Dict[str, Any]:
     files, images, videos, audio = media
+    sandboxed = isinstance(ctx.entity, BaseExternalAgent) and ctx.entity.sandbox is not None
     kwargs: Dict[str, Any] = {
         "user_id": event_context.user_id,
         "session_id": event_context.session_id,
@@ -98,7 +100,8 @@ def _run_kwargs(event_context: "EventContext", ctx: "SlackContext", media: tuple
                 "thread_id": event_context.thread_ts,
                 "user": event_context.owner,
                 "message_text": event_context.text,
-                "action_token": event_context.action_token,
+                # A sandbox request carries run metadata, which agent code inside the sandbox could read
+                "action_token": None if sandboxed else event_context.action_token,
                 "message_ts": event_context.message_ts,
             },
         ),
@@ -410,6 +413,12 @@ async def _prepare(event_context: "EventContext", ctx: "SlackContext") -> tuple:
     run_kwargs = _run_kwargs(event_context, ctx, (files, images, videos, audio))
     entity = ctx.entity
     if isinstance(entity, BaseExternalAgent) and entity.sandbox is not None:
+        from agno.sandbox.media import encode_media
+
+        try:
+            encode_media(images=images, files=files)
+        except ValueError as error:
+            raise InputCheckError(_SANDBOX_FILES_MESSAGE.format(error=error)) from error
         # A sandbox refuses dependencies, so they go into the input as the block an Agent adds to its context
         message_text += await entity._adependencies_context(
             message_text, run_kwargs, event_context.run_id, event_context.session_id, event_context.user_id
