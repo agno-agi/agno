@@ -16,18 +16,6 @@ def warn() -> None:
 
 
 class PythonTools(Toolkit):
-    # Tools in this toolkit that execute code (or install packages, whose
-    # setup code runs) in the host process. They require human confirmation
-    # by default: without the gate, a model-influenced tool call reaches
-    # exec()/runpy()/subprocess immediately (see run_function_calls()).
-    # Pass requires_confirmation_tools=[] explicitly to opt out.
-    DEFAULT_REQUIRES_CONFIRMATION_TOOLS = (
-        "run_python_code",
-        "save_to_file_and_run",
-        "run_python_file_return_variable",
-        "pip_install_package",
-        "uv_pip_install_package",
-    )
     """Tools for generating, saving, and executing Python code in the current process.
 
     .. warning::
@@ -59,6 +47,19 @@ class PythonTools(Toolkit):
         with a scrubbed environment, no network, and a read-only mount). See
         DaytonaTools for a remote-sandbox alternative.
     """
+
+    # Tools in this toolkit that execute code (or install packages, whose
+    # setup code runs) in the host process. They require human confirmation
+    # by default: without the gate, a model-influenced tool call reaches
+    # exec()/runpy()/subprocess immediately (see run_function_calls()).
+    # Pass requires_confirmation_tools=[] explicitly to opt out.
+    DEFAULT_REQUIRES_CONFIRMATION_TOOLS = (
+        "run_python_code",
+        "save_to_file_and_run",
+        "run_python_file_return_variable",
+        "pip_install_package",
+        "uv_pip_install_package",
+    )
 
     def __init__(
         self,
