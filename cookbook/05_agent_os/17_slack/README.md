@@ -408,7 +408,8 @@ message instead. Each message then runs with the mapped principal's roles.
   Claude Code or Codex approval is decided through the AgentOS API or UI, the run
   finishes, but nothing is posted into the Slack thread; the next click on the
   card answers "This approval is no longer active". A later message in the
-  thread sees the result.
+  thread sees the result. Pressing Stop on the card while that run is still
+  running does not stop it.
 - **A paused Workflow step is resolved in AgentOS.** Slack shows "Run paused —
   please resolve it in AgentOS. The result shows there, not in this thread."
   Continuing the run in AgentOS completes it, but nothing is posted into the

@@ -33,7 +33,7 @@ from agno.run.agent import (
 from agno.run.base import RunStatus
 from agno.run.requirement import RunRequirement
 
-from .conftest import make_async_client_mock, make_ctx
+from .conftest import make_async_client_mock, make_ctx, make_event_context
 
 OWNER = "U123"
 SESSION_ID = "agent-1:C123:111.222"
@@ -154,7 +154,16 @@ class FakeContinue:
         self.calls: List[Dict[str, Any]] = []
 
     async def __call__(
-        self, event_context, client, ctx, requirements, *, decisions=None, on_accepted=None, clicker=None
+        self,
+        event_context,
+        client,
+        ctx,
+        requirements,
+        *,
+        decisions=None,
+        before_continue=None,
+        on_accepted=None,
+        clicker=None,
     ) -> bool:
         self.calls.append(
             {"event_context": event_context, "requirements": requirements, "decisions": decisions, "clicker": clicker}
@@ -162,6 +171,8 @@ class FakeContinue:
         if self.refuse:
             # A refusal carries no text; the card says it is no longer active
             raise DecisionRefused()
+        if before_continue is not None:
+            await before_continue()
         if on_accepted is not None:
             await on_accepted()
         if self.gate is not None:
@@ -171,6 +182,14 @@ class FakeContinue:
 
 def _ephemerals(client: AsyncMock) -> List[str]:
     return [c.kwargs["text"] for c in client.chat_postEphemeral.call_args_list]
+
+
+def _parked_event_context(ctx: Any, **park: Any) -> EventContext:
+    event_context = make_event_context(
+        session_id=SESSION_ID, channel="C123", thread_ts="111.222", message_ts="111.222", owner=OWNER, user_id=OWNER
+    )
+    ctx.runs.park_paused(event_context, **park)
+    return event_context
 
 
 class TestSubmit:
@@ -283,12 +302,12 @@ class TestSubmit:
             patch.object(hitl, "aresolve_approval", new=resolve),
         ):
             await hitl.handle_submit(_submit_payload(_approved_blocks()), client, ctx)
-            assert fake.calls == []
+            # The refused write keeps the card live; only the retry freezes it
             assert _ephemerals(client) == [hitl.APPROVAL_NOT_RECORDED_MESSAGE]
             client.chat_update.assert_not_awaited()
             await hitl.handle_submit(_submit_payload(_approved_blocks()), client, ctx)
 
-        assert len(fake.calls) == 1
+        assert len(fake.calls) == 2
         assert rows == {"appr-1": {"status": "approved"}, "appr-2": {"status": "approved"}}
 
     @pytest.mark.asyncio
@@ -310,9 +329,29 @@ class TestSubmit:
         ):
             await hitl.handle_submit(_submit_payload(_approved_blocks()), client, ctx)
 
-        assert fake.calls == []
-        assert _ephemerals(client) == [hitl._NO_LONGER_ACTIVE_MESSAGE]
+        assert _ephemerals(client) == [hitl.NO_LONGER_ACTIVE_MESSAGE]
+        client.chat_update.assert_not_awaited()
         assert ctx.runs.claim_run("run-1") is True
+
+    @pytest.mark.asyncio
+    async def test_refused_continue_leaves_approval_pending(self):
+        requirement = _make_requirement(approval_type="required", approval_id="appr-1")
+        entity = _make_entity(_paused_run([requirement]))
+        entity.db = Mock()
+        decision = Mock(requirement_id="r1", approved=True, rejected_note=None)
+        decision.input_values = decision.external_result = decision.feedback_selections = None
+        resolve = AsyncMock(return_value={"status": "approved"})
+        client = make_async_client_mock()
+
+        with (
+            patch.object(hitl, "continue_run", new=FakeContinue(refuse=True)),
+            patch.object(hitl, "parse_submit_payload", return_value=([decision], [])),
+            patch.object(hitl, "aresolve_approval", new=resolve),
+        ):
+            await hitl.handle_submit(_submit_payload(_approved_blocks()), client, make_ctx(agent=entity))
+
+        resolve.assert_not_awaited()
+        assert _ephemerals(client) == [hitl.NO_LONGER_ACTIVE_MESSAGE]
 
     @pytest.mark.asyncio
     async def test_run_no_longer_paused_releases_claim(self):
@@ -330,7 +369,7 @@ class TestSubmit:
             await hitl.handle_submit(_submit_payload(_approved_blocks()), client, ctx)
 
         assert fake.calls == []
-        assert _ephemerals(client) == [hitl._NO_LONGER_ACTIVE_MESSAGE]
+        assert _ephemerals(client) == [hitl.NO_LONGER_ACTIVE_MESSAGE]
         assert ctx.runs.claim_run("run-1") is True
 
     @pytest.mark.asyncio
@@ -354,7 +393,7 @@ class TestSubmit:
         client = make_async_client_mock()
         blocks = _approved_blocks() + [{"type": "input", "block_id": "x"}]
 
-        async def broken(event_context, client, ctx, requirements, *, decisions=None, on_accepted=None, clicker=None):
+        async def broken(event_context, client, ctx, requirements, *, on_accepted=None, **kwargs):
             await on_accepted()
             raise RuntimeError("boom")
 
@@ -380,10 +419,20 @@ class TestSubmit:
             await hitl.handle_submit(_submit_payload(blocks), client, ctx)
 
         assert len(fake.calls) == 1
-        assert _ephemerals(client) == [hitl._NO_LONGER_ACTIVE_MESSAGE]
+        assert _ephemerals(client) == [hitl.NO_LONGER_ACTIVE_MESSAGE]
         client.chat_update.assert_not_awaited()
         client.chat_delete.assert_not_awaited()
         assert ctx.runs.claim_run("run-1") is True
+
+    @pytest.mark.asyncio
+    async def test_refusal_ephemeral_lands_in_the_card_thread(self):
+        entity = _make_entity(_paused_run([_make_requirement()]))
+        client = make_async_client_mock()
+
+        await hitl.handle_submit(_submit_payload(_approved_blocks(), user="U_OTHER"), client, make_ctx(agent=entity))
+
+        assert _ephemerals(client) == [hitl._NOT_ALLOWED_MESSAGE]
+        assert client.chat_postEphemeral.call_args.kwargs["thread_ts"] == "111.222"
 
     @pytest.mark.asyncio
     async def test_remote_entity_without_run_output_gets_ephemeral(self):
@@ -652,6 +701,34 @@ class TestAdminApproval:
         assert card["subtext"]["text"] == ":white_check_mark: Approved"
 
     @pytest.mark.asyncio
+    async def test_check_status_reads_sync_in_memory_sqlite(self):
+        from agno.db.sqlite import SqliteDb
+
+        requirement = _make_requirement(approval_type="required", approval_id="appr-1")
+        entity = _make_entity(_paused_run([requirement]))
+        # An in-memory database exists only on the connection, so the row is read on the thread that wrote it
+        entity.db = SqliteDb(db_url="sqlite:///:memory:")
+        entity.db.create_approval(
+            {
+                "id": "appr-1",
+                "run_id": "run-1",
+                "session_id": SESSION_ID,
+                "status": "approved",
+                "source_type": "agent",
+                "approval_type": "required",
+                "pause_type": "confirmation",
+                "created_at": 1,
+            }
+        )
+        fake = FakeContinue()
+
+        with patch.object(hitl, "continue_run", new=fake):
+            await hitl.handle_check_status(_check_status_payload(), make_async_client_mock(), make_ctx(agent=entity))
+
+        assert requirement.confirmation is True
+        assert len(fake.calls) == 1
+
+    @pytest.mark.asyncio
     async def test_admin_rejection_resumes_with_rejection(self):
         requirement = _make_requirement(approval_type="required", approval_id="appr-1")
         entity = _make_entity(_paused_run([requirement]))
@@ -684,7 +761,7 @@ class TestAdminApproval:
             await hitl.handle_check_status(_check_status_payload(), client, ctx)
 
         assert fake.calls == []
-        assert _ephemerals(client) == [hitl._NO_LONGER_ACTIVE_MESSAGE]
+        assert _ephemerals(client) == [hitl.NO_LONGER_ACTIVE_MESSAGE]
         assert other.confirmation is None
         assert ctx.runs.claim_run("run-1") is True
 
@@ -812,10 +889,33 @@ class TestSandboxNativeApprovals:
         with patch("agno.os.interfaces.slack.executor.adeliver_native_decisions", new=refuse):
             await hitl.handle_submit(_submit_payload(_input_blocks()), client, make_ctx(agent=entity))
 
-        assert _ephemerals(client) == [hitl._NO_LONGER_ACTIVE_MESSAGE]
+        assert _ephemerals(client) == [hitl.NO_LONGER_ACTIVE_MESSAGE]
         client.chat_update.assert_not_awaited()
         client.chat_startStream.assert_not_awaited()
         entity.acontinue_run.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_refused_approval_write_delivers_no_native_decision(self):
+        requirement = _make_requirement(approval_type="required", approval_id="appr-1")
+        entity = _native_entity(_native_run([requirement], {"pending": ["nr-1"]}))
+        entity.db = Mock()
+        entity.db.get_approval = Mock(return_value={"status": "pending"})
+        decision = Mock(requirement_id="r1", approved=True, rejected_note=None)
+        decision.input_values = decision.external_result = decision.feedback_selections = None
+        client, _ = _native_client()
+        deliver = AsyncMock()
+
+        with (
+            patch("agno.os.interfaces.slack.executor.adeliver_native_decisions", new=deliver),
+            patch.object(hitl, "parse_submit_payload", return_value=([decision], [])),
+            patch.object(hitl, "aresolve_approval", new=AsyncMock(return_value=None)),
+        ):
+            await hitl.handle_submit(_submit_payload(_input_blocks()), client, make_ctx(agent=entity))
+
+        # The approval is recorded before the native run resumes, so a failed write leaves it paused
+        deliver.assert_not_awaited()
+        assert _ephemerals(client) == [hitl.APPROVAL_NOT_RECORDED_MESSAGE]
+        client.chat_update.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_native_run_that_is_not_live_gets_no_continue(self):
@@ -833,7 +933,7 @@ class TestSandboxNativeApprovals:
         ):
             await hitl.handle_submit(_submit_payload(_input_blocks()), client, make_ctx(agent=entity))
 
-        assert _ephemerals(client) == [hitl._NO_LONGER_ACTIVE_MESSAGE]
+        assert _ephemerals(client) == [hitl.NO_LONGER_ACTIVE_MESSAGE]
         gate.assert_not_awaited()
         deliver.assert_not_awaited()
         entity.acontinue_run.assert_not_called()
@@ -857,7 +957,7 @@ class TestSandboxNativeApprovals:
 
         cancel.assert_awaited_once_with(entity, "run-1")
         deliver.assert_not_awaited()
-        assert _ephemerals(client) == [hitl._NO_LONGER_ACTIVE_MESSAGE]
+        assert _ephemerals(client) == [hitl.NO_LONGER_ACTIVE_MESSAGE]
         assert client.chat_update.call_args.kwargs["text"] == "This approval is no longer active."
 
     @pytest.mark.asyncio

@@ -110,20 +110,31 @@ class TestRunIndex:
 
 
 class TestTtls:
-    def test_park_and_stop_expire(self):
+    def test_stop_expires_and_park_stays_until_the_run_continues(self):
         fake_time = Mock()
         fake_time.monotonic.return_value = 1000.0
         with patch.object(runs_module, "time", fake_time):
             runs = SlackRuns()
             event_context = make_event_context(run_id="r1")
             runs.register(event_context)
-            runs.park_paused(event_context)
+            runs.park_paused(event_context, card_ts="250.1")
             runs.record_stop("r1")
             assert runs.is_parked("r1") and runs.was_stopped("r1")
             assert not runs.was_stopped("r2")
             fake_time.monotonic.return_value = 1000.0 + SlackRuns.TTL_SECONDS + 1
-            assert runs.find_run("r1") is None
             assert not runs.was_stopped("r1")
+            # An approval card older than the TTL can still be stopped, and is frozen at shutdown
+            assert runs.find_run("r1") is event_context
+            assert runs.parked() == [event_context]
+            assert runs.parked_cards("r1") == ("250.1", None)
+
+    def test_parked_runs_are_bounded(self):
+        with patch.object(runs_module.LookupCache, "LOOKUP_MAX_ENTRIES", 2):
+            runs = SlackRuns()
+            for run_id in ("r1", "r2", "r3"):
+                runs.park_paused(make_event_context(run_id=run_id), card_ts=f"{run_id}.card")
+            assert [event_context.run_id for event_context in runs.parked()] == ["r2", "r3"]
+            assert runs.parked_cards("r1") == (None, None)
 
     def test_thread_start_markers_are_bounded(self):
         with patch.object(runs_module.LookupCache, "LOOKUP_MAX_ENTRIES", 2):

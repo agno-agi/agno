@@ -1180,6 +1180,38 @@ class TestPausedStop:
         assert stored.status == RunStatus.paused
         assert ctx.runs.is_parked(event_context.run_id)
 
+    @pytest.mark.asyncio
+    async def test_stop_on_run_decided_elsewhere_starts_nothing(self, tmp_path):
+        model = FakeModel(_DANGER_CALL)
+        db = AsyncSqliteDb(db_file=str(tmp_path / "a.db"))
+        agent = Agent(id="agent-1", model=model, tools=[_danger_tool("confirmation", [])], db=db)
+        ctx = make_ctx(agent=agent, streaming=True)
+        client = make_client()
+        event_context = make_message_event_context(ctx)
+        await run_event(event_context, client, ctx)
+        card_ts = ctx.runs.parked_cards(event_context.run_id)[0]
+        # Decided through the AgentOS continue route: the tool runs and the run completes
+        paused = await agent.aget_run_output(run_id=event_context.run_id, session_id=event_context.session_id)
+        for requirement in paused.active_requirements:
+            requirement.confirm()
+        await agent.acontinue_run(
+            run_id=event_context.run_id,
+            requirements=paused.active_requirements,
+            session_id=event_context.session_id,
+            user_id=event_context.user_id,
+        )
+        calls_before = model.calls
+
+        with patch.object(agent, "acontinue_run", Mock()) as continue_again:
+            await stop_runs(ctx, client, "U123", "C123", "100.1", list(event_context.streaming_message_ts))
+
+        continue_again.assert_not_called()
+        assert model.calls == calls_before
+        stored = await agent.aget_run_output(run_id=event_context.run_id, session_id=event_context.session_id)
+        assert stored.status == RunStatus.completed
+        frozen = client.chat_update.call_args.kwargs
+        assert (frozen["ts"], frozen["text"]) == (card_ts, executor.NO_LONGER_ACTIVE_MESSAGE)
+
 
 # -- Continuations --
 

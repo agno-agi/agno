@@ -75,6 +75,7 @@ _CANNOT_STOP_MESSAGE = "This agent cannot be stopped."
 _NOT_OWNER_STOP_MESSAGE = "Only <@{owner}> can stop this."
 _STOPPED_NOTE = "Stopped by user"
 APPROVAL_NOT_RECORDED_MESSAGE = "Could not record the decision. Please try again."
+NO_LONGER_ACTIVE_MESSAGE = "This approval is no longer active."
 
 # Before a native continuation's own RunContinued, a replay of its first leg shows only these events
 _FIRST_LEG_EVENTS = frozenset(
@@ -402,7 +403,9 @@ async def _fail(
         if stream.ended:
             # A terminal error event already shows in the stream, e.g. a workflow that raises after its error event
             if state.terminal_status != "error":
-                await _reply(client, ctx, event_context, run_error_reply(error, _ERROR_MESSAGE, _UNSUPPORTED_FILES_MESSAGE))
+                await _reply(
+                    client, ctx, event_context, run_error_reply(error, _ERROR_MESSAGE, _UNSUPPORTED_FILES_MESSAGE)
+                )
             return
     await reply_error(error, event_context, client, ctx)
 
@@ -670,15 +673,17 @@ async def continue_run(
     requirements: List["RunRequirement"],
     *,
     decisions: Optional[List[Any]] = None,
+    before_continue: Optional[Callable[[], Awaitable[None]]] = None,
     on_accepted: Optional[Callable[[], Awaitable[None]]] = None,
     clicker: Optional[str] = None,
 ) -> bool:
     """Continue a paused run with its resolved requirements and render the rest of the reply.
 
     The reply streams to ``clicker``, the user who decided, as the run's owner may be unknown after a restart.
-    Returns False when the continuation was accepted but could not be resumed; raises DecisionRefused when
-    the run refuses the decision (a live native run, or a durable ticket owning it), in which case nothing
-    was changed.
+    ``before_continue`` runs once the run may be continued and before anything resumes it; raising
+    DecisionRefused there refuses the decision. Returns False when the continuation was accepted but could not
+    be resumed; raises DecisionRefused when the run refuses the decision (a live native run, or a durable
+    ticket owning it), in which case the run was not resumed.
     """
     entity = ctx.entity
     state = StreamState(entity_type=ctx.entity_type, entity_name=ctx.entity_name)
@@ -696,6 +701,8 @@ async def continue_run(
             # Only the requests this click answers; earlier decisions of the run are history
             answered = set(hitl_state(run_output).get("pending") or [])
             tools = [r.tool_execution for r in requirements if r.tool_execution]
+            if before_continue is not None:
+                await before_continue()
             try:
                 submitted, tail_from = await adeliver_native_decisions(
                     entity, run_output, tools, event_context.session_id, event_context.user_id
@@ -716,6 +723,8 @@ async def continue_run(
                 if e.status_code == 409:
                     raise DecisionRefused() from e
                 raise DecisionRefused(APPROVAL_NOT_RECORDED_MESSAGE) from e
+            if before_continue is not None:
+                await before_continue()
     except DecisionRefused:
         await _stopped_while_deciding(event_context, client, ctx)
         raise
@@ -788,17 +797,22 @@ async def _stopped_while_deciding(event_context: "EventContext", client: Any, ct
     if not event_context.stopped:
         return
     card_ts, awaiting_ts = ctx.runs.parked_cards(event_context.run_id)
-    await _freeze_stopped_card(client, event_context, card_ts, awaiting_ts)
+    await _freeze_card(client, event_context, card_ts, awaiting_ts)
     ctx.runs.unregister(event_context.run_id)
 
 
-async def _freeze_stopped_card(
-    client: Any, event_context: "EventContext", card_ts: Optional[str], awaiting_ts: Optional[str]
+async def _freeze_card(
+    client: Any,
+    event_context: "EventContext",
+    card_ts: Optional[str],
+    awaiting_ts: Optional[str],
+    text: str = "Stopped",
+    notice: str = STOPPED_TEXT,
 ) -> None:
     await delete_awaiting_indicator(client, event_context.channel, awaiting_ts)
     if card_ts:
-        blocks = [{"type": "context", "elements": [{"type": "mrkdwn", "text": STOPPED_TEXT}]}]
-        await update_message(client, event_context.channel, card_ts, "Stopped", blocks)
+        blocks = [{"type": "context", "elements": [{"type": "mrkdwn", "text": notice}]}]
+        await update_message(client, event_context.channel, card_ts, text, blocks)
 
 
 async def aclose_runs(ctx: "SlackContext") -> None:
@@ -819,7 +833,7 @@ async def aclose_runs(ctx: "SlackContext") -> None:
                 # The run is cancelled with its card, so a new message does not find it waiting for a decision
                 await _cancel_run(ctx, event_context.run_id)
                 card_ts, awaiting_ts = ctx.runs.parked_cards(event_context.run_id)
-                await _freeze_stopped_card(client, event_context, card_ts, awaiting_ts)
+                await _freeze_card(client, event_context, card_ts, awaiting_ts)
             # FastAPI can run a router's shutdown handler twice, so a frozen card is not frozen again
             ctx.runs.unregister(event_context.run_id)
 
@@ -830,6 +844,13 @@ async def cancel_paused(event_context: "EventContext", client: Any, ctx: "SlackC
     card_ts, awaiting_ts = ctx.runs.parked_cards(event_context.run_id)
     if hasattr(entity, "aget_run_output") and hasattr(entity, "acontinue_run"):
         run_output = await entity.aget_run_output(run_id=event_context.run_id, session_id=event_context.session_id)
+        status = getattr(run_output, "status", None)
+        if status != RunStatus.paused:
+            # Decided elsewhere (the AgentOS continue route): a continue here would start a new run
+            await _freeze_card(
+                client, event_context, card_ts, awaiting_ts, NO_LONGER_ACTIVE_MESSAGE, NO_LONGER_ACTIVE_MESSAGE
+            )
+            return
         requirements = list(getattr(run_output, "active_requirements", None) or [])
         for requirement in requirements:
             if requirement.needs_confirmation:
@@ -852,7 +873,7 @@ async def cancel_paused(event_context: "EventContext", client: Any, ctx: "SlackC
             pass
     else:
         await _cancel_run(ctx, event_context.run_id)
-    await _freeze_stopped_card(client, event_context, card_ts, awaiting_ts)
+    await _freeze_card(client, event_context, card_ts, awaiting_ts)
     await clear_status(client, event_context.channel, event_context.thread_ts)
     ctx.runs.unregister(event_context.run_id)
 

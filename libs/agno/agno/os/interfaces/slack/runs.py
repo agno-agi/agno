@@ -23,13 +23,13 @@ class SlackRuns:
     not find the run; run one worker per Slack app, as for EventDeduplicator.
     """
 
-    # A recorded Stop and a parked pause outlive Slack's own retries, as the event dedupe does
+    # A recorded Stop outlives Slack's own retries, as the event dedupe does
     TTL_SECONDS: float = EventDeduplicator.DEDUP_TTL_SECONDS
 
     def __init__(self) -> None:
         self._tasks: Set["asyncio.Task[Any]"] = set()
         self._live: Dict[str, "EventContext"] = {}
-        self._parked: Dict[str, Tuple[float, "EventContext"]] = {}
+        self._parked: "OrderedDict[str, EventContext]" = OrderedDict()
         self._cards: Dict[str, Tuple[Optional[str], Optional[str]]] = {}
         self._stops: Dict[str, float] = {}
         self._thread_starts: "OrderedDict[Tuple[str, str], None]" = OrderedDict()
@@ -102,9 +102,7 @@ class SlackRuns:
         event_context = self._live.get(run_id)
         if event_context is not None:
             return event_context
-        self._expire()
-        parked = self._parked.get(run_id)
-        return parked[1] if parked is not None else None
+        return self._parked.get(run_id)
 
     def find(
         self, channel: str, thread_ts: str, streaming_message_ts: Optional[Sequence[str]] = None
@@ -113,33 +111,35 @@ class SlackRuns:
 
         A paused run is found only by its own stream message, so a Stop on a later message never cancels it.
         """
-        self._expire()
         live = [t for t in self._live.values() if t.channel == channel and t.thread_ts == thread_ts]
         if not streaming_message_ts:
             return live
-        parked = [t for _, t in self._parked.values() if t.channel == channel and t.thread_ts == thread_ts]
+        parked = [t for t in self._parked.values() if t.channel == channel and t.thread_ts == thread_ts]
         wanted = set(streaming_message_ts)
         return [t for t in live + parked if wanted.intersection(t.streaming_message_ts)][:1]
 
     def park_paused(
         self, event_context: "EventContext", card_ts: Optional[str] = None, awaiting_ts: Optional[str] = None
     ) -> None:
-        # A paused run leaves the live index; its card can still be stopped or decided until the TTL
+        # A paused run leaves the live index; its card can be stopped or decided until the run continues or ends
         self._live.pop(event_context.run_id, None)
         self._started.discard(event_context.run_id)
         self._streams.pop(event_context.run_id, None)
-        self._parked[event_context.run_id] = (time.monotonic(), event_context)
+        self._parked[event_context.run_id] = event_context
+        self._parked.move_to_end(event_context.run_id)
         self._cards[event_context.run_id] = (card_ts, awaiting_ts)
+        # A pause never decided would otherwise stay for the life of the process
+        while len(self._parked) > LookupCache.LOOKUP_MAX_ENTRIES:
+            run_id, _ = self._parked.popitem(last=False)
+            self._cards.pop(run_id, None)
 
     def parked(self) -> List["EventContext"]:
-        self._expire()
-        return [event_context for _, event_context in self._parked.values()]
+        return list(self._parked.values())
 
     def parked_cards(self, run_id: str) -> Tuple[Optional[str], Optional[str]]:
         return self._cards.get(run_id, (None, None))
 
     def is_parked(self, run_id: str) -> bool:
-        self._expire()
         return run_id in self._parked
 
     def record_stop(self, run_id: str) -> None:
@@ -166,9 +166,6 @@ class SlackRuns:
 
     def _expire(self) -> None:
         now = time.monotonic()
-        for run_id in [r for r, (ts, _) in self._parked.items() if now - ts > self.TTL_SECONDS]:
-            del self._parked[run_id]
-            self._cards.pop(run_id, None)
         for key in [k for k, ts in self._stops.items() if now - ts > self.TTL_SECONDS]:
             del self._stops[key]
 

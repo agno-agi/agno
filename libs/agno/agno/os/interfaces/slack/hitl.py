@@ -5,9 +5,8 @@ from functools import partial
 from typing import Any, Dict, List, Optional, Tuple
 
 from slack_sdk.web.async_client import AsyncWebClient
-from starlette.concurrency import run_in_threadpool
 
-from agno.db.base import AsyncBaseDb
+from agno.agents._hitl import db_call
 from agno.os.interfaces.slack.builders import (
     append_submit_if_needed,
     build_admin_approval_status_card,
@@ -17,6 +16,7 @@ from agno.os.interfaces.slack.builders import (
 from agno.os.interfaces.slack.context import EventContext, SlackContext, event_context_from_run
 from agno.os.interfaces.slack.executor import (
     APPROVAL_NOT_RECORDED_MESSAGE,
+    NO_LONGER_ACTIVE_MESSAGE,
     DecisionRefused,
     cancel_expired_pause,
     continue_run,
@@ -44,7 +44,6 @@ from agno.run.requirement import RunRequirement
 from agno.utils.log import log_error, log_info
 
 _NOT_ALLOWED_MESSAGE = "Only the person who started this run or an approver can decide."
-_NO_LONGER_ACTIVE_MESSAGE = "This approval is no longer active."
 _ALREADY_SUBMITTED_MESSAGE = "Already submitted."
 _REMOTE_MESSAGE = "This run is paused on a remote AgentOS. Approve it there."
 
@@ -113,7 +112,7 @@ async def _decider_context(
     """The paused event context of run_id when user may decide on it; posts the ephemeral and returns None otherwise."""
     # Remote entities keep their runs on the remote AgentOS
     if not hasattr(ctx.entity, "aget_run_output"):
-        await post_ephemeral(client, channel, user, _REMOTE_MESSAGE)
+        await post_ephemeral(client, channel, user, _REMOTE_MESSAGE, thread_ts)
         return None
 
     event_context = ctx.runs.find_run(run_id)
@@ -129,22 +128,22 @@ async def _decider_context(
                     channel,
                     card_ts,
                     awaiting_ts,
-                    _NO_LONGER_ACTIVE_MESSAGE,
+                    NO_LONGER_ACTIVE_MESSAGE,
                     _update_card_to_no_longer_active(card_blocks),
                 )
-            await post_ephemeral(client, channel, user, _NO_LONGER_ACTIVE_MESSAGE)
+            await post_ephemeral(client, channel, user, NO_LONGER_ACTIVE_MESSAGE, thread_ts)
             return None
         event_context = await event_context_from_run(
             ctx, run_output, owner=owner, client=client, channel=channel, team_id=team_id
         )
 
     if not await can_act(ctx, user, event_context, client):
-        await post_ephemeral(client, channel, user, _NOT_ALLOWED_MESSAGE)
+        await post_ephemeral(client, channel, user, _NOT_ALLOWED_MESSAGE, thread_ts)
         return None
 
     if ctx.users is not None:
         # The owner's authority is checked again on every decision: a disabled or revoked owner's run does not resume
-        if not await authorize_run(ctx, event_context, event_context.user_id, client, user):
+        if not await authorize_run(ctx, event_context, event_context.user_id, client, user, thread_ts):
             return None
     return event_context
 
@@ -182,7 +181,7 @@ async def _validate_and_apply_decisions(
     if errors:
         detail = "\n".join(f"* {e.field}: {e.message}" for e in errors)
         await post_ephemeral(
-            client, sctx.channel, sctx.user_id, f"Please fix the following and submit again:\n{detail}"
+            client, sctx.channel, sctx.user_id, f"Please fix the following and submit again:\n{detail}", sctx.thread_ts
         )
         return None
     apply_decisions(decisions, requirements)
@@ -238,8 +237,17 @@ async def _resolve_required_approvals(
             if existing_status in (None, "pending"):
                 return APPROVAL_NOT_RECORDED_MESSAGE
             if existing_status != status:
-                return _NO_LONGER_ACTIVE_MESSAGE
+                return NO_LONGER_ACTIVE_MESSAGE
     return None
+
+
+async def _record_approvals(
+    ctx: SlackContext, sctx: SubmitContext, decisions: List[ParsedDecision], requirements: List[RunRequirement]
+) -> None:
+    """Record the approvals before anything resumes the run; a continue refused earlier leaves them pending."""
+    refusal = await _resolve_required_approvals(ctx, sctx, decisions, requirements)
+    if refusal is not None:
+        raise DecisionRefused(refusal)
 
 
 async def _aget_approval(ctx: SlackContext, approval_id: str) -> Optional[Dict[str, Any]]:
@@ -248,9 +256,7 @@ async def _aget_approval(ctx: SlackContext, approval_id: str) -> Optional[Dict[s
     if db is None or not approval_id:
         return None
     try:
-        if isinstance(db, AsyncBaseDb):
-            return await db.get_approval(approval_id)
-        return await run_in_threadpool(db.get_approval, approval_id)
+        return await db_call(db, "get_approval", approval_id)
     except Exception as exc:
         log_error(f"[HITL] Failed to get approval status: {exc}")
         return None
@@ -276,7 +282,7 @@ def _update_card_to_no_longer_active(blocks: List[Dict[str, Any]]) -> List[Dict[
             continue
         if block.get("type") == "card":
             block = dict(block)
-            block["subtext"] = {"type": "mrkdwn", "text": _NO_LONGER_ACTIVE_MESSAGE}
+            block["subtext"] = {"type": "mrkdwn", "text": NO_LONGER_ACTIVE_MESSAGE}
             block["actions"] = []
         new_blocks.append(block)
     return new_blocks
@@ -338,7 +344,7 @@ async def handle_submit(payload: Dict[str, Any], client: AsyncWebClient, ctx: Sl
 
     # One continuation per run: a double click or a second approver gets an ephemeral, never a second run
     if not ctx.runs.claim_run(sctx.run_id):
-        await post_ephemeral(client, sctx.channel, sctx.user_id, _ALREADY_SUBMITTED_MESSAGE)
+        await post_ephemeral(client, sctx.channel, sctx.user_id, _ALREADY_SUBMITTED_MESSAGE, sctx.thread_ts)
         return
     try:
         # Re-read after the claim: an earlier submit may have continued the run since the first read
@@ -350,20 +356,15 @@ async def handle_submit(payload: Dict[str, Any], client: AsyncWebClient, ctx: Sl
                     sctx.channel,
                     sctx.msg_ts,
                     sctx.awaiting_ts,
-                    _NO_LONGER_ACTIVE_MESSAGE,
+                    NO_LONGER_ACTIVE_MESSAGE,
                     _update_card_to_no_longer_active(original_blocks),
                 )
-            await post_ephemeral(client, sctx.channel, sctx.user_id, _NO_LONGER_ACTIVE_MESSAGE)
+            await post_ephemeral(client, sctx.channel, sctx.user_id, NO_LONGER_ACTIVE_MESSAGE, sctx.thread_ts)
             return
         requirements = list(run_output.active_requirements)
 
         decisions = await _validate_and_apply_decisions(client, sctx, payload, requirements)
         if decisions is None:
-            return
-
-        refusal = await _resolve_required_approvals(ctx, sctx, decisions, requirements)
-        if refusal is not None:
-            await post_ephemeral(client, sctx.channel, sctx.user_id, refusal)
             return
 
         readonly_blocks = response_blocks(original_blocks, sctx.state_values, requirements)
@@ -375,12 +376,15 @@ async def handle_submit(payload: Dict[str, Any], client: AsyncWebClient, ctx: Sl
                 ctx,
                 requirements,
                 decisions=decisions,
+                before_continue=partial(_record_approvals, ctx, sctx, decisions, requirements),
                 on_accepted=partial(_freeze_form, client, sctx, original_blocks, readonly_blocks),
                 clicker=sctx.user_id,
             )
         except DecisionRefused as exc:
             # The card stays live: the decision never reached the run
-            await post_ephemeral(client, sctx.channel, sctx.user_id, str(exc) or _NO_LONGER_ACTIVE_MESSAGE)
+            await post_ephemeral(
+                client, sctx.channel, sctx.user_id, str(exc) or NO_LONGER_ACTIVE_MESSAGE, sctx.thread_ts
+            )
             return
         except Exception as e:
             log_error(f"[HITL] continuation failed for run={sctx.run_id}: {e}")
@@ -462,7 +466,7 @@ async def handle_check_status(payload: Dict[str, Any], client: AsyncWebClient, c
 
     # 6. Decided by the admin: continue the run either way, so a rejection does not leave it paused
     if not ctx.runs.claim_run(run_id):
-        await post_ephemeral(client, channel, user, _ALREADY_SUBMITTED_MESSAGE)
+        await post_ephemeral(client, channel, user, _ALREADY_SUBMITTED_MESSAGE, thread_ts)
         return
     try:
         read, run_output = await _aget_paused_run(ctx, run_id, event_context.session_id)
@@ -473,10 +477,10 @@ async def handle_check_status(payload: Dict[str, Any], client: AsyncWebClient, c
                     channel,
                     msg_ts,
                     awaiting_ts,
-                    _NO_LONGER_ACTIVE_MESSAGE,
+                    NO_LONGER_ACTIVE_MESSAGE,
                     _update_card_to_no_longer_active(blocks),
                 )
-            await post_ephemeral(client, channel, user, _NO_LONGER_ACTIVE_MESSAGE)
+            await post_ephemeral(client, channel, user, NO_LONGER_ACTIVE_MESSAGE, thread_ts)
             return
         requirements = list(run_output.active_requirements)
         decided = next(
@@ -484,7 +488,7 @@ async def handle_check_status(payload: Dict[str, Any], client: AsyncWebClient, c
         )
         if decided is None:
             # The run waits on something else now; continuing would leave this approval unresolved
-            await post_ephemeral(client, channel, user, _NO_LONGER_ACTIVE_MESSAGE)
+            await post_ephemeral(client, channel, user, NO_LONGER_ACTIVE_MESSAGE, thread_ts)
             return
         if status == "approved":
             decided.confirm()
@@ -503,7 +507,7 @@ async def handle_check_status(payload: Dict[str, Any], client: AsyncWebClient, c
                 clicker=user,
             )
         except DecisionRefused as exc:
-            await post_ephemeral(client, channel, user, str(exc) or _NO_LONGER_ACTIVE_MESSAGE)
+            await post_ephemeral(client, channel, user, str(exc) or NO_LONGER_ACTIVE_MESSAGE, thread_ts)
             return
         except Exception as e:
             log_error(f"[HITL] continuation failed for run={run_id}: {e}")
