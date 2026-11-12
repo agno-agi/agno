@@ -192,6 +192,19 @@ def _routine_declaration(name, executor_type, executor_id, template, instruction
     )
 
 
+_NO_SOURCE_NOTE = (
+    "This Product has no Source. A Routine proposes a Task only from a Source it has read, so this Routine "
+    "can propose no Task yet. Tell the person to add a Source to the Product."
+)
+
+
+def _with_source_note(row, routine, sources):
+    """A created Routine, with a note when it proposes Tasks from Sources and its Product has none."""
+    if routine.template in (None, "intake") and sources == 0:
+        return {**row, "note": _NO_SOURCE_NOTE}
+    return row
+
+
 def _page(result, limit, page, **notes):
     rows, total = result
     from agno.db.schemas.tasks import public_task
@@ -551,7 +564,8 @@ class CompanyTools(Toolkit):
         routine = _routine_declaration(
             name, executor_type, executor_id, template, instructions, cron_expr, timezone, enabled
         )
-        row = self._sync().create_routine(
+        manager = self._sync()
+        row = manager.create_routine(
             product_id=product_id,
             routine=routine,
             user_id=_identity(_agno_run_context),
@@ -559,7 +573,8 @@ class CompanyTools(Toolkit):
             check=self._routine_check(routine, _agno_run_context),
             agent_os=self._agent_os_ref() if self._agent_os_ref else None,
         )
-        return _public_json(row)
+        _, sources = manager.list_sources(product_id=product_id, limit=1)
+        return _public_json(_with_source_note(row, routine, sources))
 
     @requires_permission()
     async def acreate_company_product(
@@ -662,7 +677,8 @@ class CompanyTools(Toolkit):
             if isinstance(self.db, AsyncBaseDb)
             else self._routine_check(routine, _agno_run_context)
         )
-        row = await self._async().create_routine(
+        manager = self._async()
+        row = await manager.create_routine(
             product_id=product_id,
             routine=routine,
             user_id=_identity(_agno_run_context),
@@ -670,7 +686,8 @@ class CompanyTools(Toolkit):
             check=check,
             agent_os=self._agent_os_ref() if self._agent_os_ref else None,
         )
-        return _public_json(row)
+        _, sources = await manager.list_sources(product_id=product_id, limit=1)
+        return _public_json(_with_source_note(row, routine, sources))
 
     @requires_permission()
     def list_company_products(

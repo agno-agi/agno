@@ -1,6 +1,7 @@
 """Company fixes before 3.2: one section per finding, each with the healthy case next to the refusal."""
 
 import asyncio
+import json
 
 import pytest
 
@@ -836,3 +837,65 @@ def test_max_open_still_lets_a_routine_fill_its_places(open_system):
     open_system.tick()
     statuses = sorted(open_system.db.get_task(task["id"])["status"] for task in tasks)
     assert statuses == ["backlog", "in_progress", "in_progress"]
+
+
+# ----------------------------------------------------------------- a Routine is told how it proposes
+
+
+def test_routine_instructions_name_the_tools_a_routine_proposes_with(system):
+    from agno.company.mini_agent import ROUTINE_INSTRUCTIONS
+    from agno.company.routines import _RoutineAuthorization
+    from agno.run.authorization import authorization_scope
+
+    for name in ("propose_company_project", "intake_product_source", "evidence_links", "evidence_hashes"):
+        assert name in ROUTINE_INSTRUCTIONS, name
+    assert "propose_company_task is refused" in ROUTINE_INSTRUCTIONS
+    # Both tools are held in a Routine run, and the plain Task proposal is the one that is refused there.
+    product = system.client.post("/company/products", json={"name": "Clinics"}, headers=headers()).json()
+    authority = _RoutineAuthorization(None, routine_id="routine", product_id=product["id"])
+    with authorization_scope(lambda: authority):
+        tools = {
+            name: function for toolkit in system.mini.tools(None) for name, function in toolkit.get_functions().items()
+        }
+        assert {"propose_company_project", "intake_product_source", "read_product_source"} <= set(tools)
+        project = json.loads(tools["propose_company_project"].entrypoint(product_id=product["id"], name="Updates"))
+        assert project["status"] == "proposed"
+        with pytest.raises(PermissionError, match="intake_product_source"):
+            tools["propose_company_task"].entrypoint(
+                product_id=product["id"], title="Draft the update", project_id=project["id"]
+            )
+
+
+# ----------------------------------------------------------------- a Routine with no Source says so
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_creating_a_routine_on_a_product_with_no_source_says_a_source_is_needed(system, use_async):
+    from agno.tools.company import CompanyTools
+
+    tools = CompanyTools(system.db, registry=system.os.registry)
+    tools._agent_os_ref = __import__("weakref").ref(system.os)
+    product = system.client.post("/company/products", json={"name": "Clinics"}, headers=headers()).json()
+    context = chat(scopes=[*SCOPES, "sources:write"])
+
+    def create(name, **fields):
+        arguments = dict(product_id=product["id"], name=name, **fields, _agno_run_context=context)
+        if use_async:
+            return json.loads(asyncio.run(tools.acreate_product_routine(**arguments)))
+        return json.loads(tools.create_product_routine(**arguments))
+
+    # It is created. The reply says it can propose nothing until the Product has a Source.
+    weekly = create("weekly", instructions="Each run, propose one task to draft a short update.")
+    assert weekly["id"] and system.db.get_schedule(weekly["id"]) is not None
+    assert "no Source" in weekly["note"] and "add a Source" in weekly["note"], weekly
+    assert "note" in create("intake", template="intake")
+    # A Routine that proposes no Task from a Source carries no note.
+    assert "note" not in create("refresh", template="refresh")
+
+    added = system.client.post(
+        "/company/sources",
+        json={"product_id": product["id"], "type": "website", "reference": "https://example.com/changes"},
+        headers=headers([*SCOPES, "sources:write"]),
+    )
+    assert added.status_code == 201, added.text
+    assert "note" not in create("second", instructions="Read the Source and propose work.")
