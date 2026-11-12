@@ -116,6 +116,21 @@ def _routine_failure(output: Any) -> Optional[str]:
                     )
                 ):
                     return str(tool["tool_name"]) + " failed: " + str(result or "Routine delegation failed")
+        # A call past the run's tool call limit is answered with an error and never run, and the run
+        # still completes. A Routine that was cut off did not finish its work.
+        skipped = [
+            str(message.get("tool_name"))
+            for message in output.get("messages") or []
+            if message.get("role") == "tool"
+            and message.get("tool_call_error")
+            and not message.get("from_history")
+            and str(message.get("content") or "").startswith("Tool call limit reached.")
+        ]
+        if skipped:
+            return (
+                f"Routine incomplete: it stopped at its limit of {len(tools)} tool calls before it finished. "
+                f"Not run: {', '.join(dict.fromkeys(skipped))}. What it did before the limit is saved."
+            )
         if output.get("success") is False:
             return str(output.get("error") or "Routine step failed")
         for key in ("member_responses", "step_results", "steps"):

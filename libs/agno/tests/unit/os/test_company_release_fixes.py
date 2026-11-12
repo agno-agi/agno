@@ -1140,3 +1140,37 @@ def test_super_agent_does_not_hold_the_decision_log_tools(system):
     assert {"log_company_decision", "search_company_decisions"} <= set(custom)
     listed = system.client.get("/company/decisions", headers=headers([*SCOPES, "decisions:read"]))
     assert listed.status_code == 200, listed.text
+
+
+# ----------------------------------------------------------------- a Routine cut off at its limit is not a success
+
+
+def routine_run(system, calls):
+    """One Routine run on Mini Agent, and the schedule status the scheduler records for it."""
+    from agno.company.routines import _RoutineAuthorization
+    from agno.run.authorization import authorization_scope
+    from agno.scheduler.executor import terminal_run_status
+
+    product = system.client.post("/company/products", json={"name": "Clinics"}, headers=headers()).json()
+    system.mini.model = ScriptedModel([("list_company_projects", {"product_id": product["id"]})] * calls)
+    authority = _RoutineAuthorization(None, routine_id="routine", product_id=product["id"])
+    with authorization_scope(lambda: authority):
+        output = asyncio.run(system.mini.arun("Operate only on this Product.", session_id="routine-run"))
+    return output, terminal_run_status(output.to_dict(), company_routine=True)
+
+
+def test_a_routine_cut_off_at_the_tool_call_limit_is_recorded_as_incomplete(open_system):
+    limit = open_system.mini.tool_call_limit
+    output, recorded = routine_run(open_system, limit + 5)
+    executed = [tool for tool in output.tools or [] if not tool.tool_call_error]
+    assert len(executed) == limit
+    status, error = recorded
+    assert status == "failed", (output.status, recorded)
+    assert "incomplete" in error and f"limit of {limit} tool calls" in error, error
+    assert "list_company_projects" in error
+
+
+def test_a_routine_that_stays_within_the_tool_call_limit_is_a_success(open_system):
+    limit = open_system.mini.tool_call_limit
+    output, recorded = routine_run(open_system, limit)
+    assert recorded == ("success", None), (output.status, recorded)
