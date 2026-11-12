@@ -344,8 +344,9 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         await product(body.product_id)
         fields = await call(_schedule_fields, body.product_id, body, agent_os.registry, agent_os=agent_os)
         if body.auto_accept:
-            from agno.company.routines import _authorize_auto_accept
+            from agno.company.routines import _authorize_auto_accept, _require_sent_executor_type
 
+            await call(_require_sent_executor_type, agent_os.registry, body.auto_accept)
             policy = body.auto_accept.model_dump()
             await _authorize_auto_accept(request, policy, agent_os)
             fields["payload"]["metadata"]["auto_accept"] = policy
@@ -374,7 +375,12 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
                 raise HTTPException(422, "Invalid cron expression")
             if updates["cron_expr"] is None:
                 updates["cron_expr"] = ""
-        from agno.company.routines import _DECLARED, _authorize_auto_accept, _stored_policy
+        from agno.company.routines import (
+            _DECLARED,
+            _authorize_auto_accept,
+            _require_sent_executor_type,
+            _stored_policy,
+        )
 
         # A declared policy acts for no one where authorization is on. An edit that does not set
         # auto_accept leaves it so: the payload below carries the stored marker and policy unchanged.
@@ -387,8 +393,10 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             updates.pop("auto_accept")
             # Save every field with its value, so the stored policy states all it grants.
             policy = body.auto_accept.model_dump() if body.auto_accept else False
+            if body.auto_accept:
+                await call(_require_sent_executor_type, agent_os.registry, body.auto_accept)
             stored = row["payload"]["metadata"].get("auto_accept")
-            if policy and stored and _stored_policy(stored)[0] == body.auto_accept:
+            if policy and stored and _stored_policy(stored)[0].model_dump() == policy:
                 # The stored policy sent back is not a new one: it keeps its form, its version and its count.
                 policy = stored
             await _authorize_auto_accept(request, policy, agent_os)
@@ -427,7 +435,8 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         update = await call(ScheduleUpdate, **updates)
         return await routine_response(await call(handlers["update_schedule"], routine_id, update, request))
 
-    # Super Agent's chat tools change a Routine through this handler, as the chatting person.
+    # Super Agent's chat tools read and change a Routine through these, as the chatting person.
+    agent_os._routine_api_read = routine
     agent_os._routine_api_update = update_routine
 
     @router.post("/routines/{routine_id}/pause", response_model=RoutineResponse)

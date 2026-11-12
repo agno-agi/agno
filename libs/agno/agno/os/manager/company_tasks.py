@@ -274,17 +274,61 @@ class CompanyTaskTools(Toolkit):
             raise PermissionError(f"A signed-in person is required to {operation}")
         return authority, user_id
 
-    async def _named_routine(self, agent_os: Any, routine_id: str, routine_name: str, product_name: Any) -> Any:
+    def _routine_request(self, agent_os: Any, authority: Any, user_id: Any, method: str, routine_id: str) -> Any:
+        """A Routine API request from the chatting person, as the API's middleware would describe it."""
+        from starlette.requests import Request
+
+        app = getattr(agent_os, "_company_app", None)
+        if app is None or getattr(agent_os, "_routine_api_update", None) is None:
+            raise LookupError("The Routine API is not running here. Change the Routine from AgentOS.")
+        context = authority.context if authority is not None else None
+        state = {
+            "user_id": user_id,
+            "authenticated": authority is not None,
+            "authorization_enabled": authority is not None,
+            "scopes": list(context.scopes or []) if context is not None else [],
+            "claims": dict(context.claims or {}) if context is not None else {},
+            "admin_scope": context.admin_scope if context is not None else None,
+            "user_isolation_enabled": bool(getattr(app.state, "user_isolation_enabled", False)),
+            "is_internal_service": False,
+        }
+        return Request(
+            {
+                "type": "http",
+                "method": method,
+                "path": f"/company/routines/{routine_id}",
+                "headers": [],
+                "query_string": b"",
+                "app": app,
+                "state": state,
+            }
+        )
+
+    async def _named_routine(
+        self, agent_os: Any, authority: Any, user_id: Any, routine_id: str, routine_name: str, product_name: Any
+    ) -> Any:
         """Check that the names the person confirmed are the stored Routine's and its Product's.
 
+        The person's permissions are checked before anything is read, and the Routine is read as the
+        Routine API reads it, so a refusal names nothing the API would not show this person.
         Returns the Routine's name and its stored payload.
         """
+        from fastapi import HTTPException
+
         from agno.company.execution import _call
 
-        row = await _call(agent_os.db, "get_schedule", routine_id) if agent_os.db is not None else None
-        metadata = ((row or {}).get("payload") or {}).get("metadata") or {}
-        if row is None or row.get("managed_by") != "company" or not metadata.get("product_id"):
-            raise LookupError("Routine not found")
+        request = self._routine_request(agent_os, authority, user_id, "GET", routine_id)
+        if authority is not None:
+            await authority.arequire("routines", "write")
+            if product_name is not None:
+                await authority.arequire("products", "read")
+        try:
+            row = await agent_os._routine_api_read(routine_id, request)
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                raise LookupError("Routine not found") from exc
+            raise
+        metadata = row["payload"]["metadata"]
         stored = row["name"].removeprefix(metadata["product_id"] + ".")
         # Its schedule is stored under the Product's ID and this name; a listing may show either.
         if not (_same_name(routine_name, stored) or _same_name(routine_name, row["name"])):
@@ -305,44 +349,16 @@ class CompanyTaskTools(Toolkit):
         """Change a Routine's auto_accept through the Routine API's own PATCH handler, as the chatting person."""
         from dataclasses import replace
 
-        from starlette.requests import Request
-
         from agno.os.routers.company.heartbeat import RoutineUpdate
         from agno.run.authorization import authorization_scope
 
-        app = getattr(agent_os, "_company_app", None)
-        handler = getattr(agent_os, "_routine_api_update", None)
-        if handler is None or app is None:
-            raise LookupError("The Routine API is not running here. Change the Routine from AgentOS.")
+        request = self._routine_request(agent_os, authority, user_id, "PATCH", routine_id)
         if authority is not None:
             # The route's own scope, checked by the API before its handler runs.
             await authority.arequire("routines", "write")
-        context = authority.context if authority is not None else None
-        # What the API's middleware records for a caller: identity, scopes and the deployment's isolation.
-        state = {
-            "user_id": user_id,
-            "authenticated": authority is not None,
-            "authorization_enabled": authority is not None,
-            "scopes": list(context.scopes or []) if context is not None else [],
-            "claims": dict(context.claims or {}) if context is not None else {},
-            "admin_scope": context.admin_scope if context is not None else None,
-            "user_isolation_enabled": bool(getattr(app.state, "user_isolation_enabled", False)),
-            "is_internal_service": False,
-        }
-        request = Request(
-            {
-                "type": "http",
-                "method": "PATCH",
-                "path": f"/company/routines/{routine_id}",
-                "headers": [],
-                "query_string": b"",
-                "app": app,
-                "state": state,
-            }
-        )
         saved = replace(authority, enforce_tools=False) if authority is not None else None
         with authorization_scope(lambda: saved):
-            return await handler(routine_id, RoutineUpdate(auto_accept=auto_accept), request)
+            return await agent_os._routine_api_update(routine_id, RoutineUpdate(auto_accept=auto_accept), request)
 
     async def _decide(self, call: Any) -> str:
         """Run one decision, returning each refusal as text and leaving the record as it was."""
@@ -733,7 +749,9 @@ class CompanyTaskTools(Toolkit):
 
         async def call(agent_os: Any) -> str:
             authority, user_id = self._person(agent_os, _agno_run_context, "turn a Routine's auto-accept on")
-            stored, payload = await self._named_routine(agent_os, routine_id, routine_name, product_name)
+            stored, payload = await self._named_routine(
+                agent_os, authority, user_id, routine_id, routine_name, product_name
+            )
             # A Routine that has a policy keeps it. The defaults are for a Routine with none.
             raw = payload["metadata"].get("auto_accept")
             kept = _stored_policy(raw)[0] if raw else None
@@ -808,7 +826,7 @@ class CompanyTaskTools(Toolkit):
 
         async def call(agent_os: Any) -> str:
             authority, user_id = self._person(agent_os, _agno_run_context, "turn a Routine's auto-accept off")
-            stored, _ = await self._named_routine(agent_os, routine_id, routine_name, None)
+            stored, _ = await self._named_routine(agent_os, authority, user_id, routine_id, routine_name, None)
             await self._patch_routine(agent_os, authority, user_id, routine_id, False)
             return f"Auto-accept is off for Routine '{stored}' ({routine_id}). Its proposals now wait for a person."
 

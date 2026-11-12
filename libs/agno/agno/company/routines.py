@@ -305,6 +305,18 @@ def _executor_kind(registry: Any, executor_id: str) -> str:
     return kinds[0]
 
 
+def _require_sent_executor_type(registry: Any, policy: Any) -> None:
+    """Refuse a policy sent with an executor_type that is not the kind of its default executor."""
+    sent = policy._sent_executor_type
+    if sent is None:
+        return
+    if sent not in ("agent", "team", "workflow"):
+        raise ValueError("executor_type is agent, team or workflow")
+    kind = _executor_kind(registry, policy.default_executor)
+    if kind != sent:
+        raise ValueError(f"executor_type '{sent}' does not match {kind} '{policy.default_executor}'")
+
+
 def _may_suggest(registry: Any, policy: Any, suggested: Any) -> bool:
     """Whether a proposal may name this executor: any, unless the policy lists executors."""
     from agno.registry._reserved import MINI_AGENT_ID
@@ -343,6 +355,7 @@ def _declared_schedule_fields(
     fields = _schedule_fields(product_id, routine, registry, agent_os=agent_os)
     if routine.auto_accept:
         policy = routine.auto_accept
+        _require_sent_executor_type(registry, policy)
         _policy_executors(registry, policy)
         if agent_os is not None and any(name not in _acceptance_checks(agent_os) for name in policy.required_checks):
             raise ValueError("Unknown automatic acceptance check")

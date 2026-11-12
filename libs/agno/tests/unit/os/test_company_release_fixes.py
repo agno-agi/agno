@@ -345,3 +345,118 @@ def test_a_task_run_on_mini_agent_reports_the_sandboxed_agent_as_a_refusal(syste
     )
     content = saved["result"]["content"]
     assert "accept the Task on" in content and runs == [], content
+
+
+# ----------------------------------------------------------------- the auto-accept tools check before they tell
+
+
+def authored_routine(system):
+    """A Routine named 'nightly-intake' in Product 'Docs', with a policy alice set."""
+    product_id, _ = system.declare(auto_accept=False)
+    created = system.api_routine(product_id, {"default_executor": "writer", "max_open": 3}, name="nightly-intake")
+    assert created.status_code == 201, created.text
+    return created.json()["id"]
+
+
+TOLD = ("nightly-intake", "Docs", "default executor writer", "at most 3 Tasks open")
+
+
+@pytest.mark.parametrize("missing", ["routines:write", "products:read"])
+def test_turning_auto_accept_on_tells_nothing_to_a_person_the_routine_api_would_refuse(system, missing):
+    routine_id = authored_routine(system)
+    before = system.db.get_schedule(routine_id)
+    without = chat(scopes=[scope for scope in SCOPES if scope != missing], user="bob")
+    # Wrong names and no kept policy: each of these made the tool reply with the stored value.
+    for routine, product in (("guess", "Guess"), ("nightly-intake", "Guess"), ("nightly-intake", "Docs")):
+        reply = turn_on(system, routine_id, without, routine=routine, product=product)
+        assert reply.startswith("Not done") and missing in reply, reply
+        told = [text for text in TOLD if text in reply and text not in (routine, product)]
+        assert not told, reply
+    assert system.db.get_schedule(routine_id) == before
+
+
+def test_turning_auto_accept_off_tells_nothing_to_a_person_the_routine_api_would_refuse(system):
+    routine_id = authored_routine(system)
+    before = system.db.get_schedule(routine_id)
+    without = chat(scopes=[scope for scope in SCOPES if scope != "routines:write"], user="bob")
+    reply = turn_off(system, routine_id, without, routine="guess")
+    assert reply.startswith("Not done") and "routines:write" in reply and "nightly-intake" not in reply, reply
+    assert system.db.get_schedule(routine_id) == before
+
+
+def test_a_person_the_routine_api_accepts_is_still_told_what_to_confirm(system):
+    routine_id = authored_routine(system)
+    bob = chat(user="bob")
+    assert "is named 'nightly-intake'" in turn_on(system, routine_id, bob, routine="guess")
+    assert "belongs to Product 'Docs'" in turn_on(system, routine_id, bob, routine="nightly-intake", product="Guess")
+    kept = turn_on(system, routine_id, bob, routine="nightly-intake")
+    assert "default executor writer" in kept and "at most 3 Tasks open" in kept
+    assert "is named 'nightly-intake'" in turn_off(system, routine_id, bob, routine="guess")
+
+
+def test_the_auto_accept_tools_read_a_routine_as_the_routine_api_does(system):
+    # An archived Routine and the automation schedule are not Routines to the API, and not to the tools.
+    from agno.db.schemas.scheduler import COMPANY_AUTOMATION_SCHEDULE_ID
+
+    routine_id = authored_routine(system)
+    archive = headers([*SCOPES, "routines:delete", "schedules:delete"])
+    assert system.client.post(f"/company/routines/{routine_id}/archive", headers=archive).status_code == 200
+    assert system.client.get(f"/company/routines/{routine_id}", headers=headers(SCOPES)).status_code == 404
+    before = system.db.get_schedule(routine_id)
+    for target in (routine_id, COMPANY_AUTOMATION_SCHEDULE_ID):
+        assert "Routine not found" in turn_on(system, target, routine="nightly-intake")
+        assert "Routine not found" in turn_off(system, target, routine="nightly-intake")
+    assert system.db.get_schedule(routine_id) == before
+
+
+# ----------------------------------------------------------------- a policy's executor_type is checked
+
+
+MISMATCHED = [
+    {"executor_type": "team", "executor_id": "writer"},
+    {"executor_type": "robot", "executor_id": "writer"},
+    {"default_executor": "writer", "executor_type": "workflow", "executor_id": "writer"},
+]
+
+
+@pytest.mark.parametrize("sent", MISMATCHED)
+def test_a_policy_whose_executor_type_does_not_match_the_component_is_refused(system, sent):
+    product_id, routine_id = system.declare(auto_accept=False)
+    before = system.db.get_schedule(routine_id)
+    patched = system.client.patch(
+        f"/company/routines/{routine_id}", json={"auto_accept": sent}, headers=headers(SCOPES)
+    )
+    assert patched.status_code == 422, patched.text
+    assert system.db.get_schedule(routine_id) == before
+    created = system.api_routine(product_id, sent, name="second")
+    assert created.status_code == 422, created.text
+
+
+def test_a_declared_policy_whose_executor_type_does_not_match_is_refused(system):
+    from agno.company import Product, Routine
+    from agno.company.bootstrap import arehydrate_product
+
+    routine = Routine(name="intake", instructions="Read.", auto_accept=MISMATCHED[0])
+    declaration = Product(id="docs", name="Docs", routines=[routine])
+    with pytest.raises(ValueError, match="executor_type"):
+        asyncio.run(
+            arehydrate_product(
+                system.db, declaration, system.os.registry, schedule_db=system.db, agent_os=system.os, trusted=True
+            )
+        )
+
+
+def test_a_policy_whose_executor_type_matches_is_accepted_in_both_shapes(system):
+    product_id, routine_id = system.declare(auto_accept=False)
+    path = f"/company/routines/{routine_id}"
+    for sent in (
+        {"executor_type": "agent", "executor_id": "writer"},
+        {"default_executor": "writer", "executor_type": "agent", "executor_id": "writer"},
+    ):
+        patched = system.client.patch(path, json={"auto_accept": sent}, headers=headers(SCOPES))
+        assert patched.status_code == 200, patched.text
+        assert "executor_type" not in system.stored(routine_id)["metadata"]["auto_accept"]
+    assert (
+        AutoAccept.model_validate(MISMATCHED[0]).model_dump()
+        == AutoAccept(default_executor="writer", executors=["writer"], approve_projects=False).model_dump()
+    )
