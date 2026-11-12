@@ -69,16 +69,26 @@ Company work:
 COMPANY_FILES_INSTRUCTIONS = """\
 Company files:
 - One tree: wiki/ is agreed direction, products/<id>/ a Product's brief.md, status.md and findings,
-  tasks/<id>/ what a Task was given and produced, notes/ your own notes. Read it with list_company_files,
+  tasks/<id>/ what a Task was given and produced, notes/ your notes. Read it with list_company_files,
   search_company_files and read_company_file. Write with write_company_file.
 - wiki/ and brief.md change only through save_company_page, which the person confirms. Save only what the
   person states. Wiki pages to use: priorities.md, people.md, how-we-work.md.
 """
 
 NOTES_INSTRUCTIONS = """\
-Notes: notes/ is your own folder of files that last between conversations. Use list_company_files,
+Notes: notes/ is your folder of files that last between conversations. Use list_company_files,
 search_company_files, read_company_file, write_company_file and delete_company_file with paths like
 notes/ideas.md.
+"""
+
+PRIVATE_MEMORY_INSTRUCTIONS = """\
+notes/ is shared with everyone who uses this AgentOS. Keep what a person marks private or for you only in
+your memory of that person, never in a file.
+"""
+
+NO_PRIVATE_PLACE_INSTRUCTIONS = """\
+notes/ is shared with everyone who uses this AgentOS. You have no private place. Asked to keep something
+private or for you only, say so and write nothing.
 """
 
 BUILDER_INSTRUCTIONS = """\

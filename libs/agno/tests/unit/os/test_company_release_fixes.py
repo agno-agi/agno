@@ -1387,3 +1387,58 @@ def test_created_at_does_not_name_a_record_that_was_edited_later(system, monkeyp
     reply = decide(system, "accept_company_task", arguments)
     assert "changed since the person saw it" in reply, reply
     assert system.db.get_task(task["id"])["status"] == "backlog"
+
+
+# ----------------------------------------------------------------- notes/ is shared, and a private fact is not a note
+
+
+def super_agent_prompt(tmp_path, company=True, **manager_options):
+    from agno.os import CompanyConfig, OSManager
+
+    manager = OSManager(model=ScriptedModel(), **manager_options)
+    agent_os, db = deployment(tmp_path, manager=manager, **({"company": CompanyConfig()} if company else {}))
+    try:
+        return " ".join("\n".join(agent_os.manager.instructions()).split())
+    finally:
+        db.close()
+
+
+SHARED = "notes/ is shared with everyone who uses this AgentOS"
+
+
+@pytest.mark.parametrize("company", [True, False])
+def test_super_agent_with_no_personal_memory_is_told_it_has_no_private_place(tmp_path, company):
+    prompt = super_agent_prompt(tmp_path, company=company)
+    assert SHARED in prompt, prompt
+    assert "You have no private place" in prompt and "write nothing" in prompt
+    assert "your own notes" not in prompt and "your own folder" not in prompt
+
+
+@pytest.mark.parametrize("company", [True, False])
+@pytest.mark.parametrize("stores", [None, {"user_memory": True}, {"user_profile": True}])
+def test_super_agent_with_personal_memory_is_told_a_private_fact_goes_there(tmp_path, company, stores):
+    from agno.learn import LearningMachine
+
+    learning = True if stores is None else LearningMachine(**stores)
+    prompt = super_agent_prompt(tmp_path, company=company, learning=learning)
+    assert SHARED in prompt, prompt
+    assert "your memory of that person" in prompt and "no private place" not in prompt
+
+
+def test_a_learning_machine_that_keeps_nothing_about_a_person_is_not_a_private_place(tmp_path):
+    from agno.learn import LearningMachine
+
+    prompt = super_agent_prompt(tmp_path, learning=LearningMachine(session_context=True))
+    assert "You have no private place" in prompt and "your memory of that person" not in prompt
+
+
+def test_the_file_tools_say_that_every_file_is_shared():
+    from agno.tools.company_files import CompanyFileTools
+
+    for name in ("write_company_file", "awrite_company_file"):
+        described = " ".join(getattr(CompanyFileTools, name).__doc__.split())
+        assert "shared with everyone who uses this AgentOS" in described, described
+        assert "private" in described
+    for name in ("list_company_files", "alist_company_files"):
+        described = " ".join(getattr(CompanyFileTools, name).__doc__.split())
+        assert "own notes" not in described and "shared with everyone" in described, described

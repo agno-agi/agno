@@ -230,6 +230,11 @@ Super Agent saved in one person's chat can be read in another person's chat.
 Listing `products/` and searching the tree show every Product, as the Product
 listing does.
 
+Super Agent is told that `notes/` is shared. What a person marks private, or
+for Super Agent only, goes to its memory of that person when
+`OSManager(learning=...)` keeps a user profile or a user memory. With no such
+memory, Super Agent says it has no private place and writes nothing.
+
 The tools are `CompanyFileTools`. Their names keep them apart from the source file
 tools (`list_files`, `read_file`, `search_content`) that `OSManager(root=...)` adds.
 

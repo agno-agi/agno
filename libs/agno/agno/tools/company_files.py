@@ -126,7 +126,7 @@ class CompanyFileTools(Toolkit):
 
         The tree: wiki/ (agreed direction), products/<product-id>/ (a Product's brief.md, status.md and
         what agents found), tasks/<task-id>/ (what a Task was given and produced), notes/ (Super Agent's
-        own notes). Listing products/ shows each Product's ID and name.
+        notes, shared with everyone who uses this AgentOS). Listing products/ shows each Product's ID and name.
 
         Args:
             folder: A folder such as wiki, products, products/<product-id>, tasks/<task-id> or notes.
@@ -224,6 +224,9 @@ class CompanyFileTools(Toolkit):
         writes only under its own Product and in its own Task folder. A Task's folder asks for
         tasks:write and a Product's pages for wiki:write.
 
+        Every file, notes/ included, is shared with everyone who uses this AgentOS. Never write what a
+        person marked private or for you only.
+
         Args:
             path: The file, such as notes/ideas.md, tasks/<task-id>/report.md or
                 products/<product-id>/research.md. Pages under products/ end in .md.
@@ -312,7 +315,7 @@ class CompanyFileTools(Toolkit):
 
     @requires_permission()
     def delete_company_file(self, path: str, _agno_run_context: Optional[Any] = None) -> str:
-        """Delete one of your own notes from the company file tree. Only files in notes/ can be deleted.
+        """Delete a note from the company file tree. Only files in notes/ can be deleted.
 
         Args:
             path: The note, such as notes/ideas.md.

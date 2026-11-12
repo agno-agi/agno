@@ -16,7 +16,9 @@ from agno.os.manager.prompts import (
     DOCS_INSTRUCTIONS,
     FOCUSED_EXECUTION_INSTRUCTIONS,
     MANAGER_INSTRUCTIONS,
+    NO_PRIVATE_PLACE_INSTRUCTIONS,
     NOTES_INSTRUCTIONS,
+    PRIVATE_MEMORY_INSTRUCTIONS,
     SOURCE_INSTRUCTIONS,
 )
 from agno.registry._reserved import BUILDER_ID, RESERVED_MANAGER_IDS, RESERVED_MEMBER_IDS, _listed
@@ -61,6 +63,13 @@ class _Manager:
 
 
 _CATALOG_LIMIT = 20
+
+
+def _remembers_people(learning: Any) -> bool:
+    """Whether Super Agent keeps a memory of each person: learning with a user profile or a user memory."""
+    if learning is True:
+        return True
+    return bool(getattr(learning, "user_profile", False) or getattr(learning, "user_memory", False))
 
 
 class _ManagerInstructions:
@@ -410,6 +419,10 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
 
         tools.append(CompanyFileTools(company_db, notes_db=notes_db, user_isolation=_user_isolation(agent_os)))
         instructions.append(COMPANY_FILES_INSTRUCTIONS if company_db is not None else NOTES_INSTRUCTIONS)
+        if notes_db is not None:
+            instructions.append(
+                PRIVATE_MEMORY_INSTRUCTIONS if _remembers_people(config.learning) else NO_PRIVATE_PLACE_INSTRUCTIONS
+            )
     if config.instructions:
         instructions.append(config.instructions)
 
