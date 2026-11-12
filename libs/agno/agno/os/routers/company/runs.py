@@ -18,6 +18,7 @@ from agno.company.execution import (
     _reconcile_task_run,
     _reservation_owner,
     _reserve_task,
+    _review_feedback,
     _task_input,
     _task_run_database,
     _task_session_owner,
@@ -28,7 +29,7 @@ from agno.company.execution import (
 )
 from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.db.schemas.tasks import task_next_attempt, task_run_fields, task_run_id
+from agno.db.schemas.tasks import TASK_STATUS_MEANING, task_next_attempt, task_run_fields, task_run_id
 from agno.os.auth import get_authentication_dependency
 from agno.os.job_queue import ticket_status_to_api, validate_seam_input
 from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id
@@ -158,6 +159,44 @@ async def _run_route(
         _task_transport.reset(token)
 
 
+_STATUS_MEANING = TASK_STATUS_MEANING
+
+
+def _task_state(value: Dict[str, Any], ticket: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """What a person needs to know about a Task now, from saved state only. Never waits on the worker."""
+    from agno.os.job_queue import ticket_status_to_api
+
+    attempts = [entry for entry in value.get("transitions") or [] if entry.get("attempt")]
+    latest: Dict[str, Any] = attempts[-1] if attempts else {}
+    state: Dict[str, Any] = {
+        "task_id": value["id"],
+        "title": value.get("title"),
+        "status": value["status"],
+        "meaning": _STATUS_MEANING.get(value["status"], value["status"]),
+        "executor": value.get("executor_id"),
+        "attempt": latest.get("attempt"),
+        "run_id": value.get("job_id"),
+        "started_by": latest.get("started_by"),
+        "requested_from": latest.get("requested_from"),
+    }
+    feedback = _review_feedback(value)
+    if feedback:
+        # A reviewer sent the Task back; the next attempt acts on this.
+        state["review_feedback"] = feedback
+    if ticket is not None:
+        state["run_status"] = ticket_status_to_api(ticket["status"])
+        if ticket["status"] == "paused":
+            state["waiting_on"] = "A person must approve or answer the paused run before it continues."
+    result = value.get("result") or {}
+    if result and result.get("run_id") == value.get("job_id"):
+        content = result.get("content")
+        state["run_status"] = result.get("status") or state.get("run_status")
+        state["result"] = {"content": content[:1500] if isinstance(content, str) else content}
+        if result.get("invoked"):
+            state["invoked"] = result["invoked"]
+    return state
+
+
 class _TaskStarter:
     """Start accepted Task runs through the executor route, for the HTTP API and the Super Agent alike."""
 
@@ -230,6 +269,27 @@ class _TaskStarter:
         except NotImplementedError:
             raise HTTPException(503, "Company wiki is not supported by the configured database")
 
+    async def state(self, value: Dict[str, Any], app: Any) -> Dict[str, Any]:
+        queue = getattr(getattr(app, "state", None), "queue_worker", None)
+        ticket = await queue.store.get_job(value["job_id"]) if value.get("job_id") and queue is not None else None
+        return _task_state(value, ticket)
+
+    async def run_evidence(self, value: Dict[str, Any]) -> Dict[str, Any]:
+        """What the latest attempt's run recorded, read from the run itself and summarized without outputs."""
+        from agno.company.evidence import run_evidence
+
+        if not value.get("job_id"):
+            return {}
+        try:
+            row = await _call(self.run_database(value), "get_run", value["job_id"], deserialize=False)
+        except (HTTPException, _TaskRunUnavailable) as exc:
+            detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+            return {"evidence_note": f"The run could not be read: {detail}"}
+        if row is None:
+            return {"evidence_note": "The run is not recorded yet."}
+        items, note = run_evidence(row.get("run_data") or {})
+        return {"evidence": items, **({"evidence_note": note} if note else {})}
+
     async def submit(
         self,
         task_id: str,
@@ -242,6 +302,11 @@ class _TaskStarter:
         from agno.company.sandbox import _is_sandboxed
         from agno.os.routers.company.sandbox import _sandbox_start_gate
 
+        # The route checks this before accepting a Backlog Task; Super Agent's start reaches only this
+        # path, and must be refused here rather than at the worker's claim.
+        reason = await _project_run_block(self.db, value)
+        if reason:
+            raise HTTPException(409, reason)
         component = self.executor(value)
         if _automatic_task.get() is None:
             await caller.require_accept(self.endpoint(value))

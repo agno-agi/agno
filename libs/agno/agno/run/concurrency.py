@@ -164,12 +164,15 @@ class WorkerOwnership:
     cancel it - why. ``cancellation_cause`` is stamped BEFORE the cancellation
     is delivered (the handlers that consult it run while unwinding):
     "timeout" (per-run timeout), "drain" (worker shutdown), "user_cancel"
-    (cancellation manager). None while executing normally."""
+    (cancellation manager), "lease_lost" (another worker swept or reclaimed
+    the ticket). None while executing normally. ``ticket_settling`` is set
+    once the execution starts writing its own ticket."""
 
     worker_id: str
     attempt: int
     cancellation_cause: Optional[str] = None
     session_serialized: bool = False
+    ticket_settling: bool = False
 
 
 _worker_managed_runs: Dict[str, WorkerOwnership] = {}

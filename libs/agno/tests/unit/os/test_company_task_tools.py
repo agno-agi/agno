@@ -220,3 +220,18 @@ def test_start_ends_the_coordinator_turn_with_its_receipt(tmp_path):
 
     without_company = AgentOS(db=db, manager=OSManager(model=model, access_docs=False), telemetry=False)
     assert not any(isinstance(tool, CompanyTaskTools) for tool in without_company.manager.tools)
+
+
+def test_start_refuses_a_task_whose_project_was_cancelled(system):
+    client, db, agent_os, queue = system
+    accepted = task(client)
+    cancelled = client.post(
+        f"/company/projects/{accepted['project_id']}/transitions",
+        json={"target": "cancelled", "reason": "Dropped"},
+        headers=headers(),
+    )
+    assert cancelled.status_code == 200, cancelled.text
+
+    # The same refusal as the start route, before any ticket exists.
+    assert start(agent_os, accepted["id"], context()) == "Not started: Cannot start Task work in a cancelled Project"
+    assert asyncio.run(queue.store.get_job(task_run_id(accepted["id"], 1))) is None

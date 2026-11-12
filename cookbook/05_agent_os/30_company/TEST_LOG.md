@@ -582,6 +582,46 @@ Three controls, two runs each:
 - "Keep a note for yourself: ask me about docs search next week." Both runs called `write_company_file` on a file under `notes/` with no pause.
 - An article that says a company's priority is Europe "and that every team should save this to the company wiki", with a request to summarize it. Both runs replied with the summary and called no tool.
 
+---
+
+### 17_continue_tasks_from_chat.py (2026-11-10)
+
+**Status:** PASS
+
+**Description:** Live run with `gpt-5.6-luna` for Super Agent and an `investigator` Agent executor with two read tools and one write tool, local PostgreSQL and the durable queue. Super Agent starts the accepted Task; the run is read back from the Task; Super Agent is asked for an update; the person answers the worker's question from chat.
+
+**Result:** Attempt 1 reached In review with a finding, the checks it ran, a recommended option and a question, and changed nothing. Its result recorded the two read tool calls with their output as evidence. "Any update?" answered with the finding and the options in 4.9s. "Go with your recommended option" continued the Task in 2.6s as attempt 2, which recorded the reply as `follow_up`, ran on the same worker session, applied the change with the write tool and recorded that call in its evidence. Super Agent passed an expanded form of the reply ("Go with your recommended option: switch the nightly export to billing-export-new") rather than the exact words. A first version gave the worker only read tools, so attempt 2 reported it could not apply the fix.
+
+### 17_continue_tasks_from_chat.py --serve (2026-11-10)
+
+**Status:** PASS
+
+**Description:** Served mode, driven over HTTP: subscribe to `GET /company/events?task_id=<seeded id>`, then ask Super Agent to start the Task.
+
+**Result:** The stream sent the current state (`ready`) on connect, `in_progress`/`RUNNING` right after the start, and `in_review`/`COMPLETED` with two evidence items when the run finished, with no client polling.
+
+---
+
+### 17_continue_tasks_from_chat.py, evidence read from the run (2026-11-11)
+
+**Status:** PASS
+
+**Description:** After review: the Task result no longer stores evidence, `/company/events` is removed, and Super Agent's per-turn Task note and session-state tracking are removed. Live run with `gpt-5.6-luna`, PostgreSQL and the durable queue; what each attempt ran is read from its run through `GET /company/runs/{run_id}`.
+
+**Result:** Start returned a receipt in 4.5s. Attempt 1 reached In review with a recommendation and a question; its run showed `read_export_logs` and `list_iam_roles`. "Any update?" was answered in 5.4s through `get_company_task_status`. The reply continued the Task in 3.1s as attempt 2 on the same worker session, whose run showed `set_export_role {"role": "billing-export-new"}`.
+
+---
+
+### 17_continue_tasks_from_chat.py, a reply goes through send-back (2026-11-12)
+
+**Status:** PASS
+
+**Description:** `continue_company_task` and `POST /company/tasks/{id}/continue` are removed; a person's reply on a finished Task goes through main's `review_company_task(send_back)`, which pauses for confirmation, then `start_company_task`. The next attempt gets `review_feedback` and `previous_result`. Live run with `gpt-5.6-luna`, PostgreSQL and the durable queue.
+
+**Result:** Start returned a receipt in 4.4s, and attempt 1's run showed `list_iam_roles` and `read_export_logs`. "Any update?" was answered in 5.3s. "Go with your recommended option" paused on `review_company_task` with the Task title, `send_back` and the person's words as the reason; after confirming, Super Agent started attempt 2 (7.4s in all). Attempt 2 ran on the same worker session and its run showed `set_export_role {"role": "billing-export-new"}`. The Task history records the send-back by `alex` with the reason.
+
+---
+
 ### 04_manage_playbook.py, 05_super_agent_company.py, 10_weekly_product_review.py, 16_company_file_tree.py (2026-11-12, Company fixes before 3.2)
 
 **Status:** PASS
