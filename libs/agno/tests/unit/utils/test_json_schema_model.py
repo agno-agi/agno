@@ -750,6 +750,26 @@ def test_additional_properties_false_forbids_extra_keys():
             },
             "$ref cannot be combined with required, type",
         ),
+        (
+            {
+                "type": "object",
+                "properties": {"t": {"$ref": "#/$defs/T"}},
+                "$defs": {
+                    "I": {"type": "integer"},
+                    "T": {
+                        "$id": "https://example.com/t",
+                        "type": "object",
+                        "properties": {"i": {"$ref": "#/$defs/I"}},
+                        "$defs": {"I": {"type": "string"}},
+                    },
+                },
+            },
+            "$id is only supported on the root schema",
+        ),
+        (
+            {"type": "object", "properties": {"a": {"$id": "https://example.com/a", "type": "string"}}},
+            "$id is only supported on the root schema",
+        ),
     ],
     ids=[
         "array-root",
@@ -784,11 +804,20 @@ def test_additional_properties_false_forbids_extra_keys():
         "nullable-root",
         "ref-object-or-array",
         "root-ref-with-required",
+        "nested-id-on-ref-target",
+        "nested-id-on-property",
     ],
 )
 def test_unrepresentable_schemas_are_refused(schema, reason):
     with pytest.raises(UnsupportedJsonSchemaError, match=re.escape(reason)):
         json_schema_to_model(schema)
+
+
+def test_root_id_is_accepted():
+    model = json_schema_to_model(
+        {"$id": "https://example.com/root", "type": "object", "properties": {"a": {"type": "string"}}}
+    )
+    assert model.model_validate({"a": "x"}).a == "x"
 
 
 def test_refusals_name_where_they_happened():

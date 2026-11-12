@@ -184,7 +184,7 @@ class _ModelBuilder:
         self.defaults: List[Tuple[Type[BaseModel], str, Any, str]] = []
 
     def build_root(self, schema: Dict[str, Any], name: str) -> Type[BaseModel]:
-        _check_keywords(schema, "")
+        _check_keywords(schema, "", is_root=True)
         root_types = _types_of(schema)
         if (root_types and root_types != {"object"}) or schema.get("nullable") is True:
             raise UnsupportedJsonSchemaError(
@@ -313,7 +313,7 @@ class _ModelBuilder:
             return Any
         if not isinstance(schema, dict):
             raise UnsupportedJsonSchemaError(f"{_at(path)}expected a schema object")
-        _check_keywords(schema, path)
+        _check_keywords(schema, path, is_root=schema is self.root)
 
         base = self._base_type(schema, hint, path)
         if schema.get("nullable") is True:
@@ -429,7 +429,7 @@ class _ModelBuilder:
     def _object_model(self, schema: Dict[str, Any], name: str, path: str, reserved: bool = False) -> Type[BaseModel]:
         if not reserved:
             name = self._model_name(name)
-        _check_keywords(schema, path)
+        _check_keywords(schema, path, is_root=schema is self.root)
         properties = schema.get("properties")
         if not isinstance(properties, dict):
             raise UnsupportedJsonSchemaError(f"{_at(path)}properties must be an object")
@@ -498,7 +498,7 @@ def _declares_properties(schema: Dict[str, Any]) -> bool:
     return isinstance(properties, dict) and bool(properties)
 
 
-def _check_keywords(schema: Dict[str, Any], path: str) -> None:
+def _check_keywords(schema: Dict[str, Any], path: str, is_root: bool = False) -> None:
     """Refuse unknown keywords, and any combination the converter would only partly apply.
 
     Every node is one shape ($ref, a single allOf/anyOf/oneOf, enum or const, or a type with
@@ -508,6 +508,9 @@ def _check_keywords(schema: Dict[str, Any], path: str) -> None:
     unsupported = sorted(keys - _SUPPORTED_KEYWORDS)
     if unsupported:
         raise UnsupportedJsonSchemaError(f"{_at(path)}unsupported keyword(s): {', '.join(unsupported)}")
+    if "$id" in keys and not is_root:
+        # A nested $id starts a new resource that its refs resolve against; refs here resolve from the root
+        raise UnsupportedJsonSchemaError(f"{_at(path)}$id is only supported on the root schema")
     shapes = [k for k in _SHAPE_KEYWORDS if k in keys]
     if shapes:
         allowed = _PASSIVE_KEYWORDS | {shapes[0]} | ({"type"} if shapes[0] in ("enum", "const") else set())
