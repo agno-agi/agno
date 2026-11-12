@@ -223,7 +223,8 @@ message with "Stopped". Stop works for Agents, Teams, Workflows, and external
 agents. Slack offers no Stop while an approval card waits; a Stop pressed just
 before the run paused still stops it and freezes the card to "Stopped". Only the
 person who started the run, a Slack user mapped to the same principal, or a user
-in `approvers=` can stop it; anyone else gets a private notice.
+in `approvers=` can stop it; anyone else who presses Stop on a streaming reply
+gets a private notice.
 
 ## Approvers and User Mapping
 
