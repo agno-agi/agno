@@ -108,6 +108,23 @@ class _StartCaller:
         )
 
 
+async def _may_read_projects(request: Request) -> bool:
+    """Whether the caller would pass the ``GET /company/projects`` gate; attention counts Projects only then."""
+    from agno.os.auth import _authorization_context, _provider_for
+
+    state = request.state
+    if not getattr(state, "authorization_enabled", False) and getattr(state, "service_account_name", None) is None:
+        return True
+    try:
+        # The same provider the route gate asks, so a managed-role or ReBAC plane decides here too.
+        return await _provider_for(request).aauthorize_route(
+            _authorization_context(request, action="read"), ["projects:read"]
+        )
+    except Exception:
+        # Leaving the count out is the safe answer when the decision can't be made.
+        return False
+
+
 async def _run_route(
     source: Union[Request, _StartCaller],
     path: str,
@@ -682,7 +699,7 @@ def get_company_runs_router(os: Any) -> APIRouter:
         if manager is None:
             raise HTTPException(503, "Company requires a database")
         try:
-            return await _call(manager, "attention", product_id)
+            return await _call(manager, "attention", product_id, include_projects=await _may_read_projects(request))
         except NotImplementedError:
             raise HTTPException(503, "Company tasks are not supported by the configured database")
 

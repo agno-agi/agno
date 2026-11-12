@@ -430,3 +430,44 @@ def test_proposed_project_allows_backlog_preview_but_not_acceptance(client):
     accepted = transition(client, path, "ready")
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["status"] == "ready"
+
+
+def bulk(client, items, target="cancelled"):
+    return client.post("/company/tasks/transitions", json={"target": target, "reason": "Reviewed", "items": items})
+
+
+def test_bulk_transition_reports_each_task(client):
+    first, accepted = create(client), create(client)
+    path = "/company/tasks/" + accepted["id"]
+    assert transition(client, path, "ready").status_code == 200
+    response = bulk(
+        client,
+        [
+            {"id": first["id"], "expected_status": "backlog"},
+            # Accepted by someone else after the caller loaded it.
+            {"id": accepted["id"], "expected_status": "backlog"},
+        ],
+    )
+    assert response.status_code == 200, response.text
+    results = response.json()["results"]
+    assert [(r["ok"], r["status_code"]) for r in results] == [(True, 200), (False, 409)]
+    assert results[0]["task"]["status"] == "cancelled"
+    assert results[1]["detail"] == "Task is ready, not backlog"
+    assert client.get(path).json()["status"] == "ready"
+
+
+def test_bulk_acceptance_resolves_each_tasks_own_executor(client):
+    proposed = create(client)
+    path = "/company/tasks/" + proposed["id"]
+    assert client.patch(path, json={"executor_type": "team", "executor_id": "writer"}).status_code == 200
+    unassigned = create(client)
+    results = bulk(
+        client,
+        [{"id": proposed["id"], "expected_status": "backlog"}, {"id": unassigned["id"], "expected_status": "backlog"}],
+        "ready",
+    ).json()["results"]
+    assert results[0]["ok"] and results[0]["task"]["executor_type"] == "team"
+    # The second Task must not inherit the first one's executor; with none of its own it names Mini Agent,
+    # which this deployment does not have.
+    assert (results[1]["ok"], results[1]["status_code"]) == (False, 409)
+    assert "Mini Agent is unavailable" in results[1]["detail"]

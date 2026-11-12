@@ -1,7 +1,7 @@
 """Collaborative Company project reads, edits and lifecycle transitions."""
 
 import asyncio
-from typing import Any, Dict, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
@@ -11,6 +11,8 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id
 from agno.os.routers.company.schema import (
+    ProjectBulkTransition,
+    ProjectBulkTransitionResponse,
     ProjectCreate,
     ProjectResponse,
     ProjectStatus,
@@ -151,20 +153,49 @@ def get_projects_router(db: Optional[Union[BaseDb, AsyncBaseDb]], settings: Agno
             raise HTTPException(status_code=409, detail="Project is not archived")
         return project
 
-    @router.post("/projects/{project_id}/transitions", response_model=ProjectResponse)
-    async def transition_project(
-        project_id: str, body: ProjectTransition, request: Request, _: bool = Depends(auth_dependency)
+    async def _transition(
+        project_id: str, body: ProjectTransition, request: Request, expected_status: Optional[str] = None
     ) -> Dict[str, Any]:
-        await _existing(project_id)
+        """One Project transition with every check; the single and bulk routes share it."""
+        existing = await _existing(project_id)
+        guard: Dict[str, Any] = {}
+        if expected_status is not None:
+            if existing["status"] != expected_status:
+                raise HTTPException(status_code=409, detail=f"Project is {existing['status']}, not {expected_status}")
+            # The write only lands on the row read above, so a change in between is refused too.
+            guard["expected_updated_at"] = existing.get("updated_at")
         record = await _call(
             "transition_project",
             project_id=project_id,
-            **body.model_dump(),
+            target=body.target,
+            reason=body.reason,
             user_id=None,
             accepted_by=getattr(request.state, "user_id", None),
+            **guard,
         )
         if record is None:
             raise HTTPException(status_code=409, detail="Project changed while transitioning")
         return record
+
+    @router.post("/projects/{project_id}/transitions", response_model=ProjectResponse)
+    async def transition_project(
+        project_id: str, body: ProjectTransition, request: Request, _: bool = Depends(auth_dependency)
+    ) -> Dict[str, Any]:
+        return await _transition(project_id, body, request)
+
+    @router.post("/projects/transitions", response_model=ProjectBulkTransitionResponse)
+    async def transition_projects(
+        body: ProjectBulkTransition, request: Request, _: bool = Depends(auth_dependency)
+    ) -> Dict[str, Any]:
+        """Move several Projects; each is checked and reported on its own, so one refusal leaves the rest moved."""
+        results: List[Dict[str, Any]] = []
+        for item in body.items:
+            try:
+                record = await _transition(item.id, body, request, expected_status=item.expected_status)
+            except HTTPException as exc:
+                results.append({"id": item.id, "ok": False, "status_code": exc.status_code, "detail": str(exc.detail)})
+                continue
+            results.append({"id": item.id, "ok": True, "status_code": 200, "project": record})
+        return {"results": results}
 
     return router
