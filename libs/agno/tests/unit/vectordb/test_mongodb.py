@@ -365,6 +365,18 @@ def test_keyword_search_with_content_id(vector_db: MongoVectorDb, mock_mongodb_c
     )
 
 
+def test_keyword_search_matches_literal_text(vector_db: MongoVectorDb, mock_mongodb_client: MagicMock) -> None:
+    """The query is user text, not a regex pattern."""
+    collection = mock_mongodb_client["test_vectordb"][vector_db.collection_name]
+    mock_cursor = MagicMock()
+    mock_cursor.limit.return_value = []
+    collection.find.return_value = mock_cursor
+
+    vector_db.keyword_search("v1.2(draft", limit=1)
+
+    assert collection.find.call_args.args[0] == {"content": {"$regex": r"v1\.2\(draft", "$options": "i"}}
+
+
 def test_upsert(vector_db: MongoVectorDb, mock_mongodb_client: MagicMock, mock_embedder: MagicMock) -> None:
     """Test upsert functionality."""
     collection = mock_mongodb_client["test_vectordb"][vector_db.collection_name]

@@ -236,6 +236,16 @@ def get_tools(
         _raise_if_async_tools_in_list(resolved_tools)
         agent_tools.extend(resolved_tools)
 
+    # Read-only search over history this session compacted away. Scoped to
+    # this session's archive namespace, so one session can never read another's.
+    from agno.agent._messages import agent_compaction
+
+    compaction = agent_compaction(agent)
+    if compaction is not None and compaction.search_compacted_messages:
+        archive_tools = compaction.tools_for(session.session_id, agent.db)
+        if archive_tools:
+            agent_tools.extend(archive_tools)
+
     _append_filesystem_tools(agent, agent_tools)
 
     # Add tools for accessing memory
@@ -261,7 +271,11 @@ def get_tools(
         )
 
     if agent.enable_agentic_memory:
-        agent_tools.append(_default_tools.get_update_user_memory_function(agent, user_id=user_id, async_mode=False))
+        agent_tools.append(
+            _default_tools.get_update_user_memory_function(
+                agent, user_id=user_id, run_response=run_response, async_mode=False
+            )
+        )
 
     # Read-back tools for offloaded results
     if agent._result_store is not None:
@@ -277,6 +291,7 @@ def get_tools(
             session_id=session.session_id if session else None,
             agent_id=agent.id,
             run_context=run_context,
+            run_metrics=run_response.metrics,
         )
         agent_tools.extend(learning_tools)
 
@@ -373,6 +388,16 @@ async def aget_tools(
             # Add the tool (MCP tools that passed checks, or any non-MCP tool)
             agent_tools.append(tool)
 
+    # Read-only search over history this session compacted away. Scoped to
+    # this session's archive namespace, so one session can never read another's.
+    from agno.agent._messages import agent_compaction
+
+    compaction = agent_compaction(agent)
+    if compaction is not None and compaction.search_compacted_messages:
+        archive_tools = compaction.tools_for(session.session_id, agent.db)
+        if archive_tools:
+            agent_tools.extend(archive_tools)
+
     _append_filesystem_tools(agent, agent_tools)
 
     # Add tools for accessing memory
@@ -398,7 +423,11 @@ async def aget_tools(
         )
 
     if agent.enable_agentic_memory:
-        agent_tools.append(_default_tools.get_update_user_memory_function(agent, user_id=user_id, async_mode=True))
+        agent_tools.append(
+            _default_tools.get_update_user_memory_function(
+                agent, user_id=user_id, run_response=run_response, async_mode=True
+            )
+        )
 
     # Read-back tools for offloaded results
     if agent._result_store is not None:
@@ -414,6 +443,7 @@ async def aget_tools(
             session_id=session.session_id if session else None,
             agent_id=agent.id,
             run_context=run_context,
+            run_metrics=run_response.metrics,
         )
         agent_tools.extend(learning_tools)
 
@@ -526,6 +556,8 @@ def parse_tools(
                     continue
                 _function_names.append(name)
                 _func = _func._per_run_copy()
+                if isinstance(tool.name, str) and tool.name:
+                    _func.owning_toolkit = tool.recorded_name
                 _func._agent = agent
                 if agent._team is not None:
                     _func._team = agent._team
@@ -559,6 +591,10 @@ def parse_tools(
             _function_names.append(tool.name)
 
             tool = tool._per_run_copy()
+            # The saved toolkit name can be stale (renamed, or an MCP default name
+            # holding the old command's arguments): record the live toolkit's name,
+            # and no name when no live toolkit runs the function
+            tool.owning_toolkit = tool.bound_toolkit.recorded_name if isinstance(tool.bound_toolkit, Toolkit) else None
             # Respect the function's explicit strict setting if set
             effective_strict = strict if tool.strict is None else tool.strict
             tool.process_entrypoint(strict=effective_strict)
@@ -888,6 +924,7 @@ def run_tool(
                 tool_execution = call_result.tool_executions[0]
                 tool.result = tool_execution.result
                 tool.tool_call_error = tool_execution.tool_call_error
+                tool.metrics = tool_execution.metrics
                 if stream_events:
                     if team_mode:
                         yield handle_event(  # type: ignore
@@ -1003,6 +1040,7 @@ async def arun_tool(
                 tool_execution = call_result.tool_executions[0]
                 tool.result = tool_execution.result
                 tool.tool_call_error = tool_execution.tool_call_error
+                tool.metrics = tool_execution.metrics
                 if stream_events:
                     if team_mode:
                         yield handle_event(  # type: ignore

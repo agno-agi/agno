@@ -208,12 +208,19 @@ class FileTools(Toolkit):
         """
         try:
             log_debug(f"Patching file: {file_name}")
+            if start_line < 0 or end_line < start_line:
+                return "Error patching file: require 0 <= start_line <= end_line"
             safe, file_path = self._check_path(file_name, self.base_dir)
             if not (safe):
                 log_error(f"Attempted to read file: {file_name}")
                 return "Error reading file"
             contents = file_path.read_text(encoding=encoding)
             lines = contents.split(self.line_separator)
+            # A trailing separator terminates the last line rather than adding a line.
+            # Keep its empty split element for reconstruction so the terminator survives.
+            line_count = len(lines) - 1 if lines[-1] == "" else len(lines)
+            if end_line >= line_count:
+                return f"Error patching file: end_line must be less than {line_count}"
             start = lines[0:start_line]
             end = lines[end_line + 1 :]
             return self.save_file(

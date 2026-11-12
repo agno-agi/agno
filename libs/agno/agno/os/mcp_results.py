@@ -8,7 +8,6 @@ never used -- it dumps internal message history (including the system prompt)
 over the wire and raises on binary media.
 """
 
-import json
 from base64 import b64encode
 from typing import Any, Dict, List, Optional, Union
 from urllib.parse import quote
@@ -29,7 +28,7 @@ from agno.run.team import TeamRunOutput
 from agno.run.utils import run_status_string, serialized_paused_requirements
 from agno.run.workflow import WorkflowRunOutput
 from agno.utils.media import resolve_image_mime_type
-from agno.utils.serialize import json_serializer
+from agno.utils.serialize import to_json_types
 
 AnyRunOutput = Union[RunOutput, TeamRunOutput, WorkflowRunOutput]
 
@@ -185,13 +184,8 @@ def build_custom_tool_result(result: Any) -> "Any":
     structured: Dict[str, Any] = {"content": text}
     metadata = getattr(result, "metadata", None)
     if metadata:
-        structured["metadata"] = _json_safe(metadata)
+        structured["metadata"] = to_json_types(metadata)
     return ToolResult(content=blocks, structured_content=structured)
-
-
-def _json_safe(data: Dict[str, Any]) -> Dict[str, Any]:
-    """Force a dict through JSON so enum/datetime leftovers cannot break the transport."""
-    return json.loads(json.dumps(data, default=json_serializer))
 
 
 def trimmed_structured_content(run_output: AnyRunOutput, content_text: Optional[str] = None) -> Dict[str, Any]:
@@ -218,7 +212,7 @@ def trimmed_structured_content(run_output: AnyRunOutput, content_text: Optional[
     requirements = serialized_paused_requirements(run_output)
     if requirements is not None:
         structured["requirements"] = requirements
-    return _json_safe(structured)
+    return to_json_types(structured)
 
 
 def build_run_tool_result(
@@ -255,7 +249,7 @@ def build_run_tool_result(
     content: List[ContentBlock] = [TextContent(type="text", text=text)]
 
     if result_mode == "full":
-        structured = _json_safe(run_output.to_dict())
+        structured = to_json_types(run_output.to_dict())
     else:
         content.extend(_media_blocks(run_output))
         # Pass the final text so structuredContent["content"] carries the same message

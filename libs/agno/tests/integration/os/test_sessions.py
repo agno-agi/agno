@@ -1,5 +1,6 @@
 """Integration tests for session and run endpoints in AgentOS."""
 
+import json
 import time
 from datetime import UTC, datetime
 
@@ -1063,3 +1064,195 @@ def test_get_session_name_workflow_no_input(workflow_session_no_input):
     """Test that get_session_name returns 'New {name} Session' when workflow has no input."""
     session_dict = {**workflow_session_no_input.to_dict(), "session_type": "workflow"}
     assert get_session_name(session_dict) == "New BlogGenerator Session"
+
+
+@pytest.fixture
+def mixed_status_session(shared_db, test_agent: Agent):
+    """A session whose runs span the live and terminal status sets - the
+    shape a queue tray queries."""
+    now = int(time.time())
+    statuses = {
+        "run-q": RunStatus.pending,
+        "run-r": RunStatus.running,
+        "run-p": RunStatus.paused,
+        "run-c": RunStatus.completed,
+        "run-e": RunStatus.error,
+    }
+    runs = []
+    for idx, (run_id, run_status) in enumerate(statuses.items()):
+        run = RunOutput(
+            run_id=run_id,
+            agent_id=test_agent.id,
+            user_id="test-user",
+            status=run_status,
+            messages=[],
+            created_at=now - (len(statuses) - idx),
+        )
+        run.content = f"Content for {run_id} " + "x" * 400
+        runs.append(run)
+    session = AgentSession(
+        session_id="mixed-status-session",
+        agent_id=test_agent.id,
+        user_id="test-user",
+        session_data={"session_name": "Mixed"},
+        agent_data={"name": test_agent.name, "agent_id": test_agent.id},
+        runs=runs,
+        created_at=now,
+        updated_at=now,
+    )
+    shared_db.upsert_session(session)
+    for idx, run in enumerate(runs):
+        shared_db.upsert_run(run=run, session_id=session.session_id, user_id=session.user_id, run_index=idx)
+    return session
+
+
+def _mixed_client(shared_db):
+    agent = Agent(name="test-agent", id="test-agent-id", db=shared_db)
+    return TestClient(AgentOS(agents=[agent]).get_app())
+
+
+def test_get_session_runs_status_filter_live_set(mixed_status_session, shared_db):
+    """Repeatable status filter: the tray's live set (queued + executing +
+    awaiting approval) excludes terminal runs."""
+    client = _mixed_client(shared_db)
+    response = client.get(
+        f"/sessions/{mixed_status_session.session_id}/runs",
+        params={"status": ["PENDING", "RUNNING", "PAUSED"]},
+    )
+    assert response.status_code == 200
+    assert {run["run_id"] for run in response.json()} == {"run-q", "run-r", "run-p"}
+
+
+def test_get_session_runs_status_filter_is_case_insensitive(mixed_status_session, shared_db):
+    client = _mixed_client(shared_db)
+    response = client.get(
+        f"/sessions/{mixed_status_session.session_id}/runs",
+        params={"status": ["error"]},
+    )
+    assert response.status_code == 200
+    assert {run["run_id"] for run in response.json()} == {"run-e"}
+
+
+def test_get_session_runs_unknown_status_is_400(mixed_status_session, shared_db):
+    client = _mixed_client(shared_db)
+    response = client.get(
+        f"/sessions/{mixed_status_session.session_id}/runs",
+        params={"status": ["FAILED"]},
+    )
+    assert response.status_code == 400
+    assert "FAILED" in response.json()["detail"]
+
+
+def test_get_session_run_previews_are_lightweight(mixed_status_session, shared_db):
+    """Previews truncated, heavy fields absent, status filter composes."""
+    client = _mixed_client(shared_db)
+    response = client.get(
+        f"/sessions/{mixed_status_session.session_id}/run-previews",
+        params={"status": ["COMPLETED"]},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert [run["run_id"] for run in data] == ["run-c"]
+    entry = data[0]
+    assert entry["status"] == "COMPLETED"
+    assert len(entry["content_preview"]) <= 280
+    assert "messages" not in entry and "events" not in entry and "metrics" not in entry
+
+
+@pytest.fixture
+def team_session_with_structured_run(shared_db):
+    now = int(time.time())
+    run = TeamRunOutput(
+        run_id="team-run-1",
+        team_id="test-team-id",
+        user_id="test-user",
+        status=RunStatus.completed,
+        content={"answer": 42, "notes": "structured"},
+        messages=[],
+        created_at=now,
+    )
+    session = TeamSession(
+        session_id="team-structured-session",
+        team_id="test-team-id",
+        user_id="test-user",
+        session_data={"session_name": "Team"},
+        team_data={"name": "test-team", "team_id": "test-team-id"},
+        runs=[run],
+        created_at=now,
+        updated_at=now,
+    )
+    shared_db.upsert_session(session)
+    shared_db.upsert_run(run=run, session_id=session.session_id, user_id=session.user_id, run_index=0)
+    return session
+
+
+def test_get_session_runs_team_runs_carry_user_id(team_session_with_structured_run, shared_db):
+    client = _mixed_client(shared_db)
+    session_id = team_session_with_structured_run.session_id
+    full = client.get(f"/sessions/{session_id}/runs", params={"type": "team"})
+    previews = client.get(f"/sessions/{session_id}/run-previews", params={"type": "team"})
+    assert full.status_code == 200 and previews.status_code == 200
+    assert full.json()[0]["user_id"] == "test-user"
+    assert previews.json()[0]["user_id"] == "test-user"
+
+
+def test_get_session_run_previews_render_structured_content_as_json(team_session_with_structured_run, shared_db):
+    client = _mixed_client(shared_db)
+    response = client.get(
+        f"/sessions/{team_session_with_structured_run.session_id}/run-previews",
+        params={"type": "team"},
+    )
+    assert response.status_code == 200
+    assert json.loads(response.json()[0]["content_preview"]) == {"answer": 42, "notes": "structured"}
+
+
+def test_get_session_runs_default_shape_is_unchanged(mixed_status_session, shared_db):
+    client = _mixed_client(shared_db)
+    response = client.get(f"/sessions/{mixed_status_session.session_id}/runs", params={"status": ["COMPLETED"]})
+    assert response.status_code == 200
+    entry = response.json()[0]
+    assert "content" in entry and "content_preview" not in entry
+
+
+def test_get_session_run_previews_unknown_session_is_404(shared_db):
+    client = _mixed_client(shared_db)
+    assert client.get("/sessions/no-such-session/run-previews").status_code == 404
+
+
+@pytest.fixture
+def os_client(shared_db, monkeypatch):
+    """AgentOSClient wired to the in-process app over ASGI, so requests take the client's real HTTP path."""
+    import httpx
+
+    from agno.client import os as client_module
+    from agno.client.os import AgentOSClient
+
+    app = AgentOS(agents=[Agent(name="test-agent", id="test-agent-id", db=shared_db)]).get_app()
+    async_http = httpx.AsyncClient(transport=httpx.ASGITransport(app=app))
+    sync_http = TestClient(app)
+    monkeypatch.setattr(client_module, "get_default_async_client", lambda: async_http)
+    monkeypatch.setattr(client_module, "get_default_sync_client", lambda: sync_http)
+    return AgentOSClient(base_url="http://agentos")
+
+
+async def test_client_get_session_runs_status_filter(mixed_status_session, os_client):
+    runs = await os_client.get_session_runs(mixed_status_session.session_id, status=["PENDING", "RUNNING"])
+    assert {run.run_id for run in runs} == {"run-q", "run-r"}
+
+
+def _assert_completed_and_error_previews(previews):
+    from agno.os.schema import SessionRunPreviewSchema
+
+    assert {p.run_id for p in previews} == {"run-c", "run-e"}
+    assert all(isinstance(p, SessionRunPreviewSchema) for p in previews)
+    assert all(len(p.content_preview or "") <= 280 for p in previews)
+
+
+def test_client_get_session_run_previews(mixed_status_session, os_client):
+    previews = os_client.get_session_run_previews(mixed_status_session.session_id, status=["COMPLETED", "ERROR"])
+    _assert_completed_and_error_previews(previews)
+
+
+async def test_client_aget_session_run_previews(mixed_status_session, os_client):
+    previews = await os_client.aget_session_run_previews(mixed_status_session.session_id, status=["COMPLETED", "ERROR"])
+    _assert_completed_and_error_previews(previews)

@@ -10,6 +10,7 @@ python-dotenv>=1.0.0
 PyJWT>=2.8.0
 mcp>=2.1.0,<3.0.0
 fastmcp>=4.0.0,<5
+a2a-sdk[http-server]>=1.2.2,<2
 sqlalchemy[asyncio]
 psycopg-binary
 psycopg

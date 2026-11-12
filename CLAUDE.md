@@ -43,12 +43,12 @@ This project uses two virtual environments:
 
 | Environment | Purpose | Setup |
 |-------------|---------|-------|
-| `.venv/` | Development: tests, formatting, validation | `./scripts/dev_setup.sh` |
-| `.venvs/demo/` | Cookbooks: has all demo dependencies | `./scripts/demo_setup.sh` |
+| `.venv/` | Development and cookbooks: demo dependencies, tests, formatting, validation | `./scripts/dev_setup.sh` |
+| `.venvs/demo/` | Dedicated demos: same dependencies, separate environment | `./scripts/demo_setup.sh` |
 
-**Use `.venv`** for development tasks (`pytest`, `./scripts/format.sh`, `./scripts/validate.sh`).
+**Use `.venv`** for development tasks (`pytest`, `./scripts/format.sh`, `./scripts/validate.sh`) and day-to-day cookbook work.
 
-**Use `.venvs/demo`** for running cookbook examples.
+**Use `.venvs/demo`** for running demos in a separate environment. The cookbook commands below use this environment and also work with `.venv/bin/python`.
 
 ---
 
