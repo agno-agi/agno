@@ -44,12 +44,11 @@ class CompanyBridge:
         return getattr(self.agent_os, "_company_db", None)
 
     async def authorize(self, app: Any, principal: str, entity_id: str) -> Any:
-        """The platform authority of a mapped principal to run Super Agent; None with AgentOS authorization off.
+        """The platform authority of a mapped principal to run Super Agent.
 
+        None when no authorization applies (neither AgentOS authorization nor an RBAC middleware).
         Raises PermissionError when the principal is disabled or not allowed to run the entity.
         """
-        if not getattr(self.agent_os, "authorization", False):
-            return None
         return await resolve_principal_authorization(app, principal, "teams", entity_id)
 
 
