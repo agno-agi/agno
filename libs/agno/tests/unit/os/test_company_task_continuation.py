@@ -1,4 +1,4 @@
-"""Evidence read from the run, Task state for Super Agent, and continuing a Task from a reply."""
+"""Evidence read from the run, Task state for Super Agent, and a sent-back Task starting again from the reply."""
 
 import asyncio
 import json
@@ -102,7 +102,7 @@ def task_row(**overrides):
 def test_state_reports_waiting_runs_and_recorded_results():
     paused = _task_state(task_row(), {"status": "paused"})
     assert paused["run_status"] == "PAUSED" and "approve" in paused["waiting_on"]
-    assert paused["follow_up"]["message"] == "Go with A" and paused["attempt"] == 2
+    assert paused["attempt"] == 2 and "review_feedback" not in paused
 
     finished = _task_state(
         task_row(status="in_review", result={"run_id": "r2", "status": "COMPLETED", "content": "Done"})
@@ -110,9 +110,20 @@ def test_state_reports_waiting_runs_and_recorded_results():
     assert finished["meaning"] == "finished, waiting for review" and finished["run_status"] == "COMPLETED"
     assert finished["result"] == {"content": "Done"}
 
+    # A reviewer's reason stays on the state until the next attempt reaches review again.
+    sent_back = task_row(
+        status="ready",
+        transitions=[
+            {"attempt": 1, "from": "ready", "target": "in_progress"},
+            {"from": "in_progress", "target": "in_review"},
+            {"from": "in_review", "target": "ready", "reason": "Go with A"},
+        ],
+    )
+    assert _task_state(sent_back)["review_feedback"] == "Go with A"
+
 
 # ---------------------------------------------------------------------------
-# continue_company_task
+# A reply on a finished Task: send it back, then start it
 # ---------------------------------------------------------------------------
 def headers():
     token = jwt.encode(
@@ -189,29 +200,45 @@ def context(scopes=SCOPES):
     return RunContext(run_id="chat-run", session_id="chat-1", user_id="alice", authorization=authority)
 
 
-def test_super_agent_continues_a_task_with_the_persons_words(system):
+def test_a_sent_back_task_starts_again_with_the_reply_and_its_previous_result(system):
     client, db, agent_os, queue = system
     task = reviewed_task(client, db, queue)
-    assert task["status"] == "in_review"
     tools = CompanyTaskTools(agent_os)
-    # Starting is not continuing: start refuses a Task waiting for review.
-    assert "Continue it" in asyncio.run(tools.astart_company_task(task["id"], _agno_run_context=context()))
-    reply = asyncio.run(tools.acontinue_company_task(task["id"], "Go with A", _agno_run_context=context()))
+    # Starting is not replying: start refuses a Task waiting for review.
+    assert "sends it back" in asyncio.run(tools.astart_company_task(task["id"], _agno_run_context=context()))
+
+    # The reply is a review decision (it pauses for the person in chat), then the next attempt is started.
+    sent = asyncio.run(
+        tools.areview_company_task(
+            "Investigate", "send_back", "Go with A", task["id"], task["job_id"], _agno_run_context=context()
+        )
+    )
+    assert db.get_task(task["id"])["status"] == "ready", sent
+    reply = asyncio.run(tools.astart_company_task(task["id"], _agno_run_context=context()))
     second = task_run_id(task["id"], 2)
-    assert reply.startswith("Continued 'Investigate'") and second in reply
+    assert reply.startswith("Queued 'Investigate'") and second in reply
 
-    entry = db.get_task(task["id"])["transitions"][-1]
-    assert entry["follow_up"] == {"message": "Go with A", "from": "alice", "in_reply_to_attempt": 1}
-    assert entry["requested_from"]["session_id"] == "chat-1"
-    payload = json.loads(asyncio.run(queue.store.get_job(second))["payload"]["input"])
-    assert payload["previous_result"]["content"] == "Found it. Fix A or B?"
+    job = asyncio.run(queue.store.get_job(second))
+    assert job["session_id"] == task["session_id"]
+    payload = json.loads(job["payload"]["input"])
+    assert payload["review_feedback"] == "Go with A"
+    # Executors without session history still see what the reply answers.
+    assert payload["previous_result"] == {"status": "COMPLETED", "content": "Found it. Fix A or B?"}
+    assert "act on review_feedback" in payload["execution_context"]["instructions"]
+    assert db.get_task(task["id"])["transitions"][-1]["requested_from"]["session_id"] == "chat-1"
 
-    functions = tools.get_async_functions()
-    assert functions["continue_company_task"].stop_after_tool_call is True
     state = json.loads(asyncio.run(tools.aget_company_task_status(task["id"], _agno_run_context=context())))
-    assert state["attempt"] == 2 and state["follow_up"]["message"] == "Go with A" and state["run_status"] == "PENDING"
+    assert state["attempt"] == 2 and state["review_feedback"] == "Go with A" and state["run_status"] == "PENDING"
     # Evidence is read from the run when asked; attempt 2 is queued and has recorded nothing yet.
     assert state["evidence"] == [] and state["evidence_note"] == NO_EVIDENCE
+
+
+def test_a_first_attempt_has_no_reply_or_previous_result(system):
+    client, db, agent_os, queue = system
+    task = reviewed_task(client, db, queue)
+    payload = json.loads(asyncio.run(queue.store.get_job(task["job_id"]))["payload"]["input"])
+    assert "review_feedback" not in payload and "previous_result" not in payload
+    assert "act on review_feedback" not in payload["execution_context"]["instructions"]
 
 
 def test_status_reads_evidence_from_the_run(system, monkeypatch):
@@ -235,33 +262,3 @@ def test_status_reads_evidence_from_the_run(system, monkeypatch):
     ]
     # Outputs never reach the model's context.
     assert "secret" not in json.dumps(state)
-
-
-def test_a_cancelled_project_refuses_a_reply_before_queueing(system):
-    client, db, agent_os, queue = system
-    task = reviewed_task(client, db, queue)
-    client.post(
-        f"/company/projects/{task['project_id']}/transitions",
-        json={"target": "cancelled", "reason": "Dropped"},
-        headers=headers(),
-    ).raise_for_status()
-
-    response = client.post(f"/company/tasks/{task['id']}/continue", json={"message": "Go with A"}, headers=headers())
-    assert response.status_code == 409 and response.json()["detail"] == "Cannot start Task work in a cancelled Project"
-    reply = asyncio.run(
-        CompanyTaskTools(agent_os).acontinue_company_task(task["id"], "Go", _agno_run_context=context())
-    )
-    assert reply == "Not continued: Cannot start Task work in a cancelled Project"
-    assert asyncio.run(queue.store.get_job(task_run_id(task["id"], 2))) is None
-
-
-@pytest.mark.parametrize("missing", ["tasks:write", "wiki:read", "agents:writer:run"])
-def test_continuing_needs_the_start_routes_grants(system, missing):
-    client, db, agent_os, queue = system
-    task = reviewed_task(client, db, queue)
-    scopes = [scope for scope in SCOPES if scope != missing]
-    reply = asyncio.run(
-        CompanyTaskTools(agent_os).acontinue_company_task(task["id"], "Go", _agno_run_context=context(scopes))
-    )
-    assert reply.startswith("Not continued:"), reply
-    assert asyncio.run(queue.store.get_job(task_run_id(task["id"], 2))) is None

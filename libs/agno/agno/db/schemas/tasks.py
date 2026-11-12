@@ -153,12 +153,10 @@ def task_run_fields(
     run_db_id: Optional[str] = None,
     session_user_id: Optional[str] = None,
     requested_from: Optional[Dict[str, Any]] = None,
-    follow_up: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Reserve execution in the Task lifecycle, retaining the session across attempts.
 
     requested_from names the conversation that asked for this attempt (session, run and team ids).
-    follow_up is the reply this attempt continues from: who sent it, its message and the attempt it answers.
     """
     from uuid import NAMESPACE_URL, uuid5
 
@@ -190,19 +188,8 @@ def task_run_fields(
                 "attempt": attempt,
                 "run_db_id": run_db_id,
                 **({"requested_from": _requested_from(requested_from)} if requested_from else {}),
-                **({"follow_up": _follow_up(follow_up)} if follow_up else {}),
             },
         ],
-    }
-
-
-def _follow_up(value: Dict[str, Any]) -> Dict[str, Any]:
-    """The reply as recorded on the attempt: who sent it, what it said and which attempt it answers."""
-    attempt = value.get("in_reply_to_attempt")
-    return {
-        "message": str(value.get("message") or "")[:20000],
-        "from": value.get("from") if isinstance(value.get("from"), str) else None,
-        "in_reply_to_attempt": attempt if isinstance(attempt, int) and not isinstance(attempt, bool) else None,
     }
 
 

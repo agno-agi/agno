@@ -611,3 +611,13 @@ Three controls, two runs each:
 **Result:** Start returned a receipt in 4.5s. Attempt 1 reached In review with a recommendation and a question; its run showed `read_export_logs` and `list_iam_roles`. "Any update?" was answered in 5.4s through `get_company_task_status`. The reply continued the Task in 3.1s as attempt 2 on the same worker session, whose run showed `set_export_role {"role": "billing-export-new"}`.
 
 ---
+
+### 17_continue_tasks_from_chat.py, a reply goes through send-back (2026-11-12)
+
+**Status:** PASS
+
+**Description:** `continue_company_task` and `POST /company/tasks/{id}/continue` are removed; a person's reply on a finished Task goes through main's `review_company_task(send_back)`, which pauses for confirmation, then `start_company_task`. The next attempt gets `review_feedback` and `previous_result`. Live run with `gpt-5.6-luna`, PostgreSQL and the durable queue.
+
+**Result:** Start returned a receipt in 4.4s, and attempt 1's run showed `list_iam_roles` and `read_export_logs`. "Any update?" was answered in 5.3s. "Go with your recommended option" paused on `review_company_task` with the Task title, `send_back` and the person's words as the reason; after confirming, Super Agent started attempt 2 (7.4s in all). Attempt 2 ran on the same worker session and its run showed `set_export_role {"role": "billing-export-new"}`. The Task history records the send-back by `alex` with the reason.
+
+---
