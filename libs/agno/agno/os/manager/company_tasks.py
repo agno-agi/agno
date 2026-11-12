@@ -1,17 +1,7 @@
-<<<<<<< HEAD
-"""Super Agent tools to start or continue Company Tasks and read their state without waiting.
+"""Super Agent tools for Company Tasks: start or continue accepted work, read its state, and record a
+person's decisions.
 
-Starting and continuing reuse the Company routes' checks, duplicate handling and queue path,
-under the calling user's own authority. No tool accepts work: a person accepts a Task with an
-executor first, through AgentOS or the API.
-"""
-
-import json
-from typing import Any, Dict, Optional, Tuple
-=======
-"""Super Agent tools for Company Tasks: start accepted work, read its state, and record a person's decisions.
-
-Starting reuses the Company start route's checks, duplicate handling and queue path, under
+Starting and continuing reuse the Company routes' checks, duplicate handling and queue path, under
 the calling user's own authority. The decision tools approve a Project, accept Tasks and
 review a finished one. Each decision pauses the run until the chatting person confirms it,
 runs under that person's permissions, and records that person on the transition. Two more
@@ -19,10 +9,10 @@ tools turn a Routine's auto-accept on, with the same confirmation, or off.
 """
 
 import json
-from typing import Any, Dict, List, Optional
->>>>>>> origin/main
+from typing import Any, Dict, List, Optional, Tuple
 from weakref import ReferenceType, ref
 
+from agno.db.schemas.tasks import TASK_STATUS_MEANING
 from agno.tools import Toolkit
 
 
@@ -108,16 +98,13 @@ def _requested_from(run_context: Any) -> Dict[str, str]:
 
 
 class CompanyTaskTools(Toolkit):
-<<<<<<< HEAD
-    """Start an accepted Task in the background, continue it from a reply, and check on it."""
-=======
-    """Start an accepted Task in the background, check on it later, and record a person's decisions."""
->>>>>>> origin/main
+    """Start or continue an accepted Task in the background, check on it, and record a person's decisions."""
 
     def __init__(self, agent_os: Any):
         self._agent_os: ReferenceType[Any] = ref(agent_os)
         names = [
             "start_company_task",
+            "continue_company_task",
             "get_company_task_status",
             "approve_company_project",
             "accept_company_task",
@@ -127,13 +114,6 @@ class CompanyTaskTools(Toolkit):
         ]
         super().__init__(
             name="company_tasks",
-<<<<<<< HEAD
-            tools=[self.start_company_task, self.continue_company_task, self.get_company_task_status],
-            async_tools=[
-                (self.astart_company_task, "start_company_task"),
-                (self.acontinue_company_task, "continue_company_task"),
-                (self.aget_company_task_status, "get_company_task_status"),
-=======
             tools=[getattr(self, name) for name in names],
             async_tools=[(getattr(self, "a" + name), name) for name in names],
             # A decision is the person's: the run pauses until they confirm the record and the change.
@@ -143,7 +123,6 @@ class CompanyTaskTools(Toolkit):
                 "accept_company_task",
                 "review_company_task",
                 "turn_on_routine_auto_accept",
->>>>>>> origin/main
             ],
             # The receipt is the reply: the coordinator turn ends once the run is queued.
             stop_after_tool_call_tools=["start_company_task", "continue_company_task"],
@@ -158,7 +137,7 @@ class CompanyTaskTools(Toolkit):
         if agent_os is None or app is None:
             return agent_os, app, authority, user_id, "Company execution is not running here. Use AgentOS instead."
         refusal = _refusal(authority)
-        if refusal is None and getattr(agent_os, "user_isolation", False) and not user_id:
+        if refusal is None and _unsigned(agent_os, authority, user_id):
             refusal = "A signed-in person is required."
         return agent_os, app, authority, user_id, refusal
 
@@ -182,17 +161,11 @@ class CompanyTaskTools(Toolkit):
         from fastapi import HTTPException
 
         from agno.company.execution import _pending_task_attempt, _TaskRunConflict, _TaskRunUnavailable
-        from agno.os.routers.company.runs import _STATUS_MEANING, _StartCaller, _TaskStarter
+        from agno.os.routers.company.runs import _StartCaller, _TaskStarter
 
         agent_os, app, authority, user_id, refusal = self._caller_context(_agno_run_context)
         if refusal is not None:
             return refusal
-<<<<<<< HEAD
-=======
-        if _unsigned(agent_os, authority, user_id):
-            return "A signed-in person is required to start a Task."
-
->>>>>>> origin/main
         starter = _TaskStarter(agent_os)
         try:
             value = await starter.task(task_id)
@@ -200,13 +173,12 @@ class CompanyTaskTools(Toolkit):
             if value["status"] == "backlog":
                 return f"'{title}' is still a proposal. A person must accept it with an executor before it can start."
             if value["status"] == "in_review":
-<<<<<<< HEAD
-                return f"'{title}' is waiting for review. Continue it with the person's reply instead of starting it."
-=======
-                return f"'{title}' is waiting for review. The person completes it or sends it back."
->>>>>>> origin/main
+                return (
+                    f"'{title}' is waiting for review. Continue it with the person's reply, "
+                    "or the person completes it or sends it back."
+                )
             if value["status"] != "ready" and _pending_task_attempt(value) is None:
-                meaning = _STATUS_MEANING.get(value["status"], value["status"])
+                meaning = TASK_STATUS_MEANING.get(value["status"], value["status"])
                 return f"'{title}' is {meaning}; only accepted work can start."
             if authority is not None:
                 # The start route's own requirements, beyond running the executor.
@@ -305,36 +277,8 @@ class CompanyTaskTools(Toolkit):
         except HTTPException as exc:
             return f"Cannot read the Task: {exc.detail}"
         app = getattr(agent_os, "_company_app", None)
-<<<<<<< HEAD
         state = await starter.state(value, app) if app is not None else _task_state(value)
         state.update(await starter.run_evidence(value))
-        return json.dumps(state, ensure_ascii=False, default=str)
-
-
-def _receipt(verb: str, title: str, task_id: str, response: Any) -> str:
-    body = json.loads(bytes(response.body)) if response.body else {}
-    if response.status_code != 202:
-        return f"Not {verb.lower()}: {body.get('detail') or 'the run was refused'}"
-    status = body.get("status")
-    run = f"(Task {task_id}, run {body.get('run_id')})"
-    if status in ("PENDING", "QUEUED", None):
-        return f"{verb} '{title}' {run}. It runs in its own session; ask for its status at any time."
-    if status == "RUNNING":
-        return f"'{title}' is already running {run}."
-    return f"'{title}' already has this attempt, now {status} {run}."
-=======
-        queue = getattr(getattr(app, "state", None), "queue_worker", None)
-        if value.get("job_id") and queue is not None:
-            job = await queue.store.get_job(value["job_id"])
-            if job is not None:
-                state["run_status"] = ticket_status_to_api(job["status"])
-        result = value.get("result") or {}
-        if result.get("run_id") == value.get("job_id") and result:
-            state["run_status"] = result.get("status") or state.get("run_status")
-            content = result.get("content")
-            state["result"] = content[:1500] if isinstance(content, str) else content
-            if result.get("invoked"):
-                state["invoked"] = result["invoked"]
         return json.dumps(state, ensure_ascii=False, default=str)
 
     def _person(self, agent_os: Any, run_context: Any, operation: str = "decide Company work") -> Any:
@@ -570,7 +514,7 @@ def _receipt(verb: str, title: str, task_id: str, response: Any) -> str:
                 if not _same_name(item.get("title"), title):
                     return f"Not done: Task {value['id']} is titled '{title}'. Call again with that title."
                 if value["status"] != "backlog":
-                    words = _STATUS_WORDS.get(value["status"], value["status"])
+                    words = TASK_STATUS_MEANING.get(value["status"], value["status"])
                     return f"Not done: '{title}' is {words}; only a proposal can be accepted."
                 if not _same_version(item.get("updated_at"), value["updated_at"]):
                     return (
@@ -699,7 +643,7 @@ def _receipt(verb: str, title: str, task_id: str, response: Any) -> str:
             if not _same_name(task_title, title):
                 return f"Not done: Task {task_id} is titled '{title}'. Call again with that title."
             if value["status"] != "in_review":
-                words = _STATUS_WORDS.get(value["status"], value["status"])
+                words = TASK_STATUS_MEANING.get(value["status"], value["status"])
                 return f"'{title}' is {words}; only a Task in review can be completed or sent back."
             if not reviewed_run_id or value.get("job_id") != reviewed_run_id:
                 return "Not done: the Task's attempt changed. Read its latest result and request a new confirmation."
@@ -886,4 +830,16 @@ def _receipt(verb: str, title: str, task_id: str, response: Any) -> str:
             return f"Auto-accept is off for Routine '{stored}' ({routine_id}). Its proposals now wait for a person."
 
         return await self._decide(call)
->>>>>>> origin/main
+
+
+def _receipt(verb: str, title: str, task_id: str, response: Any) -> str:
+    body = json.loads(bytes(response.body)) if response.body else {}
+    if response.status_code != 202:
+        return f"Not {verb.lower()}: {body.get('detail') or 'the run was refused'}"
+    status = body.get("status")
+    run = f"(Task {task_id}, run {body.get('run_id')})"
+    if status in ("PENDING", "QUEUED", None):
+        return f"{verb} '{title}' {run}. It runs in its own session; ask for its status at any time."
+    if status == "RUNNING":
+        return f"'{title}' is already running {run}."
+    return f"'{title}' already has this attempt, now {status} {run}."

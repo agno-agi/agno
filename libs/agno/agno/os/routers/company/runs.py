@@ -192,6 +192,8 @@ def _task_state(value: Dict[str, Any], ticket: Optional[Dict[str, Any]] = None) 
         content = result.get("content")
         state["run_status"] = result.get("status") or state.get("run_status")
         state["result"] = {"content": content[:1500] if isinstance(content, str) else content}
+        if result.get("invoked"):
+            state["invoked"] = result["invoked"]
     return state
 
 
