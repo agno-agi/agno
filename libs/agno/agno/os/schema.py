@@ -223,7 +223,10 @@ class FileSystemAgent(BaseModel):
 
 
 class FileSystemNamespace(FileSystemSummary):
-    agents: List[FileSystemAgent] = Field(..., description="Agents using this filesystem namespace and their access")
+    agents: List[FileSystemAgent] = Field(
+        ...,
+        description="Agents using this filesystem namespace and their access; empty when only the OS holds it",
+    )
 
 
 class FileSystemConfig(BaseModel):
@@ -233,11 +236,11 @@ class FileSystemConfig(BaseModel):
     )
 
 
-def _extract_filesystem(filesystem: Any, agent: Any, user_id: Optional[str] = None) -> FileSystemSummary:
-    """Describe one of the agent's filesystems, with its namespace resolved for the caller."""
+def _extract_filesystem(filesystem: Any, agent: Any = None, user_id: Optional[str] = None) -> FileSystemSummary:
+    """Describe a filesystem an agent or the OS holds, with its namespace resolved for the caller."""
     # Partitioned by the run's user, or isolated by a namespace naming the user.
     user_isolation = bool(filesystem.user_scoped) or "user_id" in filesystem._placeholders
-    filesystem = filesystem.resolve(user_id=user_id, agent_id=agent.id)
+    filesystem = filesystem.resolve(user_id=user_id, agent_id=getattr(agent, "id", None))
     backend = filesystem.backend
     backend_db = getattr(backend, "db", None)
     if backend_db is not None or hasattr(backend, "db_engine"):

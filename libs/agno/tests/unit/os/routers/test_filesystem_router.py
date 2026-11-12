@@ -48,13 +48,18 @@ def db(tmp_path):
 def client_factory():
     with ExitStack() as cleanup:
 
-        def create(*agents, user_isolation: bool = False, db=None, registry=None) -> TestClient:
+        def create(
+            *agents, user_isolation: bool = False, db=None, registry=None, filesystems=None, authorization: bool = True
+        ) -> TestClient:
             agent_os = AgentOS(
                 id=OS_ID,
                 agents=list(agents),
                 db=db,
                 registry=registry,
-                authorization=Authorization(verification_keys=[JWT_SECRET], algorithm="HS256"),
+                filesystems=filesystems,
+                authorization=Authorization(verification_keys=[JWT_SECRET], algorithm="HS256")
+                if authorization
+                else False,
                 user_isolation=user_isolation,
             )
             client = TestClient(agent_os.get_app(), raise_server_exceptions=False)
@@ -759,3 +764,325 @@ def test_top_level_user_isolation_partitions_agent_filesystems(db, enabled):
 
     assert agent.filesystem_instance is not None
     assert agent.filesystem_instance.user_scoped is enabled
+
+
+# ---------------------------------------------------------------------------
+# File systems the OS holds: AgentOS(filesystems=[...])
+# ---------------------------------------------------------------------------
+
+FILES_ONLY = ["filesystem:read"]
+
+
+def _os_namespace(namespace: str, **overrides) -> dict:
+    return {
+        "backend_type": "db",
+        "db_id": "filesystem-db",
+        "table_name": "agno_fs",
+        "namespace": namespace,
+        "user_isolation": False,
+        "max_file_bytes": 1_000_000,
+        "max_namespace_bytes": 20_000_000,
+        "agents": [],
+        **overrides,
+    }
+
+
+def test_config_lists_a_filesystem_the_os_holds_without_an_agent(db, client_factory):
+    client = client_factory(db=db, filesystems=[FileSystem(db, namespace="shared-notes")])
+
+    config = client.get("/config", headers=_headers("alice", ["config:read"]))
+
+    assert config.status_code == 200
+    assert config.json()["filesystem"] == {"namespaces": [_os_namespace("shared-notes")]}
+
+
+def test_os_with_only_filesystems_serves_them_without_authorization(db, client_factory):
+    shared = FileSystem(db, namespace="shared-notes")
+    shared.write("handbook/style.md", "plain words needle\n")
+    client = client_factory(filesystems=[shared], authorization=False)
+
+    assert client.get("/config").json()["filesystem"] == {"namespaces": [_os_namespace("shared-notes")]}
+    rows = client.get("/filesystem/files").json()["entries"]
+    assert [(row["namespace"], row["path"], row["agent_ids"]) for row in rows] == [
+        ("shared-notes", "handbook/style.md", [])
+    ]
+    listed = client.get("/filesystem/entries", params={"namespace": "shared-notes"})
+    assert listed.status_code == 200
+    assert listed.json()["agent_ids"] == []
+    assert [(entry["path"], entry["type"]) for entry in listed.json()["entries"]] == [("handbook", "directory")]
+    content = client.get("/filesystem/content", params={"namespace": "shared-notes", "path": "handbook/style.md"})
+    assert content.status_code == 200
+    assert content.json()["content"] == "plain words needle\n"
+    assert content.json()["agent_ids"] == []
+    search = client.get("/filesystem/search", params={"namespace": "shared-notes", "query": "needle"})
+    assert [entry["path"] for entry in search.json()["entries"]] == ["handbook/style.md"]
+    # A namespace nobody holds is still not found, and a request must still name something.
+    assert client.get("/filesystem/entries", params={"namespace": "missing"}).status_code == 404
+    assert client.get("/filesystem/entries").status_code == 400
+
+
+def test_filesystem_read_alone_reads_the_os_namespace_and_no_agent_namespace(db, client_factory):
+    shared = FileSystem(db, namespace="shared-notes")
+    private = FileSystem(db, namespace="private")
+    client = client_factory(Agent(id="keeper", db=db, filesystem=private), db=db, filesystems=[shared])
+    shared.write("style.md", "shared needle\n")
+    private.write("secret.md", "hidden needle\n")
+    files_only = _headers("alice", FILES_ONLY)
+
+    rows = client.get("/filesystem/files", headers=files_only)
+    assert rows.status_code == 200
+    assert [(row["namespace"], row["path"], row["agent_ids"]) for row in rows.json()["entries"]] == [
+        ("shared-notes", "style.md", [])
+    ]
+    searched = client.get("/filesystem/files", params={"query": "needle"}, headers=files_only)
+    assert [row["path"] for row in searched.json()["entries"]] == ["style.md"]
+    for path, params in (
+        ("/filesystem/entries", {}),
+        ("/filesystem/content", {"path": "style.md"}),
+        ("/filesystem/search", {"query": "needle"}),
+    ):
+        allowed = client.get(path, params={"namespace": "shared-notes", **params}, headers=files_only)
+        assert allowed.status_code == 200, path
+        assert allowed.json()["agent_ids"] == []
+
+    # The agent's namespace stays behind agent access: not listed, not found by name, refused by id.
+    for path, params in (
+        ("/filesystem/entries", {}),
+        ("/filesystem/content", {"path": "secret.md"}),
+        ("/filesystem/search", {"query": "needle"}),
+    ):
+        by_name = client.get(path, params={"namespace": "private", **params}, headers=files_only)
+        assert by_name.status_code == 404, path
+        by_agent = client.get(path, params={"agent_id": "keeper", **params}, headers=files_only)
+        assert by_agent.status_code == 403, path
+        assert "hidden" not in by_name.text + by_agent.text
+    assert client.get("/filesystem/files", params={"agent_id": "keeper"}, headers=files_only).status_code == 403
+    assert client.get("/filesystem/files", params={"namespace": "private"}, headers=files_only).json()["entries"] == []
+
+    # The OS namespace still needs filesystem:read, and a caller who reads the agent sees both.
+    for scopes in (["agents:read"], ["config:read"], []):
+        refused = client.get("/filesystem/files", headers=_headers("alice", scopes))
+        assert refused.status_code == 403, scopes
+        refused = client.get(
+            "/filesystem/content",
+            params={"namespace": "shared-notes", "path": "style.md"},
+            headers=_headers("alice", scopes),
+        )
+        assert refused.status_code == 403, scopes
+    both = client.get("/filesystem/files", headers=_headers("alice")).json()["entries"]
+    assert [(row["namespace"], row["agent_ids"]) for row in both] == [("private", ["keeper"]), ("shared-notes", [])]
+
+
+def test_config_hides_agent_namespaces_from_a_caller_without_agent_access(db, client_factory):
+    client = client_factory(
+        Agent(id="keeper", db=db, filesystem=FileSystem(db, namespace="private")),
+        db=db,
+        filesystems=[FileSystem(db, namespace="shared-notes")],
+    )
+
+    config = client.get("/config", headers=_headers("alice", ["config:read"])).json()
+    assert [(i["namespace"], i["agents"]) for i in config["filesystem"]["namespaces"]] == [("shared-notes", [])]
+    full = client.get("/config", headers=_headers("alice", ["config:read", "agents:read"])).json()
+    assert [(i["namespace"], i["agents"]) for i in full["filesystem"]["namespaces"]] == [
+        ("private", [{"id": "keeper"}]),
+        ("shared-notes", []),
+    ]
+
+
+@pytest.mark.parametrize("same_object", [True, False])
+def test_a_namespace_held_by_the_os_and_an_agent_is_one_entry(db, same_object, client_factory, monkeypatch):
+    shared = FileSystem(db, namespace="shared-notes")
+    held_by_agent = shared if same_object else FileSystem(db, namespace="shared-notes", read_only=True)
+    client = client_factory(Agent(id="writer", db=db, filesystem=held_by_agent), db=db, filesystems=[shared])
+    shared.write("style.md", "shared\n")
+    access = {"id": "writer"} if same_object else {"id": "writer", "access": "read_only"}
+
+    config = client.get("/config", headers=_headers("alice", ["config:read", "agents:read"])).json()
+    assert config["filesystem"] == {"namespaces": [_os_namespace("shared-notes", agents=[access])]}
+    without_agent = client.get("/config", headers=_headers("alice", ["config:read"])).json()
+    assert without_agent["filesystem"] == {"namespaces": [_os_namespace("shared-notes")]}
+
+    list_files = AsyncMock(wraps=FileSystem.alist)
+    monkeypatch.setattr(FileSystem, "alist", lambda self, *a, **k: list_files(self, *a, **k))
+    rows = client.get("/filesystem/files", headers=_headers("alice")).json()["entries"]
+    assert [(row["path"], row["agent_ids"]) for row in rows] == [("style.md", ["writer"])]
+    list_files.assert_awaited_once()
+    listed = client.get("/filesystem/entries", params={"namespace": "shared-notes"}, headers=_headers("alice"))
+    assert listed.json()["agent_ids"] == ["writer"]
+
+    # A caller who cannot read the agent reads the store through the OS and is not told who else holds it.
+    files_only = _headers("alice", FILES_ONLY)
+    rows = client.get("/filesystem/files", headers=files_only).json()["entries"]
+    assert [(row["path"], row["agent_ids"]) for row in rows] == [("style.md", [])]
+    assert client.get("/filesystem/entries", params={"agent_id": "writer"}, headers=files_only).status_code == 403
+
+
+def test_an_agent_with_other_limits_joins_the_entry_of_the_os_namespace(db, client_factory):
+    shared = FileSystem(db, namespace="shared-notes")
+    smaller = FileSystem(db, namespace="shared-notes", max_namespace_bytes=5_000_000)
+    client = client_factory(Agent(id="writer", db=db, filesystem=smaller), db=db, filesystems=[shared])
+
+    config = client.get("/config", headers=_headers("alice", ["config:read", "agents:read"])).json()
+
+    assert config["filesystem"] == {"namespaces": [_os_namespace("shared-notes", agents=[{"id": "writer"}])]}
+
+
+def test_os_namespace_answers_for_its_name_when_an_agent_uses_it_on_another_backend(tmp_path, db, client_factory):
+    from agno.fs.local import LocalFileSystem
+
+    held_by_os = FileSystem(db, namespace="notes")
+    on_disk = FileSystem(backend=LocalFileSystem(root=str(tmp_path / "files")), namespace="notes")
+    client = client_factory(Agent(id="disk-agent", db=db, filesystem=on_disk), db=db, filesystems=[held_by_os])
+    held_by_os.write("a.md", "os\n")
+    on_disk.write("b.md", "disk\n")
+
+    by_name = client.get("/filesystem/entries", params={"namespace": "notes"}, headers=_headers("alice"))
+    assert by_name.status_code == 200
+    assert by_name.json()["agent_ids"] == []
+    assert [entry["path"] for entry in by_name.json()["entries"]] == ["a.md"]
+    by_agent = client.get(
+        "/filesystem/entries", params={"namespace": "notes", "agent_id": "disk-agent"}, headers=_headers("alice")
+    )
+    assert by_agent.json()["agent_ids"] == ["disk-agent"]
+    assert [entry["path"] for entry in by_agent.json()["entries"]] == ["b.md"]
+
+
+@pytest.mark.parametrize("authorization", [True, False])
+def test_os_filesystem_is_partitioned_by_the_caller_under_isolation(db, authorization, client_factory):
+    shared = FileSystem(db, namespace="shared-notes")
+    client = client_factory(db=db, filesystems=[shared], user_isolation=True, authorization=authorization)
+    assert shared.user_scoped is True
+    shared.resolve(user_id="alice").write("a.md", "alice's\n")
+    shared.resolve(user_id="bob").write("a.md", "bob's\n")
+
+    def get(route: str, user: str, **params):
+        if authorization:
+            return client.get(route, params=params, headers=_headers(user, FILES_ONLY))
+        # Without authorization the caller names themselves in the query string.
+        return client.get(route, params={"user_id": user, **params})
+
+    for user in ("alice", "bob"):
+        content = get("/filesystem/content", user, namespace="shared-notes", path="a.md")
+        assert content.status_code == 200
+        assert content.json()["content"] == f"{user}'s\n"
+        assert content.json()["user_id"] == user
+        listed = get("/filesystem/entries", user, namespace="shared-notes")
+        assert [(e["path"], e["user_id"]) for e in listed.json()["entries"]] == [("a.md", user)]
+        rows = get("/filesystem/files", user).json()["entries"]
+        assert [(r["path"], r["user_id"]) for r in rows] == [("a.md", user)]
+        searched = get("/filesystem/search", user, namespace="shared-notes", query="s")
+        assert [(e["path"], e["user_id"]) for e in searched.json()["entries"]] == [("a.md", user)]
+
+    if authorization:
+        other = client.get(
+            "/filesystem/content",
+            params={"namespace": "shared-notes", "path": "a.md", "user_id": "bob"},
+            headers=_headers("alice", FILES_ONLY),
+        )
+        assert other.status_code == 403
+        assert "bob's" not in other.text
+        config = client.get("/config", headers=_headers("alice", ["config:read"])).json()
+        assert config["filesystem"]["namespaces"][0]["user_isolation"] is True
+        every_partition = client.get(
+            "/filesystem/files", headers=_headers("root", ["agent_os:admin", "filesystem:read"])
+        ).json()["entries"]
+        assert [(r["path"], r["user_id"]) for r in every_partition] == [("a.md", "alice"), ("a.md", "bob")]
+
+
+def test_os_filesystem_with_a_user_namespace_resolves_for_each_caller(db, client_factory):
+    per_user = FileSystem(db, namespace="journals/{user_id}")
+    client = client_factory(db=db, filesystems=[per_user], user_isolation=True)
+    per_user.resolve(user_id="alice").write("today.md", "alice's\n")
+    per_user.resolve(user_id="bob").write("today.md", "bob's\n")
+
+    config = client.get("/config", headers=_headers("alice", ["config:read"])).json()
+    assert [(i["namespace"], i["user_isolation"]) for i in config["filesystem"]["namespaces"]] == [
+        ("journals/alice", True)
+    ]
+    own = client.get(
+        "/filesystem/content",
+        params={"namespace": "journals/alice", "path": "today.md"},
+        headers=_headers("alice", FILES_ONLY),
+    )
+    assert own.json()["content"] == "alice's\n"
+    # Another user's namespace does not resolve for this caller.
+    other = client.get(
+        "/filesystem/content",
+        params={"namespace": "journals/bob", "path": "today.md"},
+        headers=_headers("alice", FILES_ONLY),
+    )
+    assert other.status_code == 404
+    rows = client.get("/filesystem/files", headers=_headers("bob", FILES_ONLY)).json()["entries"]
+    assert [(r["namespace"], r["path"]) for r in rows] == [("journals/bob", "today.md")]
+
+
+def test_os_filesystem_that_chose_shared_stays_shared_under_isolation(db, client_factory):
+    handbook = FileSystem(db, namespace="handbook", user_scoped=False)
+    client = client_factory(db=db, filesystems=[handbook], user_isolation=True)
+    handbook.write("style.md", "shared\n")
+
+    assert handbook.user_scoped is False
+    for user in ("alice", "bob"):
+        content = client.get(
+            "/filesystem/content",
+            params={"namespace": "handbook", "path": "style.md"},
+            headers=_headers(user, FILES_ONLY),
+        )
+        assert content.json()["content"] == "shared\n"
+        assert content.json()["user_id"] is None
+
+
+@pytest.mark.parametrize(
+    "namespace,placeholder",
+    [
+        ("notes/{agent_id}", "{agent_id}"),
+        ("teams/{team_id}/notes", "{team_id}"),
+        ("{user_id}/{agent_id}", "{agent_id}"),
+    ],
+)
+def test_os_refuses_at_startup_a_namespace_it_cannot_bind(db, namespace, placeholder):
+    with pytest.raises(ValueError) as refused:
+        AgentOS(id=OS_ID, db=db, filesystems=[FileSystem(db, namespace=namespace)])
+
+    message = str(refused.value)
+    assert namespace.lower() in message
+    assert placeholder in message
+    assert "AgentOS(filesystems=[...])" in message
+
+
+def test_os_accepts_literal_and_user_namespaces_and_refuses_other_objects(db):
+    accepted = AgentOS(
+        id=OS_ID,
+        db=db,
+        filesystems=[FileSystem(db, namespace="shared-notes"), FileSystem(db, namespace="journals/{user_id}")],
+    )
+    assert [filesystem.namespace for filesystem in accepted.filesystems or []] == [
+        "shared-notes",
+        "journals/{user_id}",
+    ]
+    # An agent may still hold a namespace named after itself.
+    AgentOS(id=OS_ID, agents=[Agent(id="notes", db=db, filesystem=FileSystem(db, namespace="notes/{agent_id}"))])
+
+    with pytest.raises(TypeError, match="FileSystem"):
+        AgentOS(id=OS_ID, db=db, filesystems=[db])
+
+
+def test_filesystem_routes_are_read_only(db, client_factory):
+    shared = FileSystem(db, namespace="shared-notes")
+    client = client_factory(db=db, filesystems=[shared])
+    shared.write("style.md", "shared\n")
+
+    paths = {path: set(item) for path, item in client.app.openapi()["paths"].items() if "filesystem" in path}
+    assert paths == {
+        "/filesystem/content": {"get"},
+        "/filesystem/entries": {"get"},
+        "/filesystem/files": {"get"},
+        "/filesystem/search": {"get"},
+    }
+    admin = _headers("root", ["agent_os:admin"])
+    for method in ("post", "put", "patch", "delete"):
+        response = getattr(client, method)(
+            "/filesystem/content", params={"namespace": "shared-notes", "path": "style.md"}, headers=admin
+        )
+        assert response.status_code == 405, method
+    assert shared.read("style.md") == "shared\n"
