@@ -161,9 +161,10 @@ class CompanyTaskTools(Toolkit):
 
         The Task runs in its own session; this conversation continues. Call this tool on its
         own, then tell the person the run is queued. Use get_company_task_status for progress.
+        A Task whose last run failed or was cancelled is started again the same way.
 
         Args:
-            task_id: The accepted (Ready) Task to start.
+            task_id: The accepted (Ready) Task to start, or the Task to retry after a failed run.
         """
         from fastapi import HTTPException
 
@@ -189,7 +190,13 @@ class CompanyTaskTools(Toolkit):
                 return f"'{title}' is still a proposal. A person must accept it with an executor before it can start."
             if value["status"] == "in_review":
                 return f"'{title}' is waiting for review. The person completes it or sends it back."
-            if value["status"] != "ready" and _pending_task_attempt(value) is None:
+            # A Task whose last attempt failed or was cancelled stays In progress. Starting it is a retry,
+            # and the start route decides whether the earlier run has ended.
+            ended = value["status"] == "in_progress" and (value.get("result") or {}).get("status") in (
+                "ERROR",
+                "CANCELLED",
+            )
+            if value["status"] != "ready" and _pending_task_attempt(value) is None and not ended:
                 return (
                     f"'{title}' is {_STATUS_WORDS.get(value['status'], value['status'])}; only accepted work can start."
                 )

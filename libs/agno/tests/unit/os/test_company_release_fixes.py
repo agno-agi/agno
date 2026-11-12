@@ -1276,3 +1276,66 @@ def test_the_mark_of_a_scheduled_run_survives_a_snapshot_and_a_person_carries_no
         context.authorization = authority
         with pytest.raises(PermissionError, match="scheduled run"):
             _require_human_creation(context)
+
+
+# ----------------------------------------------------------------- a failed Task is retried from chat
+
+
+def start_from_chat(system, task_id, context=None):
+    from agno.os.manager.company_tasks import CompanyTaskTools
+
+    tools = CompanyTaskTools(system.os)
+    return asyncio.run(tools.astart_company_task(task_id, _agno_run_context=context or chat()))
+
+
+def test_a_person_retries_a_task_whose_last_attempt_failed_from_chat(system):
+    from agno.db.schemas.tasks import task_run_id
+    from tests.unit.os.test_mini_agent_tasks import FailingModel
+
+    task = system.proposal()
+    system.accept(task["id"])
+    failed = system.execute(task["id"], model=FailingModel())
+    assert failed["status"] == "in_progress" and failed["result"]["status"] == "ERROR", failed["result"]
+
+    reply = start_from_chat(system, task["id"])
+    assert reply.startswith("Queued 'Notes'") and task_run_id(task["id"], 2) in reply, reply
+    retried = system.db.get_task(task["id"])
+    assert retried["job_id"] == task_run_id(task["id"], 2) and retried["result"] is None
+    # The retry runs like any attempt and reaches review.
+    system.mini.model = ScriptedModel()
+
+    async def run():
+        job = await system.queue.store.claim_job(system.queue.worker_id, system.queue.config.lock_grace_seconds)
+        await system.queue._execute_claimed(job)
+
+    asyncio.run(run())
+    assert system.db.get_task(task["id"])["status"] == "in_review"
+
+
+def test_a_retry_from_chat_passes_the_run_routes_checks(system):
+    from tests.unit.os.test_mini_agent_tasks import FailingModel
+
+    task = system.proposal()
+    system.accept(task["id"])
+    system.execute(task["id"], model=FailingModel())
+    before = system.db.get_task(task["id"])
+    # A person who may not run the executor cannot retry it.
+    without = [scope for scope in SCOPES if not scope.startswith("agents:")]
+    refused = start_from_chat(system, task["id"], chat(scopes=without, user="bob"))
+    assert refused.startswith("Not started"), refused
+    assert system.db.get_task(task["id"]) == before
+
+
+def test_a_task_that_is_running_or_finished_is_still_not_started_from_chat(system):
+    done = system.proposal()
+    system.accept(done["id"])
+    system.execute(done["id"])
+    assert "waiting for review" in start_from_chat(system, done["id"])
+
+    task = system.proposal()
+    system.accept(task["id"])
+    started = system.client.post(f"/company/tasks/{task['id']}/runs", headers=headers())
+    assert started.status_code == 202
+    # Its attempt is queued: starting again joins that attempt and queues nothing new.
+    running = start_from_chat(system, task["id"])
+    assert "run " + started.json()["run_id"] in running, running
