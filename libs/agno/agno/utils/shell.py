@@ -7,10 +7,17 @@ from agno.utils.log import log_debug, log_info, log_warning
 def decode_subprocess_output(data: bytes) -> str:
     """Decode subprocess output to text without ever raising.
 
-    Tries UTF-8 first (what most tools print), then the locale encoding
-    (e.g. cp1252 on Windows, where a child may emit locale-encoded bytes),
-    and finally UTF-8 with replacement characters, so undecodable bytes
-    degrade to U+FFFD instead of failing the tool call.
+    Tries UTF-8 first (what most tools print). If that fails, decodes as
+    UTF-8 with replacement characters: when the result still contains valid
+    non-ASCII characters, the output is mostly UTF-8 with a few bad bytes,
+    so those characters are kept instead of rereading the whole stream as
+    the locale encoding (which would mangle them). Only when nothing
+    decoded cleanly as UTF-8 does it fall back to the locale encoding
+    (e.g. cp1252 on Windows, where a child may emit locale-encoded bytes).
+
+    Line endings are normalized to "\\n" (universal-newline conversion),
+    matching the previous `text=True` behaviour of the replaced
+    `subprocess.run` calls.
 
     :param data: Raw bytes captured from a subprocess stream.
     :return: Decoded text.
@@ -18,13 +25,15 @@ def decode_subprocess_output(data: bytes) -> str:
     if not data:
         return ""
     try:
-        return data.decode("utf-8")
+        text = data.decode("utf-8")
     except UnicodeDecodeError:
-        pass
-    try:
-        return data.decode(locale.getpreferredencoding(False))
-    except (UnicodeDecodeError, LookupError):
-        return data.decode("utf-8", errors="replace")
+        text = data.decode("utf-8", errors="replace")
+        if not any(ord(ch) > 127 and ch != "\ufffd" for ch in text):
+            try:
+                text = data.decode(locale.getpreferredencoding(False))
+            except (UnicodeDecodeError, LookupError):
+                pass
+    return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def run_shell_command(args: List[str], tail: int = 100) -> str:
