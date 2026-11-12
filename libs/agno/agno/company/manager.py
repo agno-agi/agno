@@ -720,8 +720,11 @@ class CompanyManager:
         rows = ScheduleManager(self.schedule_db).list_all()
         return _waiting_for_a_person([row.to_dict() for row in rows], product_id)
 
-    def attention(self, product_id: Optional[str] = None) -> Dict[str, Any]:
-        """Company-wide counts over the same filters used by the Task list."""
+    def attention(self, product_id: Optional[str] = None, include_projects: bool = False) -> Dict[str, Any]:
+        """Company-wide counts over the same filters used by the Task and Project lists.
+
+        ``include_projects`` adds ``proposed_projects``; the route sets it only for callers who may read Projects.
+        """
         counts: Dict[str, Any] = {}
         for name, filters in (
             ("proposals", {"status": "backlog"}),
@@ -729,6 +732,8 @@ class CompanyManager:
             ("failed", {"failed": True}),
         ):
             _, counts[name] = self.list_tasks(product_id=product_id, limit=1, **filters)
+        if include_projects:
+            _, counts["proposed_projects"] = self.list_projects(product_id=product_id, status="proposed", limit=1)
         from agno.company.routines import _failed_routines
 
         products = []
@@ -1699,8 +1704,11 @@ class AsyncCompanyManager:
         rows = await ScheduleManager(self.schedule_db).alist_all()
         return _waiting_for_a_person([row.to_dict() for row in rows], product_id)
 
-    async def attention(self, product_id: Optional[str] = None) -> Dict[str, Any]:
-        """Company-wide counts over the same filters used by the Task list."""
+    async def attention(self, product_id: Optional[str] = None, include_projects: bool = False) -> Dict[str, Any]:
+        """Company-wide counts over the same filters used by the Task and Project lists.
+
+        ``include_projects`` adds ``proposed_projects``; the route sets it only for callers who may read Projects.
+        """
         counts: Dict[str, Any] = {}
         for name, filters in (
             ("proposals", {"status": "backlog"}),
@@ -1708,6 +1716,8 @@ class AsyncCompanyManager:
             ("failed", {"failed": True}),
         ):
             _, counts[name] = await self.list_tasks(product_id=product_id, limit=1, **filters)
+        if include_projects:
+            _, counts["proposed_projects"] = await self.list_projects(product_id=product_id, status="proposed", limit=1)
         from agno.company.routines import _afailed_routines
 
         products = []

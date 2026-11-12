@@ -256,6 +256,73 @@ class TaskTransition(BaseModel):
         return self
 
 
+# A bulk transition moves at most this many records; each runs the single route's checks.
+MAX_BULK_TRANSITIONS = 100
+
+
+def _unique_ids(items: List[Any]) -> List[Any]:
+    ids = [item.id for item in items]
+    if len(ids) != len(set(ids)):
+        raise ValueError("Each id may appear only once")
+    return items
+
+
+class ProjectBulkItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(..., min_length=1)
+    # The status the caller saw; a Project that has moved since is refused, not transitioned.
+    expected_status: ProjectStatus
+
+
+class ProjectBulkTransition(ProjectTransition):
+    items: List[ProjectBulkItem] = Field(..., min_length=1, max_length=MAX_BULK_TRANSITIONS)
+
+    @field_validator("items")
+    @classmethod
+    def validate_items(cls, value: List[ProjectBulkItem]) -> List[ProjectBulkItem]:
+        return _unique_ids(value)
+
+
+class TaskBulkItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(..., min_length=1)
+    # The status the caller saw; a Task that has moved since is refused, not transitioned.
+    expected_status: TaskStatus
+
+
+class TaskBulkTransition(TaskTransition):
+    items: List[TaskBulkItem] = Field(..., min_length=1, max_length=MAX_BULK_TRANSITIONS)
+
+    @field_validator("items")
+    @classmethod
+    def validate_items(cls, value: List[TaskBulkItem]) -> List[TaskBulkItem]:
+        return _unique_ids(value)
+
+
+class BulkTransitionResult(BaseModel):
+    id: str
+    ok: bool
+    # What the single route would have answered: 200 when moved, its error status otherwise.
+    status_code: int
+    detail: Optional[str] = None
+
+
+class ProjectBulkTransitionResult(BulkTransitionResult):
+    project: Optional[ProjectResponse] = None
+
+
+class ProjectBulkTransitionResponse(BaseModel):
+    results: List[ProjectBulkTransitionResult]
+
+
+class TaskBulkTransitionResult(BulkTransitionResult):
+    task: Optional[TaskResponse] = None
+
+
+class TaskBulkTransitionResponse(BaseModel):
+    results: List[TaskBulkTransitionResult]
+
+
 class WikiWrite(BaseModel):
     model_config = ConfigDict(extra="forbid")
     content: str
