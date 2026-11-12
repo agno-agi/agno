@@ -142,3 +142,23 @@ on Backlog Tasks were treated as suggestions, not acceptance; state and job
 records determined whether work was authorized.
 
 ---
+
+### company_os.py: Routine names Super Agent (2026-11-10)
+
+**Status:** PASS
+
+**Description:** The `review-feedback` Routine names team `superagent`. Loaded the module with `runpy` against local PostgreSQL in a disposable schema, without serving it, and rehydrated the Product. The schema was dropped afterwards.
+
+**Result:** The stored schedule endpoint is `/agents/miniagent/runs` with `target_type` `team` and `target_id` `superagent`. The UI walkthrough, Routine runs and Task execution need live models and were not run. No model calls were made.
+
+---
+
+### company_os.py (default Routine executor)
+
+**Status:** PASS
+
+**Description:** The `review-feedback` Routine no longer names an executor, so it runs as Super Agent. Checked that the declaration resolves to team `superagent` by importing `Routine` and validating the same fields. The module itself needs PostgreSQL and was not served.
+
+**Result:** The declaration validates to `executor_type` `team` and `executor_id` `superagent`. No model calls were made.
+
+---

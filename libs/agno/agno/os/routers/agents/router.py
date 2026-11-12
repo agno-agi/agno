@@ -106,6 +106,7 @@ from agno.os.utils import (
     stamped_component_version,
 )
 from agno.registry import Registry
+from agno.registry._reserved import _listed
 from agno.run.agent import RunErrorEvent, RunOutput
 from agno.run.base import RunStatus
 from agno.utils.log import log_debug, log_error, log_warning
@@ -1606,14 +1607,13 @@ def get_agent_router(
         native_run = None
         if native_agent is not None:
             native_run = await native_agent.aget_run_output(run_id, session_id=session_id, user_id=user_id)
-        from agno.agents._hitl import awaiting_decision, live_native_run
+        from agno.agents._hitl import live_native_run
 
         # A finished run keeps its HITL history and continues like any other run.
         if native_agent is not None and live_native_run(native_run):
-            from agno.agents._hitl import read_run, submit_decisions, tail_stored
+            from agno.agents._hitl import tail_stored
             from agno.models.response import ToolExecution
-            from agno.os.event_streams import get_event_stream
-            from agno.os.utils import amark_continue_stream_running
+            from agno.os.utils import adeliver_native_decisions
 
             if fork or regenerate or input is not None or continue_from != "end" or additional_instructions:
                 raise HTTPException(
@@ -1621,36 +1621,18 @@ def get_agent_router(
                     detail="Continuing a native request only delivers its decision",
                 )
             assert session_id
-            event_stream = get_event_stream()
-            # The live stream is shared only when this replica's event stream knows the run, which a
-            # Redis-backed stream always does; otherwise the continuation follows the stored run.
-            tracked = await event_stream.get_run_status(run_id) is not None
-            cursor = (await event_stream.get_event_count(run_id)) - 1 if tracked else -1
-            # Reopen only a stream that is paused on an unanswered request, before the decision lands, so the
-            # events it releases reach this client. A continuation that will be refused never touches it.
-            reopened = tracked and awaiting_decision(native_run)
-            if reopened:
-                await amark_continue_stream_running(
-                    run_id, component=native_agent, session_id=session_id, user_id=user_id
-                )
             try:
                 parsed_tools = [ToolExecution.from_dict(t) for t in tools_data or []]
-                submitted = await submit_decisions(native_agent, run_id, session_id, user_id, parsed_tools)
-            except Exception as error:
-                if reopened:
-                    # The stream follows whichever continuation won: park it again only if the run is still
-                    # paused, which is also the safe reading when the run cannot be read.
-                    current = None
-                    with contextlib.suppress(Exception):
-                        current = await read_run(native_agent, run_id, session_id, user_id)
-                    if current is None or current.status == RunStatus.paused:
-                        with contextlib.suppress(Exception):
-                            await event_stream.complete_run(run_id, RunStatus.paused)
-                if isinstance(error, (ValueError, TypeError, KeyError)):
-                    raise HTTPException(status_code=409, detail=str(error))
-                raise
+            except (ValueError, TypeError, KeyError) as error:
+                raise HTTPException(status_code=409, detail=str(error))
+            try:
+                submitted, tail_from = await adeliver_native_decisions(
+                    native_agent, native_run, parsed_tools, session_id, user_id
+                )
+            except RunNotContinuableError as error:
+                raise HTTPException(status_code=409, detail=str(error))
             if stream:
-                if not tracked:
+                if tail_from is None:
 
                     async def stored_native_events():
                         from agno.agents._hitl import hitl_state
@@ -1665,7 +1647,7 @@ def get_agent_router(
 
                     return StreamingResponse(stored_native_events(), media_type="text/event-stream")
                 return StreamingResponse(
-                    _resume_stream_generator(native_agent, run_id, cursor, session_id, user_id),
+                    _resume_stream_generator(native_agent, run_id, tail_from, session_id, user_id),
                     media_type="text/event-stream",
                 )
             return JSONResponse(
@@ -2161,9 +2143,9 @@ def get_agent_router(
                 )
 
             # Limit results based on the user's access/scopes
-            accessible_agents = await afilter_resources_by_access(request, os.agents or [], "agents")
+            accessible_agents = await afilter_resources_by_access(request, _listed(os.agents), "agents")
         else:
-            accessible_agents = os.agents or []
+            accessible_agents = _listed(os.agents)
 
         agents: List[AgentResponse] = []
         if accessible_agents:
