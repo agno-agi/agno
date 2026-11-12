@@ -123,6 +123,17 @@ def public_task(task: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+# What each Task status means to a person reading it.
+TASK_STATUS_MEANING = {
+    "backlog": "proposed, not accepted",
+    "ready": "accepted, not started",
+    "in_progress": "started",
+    "in_review": "finished, waiting for review",
+    "done": "done",
+    "cancelled": "cancelled",
+}
+
+
 def task_next_attempt(task: Dict[str, Any]) -> int:
     """A new run takes the attempt after the highest one recorded on the Task."""
     return max((entry["attempt"] for entry in task.get("transitions") or [] if "attempt" in entry), default=0) + 1
