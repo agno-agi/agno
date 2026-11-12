@@ -11,7 +11,7 @@ from agno.metrics import RunMetrics
 from agno.models.message import Citations, Message, MessageReferences
 from agno.reasoning.step import ReasoningStep
 from agno.run.authorization import current_authorization
-from agno.utils.log import log_error
+from agno.utils.log import log_error, log_warning
 
 
 @dataclass
@@ -46,6 +46,30 @@ class RunContext:
     # Per-run additive tools from the client (e.g., AG-UI frontend tools)
     # Merged AFTER agent.tools during tool resolution
     client_tools: Optional[List[Any]] = None
+
+    # Keyword arguments the caller passed to run() that Agno does not define.
+    # Hooks and a custom knowledge retriever receive them; the framework's own arguments always win.
+    extra_kwargs: Optional[Dict[str, Any]] = None
+
+
+def apply_extra_kwargs(run_context: RunContext, extra_kwargs: Dict[str, Any]) -> None:
+    """Record a run's extra keyword arguments on its run context.
+
+    A passed run context keeps the extras it already has when the caller passes none.
+    """
+    if not extra_kwargs:
+        return
+    message_fields = sorted(Message.model_fields.keys() & extra_kwargs.keys())
+    if message_fields:
+        log_warning(f"Run arguments {message_fields} are passed to hooks only; they no longer set user message fields")
+    run_context.extra_kwargs = dict(extra_kwargs)
+
+
+def get_extra_kwargs(run_context: Optional[RunContext]) -> Dict[str, Any]:
+    """The run's extra keyword arguments, empty when there are none."""
+    if run_context is None or not run_context.extra_kwargs:
+        return {}
+    return dict(run_context.extra_kwargs)
 
 
 class _EventIndexCarrier:

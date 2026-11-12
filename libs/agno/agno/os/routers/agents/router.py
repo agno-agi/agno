@@ -293,7 +293,6 @@ async def agent_continue_response_streamer(
     agent: Union[Agent, RemoteAgent, AgentProtocol],
     run_id: str,
     requirements: Optional[List] = None,
-    updated_tools: Optional[List] = None,
     input: Optional[str] = None,
     continue_from: Union[int, Literal["end", "last_user"]] = "end",
     fork: bool = False,
@@ -320,7 +319,6 @@ async def agent_continue_response_streamer(
         continue_response = agent.acontinue_run(  # type: ignore[union-attr]
             run_id=run_id,
             requirements=requirements,
-            updated_tools=updated_tools,
             input=input,
             continue_from=continue_from,
             fork=fork,
@@ -412,7 +410,6 @@ async def agent_resumable_continue_response_streamer(
     agent: Union[Agent, RemoteAgent],
     run_id: str,
     requirements: Optional[List] = None,
-    updated_tools: Optional[List] = None,
     input: Optional[str] = None,
     continue_from: Union[int, Literal["end", "last_user"]] = "end",
     fork: bool = False,
@@ -448,7 +445,6 @@ async def agent_resumable_continue_response_streamer(
         async for sse_data in agent.acontinue_run(
             run_id=run_id,
             requirements=requirements,
-            updated_tools=updated_tools,
             input=input,
             continue_from=continue_from,
             fork=fork,
@@ -1675,7 +1671,6 @@ def get_agent_router(
 
         # Convert tools dict to RunRequirement and ToolExecution objects if provided
         requirements = None
-        updated_tools = None
         if tools_data:
             try:
                 from agno.models.response import ToolExecution
@@ -1683,7 +1678,6 @@ def get_agent_router(
 
                 tool_executions = [ToolExecution.from_dict(tool) for tool in tools_data]
                 requirements = [RunRequirement(tool_execution=te) for te in tool_executions]
-                updated_tools = tool_executions
             except Exception as e:
                 raise HTTPException(status_code=400, detail=f"Invalid structure or content for tools: {str(e)}")
 
@@ -1806,7 +1800,6 @@ def get_agent_router(
                     agent,  # type: ignore[arg-type]
                     run_id=run_id,
                     requirements=requirements,
-                    updated_tools=updated_tools,
                     input=input,
                     continue_from=continue_from_value,
                     fork=fork,
@@ -1827,7 +1820,6 @@ def get_agent_router(
                     agent,
                     run_id=run_id,  # run_id from path
                     requirements=requirements,
-                    updated_tools=updated_tools,
                     input=input,
                     continue_from=continue_from_value,
                     fork=fork,
@@ -1878,7 +1870,6 @@ def get_agent_router(
                     await agent.acontinue_run(  # type: ignore
                         run_id=run_id,  # run_id from path
                         requirements=requirements,
-                        updated_tools=updated_tools,
                         input=input,
                         continue_from=continue_from_value,
                         fork=fork,

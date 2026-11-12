@@ -1286,10 +1286,7 @@ class Step:
                         )
                         audios = self._convert_audio_artifacts_to_audio(step_input.audio) if step_input.audio else None
 
-                        kwargs: Dict[str, Any] = {}
-                        if isinstance(self.active_executor, Team):
-                            kwargs["store_member_responses"] = True
-                        kwargs.update(_harness_step_kwargs(self.active_executor, workflow_run_response))
+                        kwargs: Dict[str, Any] = _harness_step_kwargs(self.active_executor, workflow_run_response)
 
                         # Forward background_tasks if provided
                         if background_tasks is not None:
@@ -1638,10 +1635,7 @@ class Step:
                         )
                         audios = self._convert_audio_artifacts_to_audio(step_input.audio) if step_input.audio else None
 
-                        kwargs: Dict[str, Any] = {}
-                        if isinstance(self.active_executor, Team):
-                            kwargs["store_member_responses"] = True
-                        kwargs.update(_harness_step_kwargs(self.active_executor, workflow_run_response))
+                        kwargs: Dict[str, Any] = _harness_step_kwargs(self.active_executor, workflow_run_response)
 
                         # Forward background_tasks if provided
                         if background_tasks is not None:
@@ -2009,10 +2003,7 @@ class Step:
                             else None
                         )
 
-                        kwargs: Dict[str, Any] = {}
-                        if isinstance(self.active_executor, Team):
-                            kwargs["store_member_responses"] = True
-                        kwargs.update(_harness_step_kwargs(self.active_executor, workflow_run_response))
+                        kwargs: Dict[str, Any] = _harness_step_kwargs(self.active_executor, workflow_run_response)
 
                         # Forward background_tasks if provided
                         if background_tasks is not None:
@@ -2367,10 +2358,7 @@ class Step:
                             else None
                         )
 
-                        kwargs: Dict[str, Any] = {}
-                        if isinstance(self.active_executor, Team):
-                            kwargs["store_member_responses"] = True
-                        kwargs.update(_harness_step_kwargs(self.active_executor, workflow_run_response))
+                        kwargs: Dict[str, Any] = _harness_step_kwargs(self.active_executor, workflow_run_response)
 
                         # Forward background_tasks if provided
                         if background_tasks is not None:
@@ -2702,7 +2690,7 @@ class Step:
                 # Add the primary executor run
                 workflow_run_response.step_executor_runs.append(raw_response)
 
-                # Add direct member agent runs (in case of a team we force store_member_responses=True here)
+                # Add direct member agent runs when the team stores member responses
                 if isinstance(raw_response, TeamRunOutput) and getattr(
                     self.active_executor, "store_member_responses", False
                 ):

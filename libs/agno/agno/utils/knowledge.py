@@ -165,3 +165,69 @@ def get_run_response_kwarg(fn: Any, run_response: Optional[Any]) -> Dict[str, An
     if "run_response" in parameters:
         return {"run_response": run_response}
     return {}
+
+
+# Arguments a custom knowledge retriever only ever receives from the framework
+_RETRIEVER_FRAMEWORK_ARGS = frozenset(
+    {"agent", "team", "query", "num_documents", "filters", "run_context", "dependencies", "user_id"}
+)
+
+
+def build_knowledge_retriever_kwargs(
+    retriever: Any,
+    *,
+    owner_name: str,
+    owner: Any,
+    query: str,
+    num_documents: Optional[int],
+    filters: Any,
+    run_context: Any,
+    dependencies: Optional[Dict[str, Any]],
+    caller_kwargs: Dict[str, Any],
+    user_id: Optional[str],
+) -> Dict[str, Any]:
+    """Arguments for a call to a custom knowledge retriever.
+
+    The run's extra arguments and the caller's own kwargs reach the retriever only when it declares
+    them or takes ``**kwargs``, and never replace the framework's arguments.
+
+    Args:
+        retriever: The custom knowledge retriever.
+        owner_name: ``"agent"`` or ``"team"``, the parameter name the owner is passed under.
+        owner: The Agent or Team running the search.
+        query: The search query.
+        num_documents: Number of documents to return.
+        filters: The resolved knowledge filters.
+        run_context: The run's RunContext, if any.
+        dependencies: The run's dependencies, for retrievers that take them instead of run_context.
+        caller_kwargs: Keyword arguments passed directly to the knowledge search call.
+        user_id: The owner to scope the search to.
+
+    Returns:
+        Dict[str, Any]: The keyword arguments to call the retriever with.
+    """
+    from inspect import Parameter, signature
+
+    from agno.run.base import get_extra_kwargs
+
+    params = signature(retriever).parameters
+    accepts_any = any(p.kind is Parameter.VAR_KEYWORD for p in params.values())
+    extras = {**get_extra_kwargs(run_context), **caller_kwargs}
+    retriever_kwargs: Dict[str, Any] = {
+        key: value
+        for key, value in extras.items()
+        if key not in _RETRIEVER_FRAMEWORK_ARGS and (accepts_any or key in params)
+    }
+    if owner_name in params:
+        retriever_kwargs[owner_name] = owner
+    if "filters" in params:
+        retriever_kwargs["filters"] = filters
+    if "run_context" in params:
+        retriever_kwargs["run_context"] = run_context
+    elif "dependencies" in params:
+        # Backward compatibility: support dependencies parameter
+        retriever_kwargs["dependencies"] = dependencies
+    retriever_kwargs["query"] = query
+    retriever_kwargs["num_documents"] = num_documents
+    retriever_kwargs.update(get_user_id_kwarg(retriever, user_id))
+    return retriever_kwargs

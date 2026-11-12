@@ -58,6 +58,7 @@ from agno.run.agent import (
 # See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
 # One registry for every detached run, shared with agents, so AgentOS shutdown drains one set.
 from agno.run.background import _background_tasks  # noqa: E402
+from agno.run.base import apply_extra_kwargs
 from agno.run.cancel import (
     acancel_run as acancel_run_global,
 )
@@ -1924,7 +1925,7 @@ def run_dispatch(
     debug_mode: Optional[bool] = None,
     yield_run_output: bool = False,
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
-    **kwargs: Any,
+    extra_kwargs: Optional[Dict[str, Any]] = None,
 ) -> Union[TeamRunOutput, Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
     """Run the Team and return the response."""
     from agno.media.storage.base import AsyncMediaStorage
@@ -1951,6 +1952,7 @@ def run_dispatch(
             "add_history_to_context is True, but no database has been assigned to the team. History will not be added to the context."
         )
 
+    kwargs: Dict[str, Any] = dict(extra_kwargs or {})
     background_tasks = kwargs.pop("background_tasks", None)
     if background_tasks is not None:
         from fastapi import BackgroundTasks
@@ -2041,6 +2043,7 @@ def run_dispatch(
             metadata=opts.metadata,
             output_schema=opts.output_schema,
         )
+        apply_extra_kwargs(run_context, kwargs)
         # Apply options with precedence: explicit args > existing run_context > resolved defaults.
         opts.apply_to_context(
             run_context,
@@ -2096,7 +2099,6 @@ def run_dispatch(
             yield_run_output=opts.yield_run_output,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
-            **kwargs,
         )  # type: ignore
 
     else:
@@ -2112,7 +2114,6 @@ def run_dispatch(
             response_format=response_format,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
-            **kwargs,
         )
 
 
@@ -4155,7 +4156,7 @@ def arun_dispatch(  # type: ignore
     yield_run_output: bool = False,
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
     background: bool = False,
-    **kwargs: Any,
+    extra_kwargs: Optional[Dict[str, Any]] = None,
 ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
     """Run the Team asynchronously and return the response."""
 
@@ -4191,6 +4192,7 @@ def arun_dispatch(  # type: ignore
             "add_history_to_context is True, but no database has been assigned to the team. History will not be added to the context."
         )
 
+    kwargs: Dict[str, Any] = dict(extra_kwargs or {})
     background_tasks = kwargs.pop("background_tasks", None)
     if background_tasks is not None:
         from fastapi import BackgroundTasks
@@ -4241,6 +4243,7 @@ def arun_dispatch(  # type: ignore
         metadata=opts.metadata,
         output_schema=opts.output_schema,
     )
+    apply_extra_kwargs(run_context, kwargs)
     # Apply options with precedence: explicit args > existing run_context > resolved defaults.
     opts.apply_to_context(
         run_context,
@@ -4296,7 +4299,6 @@ def arun_dispatch(  # type: ignore
                 yield_run_output=opts.yield_run_output,
                 debug_mode=debug_mode,
                 background_tasks=background_tasks,
-                **kwargs,
             )
         return _arun_background(  # type: ignore[return-value]
             team,  # type: ignore
@@ -4310,7 +4312,6 @@ def arun_dispatch(  # type: ignore
             response_format=response_format,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
-            **kwargs,
         )
 
     if opts.stream:
@@ -4328,7 +4329,6 @@ def arun_dispatch(  # type: ignore
             yield_run_output=opts.yield_run_output,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
-            **kwargs,
         )
     else:
         return _arun(
@@ -4343,7 +4343,6 @@ def arun_dispatch(  # type: ignore
             response_format=response_format,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
-            **kwargs,
         )
 
 
@@ -7489,7 +7488,7 @@ def continue_run_dispatch(
     metadata: Optional[Dict[str, Any]] = None,
     debug_mode: Optional[bool] = None,
     yield_run_output: bool = False,
-    **kwargs: Any,
+    extra_kwargs: Optional[Dict[str, Any]] = None,
 ) -> Union[TeamRunOutput, Iterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]]:
     """Continue a paused team run (sync).
 
@@ -7520,6 +7519,7 @@ def continue_run_dispatch(
     if isinstance(team.media_storage, AsyncMediaStorage):
         raise ValueError("Cannot use sync continue_run() with an AsyncMediaStorage. Use acontinue_run() instead.")
 
+    kwargs: Dict[str, Any] = dict(extra_kwargs or {})
     background_tasks = kwargs.pop("background_tasks", None)
     if background_tasks is not None:
         from fastapi import BackgroundTasks
@@ -7587,6 +7587,7 @@ def continue_run_dispatch(
         knowledge_filters=opts.knowledge_filters,
         metadata=opts.metadata,
     )
+    apply_extra_kwargs(run_context, kwargs)
     if user_id is not None and run_context.user_id is None:
         run_context.user_id = user_id
     if dependencies is not None:
@@ -7713,7 +7714,6 @@ def continue_run_dispatch(
                 yield_run_output=opts.yield_run_output,
                 debug_mode=debug_mode,
                 background_tasks=background_tasks,
-                **kwargs,
             )
         else:
             return _continue_run(
@@ -7727,7 +7727,6 @@ def continue_run_dispatch(
                 response_format=response_format,
                 debug_mode=debug_mode,
                 background_tasks=background_tasks,
-                **kwargs,
             )
     # --- End snapshot dispatch ----------------------------------------------
 
@@ -7868,7 +7867,6 @@ def continue_run_dispatch(
                 user_id=user_id,
                 debug_mode=debug_mode,
                 background_tasks=background_tasks,
-                **kwargs,
             )
 
         # Non-streaming: merge and check for chained pauses
@@ -7967,7 +7965,6 @@ def continue_run_dispatch(
                 yield_run_output=opts.yield_run_output,
                 debug_mode=debug_mode,
                 background_tasks=background_tasks,
-                **kwargs,
             )
         else:
             return _continue_run(
@@ -7981,7 +7978,6 @@ def continue_run_dispatch(
                 response_format=response_format,
                 debug_mode=debug_mode,
                 background_tasks=background_tasks,
-                **kwargs,
             )
 
     # Member-only case: continue the same run with member results
@@ -8034,7 +8030,6 @@ def continue_run_dispatch(
                 yield_run_output=opts.yield_run_output,
                 debug_mode=debug_mode,
                 background_tasks=background_tasks,
-                **kwargs,
             )
         else:
             return _continue_run(
@@ -8048,7 +8043,6 @@ def continue_run_dispatch(
                 response_format=response_format,
                 debug_mode=debug_mode,
                 background_tasks=background_tasks,
-                **kwargs,
             )
 
     # Fallback: nothing to do
@@ -9250,7 +9244,7 @@ def acontinue_run_dispatch(  # type: ignore
     debug_mode: Optional[bool] = None,
     yield_run_output: bool = False,
     background: bool = False,
-    **kwargs: Any,
+    extra_kwargs: Optional[Dict[str, Any]] = None,
 ) -> Union[TeamRunOutput, AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]]:
     """Continue a paused team run (async entry point).
 
@@ -9270,6 +9264,7 @@ def acontinue_run_dispatch(  # type: ignore
     if run_response is None and (run_id is not None and (session_id is None and team.session_id is None)):
         raise ValueError("Session ID is required to continue a run from a run_id.")
 
+    kwargs: Dict[str, Any] = dict(extra_kwargs or {})
     background_tasks = kwargs.pop("background_tasks", None)
     if background_tasks is not None:
         from fastapi import BackgroundTasks
@@ -9329,6 +9324,7 @@ def acontinue_run_dispatch(  # type: ignore
         knowledge_filters=opts.knowledge_filters,
         metadata=opts.metadata,
     )
+    apply_extra_kwargs(run_context, kwargs)
     if user_id is not None and run_context.user_id is None:
         run_context.user_id = user_id
     if dependencies is not None:
@@ -9372,7 +9368,6 @@ def acontinue_run_dispatch(  # type: ignore
                 yield_run_output=opts.yield_run_output,
                 debug_mode=debug_mode,
                 background_tasks=background_tasks,
-                **kwargs,
             )
         # background=True, stream=False is not supported for continue_run yet —
         # fall through to the regular non-streaming path to preserve prior behavior.
@@ -9397,7 +9392,6 @@ def acontinue_run_dispatch(  # type: ignore
             yield_run_output=opts.yield_run_output,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
-            **kwargs,
         )
     else:
         return _acontinue_run(  # type: ignore
@@ -9417,7 +9411,6 @@ def acontinue_run_dispatch(  # type: ignore
             response_format=response_format,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
-            **kwargs,
         )
 
 

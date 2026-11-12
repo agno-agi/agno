@@ -20,6 +20,7 @@ from agno.exceptions import (
 )
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunOutputEvent
+from agno.run.base import get_extra_kwargs
 from agno.run.team import (
     TeamRunInput,
     TeamRunOutput,
@@ -258,7 +259,10 @@ def _execute_pre_hooks(
 
     # Prepare arguments for hooks
     effective_debug_mode = debug_mode if debug_mode is not None else team.debug_mode
+    # Hook arguments: the caller's extra run arguments first, so the framework's own always win
     all_args = {
+        **get_extra_kwargs(run_context),
+        **kwargs,
         "run_input": run_input,
         "run_context": run_context,
         "team": team,
@@ -267,8 +271,6 @@ def _execute_pre_hooks(
         "debug_mode": effective_debug_mode,
         "metadata": run_context.metadata if run_context else None,
     }
-
-    all_args.update(kwargs)
 
     # Global background mode: run guardrails synchronously, buffer everything else.
     # See agent/_hooks.py execute_pre_hooks for full pattern explanation.
@@ -356,7 +358,10 @@ async def _aexecute_pre_hooks(
 
     # Prepare arguments for hooks
     effective_debug_mode = debug_mode if debug_mode is not None else team.debug_mode
+    # Hook arguments: the caller's extra run arguments first, so the framework's own always win
     all_args = {
+        **get_extra_kwargs(run_context),
+        **kwargs,
         "run_input": run_input,
         "run_context": run_context,
         "team": team,
@@ -365,8 +370,6 @@ async def _aexecute_pre_hooks(
         "debug_mode": effective_debug_mode,
         "metadata": run_context.metadata if run_context else None,
     }
-
-    all_args.update(kwargs)
 
     # Global background mode — see _execute_pre_hooks for pattern explanation.
     if team._run_hooks_in_background is True and background_tasks is not None:
@@ -458,7 +461,10 @@ def _execute_post_hooks(
 
     # Prepare arguments for hooks
     effective_debug_mode = debug_mode if debug_mode is not None else team.debug_mode
+    # Hook arguments: the caller's extra run arguments first, so the framework's own always win
     all_args = {
+        **get_extra_kwargs(run_context),
+        **kwargs,
         "run_output": run_output,
         "run_context": run_context,
         "team": team,
@@ -467,8 +473,6 @@ def _execute_post_hooks(
         "debug_mode": effective_debug_mode,
         "metadata": run_context.metadata if run_context else None,
     }
-
-    all_args.update(kwargs)
 
     # Global background mode — see _execute_pre_hooks for pattern explanation.
     if team._run_hooks_in_background is True and background_tasks is not None:
@@ -553,7 +557,10 @@ async def _aexecute_post_hooks(
 
     # Prepare arguments for hooks
     effective_debug_mode = debug_mode if debug_mode is not None else team.debug_mode
+    # Hook arguments: the caller's extra run arguments first, so the framework's own always win
     all_args = {
+        **get_extra_kwargs(run_context),
+        **kwargs,
         "run_output": run_output,
         "run_context": run_context,
         "team": team,
@@ -562,8 +569,6 @@ async def _aexecute_post_hooks(
         "debug_mode": effective_debug_mode,
         "metadata": run_context.metadata if run_context else None,
     }
-
-    all_args.update(kwargs)
 
     # Global background mode — see _execute_pre_hooks for pattern explanation.
     if team._run_hooks_in_background is True and background_tasks is not None:

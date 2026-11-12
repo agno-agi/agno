@@ -18,7 +18,11 @@ from agno.tools.firecrawl import FirecrawlTools
 agent = Agent(
     tools=[
         FirecrawlTools(
-            enable_scrape=False, enable_crawl=True, enable_search=True, poll_interval=2
+            enable_scrape=False,
+            enable_crawl=True,
+            enable_search=True,
+            poll_interval=2,
+            formats=["markdown", "links"],
         )
     ],
     markdown=True,
@@ -31,8 +35,7 @@ agent = Agent(
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     agent.print_response(
-        "Search for the web for the latest on 'web scraping technologies'",
-        formats=["markdown", "links"],
+        "Search for the web for the latest on 'web scraping technologies'"
     )
 
     # Should use crawl
