@@ -97,7 +97,7 @@ def pages(system, ids):
     for owner in (None, ids["product"], ids["other"]):
         for row in manager.list_wiki(owner, limit=100)[0]:
             listed[(owner, row.path)] = manager.read_wiki(owner, row.path).content
-    for name in ("company/tasks", "company/notes"):
+    for name in (f"company/tasks/{ids['task']}", f"company/tasks/{ids['stray']}", "company/notes"):
         store = FileSystem(system.db, namespace=name, user_scoped=False)
         listed.update({(name, meta.path): store.read(meta.path) for meta in store.list()})
     return listed
@@ -338,7 +338,7 @@ def test_mini_agent_writes_its_task_files_through_a_real_task_run(system):
     assert "only a person changes them" in wiki and "own Product" in other
     assert "does not exist or is not available" in save
     stored = pages(system, ids)
-    assert stored[("company/tasks", f"{ids['task']}/report.md")] == "The report"
+    assert stored[(f"company/tasks/{ids['task']}", "report.md")] == "The report"
     assert stored[(ids["product"], "findings.md")] == "Found"
     assert (None, "priorities.md") not in stored and (ids["other"], "findings.md") not in stored
     # A Task run holds the read tools and one write tool: no second way to read or write a page.
@@ -373,7 +373,7 @@ def test_a_task_started_without_wiki_write_fills_its_folder_and_writes_no_produc
     for refused in (findings, status):
         assert "Permission required: wiki:write" in refused, refused
     stored = pages(system, ids)
-    assert stored[("company/tasks", f"{ids['task']}/report.md")] == "The report"
+    assert stored[(f"company/tasks/{ids['task']}", "report.md")] == "The report"
     assert (ids["product"], "findings.md") not in stored and "Done" not in stored[(ids["product"], "status.md")]
 
 
@@ -800,7 +800,7 @@ def test_user_isolation_hides_no_product_from_a_listing_or_a_search(tmp_path, us
 
 
 def test_search_reaches_every_product_and_long_listings_have_pages(system):
-    from agno.company.files import LIST_ENTRIES
+    from agno.company.files import LIST_ENTRIES, SEARCH_FOLDERS
 
     manager = CompanyManager(system.db, system.os.registry)
     created = [manager.create(name=f"Product {index:03d}")["id"] for index in range(LIST_ENTRIES + 1)]
@@ -809,12 +809,15 @@ def test_search_reaches_every_product_and_long_listings_have_pages(system):
     assert len(first["folders"]) == LIST_ENTRIES and first["total"] == LIST_ENTRIES + 1 and first["next_page"] == 2
     second = call(files, "list_company_files", folder="products", page=2)
     assert len(second["folders"]) == 1 and "next_page" not in second
-    # The one Product the first page leaves out is still searched.
+    # A search of the whole tree opens the newest Products up to its bound, and says how many it left out.
     shown = {row["folder"].split("/")[1] for row in first["folders"]}
     beyond = next(product_id for product_id in created if product_id not in shown)
     manager.write_wiki(product_id=beyond, path="needle.md", content="uniqueneedle", expected_version=0)
     found = call(files, "search_company_files", query="uniqueneedle")
-    assert [match["path"] for match in found["matches"]] == [f"products/{beyond}/needle.md"] and "more" not in found
+    assert found["matches"] == [] and f"{SEARCH_FOLDERS} of {LIST_ENTRIES + 1} Products" in found["note"]
+    # Naming the Product's folder searches it.
+    named = call(files, "search_company_files", query="uniqueneedle", folder=f"products/{beyond}")
+    assert [match["path"] for match in named["matches"]] == [f"products/{beyond}/needle.md"] and "more" not in named
     # A search that stops at ten matches says that more exist.
     for index in range(11):
         call(files, "write_company_file", path=f"notes/note-{index:02d}.md", content="repeated phrase")

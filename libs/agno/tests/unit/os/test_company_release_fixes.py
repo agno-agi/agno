@@ -899,3 +899,171 @@ def test_creating_a_routine_on_a_product_with_no_source_says_a_source_is_needed(
     )
     assert added.status_code == 201, added.text
     assert "note" not in create("second", instructions="Read the Source and propose work.")
+
+
+# ----------------------------------------------------------------- each Task has its own folder and limit
+
+
+def task_files(system):
+    """Two Tasks in two Products, and the tree tools Super Agent holds."""
+    from tests.unit.os.test_company_file_tree import records, tree
+
+    return records(system), tree(system.os)
+
+
+def tree_call(*args, **kwargs):
+    from tests.unit.os.test_company_file_tree import call
+
+    return call(*args, **kwargs)
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_one_task_filling_its_folder_does_not_refuse_another_tasks_write(system, monkeypatch, use_async):
+    import agno.company.files as company_files
+    from agno.fs.errors import FileSystemError
+
+    # The limit, small enough to reach in a test, under the name it has before and after the change.
+    monkeypatch.setattr(company_files, "TASKS_NAMESPACE_BYTES", 1500, raising=False)
+    monkeypatch.setattr(company_files, "TASK_FOLDER_BYTES", 1500, raising=False)
+    ids, files = task_files(system)
+    first, second = f"tasks/{ids['task']}", f"tasks/{ids['stray']}"
+    tree_call(files, "write_company_file", None, use_async, path=f"{first}/report.md", content="x" * 1000)
+    with pytest.raises(FileSystemError):
+        tree_call(files, "write_company_file", None, use_async, path=f"{first}/more.md", content="x" * 1000)
+    written = tree_call(files, "write_company_file", None, use_async, path=f"{second}/report.md", content="y" * 1000)
+    assert written["version"] == 1
+    read = tree_call(files, "read_company_file", None, use_async, path=f"{second}/report.md")
+    assert read["content"] == "y" * 1000
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_task_files_stored_before_each_task_had_its_own_folder_stay_readable(system, use_async):
+    from agno.fs import FileSystem
+
+    ids, files = task_files(system)
+    folder = f"tasks/{ids['task']}"
+    # A file as it was stored when every Task shared one namespace.
+    shared = FileSystem(system.db, namespace="company/tasks", user_scoped=False)
+    shared.write(f"{ids['task']}/given.md", "Material from the older layout")
+    shared.write(f"{ids['task']}/data/rows.csv", "a,b")
+
+    read = tree_call(files, "read_company_file", None, use_async, path=f"{folder}/given.md")
+    assert read["content"] == "Material from the older layout" and read["version"] == 1
+    listed = tree_call(files, "list_company_files", None, use_async, folder=folder)
+    assert sorted(row["path"] for row in listed["files"]) == [f"{folder}/data/rows.csv", f"{folder}/given.md"]
+    for searched in (folder, "tasks", None):
+        found = tree_call(files, "search_company_files", None, use_async, query="older layout", folder=searched)
+        assert [match["path"] for match in found["matches"]] == [f"{folder}/given.md"], searched
+
+    # A new file sits next to it, and the older file is replaced at the version that was read.
+    tree_call(files, "write_company_file", None, use_async, path=f"{folder}/report.md", content="The report")
+    replaced = tree_call(
+        files, "write_company_file", None, use_async, path=f"{folder}/given.md", content="Revised", expected_version=1
+    )
+    assert replaced["path"] == f"{folder}/given.md"
+    assert tree_call(files, "read_company_file", None, use_async, path=f"{folder}/given.md")["content"] == "Revised"
+    listed = tree_call(files, "list_company_files", None, use_async, folder=folder)
+    assert sorted(row["path"] for row in listed["files"]) == [
+        f"{folder}/data/rows.csv",
+        f"{folder}/given.md",
+        f"{folder}/report.md",
+    ]
+    # The older file itself is not removed or rewritten.
+    assert shared.read(f"{ids['task']}/given.md") == "Material from the older layout"
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_listing_tasks_names_each_tasks_folder(system, use_async):
+    ids, files = task_files(system)
+    tree_call(files, "write_company_file", None, use_async, path=f"tasks/{ids['task']}/report.md", content="Report")
+    listed = tree_call(files, "list_company_files", None, use_async, folder="tasks")
+    folders = {row["folder"]: row for row in listed["folders"]}
+    assert {f"tasks/{ids['task']}/", f"tasks/{ids['stray']}/"} <= set(folders) and listed["total"] == len(folders)
+    assert folders[f"tasks/{ids['task']}/"]["title"] == "Notes"
+    again = tree_call(files, "list_company_files", None, use_async, folder=f"tasks/{ids['task']}/")
+    assert [row["path"] for row in again["files"]] == [f"tasks/{ids['task']}/report.md"]
+
+
+# ----------------------------------------------------------------- a Task's input stops reading at the budget
+
+
+def test_a_tasks_input_reads_no_page_after_the_budget_is_spent(system, monkeypatch):
+    from agno.company.execution import _task_input
+    from agno.company.files import ALWAYS_LOADED_PAGE_CHARS, ALWAYS_LOADED_TOTAL_CHARS
+    from agno.company.manager import CompanyManager
+
+    task = system.proposal()
+    manager = CompanyManager(system.db, system.os.registry)
+    for index in range(12):
+        manager.write_wiki(
+            product_id=None, path=f"page-{index:02d}.md", content="p" * ALWAYS_LOADED_PAGE_CHARS, expected_version=0
+        )
+    read = []
+    original = CompanyManager.read_wiki
+
+    def counted(self, product_id, path):
+        read.append(path)
+        return original(self, product_id, path)
+
+    monkeypatch.setattr(CompanyManager, "read_wiki", counted)
+    pages = json.loads(asyncio.run(_task_input(manager, task)))["wiki"]
+    loaded = [page for page in pages if "content" in page]
+    named = [page for page in pages if "content" not in page]
+    assert sum(len(page["content"]) for page in loaded) <= ALWAYS_LOADED_TOTAL_CHARS
+    # Every page is still named with the file to read. Only the pages that fit, and the first that did not, were read.
+    assert len(pages) == 2 + len(manager.list_wiki(None, limit=100)[0])
+    assert named and all("Not loaded" in page["note"] and page["file"] in page["note"] for page in named)
+    assert len(read) == len(loaded) + 1, (len(read), len(loaded), len(named))
+
+
+# ----------------------------------------------------------------- a search opens a bounded number of folders
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_a_whole_tree_search_opens_a_bounded_number_of_products_and_says_so(system, monkeypatch, use_async):
+    import agno.company.files as company_files
+    from agno.company.manager import AsyncCompanyManager, CompanyManager
+
+    monkeypatch.setattr(company_files, "SEARCH_FOLDERS", 3, raising=False)
+    manager = CompanyManager(system.db, system.os.registry)
+    # Each Product is created a second after the one before, so the newest three are the last three.
+    clock = iter(range(1_794_000_000, 1_794_000_100))
+    with monkeypatch.context() as patch:
+        patch.setattr("agno.company.manager.time.time", lambda: next(clock))
+        created = [manager.create(name=f"Product {index}")["id"] for index in range(6)]
+    manager.write_wiki(product_id=created[-1], path="needle.md", content="recentneedle", expected_version=0)
+    manager.write_wiki(product_id=created[0], path="needle.md", content="oldneedle", expected_version=0)
+    from tests.unit.os.test_company_file_tree import tree
+
+    files = tree(system.os)
+    opened = []
+    for cls in (CompanyManager, AsyncCompanyManager):
+        original = cls.get_wiki
+
+        def counted(self, product_id=None, _original=original):
+            opened.append(product_id)
+            return _original(self, product_id)
+
+        monkeypatch.setattr(cls, "get_wiki", counted)
+
+    for folder in (None, "products"):
+        opened.clear()
+        found = tree_call(files, "search_company_files", None, use_async, query="oldneedle", folder=folder)
+        assert len([product_id for product_id in opened if product_id is not None]) == 3, opened
+        # The Product it did not open is not searched, and the reply says how many were and what to do.
+        assert found["matches"] == [] and "3 of 6 Products" in found["note"], found
+        assert "products/<product-id>" in found["note"]
+        recent = tree_call(files, "search_company_files", None, use_async, query="recentneedle", folder=folder)
+        assert [match["path"] for match in recent["matches"]] == [f"products/{created[-1]}/needle.md"]
+    # A named Product is always searched.
+    named = tree_call(
+        files, "search_company_files", None, use_async, query="oldneedle", folder=f"products/{created[0]}"
+    )
+    assert [match["path"] for match in named["matches"]] == [f"products/{created[0]}/needle.md"]
+    assert "note" not in named
+
+
+def test_a_search_within_the_bound_carries_no_note(system):
+    ids, files = task_files(system)
+    found = tree_call(files, "search_company_files", query="nothing matches this")
+    assert found["matches"] == [] and "note" not in found

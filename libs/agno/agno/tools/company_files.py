@@ -184,7 +184,9 @@ class CompanyFileTools(Toolkit):
         """Search the text of the company file tree, ignoring case. These are company files, not source code.
 
         Returns up to ten matching files with the line of each first match, and more: true when others
-        exist; narrow the folder or the query to see them. Read a file before relying on it.
+        exist; narrow the folder or the query to see them. A search of the whole tree, of products or of
+        tasks opens the 50 newest Products and Tasks, and its note says so when it left some out: name a
+        folder to search another. Read a file before relying on it.
 
         Args:
             query: Text to find.

@@ -283,13 +283,18 @@ a runbook, must hold the read tools:
 Without them it no longer sees that page.
 
 A listing returns 200 entries a page with the total, and `next_page` when more
-remain. A search returns up to ten matches and `more` when others exist.
+remain. A search returns up to ten matches and `more` when others exist. A search
+of the whole tree, of `products/` or of `tasks/` opens the 50 newest Products and
+the 50 newest Tasks. When there are more, the reply says how many it searched;
+name a folder, `products/<product-id>` or `tasks/<task-id>`, to search another.
 
-A file holds at most 1 MB. `wiki/`, each Product and `notes/` hold 20 MB each, and
-`tasks/` holds 200 MB in total, shared by every Task. Nothing removes a Task's
-files, not even archiving the Task, so a full `tasks/` refuses every Task's writes
-until files are replaced with smaller ones. There are no API routes for `tasks/`
-and `notes/`, and no tool appends to, moves or deletes a file outside `notes/`.
+A file holds at most 1 MB. `wiki/`, each Product, each Task and `notes/` hold
+20 MB each. A Task's folder is its own space: a Task that fills its folder does not
+stop another Task's writes. Nothing removes a Task's files, not even archiving the
+Task, because an archived Task can be restored. Task files written before each
+Task had its own folder are still read, listed and searched. There are no API
+routes for `tasks/` and `notes/`, and no tool appends to, moves or deletes a file
+outside `notes/`.
 
 With `CompanyConfig`, Super Agent holds the Company tools itself. People do
 Company work by talking to Super Agent at `/teams/superagent`. It reads company
