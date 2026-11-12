@@ -511,10 +511,7 @@ async def _check_task(worker: Any, job: Dict[str, Any]) -> None:
             )
         except PermissionError as exc:
             raise _TaskRunRefused(str(exc)) from exc
-    if isinstance(authority, _ExecutorAuthorization) and (job["component_type"], job["component_id"]) == (
-        "agent",
-        MINI_AGENT_ID,
-    ):
+    if isinstance(authority, _ExecutorAuthorization):
         from agno.os.authz.run_context import restore_authorization
 
         # Starting work must not expand the components its acceptance authorized.

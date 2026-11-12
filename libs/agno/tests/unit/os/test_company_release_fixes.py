@@ -757,3 +757,34 @@ def test_a_task_that_stays_on_one_executor_keeps_its_earlier_attempts_as_history
     system.execute(task["id"], model=second)
     assert ("assistant", True, "resp_mini_1") in second.seen, second.seen
     assert chained_from(second.messages) == "resp_mini_1"
+
+
+# ----------------------------------------------------------------- the acceptance bounds every executor
+
+
+@pytest.mark.parametrize("accepting_may_run,starting_may_run", [(False, True), (True, False), (True, True)])
+def test_a_named_executor_with_run_tools_needs_both_accepting_and_starting_permissions(
+    tmp_path, accepting_may_run, starting_may_run
+):
+    # The Task's executor is an agent that holds run tools and tries to run the writer.
+    system = PolicySystem(tmp_path, pausing="agent")
+    try:
+        system.helper.model = ScriptedModel([("run_agent", {"agent_id": "writer", "message": "Write the notes"})])
+        both = [*SCOPES, "agents:helper:run", "agents:helper:read"]
+        without = [scope for scope in both if scope != "agents:writer:run"]
+        task = system.proposal()
+        accepted = system.client.post(
+            f"/company/tasks/{task['id']}/transitions",
+            json={"target": "ready", "reason": "Approved", "executor_type": "agent", "executor_id": "helper"},
+            headers=headers(both if accepting_may_run else without),
+        )
+        assert accepted.status_code == 200, accepted.text
+        saved = system.execute(task["id"], scopes=both if starting_may_run else without, user="bob")
+        allowed = accepting_may_run and starting_may_run
+        assert system.writer.model.turns == int(allowed), saved["result"]
+        assert [(entry["id"], entry["status"]) for entry in saved["result"]["invoked"]] == [
+            ("writer", "COMPLETED" if allowed else "REFUSED")
+        ]
+        assert saved["accepted_by"] == "alice"
+    finally:
+        system.db.close()

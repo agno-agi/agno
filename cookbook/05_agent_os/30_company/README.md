@@ -491,7 +491,8 @@ A component Mini Agent runs acts with its own tools, so accept a Task on Mini
 Agent only when you would run those components yourself.
 
 The accepting person's saved permissions bound component runs throughout
-delegation and continuation; the starter's permissions still apply. Task runs
+delegation and continuation, on Mini Agent and on every other executor that
+holds run tools; the starter's permissions still apply. Task runs
 can use `read_company_file` to read `products/<product-id>/status.md` and its
 version before writing it with `write_company_file`, and reread it after a
 version conflict to preserve concurrent edits.
