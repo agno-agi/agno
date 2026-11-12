@@ -3,10 +3,18 @@
 import asyncio
 import json
 from contextlib import suppress
-from typing import Any, AsyncGenerator, AsyncIterator, Awaitable, Callable, Optional
+from typing import Any, AsyncGenerator, AsyncIterator, Awaitable, Callable, Optional, Union
 
 from agno.exceptions import RunCancelledException
-from agno.run.agent import RunCancelledEvent, RunCompletedEvent, RunErrorEvent, RunEvent, RunOutput, RunPausedEvent
+from agno.run.agent import (
+    RunCancelledEvent,
+    RunCompletedEvent,
+    RunErrorEvent,
+    RunEvent,
+    RunOutput,
+    RunOutputEvent,
+    RunPausedEvent,
+)
 from agno.run.base import CancellationStage, RunStatus
 from agno.run.cancel import acleanup_run, araise_if_cancelled
 from agno.run.concurrency import SSE_KEEPALIVE_INTERVAL_SECONDS, background_run_slot, is_worker_managed
@@ -14,10 +22,30 @@ from agno.run.team import RunCancelledEvent as TeamRunCancelledEvent
 from agno.run.team import RunCompletedEvent as TeamRunCompletedEvent
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
 from agno.run.team import RunPausedEvent as TeamRunPausedEvent
-from agno.run.team import TeamRunEvent, TeamRunOutput, team_run_output_event_from_dict
+from agno.run.team import TeamRunEvent, TeamRunOutput, TeamRunOutputEvent, team_run_output_event_from_dict
+from agno.utils.events import (
+    create_run_completed_event,
+    create_run_paused_event,
+    create_team_run_completed_event,
+    create_team_run_paused_event,
+)
 from agno.utils.log import log_error, log_warning
 
 _background_tasks: set[asyncio.Task[None]] = set()
+
+_RUN_EVENT_NAMES = frozenset({e.value for e in RunEvent} | {e.value for e in TeamRunEvent})
+
+# The events that end a run; a stream that stops without one stopped before its run finished
+TERMINAL_RUN_EVENT_TYPES = (
+    RunCompletedEvent,
+    RunCancelledEvent,
+    RunErrorEvent,
+    RunPausedEvent,
+    TeamRunCompletedEvent,
+    TeamRunCancelledEvent,
+    TeamRunErrorEvent,
+    TeamRunPausedEvent,
+)
 
 
 def _spawn_background(coro: Awaitable[None]) -> None:
@@ -160,6 +188,37 @@ class _BackgroundStream:
                 self.queue.get_nowait()
 
 
+def terminal_run_event_from_run_output(
+    run_output: Union[RunOutput, TeamRunOutput],
+) -> Optional[Union[RunOutputEvent, TeamRunOutputEvent]]:
+    """Get the event that ends a stored run, or None while the run has not ended."""
+    if run_output.status == RunStatus.completed:
+        if isinstance(run_output, TeamRunOutput):
+            return create_team_run_completed_event(run_output)
+        return create_run_completed_event(run_output)
+    if run_output.status == RunStatus.paused:
+        if isinstance(run_output, TeamRunOutput):
+            return create_team_run_paused_event(
+                run_output, tools=run_output.tools, requirements=run_output.requirements
+            )
+        return create_run_paused_event(run_output, tools=run_output.tools, requirements=run_output.requirements)
+    if run_output.status == RunStatus.error:
+        if isinstance(run_output, TeamRunOutput):
+            return TeamRunErrorEvent(
+                run_id=run_output.run_id,
+                session_id=run_output.session_id,
+                content=str(run_output.content or "Run failed"),
+            )
+        return RunErrorEvent(
+            run_id=run_output.run_id, session_id=run_output.session_id, content=str(run_output.content or "Run failed")
+        )
+    if run_output.status == RunStatus.cancelled:
+        if isinstance(run_output, TeamRunOutput):
+            return TeamRunCancelledEvent(run_id=run_output.run_id, session_id=run_output.session_id)
+        return RunCancelledEvent(run_id=run_output.run_id, session_id=run_output.session_id)
+    return None
+
+
 async def map_background_stream_to_run_events(
     event_stream: AsyncIterator[Any],
     entity: Any,
@@ -183,49 +242,31 @@ async def map_background_stream_to_run_events(
         The Agno events of the run
     """
     is_finished = False
-    async for event in event_stream:
-        if isinstance(event, str):
-            # Keepalive comments carry no event
-            data_line = next((line for line in event.splitlines() if line.startswith("data: ")), None)
-            if data_line is None:
+    try:
+        async for event in event_stream:
+            if isinstance(event, str):
+                # Keepalive comments carry no event
+                data_line = next((line for line in event.splitlines() if line.startswith("data: ")), None)
+                if data_line is None:
+                    continue
+                data = json.loads(data_line[len("data: ") :])
+                # Transport frames (stream_expired, error) carry no run event
+                event_type = data.get("event", "")
+                if event_type not in _RUN_EVENT_NAMES:
+                    break
+                event = team_run_output_event_from_dict(data)
+            elif isinstance(event, (RunOutput, TeamRunOutput)):
+                # Terminal RunOutput is not an SSE event; skip it like the background producer does
                 continue
-            data = json.loads(data_line[len("data: ") :])
-            # Transport frames (stream_expired, error) carry no run event
-            event_type = data.get("event", "")
-            if event_type not in {e.value for e in RunEvent} and event_type not in {e.value for e in TeamRunEvent}:
-                break
-            event = team_run_output_event_from_dict(data)
-        elif isinstance(event, (RunOutput, TeamRunOutput)):
-            # Terminal RunOutput is not an SSE event; skip it like the background producer does
-            continue
-        if getattr(event, "run_id", None) == run_id and isinstance(
-            event,
-            (
-                RunCompletedEvent,
-                RunCancelledEvent,
-                RunErrorEvent,
-                RunPausedEvent,
-                TeamRunCompletedEvent,
-                TeamRunCancelledEvent,
-                TeamRunErrorEvent,
-                TeamRunPausedEvent,
-            ),
-        ):
-            is_finished = True
-        yield event
+            if getattr(event, "run_id", None) == run_id and isinstance(event, TERMINAL_RUN_EVENT_TYPES):
+                is_finished = True
+            yield event
+    finally:
+        # Close the background stream when the caller stops reading it early
+        await event_stream.aclose()  # type: ignore[attr-defined]
 
     if is_finished:
         return
     run_output = await entity.aget_run_output(run_id=run_id, session_id=session_id)
-    if run_output is not None and run_output.status == RunStatus.cancelled:
-        if isinstance(run_output, TeamRunOutput):
-            yield TeamRunCancelledEvent(run_id=run_id, session_id=session_id)
-        else:
-            yield RunCancelledEvent(run_id=run_id, session_id=session_id)
-    elif run_output is not None and run_output.status == RunStatus.error:
-        if isinstance(run_output, TeamRunOutput):
-            yield TeamRunErrorEvent(
-                run_id=run_id, session_id=session_id, content=str(run_output.content or "Run failed")
-            )
-        else:
-            yield RunErrorEvent(run_id=run_id, session_id=session_id, content=str(run_output.content or "Run failed"))
+    if run_output is not None and run_output.status in (RunStatus.cancelled, RunStatus.error):
+        yield terminal_run_event_from_run_output(run_output)
