@@ -37,12 +37,14 @@ from agno.os.interfaces.slack.types import tool_args, tool_name, truncate
 from agno.os.job_queue import araise_if_ticket_owns_continue, get_active_queue_worker
 from agno.os.services.runs import cancel_component_run
 from agno.os.utils import acomplete_continue_stream, adeliver_native_decisions, queued_run_tail_streamer
-from agno.run.agent import RunCancelledEvent, RunErrorEvent
 from agno.run.authorization import authorization_scope
-from agno.run.background import map_background_stream_to_run_events
+from agno.run.background import (
+    TERMINAL_RUN_EVENT_TYPES,
+    map_background_stream_to_run_events,
+    terminal_run_event_from_run_output,
+)
 from agno.run.base import RunStatus
 from agno.team import RemoteTeam, Team
-from agno.utils.events import create_run_completed_event, create_run_paused_event
 from agno.utils.log import log_error
 from agno.workflow import RemoteWorkflow, Workflow
 
@@ -63,15 +65,6 @@ APPROVAL_NOT_RECORDED_MESSAGE = "Could not record the decision. Please try again
 # Before a native continuation's own RunContinued, a replay of its first leg shows only these events
 _FIRST_LEG_EVENTS = frozenset(
     {RunEvent.run_content.value, RunEvent.run_intermediate_content.value, RunEvent.run_paused.value}
-)
-
-_TERMINAL_EVENTS = frozenset(
-    {
-        RunEvent.run_completed.value,
-        RunEvent.run_cancelled.value,
-        RunEvent.run_error.value,
-        RunEvent.run_paused.value,
-    }
 )
 
 _REMOTE_TYPES = (RemoteAgent, RemoteTeam, RemoteWorkflow)
@@ -140,8 +133,7 @@ def _start_run(event_context: "EventContext", ctx: "SlackContext", message_text:
 
 
 def _is_terminal(event: Any, run_id: str) -> bool:
-    name = _normalize_event(str(getattr(event, "event", "") or ""))
-    return name in _TERMINAL_EVENTS and getattr(event, "run_id", None) == run_id
+    return getattr(event, "run_id", None) == run_id and isinstance(event, TERMINAL_RUN_EVENT_TYPES)
 
 
 async def _stored_outcome(ctx: "SlackContext", event_context: "EventContext") -> Any:
@@ -152,18 +144,9 @@ async def _stored_outcome(ctx: "SlackContext", event_context: "EventContext") ->
         run = await read_run(entity, event_context.run_id, event_context.session_id, event_context.user_id)
         if run is None:
             raise ValueError("Native run is no longer available")
-        if run.status == RunStatus.completed:
-            return create_run_completed_event(run)
-        if run.status == RunStatus.paused:
-            return create_run_paused_event(run, tools=run.tools, requirements=run.requirements)
-        if run.status == RunStatus.error:
-            return RunErrorEvent(
-                run_id=event_context.run_id,
-                session_id=event_context.session_id,
-                content=str(run.content or "Run failed"),
-            )
-        if run.status == RunStatus.cancelled:
-            return RunCancelledEvent(run_id=event_context.run_id, session_id=event_context.session_id)
+        event = terminal_run_event_from_run_output(run)
+        if event is not None:
+            return event
         await asyncio.sleep(min(1.0, max(0.001, entity.hitl_timeout / 10)))
     raise TimeoutError("Native run timed out; inspect the persisted run")
 

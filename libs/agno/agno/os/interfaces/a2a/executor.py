@@ -1,4 +1,6 @@
-from typing import Any, List, Optional, Set, Union
+import asyncio
+import time
+from typing import Any, AsyncIterator, List, Optional, Set, Union
 
 try:
     from a2a.helpers import get_data_parts, new_task, new_text_part
@@ -25,11 +27,18 @@ from agno.os.interfaces.a2a.utils import (
 )
 from agno.os.middleware.user_scope import caller_is_admin
 from agno.os.utils import get_agent_by_id, get_team_by_id, get_workflow_by_id
-from agno.run.background import map_background_stream_to_run_events
+from agno.run.background import (
+    TERMINAL_RUN_EVENT_TYPES,
+    map_background_stream_to_run_events,
+    terminal_run_event_from_run_output,
+)
 from agno.team import RemoteTeam, Team
 from agno.utils.common import restore_integers
 from agno.utils.log import log_error
 from agno.workflow import RemoteWorkflow, Workflow
+
+# Mirrors the ``BaseExternalAgent.hitl_timeout`` default, which bounds the same wait for Slack's native runs
+_STORED_RUN_TIMEOUT_SECONDS = 900.0
 
 
 def _get_requirement_ids(data_parts: List[Any]) -> Set[str]:
@@ -47,6 +56,34 @@ def _get_requirement_ids(data_parts: List[Any]) -> Set[str]:
             tool_call_id = tool_execution.get("tool_call_id") if isinstance(tool_execution, dict) else None
             requirement_ids.add(str(tool_call_id or requirement.get("id") or requirement.get("step_id")))
     return requirement_ids
+
+
+async def _stored_run_event(entity: Any, run_id: str, session_id: str) -> Any:
+    """Get the event for how a background run ended, read from its stored run once it completes, pauses or fails."""
+    deadline = time.monotonic() + _STORED_RUN_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        run_output = await entity.aget_run_output(run_id=run_id, session_id=session_id)
+        if run_output is None:
+            raise ValueError("Background run is no longer available")
+        event = terminal_run_event_from_run_output(run_output)
+        if event is not None:
+            return event
+        await asyncio.sleep(1.0)
+    raise TimeoutError("Background run timed out; inspect the persisted run")
+
+
+async def _end_with_stored_run(
+    event_stream: AsyncIterator[Any], entity: Any, run_id: str, session_id: str
+) -> AsyncIterator[Any]:
+    """End the stream of a background run with its stored run when the stream stops before the run finishes."""
+    is_finished = False
+    async for event in event_stream:
+        if getattr(event, "run_id", None) == run_id and isinstance(event, TERMINAL_RUN_EVENT_TYPES):
+            is_finished = True
+        yield event
+
+    if not is_finished:
+        yield await _stored_run_event(entity, run_id, session_id)
 
 
 class A2AExecutor(AgentExecutor):
@@ -137,19 +174,24 @@ class A2AExecutor(AgentExecutor):
             # An entity that stores its runs is run as a background run. The run is stored before
             # it starts, so the task can be read from any replica, and it outlives the request.
             if self._runs_in_background(entity):
-                event_stream = map_background_stream_to_run_events(
-                    entity.arun(
-                        input=run_input.input_content,
-                        images=run_input.images,
-                        videos=run_input.videos,
-                        audio=run_input.audios,
-                        files=run_input.files,
-                        session_id=context.context_id,
-                        user_id=user_id,
+                event_stream = _end_with_stored_run(
+                    map_background_stream_to_run_events(
+                        entity.arun(
+                            input=run_input.input_content,
+                            images=run_input.images,
+                            videos=run_input.videos,
+                            audio=run_input.audios,
+                            files=run_input.files,
+                            session_id=context.context_id,
+                            user_id=user_id,
+                            run_id=context.task_id,
+                            stream=True,
+                            stream_events=True,
+                            background=True,
+                        ),
+                        entity,
                         run_id=context.task_id,
-                        stream=True,
-                        stream_events=True,
-                        background=True,
+                        session_id=context.context_id,
                     ),
                     entity,
                     run_id=context.task_id,
