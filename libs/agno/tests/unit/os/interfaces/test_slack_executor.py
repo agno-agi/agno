@@ -363,6 +363,45 @@ class TestRunKwargs:
             assert args[0] == "fix it"
 
     @pytest.mark.asyncio
+    async def test_sandboxed_external_agent_gets_no_action_token(self):
+        from agno.agents.base import BaseExternalAgent
+
+        entity = make_streaming_entity([content("ok")], sandbox=object())
+        entity.__class__ = type("FakeExternal", (BaseExternalAgent,), {})
+        entity._adependencies_context = AsyncMock(return_value="")
+        ctx = make_ctx(agent=entity, streaming=True)
+        event_context = make_message_event_context(ctx, assistant_thread={"action_token": "tok-1"})
+        await run_event(event_context, make_client(), ctx)
+        metadata = entity.calls[0][1]["metadata"]
+        assert "action_token" not in metadata
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "count,size,error",
+        [
+            (1, 512 * 1024 + 1, "Sandbox attachments exceed 512 KiB total"),
+            (17, 10, "Sandbox input accepts at most 16 attachments"),
+        ],
+    )
+    async def test_sandboxed_external_agent_refuses_files_over_the_sandbox_limit(self, count, size, error):
+        from agno.agents.base import BaseExternalAgent
+
+        entity = make_streaming_entity([content("ok")], sandbox=object())
+        entity.__class__ = type("FakeExternal", (BaseExternalAgent,), {})
+        ctx = make_ctx(agent=entity, streaming=True)
+        files = [
+            {"id": f"F{i}", "name": "pic.png", "mimetype": "image/png", "url_private": f"https://f/{i}", "size": 10}
+            for i in range(count)
+        ]
+        event_context = make_message_event_context(ctx, files=files)
+        client = make_client()
+        mock_httpx = make_httpx_mock([b"x" * size])
+        with patch("agno.os.interfaces.slack.helpers.httpx.AsyncClient", return_value=mock_httpx):
+            await run_event(event_context, client, ctx)
+        assert entity.calls == []
+        assert executor._SANDBOX_FILES_MESSAGE.format(error=error) in posted(client)
+
+    @pytest.mark.asyncio
     async def test_native_agent_keeps_dependencies_kwargs(self):
         entity = make_streaming_entity([content("ok")])
         ctx = make_ctx(agent=entity, streaming=True)
