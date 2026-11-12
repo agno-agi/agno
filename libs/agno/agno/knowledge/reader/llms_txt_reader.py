@@ -148,6 +148,15 @@ class LLMsTxtReader(Reader):
 
         return documents
 
+    def _select_entries_to_fetch(self, entries: List[LLMsTxtEntry]) -> List[LLMsTxtEntry]:
+        """Apply the URL limit to distinct pages, preserving the first entry's metadata."""
+        unique_entries: Dict[str, LLMsTxtEntry] = {}
+        for entry in entries:
+            unique_entries.setdefault(entry.url, entry)
+        if len(unique_entries) > self.max_urls:
+            log_warning(f"Limiting to {self.max_urls} URLs (found {len(unique_entries)} unique URLs)")
+        return list(unique_entries.values())[: self.max_urls]
+
     # Public methods
 
     def parse_llms_txt(self, content: str, base_url: str) -> Tuple[str, List[LLMsTxtEntry]]:
@@ -248,9 +257,7 @@ class LLMsTxtReader(Reader):
         overview, entries = self.parse_llms_txt(llms_txt_content, url)
         log_debug(f"Found {len(entries)} linked URLs in llms.txt")
 
-        entries_to_fetch = entries[: self.max_urls]
-        if len(entries) > self.max_urls:
-            log_warning(f"Limiting to {self.max_urls} URLs (found {len(entries)})")
+        entries_to_fetch = self._select_entries_to_fetch(entries)
 
         fetched: Dict[str, str] = {}
         for entry in entries_to_fetch:
@@ -272,9 +279,7 @@ class LLMsTxtReader(Reader):
             overview, entries = self.parse_llms_txt(llms_txt_content, url)
             log_debug(f"Found {len(entries)} linked URLs in llms.txt")
 
-            entries_to_fetch = entries[: self.max_urls]
-            if len(entries) > self.max_urls:
-                log_warning(f"Limiting to {self.max_urls} URLs (found {len(entries)})")
+            entries_to_fetch = self._select_entries_to_fetch(entries)
 
             # httpx AsyncClient limits concurrent connections per host (default 20)
             async def _fetch_entry(entry: LLMsTxtEntry) -> Tuple[str, Optional[str]]:
