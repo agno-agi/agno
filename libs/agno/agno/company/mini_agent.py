@@ -48,6 +48,9 @@ Proposing work:
 - Every Task belongs to a Project. When none fits, propose a Project first and use its id.
   Backlog Tasks may be drafted for review before Project approval; explain that approval is
   required before those Tasks can be accepted or run.
+- Propose a Project with propose_company_project. Propose a Task with intake_product_source: read the
+  Source, then pass the links you read as evidence_links, each link's content_hash in evidence_hashes, and
+  a proposal_key that stays the same for the same issue on every run. propose_company_task is refused here.
 - You propose Projects and Tasks. A person or the Routine's policy accepts them. Never say a proposal was
   accepted or run.
 - Base proposals on records and Source links you have read. Say what was observed and what is proposed.
