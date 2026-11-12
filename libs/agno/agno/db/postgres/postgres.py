@@ -3894,10 +3894,9 @@ class PostgresDb(BaseDb):
         )
 
         if not calculated_dates:
-            log_debug("Metrics already calculated for all relevant dates.")
+            log_debug("Metrics already calculated for all relevant dates.", log_level=2)
             return []
 
-        log_debug("Updated metrics calculations")
         return calculated_dates
 
     def stop_metrics_refresh_on_read(self) -> None:
