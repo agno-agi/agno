@@ -237,6 +237,10 @@ Slack(
 )
 ```
 
+A member ID is not the username or display name: it looks like `U0123ABC`.
+In Slack, open the person's profile, click the more (⋮) button and choose
+**Copy member ID**.
+
 The example reads the token key and both member IDs from the environment:
 
 ```bash
@@ -291,7 +295,7 @@ export COORDINATOR_SLACK_TOKEN="xoxb-..."
 export COORDINATOR_SLACK_SIGNING_SECRET="..."
 export RESEARCHER_SLACK_TOKEN="xoxb-..."
 export RESEARCHER_SLACK_SIGNING_SECRET="..."
-export RESEARCHER_SLACK_USER_ID="U..."
+export RESEARCHER_SLACK_USER_ID="U..."  # researcher bot user's member ID: its profile > Copy member ID
 ```
 
 Configure the coordinator at `/coordinator/events` and

@@ -547,6 +547,38 @@ class TestRestoredAuthority:
         assert _ephemerals(client) == ["Not run: User is disabled"]
         assert ctx.runs.claim_run("run-1") is True
 
+    @pytest.mark.asyncio
+    async def test_live_run_of_refused_owner_does_not_resume(self):
+        entity = _make_entity(_paused_run([_make_requirement()], user_id="principal-1"))
+        ctx = make_ctx(agent=entity, users={OWNER: "principal-1"})
+        parked = EventContext(
+            run_id="run-1",
+            session_id=SESSION_ID,
+            channel="C123",
+            thread_ts="111.222",
+            message_ts="111.222",
+            owner=OWNER,
+            user_id="principal-1",
+            entity_id="agent-1",
+            authority=object(),
+        )
+        ctx.runs.park_paused(parked)
+        client = make_async_client_mock()
+        fake = FakeContinue()
+
+        with (
+            patch.object(hitl, "continue_run", new=fake),
+            patch.object(
+                security,
+                "resolve_principal_authorization",
+                new=AsyncMock(side_effect=PermissionError("User is disabled")),
+            ),
+        ):
+            await hitl.handle_submit(_submit_payload(_approved_blocks(), owner=OWNER), client, ctx)
+
+        assert fake.calls == []
+        assert _ephemerals(client) == ["Not run: User is disabled"]
+
 
 class TestRowActions:
     @pytest.mark.asyncio
