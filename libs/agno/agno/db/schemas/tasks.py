@@ -8,6 +8,14 @@ class CancelledProjectError(ValueError):
     pass
 
 
+class OpenTaskLimitError(ValueError):
+    """An automatic acceptance would exceed its Routine's limit on open Tasks."""
+
+
+# An accepted Task is open until it is Done or Cancelled.
+OPEN_TASK_STATUSES = ("ready", "in_progress", "in_review")
+
+
 # In progress is entered only by starting a run; review and completion need an earlier attempt.
 TASK_TRANSITIONS = {
     "backlog": {"ready", "in_review", "done", "cancelled"},

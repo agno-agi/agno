@@ -788,3 +788,51 @@ def test_a_named_executor_with_run_tools_needs_both_accepting_and_starting_permi
         assert saved["accepted_by"] == "alice"
     finally:
         system.db.close()
+
+
+# ----------------------------------------------------------------- max_open holds through the checks
+
+
+def test_max_open_is_not_exceeded_by_an_acceptance_that_lands_during_the_checks(open_system):
+    system = open_system
+    gap_taken = []
+
+    def gap(task, manager):
+        # While one proposal is checked, a person accepts the Routine's other proposal.
+        if not gap_taken:
+            other = next(item for item in proposals if item["id"] != task["id"])
+            gap_taken.append((task["id"], other["id"]))
+            system.manager.transition_task(
+                task_id=other["id"], target="ready", reason="Accepted", executor_type="agent", executor_id="writer"
+            )
+        return True
+
+    system.os.company.acceptance_checks["gap"] = gap
+    policy = AutoAccept(max_open=1, required_checks=["executor_registered", "gap"])
+    product_id, routine_id = system.declare(auto_accept=policy)
+    project, first = system.proposes(product_id, routine_id, title="First")
+    _, second = system.proposes(product_id, routine_id, title="Second")
+    proposals = [first, second]
+    system.manager.transition_project(project_id=project["id"], target="active", reason="Approved by a person")
+
+    outcomes = system.tick()
+    checked, by_person = gap_taken[0]
+    # The person's acceptance took the one place. The policy's acceptance is refused where it is written.
+    assert system.db.get_task(checked)["status"] == "backlog", outcomes
+    assert system.db.get_task(by_person)["status"] in ("ready", "in_progress")
+    outcome = system.outcome(outcomes, checked)
+    assert outcome["status"] == "skipped" and "1 Tasks open, its limit" in outcome["reason"], outcome
+    open_now = [
+        task
+        for task in system.db.get_tasks(product_id=product_id, limit=100)[0]
+        if task["status"] in ("ready", "in_progress", "in_review")
+    ]
+    assert len(open_now) == 1
+
+
+def test_max_open_still_lets_a_routine_fill_its_places(open_system):
+    product_id, routine_id = open_system.declare(auto_accept=AutoAccept(max_open=2))
+    tasks = [open_system.proposes(product_id, routine_id, title=f"Task {n}")[1] for n in range(3)]
+    open_system.tick()
+    statuses = sorted(open_system.db.get_task(task["id"])["status"] for task in tasks)
+    assert statuses == ["backlog", "in_progress", "in_progress"]

@@ -806,3 +806,51 @@ async def test_http_collaborative_work_and_shared_deletion(db, resource, isolati
         assert restored.status_code == 200, restored.text
         assert restored.json()["user_id"] == "alice"
         assert (await client.patch(root + "/missing", json={field: "No"}, headers=headers("bob"))).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_the_store_refuses_an_automatic_acceptance_past_the_routines_open_limit(db):
+    from agno.db.schemas.tasks import OpenTaskLimitError
+
+    m = manager(db)
+    product = await call(m.create, name="SDK")
+    project = await call(m.create_project, product_id=product["id"], name="Release")
+    await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
+    tasks = [
+        await call(
+            m.create_task,
+            product_id=product["id"],
+            title=f"Task {n}",
+            project_id=project["id"],
+            origin="routine",
+            routine_id="routine" if n < 3 else "other-routine",
+        )
+        for n in range(4)
+    ]
+    receipt = {"routine_id": "routine", "policy": "version", "max_open": 1}
+
+    async def accept(task, auto_accept):
+        return await call(
+            db.transition_task,
+            task["id"],
+            "ready",
+            "Authorized Routine proposal",
+            executor_type="agent",
+            executor_id="writer",
+            expected_updated_at=task["updated_at"],
+            auto_accept=auto_accept,
+        )
+
+    first = await accept(tasks[0], receipt)
+    assert first["status"] == "ready" and first["transitions"][-1]["auto_accept"] == receipt
+    with pytest.raises(OpenTaskLimitError, match="^Routine has 1 Tasks open, its limit"):
+        await accept(tasks[1], receipt)
+    assert (await call(db.get_task, tasks[1]["id"]))["status"] == "backlog"
+    # Another Routine's Tasks do not count, and a receipt with no bound is not counted at all.
+    assert (await accept(tasks[3], {**receipt, "routine_id": "other-routine"}))["status"] == "ready"
+    assert (await accept(tasks[2], {"routine_id": "routine", "policy": "version"}))["status"] == "ready"
+    # A finished Task makes room.
+    for target in ("cancelled",):
+        await call(db.transition_task, first["id"], target, "Not needed")
+        await call(db.transition_task, tasks[2]["id"], target, "Not needed")
+    assert (await accept(tasks[1], receipt))["status"] == "ready"

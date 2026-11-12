@@ -9,7 +9,7 @@ from agno.company.declarations import Routine
 from agno.company.execution import _call, _ExecutorAuthorization, _registered_component, _validate_executor_tools
 from agno.company.scheduler import CompanyScheduleExecutor
 from agno.db.schemas.scheduler import COMPANY_AUTOMATION_SCHEDULE_ID, RUN_ENDPOINT_RE
-from agno.db.schemas.tasks import CancelledProjectError
+from agno.db.schemas.tasks import OPEN_TASK_STATUSES, CancelledProjectError, OpenTaskLimitError
 from agno.guardrails.base import BaseGuardrail
 from agno.skills import LocalSkills, Skills
 
@@ -503,7 +503,7 @@ def _policy_fingerprint(schedule):
     return hashlib.sha256(json.dumps(content, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
-_OPEN_STATUSES = ("ready", "in_progress", "in_review")
+_OPEN_STATUSES = OPEN_TASK_STATUSES
 
 
 def _open_tasks(tasks, routine_id):
@@ -1127,6 +1127,8 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
             if authority is not None:
                 await authority.arequire("schedules", "write")
                 await authority.arequire(acceptance_resource, "write")
+                if approving is not None:
+                    await authority.arequire("projects", "write")
                 await authority.arequire("wiki", "read")
                 await authority.arequire(executor[0] + "s", "run", executor[1])
             # Re-read after all checks and proposal IO. Product/template bindings
@@ -1149,6 +1151,11 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
                 receipt["max_acceptances"] = policy.limits.max_acceptances
             if declared:
                 receipt["declared"] = True
+            # The record says whether the executor came from the Routine's proposal or the default.
+            task_receipt = {**receipt, "executor_chosen_by": chosen_by}
+            if policy.limits is None:
+                # The store enforces each bound in the acceptance's own transaction, under the Product lock.
+                task_receipt["max_open"] = policy.max_open
             _check_automation_deadline()
             if completing:
                 accepted = await _manager_call(
@@ -1175,19 +1182,21 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
                     )
                     if approved is None:
                         raise _AutomationSkip("Project changed during automatic approval")
-                accepted = await _manager_call(
-                    manager,
-                    "transition_task",
-                    task_id=task["id"],
-                    target="ready",
-                    reason="Authorized Routine proposal",
-                    accepted_by=grant.get("user_id"),
-                    executor_type=executor[0],
-                    executor_id=executor[1],
-                    expected_updated_at=task["updated_at"],
-                    # The record says whether the executor came from the Routine's proposal or the default.
-                    auto_accept={**receipt, "executor_chosen_by": chosen_by},
-                )
+                try:
+                    accepted = await _manager_call(
+                        manager,
+                        "transition_task",
+                        task_id=task["id"],
+                        target="ready",
+                        reason="Authorized Routine proposal",
+                        accepted_by=grant.get("user_id"),
+                        executor_type=executor[0],
+                        executor_id=executor[1],
+                        expected_updated_at=task["updated_at"],
+                        auto_accept=task_receipt,
+                    )
+                except OpenTaskLimitError as exc:
+                    raise _AutomationSkip(str(exc)) from exc
         if accepted is None:
             raise _AutomationSkip("Proposal changed during automatic acceptance")
         return accepted
