@@ -1,7 +1,7 @@
 import copy
 import json
 import uuid
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ag_ui.core import (
     BaseEvent,
@@ -92,6 +92,39 @@ def _format_reasoning_step(step: Optional[ReasoningStep], step_number: int = 0) 
     return "\n".join(parts) + "\n\n" if parts else ""
 
 
+def _close_text_message(state: StreamState) -> List[BaseEvent]:
+    if not state.text_message_open:
+        return []
+    events: List[BaseEvent] = [TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=state.text_message_id)]
+    state.close_text_message()
+    return events
+
+
+def _open_reasoning(state: StreamState) -> Tuple[List[BaseEvent], str]:
+    """Close any open text message and make sure a reasoning span is open. Returns its message id."""
+    events = _close_text_message(state)
+    reasoning_id, is_new = state.ensure_reasoning_started()
+    if is_new:
+        events.append(ReasoningStartEvent(type=EventType.REASONING_START, message_id=reasoning_id))
+        events.append(
+            ReasoningMessageStartEvent(
+                type=EventType.REASONING_MESSAGE_START, message_id=reasoning_id, role="reasoning"
+            )
+        )
+    return events, reasoning_id
+
+
+def _close_reasoning(state: StreamState) -> List[BaseEvent]:
+    if state.reasoning_message_id is None:
+        return []
+    reasoning_id = state.reasoning_message_id
+    state.end_reasoning()
+    return [
+        ReasoningMessageEndEvent(type=EventType.REASONING_MESSAGE_END, message_id=reasoning_id),
+        ReasoningEndEvent(type=EventType.REASONING_END, message_id=reasoning_id),
+    ]
+
+
 def _emit_state_delta(state: StreamState) -> List[BaseEvent]:
     if state.run_state is None:
         return []
@@ -104,15 +137,7 @@ def _emit_state_delta(state: StreamState) -> List[BaseEvent]:
 
 def _close_open_spans(state: StreamState) -> List[BaseEvent]:
     """End any reasoning, tool call, or text message still open, so a terminal event never leaves a dangling span."""
-    events: List[BaseEvent] = []
-
-    # Close orphaned reasoning session
-    if state.reasoning_message_id is not None:
-        events.append(
-            ReasoningMessageEndEvent(type=EventType.REASONING_MESSAGE_END, message_id=state.reasoning_message_id)
-        )
-        events.append(ReasoningEndEvent(type=EventType.REASONING_END, message_id=state.reasoning_message_id))
-        state.end_reasoning()
+    events: List[BaseEvent] = _close_reasoning(state)
 
     # Close remaining active tool calls
     for tool_call_id in list(state.active_tool_call_ids):
@@ -120,11 +145,7 @@ def _close_open_spans(state: StreamState) -> List[BaseEvent]:
             events.append(ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=tool_call_id))
             state.end_tool_call(tool_call_id)
 
-    # Close open text message
-    if state.text_message_open:
-        events.append(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=state.text_message_id))
-        state.close_text_message()
-
+    events.extend(_close_text_message(state))
     return events
 
 
@@ -138,6 +159,41 @@ def on_run_content(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEv
         content = _extract_team_response_chunk_content(chunk)  # type: ignore
     else:
         content = ""
+
+    # Assistant text and reasoning alternate on one timeline of non-overlapping spans: whichever
+    # channel produces a delta closes the other channel's open span first, and every delta is emitted
+    # the moment it arrives. Three consequences follow and are accepted. A chunk carrying both text
+    # and its own differing reasoning yields a reasoning span and then a fresh assistant message, so
+    # consecutive such chunks give one message each. A reasoning-only chunk arriving mid-answer ends
+    # that message and the rest of the answer streams under a new id. And a tool call arriving before
+    # any assistant message exists has to mint one, which ends the reasoning span, while the same call
+    # after assistant text does not, so one chain of thought reaches the client as a single reasoning
+    # block or as several depending on where the tool calls fall.
+
+    # Models that stream their own reasoning deliver it on the content stream rather than as
+    # reasoning events, so it has to be routed to the reasoning span here or it never reaches AG-UI.
+    # Some providers mirror the assistant text into reasoning_content, so a value byte-identical to
+    # this chunk's own content is the answer repeated, not reasoning, and must not open a span.
+    reasoning_content = getattr(chunk, "reasoning_content", None)
+    if reasoning_content and reasoning_content != content:
+        reasoning_events, reasoning_id = _open_reasoning(state)
+        events.extend(reasoning_events)
+        events.append(
+            ReasoningMessageContentEvent(
+                type=EventType.REASONING_MESSAGE_CONTENT,
+                message_id=reasoning_id,
+                delta=reasoning_content,
+            )
+        )
+        if not content:
+            return events
+
+    # A chunk carrying only citations, provider data or media has no text, so it neither ends the
+    # reasoning span nor opens a message inside it.
+    if content:
+        events.extend(_close_reasoning(state))
+    elif state.reasoning_message_id is not None:
+        return events
 
     if not state.text_message_open:
         message_id = state.open_text_message()
@@ -168,16 +224,18 @@ def on_tool_call_started(chunk: BaseRunOutputEvent, state: StreamState) -> List[
     if tool is None:
         return events
 
-    # Close open text message before tool call
+    # Close open text message before tool call, then parent the tool call to it
     if state.text_message_open:
-        events.append(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=state.text_message_id))
+        events.extend(_close_text_message(state))
         state.set_pending_tool_calls_parent_id(state.text_message_id)
-        state.close_text_message()
 
     parent_message_id = state.get_parent_message_id_for_tool_call()
 
     # Create empty parent message if none exists (AG-UI protocol requirement)
     if not parent_message_id:
+        # A message span must not open inside the reasoning span, so the synthetic parent
+        # ends reasoning first. A tool call on its own leaves the span open.
+        events.extend(_close_reasoning(state))
         parent_message_id = str(uuid.uuid4())
         events.append(
             TextMessageStartEvent(
@@ -240,12 +298,9 @@ def on_tool_call_completed(chunk: BaseRunOutputEvent, state: StreamState) -> Lis
 
 
 def on_reasoning_started(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
-    events: List[BaseEvent] = []
-
-    # Close open text message before reasoning
-    if state.text_message_open:
-        events.append(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=state.text_message_id))
-        state.close_text_message()
+    events: List[BaseEvent] = _close_text_message(state)
+    # A span may already be open; end it before minting a new id, or it never gets its end events.
+    events.extend(_close_reasoning(state))
 
     reasoning_id = state.start_reasoning()
     events.append(ReasoningStartEvent(type=EventType.REASONING_START, message_id=reasoning_id))
@@ -256,21 +311,7 @@ def on_reasoning_started(chunk: BaseRunOutputEvent, state: StreamState) -> List[
 
 
 def on_reasoning_content_delta(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
-    events: List[BaseEvent] = []
-
-    # Close open text message before reasoning
-    if state.text_message_open:
-        events.append(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=state.text_message_id))
-        state.close_text_message()
-
-    reasoning_id, is_new = state.ensure_reasoning_started()
-    if is_new:
-        events.append(ReasoningStartEvent(type=EventType.REASONING_START, message_id=reasoning_id))
-        events.append(
-            ReasoningMessageStartEvent(
-                type=EventType.REASONING_MESSAGE_START, message_id=reasoning_id, role="reasoning"
-            )
-        )
+    events, reasoning_id = _open_reasoning(state)
 
     content = getattr(chunk, "reasoning_content", None)
     if content:
@@ -283,21 +324,7 @@ def on_reasoning_content_delta(chunk: BaseRunOutputEvent, state: StreamState) ->
 
 
 def on_reasoning_step(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
-    events: List[BaseEvent] = []
-
-    # Close open text message before reasoning
-    if state.text_message_open:
-        events.append(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=state.text_message_id))
-        state.close_text_message()
-
-    reasoning_id, is_new = state.ensure_reasoning_started()
-    if is_new:
-        events.append(ReasoningStartEvent(type=EventType.REASONING_START, message_id=reasoning_id))
-        events.append(
-            ReasoningMessageStartEvent(
-                type=EventType.REASONING_MESSAGE_START, message_id=reasoning_id, role="reasoning"
-            )
-        )
+    events, reasoning_id = _open_reasoning(state)
 
     step_num = state.next_reasoning_step()
     step_content = getattr(chunk, "content", None)
@@ -310,15 +337,7 @@ def on_reasoning_step(chunk: BaseRunOutputEvent, state: StreamState) -> List[Bas
 
 
 def on_reasoning_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
-    events: List[BaseEvent] = []
-
-    if state.reasoning_message_id is not None:
-        reasoning_id = state.reasoning_message_id
-        events.append(ReasoningMessageEndEvent(type=EventType.REASONING_MESSAGE_END, message_id=reasoning_id))
-        events.append(ReasoningEndEvent(type=EventType.REASONING_END, message_id=reasoning_id))
-        state.end_reasoning()
-
-    return events
+    return _close_reasoning(state)
 
 
 def on_custom_event(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
