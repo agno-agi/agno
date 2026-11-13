@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from agno.knowledge.embedder import Embedder
+from agno.knowledge.embedder.base import embedding_purpose_kwargs
 
 
 @dataclass
@@ -27,14 +28,18 @@ class Document:
         if _embedder is None:
             raise ValueError("No embedder provided")
 
-        self.embedding, self.usage = _embedder.get_embedding_and_usage(self.content)
+        self.embedding, self.usage = _embedder.get_embedding_and_usage(
+            self.content, **embedding_purpose_kwargs(_embedder.get_embedding_and_usage, "document")
+        )
 
     async def async_embed(self, embedder: Optional[Embedder] = None) -> None:
         """Embed the document using the provided embedder"""
         _embedder = embedder or self.embedder
         if _embedder is None:
             raise ValueError("No embedder provided")
-        self.embedding, self.usage = await _embedder.async_get_embedding_and_usage(self.content)
+        self.embedding, self.usage = await _embedder.async_get_embedding_and_usage(
+            self.content, **embedding_purpose_kwargs(_embedder.async_get_embedding_and_usage, "document")
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         """Returns a dictionary representation of the document"""

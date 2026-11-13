@@ -13,6 +13,7 @@ except ImportError:
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
+from agno.knowledge.embedder.base import embedding_purpose_kwargs
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_error, log_info, log_warning, logger
 from agno.vectordb.base import (
@@ -444,7 +445,9 @@ class UpstashVectorDb(VectorDb):
             filter_str = f"{filter_str} AND {scope_str}" if filter_str else scope_str
 
         if not self.use_upstash_embeddings and self.embedder is not None:
-            dense_embedding = self.embedder.get_embedding(query)
+            dense_embedding = self.embedder.get_embedding(
+                query, **embedding_purpose_kwargs(self.embedder.get_embedding, "query")
+            )
 
             if dense_embedding is None:
                 log_error(f"Error getting embedding for Query: {query}")
@@ -659,7 +662,10 @@ class UpstashVectorDb(VectorDb):
                 doc_contents = [doc.content for doc in documents]
 
                 # Get batch embeddings and usage
-                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(
+                    doc_contents,
+                    **embedding_purpose_kwargs(self.embedder.async_get_embeddings_batch_and_usage, "document"),
+                )
 
                 # Process documents with pre-computed embeddings
                 for j, doc in enumerate(documents):

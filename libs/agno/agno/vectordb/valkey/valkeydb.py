@@ -33,6 +33,7 @@ from agno.exceptions import EmbeddingError
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
+from agno.knowledge.embedder.base import embedding_purpose_kwargs
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.string import hash_string_sha256
@@ -768,7 +769,9 @@ class ValkeyDb(VectorDb):
         self._require_owner_field(user_id)
         try:
             client = self._get_client()
-            query_embedding = self.embedder.get_embedding(query)
+            query_embedding = self.embedder.get_embedding(
+                query, **embedding_purpose_kwargs(self.embedder.get_embedding, "query")
+            )
             query_vector_bytes = _float_list_to_bytes(query_embedding)
 
             clauses = [self._build_filter_expression(filters), self._user_scope_expression(user_id)]

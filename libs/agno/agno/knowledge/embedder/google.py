@@ -1,12 +1,16 @@
+from copy import copy
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from agno.knowledge.embedder.base import (
     Embedder,
+    EmbeddingPurpose,
     aembed_texts_individually,
+    embedding_purpose_kwargs,
     pad_batch_embeddings,
     raise_embedding_error,
+    resolve_embedding_task_type,
 )
 from agno.utils.gemini import inject_agno_client_header
 from agno.utils.log import log_error, log_info, log_warning
@@ -69,13 +73,15 @@ class GeminiEmbedder(Embedder):
         """Returns the same client instance since Google GenAI Client supports both sync and async operations."""
         return self.client
 
-    def _response(self, text: str) -> EmbedContentResponse:
+    def _get_request_params(
+        self, contents: Union[str, List[str]], purpose: Optional[EmbeddingPurpose] = None
+    ) -> Dict[str, Any]:
         # If a user provides a model id with the `models/` prefix, we need to remove it
         _id = self.id
         if _id.startswith("models/"):
             _id = _id.split("/")[-1]
 
-        _request_params: Dict[str, Any] = {"contents": text, "model": _id, "config": {}}
+        _request_params: Dict[str, Any] = {"contents": contents, "model": _id, "config": {}}
         if self.dimensions:
             _request_params["config"]["output_dimensionality"] = self.dimensions
         if self.task_type:
@@ -87,11 +93,29 @@ class GeminiEmbedder(Embedder):
 
         if self.request_params:
             _request_params.update(self.request_params)
-        return self.client.models.embed_content(**_request_params)
+        if purpose is not None:
+            # request_params can carry a dict or an SDK config object. Copy it so
+            # simultaneous document and query calls never alter shared settings.
+            config = copy(_request_params.get("config") or {})
+            configured = config.get("task_type", self.task_type) if isinstance(config, dict) else config.task_type
+            task_type = resolve_embedding_task_type(configured, purpose, "RETRIEVAL_DOCUMENT", "RETRIEVAL_QUERY")
+            if isinstance(config, dict):
+                config["task_type"] = task_type
+                if task_type == "RETRIEVAL_QUERY":
+                    config.pop("title", None)
+            else:
+                config.task_type = task_type
+                if task_type == "RETRIEVAL_QUERY":
+                    config.title = None
+            _request_params["config"] = config
+        return _request_params
 
-    def get_embedding(self, text: str) -> List[float]:
+    def _response(self, text: str, *, purpose: Optional[EmbeddingPurpose] = None) -> EmbedContentResponse:
+        return self.client.models.embed_content(**self._get_request_params(text, purpose))
+
+    def get_embedding(self, text: str, *, purpose: Optional[EmbeddingPurpose] = None) -> List[float]:
         try:
-            response = self._response(text=text)
+            response = self._response(text=text, **embedding_purpose_kwargs(self._response, purpose))
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="Google")
 
@@ -105,9 +129,11 @@ class GeminiEmbedder(Embedder):
         log_warning("No embeddings found in response")
         return []
 
-    def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
+    def get_embedding_and_usage(
+        self, text: str, *, purpose: Optional[EmbeddingPurpose] = None
+    ) -> Tuple[List[float], Optional[Dict[str, Any]]]:
         try:
-            response = self._response(text=text)
+            response = self._response(text=text, **embedding_purpose_kwargs(self._response, purpose))
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="Google")
         usage = None
@@ -124,25 +150,9 @@ class GeminiEmbedder(Embedder):
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="Google")
 
-    async def async_get_embedding(self, text: str) -> List[float]:
+    async def async_get_embedding(self, text: str, *, purpose: Optional[EmbeddingPurpose] = None) -> List[float]:
         """Async version of get_embedding using client.aio."""
-        # If a user provides a model id with the `models/` prefix, we need to remove it
-        _id = self.id
-        if _id.startswith("models/"):
-            _id = _id.split("/")[-1]
-
-        _request_params: Dict[str, Any] = {"contents": text, "model": _id, "config": {}}
-        if self.dimensions:
-            _request_params["config"]["output_dimensionality"] = self.dimensions
-        if self.task_type:
-            _request_params["config"]["task_type"] = self.task_type
-        if self.title:
-            _request_params["config"]["title"] = self.title
-        if not _request_params["config"]:
-            del _request_params["config"]
-
-        if self.request_params:
-            _request_params.update(self.request_params)
+        _request_params = self._get_request_params(text, purpose)
 
         try:
             response = await self.aclient.aio.models.embed_content(**_request_params)
@@ -155,25 +165,11 @@ class GeminiEmbedder(Embedder):
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="Google")
 
-    async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
+    async def async_get_embedding_and_usage(
+        self, text: str, *, purpose: Optional[EmbeddingPurpose] = None
+    ) -> Tuple[List[float], Optional[Dict[str, Any]]]:
         """Async version of get_embedding_and_usage using client.aio."""
-        # If a user provides a model id with the `models/` prefix, we need to remove it
-        _id = self.id
-        if _id.startswith("models/"):
-            _id = _id.split("/")[-1]
-
-        _request_params: Dict[str, Any] = {"contents": text, "model": _id, "config": {}}
-        if self.dimensions:
-            _request_params["config"]["output_dimensionality"] = self.dimensions
-        if self.task_type:
-            _request_params["config"]["task_type"] = self.task_type
-        if self.title:
-            _request_params["config"]["title"] = self.title
-        if not _request_params["config"]:
-            del _request_params["config"]
-
-        if self.request_params:
-            _request_params.update(self.request_params)
+        _request_params = self._get_request_params(text, purpose)
 
         try:
             response = await self.aclient.aio.models.embed_content(**_request_params)
@@ -191,7 +187,7 @@ class GeminiEmbedder(Embedder):
             raise_embedding_error(e, model_id=self.id, provider="Google")
 
     async def async_get_embeddings_batch_and_usage(
-        self, texts: List[str]
+        self, texts: List[str], *, purpose: Optional[EmbeddingPurpose] = None
     ) -> Tuple[List[List[float]], List[Optional[Dict[str, Any]]]]:
         """
         Get embeddings and usage for multiple texts in batches.
@@ -209,23 +205,7 @@ class GeminiEmbedder(Embedder):
         for i in range(0, len(texts), self.batch_size):
             batch_texts = texts[i : i + self.batch_size]
 
-            # If a user provides a model id with the `models/` prefix, we need to remove it
-            _id = self.id
-            if _id.startswith("models/"):
-                _id = _id.split("/")[-1]
-
-            _request_params: Dict[str, Any] = {"contents": batch_texts, "model": _id, "config": {}}
-            if self.dimensions:
-                _request_params["config"]["output_dimensionality"] = self.dimensions
-            if self.task_type:
-                _request_params["config"]["task_type"] = self.task_type
-            if self.title:
-                _request_params["config"]["title"] = self.title
-            if not _request_params["config"]:
-                del _request_params["config"]
-
-            if self.request_params:
-                _request_params.update(self.request_params)
+            _request_params = self._get_request_params(batch_texts, purpose)
 
             try:
                 response = await self.aclient.aio.models.embed_content(**_request_params)
@@ -256,7 +236,7 @@ class GeminiEmbedder(Embedder):
                 # Fall back to individual calls: a whole-batch failure is often transient
                 # (or caused by a single bad text). Successes are kept so one bad chunk
                 # does not discard the rest of the batch.
-                batch_embeddings, batch_usage = await aembed_texts_individually(self, batch_texts)
+                batch_embeddings, batch_usage = await aembed_texts_individually(self, batch_texts, purpose=purpose)
                 all_embeddings.extend(batch_embeddings)
                 all_usage.extend(batch_usage)
 

@@ -15,6 +15,7 @@ except ImportError:
 
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
+from agno.knowledge.embedder.base import embedding_purpose_kwargs
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb.base import (
@@ -1466,7 +1467,10 @@ class OpenSearch(VectorDb):
                 # Get batch embeddings and usage
                 doc_contents = [doc.content for doc in docs_to_embed]
                 log_debug(f"Generating batch embeddings for {len(doc_contents)} documents")
-                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(
+                    doc_contents,
+                    **embedding_purpose_kwargs(self.embedder.async_get_embeddings_batch_and_usage, "document"),
+                )
 
                 # Assign embeddings to documents
                 for j, doc in enumerate(docs_to_embed):
@@ -2069,7 +2073,9 @@ class OpenSearch(VectorDb):
             raise ValueError("No embedder configured for search")
 
         log_debug("Generating query embedding")
-        query_embedding, usage = self.embedder.get_embedding_and_usage(query)
+        query_embedding, usage = self.embedder.get_embedding_and_usage(
+            query, **embedding_purpose_kwargs(self.embedder.get_embedding_and_usage, "query")
+        )
         log_debug(f"Generated query embedding (dimension: {len(query_embedding)})")
 
         if usage:

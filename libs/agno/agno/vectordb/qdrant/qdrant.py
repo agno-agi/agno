@@ -13,6 +13,7 @@ except ImportError:
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
+from agno.knowledge.embedder.base import embedding_purpose_kwargs
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb.base import VectorDb, embed_before_replace, is_rate_limit_error
@@ -475,7 +476,10 @@ class Qdrant(VectorDb):
                     doc_contents = [doc.content for doc in documents]
 
                     # Get batch embeddings and usage
-                    embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+                    embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(
+                        doc_contents,
+                        **embedding_purpose_kwargs(self.embedder.async_get_embeddings_batch_and_usage, "document"),
+                    )
 
                     # Process documents with pre-computed embeddings
                     for j, doc in enumerate(documents):
@@ -672,7 +676,9 @@ class Qdrant(VectorDb):
         limit: int,
         formatted_filters: Optional[models.Filter],
     ) -> List[models.ScoredPoint]:
-        dense_embedding = self.embedder.get_embedding(query)
+        dense_embedding = self.embedder.get_embedding(
+            query, **embedding_purpose_kwargs(self.embedder.get_embedding, "query")
+        )
         sparse_embedding = next(iter(self.sparse_encoder.embed([query]))).as_object()
         call = self.client.query_points(
             collection_name=self.collection,
@@ -698,7 +704,9 @@ class Qdrant(VectorDb):
         limit: int,
         formatted_filters: Optional[models.Filter],
     ) -> List[models.ScoredPoint]:
-        dense_embedding = self.embedder.get_embedding(query)
+        dense_embedding = self.embedder.get_embedding(
+            query, **embedding_purpose_kwargs(self.embedder.get_embedding, "query")
+        )
 
         # TODO(v2.0.0): Remove this conditional and always use named vectors
         if self.use_named_vectors:
@@ -747,7 +755,9 @@ class Qdrant(VectorDb):
         limit: int,
         formatted_filters: Optional[models.Filter],
     ) -> List[models.ScoredPoint]:
-        dense_embedding = await self.embedder.async_get_embedding(query)
+        dense_embedding = await self.embedder.async_get_embedding(
+            query, **embedding_purpose_kwargs(self.embedder.async_get_embedding, "query")
+        )
 
         # TODO(v2.0.0): Remove this conditional and always use named vectors
         if self.use_named_vectors:
@@ -796,7 +806,9 @@ class Qdrant(VectorDb):
         limit: int,
         formatted_filters: Optional[models.Filter],
     ) -> List[models.ScoredPoint]:
-        dense_embedding = await self.embedder.async_get_embedding(query)
+        dense_embedding = await self.embedder.async_get_embedding(
+            query, **embedding_purpose_kwargs(self.embedder.async_get_embedding, "query")
+        )
         sparse_embedding = next(iter(self.sparse_encoder.embed([query]))).as_object()
         call = await self.async_client.query_points(
             collection_name=self.collection,

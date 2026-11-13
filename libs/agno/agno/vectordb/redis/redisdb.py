@@ -17,6 +17,7 @@ from agno.exceptions import EmbeddingError
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
+from agno.knowledge.embedder.base import embedding_purpose_kwargs
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.string import hash_string_sha256
@@ -650,7 +651,10 @@ class RedisDb(VectorDb):
         """Perform vector similarity search."""
         try:
             # Get query embedding
-            query_embedding = array_to_buffer(self.embedder.get_embedding(query), "float32")
+            query_embedding = array_to_buffer(
+                self.embedder.get_embedding(query, **embedding_purpose_kwargs(self.embedder.get_embedding, "query")),
+                "float32",
+            )
 
             # TODO: do we want to pass back the embedding?
             # Create vector query
@@ -719,7 +723,10 @@ class RedisDb(VectorDb):
         """Perform hybrid search combining vector and keyword search."""
         try:
             # Get query embedding
-            query_embedding = array_to_buffer(self.embedder.get_embedding(query), "float32")
+            query_embedding = array_to_buffer(
+                self.embedder.get_embedding(query, **embedding_purpose_kwargs(self.embedder.get_embedding, "query")),
+                "float32",
+            )
 
             # Create vector query
             vector_query = HybridQuery(

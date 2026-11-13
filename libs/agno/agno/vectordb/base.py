@@ -5,6 +5,7 @@ from typing import Any, Dict, Iterator, List, Optional
 
 from agno.exceptions import EmbeddingError
 from agno.knowledge.document import Document
+from agno.knowledge.embedder.base import embedding_purpose_kwargs
 from agno.utils.log import log_error, log_warning
 from agno.utils.string import generate_id
 
@@ -53,7 +54,10 @@ async def aembed_before_replace(documents: List[Document], embedder: Any) -> Non
     # Use the batch API where the embedder has one, so guarding the delete does not
     # turn one batched call into one call per document.
     if getattr(embedder, "enable_batch", False) is True and hasattr(embedder, "async_get_embeddings_batch_and_usage"):
-        embeddings, usages = await embedder.async_get_embeddings_batch_and_usage([d.content for d in pending])
+        embeddings, usages = await embedder.async_get_embeddings_batch_and_usage(
+            [d.content for d in pending],
+            **embedding_purpose_kwargs(embedder.async_get_embeddings_batch_and_usage, "document"),
+        )
         for index, document in enumerate(pending):
             if index < len(embeddings):
                 document.embedding = embeddings[index]

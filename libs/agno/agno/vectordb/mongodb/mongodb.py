@@ -11,6 +11,7 @@ from agno.exceptions import EmbeddingError
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
+from agno.knowledge.embedder.base import embedding_purpose_kwargs
 from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb, embed_before_replace, is_rate_limit_error, raise_embedding_failures
 from agno.vectordb.distance import Distance
@@ -659,7 +660,9 @@ class MongoDb(VectorDb):
         if self.search_type == SearchType.hybrid:
             return self.hybrid_search(query, limit=limit, filters=filters, user_id=user_id)
 
-        query_embedding = self.embedder.get_embedding(query)
+        query_embedding = self.embedder.get_embedding(
+            query, **embedding_purpose_kwargs(self.embedder.get_embedding, "query")
+        )
         if query_embedding is None:
             log_error(f"Failed to generate embedding for query: {query}")
             return []
@@ -851,7 +854,9 @@ class MongoDb(VectorDb):
 
         log_debug(f"Performing hybrid search for query: '{query}' with limit: {limit}")
 
-        query_embedding = self.embedder.get_embedding(query)
+        query_embedding = self.embedder.get_embedding(
+            query, **embedding_purpose_kwargs(self.embedder.get_embedding, "query")
+        )
         if query_embedding is None:
             log_error(f"Failed to generate embedding for query: {query}")
             return []
@@ -1163,7 +1168,10 @@ class MongoDb(VectorDb):
                 doc_contents = [doc.content for doc in documents]
 
                 # Get batch embeddings and usage
-                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(
+                    doc_contents,
+                    **embedding_purpose_kwargs(self.embedder.async_get_embeddings_batch_and_usage, "document"),
+                )
 
                 # Process documents with pre-computed embeddings
                 for j, doc in enumerate(documents):
@@ -1242,7 +1250,10 @@ class MongoDb(VectorDb):
                 doc_contents = [doc.content for doc in documents]
 
                 # Get batch embeddings and usage
-                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(
+                    doc_contents,
+                    **embedding_purpose_kwargs(self.embedder.async_get_embeddings_batch_and_usage, "document"),
+                )
 
                 # Process documents with pre-computed embeddings
                 for j, doc in enumerate(documents):
@@ -1304,7 +1315,9 @@ class MongoDb(VectorDb):
         if isinstance(filters, List):
             log_warning("Filters Expressions are not supported in MongoDB. No filters will be applied.")
             filters = None
-        query_embedding = await self.embedder.async_get_embedding(query)
+        query_embedding = await self.embedder.async_get_embedding(
+            query, **embedding_purpose_kwargs(self.embedder.async_get_embedding, "query")
+        )
         if query_embedding is None:
             log_error(f"Failed to generate embedding for query: {query}")
             return []

@@ -18,6 +18,7 @@ except ImportError:
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
+from agno.knowledge.embedder.base import embedding_purpose_kwargs
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
 from agno.vectordb.base import (
@@ -474,7 +475,10 @@ class ChromaDb(VectorDb):
                 doc_contents = [doc.content for doc in documents]
 
                 # Get batch embeddings and usage
-                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(
+                    doc_contents,
+                    **embedding_purpose_kwargs(self.embedder.async_get_embeddings_batch_and_usage, "document"),
+                )
 
                 # Process documents with pre-computed embeddings
                 for j, doc in enumerate(documents):
@@ -680,7 +684,10 @@ class ChromaDb(VectorDb):
                 doc_contents = [doc.content for doc in documents]
 
                 # Get batch embeddings and usage
-                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(
+                    doc_contents,
+                    **embedding_purpose_kwargs(self.embedder.async_get_embeddings_batch_and_usage, "document"),
+                )
 
                 # Process documents with pre-computed embeddings
                 for j, doc in enumerate(documents):
@@ -951,7 +958,9 @@ class ChromaDb(VectorDb):
         Returns:
             List[Document]: List of search results.
         """
-        query_embedding = self.embedder.get_embedding(query)
+        query_embedding = self.embedder.get_embedding(
+            query, **embedding_purpose_kwargs(self.embedder.get_embedding, "query")
+        )
         if query_embedding is None:
             log_error(f"Error getting embedding for Query: {query}")
             return []
@@ -1042,7 +1051,9 @@ class ChromaDb(VectorDb):
         Returns:
             List[Document]: List of search results with RRF-fused ranking.
         """
-        query_embedding = self.embedder.get_embedding(query)
+        query_embedding = self.embedder.get_embedding(
+            query, **embedding_purpose_kwargs(self.embedder.get_embedding, "query")
+        )
         if query_embedding is None:
             log_error(f"Error getting embedding for Query: {query}")
             return []

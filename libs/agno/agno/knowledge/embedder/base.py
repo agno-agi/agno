@@ -1,8 +1,40 @@
 from dataclasses import dataclass
-from typing import Any, Dict, List, NoReturn, Optional, Tuple
+from inspect import Parameter, signature
+from typing import Any, Callable, Dict, List, Literal, NoReturn, Optional, Tuple
 
 from agno.exceptions import EmbeddingError
 from agno.utils.log import log_warning
+
+EmbeddingPurpose = Literal["document", "query"]
+
+
+def embedding_purpose_kwargs(method: Callable[..., Any], purpose: Optional[EmbeddingPurpose]) -> Dict[str, Any]:
+    """Pass a purpose only to methods that explicitly accept it.
+
+    Custom embedders with the original text-only signatures, including overrides
+    of provider methods, keep receiving exactly the arguments they accepted before.
+    A generic **kwargs parameter alone does not opt an embedder into this contract.
+    """
+    if purpose is None:
+        return {}
+    try:
+        parameter = signature(method).parameters.get("purpose")
+    except (TypeError, ValueError):
+        return {}
+    if parameter is not None and parameter.kind in (Parameter.POSITIONAL_OR_KEYWORD, Parameter.KEYWORD_ONLY):
+        return {"purpose": purpose}
+    return {}
+
+
+def resolve_embedding_task_type(
+    configured: Any, purpose: Optional[EmbeddingPurpose], document_type: str, query_type: str
+) -> Any:
+    """Select a retrieval role while retaining explicit non-retrieval tasks."""
+    if purpose is not None and purpose not in ("document", "query"):
+        raise ValueError("Embedding purpose must be 'document' or 'query'")
+    if purpose is not None and configured in (document_type, query_type):
+        return document_type if purpose == "document" else query_type
+    return configured
 
 
 def raise_embedding_error(error: Exception, model_id: Optional[str] = None, provider: Optional[str] = None) -> NoReturn:
@@ -64,6 +96,7 @@ def pad_batch_embeddings(
 async def aembed_texts_individually(
     embedder: "Embedder",
     texts: List[str],
+    purpose: Optional[EmbeddingPurpose] = None,
 ) -> Tuple[List[List[float]], List[Optional[Dict]]]:
     """Embed each text on its own, keeping successes and reporting failures once.
 
@@ -77,7 +110,9 @@ async def aembed_texts_individually(
 
     for index, text in enumerate(texts):
         try:
-            embedding, usage = await embedder.async_get_embedding_and_usage(text)
+            embedding, usage = await embedder.async_get_embedding_and_usage(
+                text, **embedding_purpose_kwargs(embedder.async_get_embedding_and_usage, purpose)
+            )
         except EmbeddingError as e:
             failures.append((index, e))
             embedding, usage = [], None

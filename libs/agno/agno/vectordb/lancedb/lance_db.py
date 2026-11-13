@@ -13,6 +13,7 @@ except ImportError:
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
+from agno.knowledge.embedder.base import embedding_purpose_kwargs
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb, embed_before_replace, is_rate_limit_error
@@ -457,7 +458,10 @@ class LanceDb(VectorDb):
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
             try:
                 doc_contents = [doc.content for doc in documents]
-                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(
+                    doc_contents,
+                    **embedding_purpose_kwargs(self.embedder.async_get_embeddings_batch_and_usage, "document"),
+                )
 
                 for j, doc in enumerate(documents):
                     if j < len(embeddings):
@@ -539,7 +543,10 @@ class LanceDb(VectorDb):
             if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
                 try:
                     doc_contents = [doc.content for doc in documents]
-                    embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+                    embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(
+                        doc_contents,
+                        **embedding_purpose_kwargs(self.embedder.async_get_embeddings_batch_and_usage, "document"),
+                    )
                     for j, doc in enumerate(documents):
                         if j < len(embeddings):
                             doc.embedding = embeddings[j]
@@ -709,7 +716,9 @@ class LanceDb(VectorDb):
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         user_id: Optional[str] = None,
     ) -> Optional[List[Dict[str, Any]]]:
-        query_embedding = self.embedder.get_embedding(query)
+        query_embedding = self.embedder.get_embedding(
+            query, **embedding_purpose_kwargs(self.embedder.get_embedding, "query")
+        )
         if query_embedding is None:
             log_error(f"Error getting embedding for Query: {query}")
             return None
@@ -741,7 +750,9 @@ class LanceDb(VectorDb):
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         user_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        query_embedding = self.embedder.get_embedding(query)
+        query_embedding = self.embedder.get_embedding(
+            query, **embedding_purpose_kwargs(self.embedder.get_embedding, "query")
+        )
         if query_embedding is None:
             log_error(f"Error getting embedding for Query: {query}")
             return []

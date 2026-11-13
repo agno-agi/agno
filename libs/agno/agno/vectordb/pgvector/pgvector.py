@@ -4,6 +4,7 @@ from hashlib import md5
 from math import sqrt
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, cast
 
+from agno.knowledge.embedder.base import embedding_purpose_kwargs
 from agno.utils.string import generate_id
 
 try:
@@ -733,7 +734,10 @@ class PgVector(VectorDb):
                 doc_contents = [doc.content for doc in batch_docs]
 
                 # Get batch embeddings and usage
-                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(
+                    doc_contents,
+                    **embedding_purpose_kwargs(self.embedder.async_get_embeddings_batch_and_usage, "document"),
+                )
 
                 # Process documents with pre-computed embeddings
                 for j, doc in enumerate(batch_docs):
@@ -1062,7 +1066,9 @@ class PgVector(VectorDb):
         """
         try:
             # Get the embedding for the query string
-            query_embedding = self.embedder.get_embedding(query)
+            query_embedding = self.embedder.get_embedding(
+                query, **embedding_purpose_kwargs(self.embedder.get_embedding, "query")
+            )
             if query_embedding is None:
                 log_error(f"Error getting embedding for Query: {query}")
                 return []
@@ -1330,7 +1336,9 @@ class PgVector(VectorDb):
         """
         try:
             # Get the embedding for the query string
-            query_embedding = self.embedder.get_embedding(query)
+            query_embedding = self.embedder.get_embedding(
+                query, **embedding_purpose_kwargs(self.embedder.get_embedding, "query")
+            )
             if query_embedding is None:
                 log_error(f"Error getting embedding for Query: {query}")
                 return []

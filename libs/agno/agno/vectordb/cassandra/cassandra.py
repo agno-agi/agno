@@ -5,6 +5,7 @@ from typing import Any, Dict, Iterable, List, Optional, Union
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
+from agno.knowledge.embedder.base import embedding_purpose_kwargs
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb.base import (
     VectorDb,
@@ -256,7 +257,10 @@ class Cassandra(VectorDb):
                 doc_contents = [doc.content for doc in documents]
 
                 # Get batch embeddings and usage
-                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(
+                    doc_contents,
+                    **embedding_purpose_kwargs(self.embedder.async_get_embeddings_batch_and_usage, "document"),
+                )
 
                 # Process documents with pre-computed embeddings
                 for j, doc in enumerate(documents):
@@ -380,7 +384,9 @@ class Cassandra(VectorDb):
         """Vector similarity search implementation."""
         self._validate_user_id(user_id)
         self._require_owner_field(user_id)
-        query_embedding = self.embedder.get_embedding(query)
+        query_embedding = self.embedder.get_embedding(
+            query, **embedding_purpose_kwargs(self.embedder.get_embedding, "query")
+        )
 
         if user_id is None:
             # Unscoped: one unfiltered search sees every owner.

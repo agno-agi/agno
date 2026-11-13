@@ -14,6 +14,7 @@ except ImportError as e:
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
+from agno.knowledge.embedder.base import embedding_purpose_kwargs
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.vectordb.base import VectorDb, aembed_before_replace, embed_before_replace
 from agno.vectordb.distance import Distance
@@ -489,7 +490,9 @@ class SurrealDb(VectorDb):
         if isinstance(filters, List):
             log_warning("Filters Expressions are not supported in SurrealDB. No filters will be applied.")
             filters = None
-        query_embedding = self.embedder.get_embedding(query)
+        query_embedding = self.embedder.get_embedding(
+            query, **embedding_purpose_kwargs(self.embedder.get_embedding, "query")
+        )
         if query_embedding is None:
             log_error(f"Error getting embedding for Query: {query}")
             return []
@@ -869,7 +872,9 @@ class SurrealDb(VectorDb):
             log_warning("Filters Expressions are not supported in SurrealDB. No filters will be applied.")
             filters = None
 
-        query_embedding = self.embedder.get_embedding(query)
+        query_embedding = self.embedder.get_embedding(
+            query, **embedding_purpose_kwargs(self.embedder.get_embedding, "query")
+        )
         if query_embedding is None:
             log_error(f"Error getting embedding for Query: {query}")
             return []

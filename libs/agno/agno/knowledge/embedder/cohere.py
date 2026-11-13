@@ -4,9 +4,12 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from agno.knowledge.embedder.base import (
     Embedder,
+    EmbeddingPurpose,
     aembed_texts_individually,
+    embedding_purpose_kwargs,
     pad_batch_embeddings,
     raise_embedding_error,
+    resolve_embedding_task_type,
 )
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
@@ -55,20 +58,12 @@ class CohereEmbedder(Embedder):
         self.async_client = AsyncCohereClient(**params)
         return self.async_client
 
-    def response(self, text: str) -> Union[EmbeddingsFloatsEmbedResponse, EmbeddingsByTypeEmbedResponse]:
-        request_params: Dict[str, Any] = {}
+    def response(
+        self, text: str, *, purpose: Optional[EmbeddingPurpose] = None
+    ) -> Union[EmbeddingsFloatsEmbedResponse, EmbeddingsByTypeEmbedResponse]:
+        return self.client.embed(texts=[text], **self._get_batch_request_params(purpose))
 
-        if self.id:
-            request_params["model"] = self.id
-        if self.input_type:
-            request_params["input_type"] = self.input_type
-        if self.embedding_types:
-            request_params["embedding_types"] = self.embedding_types
-        if self.request_params:
-            request_params.update(self.request_params)
-        return self.client.embed(texts=[text], **request_params)
-
-    def _get_batch_request_params(self) -> Dict[str, Any]:
+    def _get_batch_request_params(self, purpose: Optional[EmbeddingPurpose] = None) -> Dict[str, Any]:
         """Get request parameters for batch embedding calls."""
         request_params: Dict[str, Any] = {}
 
@@ -81,6 +76,10 @@ class CohereEmbedder(Embedder):
         if self.request_params:
             request_params.update(self.request_params)
 
+        if "input_type" in request_params:
+            request_params["input_type"] = resolve_embedding_task_type(
+                request_params["input_type"], purpose, "search_document", "search_query"
+            )
         return request_params
 
     def _is_rate_limit_error(self, error: Exception) -> bool:
@@ -120,7 +119,7 @@ class CohereEmbedder(Embedder):
         await asyncio.sleep(delay)
 
     async def _async_batch_with_retry(
-        self, texts: List[str], max_retries: int = 3
+        self, texts: List[str], max_retries: int = 3, *, purpose: Optional[EmbeddingPurpose] = None
     ) -> Tuple[List[List[float]], List[Optional[Dict]]]:
         """Execute async batch embedding with rate-limit-aware backoff for rate limiting."""
 
@@ -128,7 +127,7 @@ class CohereEmbedder(Embedder):
 
         for attempt in range(max_retries + 1):
             try:
-                request_params = self._get_batch_request_params()
+                request_params = self._get_batch_request_params(purpose)
                 response: Union[
                     EmbeddingsFloatsEmbedResponse, EmbeddingsByTypeEmbedResponse
                 ] = await self.aclient.embed(texts=texts, **request_params)
@@ -175,9 +174,11 @@ class CohereEmbedder(Embedder):
         log_error("Could not create embeddings. End of retry loop reached.")
         return [], []
 
-    def get_embedding(self, text: str) -> List[float]:
+    def get_embedding(self, text: str, *, purpose: Optional[EmbeddingPurpose] = None) -> List[float]:
         try:
-            response: Union[EmbeddingsFloatsEmbedResponse, EmbeddingsByTypeEmbedResponse] = self.response(text=text)
+            response: Union[EmbeddingsFloatsEmbedResponse, EmbeddingsByTypeEmbedResponse] = self.response(
+                text=text, **embedding_purpose_kwargs(self.response, purpose)
+            )
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="Cohere")
 
@@ -191,9 +192,13 @@ class CohereEmbedder(Embedder):
         log_warning("No embeddings found in response")
         return []
 
-    def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
+    def get_embedding_and_usage(
+        self, text: str, *, purpose: Optional[EmbeddingPurpose] = None
+    ) -> Tuple[List[float], Optional[Dict[str, Any]]]:
         try:
-            response: Union[EmbeddingsFloatsEmbedResponse, EmbeddingsByTypeEmbedResponse] = self.response(text=text)
+            response: Union[EmbeddingsFloatsEmbedResponse, EmbeddingsByTypeEmbedResponse] = self.response(
+                text=text, **embedding_purpose_kwargs(self.response, purpose)
+            )
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="Cohere")
 
@@ -208,17 +213,8 @@ class CohereEmbedder(Embedder):
             return embedding, usage.model_dump()
         return embedding, None
 
-    async def async_get_embedding(self, text: str) -> List[float]:
-        request_params: Dict[str, Any] = {}
-
-        if self.id:
-            request_params["model"] = self.id
-        if self.input_type:
-            request_params["input_type"] = self.input_type
-        if self.embedding_types:
-            request_params["embedding_types"] = self.embedding_types
-        if self.request_params:
-            request_params.update(self.request_params)
+    async def async_get_embedding(self, text: str, *, purpose: Optional[EmbeddingPurpose] = None) -> List[float]:
+        request_params = self._get_batch_request_params(purpose)
 
         try:
             response: Union[EmbeddingsFloatsEmbedResponse, EmbeddingsByTypeEmbedResponse] = await self.aclient.embed(
@@ -234,17 +230,10 @@ class CohereEmbedder(Embedder):
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="Cohere")
 
-    async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
-        request_params: Dict[str, Any] = {}
-
-        if self.id:
-            request_params["model"] = self.id
-        if self.input_type:
-            request_params["input_type"] = self.input_type
-        if self.embedding_types:
-            request_params["embedding_types"] = self.embedding_types
-        if self.request_params:
-            request_params.update(self.request_params)
+    async def async_get_embedding_and_usage(
+        self, text: str, *, purpose: Optional[EmbeddingPurpose] = None
+    ) -> Tuple[List[float], Optional[Dict[str, Any]]]:
+        request_params = self._get_batch_request_params(purpose)
 
         try:
             response: Union[EmbeddingsFloatsEmbedResponse, EmbeddingsByTypeEmbedResponse] = await self.aclient.embed(
@@ -265,7 +254,7 @@ class CohereEmbedder(Embedder):
         return embedding, None
 
     async def async_get_embeddings_batch_and_usage(
-        self, texts: List[str]
+        self, texts: List[str], *, purpose: Optional[EmbeddingPurpose] = None
     ) -> Tuple[List[List[float]], List[Optional[Dict]]]:
         """
                 Get embeddings and usage for multiple texts in batches (async version).
@@ -285,7 +274,7 @@ class CohereEmbedder(Embedder):
 
             try:
                 # Use retry logic for batch processing
-                batch_embeddings, batch_usage = await self._async_batch_with_retry(batch_texts)
+                batch_embeddings, batch_usage = await self._async_batch_with_retry(batch_texts, purpose=purpose)
                 all_embeddings.extend(batch_embeddings)
                 all_usage.extend(batch_usage)
 
@@ -311,7 +300,9 @@ class CohereEmbedder(Embedder):
                         for j in range(0, len(batch_texts), smaller_batch_size):
                             small_batch = batch_texts[j : j + smaller_batch_size]
                             try:
-                                small_embeddings, small_usage = await self._async_batch_with_retry(small_batch)
+                                small_embeddings, small_usage = await self._async_batch_with_retry(
+                                    small_batch, purpose=purpose
+                                )
                                 all_embeddings.extend(small_embeddings)
                                 all_usage.extend(small_usage)
                             except Exception as e3:
@@ -324,7 +315,7 @@ class CohereEmbedder(Embedder):
                     # For non-rate-limit errors, fall back to individual calls. Successes
                     # are kept so one bad chunk does not discard the rest of the batch.
                     log_debug("Non-rate-limit error, falling back to individual calls")
-                    batch_embeddings, batch_usage = await aembed_texts_individually(self, batch_texts)
+                    batch_embeddings, batch_usage = await aembed_texts_individually(self, batch_texts, purpose=purpose)
                     all_embeddings.extend(batch_embeddings)
                     all_usage.extend(batch_usage)
 

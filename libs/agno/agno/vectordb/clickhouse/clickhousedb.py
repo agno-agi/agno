@@ -2,6 +2,7 @@ import asyncio
 from hashlib import md5
 from typing import Any, Dict, List, Optional, Union
 
+from agno.knowledge.embedder.base import embedding_purpose_kwargs
 from agno.vectordb.clickhouse.index import HNSW
 
 try:
@@ -414,7 +415,10 @@ class Clickhouse(VectorDb):
                 doc_contents = [doc.content for doc in documents]
 
                 # Get batch embeddings and usage
-                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(
+                    doc_contents,
+                    **embedding_purpose_kwargs(self.embedder.async_get_embeddings_batch_and_usage, "document"),
+                )
 
                 # Process documents with pre-computed embeddings
                 for j, doc in enumerate(documents):
@@ -587,7 +591,9 @@ class Clickhouse(VectorDb):
         self._require_owner_column(user_id)
         if filters is not None:
             log_warning("Filters are not yet supported in Clickhouse. No filters will be applied.")
-        query_embedding = self.embedder.get_embedding(query)
+        query_embedding = self.embedder.get_embedding(
+            query, **embedding_purpose_kwargs(self.embedder.get_embedding, "query")
+        )
         if query_embedding is None:
             log_error(f"Error getting embedding for Query: {query}")
             return []
@@ -655,7 +661,9 @@ class Clickhouse(VectorDb):
         if filters is not None:
             log_warning("Filters are not yet supported in Clickhouse. No filters will be applied.")
 
-        query_embedding = self.embedder.get_embedding(query)
+        query_embedding = self.embedder.get_embedding(
+            query, **embedding_purpose_kwargs(self.embedder.get_embedding, "query")
+        )
         if query_embedding is None:
             log_error(f"Error getting embedding for Query: {query}")
             return []
