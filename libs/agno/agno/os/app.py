@@ -4,7 +4,7 @@ import inspect
 from contextlib import asynccontextmanager
 from functools import partial
 from os import getenv
-from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Literal, Optional, Sequence, Set, Union
+from typing import TYPE_CHECKING, Any, Dict, FrozenSet, Iterator, List, Literal, Optional, Sequence, Set, Tuple, Union
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException
@@ -21,6 +21,7 @@ from agno.agent import Agent, AgentFactory, RemoteAgent
 from agno.agent.protocol import AgentProtocol
 from agno.agents.base import BaseExternalAgent
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.db.utils import database_error_message
 from agno.exceptions import AgnoError, SessionBusyError
 from agno.job_queue import QueueConfig
 from agno.knowledge.knowledge import Knowledge
@@ -86,12 +87,16 @@ from agno.os.utils import (
     collect_mcp_tools_from_workflow,
     find_conflicting_routes,
     flatten_routes,
+    get_metrics_calculation,
+    has_metrics_lock_row,
     load_yaml_config,
     resolve_origins,
     setup_tracing_for_os,
+    stop_metrics_refresh_on_read,
     update_cors_middleware,
 )
 from agno.registry import Registry
+from agno.registry._reserved import _listed
 from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.team import RemoteTeam, Team, TeamFactory
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -209,12 +214,26 @@ def _error_body(detail: str, exc: BaseException) -> Dict[str, Any]:
 
 
 @asynccontextmanager
+async def interface_lifespan(_, agent_os: "AgentOS"):
+    """Starts the interfaces' background work on startup and closes their running work (e.g. A2A tasks) on shutdown."""
+    for interface in agent_os.interfaces:
+        await interface.astart()
+
+    yield
+
+    for interface in agent_os.interfaces:
+        await interface.aclose()
+
+
+@asynccontextmanager
 async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
     """Initializes databases in the event loop and closes them on shutdown."""
     if agent_os.auto_provision_dbs:
         agent_os._initialize_sync_databases()
         await agent_os._initialize_async_databases()
     await agent_os._acheck_sandbox_tables()
+    if agent_os._authz_role_store is not None:
+        await agent_os._authz_role_store._araise_if_former_manager_policies()
 
     yield
 
@@ -273,6 +292,55 @@ async def scheduler_lifespan(app: FastAPI, agent_os: "AgentOS"):
     yield
 
     await poller.stop()
+
+
+# Default timeout (in seconds) when stopping the metrics calculation
+_DEFAULT_METRICS_STOP_TIMEOUT = 30
+
+
+@asynccontextmanager
+async def metrics_lifespan(app: FastAPI, agent_os: "AgentOS"):
+    """Calculate the metrics of every database with a lock row in the background: once at startup, then every
+    metrics_calculation_interval_seconds. The lock row lets one process calculate at a time."""
+    from itertools import chain
+
+    # A database registered under several ids is calculated once
+    dbs = list({id(db): db for db in chain.from_iterable(agent_os.dbs.values()) if has_metrics_lock_row(db)}.values())
+    if not dbs:
+        yield
+        return
+
+    # Calculated here, so a read never calculates them
+    for db in dbs:
+        stop_metrics_refresh_on_read(db)
+
+    stopping = asyncio.Event()
+
+    async def calculate_loop() -> None:
+        """Main loop: calculate first, then sleep."""
+        while not stopping.is_set():
+            for db in dbs:
+                try:
+                    # Checked between days, so a shutdown releases the lock instead of holding it for its lease
+                    if isinstance(db, AsyncBaseDb):
+                        await get_metrics_calculation(db, should_stop=stopping.is_set)()
+                    elif isinstance(db, BaseDb):
+                        await asyncio.to_thread(get_metrics_calculation(db, should_stop=stopping.is_set))
+                except Exception as exc:
+                    log_error(f"Metrics calculation error: {database_error_message(exc)}")
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(stopping.wait(), timeout=agent_os.settings.metrics_calculation_interval_seconds)
+
+    task = asyncio.create_task(calculate_loop())
+
+    yield
+
+    # A calculation in progress finishes before the database closes its connections
+    stopping.set()
+    try:
+        await asyncio.wait_for(task, timeout=_DEFAULT_METRICS_STOP_TIMEOUT)
+    except asyncio.TimeoutError as e:
+        log_warning(f"Timed out waiting for the metrics calculation during shutdown: {e}")
 
 
 def _combine_app_lifespans(lifespans: list) -> Any:
@@ -554,6 +622,7 @@ class AgentOS:
         self._authz_role_store: Any = None
         self._authz_provider: Any = None
         self._authz_issuer: Optional[str] = None
+        self._auto_a2a_interface: Any = None
 
         # authorization= takes the switch or the object, never the low-level config: one spelling
         # for the deprecated type is enough, and it is the keyword that already exists.
@@ -675,23 +744,31 @@ class AgentOS:
         from agno.os.manager import OSManager
         from agno.os.manager.manager import _build_manager
 
-        self._company_manager: Optional[Agent] = None
-        self.company_manager_unavailable_reason: Optional[str] = None
+        self._manager_catalog_checked: Set[int] = set()
+        self._mini_agent: Optional[Agent] = None
+        self._mini_agent_unavailable_reason: Optional[str] = None
+        # The Routine API's read and its PATCH handler, set when the Company routes are built.
+        self._routine_api_read: Any = None
+        self._routine_api_update: Any = None
         if self.company is not None:
-            from agno.company.company_manager import _build_company_manager
             from agno.company.execution import _mount_executors
+            from agno.company.mini_agent import _build_mini_agent
 
             _mount_executors(self)
 
+            # CompanyConfig's model, else Super Agent's when it is on, else the registry's first model.
             company_model = self.company.model
+            if company_model is None and isinstance(manager, OSManager):
+                company_model = manager.model
             if company_model is None and self.registry is not None and self.registry.models:
                 company_model = self.registry.models[0]
-            self._company_manager = _build_company_manager(self, company_model)
-            if self._company_manager is None:
-                self.company_manager_unavailable_reason = (
-                    "Company Manager unavailable: configure CompanyConfig(model=...) or Registry(models=[...])"
+            self._mini_agent = _build_mini_agent(self, company_model)
+            if self._mini_agent is None:
+                self._mini_agent_unavailable_reason = (
+                    "Mini Agent unavailable: configure CompanyConfig(model=...), OSManager(model=...) "
+                    "or Registry(models=[...])"
                     if company_model is None
-                    else "Company Manager unavailable: Company requires a database"
+                    else "Mini Agent unavailable: Company requires a database"
                 )
 
         self._manager: Optional["_Manager"] = None
@@ -705,32 +782,13 @@ class AgentOS:
             self.agents = list(self.agents or [])
             self.teams = [*(self.teams or []), self._manager.team]
 
-        if self._company_manager is not None:
+        if self._mini_agent is not None:
             if self.registry is None:
                 self.registry = Registry()
-            self.registry.exclude_components([self._company_manager])
-            if self._manager is not None:
-                from agno.company.company_manager import _build_company_manager
-                from agno.os.manager.prompts import FOCUSED_EXECUTION_INSTRUCTIONS
-
-                # A separate member keeps the manager's execution policy off the served
-                # Company Manager, which direct chat and Routines run.
-                member = _build_company_manager(self, self._company_manager.model)
-                assert member is not None
-                member.tool_call_limit = self._manager.config.member_tool_call_limit
-                assert isinstance(member.instructions, str)
-                member.instructions = [member.instructions, FOCUSED_EXECUTION_INSTRUCTIONS]
-                self.registry.exclude_components([member])
-                self._manager.company_manager = member
-                assert isinstance(self._manager.team.members, list)
-                self._manager.team.members.append(member)
-                assert isinstance(self._manager.team.instructions, list)
-                self._manager.team.instructions.append(
-                    "Delegate Company Products, Projects, Tasks, Sources, Routines, playbook pages and decisions to "
-                    "Company Manager, including setup requests and questions about their status. Routines are "
-                    "Company schedules: ask Company Manager, not Platform Builder, to create them."
-                )
-            self.agents = [*(self.agents or []), self._company_manager]
+            self.registry.exclude_components([self._mini_agent])
+            self.registry._mini_agent = self._mini_agent
+            # Served so the scheduler and the Task queue can reach it; listings leave it out.
+            self.agents = [*(self.agents or []), self._mini_agent]
         self._apply_manager_manifest()
 
         self._initialize_agents()
@@ -768,25 +826,6 @@ class AgentOS:
         """The OS Manager team, or None when disabled. Supports run() and arun()."""
         return self._manager.team if self._manager is not None else None
 
-    @property
-    def company_manager(self) -> Optional[Agent]:
-        """The built-in Company Manager, or None with an unavailable reason."""
-        return self._company_manager
-
-    @property
-    def product_manager(self) -> Optional[Agent]:
-        """Deprecated alias of ``company_manager``."""
-        log_warning("AgentOS.product_manager is deprecated; use AgentOS.company_manager.")
-        return self._company_manager
-
-    @property
-    def product_manager_unavailable_reason(self) -> Optional[str]:
-        """Deprecated alias of ``company_manager_unavailable_reason``."""
-        log_warning(
-            "AgentOS.product_manager_unavailable_reason is deprecated; use AgentOS.company_manager_unavailable_reason."
-        )
-        return self.company_manager_unavailable_reason
-
     def _owned_by_manager(self, component: Any) -> bool:
         """True for the manager's team and members, which never enter the registry."""
         return (getattr(component, "_registry_excluded", False) is True) or (
@@ -796,14 +835,9 @@ class AgentOS:
     def _apply_manager_manifest(self) -> None:
         """Set default UI descriptions and prompts without replacing application settings."""
         from agno.os.config import AgentOSConfig
-        from agno.registry._reserved import COMPANY_MANAGER_ID, RESERVED_MEMBER_IDS
+        from agno.registry._reserved import RESERVED_MEMBER_IDS
 
         defaults = self._manager.manifest() if self._manager is not None else {}
-        # Company Manager is served with or without OS Manager, so it always gets its own chat card.
-        if self._company_manager is not None:
-            from agno.company.company_manager import _company_manager_manifest
-
-            defaults[COMPANY_MANAGER_ID] = _company_manager_manifest()
         if not defaults:
             return
         if self.config is None:
@@ -1008,13 +1042,19 @@ class AgentOS:
                 agents=self._agents or None,  # type: ignore[arg-type]
                 teams=self._teams or None,  # type: ignore[arg-type]
             ),
-            get_metrics_router(dbs=self.dbs),
+            get_metrics_router(
+                dbs=self.dbs,
+                settings=self.settings,
+                role_store=self._authz_role_store,
+                auth_enabled=self._auth_configured(),
+            ),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
             get_traces_router(dbs=self.dbs),
             get_database_router(self, settings=self.settings),
             get_filesystem_router(self, settings=self.settings),
         ]
         if self.company is not None:
+            from agno.os.routers.company.details import get_company_details_router
             from agno.os.routers.company.heartbeat import get_heartbeat_router
             from agno.os.routers.company.playbook import get_playbook_router
             from agno.os.routers.company.products import get_products_router
@@ -1022,6 +1062,7 @@ class AgentOS:
             from agno.os.routers.company.runs import get_company_runs_router
             from agno.os.routers.company.tasks import get_tasks_router
 
+            updated_routers.append(get_company_details_router(self))
             updated_routers.append(get_products_router(db=self._company_db, settings=self.settings))
             updated_routers.append(get_heartbeat_router(self))
             updated_routers.append(get_projects_router(db=self._company_db, settings=self.settings))
@@ -1111,9 +1152,51 @@ class AgentOS:
         # Add A2A interface if relevant
         has_a2a_interface = False
         self._public_interface_routes: List[tuple[str, str]] = []
+
+        # Interfaces sharing a bot token and the settings that decide whose Task it is deliver the same results,
+        # so only the first posts them, also when get_app runs again
+        def delivery_key(interface: BaseInterface) -> Tuple[str, Optional[FrozenSet[Tuple[str, str]]], bool]:
+            users = interface.ctx.users  # type: ignore[attr-defined]
+            return (
+                interface.ctx.token,  # type: ignore[attr-defined]
+                None if users is None else frozenset(users.items()),
+                interface.ctx.resolve_user_identity,  # type: ignore[attr-defined]
+            )
+
+        delivery_keys = {
+            delivery_key(interface)
+            for interface in self.interfaces
+            if getattr(getattr(interface, "company", None), "deliver", False)
+        }
         for interface in self.interfaces:
-            if not has_a2a_interface and interface.__class__.__name__ == "A2A":
+            if interface.__class__.__name__ == "A2A":
                 has_a2a_interface = True
+                # The interface AgentOS created serves every entity, including the ones added since
+                if interface is self._auto_a2a_interface:
+                    interface.agents = self._get_a2a_agents()  # type: ignore[attr-defined]
+                    interface.teams = self._teams or None  # type: ignore[attr-defined]
+                    interface.workflows = self._workflows or None  # type: ignore[attr-defined]
+                # Agent Cards declare how to authenticate when the OS requires a bearer token
+                if getattr(interface, "security_schemes", None) is None:
+                    interface.security_schemes = self._get_a2a_security_schemes()  # type: ignore[attr-defined]
+            if interface.type == "slack" and interface.team is not None and interface.team is self.manager:
+                from agno.os.auth import _has_authorization_middleware
+
+                # An authorization middleware on a base_app enforces roles just as AgentOS(authorization=...) does
+                if getattr(interface, "users", None) is None and (
+                    self.authorization or _has_authorization_middleware(app)
+                ):
+                    raise ValueError(
+                        "Slack serving Super Agent under authorization requires Slack identity mapping: "
+                        "pass Slack(users={slack_user_id: principal_id})."
+                    )
+                # Slack serving the Manager team reaches Company through the AgentOS that owns it
+                if getattr(interface, "company", None) is None:
+                    from agno.os.interfaces.slack.company import CompanyBridge
+
+                    key = delivery_key(interface)
+                    interface.company = CompanyBridge(self, deliver=key not in delivery_keys)  # type: ignore[attr-defined]
+                    delivery_keys.add(key)
             interface_router = interface.get_router()
             if getattr(interface, "authenticates_own_requests", False):
                 self._public_interface_routes.extend(
@@ -1127,12 +1210,29 @@ class AgentOS:
             from agno.os.interfaces.a2a import A2A
 
             a2a_interface = A2A(
-                agents=self._agents or None,  # type: ignore[arg-type]
+                agents=self._get_a2a_agents(),  # type: ignore[arg-type]
                 teams=self._teams or None,  # type: ignore[arg-type]
                 workflows=self._workflows or None,  # type: ignore[arg-type]
+                security_schemes=self._get_a2a_security_schemes(),
             )
+            self._auto_a2a_interface = a2a_interface
             self.interfaces.append(a2a_interface)
             self._add_router(app, a2a_interface.get_router())
+
+    def _get_a2a_agents(self) -> Optional[List[Any]]:
+        """The agents the A2A interface serves: external agents (Claude, Codex, ...) next to the local agents."""
+        a2a_agents = [a for a in _listed(self.agents) if isinstance(a, (Agent, BaseExternalAgent))]
+        return a2a_agents or None
+
+    def _get_a2a_security_schemes(self) -> Optional[Dict[str, Any]]:
+        """The security schemes A2A Agent Cards declare: bearer when the OS requires a token, else none."""
+        security_key = self.settings.os_security_key if self.settings else None
+        if not self.authorization and not security_key:
+            return None
+        from agno.os.interfaces.a2a.agent_card import build_bearer_security_schemes
+
+        # JWTs when authorization is on; the security key is an opaque token
+        return build_bearer_security_schemes(bearer_format="JWT" if self.authorization else None)
 
     def _raise_if_duplicate_ids(self) -> None:
         """Check for duplicate IDs within each entity type.
@@ -1146,7 +1246,7 @@ class AgentOS:
             [*(self.agents or []), *(self.teams or []), *(self.workflows or [])],
             owned=[
                 *(self._manager.components if self._manager is not None else []),
-                *([self._company_manager] if self._company_manager is not None else []),
+                *([self._mini_agent] if self._mini_agent is not None else []),
             ],
         )
         duplicate_ids: List[str] = []
@@ -1208,12 +1308,10 @@ class AgentOS:
         Tables are created here only when the OS provisions databases; otherwise an existing
         table is validated and a missing one is left to the deployment, as the first run was.
         """
-        nested = [*self._sandboxed_team_members(), *self._sandboxed_workflow_agents()]
-        for entry in [*(self.agents or []), *(agent for agent, _ in nested)]:
-            if isinstance(entry, BaseExternalAgent) and entry.sandbox is not None and entry.db is not None:
-                from agno.sandbox import _harness
+        for entry in self._sandboxed_agents():
+            from agno.sandbox import _harness
 
-                await _harness.acheck_tables(entry, create=self.auto_provision_dbs)
+            await _harness.acheck_tables(entry, create=self.auto_provision_dbs)
 
     @staticmethod
     def _nearest_postgres(db: Any, inherited_db: Any) -> Any:
@@ -1302,6 +1400,15 @@ class AgentOS:
             visit_workflow(workflow, None)
         return found
 
+    def _sandboxed_agents(self) -> List[Any]:
+        """Every sandboxed harness agent with a database: served, a team member or inside a workflow."""
+        nested = [*self._sandboxed_team_members(), *self._sandboxed_workflow_agents()]
+        return [
+            entry
+            for entry in [*(self.agents or []), *(agent for agent, _ in nested)]
+            if isinstance(entry, BaseExternalAgent) and entry.sandbox is not None and entry.db is not None
+        ]
+
     def _prepare_sandboxed_agent(self, agent: BaseExternalAgent, fallback_db: Any) -> None:
         """Give a sandboxed agent a database and fail at startup on what would fail its first turn.
 
@@ -1328,7 +1435,7 @@ class AgentOS:
                     self._prepare_sandboxed_agent(entry, self.db)
 
         # Manager specialists need normal initialization, but are not served agents.
-        agents_to_initialize = [*self._agents, *(self._manager.agents if self._manager else [])]
+        agents_to_initialize = [*self._agents, *([self._manager.builder] if self._manager else [])]
         if not agents_to_initialize:
             return
 
@@ -1658,6 +1765,7 @@ class AgentOS:
 
         from agno.company.routines import _RoutineResultGuardrail
         from agno.tools.company import CompanyTools
+        from agno.tools.company_files import CompanyFileTools
 
         company = self.company
 
@@ -1665,6 +1773,9 @@ class AgentOS:
             found = False
             for entry in entries or []:
                 toolkit = getattr(entry, "source_toolkit", None) or entry
+                if isinstance(toolkit, CompanyFileTools):
+                    # Its refused writes fail a Routine run through the same result check.
+                    found = True
                 if isinstance(toolkit, CompanyTools):
                     found = True
                     if not toolkit._interfaces_explicit:
@@ -1828,8 +1939,10 @@ class AgentOS:
             self.registry = Registry()
 
         try:
+            # External adapters are not in self._agents; the walk takes their sandboxes.
+            external_agents = [a for a in self.agents or [] if isinstance(a, BaseExternalAgent)]
             collect_components_from_os(
-                [a for a in self._agents if not self._owned_by_manager(a)],
+                [a for a in self._agents if not self._owned_by_manager(a)] + external_agents,
                 [t for t in self._teams if not self._owned_by_manager(t)],
                 self._workflows,
                 self.registry,
@@ -1934,14 +2047,21 @@ class AgentOS:
             # The async database lifespan
             lifespans.append(partial(db_lifespan, agent_os=self))
 
-            if self.company is not None and self.company.products:
+            if self.company is not None:
                 from agno.company.bootstrap import _company_lifespan
 
                 lifespans.append(partial(_company_lifespan, agent_os=self))
 
+            # The interface lifespan
+            lifespans.append(partial(interface_lifespan, agent_os=self))
+
             # The scheduler lifespan (after db so tables exist)
             if self._scheduler_enabled and self.db is not None:
                 lifespans.append(partial(scheduler_lifespan, agent_os=self))
+
+            # The metrics lifespan (after db so tables exist)
+            if self.settings.metrics_calculation_enabled:
+                lifespans.append(partial(metrics_lifespan, agent_os=self))
 
             # The durable job queue worker (after db so tables exist)
             if self.queue is not None and self.queue.durable:
@@ -1988,14 +2108,21 @@ class AgentOS:
             # Async database initialization lifespan
             lifespans.append(partial(db_lifespan, agent_os=self))  # type: ignore
 
-            if self.company is not None and self.company.products:
+            if self.company is not None:
                 from agno.company.bootstrap import _company_lifespan
 
                 lifespans.append(partial(_company_lifespan, agent_os=self))
 
+            # The interface lifespan
+            lifespans.append(partial(interface_lifespan, agent_os=self))  # type: ignore
+
             # The scheduler lifespan (after db so tables exist)
             if self._scheduler_enabled and self.db is not None:
                 lifespans.append(partial(scheduler_lifespan, agent_os=self))
+
+            # The metrics lifespan (after db so tables exist)
+            if self.settings.metrics_calculation_enabled:
+                lifespans.append(partial(metrics_lifespan, agent_os=self))
 
             # The durable job queue worker (after db so tables exist)
             if self.queue is not None and self.queue.durable:
@@ -2033,13 +2160,19 @@ class AgentOS:
                 agents=self._agents or None,  # type: ignore[arg-type]
                 teams=self._teams or None,  # type: ignore[arg-type]
             ),
-            get_metrics_router(dbs=self.dbs),
+            get_metrics_router(
+                dbs=self.dbs,
+                settings=self.settings,
+                role_store=self._authz_role_store,
+                auth_enabled=self._auth_configured(),
+            ),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
             get_traces_router(dbs=self.dbs),
             get_database_router(self, settings=self.settings),
             get_filesystem_router(self, settings=self.settings),
         ]
         if self.company is not None:
+            from agno.os.routers.company.details import get_company_details_router
             from agno.os.routers.company.heartbeat import get_heartbeat_router
             from agno.os.routers.company.playbook import get_playbook_router
             from agno.os.routers.company.products import get_products_router
@@ -2047,6 +2180,7 @@ class AgentOS:
             from agno.os.routers.company.runs import get_company_runs_router
             from agno.os.routers.company.tasks import get_tasks_router
 
+            routers.append(get_company_details_router(self))
             routers.append(get_products_router(db=self._company_db, settings=self.settings))
             routers.append(get_heartbeat_router(self))
             routers.append(get_projects_router(db=self._company_db, settings=self.settings))
@@ -2287,6 +2421,10 @@ class AgentOS:
         # agno cannot amend. Fail fast (with the exact paths) rather than 401 connector
         # discovery. (Only agno's own AuthMiddleware is inspected; see the method docstring.)
         self._check_mcp_auth_middleware_composition(fastapi_app)
+        # Interfaces that verify their own requests (Slack) skip the auth middleware and read this flag
+        from agno.os.auth import _has_authorization_middleware
+
+        fastapi_app.state.authorization_enabled = bool(self.authorization) or _has_authorization_middleware(fastapi_app)
 
         from agno.os.authz.run_context import RunAuthorizationMiddleware
 
@@ -2887,8 +3025,9 @@ class AgentOS:
                 self._register_db_with_validation(knowledge_dbs, knowledge_base.contents_db)
 
         for interface in self.interfaces or []:
-            if interface.agent and interface.agent.db:
-                self._register_db_with_validation(dbs, interface.agent.db)
+            agent_db = getattr(interface.agent, "db", None)
+            if agent_db:
+                self._register_db_with_validation(dbs, agent_db)
             elif interface.team and interface.team.db:
                 self._register_db_with_validation(dbs, interface.team.db)
 
@@ -3303,7 +3442,19 @@ class AgentOS:
         for db_id, dbs in self.dbs.items():
             if db_id not in dbs_with_specific_config:
                 # Collect unique table names from all databases with the same id
-                unique_tables = list({db.metrics_table_name for db in dbs if db.metrics_table_name is not None})
+                unique_tables = list(
+                    dict.fromkeys(
+                        table_name
+                        for db in dbs
+                        for table_name in (
+                            # One table per metrics store, the one every number is built from
+                            db.component_metrics_table_name
+                            if has_metrics_lock_row(db) or isinstance(db, RemoteDb)
+                            else db.metrics_table_name,
+                        )
+                        if table_name is not None
+                    )
+                )
                 metrics_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,

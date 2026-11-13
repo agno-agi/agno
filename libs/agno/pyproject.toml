@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "3.1.12"
+version = "3.2.0"
 description = "The programming language for agentic software."
 requires-python = ">=3.9,<4"
 readme = "README.md"
@@ -200,7 +200,7 @@ gcs = ["google-cloud-storage"]
 mysql = ["sqlalchemy[asyncio]", "pymysql", "asyncmy"]
 postgres = ["sqlalchemy[asyncio]", "psycopg[binary]"]
 pages = ["agno[postgres]", "agno[pgvector]", "dnspython>=2.6.1", "beautifulsoup4", "regex>=2024.5.15"]
-redis = ["redis>=4.5.4", "redisvl>=0.12.1"]  # >=4.5.4: safe cancellation of blocking commands (XREAD in event stream tail)
+redis = ["redis>=6.1.0", "redisvl>=0.12.1"]  # >=6.1.0: transactions on a Redis Cluster client (metrics lock), redis/redis-py#3611; also safe cancellation of blocking commands (XREAD in event stream tail)
 s3 = ["boto3", "aioboto3"]
 sql = ["sqlalchemy[asyncio]"]
 sqlite = ["sqlalchemy[asyncio]", "aiosqlite"]
@@ -221,7 +221,7 @@ pinecone = ["pinecone==5.4.2"]
 pylance = ["pylance"]
 qdrant = ["qdrant-client"]
 singlestore = ["sqlalchemy"]
-surrealdb = ["surrealdb>=1.0.4"]
+surrealdb = ["surrealdb>=1.0.4,<3"]
 upstash = ["upstash-vector"]
 weaviate = ["weaviate-client"]
 
@@ -253,10 +253,10 @@ pdf-ocr = ["rapidocr_onnxruntime"]
 agui = ["ag-ui-protocol>=0.1.15", "jsonpatch>=1.33"]
 
 # Dependencies for A2A integration
-a2a = ["a2a-sdk>=0.3.0,<1.0"]
+a2a = ["a2a-sdk[http-server]>=1.2.2,<2"]
 
 # Dependencies for Slack integration
-slack = ["slack_sdk>=3.40.0", "aiohttp>=3.7.3,<4"]
+slack = ["slack_bolt>=1.29.0,<2", "slack_sdk>=3.43.0,<4", "aiohttp>=3.7.3,<4"]
 
 # Dependencies for Embedders
 huggingface = [
@@ -679,6 +679,7 @@ module = [
   "serpapi.*",
   "setuptools.*",
   "simplejson.*",
+  "slack_bolt.*",
   "slack_sdk.*",
   "spider.*",
   "sqlalchemy.*",

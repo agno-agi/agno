@@ -296,6 +296,19 @@ async def test_unsupported_run_options_are_rejected(coordinator, sandbox):
         await agent.arun("hello", session_id="s1", dependencies={"a": 1})
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_dependencies_reach_the_sandbox_as_the_block_an_agent_adds(coordinator, sandbox, stream):
+    agent = ClaudeAgent(id="coder", sandbox=sandbox)
+    options = dict(session_id="s1", dependencies={"channel": "#general"}, add_dependencies_to_context=True)
+    if stream:
+        [event async for event in agent.arun("hello", stream=True, **options)]
+    else:
+        await agent.arun("hello", **options)
+    _, execution = coordinator.calls[0]
+    assert execution["input"] == 'hello\n\n<additional context>\n{\n  "channel": "#general"\n}\n</additional context>'
+
+
 def test_codex_string_sandbox_is_a_deprecated_alias_for_sandbox_mode():
     with pytest.warns(DeprecationWarning, match="use sandbox_mode") as record:
         agent = CodexAgent(sandbox="read-only")
@@ -354,18 +367,57 @@ async def test_queue_terminal_bypasses_an_unusable_bindings_table(sandbox, monke
 
 def test_coordinator_is_built_once_per_sandbox_and_database(tmp_path, monkeypatch):
     from agno.db.postgres import PostgresDb
+    from agno.db.utils import resolve_db_from_config
+    from agno.registry import Registry
     from agno.sandbox.checkpoint import FileCheckpointStore
 
     monkeypatch.setattr(_harness, "_DEFAULT_CHECKPOINTS", tmp_path / "default")
-    db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:1/ai")
+    db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:1/ai", id="main")
     shared = DockerSandbox("agno-sandbox:claude", network="isolated", checkpoints=FileCheckpointStore(tmp_path))
     first = ClaudeAgent(id="first", db=db, sandbox=shared)
     second = ClaudeAgent(id="second", db=db, sandbox=shared)
     assert _harness.coordinator(first) is _harness.coordinator(second)
     other_db = ClaudeAgent(
-        id="third", db=PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:1/ai"), sandbox=shared
+        id="third", db=PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:1/other", id="other"), sandbox=shared
     )
     assert _harness.coordinator(other_db) is not _harness.coordinator(first)
+    # A stored config with table-name overrides is rebuilt onto a db clone per load: the clones share
+    # one coordinator, which is not the base db's, and each clone's session delete can reach it.
+    overrides = {**db.to_dict(), "session_table": "coder_sessions"}
+    registry = Registry(dbs=[db])
+    clones = [resolve_db_from_config(overrides, registry=registry) for _ in range(2)]
+    assert clones[0] is not clones[1] and clones[0] is not db
+    on_clones = [_harness.coordinator(ClaudeAgent(id="fifth", db=clone, sandbox=shared)) for clone in clones]
+    assert on_clones[0] is on_clones[1] and on_clones[0] is not _harness.coordinator(first)
+    assert all(clone.sandbox_coordinators == [on_clones[0]] for clone in clones)
+    # Engine-only dbs serialize no connection: the key takes it from the engine, so same-id dbs on
+    # different servers stay apart while two engines on one server share.
+    from sqlalchemy import create_engine
+
+    engine_only = [
+        _harness.coordinator(
+            ClaudeAgent(id="sixth", db=PostgresDb(db_engine=create_engine(url), id="main"), sandbox=shared)
+        )
+        for url in (
+            "postgresql+psycopg://ai:ai@localhost:1/one",
+            "postgresql+psycopg://ai:ai@localhost:1/two",
+            "postgresql+psycopg://ai:ai@localhost:1/one",
+        )
+    ]
+    assert engine_only[0] is not engine_only[1] and engine_only[0] is engine_only[2]
+    # The async adapter does not serialize its bindings table; a different table is a different store.
+    from agno.db.postgres import AsyncPostgresDb
+
+    async_url = "postgresql+psycopg://ai:ai@localhost:1/ai"
+    by_bindings = [
+        _harness.coordinator(
+            ClaudeAgent(
+                id="seventh", db=AsyncPostgresDb(db_url=async_url, id="main", sandbox_table=table), sandbox=shared
+            )
+        )
+        for table in ("bindings_a", "bindings_b", "bindings_a")
+    ]
+    assert by_bindings[0] is not by_bindings[1] and by_bindings[0] is by_bindings[2]
     unset = ClaudeAgent(id="fourth", db=db, sandbox=DockerSandbox("agno-sandbox:claude", network="isolated"))
     assert _harness.coordinator(unset).transfer.store.root == tmp_path / "default"
 

@@ -1,7 +1,8 @@
 """Task run routes: authorize, then enter the existing executor route and queue."""
 
 import asyncio
-from typing import Any, Dict, Optional
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable, Dict, Optional, Union
 from urllib.parse import quote, unquote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -13,9 +14,11 @@ from agno.company.execution import (
     _executor,
     _pending_task_attempt,
     _prepare_task_session,
+    _project_run_block,
     _reconcile_task_run,
     _reservation_owner,
     _reserve_task,
+    _review_feedback,
     _task_input,
     _task_run_database,
     _task_session_owner,
@@ -26,7 +29,7 @@ from agno.company.execution import (
 )
 from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.db.schemas.tasks import task_run_fields, task_run_id
+from agno.db.schemas.tasks import TASK_STATUS_MEANING, task_next_attempt, task_run_fields, task_run_id
 from agno.os.auth import get_authentication_dependency
 from agno.os.job_queue import ticket_status_to_api, validate_seam_input
 from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id
@@ -35,8 +38,79 @@ from agno.os.routers.run_permissions import _require_endpoint_permission
 from agno.os.schema import PaginatedResponse, PaginationInfo
 
 
+@dataclass
+class _StartCaller:
+    """Who enters a Task run: an HTTP request, or a Super Agent tool acting for its user.
+
+    Identity and authority are read only when needed, so a refusal surfaces in the same
+    order whichever caller starts the run.
+    """
+
+    app: Any
+    resolve_user: Callable[[], Optional[str]]
+    authorization: Callable[[], Any]
+    authorization_enabled: bool
+    require_accept: Callable[[str], Awaitable[None]]
+    # The conversation that asked for the run, recorded on its Task attempt.
+    requested_from: Optional[Dict[str, str]] = None
+
+    @classmethod
+    def from_request(cls, request: Request) -> "_StartCaller":
+        from agno.os.authz.run_context import request_authorization
+
+        async def require_accept(path: str) -> None:
+            await _require_endpoint_permission(request, path, "POST", action="accept")
+
+        return cls(
+            app=request.app,
+            resolve_user=lambda: resolve_run_user_id(request),
+            authorization=lambda: request_authorization(request),
+            authorization_enabled=getattr(request.state, "authorization_enabled", False),
+            require_accept=require_accept,
+        )
+
+    @classmethod
+    def for_authority(
+        cls,
+        app: Any,
+        authority: Any,
+        user_id: Optional[str],
+        requested_from: Optional[Dict[str, str]] = None,
+    ) -> "_StartCaller":
+        """A caller acting through a run's authority instead of an HTTP request, as a Super Agent tool does."""
+        from dataclasses import replace
+
+        from agno.db.schemas.scheduler import RUN_ENDPOINT_RE
+        from agno.registry._reserved import RESERVED_MEMBER_IDS
+
+        async def require_accept(path: str) -> None:
+            # The same decision as the start route: manager specialists are never executors, and the
+            # caller must be allowed to run the executor themselves.
+            match = RUN_ENDPOINT_RE.match(path)
+            if match is None or unquote(match.group(2)) in RESERVED_MEMBER_IDS:
+                raise HTTPException(
+                    409, "Manager specialists are internal. Select a registered agent, team or workflow."
+                )
+            if authority is not None:
+                try:
+                    await authority.arequire(match.group(1), "run", unquote(match.group(2)))
+                except PermissionError as exc:
+                    raise HTTPException(403, str(exc)) from exc
+
+        # The executor route checks its own tools; it receives the grants, not the tool-call enforcement flag.
+        forwarded = replace(authority, enforce_tools=False) if authority is not None else None
+        return cls(
+            app=app,
+            resolve_user=lambda: user_id,
+            authorization=lambda: forwarded,
+            authorization_enabled=authority is not None,
+            require_accept=require_accept,
+            requested_from=requested_from,
+        )
+
+
 async def _run_route(
-    request: Request,
+    source: Union[Request, _StartCaller],
     path: str,
     method: str,
     *,
@@ -52,11 +126,11 @@ async def _run_route(
     import httpx
 
     from agno.db.schemas.scheduler import SCHEDULE_OWNER_HEADER
-    from agno.os.authz.run_context import request_authorization
     from agno.run.authorization import AUTHORIZATION_HEADER
 
-    authority = request_authorization(request)
-    headers = {"Authorization": "Bearer " + request.app.state.internal_service_token}
+    caller = source if isinstance(source, _StartCaller) else _StartCaller.from_request(source)
+    authority = caller.authorization()
+    headers = {"Authorization": "Bearer " + caller.app.state.internal_service_token}
     if authority is not None:
         headers[AUTHORIZATION_HEADER] = json.dumps(authority.snapshot())
     if owner is not None:
@@ -70,7 +144,7 @@ async def _run_route(
                 **scope,
                 "state": {**scope.get("state", {}), "metadata": {"repository": {"commit": checkout["commit"]}}},
             }
-        await request.app(scope, receive, send)
+        await caller.app(scope, receive, send)
 
     token = _task_transport.set((method, unquote(path), owner))
     try:
@@ -85,78 +159,163 @@ async def _run_route(
         _task_transport.reset(token)
 
 
-def get_company_runs_router(os: Any) -> APIRouter:
-    router = APIRouter(prefix="/company", tags=["Company execution"], dependencies=[Depends(get_scoped_user_id)])
-    auth = get_authentication_dependency(os.settings)
-    db = os._company_db
-    manager = (
-        AsyncCompanyManager(db, os.registry, schedule_db=os.db)
-        if isinstance(db, AsyncBaseDb)
-        else CompanyManager(db, os.registry, schedule_db=os.db)
-        if db
-        else None
-    )
+_STATUS_MEANING = TASK_STATUS_MEANING
 
-    async def task(task_id: str) -> Dict[str, Any]:
-        if db is None:
+
+def _task_state(value: Dict[str, Any], ticket: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """What a person needs to know about a Task now, from saved state only. Never waits on the worker."""
+    from agno.os.job_queue import ticket_status_to_api
+
+    attempts = [entry for entry in value.get("transitions") or [] if entry.get("attempt")]
+    latest: Dict[str, Any] = attempts[-1] if attempts else {}
+    state: Dict[str, Any] = {
+        "task_id": value["id"],
+        "title": value.get("title"),
+        "status": value["status"],
+        "meaning": _STATUS_MEANING.get(value["status"], value["status"]),
+        "executor": value.get("executor_id"),
+        "attempt": latest.get("attempt"),
+        "run_id": value.get("job_id"),
+        "started_by": latest.get("started_by"),
+        "requested_from": latest.get("requested_from"),
+    }
+    feedback = _review_feedback(value)
+    if feedback:
+        # A reviewer sent the Task back; the next attempt acts on this.
+        state["review_feedback"] = feedback
+    if ticket is not None:
+        state["run_status"] = ticket_status_to_api(ticket["status"])
+        if ticket["status"] == "paused":
+            state["waiting_on"] = "A person must approve or answer the paused run before it continues."
+    result = value.get("result") or {}
+    if result and result.get("run_id") == value.get("job_id"):
+        content = result.get("content")
+        state["run_status"] = result.get("status") or state.get("run_status")
+        state["result"] = {"content": content[:1500] if isinstance(content, str) else content}
+        if result.get("invoked"):
+            state["invoked"] = result["invoked"]
+    return state
+
+
+class _TaskStarter:
+    """Start accepted Task runs through the executor route, for the HTTP API and the Super Agent alike."""
+
+    def __init__(self, os: Any):
+        self.os = os
+        self.db = os._company_db
+        db = self.db
+        self.manager = (
+            AsyncCompanyManager(db, os.registry, schedule_db=os.db)
+            if isinstance(db, AsyncBaseDb)
+            else CompanyManager(db, os.registry, schedule_db=os.db)
+            if db
+            else None
+        )
+
+    async def task(self, task_id: str) -> Dict[str, Any]:
+        if self.db is None:
             raise HTTPException(503, "Company requires a database")
         try:
-            value = await _call(db, "get_task", task_id)
+            value = await _call(self.db, "get_task", task_id)
         except NotImplementedError:
             raise HTTPException(503, "Company execution is not supported by the configured database")
         if value is None:
             raise HTTPException(404, "Task not found")
         return value
 
-    def executor(value: Dict[str, Any]):
+    def executor(self, value: Dict[str, Any]):
         try:
-            return _executor(os.registry, value["executor_type"], value["executor_id"])
+            return _executor(self.os.registry, value["executor_type"], value["executor_id"])
         except ValueError as exc:
             raise HTTPException(409, str(exc))
 
-    def worker(request: Request):
-        queue = getattr(request.app.state, "queue_worker", None)
+    def worker(self, app: Any):
+        queue = getattr(app.state, "queue_worker", None)
         if queue is None:
             raise HTTPException(503, "Company execution requires the durable queue")
         return queue
 
-    def endpoint(value: Dict[str, Any]):
+    def endpoint(self, value: Dict[str, Any]):
         resource = {"agent": "agents", "team": "teams", "workflow": "workflows"}[value["executor_type"]]
         return f"/{resource}/{quote(value['executor_id'], safe='')}/runs"
 
-    def run_database(value: Dict[str, Any]):
+    def run_database(self, value: Dict[str, Any]):
         try:
-            store = _task_run_database(os, value)
+            store = _task_run_database(self.os, value)
             if store is None:
                 raise _TaskRunUnavailable("Task run database is unavailable")
             return store
         except ValueError as exc:
             raise HTTPException(503, str(exc)) from exc
 
-    @router.post("/tasks/{task_id}/runs", status_code=202)
-    async def start(task_id: str, request: Request, body: TaskRunCreate = TaskRunCreate(), _: bool = Depends(auth)):
-        try:
-            return await start_task(task_id, request, body)
-        except _TaskRunUnavailable as exc:
-            raise HTTPException(503, str(exc)) from exc
-        except _TaskRunConflict as exc:
-            raise HTTPException(409, str(exc)) from exc
+    def executor_database(self, value: Dict[str, Any], component: Any):
+        run_db = getattr(component, "db", None)
+        if run_db is None:
+            raise HTTPException(409, "Task executor requires a database for durable runs")
+        # Runs are read back through os.dbs by id, so they must be stored in an instance AgentOS serves.
+        if not any(store is run_db for store in self.os.dbs.get(run_db.id, [])):
+            raise HTTPException(409, "Task executor database must be a database AgentOS serves")
+        if value.get("job_id") and self.run_database(value) is not run_db:
+            raise HTTPException(409, "A Task session must stay in its original executor database")
+        return run_db
 
-    async def start_task(task_id: str, request: Request, body: TaskRunCreate):
-        value = await task(task_id)
+    async def task_message(self, value: Dict[str, Any]) -> str:
+        try:
+            return await _task_input(self.manager, value, accepted_execution=True)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+        except ValueError as exc:
+            raise HTTPException(409, str(exc))
+        except NotImplementedError:
+            raise HTTPException(503, "Company wiki is not supported by the configured database")
+
+    async def state(self, value: Dict[str, Any], app: Any) -> Dict[str, Any]:
+        queue = getattr(getattr(app, "state", None), "queue_worker", None)
+        ticket = await queue.store.get_job(value["job_id"]) if value.get("job_id") and queue is not None else None
+        return _task_state(value, ticket)
+
+    async def run_evidence(self, value: Dict[str, Any]) -> Dict[str, Any]:
+        """What the latest attempt's run recorded, read from the run itself and summarized without outputs."""
+        from agno.company.evidence import run_evidence
+
+        if not value.get("job_id"):
+            return {}
+        try:
+            row = await _call(self.run_database(value), "get_run", value["job_id"], deserialize=False)
+        except (HTTPException, _TaskRunUnavailable) as exc:
+            detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+            return {"evidence_note": f"The run could not be read: {detail}"}
+        if row is None:
+            return {"evidence_note": "The run is not recorded yet."}
+        items, note = run_evidence(row.get("run_data") or {})
+        return {"evidence": items, **({"evidence_note": note} if note else {})}
+
+    async def submit(
+        self,
+        task_id: str,
+        caller: _StartCaller,
+        attempt: Optional[int],
+        value: Dict[str, Any],
+        message: Optional[str],
+    ):
         from agno.company.execution import _automatic_task
         from agno.company.sandbox import _is_sandboxed
         from agno.os.routers.company.sandbox import _sandbox_start_gate
 
-        component = executor(value)
+        # The route checks this before accepting a Backlog Task; Super Agent's start reaches only this
+        # path, and must be refused here rather than at the worker's claim.
+        reason = await _project_run_block(self.db, value)
+        if reason:
+            raise HTTPException(409, reason)
+        component = self.executor(value)
         if _automatic_task.get() is None:
-            await _require_endpoint_permission(request, endpoint(value), "POST", action="accept")
+            await caller.require_accept(self.endpoint(value))
 
         if _is_sandboxed(component):
 
             async def admit():
-                async with _sandbox_start_gate(os, value, worker(request)):
-                    return await dispatch(task_id, request, body, value)
+                async with _sandbox_start_gate(self.os, value, self.worker(caller.app)):
+                    return await self.dispatch(task_id, caller, attempt, value, message)
 
             # A disconnected caller must not release admission while an off-thread
             # queue INSERT can still commit. Finish submission under the same lock.
@@ -168,46 +327,54 @@ def get_company_runs_router(os: Any) -> APIRouter:
                     await asyncio.shield(pending)
                 finally:
                     raise
-        return await dispatch(task_id, request, body, value)
+        return await self.dispatch(task_id, caller, attempt, value, message)
 
-    async def dispatch(task_id: str, request: Request, body: TaskRunCreate, value: Dict[str, Any]):
+    async def dispatch(
+        self,
+        task_id: str,
+        caller: _StartCaller,
+        attempt: Optional[int],
+        value: Dict[str, Any],
+        message: Optional[str],
+    ):
         from agno.company.execution import _automatic_task
 
         observed = _automatic_task.get()
         if observed is not None and any(value[key] != observed[key] for key in ("id", "status", "updated_at")):
             raise HTTPException(409, "Task acceptance changed before automatic dispatch")
-        component = executor(value)
-        path = endpoint(value)
+        component = self.executor(value)
+        path = self.endpoint(value)
         if observed is not None:
-            from agno.os.authz.run_context import request_authorization
-
             # Recheck the saved accepting authority at the Task route boundary.
             # Managed providers decide for that human, not the transport principal.
-            authority = request_authorization(request)
-            if authority is None and getattr(request.state, "authorization_enabled", False):
+            authority = caller.authorization()
+            if authority is None and caller.authorization_enabled:
                 raise HTTPException(403, "Task acceptance has no saved caller authority")
             if authority is not None:
                 try:
                     await authority.arequire(value["executor_type"] + "s", "run", value["executor_id"])
                 except PermissionError as exc:
                     raise HTTPException(403, str(exc)) from exc
-        queue = worker(request)
-        caller = resolve_run_user_id(request)
+        queue = self.worker(caller.app)
+        started_by = caller.resolve_user()
         if observed is not None:
-            caller = value.get("accepted_by")
+            started_by = value.get("accepted_by")
+        # An omitted attempt joins the reserved run, otherwise it starts the next attempt.
+        if attempt is None:
+            attempt = _pending_task_attempt(value) or task_next_attempt(value)
         # Review requests start the next attempt; an old attempt is not a revision.
         # Validate before looking up tickets so retained runs cannot bypass this gate.
-        if value["status"] in {"ready", "in_review"} or (value["status"] == "backlog" and body.attempt > 1):
+        if value["status"] in {"ready", "in_review"} or (value["status"] == "backlog" and attempt > 1):
             try:
-                task_run_fields(value, body.attempt, caller)
+                task_run_fields(value, attempt, started_by)
             except ValueError as exc:
                 raise HTTPException(409, str(exc)) from exc
-        run_id = task_run_id(task_id, body.attempt)
+        run_id = task_run_id(task_id, attempt)
         existing = await queue.store.get_job(run_id)
         if existing is not None:
             if (existing.get("payload") or {}).get("company_task_id") != task_id:
                 raise HTTPException(409, "Run identifier conflicts with another submission")
-            reserved = await _reserve_task(db, existing)
+            reserved = await _reserve_task(self.db, existing)
             if (
                 reserved is not None
                 and existing["status"] in {"completed", "failed", "cancelled"}
@@ -216,7 +383,7 @@ def get_company_runs_router(os: Any) -> APIRouter:
                 from agno.company.execution import _recover_task
 
                 # A finished ticket's unsaved Task result is rebuilt from its run row.
-                await _recover_task(os, queue, reserved)
+                await _recover_task(self.os, queue, reserved)
             return JSONResponse(
                 {
                     "run_id": run_id,
@@ -228,13 +395,13 @@ def get_company_runs_router(os: Any) -> APIRouter:
         # Queue retention does not erase idempotency: the Task session's run row
         # remains the authority after the ticket has been cleaned up.
         if value.get("job_id"):
-            original_db = run_database(value)
+            original_db = self.run_database(value)
             prior_run = await _call(original_db, "get_run", run_id, deserialize=False)
             if prior_run is not None:
                 if prior_run["session_id"] != value["session_id"]:
                     raise _TaskRunConflict("Run identifier conflicts with another session")
                 await _reconcile_task_run(
-                    db,
+                    self.db,
                     original_db,
                     value,
                     prior_run,
@@ -247,11 +414,7 @@ def get_company_runs_router(os: Any) -> APIRouter:
                 )
         if value["status"] not in {"ready", "in_progress", "in_review"} or not value.get("executor_id"):
             raise HTTPException(409, "Only accepted work can be started")
-        run_db = getattr(component, "db", None)
-        if run_db is None:
-            raise HTTPException(409, "Task executor requires a database for durable runs")
-        if value.get("job_id") and run_database(value) is not run_db:
-            raise HTTPException(409, "A Task session must stay in its original executor database")
+        run_db = self.executor_database(value, component)
         if value.get("job_id") and value["job_id"] != run_id:
             previous = await queue.store.get_job(value["job_id"])
             previous_status = previous["status"] if previous else None
@@ -285,7 +448,7 @@ def get_company_runs_router(os: Any) -> APIRouter:
         if _pending_task_attempt(value) is not None:
             from agno.company.execution import _recover_task
 
-            recovered = await _recover_task(os, queue, value)
+            recovered = await _recover_task(self.os, queue, value)
             if recovered is not None:
                 return JSONResponse(
                     {"run_id": value["job_id"], "session_id": value["session_id"], "status": recovered["status"]},
@@ -294,28 +457,36 @@ def get_company_runs_router(os: Any) -> APIRouter:
             raise HTTPException(409, "Start the next Task attempt after accepting a retry")
         owner = _task_session_owner(value, component)
         await _prepare_task_session(run_db, value, owner)
-        try:
-            message = await _task_input(manager, value, accepted_execution=True)
-        except LookupError as exc:
-            raise HTTPException(404, str(exc))
-        except ValueError as exc:
-            raise HTTPException(409, str(exc))
-        except NotImplementedError:
-            raise HTTPException(503, "Company wiki is not supported by the configured database")
+        if message is None:
+            message = await self.task_message(value)
         # Apply the ordinary run route's schema check before mutating the Task.
         # Rejected input must not consume an attempt or leave phantom active work.
         validate_seam_input(component, message)
         try:
-            if _pending_task_attempt(value) != body.attempt:
-                task_run_fields(value, body.attempt, caller, run_db.id)
+            if _pending_task_attempt(value) != attempt:
+                task_run_fields(value, attempt, started_by, run_db.id)
         except ValueError as exc:
             raise HTTPException(409, str(exc))
+        from agno.agent import Agent
+        from agno.company.execution import _another_executor_ran
+        from agno.team import Team
+
+        # Agents and teams take the history switch per run. A workflow and an external agent do not.
+        without_history = isinstance(component, (Agent, Team)) and await _another_executor_ran(run_db, value)
         token = _task_submission.set(
-            {"db": db, "task": value, "attempt": body.attempt, "run_db_id": run_db.id, "started_by": caller}
+            {
+                "db": self.db,
+                "task": value,
+                "attempt": attempt,
+                "run_db_id": run_db.id,
+                "started_by": started_by,
+                "requested_from": caller.requested_from,
+                "without_history": without_history,
+            }
         )
         try:
             return await _run_route(
-                request,
+                caller,
                 path,
                 "POST",
                 owner=owner,
@@ -326,11 +497,139 @@ def get_company_runs_router(os: Any) -> APIRouter:
                     "session_id": value["session_id"],
                     **({"user_id": owner} if owner is not None else {}),
                 },
-                key=f"company:{task_id}:{body.attempt}",
+                key=f"company:{task_id}:{attempt}",
                 checkout=(value.get("metadata") or {}).get("checkout"),
             )
         finally:
             _task_submission.reset(token)
+
+
+def get_company_runs_router(os: Any) -> APIRouter:
+    router = APIRouter(prefix="/company", tags=["Company execution"], dependencies=[Depends(get_scoped_user_id)])
+    auth = get_authentication_dependency(os.settings)
+    starter = _TaskStarter(os)
+    db, manager = starter.db, starter.manager
+    task, executor, endpoint = starter.task, starter.executor, starter.endpoint
+    run_database, executor_database, task_message = (
+        starter.run_database,
+        starter.executor_database,
+        starter.task_message,
+    )
+
+    def worker(request: Request):
+        return starter.worker(request.app)
+
+    async def withdraw(task_id: str, request: Request, accepted: Dict[str, Any], reason: str) -> None:
+        from agno.utils.log import log_error
+
+        try:
+            current = await task(task_id)
+            # Withdraw only the unchanged, unstarted acceptance. Backlog and
+            # its transition reason expose the work for human attention.
+            if current["status"] != "ready" or current.get("job_id") != accepted.get("job_id"):
+                return
+            # A ticket committed before the start failed still runs this acceptance.
+            queue = getattr(request.app.state, "queue_worker", None)
+            if queue is not None:
+                run_id = task_run_id(task_id, task_next_attempt(current))
+                # A failed lookup must not read as "no ticket" and withdraw a committed run.
+                try:
+                    job = await queue.store.get_job(run_id, strict=True)
+                except TypeError:
+                    job = await queue.store.get_job(run_id)
+                if job is not None and job["status"] not in {"failed", "cancelled"}:
+                    return
+            await _call(db, "transition_task", task_id, "backlog", reason, expected_updated_at=current["updated_at"])
+        except Exception as exc:
+            log_error(f"Failed to withdraw Task {task_id} after a refused start: {exc}")
+
+    @router.post("/tasks/{task_id}/runs", status_code=202)
+    async def start(task_id: str, request: Request, body: TaskRunCreate = TaskRunCreate(), _: bool = Depends(auth)):
+        try:
+            return await start_task(task_id, request, body)
+        except _TaskRunUnavailable as exc:
+            raise HTTPException(503, str(exc)) from exc
+        except _TaskRunConflict as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    async def start_task(task_id: str, request: Request, body: TaskRunCreate):
+        import json
+
+        from agno.company.routines import _manager_call
+
+        value = await task(task_id)
+        reason = await _project_run_block(db, value)
+        if reason:
+            raise HTTPException(409, reason)
+        # A retry joins the start while the Task is Ready or its attempt is unfinished; repeating it
+        # after the run has ended would start another attempt, so it is refused.
+        accepted_for = (value["status"] == "ready" or _pending_task_attempt(value) is not None) and (
+            value.get("executor_type"),
+            value.get("executor_id"),
+        ) == (body.executor_type, body.executor_id)
+        message: Optional[str] = None
+        accepted: Optional[Dict[str, Any]] = None
+        if body.executor_type is not None and not accepted_for:
+            # Starting a Backlog Task with an executor accepts it first, with the same check as moving it to Ready.
+            if value["status"] != "backlog":
+                raise HTTPException(409, "Only a Backlog Task takes an executor when its run starts")
+            target = {"executor_type": body.executor_type, "executor_id": body.executor_id}
+            # Check what the start needs before accepting; a later refusal returns the Task to Backlog.
+            component = executor(target)
+            await _require_endpoint_permission(request, endpoint(target), "POST", action="accept")
+            queue = worker(request)
+            executor_database(value, component)
+            # A withdrawn queued ticket stays live until the worker refuses it.
+            previous = None
+            if value.get("job_id"):
+                try:
+                    # A failed lookup must not read as "no ticket" and accept over a live run.
+                    try:
+                        previous = await queue.store.get_job(value["job_id"], strict=True)
+                    except TypeError:
+                        previous = await queue.store.get_job(value["job_id"])
+                except Exception:
+                    raise HTTPException(503, "Could not verify the Task run; retry the request")
+            if previous is not None and previous["status"] not in {"failed", "cancelled", "completed"}:
+                raise HTTPException(409, "The previous Task run is still active")
+            message = await task_message(value)
+            validate_seam_input(component, message)
+            if body.attempt is not None and body.attempt != task_next_attempt(value):
+                raise HTTPException(409, "Start the next Task attempt, or retry the original attempt")
+            try:
+                accepted = await _manager_call(
+                    manager,
+                    "transition_task",
+                    task_id=task_id,
+                    target="ready",
+                    reason="Accepted to start a run",
+                    accepted_by=getattr(request.state, "user_id", None),
+                    executor_type=body.executor_type,
+                    executor_id=body.executor_id,
+                    expected_updated_at=value["updated_at"],
+                )
+            except ValueError as exc:
+                accepted, detail = None, str(exc)
+            else:
+                detail = "Task changed while transitioning"
+            value = await task(task_id)
+            # A concurrent identical direct start may have accepted the Task first; join its run.
+            if accepted is None and (
+                value["status"] == "backlog"
+                or (value.get("executor_type"), value.get("executor_id")) != (body.executor_type, body.executor_id)
+            ):
+                raise HTTPException(409, detail)
+        try:
+            response = await starter.submit(task_id, _StartCaller.from_request(request), body.attempt, value, message)
+        except Exception as exc:
+            if accepted is not None:
+                reason = str(exc.detail) if isinstance(exc, HTTPException) else str(exc)
+                await withdraw(task_id, request, accepted, reason)
+            raise
+        if accepted is not None and response.status_code >= 300:
+            refusal = json.loads(bytes(response.body)).get("detail") if response.body else None
+            await withdraw(task_id, request, accepted, str(refusal or "The run did not start"))
+        return response
 
     @router.get("/tasks/{task_id}/runs", response_model=PaginatedResponse[Dict[str, Any]])
     async def runs(
