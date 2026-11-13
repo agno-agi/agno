@@ -811,7 +811,7 @@ class Model(ABC):
                             ModelResponseEvent.tool_call_completed.value,
                         ]:
                             if function_call_response.content:
-                                model_response.content += function_call_response.content  # type: ignore
+                                model_response.content = (model_response.content or "") + function_call_response.content
 
                 # Add a function call for each successful execution
                 function_call_count += self._limit_charge_for(function_call_results, result_store)
@@ -1034,7 +1034,7 @@ class Model(ABC):
                             ModelResponseEvent.tool_call_completed.value,
                         ]:
                             if function_call_response.content:
-                                model_response.content += function_call_response.content  # type: ignore
+                                model_response.content = (model_response.content or "") + function_call_response.content
 
                 # Add a function call for each successful execution
                 function_call_count += self._limit_charge_for(function_call_results, result_store)
@@ -1139,12 +1139,11 @@ class Model(ABC):
         # Populate the assistant message
         self._populate_assistant_message(assistant_message=assistant_message, provider_response=provider_response)
 
-        # Update model response with assistant message content and audio
-        if assistant_message.content is not None:
-            if model_response.content is None:
-                model_response.content = assistant_message.get_content_string()
-            else:
-                model_response.content += assistant_message.get_content_string()
+        # Update model response with assistant message content and audio.
+        # Content holds the latest model call's text only (None when that call wrote no
+        # text): text written before a tool call stays in its own assistant message
+        # instead of being glued onto the final answer (#11641).
+        model_response.content = assistant_message.get_content_string() if assistant_message.content else None
         if assistant_message.reasoning_content is not None:
             model_response.reasoning_content = assistant_message.reasoning_content
         if assistant_message.redacted_reasoning_content is not None:
@@ -1209,12 +1208,11 @@ class Model(ABC):
         # Populate the assistant message
         self._populate_assistant_message(assistant_message=assistant_message, provider_response=provider_response)
 
-        # Update model response with assistant message content and audio
-        if assistant_message.content is not None:
-            if model_response.content is None:
-                model_response.content = assistant_message.get_content_string()
-            else:
-                model_response.content += assistant_message.get_content_string()
+        # Update model response with assistant message content and audio.
+        # Content holds the latest model call's text only (None when that call wrote no
+        # text): text written before a tool call stays in its own assistant message
+        # instead of being glued onto the final answer (#11641).
+        model_response.content = assistant_message.get_content_string() if assistant_message.content else None
         if assistant_message.reasoning_content is not None:
             model_response.reasoning_content = assistant_message.reasoning_content
         if assistant_message.redacted_reasoning_content is not None:

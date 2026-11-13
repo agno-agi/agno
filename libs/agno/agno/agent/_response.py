@@ -1083,6 +1083,11 @@ def handle_model_response_stream(
         # Handle LLM request events and compression events from ModelResponse
         if isinstance(model_response_event, ModelResponse):
             if model_response_event.event == ModelResponseEvent.model_request_started.value:
+                # Each model call starts a new assistant message: drop the text streamed by
+                # the previous call so run content matches the non-streaming path (#11641).
+                if model_response.content:
+                    model_response.content = ""
+                    run_response.content = None
                 if stream_events:
                     yield handle_event(  # type: ignore
                         create_model_request_started_event(
@@ -1249,6 +1254,11 @@ async def ahandle_model_response_stream(
         # Handle LLM request events and compression events from ModelResponse
         if isinstance(model_response_event, ModelResponse):
             if model_response_event.event == ModelResponseEvent.model_request_started.value:
+                # Each model call starts a new assistant message: drop the text streamed by
+                # the previous call so run content matches the non-streaming path (#11641).
+                if model_response.content:
+                    model_response.content = ""
+                    run_response.content = None
                 if stream_events:
                     yield handle_event(  # type: ignore
                         create_model_request_started_event(
