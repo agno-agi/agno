@@ -641,3 +641,13 @@ Three controls, two runs each:
 **Result:** Exit 0 and all assertions passed. The listings returned `changes.md` and `follow-ups.md`, each path inside its folder, and both reads returned the content the tools wrote. The script runs with authorization off, so it does not show the scopes; `tests/unit/os/routers/test_company_files_router.py` checks them.
 
 ---
+
+### 16_company_file_tree.py (2026-11-13, a Task's files ask for two scopes)
+
+**Status:** PASS
+
+**Description:** Rerun after the file routes changed: a Task's files now ask for `tasks:read` and `wiki:read`, a listing returns at most 200 files a page, and a refused path is described in the terms of the path the caller sent. No model call. The script's own change is one comment.
+
+**Result:** Exit 0 and all assertions passed. The script runs with authorization off, so it does not show the scopes; `tests/unit/os/routers/test_company_files_router.py` checks them.
+
+---

@@ -1,11 +1,12 @@
 """Read-only routes over the Company file tree: a Task's files and the shared notes."""
 
-from typing import Any, Dict, List
+from typing import Any, Awaitable, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from agno.company.execution import _call
 from agno.company.files import LIST_ENTRIES, CompanyFiles
+from agno.fs._paths import MAX_PATH_CHARS, MAX_SEGMENT_CHARS, MAX_SEGMENTS
 from agno.fs.errors import InvalidPathError
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id
@@ -20,12 +21,23 @@ def get_company_files_router(agent_os: Any) -> APIRouter:
     db = agent_os._company_db
     files = CompanyFiles(db, notes_db=agent_os.db)
 
-    async def tree(method: str, *args: Any) -> Dict[str, Any]:
+    def path_rules(folder: str) -> str:
+        """What a path inside the folder must look like. The tree's limits count the folder's own name."""
+        return (
+            f"Invalid file path. A path is at most {MAX_PATH_CHARS - len(folder) - 1} characters and "
+            f"{MAX_SEGMENTS - folder.count('/') - 1} names deep, each name at most {MAX_SEGMENT_CHARS} characters, "
+            "with no '.' or '..' names, no backslashes and no control characters."
+        )
+
+    async def tree(folder: str, call: Awaitable[Dict[str, Any]]) -> Dict[str, Any]:
         try:
-            return await getattr(files, method)(*args)
+            return await call
         except NotImplementedError:
             raise HTTPException(503, "Company files are not supported by the configured database")
-        except (ValueError, InvalidPathError) as exc:
+        except InvalidPathError:
+            # The tree's own message names the whole tree path. The caller sent a path inside the folder.
+            raise HTTPException(422, path_rules(folder))
+        except ValueError as exc:
             raise HTTPException(422, str(exc))
 
     async def task_folder(task_id: str) -> str:
@@ -55,12 +67,12 @@ def get_company_files_router(agent_os: Any) -> APIRouter:
         }
 
     async def listing(folder: str, limit: int, page: int) -> PaginatedResponse:
-        # The tree lists LIST_ENTRIES files a page, so one page here may span more than one of them.
+        # The tree lists LIST_ENTRIES files a page and limit is at most that, so one page here spans up to two.
         start = (page - 1) * limit
         tree_page, skip = start // LIST_ENTRIES + 1, start % LIST_ENTRIES
         rows: List[Dict[str, Any]] = []
         while True:
-            result = await tree("alist", folder, tree_page)
+            result = await tree(folder, files.alist(folder, tree_page))
             rows.extend(result["files"])
             if len(rows) >= skip + limit or "next_page" not in result:
                 break
@@ -72,7 +84,7 @@ def get_company_files_router(agent_os: Any) -> APIRouter:
         )
 
     async def reading(folder: str, path: str, offset: int) -> Dict[str, Any]:
-        result = await tree("aread", f"{folder}/{path}", offset)
+        result = await tree(folder, files.aread(f"{folder}/{path}", offset))
         if "content" not in result:
             raise HTTPException(404, "File not found")
         return {
@@ -84,7 +96,7 @@ def get_company_files_router(agent_os: Any) -> APIRouter:
     @router.get("/tasks/{task_id}/files", response_model=PaginatedResponse[WikiPageResponse])
     async def list_task_files(
         task_id: str,
-        limit: int = Query(20, ge=1, le=1000),
+        limit: int = Query(20, ge=1, le=LIST_ENTRIES),
         page: int = Query(1, ge=1),
         _: bool = Depends(auth),
     ):
@@ -96,7 +108,7 @@ def get_company_files_router(agent_os: Any) -> APIRouter:
 
     @router.get("/notes", response_model=PaginatedResponse[WikiPageResponse])
     async def list_notes(
-        limit: int = Query(20, ge=1, le=1000),
+        limit: int = Query(20, ge=1, le=LIST_ENTRIES),
         page: int = Query(1, ge=1),
         _: bool = Depends(auth),
     ):

@@ -618,9 +618,10 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
                 "DELETE /company/projects/*": ["projects:delete"],
                 "POST /company/projects/*/restore": ["projects:delete"],
                 "POST /company/projects/*/transitions": ["projects:write"],
-                # Company Task endpoints. A Task's files come before tasks/*, which also matches them.
-                "GET /company/tasks/*/files": ["tasks:read"],
-                "GET /company/tasks/*/files/*": ["tasks:read"],
+                # Company Task endpoints. A Task's files ask for wiki:read too, as reading them in chat does.
+                # Their rows come before tasks/*, which also matches them and asks for less.
+                "GET /company/tasks/*/files": ["tasks:read", "wiki:read"],
+                "GET /company/tasks/*/files/*": ["tasks:read", "wiki:read"],
                 "GET /company/tasks": ["tasks:read"],
                 "GET /company/tasks/*": ["tasks:read"],
                 "POST /company/tasks": ["tasks:write"],

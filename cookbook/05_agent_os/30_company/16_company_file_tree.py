@@ -144,8 +144,8 @@ if __name__ == "__main__":
         assert [match["path"] for match in found] == [product_folder + "/research.md"]
 
         # A person reads a Task's files and the notes through the API, as the Company
-        # pages do. With authorization on, a Task's files ask for tasks:read and the
-        # notes for wiki:read. Each path is inside its folder.
+        # pages do. With authorization on, a Task's files ask for tasks:read and
+        # wiki:read, and the notes for wiki:read. Each path is inside its folder.
         client = TestClient(agent_os.get_app())
         task_files = client.get("/company/tasks/" + task["id"] + "/files").json()
         print("Task files over the API:", [row["path"] for row in task_files["data"]])

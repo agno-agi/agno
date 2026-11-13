@@ -236,10 +236,13 @@ show what Super Agent and its workers wrote:
 
 | Route | Scope | Returns |
 | --- | --- | --- |
-| GET `/company/tasks/{id}/files` | `tasks:read` | The Task's files, paged with `limit` and `page` as the wiki is |
-| GET `/company/tasks/{id}/files/{path}` | `tasks:read` | One file: `content`, `metadata` and `next_offset` |
+| GET `/company/tasks/{id}/files` | `tasks:read` and `wiki:read` | The Task's files, paged with `limit` and `page` |
+| GET `/company/tasks/{id}/files/{path}` | `tasks:read` and `wiki:read` | One file: `content`, `metadata` and `next_offset` |
 | GET `/company/notes` | `wiki:read` | The notes, paged the same way |
 | GET `/company/notes/{path}` | `wiki:read` | One note |
+
+A Task's files ask for `wiki:read` as well as `tasks:read`, because reading them in
+chat asks for `wiki:read`. A listing returns at most 200 files a page.
 
 Each `path` is inside its folder: `report.md`, not `tasks/<task-id>/report.md`.
 One read returns at most 40,000 characters. A longer file returns `next_offset`;

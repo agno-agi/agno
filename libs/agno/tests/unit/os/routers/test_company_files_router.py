@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from agno.company.files import LIST_ENTRIES, READ_CHARS, CompanyFiles
 from agno.db.sqlite import AsyncSqliteDb, SqliteDb
+from agno.fs._paths import MAX_PATH_CHARS, MAX_SEGMENT_CHARS, MAX_SEGMENTS
 from agno.os import AgentOS, CompanyConfig
 from agno.os.config import AuthorizationConfig
 from agno.os.scopes import get_default_scope_mappings, get_required_scopes_for_route
@@ -200,12 +201,13 @@ def test_a_folder_with_more_than_one_page_of_files(make, folder):
     assert page(20, 2) == names[20:40]
     # A page that starts in one page of the tree and ends in the next.
     assert page(150, 2) == names[150:]
+    assert page(LIST_ENTRIES, 1) == names[:LIST_ENTRIES]
     assert page(LIST_ENTRIES, 2) == names[LIST_ENTRIES:]
-    assert page(1000, 1) == names
     # Every file is listed once across the pages, and a page past the end is empty.
     assert [name for number in range(1, 5) for name in page(60, number)] == names
     assert page(60, 5) == []
-    for params in [{"limit": 0}, {"limit": 1001}, {"page": 0}]:
+    # One request lists at most one page of the tree.
+    for params in [{"limit": 0}, {"limit": LIST_ENTRIES + 1}, {"limit": 1000}, {"page": 0}]:
         assert client.get(url, params=params).status_code == 422
 
 
@@ -216,7 +218,7 @@ def test_a_page_past_the_end_is_empty_with_the_right_totals(make):
         files.write(f"tasks/{task_id}/{name}", name)
         files.write(f"notes/{name}", name)
     for url in [f"/company/tasks/{task_id}/files", "/company/notes"]:
-        for limit, page, total_pages in [(20, 50, 1), (2, 3, 2), (1, 4, 3), (1000, 10**9, 1)]:
+        for limit, page, total_pages in [(20, 50, 1), (2, 3, 2), (1, 4, 3), (LIST_ENTRIES, 10**9, 1)]:
             response = client.get(url, params={"limit": limit, "page": page})
             assert response.status_code == 200, (url, limit, page, response.text)
             assert response.json()["data"] == []
@@ -244,14 +246,20 @@ def test_a_caller_without_the_scope_is_refused(make):
     for url in [*task_urls, *note_urls]:
         assert client.get(url).status_code == 401, url
         assert client.get(url, headers=headers("bob", [])).status_code == 403, url
+    # A Task's files ask for both scopes: the Task's own, and the one that reads the tree in chat.
     for url in task_urls:
         assert client.get(url, headers=headers("bob", ["wiki:read", "tasks:write"])).status_code == 403, url
-        assert client.get(url, headers=headers("bob", ["tasks:read"])).status_code == 200, url
+        assert client.get(url, headers=headers("bob", ["tasks:read", "wiki:write"])).status_code == 403, url
+        assert client.get(url, headers=headers("bob", ["tasks:read", "wiki:read"])).status_code == 200, url
+    # The Task route itself still asks for tasks:read alone.
+    assert client.get(f"/company/tasks/{task_id}", headers=headers("bob", ["tasks:read"])).status_code == 200
     for url in note_urls:
         assert client.get(url, headers=headers("bob", ["tasks:read", "wiki:write"])).status_code == 403, url
         assert client.get(url, headers=headers("bob", ["wiki:read"])).status_code == 200, url
     # The scope is checked before the Task is looked up.
-    assert client.get("/company/tasks/no-such-task/files", headers=headers("bob", ["wiki:read"])).status_code == 403
+    for scopes, status in [(["wiki:read"], 403), (["tasks:read"], 403), (["tasks:read", "wiki:read"], 404)]:
+        response = client.get("/company/tasks/no-such-task/files", headers=headers("bob", scopes))
+        assert response.status_code == status, scopes
 
 
 @pytest.mark.parametrize("isolation", [False, True])
@@ -356,6 +364,40 @@ def test_a_path_cannot_leave_its_folder(make, path):
         response = client.get(url)
         assert response.status_code == 422, (url, response.status_code, response.text)
         assert "content" not in response.json()
+        # The refusal is about the path the caller sent. It names no folder of the tree.
+        detail = response.json()["detail"]
+        assert detail.startswith("Invalid file path. A path is at most "), detail
+        assert "notes" not in detail and "tasks" not in detail and task_id not in detail, detail
+
+
+def test_a_refused_path_states_the_limits_that_apply_to_it(make):
+    client, files = make()
+    task_id = new_task(client)
+    # The tree's limits count the folder's name, so a path inside the folder has less room.
+    for url, folder in [(f"/company/tasks/{task_id}/files", f"tasks/{task_id}"), ("/company/notes", "notes")]:
+        chars = MAX_PATH_CHARS - len(folder) - 1
+        names = MAX_SEGMENTS - folder.count("/") - 1
+        rules = (
+            f"Invalid file path. A path is at most {chars} characters and {names} names deep, "
+            f"each name at most {MAX_SEGMENT_CHARS} characters, "
+            "with no '.' or '..' names, no backslashes and no control characters."
+        )
+
+        def read(path):
+            response = client.get(f"{url}/{path}")
+            return response.status_code, response.json()["detail"]
+
+        # The longest path, the deepest path and the longest name are read; one more of each is refused.
+        longest = "/".join(["a" * 100] * 4) + "/"
+        longest += "b" * (chars - len(longest))
+        assert len(longest) == chars
+        assert read(longest) == (404, "File not found")
+        assert read(longest + "b") == (422, rules)
+        assert read("/".join(["d"] * names)) == (404, "File not found")
+        assert read("/".join(["d"] * (names + 1))) == (422, rules)
+        assert read("n" * MAX_SEGMENT_CHARS) == (404, "File not found")
+        assert read("n" * (MAX_SEGMENT_CHARS + 1)) == (422, rules)
+        assert read("a%5Cb.md") == (422, rules)
 
 
 def test_a_trailing_slash_is_dropped_before_the_route(make):
@@ -397,15 +439,15 @@ def matched_row(method, path):
 @pytest.mark.parametrize(
     "path,row,scopes",
     [
-        ("/company/tasks/t1/files", "GET /company/tasks/*/files", ["tasks:read"]),
-        ("/company/tasks/t1/files/report.md", "GET /company/tasks/*/files/*", ["tasks:read"]),
-        ("/company/tasks/t1/files/data/rows.csv", "GET /company/tasks/*/files/*", ["tasks:read"]),
+        ("/company/tasks/t1/files", "GET /company/tasks/*/files", ["tasks:read", "wiki:read"]),
+        ("/company/tasks/t1/files/report.md", "GET /company/tasks/*/files/*", ["tasks:read", "wiki:read"]),
+        ("/company/tasks/t1/files/data/rows.csv", "GET /company/tasks/*/files/*", ["tasks:read", "wiki:read"]),
         ("/company/notes", "GET /company/notes", ["wiki:read"]),
         ("/company/notes/ideas.md", "GET /company/notes/*", ["wiki:read"]),
         ("/company/notes/people/alice.md", "GET /company/notes/*", ["wiki:read"]),
         # A file path that looks like another route keeps its own row.
-        ("/company/tasks/t1/files/wiki/brief.md", "GET /company/tasks/*/files/*", ["tasks:read"]),
-        ("/company/tasks/t1/files/../../notes/ideas.md", "GET /company/tasks/*/files/*", ["tasks:read"]),
+        ("/company/tasks/t1/files/wiki/brief.md", "GET /company/tasks/*/files/*", ["tasks:read", "wiki:read"]),
+        ("/company/tasks/t1/files/../../notes/ideas.md", "GET /company/tasks/*/files/*", ["tasks:read", "wiki:read"]),
         ("/company/notes/tasks/t1/files/report.md", "GET /company/notes/*", ["wiki:read"]),
         ("/company/notes/../tasks/t1/files/report.md", "GET /company/notes/*", ["wiki:read"]),
         # The rows beside the new ones still match their own routes.
