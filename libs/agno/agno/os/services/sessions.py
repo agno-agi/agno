@@ -16,7 +16,7 @@ from starlette.concurrency import run_in_threadpool
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.db.utils import detect_session_type
-from agno.os.schema import RunSchema, TeamRunSchema, WorkflowRunSchema
+from agno.os.schema import CompactionSummarySchema, RunSchema, TeamRunSchema, WorkflowRunSchema
 from agno.utils.log import log_warning
 
 AnyRunSchema = Union[RunSchema, TeamRunSchema, WorkflowRunSchema]
@@ -333,6 +333,26 @@ async def get_session_runs(
         for indexed_run in indexed.runs
         if _run_matches_filters(indexed_run[1], created_after, created_before, None)
     ]
+
+
+async def get_session_compactions(
+    db: Optional[Union[BaseDb, AsyncBaseDb]], *, session_id: str
+) -> List[CompactionSummarySchema]:
+    """Every compaction of a session, automatic and manual, newest first.
+
+    Read from the compaction records rather than from runs: a manual compaction is made by no run, so the
+    records are the only place that has all of them. A database that does not store compaction records has
+    none to return. The caller checks that the session exists and belongs to the requester.
+    """
+    # Only sync databases store compaction records; the base class declares the read as a stub that raises
+    read = getattr(db, "get_compactions_for_session", None)
+    if read is None or isinstance(db, AsyncBaseDb):
+        return []
+    try:
+        records = await run_in_threadpool(lambda: read(session_id))
+    except NotImplementedError:
+        return []
+    return [CompactionSummarySchema.from_record(record) for record in records]
 
 
 class SessionRunsWindow(NamedTuple):

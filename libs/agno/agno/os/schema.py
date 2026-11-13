@@ -753,22 +753,25 @@ class CompactionSummarySchema(BaseModel):
 
     id: Optional[str] = Field(None, description="Unique identifier for the compaction record")
     run_id: Optional[str] = Field(
-        None, description="Run that compacted its own context. Not set for a manual compaction made after the run"
+        None, description="Run that compacted its own context. Not set for a manual compaction, which no run made"
     )
     messages_compacted: int = Field(0, description="Number of history messages the compaction replaced")
     tokens_before: Optional[int] = Field(None, description="Context size before the compaction, in tokens")
     tokens_after: Optional[int] = Field(None, description="Context size after the compaction, in tokens")
     created_at: Optional[int] = Field(None, description="Unix timestamp of the compaction")
+    archived: bool = Field(False, description="Whether the replaced messages were stored and can be read back")
 
     @classmethod
-    def from_dict(cls, record: Dict[str, Any]) -> "CompactionSummarySchema":
+    def from_record(cls, record: Dict[str, Any]) -> "CompactionSummarySchema":
+        """From a stored compaction record, as the database returns it."""
         return cls(
-            id=record.get("id") or record.get("compaction_id"),
+            id=record.get("compaction_id"),
             run_id=record.get("run_id"),
             messages_compacted=record.get("messages_compacted") or 0,
             tokens_before=record.get("tokens_before"),
             tokens_after=record.get("tokens_after"),
             created_at=record.get("created_at"),
+            archived=bool(record.get("archived_messages")),
         )
 
 
@@ -824,13 +827,6 @@ class RunSchema(BaseModel):
     last_checkpoint_at_message_index: Optional[int] = Field(
         None, description="Message index of the most recent mid-run checkpoint (checkpoint='tool-batch' runs)"
     )
-    compaction: Optional[CompactionSummarySchema] = Field(
-        None,
-        description=(
-            "The latest compaction on this run: one the run made on its own context, "
-            "or a manual one made after it while it was the session's latest run"
-        ),
-    )
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any], *, session: Optional[Dict[str, Any]] = None) -> "RunSchema":
@@ -879,9 +875,6 @@ class RunSchema(BaseModel):
             forked_from_session_id=run_dict.get("forked_from_session_id"),
             regenerated_from=run_dict.get("regenerated_from"),
             last_checkpoint_at_message_index=run_dict.get("last_checkpoint_at_message_index"),
-            compaction=(
-                CompactionSummarySchema.from_dict(run_dict["compaction"]) if run_dict.get("compaction") else None
-            ),
         )
 
 
