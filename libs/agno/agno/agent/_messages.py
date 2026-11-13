@@ -453,10 +453,10 @@ def _add_to_session_and_latest_run(
     its usage to the session's metrics.
 
     A manual compaction has no run of its own, so that run carries its model call and its record. The record takes the
-    run's `compaction`, replacing an earlier one: the newest compaction is the one in force. It has no `run_id`, which
-    is how a reader tells it from one the run made itself. With no such run, the usage is kept in the session's
-    compaction metrics, which the session's metrics add to its runs', and the record stays in the compaction table
-    alone.
+    run's `compaction` and has no `run_id`, which is how a reader tells it from one the run made itself. It replaces
+    an earlier manual record, but never a compaction the run made on its own context: that one is the run's own
+    history. With no run to carry it, the usage is kept in the session's compaction metrics, which the session's
+    metrics add to its runs', and the record stays in the compaction table alone.
     """
     from copy import copy as shallow_copy
     from dataclasses import replace
@@ -482,7 +482,8 @@ def _add_to_session_and_latest_run(
                 RunMetrics.from_dict(latest_run.metrics.to_dict()) if latest_run.metrics else RunMetrics()
             )
             merge_background_metrics(latest_run.metrics, [metrics])
-        if record is not None:
+        made_by_the_run = getattr(latest_run.compaction, "run_id", None) is not None
+        if record is not None and not made_by_the_run:
             latest_run.compaction = replace(record, summary="")
         runs[finished[-1]] = latest_run
     elif metrics is not None:

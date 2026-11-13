@@ -2266,6 +2266,34 @@ def test_manual_compact_is_recorded_on_the_latest_run(use_async):
     }
 
 
+def test_manual_compact_keeps_the_compaction_a_run_made_itself():
+    """A run that compacted its own context keeps that record. A later manual fold would otherwise replace it, and the
+    runs API would stop reporting the automatic compaction that run really made."""
+    from agno.agent import Agent
+    from agno.compaction.types import CompactionRecord
+    from agno.db.base import SessionType
+
+    db = _db()
+    agent = Agent(
+        model=_RecordingModel.build(),
+        db=db,
+        session_id="s",
+        add_history_to_context=True,
+        compaction=Compaction(compact_at_tokens=None, uncompacted_runs=1, min_fold_ratio=0, model=_MeteredSummarizer()),
+    )
+    for i in range(4):
+        agent.run(f"question number {i}")
+    latest = db.get_session(session_id="s", session_type=SessionType.AGENT).runs[-1]
+    latest.compaction = CompactionRecord(messages_compacted=2, summary="", id="auto-fold", run_id=latest.run_id)
+    db.upsert_run(run=latest, session_id="s", run_index=3)
+
+    result = agent.compact(session_id="s")
+
+    kept = db.get_session(session_id="s", session_type=SessionType.AGENT).runs[-1].compaction
+    assert result.compacted
+    assert (kept.id, kept.run_id) == ("auto-fold", latest.run_id)
+
+
 def test_manual_compact_leaves_a_latest_run_that_can_still_change():
     """A failed latest run can still be continued in place, so the fold's usage goes on the latest completed run
     instead, never on one whose continue would drop it."""
