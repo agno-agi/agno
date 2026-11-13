@@ -17,7 +17,7 @@ except ImportError:
 class DalleTools(Toolkit):
     def __init__(
         self,
-        model: str = "dall-e-3",
+        model: str = "gpt-image-2",
         n: int = 1,
         size: Optional[Literal["256x256", "512x512", "1024x1024", "1792x1024", "1024x1792"]] = "1024x1024",
         quality: Literal["standard", "hd"] = "standard",
@@ -35,7 +35,7 @@ class DalleTools(Toolkit):
         self.api_key = api_key or getenv("OPENAI_API_KEY")
 
         # Validations
-        if model not in ["dall-e-3", "dall-e-2"]:
+        if model not in ["dall-e-3", "dall-e-2", "gpt-image-2", "gpt-image-1", "gpt-image-1-mini"]:
             raise ValueError("Invalid model. Please choose from 'dall-e-3' or 'dall-e-2'.")
         if size not in ["256x256", "512x512", "1024x1024", "1792x1024", "1024x1792"]:
             raise ValueError(
