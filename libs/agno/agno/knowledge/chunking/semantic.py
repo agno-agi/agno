@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any, Dict, List, Literal, Optional, Union
 
 try:
@@ -166,3 +167,11 @@ class SemanticChunking(ChunkingStrategy):
             chunked_documents.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content=chunk.text))
 
         return chunked_documents
+
+    async def achunk(self, document: Document) -> List[Document]:
+        """Run the synchronous chunker without blocking the event loop.
+
+        Cancelling the await does not interrupt an embedding call already running
+        in the worker thread.
+        """
+        return await asyncio.to_thread(self.chunk, document)
