@@ -499,7 +499,7 @@ def _connect(
         # Not minting, but re-verification re-sends any token already stored in a
         # matching entry: the same plaintext rule applies to credentials we merely relay.
         require_secure_url(os_info.base_url, allow_http=allow_http, what="a token stored in a client config")
-    admin_token = resolve_admin_token(os_info.auth_mode, json_mode) if minting else None
+    admin_token = resolve_admin_token(os_info.auth_mode, json_mode, os_info.base_url) if minting else None
     # "Authorization is disabled" is a statement about the whole server; stay quiet when
     # an mcp.oauth block says /mcp has its own auth the REST plane knows nothing about.
     if not minting and selected and not json_mode and os_info.auth_mode == "none" and os_info.oauth is None:

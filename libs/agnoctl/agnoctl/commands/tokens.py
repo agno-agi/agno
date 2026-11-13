@@ -62,7 +62,7 @@ def _api_for(
     # OAuth provider on /mcp refuses every mint, so no credential can help.
     if mint:
         require_mint_capable(os_info.base_url, os_info.auth_mode)
-    admin_token = resolve_admin_token(os_info.auth_mode, json_mode)
+    admin_token = resolve_admin_token(os_info.auth_mode, json_mode, os_info.base_url)
     # Refuse to put a bearer credential (admin token) or receive a freshly minted PAT over
     # plaintext HTTP unless the target is loopback or the operator opted in with --allow-http.
     if admin_token is not None or sensitive:
