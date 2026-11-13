@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
+from xml.sax.saxutils import escape as escape_markup
 
 from agno.exceptions import PathSecurityError
 from agno.media import File
@@ -355,15 +356,18 @@ class FileGenerationTools(Toolkit):
             story = []
 
             if title:
-                story.append(Paragraph(title, title_style))
+                # ReportLab parses paragraph text as markup, so escape it or a title
+                # such as "Review <b>draft</b>" loses its literal tags.
+                story.append(Paragraph(escape_markup(title), title_style))
                 story.append(Spacer(1, 20))
 
             # Split content into paragraphs and add to story
             paragraphs = content.split("\n\n")
             for para in paragraphs:
                 if para.strip():
-                    # Clean the paragraph text for PDF
-                    clean_para = para.strip().replace("<", "&lt;").replace(">", "&gt;")
+                    # Escape &, < and >: escaping only the angle brackets still lets
+                    # ReportLab swallow "&amp;" as an entity and turn "R&D" into "R&D;".
+                    clean_para = escape_markup(para.strip())
                     story.append(Paragraph(clean_para, normal_style))
                     story.append(Spacer(1, 10))
 

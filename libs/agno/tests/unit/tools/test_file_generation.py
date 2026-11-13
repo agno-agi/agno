@@ -3,6 +3,7 @@
 import json
 import os
 import tempfile
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -578,3 +579,38 @@ def test_filename_sanitized_subdir_collapsed():
         assert artifact.filename == "report.json"
         assert artifact.filepath is not None
         assert Path(artifact.filepath).name == "report.json"
+
+
+def test_generate_pdf_file_preserves_literal_markup_and_entities():
+    """ReportLab markup must not rewrite literal text in the title or the content."""
+    if not PDF_AVAILABLE:
+        pytest.skip("reportlab not installed")
+    pypdf = pytest.importorskip("pypdf")
+
+    tools = FileGenerationTools(save_files=False)
+    result = tools.generate_pdf_file(
+        "Literal &amp; should remain literal",
+        title="Review <b>draft</b>",
+    )
+
+    file_artifact = _get_single_file(result)
+    text = pypdf.PdfReader(BytesIO(file_artifact.content)).pages[0].extract_text()
+
+    assert "Review <b>draft</b>" in text
+    assert "Literal &amp; should remain literal" in text
+
+
+def test_generate_pdf_file_keeps_ampersands_verbatim():
+    """A bare ampersand must survive instead of being parsed as markup."""
+    if not PDF_AVAILABLE:
+        pytest.skip("reportlab not installed")
+    pypdf = pytest.importorskip("pypdf")
+
+    tools = FileGenerationTools(save_files=False)
+    result = tools.generate_pdf_file("Research and development: R&D stays", title="Plain title")
+
+    file_artifact = _get_single_file(result)
+    text = pypdf.PdfReader(BytesIO(file_artifact.content)).pages[0].extract_text()
+
+    assert "R&D stays" in text
+    assert "R&D;" not in text
