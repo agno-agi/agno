@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 from agno.models.response import ToolExecution
 from agno.run.team import TeamRunOutput
 from agno.scorer.base import AnyRunOutput, FingerprintError, Score
+from agno.utils.arguments import tool_argument_values_equal
 
 
 def _members_carry_tools(response: Any) -> bool:
@@ -104,7 +105,8 @@ class ToolCallScorer:
                 for spec in specs:
                     n_checks += 1
                     if any(
-                        all(key in args and args[key] == value for key, value in spec.items()) for args in candidates
+                        all(key in args and tool_argument_values_equal(args[key], value) for key, value in spec.items())
+                        for args in candidates
                     ):
                         n_satisfied += 1
                     else:

@@ -20,6 +20,7 @@ from agno.eval.utils import (
     spinner_live,
     store_result_in_file,
 )
+from agno.utils.arguments import tool_argument_values_equal
 from agno.utils.log import logger
 
 
@@ -236,7 +237,10 @@ class ReliabilityEval:
                 all_specs_matched = True
                 for spec in arg_specs:
                     if not any(
-                        all(key in actual and actual[key] == value for key, value in spec.items())
+                        all(
+                            key in actual and tool_argument_values_equal(actual[key], value)
+                            for key, value in spec.items()
+                        )
                         for actual in parsed_args_list
                     ):
                         all_specs_matched = False
