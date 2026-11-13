@@ -83,3 +83,48 @@ def test_run_dataframe_operation(pandas_tools):
         dataframe_name="nonexistent_df", operation="head", operation_parameters={"n": 2}
     )
     assert "Error running operation:" in result
+
+
+def test_create_pandas_dataframe_rejects_read_pickle(pandas_tools, tmp_path):
+    """Security regression: read_pickle (untrusted deserialization) must be rejected, never executed."""
+    import os
+    import pickle
+
+    marker = tmp_path / "pwned"
+
+    class _Evil:
+        def __reduce__(self):
+            return (os.system, (f"echo pwned > {marker}",))
+
+    payload = tmp_path / "evil.pkl"
+    payload.write_bytes(pickle.dumps(_Evil()))
+
+    result = pandas_tools.create_pandas_dataframe(
+        dataframe_name="x",
+        create_using_function="read_pickle",
+        function_parameters={"filepath_or_buffer": str(payload)},
+    )
+    assert "unsupported function" in result
+    assert not marker.exists()  # deserialization payload must not run
+
+
+def test_create_pandas_dataframe_allows_safe_reader(pandas_tools, tmp_path):
+    csv = tmp_path / "data.csv"
+    csv.write_text("a,b\n1,2\n")
+    result = pandas_tools.create_pandas_dataframe(
+        dataframe_name="csv_df",
+        create_using_function="read_csv",
+        function_parameters={"filepath_or_buffer": str(csv)},
+    )
+    assert result == "csv_df"
+
+
+def test_run_dataframe_operation_blocks_dangerous_ops(pandas_tools):
+    pandas_tools.create_pandas_dataframe(
+        dataframe_name="df", create_using_function="DataFrame", function_parameters={"data": {"a": [1, 2]}}
+    )
+    for op in ("query", "eval", "to_pickle", "__class__"):
+        result = pandas_tools.run_dataframe_operation(
+            dataframe_name="df", operation=op, operation_parameters={}
+        )
+        assert "unsupported operation" in result
