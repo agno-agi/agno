@@ -1300,10 +1300,11 @@ class AgentOS:
         )
 
     def _initialize_filesystems(self) -> None:
-        """Validate the file systems the OS holds and apply the ``user_isolation`` setting to them.
+        """Validate the file systems the OS holds.
 
         The OS binds a namespace from the caller alone, so only ``{user_id}`` can be filled.
-        A store that left ``user_scoped`` unset follows ``user_isolation``, as an agent's does.
+        ``user_scoped`` is left as given: the object may also be an agent's or a registry
+        tool's, and holding it on the OS must not move where their runs write.
 
         Raises:
             TypeError: If an entry is not a FileSystem.
@@ -1334,8 +1335,6 @@ class AgentOS:
                     "passed to AgentOS(filesystems=[...]) has none. Use a literal namespace or {user_id}, "
                     "or attach this file system to an agent instead."
                 )
-            if filesystem.user_scoped is None:
-                filesystem.user_scoped = self._user_isolation_enabled
 
     @property
     def _agents(self) -> List[Agent]:

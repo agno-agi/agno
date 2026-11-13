@@ -927,31 +927,46 @@ def test_an_agent_with_other_limits_joins_the_entry_of_the_os_namespace(db, clie
     assert config["filesystem"] == {"namespaces": [_os_namespace("shared-notes", agents=[{"id": "writer"}])]}
 
 
-def test_os_namespace_answers_for_its_name_when_an_agent_uses_it_on_another_backend(tmp_path, db, client_factory):
+def test_a_namespace_on_the_os_and_on_an_agents_other_backend_is_not_chosen_by_name(tmp_path, db, client_factory):
     from agno.fs.local import LocalFileSystem
 
     held_by_os = FileSystem(db, namespace="notes")
     on_disk = FileSystem(backend=LocalFileSystem(root=str(tmp_path / "files")), namespace="notes")
     client = client_factory(Agent(id="disk-agent", db=db, filesystem=on_disk), db=db, filesystems=[held_by_os])
     held_by_os.write("a.md", "os\n")
-    on_disk.write("b.md", "disk\n")
+    on_disk.write("a.md", "disk\n")
 
-    by_name = client.get("/filesystem/entries", params={"namespace": "notes"}, headers=_headers("alice"))
-    assert by_name.status_code == 200
-    assert by_name.json()["agent_ids"] == []
-    assert [entry["path"] for entry in by_name.json()["entries"]] == ["a.md"]
+    rows = client.get("/filesystem/files", headers=_headers("alice")).json()["entries"]
+    assert [(row["path"], row["agent_ids"]) for row in rows] == [("a.md", []), ("a.md", ["disk-agent"])]
+    # A row's namespace and path alone must never open the other store's file.
+    for path, params in (
+        ("/filesystem/entries", {}),
+        ("/filesystem/content", {"path": "a.md"}),
+        ("/filesystem/search", {"query": "os"}),
+    ):
+        by_name = client.get(path, params={"namespace": "notes", **params}, headers=_headers("alice"))
+        assert by_name.status_code == 409, path
+        assert "give it its own namespace" in by_name.json()["detail"]
+        assert "os\n" not in by_name.text
     by_agent = client.get(
-        "/filesystem/entries", params={"namespace": "notes", "agent_id": "disk-agent"}, headers=_headers("alice")
+        "/filesystem/content",
+        params={"namespace": "notes", "agent_id": "disk-agent", "path": "a.md"},
+        headers=_headers("alice"),
     )
     assert by_agent.json()["agent_ids"] == ["disk-agent"]
-    assert [entry["path"] for entry in by_agent.json()["entries"]] == ["b.md"]
+    assert by_agent.json()["content"] == "disk\n"
+
+    # A caller who reads no agent sees one store under the name, so it resolves.
+    files_only = client.get(
+        "/filesystem/content", params={"namespace": "notes", "path": "a.md"}, headers=_headers("alice", FILES_ONLY)
+    )
+    assert files_only.json()["content"] == "os\n"
 
 
 @pytest.mark.parametrize("authorization", [True, False])
-def test_os_filesystem_is_partitioned_by_the_caller_under_isolation(db, authorization, client_factory):
-    shared = FileSystem(db, namespace="shared-notes")
+def test_a_user_scoped_os_filesystem_is_partitioned_by_the_caller(db, authorization, client_factory):
+    shared = FileSystem(db, namespace="shared-notes", user_scoped=True)
     client = client_factory(db=db, filesystems=[shared], user_isolation=True, authorization=authorization)
-    assert shared.user_scoped is True
     shared.resolve(user_id="alice").write("a.md", "alice's\n")
     shared.resolve(user_id="bob").write("a.md", "bob's\n")
 
@@ -1016,12 +1031,16 @@ def test_os_filesystem_with_a_user_namespace_resolves_for_each_caller(db, client
     assert [(r["namespace"], r["path"]) for r in rows] == [("journals/bob", "today.md")]
 
 
-def test_os_filesystem_that_chose_shared_stays_shared_under_isolation(db, client_factory):
-    handbook = FileSystem(db, namespace="handbook", user_scoped=False)
+@pytest.mark.parametrize("user_scoped", [None, False])
+def test_os_filesystem_stays_shared_under_isolation_unless_it_is_user_scoped(db, user_scoped, client_factory):
+    handbook = FileSystem(db, namespace="handbook", user_scoped=user_scoped)
     client = client_factory(db=db, filesystems=[handbook], user_isolation=True)
     handbook.write("style.md", "shared\n")
 
-    assert handbook.user_scoped is False
+    # The object may also be an agent's or a registry tool's: AgentOS leaves its setting as given.
+    assert handbook.user_scoped is user_scoped
+    config = client.get("/config", headers=_headers("alice", ["config:read"])).json()
+    assert config["filesystem"]["namespaces"][0]["user_isolation"] is False
     for user in ("alice", "bob"):
         content = client.get(
             "/filesystem/content",
@@ -1030,6 +1049,42 @@ def test_os_filesystem_that_chose_shared_stays_shared_under_isolation(db, client
         )
         assert content.json()["content"] == "shared\n"
         assert content.json()["user_id"] is None
+
+
+def test_an_empty_agent_id_names_no_agent(db, client_factory):
+    shared = FileSystem(db, namespace="shared-notes")
+    client = client_factory(
+        Agent(id="plain", db=db), Agent(id="keeper", db=db, filesystem=True), db=db, filesystems=[shared]
+    )
+    shared.write("style.md", "shared\n")
+
+    for params in ({}, {"agent_id": ""}):
+        rows = client.get("/filesystem/files", params=params, headers=_headers("alice"))
+        assert rows.status_code == 200, params
+        assert [(row["namespace"], row["path"]) for row in rows.json()["entries"]] == [("shared-notes", "style.md")]
+        listed = client.get(
+            "/filesystem/entries", params={"namespace": "shared-notes", **params}, headers=_headers("alice")
+        )
+        assert listed.status_code == 200, params
+        assert client.get("/filesystem/entries", params=params, headers=_headers("alice")).status_code == 400
+
+
+def test_a_user_scoped_os_filesystem_tells_a_caller_with_no_user_why_it_is_not_served(db, client_factory):
+    scoped = FileSystem(db, namespace="notes", user_scoped=True)
+    client = client_factory(db=db, filesystems=[scoped], authorization=False)
+
+    assert [i["namespace"] for i in client.get("/config").json()["filesystem"]["namespaces"]] == ["notes"]
+    for path, params in (
+        ("/filesystem/entries", {}),
+        ("/filesystem/content", {"path": "a.md"}),
+        ("/filesystem/search", {"query": "x"}),
+    ):
+        refused = client.get(path, params={"namespace": "notes", **params})
+        assert refused.status_code == 400, path
+        assert "no user_id" in refused.json()["detail"]
+    # Another name is still not found, and the listing leaves the store out.
+    assert client.get("/filesystem/entries", params={"namespace": "missing"}).status_code == 404
+    assert client.get("/filesystem/files").json()["entries"] == []
 
 
 @pytest.mark.parametrize(

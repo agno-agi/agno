@@ -173,6 +173,8 @@ async def _get_filesystems(
     keeps the filesystems resolving to it.
     """
     held: dict[tuple, _HeldFileSystem] = {}
+    # An empty agent_id names no agent.
+    agent_id = agent_id or None
 
     def add(filesystem: FileSystem, holder_id: Optional[str]) -> None:
         if namespace is not None and filesystem.namespace != namespace:
@@ -204,24 +206,34 @@ async def _resolve_filesystem(
     """The one filesystem a browse request addresses, with the caller's agents that hold it.
 
     Storage is addressed by namespace. ``agent_id`` narrows the search to one agent,
-    and alone selects that agent's first filesystem. With no ``agent_id`` a namespace
-    the OS holds is the OS's filesystem. Every other namespace derives its access from
-    the agents the caller may read, so one no accessible agent holds is not found.
+    and alone selects that agent's first filesystem. A namespace the OS holds needs no
+    agent. Every other namespace derives its access from the agents the caller may
+    read, so one no accessible agent holds is not found.
     """
+    # An empty agent_id names no agent.
+    agent_id = agent_id or None
     if agent_id is None and namespace is None:
         raise HTTPException(status_code=400, detail="Provide a namespace, an agent_id, or both")
 
     matches = list((await _get_filesystems(os, request, agent_id, namespace)).values())
     if not matches:
+        if agent_id is None:
+            # A filesystem the OS holds under this name that the caller cannot bind says why.
+            named = [filesystem for filesystem in os.filesystems or [] if filesystem.namespace == namespace]
+            unresolved = _bind_filesystems(named, request)[1]
+            if unresolved is not None:
+                raise HTTPException(status_code=400, detail=str(unresolved))
         # A namespace the caller cannot reach is indistinguishable from one that does not exist.
         raise HTTPException(status_code=404, detail="Filesystem not found")
     if namespace is not None and len(matches) > 1:
-        matches = [match for match in matches if match.held_by_os]
-        if len(matches) != 1:
-            raise HTTPException(
-                status_code=409,
-                detail="Several filesystems use this namespace on different backends; pass agent_id to choose one",
+        detail = "Several filesystems use this namespace on different backends; pass agent_id to choose one"
+        if any(match.held_by_os for match in matches):
+            # No agent_id selects a filesystem the OS holds.
+            detail = (
+                "Several filesystems use this namespace on different backends. Pass agent_id to read an agent's. "
+                "No agent_id selects one AgentOS holds: give it its own namespace to read it by name"
             )
+        raise HTTPException(status_code=409, detail=detail)
     return matches[0].filesystem, sorted(matches[0].agent_ids)
 
 

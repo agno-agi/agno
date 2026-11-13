@@ -79,10 +79,15 @@ backend and namespace, it is one entry with that agent in `agents`.
   `{team_id}` at startup: the OS has no agent or team to fill them from.
 - AgentOS also refuses at startup two filesystems passed to it with the same
   namespace on different backends: a request by namespace could not choose one.
-- `user_scoped` follows the same rule as on an agent: unset, it takes the
-  `user_isolation` setting of the OS, and each caller browses their own partition.
-- With no `agent_id`, a namespace the OS holds is the OS's filesystem, also when an
-  agent uses the same namespace on another backend. Pass `agent_id` for the agent's.
+- AgentOS leaves `user_scoped` as given on a filesystem passed to it. Unset, the
+  store is shared, also under `user_isolation`. Set `user_scoped=True` and each
+  caller browses their own partition.
+- To put one store on the page and on an agent, pass the same `FileSystem` object
+  to both. Two objects on one store can disagree on `user_scoped`, and a request
+  with no `agent_id` then reads the store as the OS's object describes it.
+- If an agent uses the same namespace on another backend, a request by namespace
+  alone returns 409. Pass `agent_id` for the agent's, and give the filesystem on
+  the OS its own namespace to read it by name.
 
 ## Namespaces and isolation
 
