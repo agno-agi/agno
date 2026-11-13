@@ -336,14 +336,22 @@ async def get_session_runs(
 
 
 async def get_session_compactions(
-    db: Optional[Union[BaseDb, AsyncBaseDb]], *, session_id: str
+    db: Union[BaseDb, AsyncBaseDb],
+    *,
+    session_id: str,
+    session_type: Optional[SessionType] = None,
+    user_id: Optional[str] = None,
 ) -> List[CompactionSummarySchema]:
     """Every compaction of a session, automatic and manual, newest first.
 
     Read from the compaction records rather than from runs: a manual compaction is made by no run, so the
     records are the only place that has all of them. A database that does not store compaction records has
-    none to return. The caller checks that the session exists and belongs to the requester.
+    none to return.
+
+    Raises :class:`SessionNotFoundError` when the session does not exist.
     """
+    await _get_session_dict(db, session_id=session_id, session_type=session_type, user_id=user_id)
+
     # Only sync databases store compaction records; the base class declares the read as a stub that raises
     read = getattr(db, "get_compactions_for_session", None)
     if read is None or isinstance(db, AsyncBaseDb):

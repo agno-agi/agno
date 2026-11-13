@@ -21,6 +21,7 @@ from agno.os.routers.traces.schemas import FilterSchemaResponse
 from agno.os.schema import (
     AgentSessionDetailSchema,
     BadRequestResponse,
+    CompactionSummarySchema,
     CreateSessionRequest,
     DeleteSessionRequest,
     InternalServerErrorResponse,
@@ -44,6 +45,7 @@ from agno.os.schema import (
 from agno.os.services.sessions import (
     InvalidRunCursorError,
     SessionNotFoundError,
+    get_session_compactions,
     get_session_runs_window,
     get_sessions_page,
     run_status_matches,
@@ -956,6 +958,48 @@ def attach_routes(
                 newest_run_index=page.newest_run_index,
             ),
         )
+
+    @router.get(
+        "/sessions/{session_id}/compactions",
+        response_model=List[CompactionSummarySchema],
+        status_code=200,
+        operation_id="get_session_compactions",
+        summary="Get Session Compactions",
+        description=(
+            "Every compaction of a session, newest first: how many messages each replaced and the context "
+            "size before and after. A compaction a run made on its own context carries that run's 'run_id'. "
+            "A manual one was made by no run and carries none, so place it in the conversation by "
+            "'created_at'. The summary text and the archived messages are not returned. Returns an empty "
+            "list when the database does not store compaction records."
+        ),
+        response_model_exclude_none=True,
+        responses={
+            404: {"description": "Session not found", "model": NotFoundResponse},
+            422: {"description": "Invalid session type", "model": ValidationErrorResponse},
+        },
+    )
+    async def get_session_compactions_endpoint(
+        request: Request,
+        session_id: str = Path(description="Session ID to get compactions from"),
+        session_type: Optional[SessionType] = Query(
+            default=None,
+            description="Session type (agent, team, or workflow). If not provided, auto-detected from session data.",
+            alias="type",
+        ),
+        user_id: Optional[str] = Query(default=None, description="User ID to query compactions from"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to query compactions from"),
+        table: Optional[str] = Query(default=None, description="Table to query the session from"),
+    ) -> List[CompactionSummarySchema]:
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
+        # A remote AgentOS is not asked: it may predate this route
+        if isinstance(db, RemoteDb):
+            return []
+        try:
+            return await get_session_compactions(
+                db, session_id=session_id, session_type=session_type, user_id=effective_user_id
+            )
+        except SessionNotFoundError:
+            raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
 
     @router.get(
         "/sessions/{session_id}/run-previews",

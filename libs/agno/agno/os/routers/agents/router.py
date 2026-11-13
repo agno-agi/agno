@@ -1,7 +1,7 @@
 import asyncio
 import contextlib
 import json
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Literal, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Literal, Optional, Union, cast
 from uuid import uuid4
 
 from fastapi import (
@@ -72,9 +72,7 @@ from agno.os.middleware.user_scope import (
     verify_run_in_session_via_db,
 )
 from agno.os.routers.agents.schema import AgentResponse
-from agno.os.services.sessions import get_session_compactions
 from agno.os.schema import (
-    CompactionSummarySchema,
     AgentSummaryResponse,
     BadRequestResponse,
     InternalServerErrorResponse,
@@ -1975,52 +1973,6 @@ def get_agent_router(
 
         return {"session_id": new_session_id, "forked_from_session_id": session_id}
 
-    async def _agent_and_session_owner(
-        agent_id: str, session_id: str, request: Request, user_id: Optional[str]
-    ) -> Tuple[Any, Optional[str]]:
-        """The agent and the user to act as, once the session is known to exist, belong to that agent and be the
-        caller's. Raises 404 otherwise. Shared by the compaction routes so they cannot drift."""
-        if hasattr(request.state, "user_id") and request.state.user_id is not None:
-            user_id = request.state.user_id
-
-        try:
-            agent = get_agent_by_id(
-                agent_id=agent_id,
-                agents=os.agents,
-                db=os.db,
-                registry=os.registry,
-                create_fresh=True,
-                user_id=get_scoped_user_id(request),
-                strict=False,
-                published_only=False,
-            )
-        except HTTPException:
-            raise
-        except Exception as e:
-            log_error(f"Error resolving agent '{agent_id}': {e}")
-            raise HTTPException(status_code=500, detail="Internal server error")
-        if agent is None:
-            raise HTTPException(status_code=404, detail="Agent not found")
-
-        # Scope the session read to the caller, so one user cannot compact another's session.
-        scoped_user_id = get_scoped_user_id(request)
-        effective_user_id = scoped_user_id or user_id
-
-        # The session must belong to this agent: the per-resource gate authorised agent_id, not
-        # whichever session id the client named.
-        await verify_run_belongs_to_component(
-            request,
-            getattr(agent, "db", None) or os.db,
-            component_type="agents",
-            component_id=agent_id,
-            session_id=session_id,
-        )
-        # A missing session is a 404, as on the other session routes. no_history is kept for a
-        # session that exists but has nothing to fold yet.
-        if await agent.aget_session(session_id=session_id, user_id=effective_user_id) is None:  # type: ignore[union-attr]
-            raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
-        return agent, effective_user_id
-
     @router.post(
         "/agents/{agent_id}/sessions/{session_id}/compact",
         tags=["Agents"],
@@ -2090,35 +2042,48 @@ def get_agent_router(
         request: Request,
         user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        agent, effective_user_id = await _agent_and_session_owner(agent_id, session_id, request, user_id)
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+            user_id = request.state.user_id
+
+        try:
+            agent = get_agent_by_id(
+                agent_id=agent_id,
+                agents=os.agents,
+                db=os.db,
+                registry=os.registry,
+                create_fresh=True,
+                user_id=get_scoped_user_id(request),
+                strict=False,
+                published_only=False,
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            log_error(f"Error resolving agent '{agent_id}': {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        # Scope the session read to the caller, so one user cannot compact another's session.
+        scoped_user_id = get_scoped_user_id(request)
+        effective_user_id = scoped_user_id or user_id
+
+        # The session must belong to this agent: the per-resource gate authorised agent_id, not
+        # whichever session id the client named.
+        await verify_run_belongs_to_component(
+            request,
+            getattr(agent, "db", None) or os.db,
+            component_type="agents",
+            component_id=agent_id,
+            session_id=session_id,
+        )
+        # A missing session is a 404, as on the other session routes. no_history is kept for a
+        # session that exists but has nothing to fold yet.
+        if await agent.aget_session(session_id=session_id, user_id=effective_user_id) is None:  # type: ignore[union-attr]
+            raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
+
         result = await agent.acompact(session_id=session_id, user_id=effective_user_id)  # type: ignore[union-attr]
         return result.to_dict()
-
-    @router.get(
-        "/agents/{agent_id}/sessions/{session_id}/compactions",
-        tags=["Agents"],
-        operation_id="get_agent_session_compactions",
-        summary="Get Agent Session Compactions",
-        description=(
-            "Every compaction of this session, newest first: how many messages each replaced and the context "
-            "size before and after. A compaction a run made on its own context carries that run's ``run_id``. "
-            "A manual one was made by no run and carries none, so place it in the conversation by "
-            "``created_at``. The summary text and the archived messages are not returned. Returns an empty "
-            "list when the database does not store compaction records."
-        ),
-        response_model=List[CompactionSummarySchema],
-        response_model_exclude_none=True,
-        responses={404: {"description": "Agent or session not found", "model": NotFoundResponse}},
-        dependencies=[Depends(require_resource_access("agents", "read", "agent_id"))],
-    )
-    async def get_agent_session_compactions(
-        agent_id: str,
-        session_id: str,
-        request: Request,
-        user_id: Optional[str] = None,
-    ) -> List[CompactionSummarySchema]:
-        agent, _ = await _agent_and_session_owner(agent_id, session_id, request, user_id)
-        return await get_session_compactions(getattr(agent, "db", None) or os.db, session_id=session_id)
 
     @router.get(
         "/agents",

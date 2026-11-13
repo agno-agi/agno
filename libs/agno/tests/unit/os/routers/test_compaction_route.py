@@ -37,65 +37,6 @@ def client() -> TestClient:
     return _client()
 
 
-def _row(compaction_id: str, created_at: int, run_id=None, session_id: str = "s1", archived: bool = True) -> dict:
-    return {
-        "compaction_id": compaction_id,
-        "session_id": session_id,
-        "run_id": run_id,
-        "user_id": None,
-        "first_kept_message_id": "m-19",
-        "summary": "A long summary of the folded turns",
-        "archived_messages": "the folded transcript" if archived else None,
-        "messages_compacted": 18,
-        "tokens_before": 15_864,
-        "tokens_after": 3_981,
-        "created_at": created_at,
-    }
-
-
-def test_compactions_lists_manual_and_automatic_newest_first():
-    """A manual compaction is made by no run, so the records are the only place that has every compaction. It
-    carries no run_id and is placed by created_at. The summary and the archived messages stay out: they are large,
-    and they repeat conversation content."""
-    db = SqliteDb(db_file=str(Path(tempfile.mkdtemp()) / "compaction.db"))
-    db.upsert_session(AgentSession(session_id="s1", agent_id="a1", runs=[]))
-    db.upsert_compaction(_row("auto-fold", created_at=100, run_id="r3"))
-    db.upsert_compaction(_row("manual-fold", created_at=200, archived=False))
-    db.upsert_compaction(_row("other-session", created_at=300, session_id="s2"))
-    app = FastAPI()
-    app.include_router(get_agent_router(AgentOS(agents=[Agent(id="a1", db=db, compaction=Compaction())])))
-
-    response = TestClient(app).get("/agents/a1/sessions/s1/compactions")
-
-    numbers = {"messages_compacted": 18, "tokens_before": 15864, "tokens_after": 3981}
-    assert response.status_code == 200
-    assert response.json() == [
-        {"id": "manual-fold", **numbers, "created_at": 200, "archived": False},
-        {"id": "auto-fold", "run_id": "r3", **numbers, "created_at": 100, "archived": True},
-    ]
-
-
-def test_compactions_follow_the_compact_routes_404s(client: TestClient):
-    """Same lookups as POST .../compact: an unknown agent or session is a 404, and a session with nothing folded
-    yet is an empty list."""
-    assert client.get("/agents/a1/sessions/s1/compactions").json() == []
-    assert client.get("/agents/a1/sessions/does-not-exist/compactions").status_code == 404
-    assert client.get("/agents/nope/sessions/s1/compactions").status_code == 404
-
-
-def test_compactions_of_another_agents_session_are_a_404(monkeypatch):
-    """Being allowed to read agent a1 does not open a session that belongs to agent a2."""
-
-    async def may_read_a1_only(request, resource_id, resource_type, action):
-        return resource_id == "a1"
-
-    monkeypatch.setattr("agno.os.auth.acheck_resource_access", may_read_a1_only)
-    client = _client(authorization=True)
-
-    assert client.get("/agents/a1/sessions/s1/compactions").status_code == 200
-    assert client.get("/agents/a1/sessions/s2/compactions").status_code == 404
-
-
 def test_route_is_registered():
     db = SqliteDb(db_file=str(Path(tempfile.mkdtemp()) / "compaction.db"))
     agent_os = AgentOS(agents=[Agent(id="a1", db=db, compaction=Compaction())])
