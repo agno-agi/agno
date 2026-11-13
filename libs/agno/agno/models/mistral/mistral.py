@@ -1,7 +1,7 @@
 import warnings
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Type, Union
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Type, Union
 
 from pydantic import BaseModel
 
@@ -334,6 +334,53 @@ class MistralChat(Model):
             log_error(f"SDKError from Mistral: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
+    def _extract_content_and_reasoning(self, content: Any) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Extract text content and reasoning content from Mistral response content.
+        Content may be a string, or a list containing ThinkChunk and TextChunk objects
+        (e.g. when reasoning_effort is enabled for reasoning models).
+        """
+        if content is None or isinstance(content, Unset):
+            return None, None
+        if isinstance(content, str):
+            return content, None
+        if isinstance(content, list):
+            text_parts: List[str] = []
+            thinking_parts: List[str] = []
+            for chunk in content:
+                chunk_type = getattr(chunk, "type", None) or (chunk.get("type") if isinstance(chunk, dict) else None)
+                if chunk_type == "thinking":
+                    thinking_items = getattr(chunk, "thinking", None) or (
+                        chunk.get("thinking") if isinstance(chunk, dict) else None
+                    )
+                    if isinstance(thinking_items, list):
+                        for item in thinking_items:
+                            text = getattr(item, "text", None) or (
+                                item.get("text")
+                                if isinstance(item, dict)
+                                else (item if isinstance(item, str) else None)
+                            )
+                            if text:
+                                thinking_parts.append(text)
+                    elif isinstance(thinking_items, str):
+                        thinking_parts.append(thinking_items)
+                elif chunk_type == "text":
+                    text = getattr(chunk, "text", None) or (chunk.get("text") if isinstance(chunk, dict) else None)
+                    if text:
+                        text_parts.append(text)
+                elif isinstance(chunk, str):
+                    text_parts.append(chunk)
+                else:
+                    text = getattr(chunk, "text", None) or (chunk.get("text") if isinstance(chunk, dict) else None)
+                    if text:
+                        text_parts.append(text)
+
+            text_content = "".join(text_parts) if text_parts else None
+            reasoning_content = "".join(thinking_parts) if thinking_parts else None
+            return text_content, reasoning_content
+
+        return None, None
+
     def _parse_provider_response(self, response: ChatCompletionResponse, **kwargs) -> ModelResponse:
         """
         Parse the response from the Mistral model.
@@ -346,7 +393,12 @@ class MistralChat(Model):
             response_message: AssistantMessage = response.choices[0].message  # type: ignore
 
             # -*- Set content
-            model_response.content = response_message.content  # type: ignore
+            if response_message.content is not None and not isinstance(response_message.content, Unset):
+                content, reasoning_content = self._extract_content_and_reasoning(response_message.content)
+                if content is not None:
+                    model_response.content = content
+                if reasoning_content is not None:
+                    model_response.reasoning_content = reasoning_content
 
             # -*- Set role
             model_response.role = response_message.role
@@ -378,12 +430,12 @@ class MistralChat(Model):
         if delta_message.role is not None and not isinstance(delta_message.role, Unset):
             model_response.role = delta_message.role  # type: ignore
 
-        if (
-            delta_message.content is not None
-            and not isinstance(delta_message.content, Unset)
-            and isinstance(delta_message.content, str)
-        ):
-            model_response.content = delta_message.content
+        if delta_message.content is not None and not isinstance(delta_message.content, Unset):
+            content, reasoning_content = self._extract_content_and_reasoning(delta_message.content)
+            if content is not None:
+                model_response.content = content
+            if reasoning_content is not None:
+                model_response.reasoning_content = reasoning_content
 
         if delta_message.tool_calls is not None:
             model_response.tool_calls = []
