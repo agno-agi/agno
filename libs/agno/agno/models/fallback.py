@@ -283,6 +283,31 @@ async def acall_model_with_fallback(
 # ---------------------------------------------------------------------------
 
 
+def _has_visible_stream_output(event: StreamEvent) -> bool:
+    """Whether replacing this attempt could discard content or repeat tool work."""
+    if not isinstance(event, ModelResponse):
+        return True
+    return bool(
+        event.content
+        or event.reasoning_content
+        or event.redacted_reasoning_content
+        or event.parsed is not None
+        or event.audio
+        or event.images
+        or event.videos
+        or event.audios
+        or event.files
+        or event.tool_calls
+        or event.tool_executions
+        or event.event
+        in {
+            ModelResponseEvent.tool_call_started.value,
+            ModelResponseEvent.tool_call_completed.value,
+            ModelResponseEvent.tool_call_paused.value,
+        }
+    )
+
+
 def call_model_stream_with_fallback(
     model: Model,
     fallback_config: Optional[FallbackConfig],
@@ -292,21 +317,31 @@ def call_model_stream_with_fallback(
     """Call the primary model stream, falling back on failure.
 
     ``recover_from_overflow`` shrinks the payload and retries the same model before any fallback,
-    exactly as the non-streaming path does. A rejection for length arrives before the first
-    chunk, so nothing has been yielded yet and the retry is safe to start from scratch.
+    exactly as the non-streaming path does. Recovery and fallback are allowed only
+    before content or tool work becomes visible. A later failure propagates so the
+    caller can retain the partial output and report an error.
     """
+    has_output = False
     try:
-        yield from model.response_stream(**kwargs)
+        for event in model.response_stream(**kwargs):
+            has_output = has_output or _has_visible_stream_output(event)
+            yield event
     except ModelProviderError as primary_error:
+        if has_output:
+            raise
         if (
             recover_from_overflow is not None
             and _is_context_overflow(primary_error)
             and _recovered_from_overflow(recover_from_overflow)
         ):
             try:
-                yield from model.response_stream(**kwargs)
+                for event in model.response_stream(**kwargs):
+                    has_output = has_output or _has_visible_stream_output(event)
+                    yield event
                 return
             except ModelProviderError as retry_error:
+                if has_output:
+                    raise
                 primary_error = retry_error
         fallbacks = get_fallback_models(fallback_config, primary_error)
         if not fallbacks:
@@ -332,10 +367,14 @@ async def acall_model_stream_with_fallback(
     **kwargs: Any,
 ) -> AsyncIterator[StreamEvent]:
     """Async variant of call_model_stream_with_fallback."""
+    has_output = False
     try:
         async for event in model.aresponse_stream(**kwargs):
+            has_output = has_output or _has_visible_stream_output(event)
             yield event
     except ModelProviderError as primary_error:
+        if has_output:
+            raise
         if (
             recover_from_overflow is not None
             and _is_context_overflow(primary_error)
@@ -343,9 +382,12 @@ async def acall_model_stream_with_fallback(
         ):
             try:
                 async for event in model.aresponse_stream(**kwargs):
+                    has_output = has_output or _has_visible_stream_output(event)
                     yield event
                 return
             except ModelProviderError as retry_error:
+                if has_output:
+                    raise
                 primary_error = retry_error
         fallbacks = get_fallback_models(fallback_config, primary_error)
         if not fallbacks:
@@ -457,14 +499,20 @@ def _try_fallback_models_stream(
     """
     seed_len = len(kwargs["messages"]) if "messages" in kwargs else 0
     for i, fallback in enumerate(fallback_models):
+        has_output = False
         try:
             log_warning(f"Trying fallback model {i + 1}/{len(fallback_models)}: {fallback.id}")
             attempt_kwargs = _copy_kwargs_with_fresh_messages(kwargs)
-            yield from fallback.response_stream(**attempt_kwargs)
+            for event in fallback.response_stream(**attempt_kwargs):
+                has_output = has_output or _has_visible_stream_output(event)
+                yield event
             _sync_appended_messages(original_messages, attempt_kwargs.get("messages"), seed_len)
             _notify_fallback(fallback_config, primary_model_id, fallback.id, primary_error)
             return
         except ModelProviderError as e:
+            if has_output:
+                _sync_appended_messages(original_messages, attempt_kwargs.get("messages"), seed_len)
+                raise
             log_warning(f"Fallback model '{fallback.id}' also failed: {str(e)}")
             continue
     raise primary_error
@@ -485,15 +533,20 @@ async def _atry_fallback_models_stream(
     """
     seed_len = len(kwargs["messages"]) if "messages" in kwargs else 0
     for i, fallback in enumerate(fallback_models):
+        has_output = False
         try:
             log_warning(f"Trying fallback model {i + 1}/{len(fallback_models)}: {fallback.id}")
             attempt_kwargs = _copy_kwargs_with_fresh_messages(kwargs)
             async for event in fallback.aresponse_stream(**attempt_kwargs):
+                has_output = has_output or _has_visible_stream_output(event)
                 yield event
             _sync_appended_messages(original_messages, attempt_kwargs.get("messages"), seed_len)
             _notify_fallback(fallback_config, primary_model_id, fallback.id, primary_error)
             return
         except ModelProviderError as e:
+            if has_output:
+                _sync_appended_messages(original_messages, attempt_kwargs.get("messages"), seed_len)
+                raise
             log_warning(f"Fallback model '{fallback.id}' also failed: {str(e)}")
             continue
     raise primary_error
