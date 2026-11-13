@@ -446,14 +446,20 @@ async def acompact_now(agent: "Agent", session: AgentSession, history: List[Mess
     return _compaction_result(new_record, metrics)
 
 
-def _add_to_session_and_latest_run(agent: "Agent", session: AgentSession, metrics: RunMetrics) -> Optional[RunOutput]:
-    """Add a manual compaction's usage to its latest completed or cancelled run, returned for saving, and to the
-    session's metrics.
+def _add_to_session_and_latest_run(
+    agent: "Agent", session: AgentSession, metrics: Optional[RunMetrics], record: Optional[Any] = None
+) -> Optional[RunOutput]:
+    """Add a manual compaction's usage and record to its latest completed or cancelled run, returned for saving, and
+    its usage to the session's metrics.
 
-    A manual compaction has no run of its own, so that run carries its model call. With no such run, the usage is kept
-    in the session's compaction metrics, which the session's metrics add to its runs'.
+    A manual compaction has no run of its own, so that run carries its model call and its record. The record takes the
+    run's `compaction`, replacing an earlier one: the newest compaction is the one in force. It has no `run_id`, which
+    is how a reader tells it from one the run made itself. With no such run, the usage is kept in the session's
+    compaction metrics, which the session's metrics add to its runs', and the record stays in the compaction table
+    alone.
     """
     from copy import copy as shallow_copy
+    from dataclasses import replace
 
     from agno.agent._session import update_session_metrics
 
@@ -471,10 +477,17 @@ def _add_to_session_and_latest_run(agent: "Agent", session: AgentSession, metric
     if finished:
         # Update a copy, never the loaded run: history run objects are shared between reads of the same session
         latest_run = cast(RunOutput, shallow_copy(runs[finished[-1]]))
-        latest_run.metrics = RunMetrics.from_dict(latest_run.metrics.to_dict()) if latest_run.metrics else RunMetrics()
-        merge_background_metrics(latest_run.metrics, [metrics])
+        if metrics is not None:
+            latest_run.metrics = (
+                RunMetrics.from_dict(latest_run.metrics.to_dict()) if latest_run.metrics else RunMetrics()
+            )
+            merge_background_metrics(latest_run.metrics, [metrics])
+        if record is not None:
+            # The summary stays in the compaction table, which is what replays the fold. The run only needs to say
+            # that a fold happened here and what it saved.
+            latest_run.compaction = replace(record, summary="")
         runs[finished[-1]] = latest_run
-    else:
+    elif metrics is not None:
         compaction_metrics = SessionMetrics.from_dict(session.session_data.get("compaction_metrics") or {})
         compaction_metrics.accumulate_from_run(metrics)
         session.session_data["compaction_metrics"] = compaction_metrics.to_dict()
@@ -491,12 +504,12 @@ def compact_session(agent: "Agent", session_id: Optional[str] = None, user_id: O
     if session is None or not isinstance(session, AgentSession):
         return CompactionResult(status=CompactionStatus.NO_HISTORY, message="No such session.")
     result = compact_now(agent, session, _history_for_compaction(agent, session))
-    if result.metrics is not None:
+    if result.metrics is not None or result.record is not None:
         # Read the session again: a run may have finished while the summarizer ran
         session = cast(
             AgentSession, _session.get_session(agent, session_id=session.session_id, user_id=user_id) or session
         )
-        latest_run = _add_to_session_and_latest_run(agent, session, result.metrics)
+        latest_run = _add_to_session_and_latest_run(agent, session, result.metrics, result.record)
         try:
             _session.save_session(agent, session)
             if latest_run is not None:
@@ -508,7 +521,7 @@ def compact_session(agent: "Agent", session_id: Optional[str] = None, user_id: O
                     run_index=resolve_run_index(session, latest_run),
                 )
         except Exception as e:  # noqa: BLE001 - the fold is already stored; only the totals are lost
-            log_warning(f"Could not add the compaction's usage to the session metrics: {e}")
+            log_warning(f"Could not add the compaction to the session and its latest run: {e}")
     return result
 
 
@@ -520,12 +533,12 @@ async def acompact_session(agent: "Agent", session_id: Optional[str] = None, use
     if session is None or not isinstance(session, AgentSession):
         return CompactionResult(status=CompactionStatus.NO_HISTORY, message="No such session.")
     result = await acompact_now(agent, session, _history_for_compaction(agent, session))
-    if result.metrics is not None:
+    if result.metrics is not None or result.record is not None:
         # Read the session again: a run may have finished while the summarizer ran
         session = cast(
             AgentSession, await _session.aget_session(agent, session_id=session.session_id, user_id=user_id) or session
         )
-        latest_run = _add_to_session_and_latest_run(agent, session, result.metrics)
+        latest_run = _add_to_session_and_latest_run(agent, session, result.metrics, result.record)
         try:
             await _session.asave_session(agent, session)
             if latest_run is not None:
@@ -537,7 +550,7 @@ async def acompact_session(agent: "Agent", session_id: Optional[str] = None, use
                     run_index=resolve_run_index(session, latest_run),
                 )
         except Exception as e:  # noqa: BLE001 - the fold is already stored; only the totals are lost
-            log_warning(f"Could not add the compaction's usage to the session metrics: {e}")
+            log_warning(f"Could not add the compaction to the session and its latest run: {e}")
     return result
 
 

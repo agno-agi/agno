@@ -225,3 +225,28 @@ def test_run_schemas_expose_the_cancellation_stage(schema_name, id_field):
     assert with_stage.cancellation_stage == "PENDING"
     without = schema_cls.from_dict({"run_id": "r2", id_field: "x", "status": "CANCELLED"})
     assert without.cancellation_stage is None
+
+
+def test_run_schema_returns_compaction_numbers_without_the_summary():
+    """GET /runs returns what a compaction saved, so a client can show it after a reload. The summary and the
+    archived messages stay out: they are large, and they repeat conversation content."""
+    from agno.os.schema import RunSchema
+
+    record = {
+        "id": "fold-1",
+        "run_id": "r1",
+        "messages_compacted": 18,
+        "summary": "A long summary of the folded turns",
+        "first_kept_message_id": "m-19",
+        "tokens_before": 10_800,
+        "tokens_after": 3_200,
+        "created_at": 1_794_000_000,
+    }
+    numbers = {
+        k: record[k] for k in ("id", "run_id", "messages_compacted", "tokens_before", "tokens_after", "created_at")
+    }
+
+    schema = RunSchema.from_dict({"run_id": "r1", "compaction": record})
+
+    assert schema.compaction is not None and schema.compaction.model_dump() == numbers
+    assert RunSchema.from_dict({"run_id": "r2"}).compaction is None

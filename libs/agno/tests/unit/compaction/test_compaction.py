@@ -2225,6 +2225,47 @@ def test_manual_compact_is_added_to_the_session_metrics(use_async):
     assert after["total_tokens"] == before + 740
 
 
+@pytest.mark.parametrize("use_async", [False, True])
+def test_manual_compact_is_recorded_on_the_latest_run(use_async):
+    """A manual fold has no run of its own, so the run it followed carries the record in `compaction`, with no
+    `run_id`. That is the only place the AgentOS runs API can read it back from, and it must not repeat the summary."""
+    import asyncio
+
+    from agno.agent import Agent
+    from agno.db.base import SessionType
+    from agno.os.schema import RunSchema
+
+    db = _db()
+    agent = Agent(
+        model=_RecordingModel.build(),
+        db=db,
+        session_id="s",
+        add_history_to_context=True,
+        compaction=Compaction(compact_at_tokens=None, uncompacted_runs=1, min_fold_ratio=0, model=_MeteredSummarizer()),
+    )
+    for i in range(4):
+        agent.run(f"question number {i}")
+
+    result = asyncio.run(agent.acompact(session_id="s")) if use_async else agent.compact(session_id="s")
+
+    runs = db.get_session(session_id="s", session_type=SessionType.AGENT).runs
+    assert result.compacted
+    assert [run.compaction for run in runs[:-1]] == [None, None, None]
+    recorded = runs[-1].compaction
+    assert (recorded.id, recorded.run_id, recorded.summary) == (result.record.id, None, "")
+    assert (recorded.tokens_before, recorded.tokens_after) == (result.record.tokens_before, result.record.tokens_after)
+
+    returned = RunSchema.from_dict(runs[-1].to_dict()).compaction
+    assert returned is not None and returned.model_dump() == {
+        "id": result.record.id,
+        "run_id": None,
+        "messages_compacted": result.record.messages_compacted,
+        "tokens_before": result.record.tokens_before,
+        "tokens_after": result.record.tokens_after,
+        "created_at": result.record.created_at,
+    }
+
+
 def test_manual_compact_leaves_a_latest_run_that_can_still_change():
     """A failed latest run can still be continued in place, so the fold's usage goes on the latest completed run
     instead, never on one whose continue would drop it."""
