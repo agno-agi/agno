@@ -13,9 +13,8 @@
             "display_name": "Slack Agent",
             "always_online": true
         },
-        "assistant_view": {
-            "assistant_description": "Ask me anything.",
-            "suggested_prompts": []
+        "agent_view": {
+            "agent_description": "Ask me anything."
         }
     },
     "oauth_config": {
@@ -31,6 +30,7 @@
                 "groups:history",
                 "groups:read",
                 "im:history",
+                "mpim:history",
                 "users:read",
                 "users:read.email"
             ]
@@ -40,8 +40,9 @@
         "event_subscriptions": {
             "request_url": "https://YOUR-URL/slack/events",
             "bot_events": [
+                "agent_session_stopped",
+                "app_home_opened",
                 "app_mention",
-                "assistant_thread_started",
                 "message.im"
             ]
         },

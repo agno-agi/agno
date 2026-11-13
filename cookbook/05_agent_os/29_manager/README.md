@@ -1,8 +1,9 @@
 # Super Agent
 
-Super Agent is a team you talk to through AgentOS. It can check activity, run
-diagnostics, run existing components and ask its members to build new ones.
-Start with a model and a database:
+Super Agent is a team you talk to through AgentOS. It does the work itself with
+direct tools: it checks activity, runs diagnostics, runs existing components and,
+with Company, keeps company work on record. Its one member, Platform Builder,
+builds new components. Start with a model and a database:
 
 ```python
 from agno.db.sqlite import SqliteDb
@@ -58,16 +59,15 @@ Conversations use the configured model and incur provider charges.
 
 | File | Ask Super Agent | What to expect |
 |---|---|---|
-| `basic_manager.py` | “Run diagnostics and explain any issues.” | A report from Platform Manager, including the authorization warning. The manager model is available for basic builds; no additional tools are declared. |
+| `basic_manager.py` | “Run diagnostics and explain any issues.” | A diagnostics report from Super Agent, including the authorization warning. The manager model is available for basic builds; no additional tools are declared. |
 | `manager_user_access.py` | As Alice, ask “Run math-helper: what is 6 * 7?” Then ask to publish a new agent. | The permitted run succeeds; publishing is refused. Configure `JWT_VERIFICATION_KEY` and a JWT with `sub=alice`, `aud=manager-access-demo`. |
 | `manager_builds_agents.py` | “Create a calculator agent named Budget Helper.” Then: “Run Budget Helper: what is 15% of 240?” | Platform Builder publishes the agent. The second request runs it and should return 36. |
-| `manager_source.py` | “Read basic_manager.py, then check the Agno docs for how to add knowledge.” | Platform Manager reads the configured root and consults the docs MCP server; no notebook or memory setup is needed. |
+| `manager_source.py` | “Read basic_manager.py, then check the Agno docs for how to add knowledge.” | Super Agent reads the configured root and consults the docs MCP server; no notebook or memory setup is needed. |
 | `manager_source.py` | “How does learning work?” | Super Agent can search docs directly and answer the concept question without a deployment audit. |
 | `manager_source.py` | “What is Agno?” or “Can you tell me about learning machines?” | A brief explanation grounded in the Agno documentation, with links. An explicitly general machine-learning question retains its broader meaning. |
 | `check_manager_permissions.py` | Run it directly; no chat or model key needed. | Seven HTTP checks confirm discovery, session access, rejected audiences, and denied publication. |
 | `manager_with_resources.py` | “Save a note in project.md: the demo is on Friday.” Then: “Read project.md.” | The shared notebook stores and retrieves the note. |
 | `manager_with_resources.py` | “Remember that I prefer short answers.” Then ask about your preference in a new session with the same user id. | The manager can save and retrieve a user preference across sessions. |
-| `manager_with_resources.py` | “Read basic_manager.py and explain how the manager is configured.” | Platform Manager reads the example from its configured root. |
 
 To try the build example:
 
@@ -75,7 +75,7 @@ To try the build example:
 .venvs/demo/bin/python cookbook/05_agent_os/29_manager/manager_builds_agents.py
 ```
 
-To try the notebook, memory and source tools:
+To try the notebook and memory tools:
 
 ```bash
 .venvs/demo/bin/python cookbook/05_agent_os/29_manager/manager_with_resources.py
@@ -138,32 +138,29 @@ persisted team/workflow members.
 
 | Setting | Default | Effect |
 |---|---|---|
-| `model` | First registry model | Shared by the manager and both members; also available for builds. |
-| `name` | `Super Agent` | Display name only; the ID and member composition are fixed. |
-| `root` | `None` | Platform Manager's read-only source directory or constrained workspace provider. |
-| `access_docs` | `True` | Gives Super Agent and Platform Manager access to Agno docs through one shared connection. Connection failures are nonfatal; set `False` for offline deployments. |
-| `tools`, `knowledge`, `learning` | Empty / `None` | Extra resources for the lead team; not automatically available for builds. |
-| `instructions` | `None` | Appends instructions to the lead team's existing prompt. |
+| `model` | First registry model | Shared by Super Agent and Platform Builder; also available for builds. |
+| `name` | `Super Agent` | Display name only; the ID and member are fixed. |
+| `root` | `None` | Directory or `WorkspaceContextProvider` that Super Agent reads with `list_files`, `read_file` and `search_content`. |
+| `access_docs` | `True` | Gives Super Agent the Agno docs tools. Connection failures are nonfatal; set `False` for offline deployments. |
+| `tools`, `knowledge`, `learning` | Empty / `None` | Extra resources for Super Agent; not automatically available for builds. |
+| `instructions` | `None` | Appends instructions to Super Agent's prompt. |
 | `required_env` | Empty | Names whose presence diagnostics checks; values are never returned. |
-| `tool_call_limit` | `8` | Ordinary tool executions per coordinator run, including delegations. `None` disables the limit; `0` refuses all ordinary tools. |
-| `member_tool_call_limit` | `24` | Ordinary tool executions per specialist invocation, including the Company Manager member when Company is enabled. `None` disables the limit. |
-| `num_history_runs` | `7` | Lead-team history depth. Members retain five runs. |
+| `tool_call_limit` | `24` | Ordinary tool executions per Super Agent run, including delegations. `None` disables the limit; `0` refuses all ordinary tools. |
+| `member_tool_call_limit` | `24` | Ordinary tool executions per Platform Builder invocation. `None` disables the limit. |
+| `num_history_runs` | `5` | Super Agent history depth. Platform Builder keeps five runs. |
 | `offload_tool_results` | `True` | Stores large tool results on supported databases; accepts `False` or a `ResultStore`. |
 
 `root` is resolved relative to the process working directory. Use a path based on
 `__file__`, as in `manager_source.py`, for the same root regardless of where you
 launch the server. Setting `root` does not enable file writes or shell execution.
 
-The manager is instructed to keep explanations scoped to the question and to
-request concise specialist answers when delegation is necessary. Documentation
-access on the lead lets it answer framework questions without a specialist run.
-Short grounding and stopping rules also reach the builder, operator and attached
-Company Manager member. Guidance for explaining framework concepts from the docs goes only
-to the lead and Platform Manager, the roles with documentation access. Source
-investigation guidance stays with Platform Manager.
+Super Agent is instructed to do the work itself, stay within the question and
+stop once the evidence supports the answer. Docs guidance is added when
+`access_docs` is on, and source guidance when `root` is set. Platform Builder gets
+short grounding and stopping rules.
 
-The limits use the existing Agent/Team tool execution mechanism. Each member
-invocation has its own allowance; there is no shared budget across the run tree.
+The limits use the existing Agent/Team tool execution mechanism. Each Platform
+Builder invocation has its own allowance; there is no shared budget across the run tree.
 The `read_result` and `search_result` tools remain exempt when result offloading
 is active. A refusal is returned to the model, which is instructed to stop and
 report verified progress and gaps. These limits do not bound model turns, tokens,
@@ -171,9 +168,8 @@ latency, or application components dispatched through runner tools.
 
 Increase the limits for larger builds or plans. Set either limit to `None` to
 restore unlimited ordinary tool executions for that level. Ordinary application
-agents and the served Company Manager, which runs direct chat and Routines, retain their existing limits. Custom
-`instructions` remain specific to the lead team. Model choices still determine
-actual routing and answer quality; prompt guidance is not an execution guarantee.
+agents and Mini Agent are not affected. Model choices still
+determine routing and answer quality; prompt guidance is not a guarantee.
 
 ## When to use a registry
 
@@ -192,27 +188,33 @@ Tools passed to `OSManager(tools=[...])` are for the manager itself. They do
 not become tools for new agents. To share a resource with the builder, include
 it in the registry as well. Code-defined application components also contribute
 resources through AgentOS registry discovery. Manager components are excluded.
+For the other `AgentOSTools` reports, such as `get_platform_metrics` or
+`list_pending_approvals`, pass `OSManager(tools=[AgentOSTools(db=db)])`.
 
 ## The team and its members
 
 The default team name is **Super Agent**, with id `superagent`. Set
-`OSManager(name=...)` to change the display name. The ID and two-member
-composition are fixed. Its members are:
+`OSManager(name=...)` to change the display name. The ID and member are fixed.
+Super Agent holds these tools:
 
-- **Platform Builder** (`platform-builder`): creates components and schedules.
-- **Platform Manager** (`platform-manager`): checks activity, runs diagnostics,
-  reads source when `root` is set, and queries Agno documentation by default.
+- Run tools: `list_agents`, `run_agent`, `list_teams`, `run_team`, `list_workflows`, `run_workflow`.
+- Platform tools: `get_run_activity`, `list_schedules`, `run_diagnostics`.
+- Docs tools when `access_docs` is on, and `list_files`, `read_file`, `search_content` when `root` is set.
+- Company tools when `company=CompanyConfig(...)` is set: company details, Products,
+  Projects, Tasks, Sources, playbook, Routines and decisions. See `30_company`.
+- Anything passed in `OSManager(tools=...)`.
+
+Its context lists up to 20 components the caller may read and run. Its one
+member, **Platform Builder** (`platform-builder`), creates and edits components
+and schedules.
 
 Only Super Agent is exposed as a standalone target in config, discovery, REST and MCP.
-Platform Builder and Platform Manager appear as nested members in `/teams` and
-`/teams/superagent`, so the team graph shows its composition. Built-in members,
-including Product Manager, list their model and tools but not their instructions. They remain
-excluded from the application registry, `/config` agent list and `/agents`, and
-their standalone agent routes return 422 with an explanation that the component
-ID is reserved. Super Agent delegates to them; their child runs and tool results remain
-available inside its session for replay and diagnostics. Schedule the manager
-team, not either specialist. Ordinary run grants, including `teams:superagent:run`, let a user talk to the manager. Access
-to the manager does not grant its tools additional permissions:
+Platform Builder appears as a nested member in `/teams` and `/teams/superagent`.
+It lists its model and tools but not its instructions, stays out of the registry,
+`/config` and `/agents`, and its standalone agent route returns 422. Its child runs
+and tool results stay inside Super Agent's session. Schedule Super Agent, not
+Platform Builder. Ordinary run grants, including `teams:superagent:run`, let a user
+talk to Super Agent. Access to Super Agent does not grant its tools additional permissions:
 
 - Running another component requires its agent, team or workflow `run` permission.
 - Discovery filters components by their `read` permission. Registry discovery
@@ -255,24 +257,21 @@ supplied through `OSManager.tools` remain application-defined capabilities:
 use `RunContext.authorization` or `requires_permission` from
 `agno.run.authorization` when they need caller authorization.
 
-All three IDs are reserved, even when the manager is disabled. Application
-components and Studio builds cannot use them. The manager can run itself once with a fresh context; it cannot start
-another self-run from that run.
+Super Agent can run itself once with a fresh context, but not again from that run.
 
-`OSManager(root="./")` gives Platform Manager read-only file tools with default exclusions
+`OSManager(root="./")` gives Super Agent read-only file tools with default exclusions
 for credential files. A supplied `WorkspaceContextProvider` is copied into tools
 mode. Its model, prompt and custom tools are not used. Additional exclusions are
 supported; `allow_paths` and custom `!` exemptions are rejected.
 
-Platform Manager has Agno documentation access by default through
-`https://docs.agno.com/mcp`. No extra configuration is needed. If the docs server
-is unavailable, the connection failure is logged and AgentOS starts normally;
-Platform Manager can still use its other tools. A later async run retries the connection.
-If the optional MCP dependency is missing, a warning explains how to install it.
+Super Agent has Agno documentation access by default through
+`https://docs.agno.com/mcp`. If the docs server is unavailable, the failure is
+logged, AgentOS starts normally and Super Agent keeps its other tools. A later
+async run retries the connection. If the optional MCP dependency is missing, a
+warning explains how to install it.
 
 Use `OSManager(model=model, access_docs=False)` to disable docs access in offline
-or restricted-network deployments. The docs tools remain private to Platform
-Manager and are not added to the build palette.
+or restricted-network deployments. The docs tools are not added to the build palette.
 
 The public team response exposes its built-in identity through existing metadata:
 
@@ -283,28 +282,21 @@ The public team response exposes its built-in identity through existing metadata
 Internal member runs carry their own reserved ID in the same place. This is a UI marker,
 not an authorization grant. Ordinary application metadata is unchanged.
 
-Clients that previously called a specialist directly should use
-`POST /teams/superagent/runs` or MCP `run_team` with that team ID.
-Existing direct-specialist schedules can be disabled or deleted. Unmanaged
-schedules can be repointed to Super Agent. Studio-managed schedules have immutable
-targets: create a replacement targeting Super Agent, then delete the old schedule.
-Changing only their endpoint causes execution to fail and disables the schedule.
-Creating or re-enabling a direct-specialist schedule returns HTTP 409. Old catalog rows do not
-restore specialist endpoints. Obsolete specialist manifest entries are omitted.
-Stored rows remain available for deliberate administrative cleanup.
-Ordinary application agents and teams keep their existing routes.
-
-`OSManager` replaces `ManagerConfig`, `root` replaces `workspace`, and `access_docs`
-(now enabled by default) replaces `docs`. Run access, component discovery (`teams:read` or
-`agents:read`), and session access (`sessions:read` plus ownership restrictions)
-remain separate permissions.
+Call Super Agent with `POST /teams/superagent/runs` or MCP `run_team`, not a
+specialist. Creating or re-enabling a specialist schedule returns HTTP 409. Disable
+or delete existing ones; Studio-managed schedules have immutable targets, so create
+a replacement targeting Super Agent first. Run access, component discovery
+(`teams:read` or `agents:read`) and session access (`sessions:read` plus ownership
+restrictions) remain separate permissions.
 
 The resources example shares notebook files across users, while learning keeps
-user memory separate. It does not configure a knowledge base.
+user memory separate. It does not configure a knowledge base or `root`. AgentOS
+refuses to start when `root` is set and a tool in `OSManager(tools=...)` is named
+`read_file`, `list_files` or `search_content`, and the notebook has all three.
 
 ## Large tool results
 
-Super Agent and its members offload tool results by default on SQLite and
+Super Agent and Platform Builder offload tool results by default on SQLite and
 PostgreSQL. Results above 16,000 characters are stored in the database; the
 model receives a preview and can read or search the full result. Small results
 stay inline. Other database adapters warn and leave offloading disabled.
@@ -365,13 +357,19 @@ editor to have permission to run the target and saves that editor's authority.
 To refresh captured token-scope grants, update the payload as an authorized caller.
 
 
-The manager IDs are `superagent`, `company-manager`, `platform-builder` and
-`platform-manager`. `OSManager(...)` remains the configuration API. Private specialists
-are still available only through manager delegation.
+## Reserved IDs
 
-Agno 3.2 renamed these from `os-manager-internal`, `company-manager-internal`,
-`platform-builder-internal` and `platform-manager-internal`. The former IDs stay reserved
-and no longer resolve; requests that use them get an error naming the new ID. When upgrading:
+The public manager IDs are `superagent` (Super Agent) and `platform-builder`
+(Platform Builder). `miniagent` is Mini Agent, which runs Company Routines.
+`product-manager-internal` and the pre-3.2 IDs `os-manager-internal`,
+`company-manager-internal`, `platform-builder-internal` and
+`platform-manager-internal` stay reserved and do not resolve; requests that use
+them get an error naming `superagent` or `platform-builder`. These IDs are
+reserved even when managers are disabled. Other IDs, such as `super-agent`,
+`platform-manager` and `company-manager`, are ordinary user IDs. Startup refuses
+to replace a custom catalog component that uses a manager ID; rename it first.
+
+When upgrading:
 
 - **Managed-role policies:** startup refuses any stored policy that names a former ID,
   because a stored deny that stopped matching could let a denied user through. Update those
@@ -383,10 +381,15 @@ and no longer resolve; requests that use them get an error naming the new ID. Wh
 - **History:** sessions, runs, traces and memories keep the ID they were saved with, so
   they don't appear under the new ID.
 
-If a custom catalog component already uses a manager ID, rename it before enabling the
-managers; startup refuses to replace it.
+## Breaking changes in 3.2
 
-These exact IDs are reserved even when managers are disabled. Other IDs, such as `super-agent` and `my-company-manager`, remain available for user components.
+- `platform-manager` and `company-manager` do not exist. Super Agent does their work
+  with its own tools; nothing is served at `/agents/company-manager`.
+- `AgentOS.company_manager` and `AgentOS.product_manager` are removed. Use
+  `AgentOS.manager` or talk to Super Agent at `/teams/superagent`.
+- Routines run on Mini Agent by default: `executor_type="agent", executor_id="miniagent"`, or leave
+  the executor out. A Routine cannot name Super Agent.
+- `OSManager.tool_call_limit` defaults to 24 and `num_history_runs` to 5.
 
 Before upgrading, audit existing components, sessions and authorization grants for the newly reserved names. Rename custom components and migrate their references; do not let a grant intended for a custom component authorize a built-in manager. Catalog collisions fail at startup, but external token scopes and custom policy stores require an operator audit.
 

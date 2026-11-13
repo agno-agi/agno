@@ -85,10 +85,27 @@ async def db(request, tmp_path):
 async def test_former_id_policy_blocks_startup_on_every_adapter(db, resource, effect):
     auth = _wired(db)
     await call(db.set_authz_role_policies, "legacy", [("teams/*", "run", "allow"), (resource, "run", effect)])
-    with pytest.raises(ValueError, match="renamed in Agno 3.2") as raised:
+    with pytest.raises(ValueError, match="replaced in Agno 3.2") as raised:
         await auth._araise_if_former_manager_policies()
-    assert f"legacy: {resource} run ({effect})" in str(raised.value)
-    assert "os-manager-internal -> superagent" in str(raised.value)
+    message = str(raised.value)
+    assert f"legacy: {resource} run ({effect})" in message
+    # Each replacement is named with the route family it is served under: a policy renamed to
+    # agents/superagent would match nothing and pass this check.
+    assert "os-manager-internal -> teams/superagent" in message
+    assert "platform-builder-internal -> agents/platform-builder" in message
+    # Mini Agent runs Routines now, so the rename to Super Agent alone would leave those runs uncovered.
+    routine = "Routines ran on company-manager-internal as well: a policy for Routine runs needs agents/miniagent"
+    assert (routine in message) == resource.endswith("/company-manager-internal")
+
+
+@pytest.mark.asyncio
+async def test_a_deployment_with_only_the_old_super_agent_policy_is_not_told_about_routines(db):
+    auth = _wired(db)
+    await call(db.set_authz_role_policies, "legacy", [("teams/os-manager-internal", "run", "deny")])
+    with pytest.raises(ValueError, match="replaced in Agno 3.2") as raised:
+        await auth._araise_if_former_manager_policies()
+    assert "os-manager-internal -> teams/superagent" in str(raised.value)
+    assert "Routine" not in str(raised.value) and "miniagent" not in str(raised.value)
 
 
 @pytest.mark.asyncio
@@ -106,7 +123,7 @@ def test_application_refuses_to_start_and_starts_once_policies_are_updated(tmp_p
     db = SqliteDb(db_file=str(tmp_path / "app.db"))
     db.set_authz_role_policies("legacy", [("teams/*", "run", "allow"), ("teams/os-manager-internal", "run", "deny")])
     app = AgentOS(id="former", db=db, authorization=_authorization(), telemetry=False).get_app()
-    with pytest.raises(ValueError, match="renamed in Agno 3.2"):
+    with pytest.raises(ValueError, match="replaced in Agno 3.2"):
         with TestClient(app):
             pass
 
@@ -121,7 +138,7 @@ def test_role_declared_in_code_with_a_former_id_blocks_startup(tmp_path):
     db = SqliteDb(db_file=str(tmp_path / "code.db"))
     auth = _authorization().define_role("legacy", ["teams:os-manager-internal:run"])
     app = AgentOS(id="former", db=db, authorization=auth, telemetry=False).get_app()
-    with pytest.raises(ValueError, match="renamed in Agno 3.2"):
+    with pytest.raises(ValueError, match="replaced in Agno 3.2"):
         with TestClient(app):
             pass
     db.close()

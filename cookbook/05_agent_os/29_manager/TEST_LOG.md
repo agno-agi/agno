@@ -842,3 +842,13 @@ provider calls were made.
 **Result:** Public IDs route correctly; private specialists remain private; former IDs are rejected, and old managed-role policies block startup. Unrelated user IDs retain separate permissions/history. The earlier double-hyphen decision and alias behavior recorded above are superseded.
 
 ---
+
+### Super Agent direct tools: offline checks (2026-11-10)
+
+**Status:** PASS
+
+**Description:** Super Agent does the work itself with direct tools and has one member, Platform Builder. Ran `manager_diagnostics.py`, `manager_discovery.py` and `check_manager_permissions.py` with a placeholder `OPENAI_API_KEY`. Loaded `basic_manager.py`, `manager_source.py`, `manager_with_resources.py`, `manager_builds_agents.py` and `manager_user_access.py` with `runpy` to build each AgentOS without serving it. Each Super Agent has members `['platform-builder']`, `tool_call_limit` 24 and `num_history_runs` 5. `manager_source.py` has `list_files`, `read_file` and `search_content` on Super Agent.
+
+**Result:** Diagnostics returned overall WARN: 5 checks PASS, 2 SKIP, and authorization disabled WARN. Discovery listed the components. All seven permission checks passed. `manager_with_resources.py` had duplicate `list_files`, `read_file` and `search_content` tools from the notebook and `root`; Super Agent keeps the first, so source reads went to the notebook. The example now sets no `root`, and the construction check found no duplicate tool names. Conversations in the serving examples need a live model and were not run. No model calls were made.
+
+---

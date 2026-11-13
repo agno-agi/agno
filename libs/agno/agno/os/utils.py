@@ -2,7 +2,7 @@ import json
 from datetime import date, datetime, time, timezone
 from functools import partial
 from os import getenv
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Type, Union
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Set, Tuple, Type, Union
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.routing import APIRoute, APIRouter
@@ -12,7 +12,7 @@ from starlette.middleware.cors import CORSMiddleware
 from agno.agent import Agent, AgentFactory, RemoteAgent
 from agno.agent.protocol import AgentProtocol
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.exceptions import AgnoError, ComponentRehydrationError
+from agno.exceptions import AgnoError, ComponentRehydrationError, RunNotContinuableError
 from agno.factory import (
     FactoryContextRequired,
     FactoryError,
@@ -122,6 +122,9 @@ def drop_media_references(media_dicts: Any) -> Any:
     return media_dicts
 
 
+INTERNAL_RUN_OPTIONS = frozenset({"run_context", "debug_mode", "yield_run_output", "background_tasks", "websocket"})
+
+
 def _check_object_json_schema(schema: Dict[str, Any]) -> None:
     """Raise HTTP 422 unless schema is a structurally valid JSON Schema with an explicit object root."""
     if schema.get("type") != "object":
@@ -163,6 +166,11 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
     sig = inspect.signature(endpoint_func)
     known_fields = set(sig.parameters.keys())
     kwargs: Dict[str, Any] = {key: value for key, value in form_data.items() if key not in known_fields}
+
+    # Run options that only code in this process can supply, never a caller's form field
+    for name in INTERNAL_RUN_OPTIONS.intersection(kwargs):
+        kwargs.pop(name)
+        log_warning(f"Ignoring form field '{name}': it is not a request parameter")
 
     # Handle JSON parameters. They are passed as strings and need to be deserialized.
     if session_state := kwargs.get("session_state"):
@@ -404,6 +412,8 @@ def format_sse_event_with_index(
 _TAIL_IDLE_RECHECK_SECONDS = 30.0
 # How often a replica-local stream checks whether another replica claimed its queued run.
 _TAIL_CLAIM_RECHECK_SECONDS = 1.0
+# How often a stored run is read once only its queue ticket keeps the wait open.
+_STORED_RUN_TICKET_RECHECK_SECONDS = 10.0
 
 
 def sse_error_frame(message: str) -> str:
@@ -452,6 +462,50 @@ async def run_stream_served_here(run_id: str) -> bool:
     except Exception:
         return True
     return job is None or _ticket_runs_here(job)
+
+
+async def run_ticket_active(run_id: str) -> bool:
+    """Whether the durable queue's run ticket for ``run_id`` is still queued or running."""
+    try:
+        job = await _run_ticket(run_id)
+    except Exception:
+        return False
+    return job is not None and job.get("status") in ("queued", "running")
+
+
+async def await_stored_run(
+    read: Callable[[], Awaitable[Any]], run_id: str, deadline_seconds: float, extension_seconds: Optional[float] = None
+) -> Optional[Any]:
+    """The stored run once it completes, pauses, fails or is cancelled; None when it is no longer stored.
+
+    ``deadline_seconds`` bounds the wait for the stored run; a queued or running ticket that still owns the run
+    extends it by ``extension_seconds`` (the entity's sandbox execution_timeout) and the queue's stale-lock grace,
+    else by ``deadline_seconds`` again.
+    """
+    import asyncio
+
+    from agno.os.job_queue import get_active_queue_worker
+
+    ended = (RunStatus.completed, RunStatus.paused, RunStatus.error, RunStatus.cancelled)
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + deadline_seconds
+    if extension_seconds is None:
+        ticket_deadline = deadline + deadline_seconds
+    else:
+        # A crashed worker's ticket is claimed again only after the queue's stale-lock grace
+        worker = get_active_queue_worker()
+        ticket_deadline = deadline + extension_seconds + (worker.config.lock_grace_seconds if worker is not None else 0)
+    interval = min(1.0, max(0.001, deadline_seconds / 10))
+    while loop.time() < deadline or (loop.time() < ticket_deadline and await run_ticket_active(run_id)):
+        run = await read()
+        if run is None or run.status in ended:
+            return run
+        await asyncio.sleep(interval if loop.time() < deadline else max(interval, _STORED_RUN_TICKET_RECHECK_SECONDS))
+    # A run that ended during the last sleep is not a timeout
+    run = await read()
+    if run is None or run.status in ended:
+        return run
+    raise TimeoutError("Background run timed out; inspect the persisted run")
 
 
 async def _tail_closing_frame(run_id: str, job: Optional[Dict[str, Any]], event_stream: Any) -> Optional[str]:
@@ -745,6 +799,51 @@ async def amark_continue_stream_running(
             # leave the stream alone; the continue itself proceeds.
             return
         await event_stream.set_run_status(run_id, RunStatus.running)
+
+
+async def adeliver_native_decisions(
+    agent: Any, run: Any, tools: List[Any], session_id: str, user_id: Optional[str] = None
+) -> Tuple[Any, Optional[int]]:
+    """Deliver a chat's decisions to the native execution waiting on ``run``; nothing new is executed.
+
+    Returns the run as submitted and the event index to tail the live stream from, or None when this
+    replica's event stream does not know the run and the caller follows the stored run instead. A
+    refused decision (already continued, expired, or not matching the request) raises
+    RunNotContinuableError for the caller to answer.
+    """
+    import contextlib
+
+    from agno.agents._hitl import awaiting_decision, read_run, submit_decisions
+    from agno.os.event_streams import get_event_stream
+    from agno.run.base import RunStatus
+
+    run_id = run.run_id
+    event_stream = get_event_stream()
+    # The live stream is shared only when this replica's event stream knows the run, which a
+    # Redis-backed stream always does; otherwise the continuation follows the stored run.
+    tracked = await event_stream.get_run_status(run_id) is not None
+    cursor = (await event_stream.get_event_count(run_id)) - 1 if tracked else -1
+    # Reopen only a stream that is paused on an unanswered request, before the decision lands, so the
+    # events it releases reach this client. A continuation that will be refused never touches it.
+    reopened = tracked and awaiting_decision(run)
+    if reopened:
+        await amark_continue_stream_running(run_id, component=agent, session_id=session_id, user_id=user_id)
+    try:
+        submitted = await submit_decisions(agent, run_id, session_id, user_id, tools)
+    except Exception as error:
+        if reopened:
+            # The stream follows whichever continuation won: park it again only if the run is still
+            # paused, which is also the safe reading when the run cannot be read.
+            current = None
+            with contextlib.suppress(Exception):
+                current = await read_run(agent, run_id, session_id, user_id)
+            if current is None or current.status == RunStatus.paused:
+                with contextlib.suppress(Exception):
+                    await event_stream.complete_run(run_id, RunStatus.paused)
+        if isinstance(error, (ValueError, TypeError, KeyError)):
+            raise RunNotContinuableError(str(error)) from error
+        raise
+    return submitted, cursor if tracked else None
 
 
 async def acomplete_continue_stream(

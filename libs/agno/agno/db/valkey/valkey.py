@@ -19,6 +19,7 @@ from agno.db.utils import (
     AGGREGATE_METRICS_COUNT_COLUMNS,
     COMPONENT_METRICS_KEY_COLUMNS,
     METRICS_BATCH_BYTES,
+    METRICS_BATCH_SIZE,
     METRICS_LOCK_SECONDS,
     METRICS_REFRESH_ID,
     METRICS_STOPPED_ERROR,
@@ -2057,8 +2058,8 @@ class ValkeyDb(BaseDb):
         holding legacy runs, or a run with a long output, can be megabytes, so a fixed number could not be held at
         once. A value larger than the cap is read alone.
         """
-        for batch_start in range(0, len(keys), VALKEY_BATCH_LIMIT):
-            batch_keys = keys[batch_start : batch_start + VALKEY_BATCH_LIMIT]
+        for batch_start in range(0, len(keys), METRICS_BATCH_SIZE):
+            batch_keys = keys[batch_start : batch_start + METRICS_BATCH_SIZE]
             pipeline = self._create_pipeline()
             for key in batch_keys:
                 pipeline.strlen(key)
@@ -2869,10 +2870,9 @@ class ValkeyDb(BaseDb):
         )
 
         if not calculated_dates:
-            log_info("Metrics already calculated for all relevant dates.")
+            log_debug("Metrics already calculated for all relevant dates.", log_level=2)
             return []
 
-        log_debug("Updated metrics calculations")
         return calculated_dates
 
     def stop_metrics_refresh_on_read(self) -> None:

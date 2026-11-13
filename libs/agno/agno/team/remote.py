@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from agno.media import Audio, File, Image, Video
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.remote.base import BaseRemote, RemoteDb, RemoteKnowledge
+from agno.remote.base import BaseRemote, RemoteDb, RemoteKnowledge, take_local_run_options
 from agno.run.agent import RunOutputEvent
 from agno.run.team import TeamRunOutput, TeamRunOutputEvent
 from agno.utils.agent import validate_input
@@ -281,6 +281,9 @@ class RemoteTeam(BaseRemote):
         headers = self._get_auth_headers(auth_token)
         # Read here, never forwarded: the remote stream route cannot send a TeamRunOutput over SSE
         yield_run_output = kwargs.pop("yield_run_output", False)
+        dependencies, metadata, knowledge_filters = take_local_run_options(
+            kwargs, dependencies=dependencies, metadata=metadata, knowledge_filters=knowledge_filters
+        )
 
         # A2A protocol path
         if self.a2a_client:
@@ -526,6 +529,7 @@ class RemoteTeam(BaseRemote):
         headers = self._get_auth_headers(auth_token)
         # Read here, never forwarded: the remote stream route cannot send a TeamRunOutput over SSE
         yield_run_output = kwargs.pop("yield_run_output", False)
+        take_local_run_options(kwargs)
 
         # A2A protocol path
         if self.a2a_client:

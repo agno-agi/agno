@@ -1336,6 +1336,51 @@ async def test_reclaimed_direct_native_run_never_replays(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_queued_native_run_gets_its_decision_without_a_second_execution(tmp_path, monkeypatch):
+    """A queued run paused on a native request keeps its ticket running; the decision reaches that execution."""
+    import json
+
+    import httpx
+
+    from agno.job_queue.config import QueueConfig
+    from agno.job_queue.store import InMemoryQueueStore
+    from agno.os import AgentOS, utils
+
+    deliveries = []
+    deliver = utils.adeliver_native_decisions
+
+    async def counted(*args, **kwargs):
+        deliveries.append(args[1].run_id)
+        return await deliver(*args, **kwargs)
+
+    monkeypatch.setattr(utils, "adeliver_native_decisions", counted)
+
+    db = SqliteDb(db_file=str(tmp_path / "queued.db"))
+    agent = Harness(id="test", db=db, hitl_timeout=5)
+    store = InMemoryQueueStore()
+    queue = QueueConfig(durable=True, db=store, poll_interval=0.05)
+    app = AgentOS(id="queue-test", db=db, agents=[agent], queue=queue, telemetry=False).get_app()
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            run_id, run = await paused_over_http(client, agent)
+            assert (await store.get_job(run_id))["status"] == "running"
+            tools = json.dumps([tool.to_dict() for tool in answered(run, True)])
+            response = await client.post(
+                f"/agents/test/runs/{run_id}/continue", data={"session_id": "session", "stream": "true", "tools": tools}
+            )
+            assert response.status_code == 200, response.text
+            assert "RunCompleted" in response.text
+            for _ in range(300):
+                if (await store.get_job(run_id))["status"] == "completed":
+                    break
+                await asyncio.sleep(0.01)
+            assert (await store.get_job(run_id))["status"] == "completed"
+    assert (await agent.aget_run_output(run_id, session_id="session")).status == RunStatus.completed
+    assert deliveries == [run_id]
+    assert agent.executions == 1 and agent.calls == 1
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("status", [RunStatus.pending, RunStatus.completed, RunStatus.cancelled])
 async def test_never_started_or_terminal_native_job_is_not_failed_on_reclaim(tmp_path, status):
     from agno.job_queue.config import QueueConfig

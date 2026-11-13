@@ -22,6 +22,8 @@ from agno.db.migrations.manager import MigrationManager
 from agno.db.mongo.utils import (
     apply_pagination,
     apply_sorting,
+    build_component_metrics_legacy_json_runs_filter,
+    build_component_metrics_legacy_runs,
     build_component_metrics_legacy_runs_projection,
     build_component_metrics_legacy_session,
     build_component_metrics_runs_projection,
@@ -240,7 +242,6 @@ class MongoDb(BaseDb):
             ("sessions", self.session_table_name),
             ("runs", self.runs_table_name),
             ("memories", self.memory_table_name),
-            ("metrics", self.metrics_table_name),
             ("component_metrics", self.component_metrics_table_name),
             ("aggregate_metrics", self.aggregate_metrics_table_name),
             ("metrics_refreshes", self.metrics_refreshes_table_name),
@@ -2119,12 +2120,16 @@ class MongoDb(BaseDb):
         legacy_runs_by_day: Dict[date, List[Dict[str, Any]]] = {}
         legacy_runs_by_id: Dict[str, Dict[str, Any]] = {}
         while True:
-            # A session at a time, so a JSON string read whole is reduced before the next session is read
-            sessions = [
-                build_component_metrics_legacy_session(session) for session in islice(cursor, METRICS_BATCH_SIZE)
-            ]
+            sessions = list(islice(cursor, METRICS_BATCH_SIZE))
             if not sessions:
                 break
+            legacy_json_runs_filter = build_component_metrics_legacy_json_runs_filter(sessions)
+            if legacy_json_runs_filter is not None:
+                legacy_json_runs: Dict[Any, List[Dict[str, Any]]] = {}
+                # A session at a time, so a JSON string read whole is reduced before the next session is read
+                for session in sessions_collection.find(legacy_json_runs_filter, {"runs": 1}):
+                    legacy_json_runs[session["_id"]] = build_component_metrics_legacy_runs(session["runs"])
+                sessions = [build_component_metrics_legacy_session(session, legacy_json_runs) for session in sessions]
             legacy_runs = [
                 legacy_run
                 for legacy_run in get_metrics_legacy_runs(sessions)
@@ -2476,7 +2481,7 @@ class MongoDb(BaseDb):
             or refreshes_collection is None
             or sessions_collection is None
         ):
-            log_info("No session data found. Won't calculate metrics.")
+            log_debug("No session data found. Won't calculate metrics.")
             return []
         runs_collection = self._get_collection(table_type="runs")
 
@@ -2587,10 +2592,9 @@ class MongoDb(BaseDb):
         )
 
         if not calculated_dates:
-            log_info("Metrics already calculated for all relevant dates.")
+            log_debug("Metrics already calculated for all relevant dates.", log_level=2)
             return []
 
-        log_debug("Updated metrics calculations")
         return calculated_dates
 
     def stop_metrics_refresh_on_read(self) -> None:

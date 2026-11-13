@@ -26,7 +26,6 @@ from agno.db.utils import (
     deserialize_history_run,
     deserialize_session,
     deserialize_sessions,
-    drop_legacy_metrics,
     filter_context_runs,
     get_metrics_dates_to_calculate,
     get_metrics_records_by_day,
@@ -77,7 +76,6 @@ class InMemoryDb(BaseDb):
         # contract; the stored dicts remain the canonical state.
         self._run_object_cache: Dict[str, Dict[str, Tuple[Dict[str, Any], Any]]] = {}
         self._memories: List[Dict[str, Any]] = []
-        self._metrics: List[Dict[str, Any]] = []
         self._component_metrics: List[Dict[str, Any]] = []
         # None until a calculation started
         self._aggregate_metrics: Optional[List[Dict[str, Any]]] = None
@@ -1441,10 +1439,9 @@ class InMemoryDb(BaseDb):
         )
 
         if not calculated_dates:
-            log_info("Metrics already calculated for all relevant dates.")
+            log_debug("Metrics already calculated for all relevant dates.", log_level=2)
             return []
 
-        log_debug("Updated metrics calculations")
         return calculated_dates
 
     def stop_metrics_refresh_on_read(self) -> None:
@@ -1543,8 +1540,7 @@ class InMemoryDb(BaseDb):
         # Stamp first so failed runs are throttled too instead of retried on every read
         self._metrics_refreshed_at = time.time()
         try:
-            # A first build reads every run, so a read never waits for one: until it has finished, reads serve the
-            # deprecated metrics rows
+            # A first build reads every run, so a read never waits for one
             if not metrics_calculation_enabled() or not self._metrics_calculated():
                 return
             self.calculate_metrics_dates()
@@ -1560,8 +1556,8 @@ class InMemoryDb(BaseDb):
         """Get all metrics matching the given date range.
 
         Metrics are read from the aggregate metrics and component metrics rows once the first calculate_metrics has
-        finished, and from the deprecated metrics rows until then. They are refreshed first, at most once per minute
-        per process, unless stop_metrics_refresh_on_read was called.
+        finished, and there are none until then. They are refreshed first, at most once per minute per process, unless
+        stop_metrics_refresh_on_read was called.
 
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
@@ -1573,32 +1569,7 @@ class InMemoryDb(BaseDb):
             if self._metrics_calculated():
                 return self._get_metrics_rows(starting_date, ending_date, user_id)
 
-            metrics = drop_legacy_metrics(self._metrics) if user_id is None else self._metrics
-
-            filtered_metrics = []
-            latest_updated_at = None
-
-            for metric in metrics:
-                metric_date = datetime.strptime(metric.get("date", ""), "%Y-%m-%d").date()
-
-                if starting_date and metric_date < starting_date:
-                    continue
-                if ending_date and metric_date > ending_date:
-                    continue
-                if user_id is not None and metric.get("user_id") != user_id:
-                    continue
-
-                row = deepcopy(metric)
-                # Unowned sessions are bucketed under "": surface them as None
-                if row.get("user_id") == "":
-                    row["user_id"] = None
-                filtered_metrics.append(row)
-
-                updated_at = metric.get("updated_at")
-                if updated_at and (latest_updated_at is None or updated_at > latest_updated_at):
-                    latest_updated_at = updated_at
-
-            return filtered_metrics, latest_updated_at
+            return [], None
 
         except Exception as e:
             log_error(f"Exception getting metrics: {str(e)}")
@@ -1611,8 +1582,8 @@ class InMemoryDb(BaseDb):
     ) -> Tuple[List[dict], Optional[int]]:
         """Get the metrics of every user, one row per day, matching the given date range.
 
-        Read from the everyone aggregate metrics rows once the first calculate_metrics has finished, and from
-        the deprecated metrics rows until then. They are refreshed first, as get_metrics does.
+        Read from the everyone aggregate metrics rows once the first calculate_metrics has finished, and there are
+        none until then. They are refreshed first, as get_metrics does.
 
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
@@ -1628,7 +1599,7 @@ class InMemoryDb(BaseDb):
             self._refresh_metrics_before_read()
             if self._metrics_calculated():
                 return self._get_aggregate_metrics_rows(starting_date, ending_date, "")
-            return super().get_metrics_by_date(starting_date, ending_date)
+            return [], None
 
         except Exception as e:
             log_error(f"Exception getting metrics: {str(e)}")

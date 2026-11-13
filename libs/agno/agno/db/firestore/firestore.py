@@ -2457,7 +2457,7 @@ class FirestoreDb(BaseDb):
             or refreshes_collection_ref is None
             or sessions_collection_ref is None
         ):
-            log_info("No session data found. Won't calculate metrics.")
+            log_debug("No session data found. Won't calculate metrics.")
             return []
         runs_collection_ref = self._get_collection(table_type="runs")
 
@@ -2576,10 +2576,9 @@ class FirestoreDb(BaseDb):
         )
 
         if not calculated_dates:
-            log_info("Metrics already calculated for all relevant dates.")
+            log_debug("Metrics already calculated for all relevant dates.", log_level=2)
             return []
 
-        log_debug("Updated metrics calculations")
         return calculated_dates
 
     def stop_metrics_refresh_on_read(self) -> None:
