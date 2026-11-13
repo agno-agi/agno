@@ -61,7 +61,7 @@ else:
         reasoning_effort="low",
         db=db,
         cwd=str(workspace),
-        sandbox="read-only",
+        sandbox_mode="read-only",
         approval_mode="deny_all",
         mcp_servers={"fixture": server},
     )

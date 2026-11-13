@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "3.1.3"
+version = "3.2.0"
 description = "The programming language for agentic software."
 requires-python = ">=3.9,<4"
 readme = "README.md"
@@ -40,6 +40,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+agentcore-sandbox = ["boto3>=1.43.113"]
 dev = [
   "mypy==2.1.0",
   "ruff==0.15.20",
@@ -89,6 +90,10 @@ weave = ["weave"]
 openlit = ["openlit", "agno[opentelemetry]"]
 arize = ["arize-phoenix", "agno[opentelemetry]", "opentelemetry-exporter-otlp-proto-grpc", "opentelemetry-distro"]
 langfuse = ["langfuse"]
+
+# Dependencies for External Agent Harnesses
+claude = ["claude-agent-sdk>=0.2.148"]
+codex = ["openai-codex"]
 
 # Dependencies for Models
 # >=0.77.0: the first release accepting output_config on the stable messages endpoint
@@ -195,7 +200,7 @@ gcs = ["google-cloud-storage"]
 mysql = ["sqlalchemy[asyncio]", "pymysql", "asyncmy"]
 postgres = ["sqlalchemy[asyncio]", "psycopg[binary]"]
 pages = ["agno[postgres]", "agno[pgvector]", "dnspython>=2.6.1", "beautifulsoup4", "regex>=2024.5.15"]
-redis = ["redis>=4.5.4", "redisvl>=0.12.1"]  # >=4.5.4: safe cancellation of blocking commands (XREAD in event stream tail)
+redis = ["redis>=6.1.0", "redisvl>=0.12.1"]  # >=6.1.0: transactions on a Redis Cluster client (metrics lock), redis/redis-py#3611; also safe cancellation of blocking commands (XREAD in event stream tail)
 s3 = ["boto3", "aioboto3"]
 sql = ["sqlalchemy[asyncio]"]
 sqlite = ["sqlalchemy[asyncio]", "aiosqlite"]
@@ -216,7 +221,7 @@ pinecone = ["pinecone==5.4.2"]
 pylance = ["pylance"]
 qdrant = ["qdrant-client"]
 singlestore = ["sqlalchemy"]
-surrealdb = ["surrealdb>=1.0.4"]
+surrealdb = ["surrealdb>=1.0.4,<3"]
 upstash = ["upstash-vector"]
 weaviate = ["weaviate-client"]
 
@@ -248,10 +253,10 @@ pdf-ocr = ["rapidocr_onnxruntime"]
 agui = ["ag-ui-protocol>=0.1.15", "jsonpatch>=1.33"]
 
 # Dependencies for A2A integration
-a2a = ["a2a-sdk>=0.3.0,<1.0"]
+a2a = ["a2a-sdk[http-server]>=1.2.2,<2"]
 
 # Dependencies for Slack integration
-slack = ["slack_sdk>=3.40.0", "aiohttp>=3.7.3,<4"]
+slack = ["slack_bolt>=1.29.0,<2", "slack_sdk>=3.43.0,<4", "aiohttp>=3.7.3,<4"]
 
 # Dependencies for Embedders
 huggingface = [
@@ -424,6 +429,7 @@ embedders = [
 # All libraries for testing
 tests = [
     "claude-agent-sdk>=0.2.148",
+    "openai-codex==0.163.0; python_version >= '3.10'",
   "agno[pages]",
     "agno[a2a]",
     "agno[slack]",
@@ -439,6 +445,8 @@ tests = [
     "agno[cookbooks]",
     "agno[agui]",
     "agno[integration-tests]",
+    # In-process S3 for the sandbox checkpoint store tests.
+    "moto[s3]>=5",
     "twine",
     "build",
     "grpcio>=1.76.0",
@@ -515,7 +523,7 @@ build-backend = "setuptools.build_meta"
 include = ["agno*"]
 
 [tool.setuptools.package-data]
-agno = ["py.typed"]
+agno = ["py.typed", "company/skills/*/SKILL.md"]
 include = ["LICENSE"]
 
 [tool.pytest.ini_options]
@@ -523,6 +531,7 @@ log_cli = true
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = [
+  "live: opt-in tests against public external services",
   "integration: tests that need live services (kernels, databases)",
 ]
 
@@ -670,6 +679,7 @@ module = [
   "serpapi.*",
   "setuptools.*",
   "simplejson.*",
+  "slack_bolt.*",
   "slack_sdk.*",
   "spider.*",
   "sqlalchemy.*",

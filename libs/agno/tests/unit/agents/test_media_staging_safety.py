@@ -237,3 +237,33 @@ def test_staging_errors_are_input_errors_and_never_retried(tmp_path):
     assert run.metadata["error_type"] == "input_check_error"
     assert issubclass(MediaStagingError, InputCheckError) and issubclass(MediaStagingError, ValueError)
     assert list(outside.iterdir()) == []
+
+
+def test_long_names_keep_their_extension_when_truncated():
+    name = _media._safe_name("a" * 300 + ".txt")
+    assert len(name) == 120 and name.endswith(".txt")
+    assert _media._safe_name("short.txt") == "short.txt"
+    assert len(_media._safe_name("a" * 300)) == 120
+
+
+def test_inline_blocks_follow_the_bytes_not_the_label(tmp_path):
+    """A file labelled PDF that holds HTML stays on disk; an untyped PNG goes inline under its old name."""
+    from agno.agents._media import inline_blocks, media_prompt_block, stage_media
+    from agno.media import File, Image
+
+    png = b"\x89PNG\r\n\x1a\n" + bytes(range(64))
+    media = {
+        "images": [Image(content=png)],
+        "files": [File(content=b"<html>not a pdf</html>", filename="memo.pdf", mime_type="application/pdf")],
+    }
+    staged = stage_media(tmp_path, "run-1", media)
+    blocks = inline_blocks(staged)
+
+    assert staged[0].name == "image-1.bin", "the disk name is what earlier releases chose"
+    assert staged[0].mime_type == "image/png" and staged[0].inline
+    assert [b["type"] for b in blocks] == ["image"] and blocks[0]["source"]["media_type"] == "image/png"
+    assert not staged[1].inline, "mislabelled document is left for the file tools"
+    prompt = media_prompt_block(staged)
+    image_line, pdf_line = [line for line in prompt.splitlines() if line.startswith("- ")]
+    assert "do not read it" in image_line and "read it with the file tools" in pdf_line
+    assert "Read them" not in prompt

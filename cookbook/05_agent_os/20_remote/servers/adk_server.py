@@ -11,7 +11,7 @@ Run: use the isolated Google ADK command in `20_remote/README.md`
 Try: fetch GET http://127.0.0.1:8001/.well-known/agent-card.json
 """
 
-from a2a.types import AgentCapabilities, AgentCard
+from a2a.types import AgentCapabilities, AgentCard, AgentInterface
 from google.adk import Agent
 from google.adk.a2a.utils.agent_to_a2a import to_a2a
 
@@ -37,12 +37,17 @@ facts_agent = Agent(
 agent_card = AgentCard(
     name="facts_agent",
     description="A Google ADK Agent that explains durable scientific facts.",
-    url=f"http://127.0.0.1:{PORT}",
+    supported_interfaces=[
+        AgentInterface(
+            url=f"http://127.0.0.1:{PORT}",
+            protocol_binding="JSONRPC",
+            protocol_version="1.0",
+        )
+    ],
     version="1.0.0",
     capabilities=AgentCapabilities(
         streaming=True,
         push_notifications=False,
-        state_transition_history=False,
     ),
     skills=[],
     default_input_modes=["text/plain"],

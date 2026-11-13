@@ -283,8 +283,10 @@ class TestSqliteDbDeleteRunScrubsLegacyBlob:
 
         # No legacy `runs` column exists on the fresh v3 schema. The helper
         # must return cleanly without raising.
-        db._scrub_run_ids_from_legacy_blob(["r0"])  # should not raise
-        db._scrub_run_ids_from_legacy_blob([])  # empty list -> early return
+        sessions_table = db._get_table(table_type="sessions")
+        with db.Session() as sess, sess.begin():
+            db._scrub_run_ids_from_legacy_blob(["r0"], sess, sessions_table)  # should not raise
+            db._scrub_run_ids_from_legacy_blob([], sess, sessions_table)  # empty list -> early return
 
 
 class TestInMemoryDbDeleteRunDoesNotResurrect:

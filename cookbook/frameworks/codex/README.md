@@ -7,9 +7,14 @@ SDK version in that environment:
 uv pip install 'openai-codex==0.162.1'
 ```
 
-Authenticate through your existing Codex CLI login (`codex login`), or use
-the SDK's API-key login once. If the CLI is not on your PATH, export
-`OPENAI_API_KEY` in your shell and run:
+Export `OPENAI_API_KEY` to authenticate `CodexAgent` automatically. Agno uses
+the key from the Codex process environment, including overrides in `env` or
+`client_options.env`, before starting or resuming a thread or compacting it.
+An existing ChatGPT or other non-API-key login is preserved. Without a key,
+Codex uses its existing authentication (`codex login`).
+
+The native SDK example requires an existing login. To authenticate it directly
+with an API key, run:
 
 ```bash
 python - <<'PY'
@@ -70,7 +75,7 @@ turn_options: TurnOptions = {"effort": "low"}
 
 agent = CodexAgent(
     model="gpt-5.6-luna",
-    sandbox="read-only",
+    sandbox_mode="read-only",
     approval_mode="deny_all",
     client_options=CodexConfig(client_name="shipping_review"),
     thread_options=thread_options,
@@ -119,7 +124,7 @@ Tool Calls panel, and returns the final `RunOutput` with tool results. Expect fe
 The script checks that at least one tool succeeded; the live test also checks
 fixture contents in the returned tool results. Inspect the final explanation yourself.
 
-The thread uses `sandbox="read-only"` and `approval_mode="deny_all"`.
+The thread uses `sandbox_mode="read-only"` and `approval_mode="deny_all"`.
 Shell reads are translated into Agno tool events. Codex can inherit other local
 configuration; this is a local integration exercise, not a tenant-isolation
 demonstration. We do not use full-access mode or auto-approve escalation.

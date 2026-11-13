@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -41,6 +41,7 @@ from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
 from agno.knowledge.protocol import KnowledgeProtocol
+from agno.registry._reserved import RESERVED_MANAGER_IDS, _reserved_manager_id_message
 
 if TYPE_CHECKING:
     from agno.compaction.types import CompactionResult
@@ -57,7 +58,9 @@ from agno.models.fallback import FallbackConfig
 from agno.models.message import Message
 
 if TYPE_CHECKING:
+    from agno.agents.base import BaseExternalAgent
     from agno.offload.store import ResultStore
+    from agno.sandbox import Sandbox
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
@@ -404,6 +407,9 @@ class Agent:
     # Custom cache key function for knowledge callable factory
     callable_knowledge_cache_key: Optional[Callable[..., Optional[str]]] = None
 
+    # Keep this agent out of the registry while allowing it to run.
+    _registry_excluded: bool = field(default=False, init=False, repr=False, compare=False)
+
     def __init__(
         self,
         *,
@@ -516,7 +522,13 @@ class Agent:
         cache_callables: bool = True,
         callable_tools_cache_key: Optional[Callable[..., Optional[str]]] = None,
         callable_knowledge_cache_key: Optional[Callable[..., Optional[str]]] = None,
+        sandbox: Optional["Sandbox"] = None,
     ):
+        if sandbox is not None:
+            raise NotImplementedError(
+                "Agent(sandbox=...) is not supported yet. Use ClaudeAgent(sandbox=...) or "
+                "CodexAgent(sandbox=...) to run a coding harness inside a sandbox."
+            )
         self.model = model  # type: ignore[assignment]
         if fallback_config is not None:
             if fallback_models:
@@ -1854,13 +1866,16 @@ def get_agent_by_id(
     user_id: Optional[str] = None,
     strict: bool = False,
     published_only: bool = True,
-) -> Optional["Agent"]:
+) -> Optional[Union["Agent", "BaseExternalAgent"]]:
     """
     Get an Agent by id from the database (new entities/configs schema).
 
     Resolution order:
     - if label is provided: load that labeled version
     - else: load component.current_version
+
+    A config stored by an external adapter (its ``sdk`` key names the adapter,
+    e.g. ClaudeAgent or CodexAgent) rebuilds that adapter instead of an Agent.
 
     Args:
         db: Database handle.
@@ -1872,13 +1887,17 @@ def get_agent_by_id(
             ComponentRehydrationError; None strictly means the agent was not found.
 
     Returns:
-        Agent instance or None.
+        Agent or external agent instance, or None.
 
     Raises:
-        ComponentRehydrationError: If strict and a registry reference cannot be resolved.
+        ComponentRehydrationError: If the ID is reserved for OS Manager, or if strict
+            and a registry reference cannot be resolved.
     """
     from agno.exceptions import ComponentRehydrationError
     from agno.utils.log import log_error
+
+    if id in RESERVED_MANAGER_IDS:
+        raise ComponentRehydrationError(_reserved_manager_id_message(id))
 
     try:
         # Only resolve the agent if owned by this user, unowned (shared), or published.
@@ -1903,6 +1922,11 @@ def get_agent_by_id(
         cfg = row.get("config") if isinstance(row, dict) else None
         if cfg is None:
             raise ValueError(f"Invalid config found for agent {id}")
+
+        from agno.agents._storage import external_agent_from_config, is_external_agent_config
+
+        if is_external_agent_config(cfg):
+            return external_agent_from_config(cfg, id=id, db=db, registry=registry, strict=strict)
 
         agent = Agent.from_dict(cfg, registry=registry, strict=strict)
         agent.id = id
@@ -1940,11 +1964,13 @@ def get_agents(
     registry: Optional["Registry"] = None,
     exclude_component_ids: Optional[Set[str]] = None,
     user_id: Optional[str] = None,
-) -> List["Agent"]:
+) -> List[Union["Agent", "BaseExternalAgent"]]:
     """
     Get all agents from the database.
 
-    Sets _version and _stage on each agent from the component metadata.
+    Sets _version and _stage on each agent from the component metadata. A
+    config stored by an external adapter rebuilds that adapter (see
+    ``get_agent_by_id``).
 
     Args:
         db: Database to load agents from
@@ -1952,9 +1978,16 @@ def get_agents(
         exclude_component_ids: Component IDs to exclude from results.
         user_id: If set, only load agents owned by this user, unowned (shared), or published.
     """
+    from agno.agents._storage import (
+        external_agent_from_config,
+        is_external_agent_config,
+        unavailable_external_agent,
+    )
+    from agno.exceptions import ComponentRehydrationError
     from agno.utils.log import log_error
 
-    agents: List[Agent] = []
+    exclude_component_ids = set(exclude_component_ids or ()) | RESERVED_MANAGER_IDS
+    agents: List[Union[Agent, BaseExternalAgent]] = []
     try:
         # The DB default page is one small page and the catalog can exceed it
         # (other users' published components compete for the same slots), so
@@ -2001,8 +2034,19 @@ def get_agents(
                             agent_config["id"] = component_id
                         # Lenient on purpose: listings must show degraded
                         # components so they stay visible and fixable.
-                        agent = Agent.from_dict(agent_config, registry=registry, strict=False)
-                        agent.id = component_id
+                        agent: Union[Agent, BaseExternalAgent]
+                        if is_external_agent_config(agent_config):
+                            try:
+                                agent = external_agent_from_config(
+                                    agent_config, id=component_id, db=db, registry=registry, strict=False
+                                )
+                            except ComponentRehydrationError as e:
+                                # Still listed, as a stand-in that reports why it cannot run.
+                                log_error(f"Agent {component_id} cannot be rebuilt from its config: {e}")
+                                agent = unavailable_external_agent(agent_config, component_id, db, str(e))
+                        else:
+                            agent = Agent.from_dict(agent_config, registry=registry, strict=False)
+                            agent.id = component_id
                         agent._version = component.get("current_version")
                         agent._stage = config.get("stage")
                         agents.append(agent)

@@ -64,7 +64,7 @@ def main():
         agent = CodexAgent(
             id="retries-demo",
             model="gpt-5.6-luna",
-            sandbox="read-only",
+            sandbox_mode="read-only",
             db=db,
             cwd=workdir,
             # Retry up to 2 times, waiting 1s then 2s
@@ -124,7 +124,7 @@ def main():
         plain = CodexAgent(
             id="plain-demo",
             model="gpt-5.6-luna",
-            sandbox="read-only",
+            sandbox_mode="read-only",
             db=db,
             cwd=workdir,
         )

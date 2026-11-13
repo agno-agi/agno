@@ -19,6 +19,7 @@ import pytest
 from agno.agent.agent import _COMPONENT_LIST_PAGE, Agent, get_agent_by_id, get_agents
 from agno.db.base import BaseDb, ComponentType
 from agno.registry import Registry
+from agno.registry._reserved import RESERVED_MANAGER_IDS
 
 # =============================================================================
 # Fixtures
@@ -988,7 +989,7 @@ class TestGetAgents:
 
         mock_db.list_components.assert_called_once_with(
             component_type=ComponentType.AGENT,
-            exclude_component_ids=None,
+            exclude_component_ids=RESERVED_MANAGER_IDS,
             user_id=None,
             limit=_COMPONENT_LIST_PAGE,
             offset=0,

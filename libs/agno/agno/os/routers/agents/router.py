@@ -42,6 +42,7 @@ from agno.os.auth import (
 from agno.os.checkpoints import build_run_checkpoint_snapshot, list_run_checkpoints
 from agno.os.event_streams import get_event_stream
 from agno.os.job_queue import (
+    _new_queued_run_id,
     aattach_waiting_on,
     acontinue_via_queue,
     aenqueue_ticket,
@@ -55,6 +56,7 @@ from agno.os.job_queue import (
     resolve_queue_scope,
     ticket_status_to_api,
     validate_seam_input,
+    wake_queue_worker,
 )
 from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
@@ -85,10 +87,12 @@ from agno.os.utils import (
     allow_draft_preview,
     amark_continue_stream_running,
     classify_upload_file,
+    factory_row_handle,
     find_factory_by_id,
     format_sse_event,
     get_agent_by_id,
     get_request_kwargs,
+    is_form_field_omitted,
     parse_files_metadata,
     process_audio,
     process_document,
@@ -102,11 +106,13 @@ from agno.os.utils import (
     stamped_component_version,
 )
 from agno.registry import Registry
+from agno.registry._reserved import _listed
 from agno.run.agent import RunErrorEvent, RunOutput
 from agno.run.base import RunStatus
 from agno.utils.log import log_debug, log_error, log_warning
 
 if TYPE_CHECKING:
+    from agno.agents.base import BaseExternalAgent
     from agno.os.app import AgentOS
 
 
@@ -489,7 +495,7 @@ async def agent_resumable_continue_response_streamer(
 
 
 async def _resume_stream_generator(
-    agent: Union[Agent, RemoteAgent],
+    agent: Union[Agent, RemoteAgent, "BaseExternalAgent"],
     run_id: str,
     last_event_index: Optional[int],
     session_id: Optional[str],
@@ -500,7 +506,7 @@ async def _resume_stream_generator(
     Three reconnection paths:
     1. Run still active (in buffer): replay missed events + subscribe for live events via Queue
     2. Run completed (in buffer): replay all events since last_event_index
-    3. Not in buffer: fall back to database replay
+    3. Not in buffer, or executed elsewhere: fall back to database replay
     """
     event_stream = get_event_stream()
     try:
@@ -513,8 +519,12 @@ async def _resume_stream_generator(
         yield sse_error_frame(f"event stream unavailable: {str(e)[:200]}")
         return
 
-    if buffer_status is None:
-        # PATH 3: Not in buffer -- fall back to database
+    from agno.os.utils import run_stream_served_here
+
+    # A replica-local stream never advances a run another replica's worker executes.
+    elsewhere = buffer_status in (RunStatus.pending, RunStatus.running) and not await run_stream_served_here(run_id)
+    if buffer_status is None or elsewhere:
+        # PATH 3: Not in buffer, or executed elsewhere -- fall back to database
         if session_id and not isinstance(agent, RemoteAgent):
             try:
                 run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)
@@ -531,8 +541,16 @@ async def _resume_stream_generator(
             elif run_output:
                 from agno.os.utils import no_stored_events_replay_meta
 
-                yield f"event: replay\ndata: {json.dumps(no_stored_events_replay_meta(run_output, run_id))}\n\n"
+                meta = no_stored_events_replay_meta(run_output, run_id, elsewhere=elsewhere)
+                yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
                 return
+
+        # Executed on another replica, whose events only the database can replay
+        if elsewhere and not session_id:
+            yield sse_error_frame(
+                f"Run {run_id} executes on another replica; pass session_id to replay it from the database"
+            )
+            return
 
         # Run not found anywhere
         error = {"event": "error", "error": f"Run {run_id} not found in buffer or database"}
@@ -601,44 +619,29 @@ async def _resume_stream_generator(
 
     log_debug(f"SSE client subscribed to agent run {run_id} (last_event_index: {last_event_index})")
 
-    # Pump the tail through a queue so we can heartbeat on idle without
-    # cancelling the tail generator (cancelling its __anext__ would kill it).
-    tail_queue: asyncio.Queue = asyncio.Queue()
+    # queued_run_tail_streamer also ends on a settled ticket or a claim by another replica.
+    async for frame in queued_run_tail_streamer(run_id, last_replayed_index, keepalive=": heartbeat\n\n"):
+        yield frame
 
-    async def _pump_tail() -> None:
-        try:
-            async for tail_item in event_stream.tail(run_id, last_event_index=last_replayed_index):
-                await tail_queue.put(tail_item)
-        except Exception as e:
-            # A tail that DIES must not look like a tail that FINISHED: emit an
-            # error frame so the client can distinguish and reconnect
-            log_error(f"Resume tail failed for run {run_id}: {e}")
-            with contextlib.suppress(Exception):
-                await tail_queue.put((-1, sse_error_frame(f"stream tail failed: {str(e)[:200]}")))
-        finally:
-            await tail_queue.put(None)
 
-    pump_task = asyncio.create_task(_pump_tail())
-    try:
-        while True:
-            try:
-                item = await asyncio.wait_for(tail_queue.get(), timeout=30.0)
-            except asyncio.TimeoutError:
-                # Tail is idle (queued or silent run) - keep the connection alive
-                yield ": heartbeat\n\n"
-                continue
-            if item is None:
-                # Tail finished: run reached a terminal state
-                break
-            _ev_index, sse_data = item
-            yield sse_data
-    finally:
-        pump_task.cancel()
-        # Suppress everything, not just CancelledError: an exception re-raised
-        # here reaches the ASGI layer on a response whose headers are already
-        # sent (the pump has already surfaced it as an error frame)
-        with contextlib.suppress(BaseException):
-            await pump_task
+def _external_agent_response(agent: Any, is_component: bool = False) -> AgentResponse:
+    """The listing entry for an external framework adapter, code-registered or stored."""
+    agent_db = getattr(agent, "db", None)
+    session_table = agent_db.session_table_name if agent_db and hasattr(agent_db, "session_table_name") else None
+    sessions = {"session_table": session_table} if session_table else None
+    summary = AgentSummaryResponse.from_agent(agent)
+    return AgentResponse(
+        id=agent.id,
+        name=agent.name,
+        description=getattr(agent, "description", None),
+        db_id=agent_db.id if agent_db else None,
+        sessions=sessions,
+        metadata=summary.metadata or {"sdk": "external"},
+        sandboxed=summary.sandboxed,
+        is_component=is_component,
+        current_version=getattr(agent, "_version", None) if is_component else None,
+        stage=getattr(agent, "_stage", None) if is_component else None,
+    )
 
 
 def get_agent_router(
@@ -725,6 +728,8 @@ def get_agent_router(
         ),
     ):
         kwargs = await get_request_kwargs(request, create_agent_run)
+        if await is_form_field_omitted(request, "stream"):
+            stream = True
 
         files_metadata_list = parse_files_metadata(files_metadata)
 
@@ -867,6 +872,34 @@ def get_agent_router(
         # Extract auth token for remote agents
         auth_token = get_auth_token_from_request(request)
 
+        from agno.agents.base import BaseExternalAgent
+
+        if isinstance(agent, BaseExternalAgent) and agent.sandbox is not None:
+            from agno.os.routers.agents.sandbox import sandbox_run_response
+
+            if getattr(agent, "_uses_native_hitl", False):
+                background = True
+            return await sandbox_run_response(
+                agent,
+                getattr(request.app.state, "queue_worker", None),
+                request,
+                input=message,
+                session_id=session_id,
+                user_id=user_id,
+                kwargs=kwargs,
+                stream=stream,
+                background=background,
+                scope=resolve_queue_scope(agent_id, os.agents, os.db, scoped_user_id, version),
+                version=version,
+                images=base64_images,
+                files=input_files,
+                unsupported_media=bool(base64_audios or base64_videos),
+            )
+
+        # A native permission request waits for its confirmation longer than a browser connection lives.
+        if getattr(agent, "_uses_native_hitl", False):
+            background = True
+
         # Background execution
         if background:
             if isinstance(agent, RemoteAgent):
@@ -903,10 +936,18 @@ def get_agent_router(
                     from agno.os.event_streams import get_event_stream as _ges
                     from agno.run.base import RunStatus as _RS
 
-                    queued_run_id = str(uuid4())
+                    queued_run_id = _new_queued_run_id()
                     queued_session_id = session_id  # non-empty: defaulted at the top of the endpoint
                     queued_stream_payload["scope"] = resolve_queue_scope(
-                        agent_id, os.agents, os.db, scoped_user_id, version
+                        agent_id,
+                        os.agents,
+                        os.db,
+                        scoped_user_id,
+                        version,
+                        state=request.state,
+                        context_user_id=user_id,
+                        session_id=queued_session_id,
+                        factory_input=factory_input,
                     )
                     job = QueuedJob(
                         id=queued_run_id,
@@ -966,6 +1007,7 @@ def get_agent_router(
                     await aprepare_accepted_or_abort(
                         queue_worker, agent, "agent", queued_run_id, queued_session_id, user_id, message
                     )
+                    wake_queue_worker(queue_worker)
                     return StreamingResponse(queued_run_tail_streamer(queued_run_id), media_type="text/event-stream")
                 if queue_worker is not None:
                     log_warning(
@@ -1017,9 +1059,19 @@ def get_agent_router(
             ):
                 # 202 must honor input_schema exactly like the inline path (400)
                 validate_seam_input(agent, message)
-                queued_run_id = str(uuid4())
+                queued_run_id = _new_queued_run_id()
                 queued_session_id = session_id  # non-empty: defaulted at the top of the endpoint
-                queued_payload["scope"] = resolve_queue_scope(agent_id, os.agents, os.db, scoped_user_id, version)
+                queued_payload["scope"] = resolve_queue_scope(
+                    agent_id,
+                    os.agents,
+                    os.db,
+                    scoped_user_id,
+                    version,
+                    state=request.state,
+                    context_user_id=user_id,
+                    session_id=queued_session_id,
+                    factory_input=factory_input,
+                )
                 job = QueuedJob(
                     id=queued_run_id,
                     component_type="agent",
@@ -1065,6 +1117,7 @@ def get_agent_router(
                 await aprepare_accepted_or_abort(
                     queue_worker, agent, "agent", queued_run_id, queued_session_id, user_id, message
                 )
+                wake_queue_worker(queue_worker)
                 return JSONResponse(
                     status_code=202,
                     content={"run_id": queued_run_id, "session_id": queued_session_id, "status": "PENDING"},
@@ -1409,6 +1462,10 @@ def get_agent_router(
         ),
     ):
         kwargs = await get_request_kwargs(request, continue_agent_run)
+        if await is_form_field_omitted(request, "stream"):
+            stream = True
+        if await is_form_field_omitted(request, "replace_original"):
+            replace_original = None
 
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
@@ -1541,6 +1598,61 @@ def get_agent_router(
         # error - so a paused-only check here can only block requests the
         # core supports. Teams are equally ungated; workflows still refuse
         # non-paused continues because their core requires PAUSED.
+
+        # A native permission request is answered here: the live native execution, still waiting for it,
+        # receives the chat's confirm or reject. Never requeue its turn.
+        from agno.agents.base import BaseExternalAgent
+
+        native_agent = agent if isinstance(agent, BaseExternalAgent) and agent._uses_native_hitl else None
+        native_run = None
+        if native_agent is not None:
+            native_run = await native_agent.aget_run_output(run_id, session_id=session_id, user_id=user_id)
+        from agno.agents._hitl import live_native_run
+
+        # A finished run keeps its HITL history and continues like any other run.
+        if native_agent is not None and live_native_run(native_run):
+            from agno.agents._hitl import tail_stored
+            from agno.models.response import ToolExecution
+            from agno.os.utils import adeliver_native_decisions
+
+            if fork or regenerate or input is not None or continue_from != "end" or additional_instructions:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Continuing a native request only delivers its decision",
+                )
+            assert session_id
+            try:
+                parsed_tools = [ToolExecution.from_dict(t) for t in tools_data or []]
+            except (ValueError, TypeError, KeyError) as error:
+                raise HTTPException(status_code=409, detail=str(error))
+            try:
+                submitted, tail_from = await adeliver_native_decisions(
+                    native_agent, native_run, parsed_tools, session_id, user_id
+                )
+            except RunNotContinuableError as error:
+                raise HTTPException(status_code=409, detail=str(error))
+            if stream:
+                if tail_from is None:
+
+                    async def stored_native_events():
+                        from agno.agents._hitl import hitl_state
+                        from agno.run.agent import RunOutput
+
+                        answered = set(hitl_state(submitted).get("decisions") or {})
+                        async for event in tail_stored(
+                            native_agent, run_id, session_id, user_id, len(submitted.events or []), answered
+                        ):
+                            if not isinstance(event, RunOutput):
+                                yield f"event: {event.event}\ndata: {event.to_json()}\n\n"
+
+                    return StreamingResponse(stored_native_events(), media_type="text/event-stream")
+                return StreamingResponse(
+                    _resume_stream_generator(native_agent, run_id, tail_from, session_id, user_id),
+                    media_type="text/event-stream",
+                )
+            return JSONResponse(
+                status_code=202, content={"run_id": run_id, "session_id": session_id, "status": "RUNNING"}
+            )
 
         # Convert tools dict to RunRequirement and ToolExecution objects if provided
         requirements = None
@@ -2031,9 +2143,9 @@ def get_agent_router(
                 )
 
             # Limit results based on the user's access/scopes
-            accessible_agents = await afilter_resources_by_access(request, os.agents or [], "agents")
+            accessible_agents = await afilter_resources_by_access(request, _listed(os.agents), "agents")
         else:
-            accessible_agents = os.agents or []
+            accessible_agents = _listed(os.agents)
 
         agents: List[AgentResponse] = []
         if accessible_agents:
@@ -2046,21 +2158,7 @@ def get_agent_router(
                     agents.append(await agent.get_agent_config())
                 else:
                     # External framework adapter: build a minimal response
-                    agent_db = getattr(agent, "db", None)
-                    session_table = (
-                        agent_db.session_table_name if agent_db and hasattr(agent_db, "session_table_name") else None
-                    )
-                    sessions = {"session_table": session_table} if session_table else None
-                    agents.append(
-                        AgentResponse(
-                            id=agent.id,
-                            name=agent.name,
-                            description=getattr(agent, "description", None),
-                            db_id=agent_db.id if agent_db else None,
-                            sessions=sessions,
-                            metadata=AgentSummaryResponse.from_agent(agent).metadata or {"sdk": "external"},
-                        )
-                    )
+                    agents.append(_external_agent_response(agent))
 
         if os.db and isinstance(os.db, BaseDb):
             from agno.agent.agent import get_agents
@@ -2081,7 +2179,10 @@ def get_agent_router(
                 if getattr(request.state, "authorization_enabled", False):
                     db_agents = await afilter_resources_by_access(request, db_agents, "agents")
                 for db_agent in db_agents:
-                    agent_response = await AgentResponse.from_agent(agent=db_agent, is_component=True)
+                    if isinstance(db_agent, Agent):
+                        agent_response = await AgentResponse.from_agent(agent=db_agent, is_component=True)
+                    else:
+                        agent_response = _external_agent_response(db_agent, is_component=True)
                     agents.append(agent_response)
 
         return agents
@@ -2162,6 +2263,7 @@ def get_agent_router(
                 name=agent.name,
                 description=getattr(agent, "description", None),
                 metadata=AgentSummaryResponse.from_agent(agent).metadata or {"sdk": "external"},
+                sandboxed=AgentSummaryResponse.from_agent(agent).sandboxed,
             )
 
     @router.get(
@@ -2188,13 +2290,7 @@ def get_agent_router(
         # Factory agents: resolve to get a real agent for session lookup
         factory = find_factory_by_id(agent_id, os.agents)
         if factory:
-            agent = await resolve_agent(  # type: ignore[assignment]
-                agent_id,
-                os.agents,
-                factory.db,
-                session_id=session_id,
-                published_only=False,
-            )
+            agent = factory_row_handle(factory)  # type: ignore[assignment]
         else:
             try:
                 agent = get_agent_by_id(
@@ -2292,13 +2388,7 @@ def get_agent_router(
     ):
         factory = find_factory_by_id(agent_id, os.agents)
         if factory:
-            agent = await resolve_agent(  # type: ignore[assignment]
-                agent_id,
-                os.agents,
-                factory.db,
-                session_id=session_id,
-                published_only=False,
-            )
+            agent = factory_row_handle(factory)  # type: ignore[assignment]
         else:
             try:
                 agent = get_agent_by_id(
@@ -2363,13 +2453,7 @@ def get_agent_router(
     ):
         factory = find_factory_by_id(agent_id, os.agents)
         if factory:
-            agent = await resolve_agent(  # type: ignore[assignment]
-                agent_id,
-                os.agents,
-                factory.db,
-                session_id=session_id,
-                published_only=False,
-            )
+            agent = factory_row_handle(factory)  # type: ignore[assignment]
         else:
             try:
                 agent = get_agent_by_id(
@@ -2556,13 +2640,7 @@ def get_agent_router(
         # Factory agents: resolve to get a real agent for session lookup
         factory = find_factory_by_id(agent_id, os.agents)
         if factory:
-            agent = await resolve_agent(  # type: ignore[assignment]
-                agent_id,
-                os.agents,
-                factory.db,
-                session_id=session_id,
-                published_only=False,
-            )
+            agent = factory_row_handle(factory)  # type: ignore[assignment]
         else:
             try:
                 agent = get_agent_by_id(

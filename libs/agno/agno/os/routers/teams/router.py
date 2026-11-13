@@ -38,6 +38,7 @@ from agno.os.auth import (
 from agno.os.checkpoints import build_run_checkpoint_snapshot, list_run_checkpoints
 from agno.os.event_streams import get_event_stream
 from agno.os.job_queue import (
+    _new_queued_run_id,
     aattach_waiting_on,
     acontinue_via_queue,
     aenqueue_ticket,
@@ -51,6 +52,7 @@ from agno.os.job_queue import (
     resolve_queue_scope,
     ticket_status_to_api,
     validate_seam_input,
+    wake_queue_worker,
 )
 from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
@@ -79,10 +81,12 @@ from agno.os.utils import (
     allow_draft_preview,
     amark_continue_stream_running,
     classify_upload_file,
+    factory_row_handle,
     find_factory_by_id,
     format_sse_event,
     get_request_kwargs,
     get_team_by_id,
+    is_form_field_omitted,
     parse_files_metadata,
     process_audio,
     process_document,
@@ -264,7 +268,7 @@ async def _resume_stream_generator(
     Three reconnection paths:
     1. Run still active (in buffer): replay missed events + subscribe for live events via Queue
     2. Run completed (in buffer): replay all events since last_event_index
-    3. Not in buffer: fall back to database replay
+    3. Not in buffer, or executed elsewhere: fall back to database replay
     """
     event_stream = get_event_stream()
     try:
@@ -277,8 +281,12 @@ async def _resume_stream_generator(
         yield sse_error_frame(f"event stream unavailable: {str(e)[:200]}")
         return
 
-    if buffer_status is None:
-        # PATH 3: Not in buffer -- fall back to database
+    from agno.os.utils import run_stream_served_here
+
+    # A replica-local stream never advances a run another replica's worker executes.
+    elsewhere = buffer_status in (RunStatus.pending, RunStatus.running) and not await run_stream_served_here(run_id)
+    if buffer_status is None or elsewhere:
+        # PATH 3: Not in buffer, or executed elsewhere -- fall back to database
         if session_id and not isinstance(team, RemoteTeam):
             try:
                 run_output = await team.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)
@@ -295,8 +303,16 @@ async def _resume_stream_generator(
             elif run_output:
                 from agno.os.utils import no_stored_events_replay_meta
 
-                yield f"event: replay\ndata: {json.dumps(no_stored_events_replay_meta(run_output, run_id))}\n\n"
+                meta = no_stored_events_replay_meta(run_output, run_id, elsewhere=elsewhere)
+                yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
                 return
+
+        # Executed on another replica, whose events only the database can replay
+        if elsewhere and not session_id:
+            yield sse_error_frame(
+                f"Run {run_id} executes on another replica; pass session_id to replay it from the database"
+            )
+            return
 
         # Run not found anywhere
         error = {"event": "error", "error": f"Run {run_id} not found in buffer or database"}
@@ -365,44 +381,9 @@ async def _resume_stream_generator(
 
     log_debug(f"SSE client subscribed to team run {run_id} (last_event_index: {last_event_index})")
 
-    # Pump the tail through a queue so we can heartbeat on idle without
-    # cancelling the tail generator (cancelling its __anext__ would kill it).
-    tail_queue: asyncio.Queue = asyncio.Queue()
-
-    async def _pump_tail() -> None:
-        try:
-            async for tail_item in event_stream.tail(run_id, last_event_index=last_replayed_index):
-                await tail_queue.put(tail_item)
-        except Exception as e:
-            # A tail that DIES must not look like a tail that FINISHED: emit an
-            # error frame so the client can distinguish and reconnect
-            log_error(f"Resume tail failed for run {run_id}: {e}")
-            with contextlib.suppress(Exception):
-                await tail_queue.put((-1, sse_error_frame(f"stream tail failed: {str(e)[:200]}")))
-        finally:
-            await tail_queue.put(None)
-
-    pump_task = asyncio.create_task(_pump_tail())
-    try:
-        while True:
-            try:
-                item = await asyncio.wait_for(tail_queue.get(), timeout=30.0)
-            except asyncio.TimeoutError:
-                # Tail is idle (queued or silent run) - keep the connection alive
-                yield ": heartbeat\n\n"
-                continue
-            if item is None:
-                # Tail finished: run reached a terminal state
-                break
-            _ev_index, sse_data = item
-            yield sse_data
-    finally:
-        pump_task.cancel()
-        # Suppress everything, not just CancelledError: an exception re-raised
-        # here reaches the ASGI layer on a response whose headers are already
-        # sent (the pump has already surfaced it as an error frame)
-        with contextlib.suppress(BaseException):
-            await pump_task
+    # queued_run_tail_streamer also ends on a settled ticket or a claim by another replica.
+    async for frame in queued_run_tail_streamer(run_id, last_replayed_index, keepalive=": heartbeat\n\n"):
+        yield frame
 
 
 async def team_continue_response_streamer(
@@ -637,6 +618,10 @@ def get_team_router(
         ),
     ):
         kwargs = await get_request_kwargs(request, create_team_run)
+        if await is_form_field_omitted(request, "stream"):
+            stream = True
+        if await is_form_field_omitted(request, "monitor"):
+            monitor = True
 
         files_metadata_list = parse_files_metadata(files_metadata)
 
@@ -829,10 +814,18 @@ def get_team_router(
                     # 202/stream-accept must honor input_schema like the inline path (400)
                     validate_seam_input(team, message)
                     assert queue_worker is not None  # narrowed by stream_queueable
-                    queued_run_id = str(uuid4())
+                    queued_run_id = _new_queued_run_id()
                     queued_session_id = session_id  # non-empty: defaulted at the top of the endpoint
                     queued_stream_payload["scope"] = resolve_queue_scope(
-                        team_id, os.teams, os.db, scoped_user_id, version
+                        team_id,
+                        os.teams,
+                        os.db,
+                        scoped_user_id,
+                        version,
+                        state=request.state,
+                        context_user_id=user_id,
+                        session_id=queued_session_id,
+                        factory_input=factory_input,
                     )
                     job = QueuedJob(
                         id=queued_run_id,
@@ -886,6 +879,7 @@ def get_team_router(
                     await aprepare_accepted_or_abort(
                         queue_worker, team, "team", queued_run_id, queued_session_id, user_id, message
                     )
+                    wake_queue_worker(queue_worker)
                     return StreamingResponse(queued_run_tail_streamer(queued_run_id), media_type="text/event-stream")
                 if queue_worker is not None:
                     log_warning(
@@ -939,9 +933,19 @@ def get_team_router(
             ):
                 # 202 must honor input_schema exactly like the inline path (400)
                 validate_seam_input(team, message)
-                queued_run_id = str(uuid4())
+                queued_run_id = _new_queued_run_id()
                 queued_session_id = session_id  # non-empty: defaulted at the top of the endpoint
-                queued_payload["scope"] = resolve_queue_scope(team_id, os.teams, os.db, scoped_user_id, version)
+                queued_payload["scope"] = resolve_queue_scope(
+                    team_id,
+                    os.teams,
+                    os.db,
+                    scoped_user_id,
+                    version,
+                    state=request.state,
+                    context_user_id=user_id,
+                    session_id=queued_session_id,
+                    factory_input=factory_input,
+                )
                 job = QueuedJob(
                     id=queued_run_id,
                     component_type="team",
@@ -987,6 +991,7 @@ def get_team_router(
                 await aprepare_accepted_or_abort(
                     queue_worker, team, "team", queued_run_id, queued_session_id, user_id, message
                 )
+                wake_queue_worker(queue_worker)
                 return JSONResponse(
                     status_code=202,
                     content={"run_id": queued_run_id, "session_id": queued_session_id, "status": "PENDING"},
@@ -1390,6 +1395,10 @@ def get_team_router(
         background: bool = Form(False),
     ):
         kwargs = await get_request_kwargs(request, continue_team_run)
+        if await is_form_field_omitted(request, "stream"):
+            stream = True
+        if await is_form_field_omitted(request, "replace_original"):
+            replace_original = None
 
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
@@ -2095,13 +2104,7 @@ def get_team_router(
         # Factory teams
         factory = find_factory_by_id(team_id, os.teams)
         if factory:
-            team = await resolve_team(  # type: ignore[assignment]
-                team_id,
-                os.teams,
-                factory.db,
-                session_id=session_id,
-                published_only=False,
-            )
+            team = factory_row_handle(factory)  # type: ignore[assignment]
         else:
             try:
                 team = get_team_by_id(
@@ -2196,13 +2199,7 @@ def get_team_router(
     ):
         factory = find_factory_by_id(team_id, os.teams)
         if factory:
-            team = await resolve_team(  # type: ignore[assignment]
-                team_id,
-                os.teams,
-                factory.db,
-                session_id=session_id,
-                published_only=False,
-            )
+            team = factory_row_handle(factory)  # type: ignore[assignment]
         else:
             try:
                 team = get_team_by_id(
@@ -2267,13 +2264,7 @@ def get_team_router(
     ):
         factory = find_factory_by_id(team_id, os.teams)
         if factory:
-            team = await resolve_team(  # type: ignore[assignment]
-                team_id,
-                os.teams,
-                factory.db,
-                session_id=session_id,
-                published_only=False,
-            )
+            team = factory_row_handle(factory)  # type: ignore[assignment]
         else:
             try:
                 team = get_team_by_id(
@@ -2338,13 +2329,7 @@ def get_team_router(
         # Factory teams
         factory = find_factory_by_id(team_id, os.teams)
         if factory:
-            team = await resolve_team(  # type: ignore[assignment]
-                team_id,
-                os.teams,
-                factory.db,
-                session_id=session_id,
-                published_only=False,
-            )
+            team = factory_row_handle(factory)  # type: ignore[assignment]
         else:
             try:
                 team = get_team_by_id(

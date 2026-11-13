@@ -118,13 +118,15 @@ class TestQueueabilityGuard:
         agent = Agent(id="a1", name="A1")
         assert component_is_queueable(agent, "a1", [agent], db=None) is True
 
-    def test_factory_entry_is_never_queueable(self, db):
+    def test_factory_entry_is_queueable(self, db):
         from agno.agent import Agent
         from agno.agent.factory import AgentFactory
 
+        # The ticket carries the request context, so the worker can invoke
+        # the factory again at claim time; no db is needed for that
         produced = Agent(id="fx", name="FX", db=db)
         factory = AgentFactory(id="fx", db=db, factory=lambda ctx: produced)
-        assert component_is_queueable(produced, "fx", [factory], db=db) is False
+        assert component_is_queueable(produced, "fx", [factory], db=None) is True
 
     def test_off_registry_component_needs_a_sync_db_to_replay_from(self, db):
         from agno.agent import Agent

@@ -89,6 +89,62 @@ async def test_version_pinned_submission_rides_the_queue_with_its_pin(ws_env):
         await env.router.cancel_subscription_pump(env.ws)
 
 
+@pytest.mark.asyncio
+async def test_factory_submission_rides_the_queue_with_its_pin(ws_env):
+    """A factory-backed workflow queues like a registered instance: the door
+    invokes the factory to validate the submission, and the ticket carries the
+    request context and the version pin so the worker builds the same
+    workflow instead of running it in-process on the accepting replica."""
+    from agno.db.in_memory import InMemoryDb
+    from agno.run.base import RunStatus
+    from agno.workflow.factory import WorkflowFactory
+    from agno.workflow.workflow import Workflow
+
+    env = ws_env
+    built = Workflow(id="wf-factory", name="Built", db=InMemoryDb())
+    arun_calls: List[dict] = []
+
+    async def recording_arun(**kwargs):
+        arun_calls.append(kwargs)
+        return None
+
+    built.arun = recording_arun  # type: ignore[method-assign]
+    factory_contexts: List[Any] = []
+
+    def build(ctx):
+        factory_contexts.append(ctx)
+        return built
+
+    env.os.workflows.append(WorkflowFactory(id="wf-factory", db=built.db, factory=build))
+    await env.router.handle_workflow_via_websocket(
+        env.ws,
+        {"workflow_id": "wf-factory", "session_id": "s1", "message": "hi", "version": 1},
+        env.os,
+        ws_user_context={"user_id": "alice", "payload": {"sub": "alice"}, "scopes": {"workflows:run"}},
+    )
+    try:
+        acks = _queued_acks(env)
+        assert len(acks) == 1, f"a factory submission must ride the queue, got {env.ws.sent}"
+        assert arun_calls == [], "and not also run in-process"
+        assert len(factory_contexts) == 1, "the door invokes the factory once to validate the submission"
+        assert factory_contexts[0].user_id == "alice"
+        job = await env.store.get_job(acks[0]["run_id"])
+        assert job is not None
+        scope = job["payload"]["scope"]
+        assert scope["source"] == "factory"
+        assert scope["pinned"] == 1
+        assert scope["context"]["user_id"] == "alice"
+        assert scope["context"]["session_id"] == "s1"
+        assert scope["context"]["claims"] == {"sub": "alice"}
+        assert scope["context"]["scopes"] == ["workflows:run"]
+        stamped = job["payload"]["kwargs"].get("metadata") or {}
+        assert stamped.get(COMPONENT_VERSION_METADATA_KEY) == 1, "the queued run carries the pin"
+    finally:
+        for ack in _queued_acks(env):
+            await env.stream.complete_run(ack["run_id"], RunStatus.completed)
+        await env.router.cancel_subscription_pump(env.ws)
+
+
 def _isolated(ws_router):
     return ws_router.WebSocketAuthContext(jwt_enabled=True, is_admin=False, user_isolation_enabled=True)
 

@@ -26,7 +26,7 @@ agent = CodexAgent(
     id="codex-basic",
     model=os.getenv("CODEX_MODEL", "gpt-5.6-luna"),
     cwd=str(workspace),
-    sandbox="read-only",
+    sandbox_mode="read-only",
     approval_mode="deny_all",
     reasoning_effort="low",
 )

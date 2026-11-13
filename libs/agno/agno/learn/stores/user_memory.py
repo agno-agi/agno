@@ -273,6 +273,7 @@ class UserMemoryStore(LearningStore):
             user_id=user_id,
             agent_id=agent_id,
             team_id=team_id,
+            run_metrics=kwargs.get("run_metrics"),
         )
 
     async def aget_tools(
@@ -289,6 +290,7 @@ class UserMemoryStore(LearningStore):
             user_id=user_id,
             agent_id=agent_id,
             team_id=team_id,
+            run_metrics=kwargs.get("run_metrics"),
         )
 
     @property
@@ -341,6 +343,7 @@ class UserMemoryStore(LearningStore):
         user_id: str,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> List[Callable]:
         """Get the tools to expose to the agent.
 
@@ -382,6 +385,7 @@ class UserMemoryStore(LearningStore):
                     user_id=user_id,
                     agent_id=agent_id,
                     team_id=team_id,
+                    run_metrics=run_metrics,
                 )
 
             tools.append(update_user_memory)
@@ -393,6 +397,7 @@ class UserMemoryStore(LearningStore):
         user_id: str,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> List[Callable]:
         """Get the async tools to expose to the agent."""
         tools = []
@@ -424,6 +429,7 @@ class UserMemoryStore(LearningStore):
                     user_id=user_id,
                     agent_id=agent_id,
                     team_id=team_id,
+                    run_metrics=run_metrics,
                 )
 
             tools.append(update_user_memory)
@@ -786,10 +792,10 @@ class UserMemoryStore(LearningStore):
             tool_call_limit=self.config.max_updates_per_run,
         )
 
-        if run_metrics is not None and response.response_usage is not None:
-            from agno.metrics import ModelType, accumulate_model_metrics
+        # Accumulate learning model metrics, for every model call of the tool loop
+        from agno.metrics import ModelType, accumulate_tool_loop_metrics
 
-            accumulate_model_metrics(response, model_copy, ModelType.LEARNING_MODEL, run_metrics)
+        accumulate_tool_loop_metrics(messages_for_model[2:], model_copy, ModelType.LEARNING_MODEL, run_metrics)
 
         if response.tool_executions:
             self.memories_updated = True
@@ -849,10 +855,10 @@ class UserMemoryStore(LearningStore):
             tool_call_limit=self.config.max_updates_per_run,
         )
 
-        if run_metrics is not None and response.response_usage is not None:
-            from agno.metrics import ModelType, accumulate_model_metrics
+        # Accumulate learning model metrics, for every model call of the tool loop
+        from agno.metrics import ModelType, accumulate_tool_loop_metrics
 
-            accumulate_model_metrics(response, model_copy, ModelType.LEARNING_MODEL, run_metrics)
+        accumulate_tool_loop_metrics(messages_for_model[2:], model_copy, ModelType.LEARNING_MODEL, run_metrics)
 
         if response.tool_executions:
             self.memories_updated = True
@@ -871,6 +877,7 @@ class UserMemoryStore(LearningStore):
         user_id: str,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> str:
         """Run a memories update task.
 
@@ -892,6 +899,7 @@ class UserMemoryStore(LearningStore):
             agent_id=agent_id,
             team_id=team_id,
             instructed=True,
+            run_metrics=run_metrics,
         )
 
     async def arun_memories_update(
@@ -900,6 +908,7 @@ class UserMemoryStore(LearningStore):
         user_id: str,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> str:
         """Async version of run_memories_update."""
         from agno.models.message import Message
@@ -911,6 +920,7 @@ class UserMemoryStore(LearningStore):
             agent_id=agent_id,
             team_id=team_id,
             instructed=True,
+            run_metrics=run_metrics,
         )
 
     # =========================================================================

@@ -1877,7 +1877,7 @@ def test_async_overflow_recovery_does_not_block_the_event_loop(stream):
     from agno.exceptions import ContextWindowExceededError
     from agno.models.response import ModelResponse
 
-    used = []
+    used, beats, beats_while_summarizing = [], {"n": 0}, []
 
     class _SlowSummarizer:
         id = "stub"
@@ -1889,7 +1889,9 @@ def test_async_overflow_recovery_does_not_block_the_event_loop(stream):
 
         async def aresponse(self, messages, **kwargs):
             used.append("async")
+            start = beats["n"]
             await asyncio.sleep(0.3)
+            beats_while_summarizing.append(beats["n"] - start)
             return ModelResponse(content="SUMMARY")
 
     model = _RecordingModel.build()
@@ -1925,15 +1927,12 @@ def test_async_overflow_recovery_does_not_block_the_event_loop(stream):
     async def scenario():
         for i in range(5):
             await agent.arun(f"question number {i}")
-        gaps, stop = [], asyncio.Event()
+        stop = asyncio.Event()
 
         async def heartbeat():
-            last = time.perf_counter()
             while not stop.is_set():
                 await asyncio.sleep(0.01)
-                now = time.perf_counter()
-                gaps.append(now - last)
-                last = now
+                beats["n"] += 1
 
         beat = asyncio.create_task(heartbeat())
         await asyncio.sleep(0.03)
@@ -1944,12 +1943,13 @@ def test_async_overflow_recovery_does_not_block_the_event_loop(stream):
             await agent.arun("question number 5")
         stop.set()
         await beat
-        return max(gaps)
 
-    longest_stall = asyncio.run(scenario())
+    asyncio.run(scenario())
 
     assert used == ["async"]
-    assert longest_stall < 0.15
+    # Counted only while the summary is awaited: the rest of the turn writes to a sync SqliteDb on the
+    # loop, which a loaded CI runner stalls for long enough to fail any bound on the whole turn.
+    assert beats_while_summarizing[0] > 3
 
 
 def test_overflow_retry_sends_the_compacted_payload():
@@ -2223,6 +2223,96 @@ def test_manual_compact_is_added_to_the_session_metrics(use_async):
     assert _stored_compaction_usage(db, "s") == [("summarizer", 700, 40)]
     after = db.get_session(session_id="s", session_type=SessionType.AGENT).session_data["session_metrics"]
     assert after["total_tokens"] == before + 740
+
+
+def test_manual_compact_leaves_a_latest_run_that_can_still_change():
+    """A failed latest run can still be continued in place, so the fold's usage goes on the latest completed run
+    instead, never on one whose continue would drop it."""
+    from agno.agent import Agent
+    from agno.db.base import SessionType
+    from agno.run.base import RunStatus
+
+    db = _db()
+    agent = Agent(
+        model=_RecordingModel.build(),
+        db=db,
+        session_id="s",
+        add_history_to_context=True,
+        compaction=Compaction(compact_at_tokens=None, uncompacted_runs=1, min_fold_ratio=0, model=_MeteredSummarizer()),
+    )
+    for i in range(4):
+        agent.run(f"question number {i}")
+    stored = db.get_session(session_id="s", session_type=SessionType.AGENT)
+    latest, completed = stored.runs[-1], stored.runs[-2]
+    latest.status = RunStatus.error
+    db.upsert_run(run=latest, session_id="s", run_index=3)
+
+    result = agent.compact(session_id="s")
+
+    runs = db.get_session(session_id="s", session_type=SessionType.AGENT).runs
+    assert result.compacted
+    assert (runs[-1].status, runs[-1].metrics.total_tokens) == (RunStatus.error, latest.metrics.total_tokens)
+    assert runs[-2].metrics.total_tokens == completed.metrics.total_tokens + 740
+
+
+def test_manual_compact_with_no_finished_run_stays_in_the_session_metrics():
+    """With no completed or cancelled run to carry it, the fold's usage is kept in the session's compaction metrics,
+    so the session's metrics keep it when a run is saved again."""
+    from agno.agent import Agent
+    from agno.db.base import SessionType
+    from agno.run.base import RunStatus
+
+    db = _db()
+    agent = Agent(
+        model=_RecordingModel.build(),
+        db=db,
+        session_id="s",
+        add_history_to_context=True,
+        compaction=Compaction(compact_at_tokens=None, uncompacted_runs=1, min_fold_ratio=0, model=_MeteredSummarizer()),
+    )
+    for i in range(4):
+        agent.run(f"question number {i}")
+    for index, run in enumerate(db.get_session(session_id="s", session_type=SessionType.AGENT).runs):
+        run.status = RunStatus.running
+        db.upsert_run(run=run, session_id="s", run_index=index)
+
+    result = agent.compact(session_id="s")
+    agent.run("question number 4")
+
+    stored = db.get_session(session_id="s", session_type=SessionType.AGENT)
+    assert result.compacted
+    assert stored.session_data["session_metrics"]["total_tokens"] == (
+        sum(run.metrics.total_tokens for run in stored.runs) + 740
+    )
+
+
+def test_manual_compact_in_a_forked_session_skips_the_runs_it_copied():
+    """A run copied into a forked session is counted in the session it was made in, so the fold's usage is kept in
+    the session's compaction metrics instead of on the copy."""
+    from agno.agent import Agent
+    from agno.db.base import SessionType
+
+    db = _db()
+    agent = Agent(
+        model=_RecordingModel.build(),
+        db=db,
+        session_id="s",
+        add_history_to_context=True,
+        compaction=Compaction(compact_at_tokens=None, uncompacted_runs=1, min_fold_ratio=0, model=_MeteredSummarizer()),
+    )
+    for i in range(4):
+        agent.run(f"question number {i}")
+    copied = db.get_session(session_id="s", session_type=SessionType.AGENT).runs
+    for index, run in enumerate(copied):
+        run.forked_from_session_id = "source"
+        db.upsert_run(run=run, session_id="s", run_index=index)
+
+    result = agent.compact(session_id="s")
+
+    stored = db.get_session(session_id="s", session_type=SessionType.AGENT)
+    assert result.compacted
+    assert [run.metrics.total_tokens for run in stored.runs] == [run.metrics.total_tokens for run in copied]
+    assert stored.session_data["compaction_metrics"]["total_tokens"] == 740
 
 
 def test_a_declined_manual_compact_reports_no_usage():

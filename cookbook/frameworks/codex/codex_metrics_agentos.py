@@ -38,7 +38,7 @@ agent = CodexAgent(
     id=AGENT_ID,
     name="Codex Metrics",
     model="gpt-5.6-luna",
-    sandbox="read-only",
+    sandbox_mode="read-only",
     db=db,
 )
 agent_os = AgentOS(agents=[agent], db=db)

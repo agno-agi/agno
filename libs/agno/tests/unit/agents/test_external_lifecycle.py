@@ -10,6 +10,7 @@ import pytest
 from agno.agents.base import BaseExternalAgent, _live_handles
 from agno.db.sqlite import SqliteDb
 from agno.db.sqlite.async_sqlite import AsyncSqliteDb
+from agno.metrics import RunMetrics
 from agno.run.agent import RunContentEvent, RunOutput
 from agno.run.base import RunStatus
 
@@ -270,6 +271,47 @@ async def test_pending_prepare_preserves_existing_terminal(agent):
 
 
 @pytest.mark.asyncio
+async def test_failed_run_written_again_is_counted_once(agent):
+    failed = RunOutput(
+        run_id=str(uuid4()),
+        agent_id="external",
+        session_id="s",
+        status=RunStatus.error,
+        metrics=RunMetrics(total_tokens=23),
+    )
+    await agent._apersist_run_fallback("s", failed)
+    await agent._apersist_run_fallback("s", failed)
+    session = await agent.aread_or_create_session("s", None)
+    assert session.session_data["session_metrics"]["total_tokens"] == 23
+
+
+@pytest.mark.asyncio
+async def test_failed_run_run_again_is_running_then_counted_once(agent):
+    run_id = str(uuid4())
+    failed = RunOutput(
+        run_id=run_id,
+        agent_id="external",
+        session_id="s",
+        status=RunStatus.error,
+        metrics=RunMetrics(total_tokens=10),
+    )
+    await agent._apersist_run_fallback("s", failed)
+    running = RunOutput(run_id=run_id, agent_id="external", session_id="s", status=RunStatus.running)
+    await agent._apersist_run_fallback("s", running)
+    assert (await agent.aget_run_output(run_id, "s")).status == RunStatus.running
+    completed = RunOutput(
+        run_id=run_id,
+        agent_id="external",
+        session_id="s",
+        status=RunStatus.completed,
+        metrics=RunMetrics(total_tokens=7),
+    )
+    await agent._apersist_run_in_session(await agent.aread_or_create_session("s", None), completed)
+    session = await agent.aread_or_create_session("s", None)
+    assert session.session_data["session_metrics"]["total_tokens"] == 7
+
+
+@pytest.mark.asyncio
 async def test_pending_persistence_failure_is_not_accepted(agent, monkeypatch):
     async def fail(*args, **kwargs):
         raise RuntimeError("database unavailable")
@@ -338,23 +380,23 @@ async def test_a2a_poll_and_cancel_scoped_external(agent, monkeypatch):
     from httpx import ASGITransport, AsyncClient
 
     from agno.os.interfaces.a2a import router as a2a_router
+    from agno.os.interfaces.a2a import task_store as a2a_task_store
 
     app = FastAPI()
     app.include_router(a2a_router.attach_routes(APIRouter(), agents=[agent]))
-    monkeypatch.setattr(a2a_router, "get_scoped_user_id", lambda request: request.headers.get("test-user"))
+    monkeypatch.setattr(a2a_task_store, "get_scoped_user_id", lambda request: request.headers.get("test-user"))
     run = await agent.arun("go", background=True, session_id="s", user_id="owner")
     await asyncio.wait_for(agent.started.wait(), 2)
-    body = {"id": "request", "params": {"id": run.run_id, "contextId": "s"}}
+    headers = {"A2A-Version": "1.0"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        for action in ("get", "cancel"):
-            response = await client.post(
-                "/agents/external/v1/tasks:" + action, json=body, headers={"test-user": "other"}
-            )
-            assert response.status_code == 404
-        response = await client.post("/agents/external/v1/tasks:get", json=body, headers={"test-user": "owner"})
-        assert response.status_code == 200, response.text
-        response = await client.post("/agents/external/v1/tasks:cancel", json=body, headers={"test-user": "owner"})
-        assert response.status_code == 200, response.text
+        for method in ("GetTask", "CancelTask"):
+            body = {"jsonrpc": "2.0", "id": "request", "method": method, "params": {"id": run.run_id}}
+            response = await client.post("/agents/external", json=body, headers={**headers, "test-user": "other"})
+            assert response.status_code == 200, response.text
+            assert response.json()["error"]["code"] == -32001
+            response = await client.post("/agents/external", json=body, headers={**headers, "test-user": "owner"})
+            assert response.status_code == 200, response.text
+            assert "result" in response.json(), response.text
     assert (await terminal(agent, run.run_id)).status == RunStatus.cancelled
 
 
