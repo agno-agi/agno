@@ -49,8 +49,8 @@ def test_lists_manual_and_automatic_compactions_newest_first(client: TestClient)
     numbers = {"messages_compacted": 18, "tokens_before": 15864, "tokens_after": 3981}
     assert response.status_code == 200
     assert response.json() == [
-        {"id": "manual-fold", **numbers, "created_at": 200, "archived": False},
-        {"id": "auto-fold", "run_id": "r3", **numbers, "created_at": 100, "archived": True},
+        {"id": "manual-fold", **numbers, "created_at": "1970-01-01T00:03:20Z", "archived": False},
+        {"id": "auto-fold", "run_id": "r3", **numbers, "created_at": "1970-01-01T00:01:40Z", "archived": True},
     ]
 
 
