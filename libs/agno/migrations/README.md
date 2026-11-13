@@ -17,6 +17,16 @@ Notice:
 - The script is idempotent. If something goes wrong or if you stop it mid-run, you can run it again.
 - Metrics are automatically converted from v1 to v2 format.
 
+## How to migrate from Agno v2 to v3
+
+Before attempting this, make sure you have read the [Agno v3 Migration Guide](https://docs.agno.com/other/v3-migration) and are familiar with the changes in the new version.
+
+- For migrating your database tables, use the [migration manager](#how-to-use-the-migration-manager): `MigrationManager(db).up()` applies the `v3.0.0` migration.
+- For migrating your Vector Database to v3 per-user isolation, use the script for your backend (see the [v2 to v3 Vector DB guide](v2_to_v3/README.md)):
+  - pgvector, SingleStore: `libs/agno/migrations/v2_to_v3/migrate_sql_vectordbs.py`
+  - Milvus, LanceDB, ClickHouse, SurrealDB: `libs/agno/migrations/v2_to_v3/migrate_field_vectordbs.py`
+  - Redis, Couchbase, Cassandra: `libs/agno/migrations/v2_to_v3/migrate_sentinel_vectordbs.py`
+
 ## Filesystem table (`agno_fs`) in v3.1
 
 v3.1 keys the filesystem table by `(namespace, user_id, path)`. `user_id` is the user
